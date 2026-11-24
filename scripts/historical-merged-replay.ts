@@ -29,6 +29,16 @@ export type HistoricalEmptyLegacyClosureBindings = ReadonlyMap<
 export class HistoricalClosedOutcomeError extends Error {
   constructor(
     readonly reason: "lifecycle" | "assessment" | "scored-work" | "projection",
+    readonly check?:
+      | "approved-context-identity"
+      | "approved-context-missing-decision"
+      | "approved-context-different-decision"
+      | "standalone-review-decision"
+      | "empty-legacy-identity"
+      | "empty-legacy-reviews"
+      | "empty-legacy-decision"
+      | "closed-census"
+      | "closed-assessment-coverage",
   ) {
     super(
       `Historical closed-unmerged ${reason} requires a reviewed expanded lifecycle source contract`,
@@ -66,6 +76,86 @@ function paymentLedger(snapshot: LeaderboardSnapshot) {
   return [...ledger.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** The pre-scoring guards shared with a diagnostic-only closure preflight. */
+export function assertHistoricalClosedBindings(
+  input: Pick<
+    LeaderboardInput,
+    "closedUnmergedPullRequests" | "valueDecisions"
+  > & {
+    jointValueDecisions?: ReadonlyMap<
+      string,
+      { latestDigest: string | null; status?: string }
+    >;
+  },
+  approvedContexts: HistoricalClosedContextBindings,
+  emptyLegacyClosures: HistoricalEmptyLegacyClosureBindings,
+) {
+  const closedById = new Map(
+    (input.closedUnmergedPullRequests ?? []).map((pull) => [pull.id, pull]),
+  );
+  for (const [id, binding] of approvedContexts) {
+    const pull = closedById.get(id);
+    const decision = input.jointValueDecisions?.get(id);
+    if (
+      !pull ||
+      pull.number !== binding.number ||
+      pull.headRefOid !== binding.headSha ||
+      Date.parse(pull.closedAt ?? "") !== Date.parse(binding.occurredAt)
+    )
+      throw new HistoricalClosedOutcomeError(
+        "lifecycle",
+        "approved-context-identity",
+      );
+    if (!decision)
+      throw new HistoricalClosedOutcomeError(
+        "lifecycle",
+        "approved-context-missing-decision",
+      );
+    if (decision.latestDigest !== binding.digest)
+      throw new HistoricalClosedOutcomeError(
+        "lifecycle",
+        "approved-context-different-decision",
+      );
+    if (binding.standaloneReview && decision.status !== "assessed")
+      throw new HistoricalClosedOutcomeError(
+        "assessment",
+        "standalone-review-decision",
+      );
+  }
+  for (const [id, binding] of emptyLegacyClosures) {
+    const pull = closedById.get(id);
+    if (
+      !pull ||
+      pull.number !== binding.number ||
+      pull.headRefOid !== binding.headSha ||
+      Date.parse(pull.closedAt ?? "") !== Date.parse(binding.occurredAt)
+    )
+      throw new HistoricalClosedOutcomeError(
+        "lifecycle",
+        "empty-legacy-identity",
+      );
+    const decision = input.valueDecisions?.get(id);
+    if (pull.reviews.length !== 0)
+      throw new HistoricalClosedOutcomeError(
+        "assessment",
+        "empty-legacy-reviews",
+      );
+    if (
+      approvedContexts.has(id) ||
+      input.jointValueDecisions?.has(id) ||
+      decision?.latestDigest !== binding.digest ||
+      (decision.status !== "assessed" && decision.status !== "unresolved") ||
+      decision.assessment.tier !== null ||
+      decision.assessment.reviews.length !== 0
+    )
+      throw new HistoricalClosedOutcomeError(
+        "assessment",
+        "empty-legacy-decision",
+      );
+  }
+  return closedById;
+}
+
 /** Keep only audited merges and approved closed review sources. Prove that
  * omitting context-only outcomes preserves awards and linked provenance. */
 export function createMergedHistoricalReplaySnapshot(
@@ -76,43 +166,11 @@ export function createMergedHistoricalReplaySnapshot(
   emptyLegacyClosures: HistoricalEmptyLegacyClosureBindings = new Map(),
 ): LeaderboardSnapshot {
   const closed = input.closedUnmergedPullRequests ?? [];
-  const closedById = new Map(closed.map((pull) => [pull.id, pull]));
-  for (const [id, binding] of approvedContexts) {
-    const pull = closedById.get(id);
-    const decision = input.jointValueDecisions?.get(id);
-    if (
-      !pull ||
-      pull.number !== binding.number ||
-      pull.headRefOid !== binding.headSha ||
-      Date.parse(pull.closedAt ?? "") !== Date.parse(binding.occurredAt) ||
-      !decision ||
-      decision.latestDigest !== binding.digest
-    )
-      throw new HistoricalClosedOutcomeError("lifecycle");
-    if (binding.standaloneReview && decision.status !== "assessed")
-      throw new HistoricalClosedOutcomeError("assessment");
-  }
-  for (const [id, binding] of emptyLegacyClosures) {
-    const pull = closedById.get(id);
-    if (
-      !pull ||
-      pull.number !== binding.number ||
-      pull.headRefOid !== binding.headSha ||
-      Date.parse(pull.closedAt ?? "") !== Date.parse(binding.occurredAt)
-    )
-      throw new HistoricalClosedOutcomeError("lifecycle");
-    const decision = input.valueDecisions?.get(id);
-    if (
-      approvedContexts.has(id) ||
-      input.jointValueDecisions?.has(id) ||
-      pull.reviews.length !== 0 ||
-      decision?.latestDigest !== binding.digest ||
-      (decision.status !== "assessed" && decision.status !== "unresolved") ||
-      decision.assessment.tier !== null ||
-      decision.assessment.reviews.length !== 0
-    )
-      throw new HistoricalClosedOutcomeError("assessment");
-  }
+  const closedById = assertHistoricalClosedBindings(
+    input,
+    approvedContexts,
+    emptyLegacyClosures,
+  );
   if (!closed.length) return createHistoricalLeaderboardSnapshot(input, scope);
   const closedIds = new Set(closedById.keys());
   const closedByNumber = new Map(closed.map((pull) => [pull.number, pull]));
@@ -133,7 +191,7 @@ export function createMergedHistoricalReplaySnapshot(
       (pull) => closedIds.has(pull.id) || closedNumbers.has(pull.number),
     )
   )
-    throw new HistoricalClosedOutcomeError("lifecycle");
+    throw new HistoricalClosedOutcomeError("lifecycle", "closed-census");
 
   const complete = createHistoricalLeaderboardSnapshot(input, scope);
   const coverage = complete.valueAssessmentCoverage ?? [];
@@ -184,7 +242,10 @@ export function createMergedHistoricalReplaySnapshot(
       );
     })
   )
-    throw new HistoricalClosedOutcomeError("assessment");
+    throw new HistoricalClosedOutcomeError(
+      "assessment",
+      "closed-assessment-coverage",
+    );
 
   function closedSource(url: string) {
     const source = new URL(url);

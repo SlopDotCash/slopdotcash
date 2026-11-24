@@ -1,4 +1,5 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
+import { throws } from "node:assert/strict";
 import {
   createHistoricalLeaderboardSnapshot,
   type LeaderboardInput,
@@ -204,11 +205,17 @@ test("empty legacy closure evidence refuses changed source identity, coverage, o
     { ...decision, assessment: { ...decision.assessment, reviews: [review] } },
   ]) {
     input.valueDecisions = new Map([[closed.id, changed as never]]);
-    expect(project).toThrow("closed-unmerged assessment");
+    throws(project, {
+      reason: "assessment",
+      check: "empty-legacy-decision",
+    });
   }
   input.valueDecisions = new Map([[closed.id, decision as never]]);
   input.closedUnmergedPullRequests = [{ ...closed, reviews: [review] }];
-  expect(project).toThrow("closed-unmerged assessment");
+  throws(project, {
+    reason: "assessment",
+    check: "empty-legacy-reviews",
+  });
   input.closedUnmergedPullRequests = census;
   input.jointValueDecisions = new Map([
     [

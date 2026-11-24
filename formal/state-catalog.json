@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "ae1bea08cc39131ae7a127c778c4a98c707cc4bbcaa5d2dea4043bd30db2caac",
+  "inventorySha256": "739e3f3506b2f6abdd3a66e1a9f18571daf667d561523db221fa394877a2564a",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2496,7 +2496,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 284,
+      "line": 285,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2518,7 +2518,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 534,
+      "line": 535,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2556,7 +2556,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4070,
+      "line": 4071,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2578,7 +2578,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4674,
+      "line": 4675,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2833,7 +2833,7 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "line": 1482,
+      "line": 1469,
       "name": "PublicationPhase",
       "kind": "string-union",
       "values": [
@@ -2848,9 +2848,18 @@
         "duplicate acceptance order verification",
         "enforcement checkpoint read",
         "financial protection verification",
+        "historical GitHub repository binding",
+        "historical GitHub repository read",
         "historical Points reconstruction",
         "historical assessment replay",
         "historical census verification",
+        "historical closed review verification",
+        "historical project manifest binding",
+        "historical registry pair read",
+        "historical replay qualification",
+        "historical repository credential",
+        "historical repository identity",
+        "historical value projection",
         "import preparation",
         "main source verification",
         "owner authority verification",
@@ -2875,8 +2884,7 @@
         "assessment qualification recheck",
         "assessment receipt",
         "assessment source reconciliation",
-        "complete assessment catalog read",
-        "historical assessment replay"
+        "complete assessment catalog read"
       ],
       "review": "candidate-only"
     },
