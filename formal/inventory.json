@@ -3966,9 +3966,9 @@
     },
     {
       "path": "scripts/attribution-memo.ts",
-      "sha256": "990f9c51eba3ba7bdd1d49a576c010cf185923cfdd76e0182cab0f95f49056cf",
+      "sha256": "c4d1b0cd835c3af166187500d5db480a2f60f6cdb3e13704eee146398fe63176",
       "models": ["formal/models/points/incremental_collection.qnt"],
-      "candidateLines": [10, 78, 80, 81, 82, 118, 121, 124, 142, 286, 329, 341],
+      "candidateLines": [10, 78, 80, 81, 82, 118, 121, 124, 142, 287, 330, 342],
       "review": "mapped-abstraction"
     },
     {
@@ -4150,10 +4150,10 @@
     },
     {
       "path": "scripts/collection-memo.ts",
-      "sha256": "0c1062a3a4b1b8c841439471d51a9f05c624dca51c58e1c0b8d3c8eae26439ac",
+      "sha256": "99f033aa792d0ee1e19a76b38a2a0e3e3b39f3f465c9a1a7697d56a6b964a960",
       "models": ["formal/models/points/incremental_collection.qnt"],
       "candidateLines": [
-        50, 201, 206, 212, 372, 374, 375, 378, 393, 401, 406, 519
+        65, 91, 259, 264, 270, 452, 454, 455, 458, 473, 481, 486, 517, 528, 645
       ],
       "review": "mapped-abstraction"
     },
@@ -4498,7 +4498,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "c2f3de2f6fc1d5b3bb9def5aafd597dc2fb5a0520a043e9eaad83f7e45e45ed1",
+      "sha256": "3bd1ca202b279b7e70a56a62ef3a6f55ee215b5440369d3a47644a9cad21da99",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -5718,7 +5718,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "b9679fb65ab9c62ac65a44acf89c1f674400d195d2935d0bf7ed2adf4dd7114e",
+      "sha256": "6725e420273a7cad2de7913bfe0be40c9e899992139cd8d63bcb90209eea6553",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5729,8 +5729,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        82, 93, 150, 209, 210, 211, 212, 214, 215, 304, 305, 306, 308, 309, 969,
-        998, 1244, 1414, 1451, 1469, 1510, 1534
+        82, 93, 150, 209, 210, 211, 212, 214, 215, 304, 305, 306, 308, 309, 970,
+        999, 1246, 1416, 1453, 1471, 1512, 1536
       ],
       "review": "mapped-abstraction"
     },
@@ -10191,7 +10191,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "4ea5a761830193b9b5a05ecfccd22ab090db2845ec2d123dd665c7fbd123af3f",
+      "sha256": "e69facdad510389aae9de852661010dd73ffd6272dcf85ab7826462c937815a8",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/historical_discussion_evidence.qnt",
@@ -10199,7 +10199,7 @@
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        73, 86, 95, 111, 499, 500, 702, 722, 765, 774, 793, 1111, 1169, 1188
+        73, 86, 95, 111, 500, 501, 704, 724, 767, 776, 795, 1113, 1171, 1190
       ],
       "review": "mapped-abstraction"
     },
@@ -16428,7 +16428,7 @@
     },
     {
       "path": "formal/models/points/incremental_collection.qnt",
-      "sha256": "f6c4f88eac023c87b307d07d1b5a89e6ec142053c76dee805854218d3d6a75ca",
+      "sha256": "537ee43634cd14f8eb93827434932a1ada190d1afaebc6251c96fa8ccdb00bc4",
       "sources": [
         "scripts/accepted-implementation-memo.ts",
         "scripts/attribution-memo.ts",
@@ -16437,12 +16437,14 @@
       ],
       "scenarios": [
         "auditDiscardsEveryReuseTest",
-        "changedCodeIsFullTest",
+        "changedCodeAuditCatchesStaleAnswerTest",
+        "changedCodeStaysIncrementalTest",
         "changedInputIsRecomputedTest",
+        "changedRulesIsFullTest",
+        "expiredAnswerIsRecomputedTest",
         "forcedFullNeverReusesTest",
         "missingMemoIsFullTest",
-        "unchangedAnswerIsReusedTest",
-        "weeklyFullTest"
+        "unchangedAnswerIsReusedTest"
       ]
     },
     {

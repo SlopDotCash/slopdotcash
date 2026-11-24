@@ -245,6 +245,7 @@ export interface RelatedPullRequestTimelineNode {
   };
 }
 
+// attribution-rules: begin reference-discovery
 export function valueReferenceTimelineRequest(
   repository: string,
   number: number,
@@ -556,6 +557,7 @@ export async function collectValueReferenceEvidence(
       related.limitations.push(`Incomplete ${name}: ${actual}/${expected}`);
   return { pull, ...related };
 }
+// attribution-rules: end reference-discovery
 /** True when `id` names the repository or one of its aliases, ignoring case. */
 export function namesRepository(
   repository: Pick<TargetRepository, "id" | "aliases">,

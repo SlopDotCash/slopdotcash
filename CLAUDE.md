@@ -825,7 +825,11 @@ To publish new data without a commit, run the release workflow by hand
 `daily-collection.yml` workflow does this every day at 07:17 UTC unless a
 collection is already running, publishes a superseded collection through a
 `data_from_run` release, and resumes a failed collection once (operator
-decision, 19 November 2026). Every production release requires current main equivalence. Every
+decision, 19 November 2026). Saved commit attributions in the collection memo survive
+code changes; a change that could make a saved answer come out differently
+must raise `ATTRIBUTION_RULES_VERSION` in `scripts/collection-memo.ts`, and a
+test pins the rule sources (PRD section 11, operator decision, 24 November
+2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
