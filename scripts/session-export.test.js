@@ -1825,3 +1825,142 @@ test("a name-only command does not hide a second command", async () => {
   const { events } = await runOut(w);
   assert.ok(!JSON.stringify(events).includes("NOTES-BODY"));
 });
+
+// ---- fix round 7: git flags, globs, shells and patches ----
+function pkgWorld() {
+  const w = world();
+  mkdirSync(join(w.repoRoot, "pkg"), { recursive: true });
+  writeFileSync(join(w.repoRoot, "pkg", ".secret"), "pw=Hd3\n");
+  writeFileSync(join(w.repoRoot, "pkg", "x.js"), "x=1\n");
+  writeFileSync(
+    join(w.repoRoot, ".gitignore"),
+    "*.log\n.env\n*.pem\nsecrets/\npkg/.secret\nhist2\n",
+  );
+  execFileSync("git", ["-C", w.repoRoot, "add", ".gitignore", "pkg/x.js"]);
+  return w;
+}
+const leakText = (events) =>
+  JSON.stringify(events).match(/pw=Hd3|Ab1|LEAKWORD-\w+/g) ?? [];
+async function probe(w, cmds) {
+  build(w, ({ call }) => {
+    for (const [command, out] of cmds) call("Bash", { command }, out);
+  });
+  return (await runOut(w)).events;
+}
+
+test("git flags outside the name-only allowlist make the result unresolvable", async () => {
+  const w = pkgWorld();
+  const binary =
+    " pkg/.secret => /dev/null | 1 -\n 1 file changed\n\ndiff --git a/pkg/.secret b/pkg/.secret\ndeleted file mode 100644\n--- a/pkg/.secret\n+++ /dev/null\n@@ -1 +0,0 @@\n-pw=Hd3\n";
+  const hist =
+    "rm2\n\n\ndiff --git a/hist2 b/hist2\ndeleted file mode 100644\n--- a/hist2\n+++ /dev/null\n@@ -1 +0,0 @@\n-ws=Ab1   \n";
+  const events = await probe(w, [
+    ["git diff --stat --binary --no-index pkg src", binary],
+    ["git diff --numstat --binary --no-index src pkg", binary],
+    ["git diff --stat --no-index pkg src", binary],
+    ["git log --format=%B --dd", hist],
+    ["git log --remerge-diff", hist],
+    ["git log --binary", hist],
+    [
+      "git log --oneline --check",
+      "2924975 rm2\nhist2:1: trailing whitespace.\n+ws=Ab1   \n",
+    ],
+    ["git status -v", hist],
+    [
+      "git status --pathspec-from-file=.env",
+      "error: pathspec 'pw=Hd3' did not match",
+    ],
+    ["git log --pathspec-from-file=.env", "fatal: pw=Hd3"],
+    ["tree --fromfile=.env", ".\n└── pw=Hd3\n"],
+    ["find . -files0-from .env", "find: 'pw=Hd3': No such file"],
+    ["git log -p", hist],
+    ["git log --unif=3", hist],
+  ]);
+  assert.deepEqual(leakText(events), []);
+  const kept = await probe(w, [
+    ["git log --oneline -3 --stat", "abc1234 first\n pkg/x.js | 1 +"],
+    ["git status -sb", "## main\n?? notes.txt"],
+    ["git diff --cached --name-status", "A\tpkg/x.js"],
+    ["git branch -a", "* main"],
+  ]);
+  const r = results(kept).map((e) => e.text);
+  for (const t of [
+    "abc1234 first\n pkg/x.js | 1 +",
+    "## main\n?? notes.txt",
+    "A\tpkg/x.js",
+    "* main",
+  ])
+    assert.ok(r.includes(t), t);
+});
+
+test("globs count dotfiles and shell glob options are refused", async () => {
+  const w = pkgWorld();
+  const both = "pw=Hd3\nx=1\n";
+  const events = await probe(w, [
+    ["cat pkg/*", both],
+    ["cat pkg/*(D)", both],
+    ["setopt globdots; cat pkg/*", both],
+    ["bash -O dotglob -c 'cat pkg/*'", both],
+    ["cat pkg/?secret", "pw=Hd3"],
+    ["cat pkg/[.]secret", "pw=Hd3"],
+    ["cat pkg/(.secret)", "pw=Hd3"],
+    ["cat pkg/(.secret|x.js)", both],
+    ["cat pkg/*(D:a)", both],
+    ["cat pkg/x.js(:h)/.secret", "pw=Hd3"],
+    ["ls pkg/*(D)", "pkg/.secret\npw=Hd3"],
+    ["shopt -s dotglob; cat pkg/*", both],
+    ["GLOBIGNORE=x; cat pkg/*", both],
+    ["zsh -o globdots -c 'cat pkg/*'", both],
+    ["cat pkg/.s#ecret", "pw=Hd3"],
+  ]);
+  assert.deepEqual(leakText(events), []);
+  const kept = await probe(w, [["cat pkg/*.js", "x=1"]]);
+  assert.ok(results(kept).some((e) => e.text === "x=1"));
+});
+
+test("extended glob words with ^ or ~ are refused", async () => {
+  const w = pkgWorld();
+  const events = await probe(w, [
+    ["setopt extendedglob globdots; cat pkg/^x.js", "pw=Hd3"],
+    ["cat pkg/^x.js", "pw=Hd3"],
+    ["cat pkg/.secret~foo", "pw=Hd3"],
+  ]);
+  assert.deepEqual(leakText(events), []);
+});
+
+test("a shell with -c after other options is unresolvable", async () => {
+  const w = pkgWorld();
+  const events = await probe(w, [
+    ["bash -O x -c 'echo hi'", "LEAKWORD-A"],
+    ["bash --norc -c 'echo hi'", "LEAKWORD-B"],
+    ["sh -e -c 'echo hi'", "LEAKWORD-C"],
+    ["fish -c 'echo hi'", "LEAKWORD-D"],
+    ["zsh -f -c 'echo hi'", "LEAKWORD-E"],
+  ]);
+  assert.deepEqual(leakText(events), []);
+});
+
+test("git patch output naming a file that is not a repo file is redacted", async () => {
+  const w = pkgWorld();
+  const hist =
+    "commit f661e5a\n\n    ws\n\ndiff --git a/hist2 b/hist2\nnew file mode 100644\nindex 0000000..527ec3d\n--- /dev/null\n+++ b/hist2\n@@ -0,0 +1 @@\n+ws=Ab1   \n";
+  const events = await probe(w, [
+    ["git show f661e5a", hist],
+    ["git stash show -p", hist],
+    ["git -c core.pager=cat log -p", hist],
+    ["GIT_PAGER=cat git log -p", hist],
+    ["git diff 5f986e1", hist],
+    ["git show abc1234", "--- x\n+++ y\n@@ -1 +1 @@\n-pw=Hd3\n"],
+    ["git show --check abc1234", "hist2:1: trailing whitespace.\n+ws=Ab1"],
+  ]);
+  assert.deepEqual(leakText(events), []);
+  const ok =
+    "diff --git a/src/a.ts b/src/a.ts\nindex 1..2 100644\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n";
+  const kept = await probe(w, [
+    ["git diff", ok],
+    ["git show abc1234", `commit abc1234\n\n${ok}`],
+  ]);
+  const r = results(kept).map((e) => e.text);
+  assert.ok(r.includes(ok));
+  assert.ok(r.includes(`commit abc1234\n\n${ok}`));
+});

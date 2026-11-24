@@ -4,7 +4,6 @@
 import { spawnSync } from "node:child_process";
 import {
   closeSync,
-  globSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -1212,7 +1211,10 @@ function unresolvable(call, cwd, g) {
   if (/(?:^|[;&|(]\s*)\.\s/.test(cmd) || /^\s*\.\s/.test(cmd)) return true;
   if (/\bfind\b/.test(cmd) && /\s-(?:exec|execdir|ok|okdir)\b/.test(cmd))
     return true;
-  if (/(?:^|[\s;&|(])(?:ba|z|da|k)?sh\s+-[a-z]*c\b/.test(cmd)) return true;
+  // Shell options that change what a glob matches are not followed.
+  if (/\b(?:setopt|unsetopt|shopt|emulate|GLOBIGNORE)\b/.test(cmd)) return true;
+  if (/(?:^|[\s;&|(])set\s+[-+]o\b/.test(cmd)) return true;
+  if (gitRefused(cmd)) return true;
   if (/(?:^|[\s;&|(])(?:rg|ag|ack|tar)\b/.test(cmd)) return true;
   const words = cmd.split(/\s+/).filter(Boolean);
   if (
@@ -1232,8 +1234,26 @@ function unresolvable(call, cwd, g) {
       if (tool === "php" && /^-[A-Za-z]*r[A-Za-z]*$/.test(f)) return true;
     }
   }
+  // A shell given a script (-c anywhere in its options) or an option that
+  // changes globbing runs words the guard has not read.
+  for (let i = 0; i < words.length; i++) {
+    if (!SHELL_NAME.test(unquote(words[i]).split("/").pop())) continue;
+    for (
+      let j = i + 1;
+      j < words.length && !/^(?:;|&&|\|\||\|)$/.test(words[j]);
+      j++
+    ) {
+      const f = words[j];
+      if (/^-[A-Za-z]*c[A-Za-z]*$/.test(f) || f === "--command") return true;
+      if (/^[-+][oO]$/.test(f) || /^[-+]O\S/.test(f)) return true;
+    }
+  }
   for (const word of words) {
     if (!word) continue;
+    // zsh glob qualifiers and extended globs: ( ) ^, ~ after the start, and
+    // # inside a word.
+    if (/[()^]/.test(word)) return true;
+    if (word.indexOf("~") > 0 || word.indexOf("#") > 0) return true;
     if (word.length > 1 && /["']/.test(word.slice(1, -1))) return true;
     if (word.includes(":") && !word.includes("://") && !/:$/.test(word))
       return true;
@@ -1273,19 +1293,70 @@ function fileStatus(abs, g) {
 const GLOB_CHARS = /[*?[\]]/;
 const MAX_GLOB_MATCHES = 500;
 
-// A glob word is expanded locally from the command's directory. It passes
-// only when it matches at least one file and every match is a tracked or
+// A glob word is expanded locally from the command's directory. Every entry
+// a pattern could match counts, dotfiles included, since a shell option the
+// guard cannot see (zsh GLOB_DOTS, bash dotglob) may match them. It passes
+// only when it matches at least one entry and every match is a tracked or
 // run-written, non-ignored file inside the repository.
+function segmentRegExp(seg) {
+  let re = "";
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else if (c === "[") {
+      const end = seg.indexOf("]", i + 2);
+      if (end < 0) {
+        re += "\\[";
+        continue;
+      }
+      let body = seg.slice(i + 1, end);
+      if (body.startsWith("!")) body = `^${body.slice(1)}`;
+      re += `[${body}]`;
+      i = end;
+    } else re += c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  }
+  try {
+    return new RegExp(`^${re}$`);
+  } catch {
+    return null;
+  }
+}
+
+function expandGlob(word, base, homeDir) {
+  const p = expandTilde(word, homeDir);
+  let dirs = [isAbsolute(p) ? "/" : base];
+  for (const seg of p.split("/").filter(Boolean)) {
+    const next = [];
+    for (const dir of dirs) {
+      if (!GLOB_CHARS.test(seg)) {
+        next.push(join(dir, seg));
+        continue;
+      }
+      const re = segmentRegExp(seg);
+      if (re === null) return null;
+      const names = listDir(dir).map((d) => d.name);
+      // Shells match . and .. only for a pattern that starts with a dot.
+      if (seg.startsWith(".")) names.push(".", "..");
+      for (const n of names) if (re.test(n)) next.push(join(dir, n));
+      if (next.length > MAX_GLOB_MATCHES) return null;
+    }
+    dirs = next;
+  }
+  return dirs.filter((d) => {
+    try {
+      statSync(d);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function globTouches(word, g, base) {
   if (word.includes("**")) return "source";
-  let matches;
-  try {
-    matches = globSync(expandTilde(word, g.homeDir), { cwd: base });
-  } catch {
-    return "source";
-  }
-  if (matches.length === 0 || matches.length > MAX_GLOB_MATCHES)
-    return "source";
+  const matches = expandGlob(word, base, g.homeDir);
+  if (matches === null || matches.length === 0) return "source";
   let verdict = "ok";
   for (const m of matches) {
     const abs = resolve(base, m);
@@ -1332,13 +1403,61 @@ function commandTouches(cmd, g, base) {
 // ---- Name-only commands: their output is names and metadata, not file
 // contents, so it is kept when every path they name lies inside the
 // repository. The content guard still strips secret values from it.
-const PATCH_FLAG =
-  /^(?:-p|-u|-c|-m|--cc|--patch.*|-U\d*|--unified.*|-L.*|--word-diff.*|--color-words.*|--ext-diff|--textconv|--full-diff|--show-signature|--notes.*|--raw)$/;
-const SHORT_PATCH = /^-[A-Za-z0-9]*[pucmLU][A-Za-z0-9]*$/;
+// Flags a name-only git command may carry. Any other flag on these
+// subcommands makes the result unresolvable (gitRefused).
+const GIT_ALLOWED = {
+  status:
+    /^(?:-s|--short|--porcelain(?:=v[12])?|-b|--branch|-sb|-bs|-u(?:no|normal|all)?|--untracked-files(?:=(?:no|normal|all))?|-z)$/,
+  log: /^(?:--oneline|--(?:format|pretty)=.*|-n|-n\d+|-\d+|--max-count=\d+|--(?:since|until|after|before|author|grep)=.+|--stat|--shortstat|--name-only|--name-status|--graph|--decorate(?:=\w+)?|--all|--reverse|--no-merges|--first-parent)$/,
+  diff: /^(?:--stat(?:=[\d,]+)?|--numstat|--shortstat|--name-only|--name-status|--cached|--staged)$/,
+  branch: /^(?:-a|-r|-v|-vv|--list|--show-current|--all|--remotes)$/,
+};
+// Flags refused on the other git commands that print history; their patches
+// are checked by patchTouches, but these print lines without a header.
+const GIT_CONTENT_REFUSED = /^(?:--check|--output(?:=.*)?)$/;
+const SHELL_NAME = /^(?:ba|z|da|k|c|tc|fi)?sh$/;
+
+// Each git invocation: its subcommand and the words after it.
+function gitCalls(cmd) {
+  const calls = [];
+  for (const stage of cmd.split(/&&|\|\||;|\||\n/)) {
+    const words = stage.trim().split(/\s+/).filter(Boolean).map(unquote);
+    let i = 0;
+    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++;
+    if (words[i]?.split("/").pop() !== "git") continue;
+    i++;
+    while (i < words.length && words[i].startsWith("-")) {
+      if (words[i] === "-c") i++;
+      i++;
+    }
+    calls.push({ sub: words[i], args: words.slice(i + 1), all: words });
+  }
+  return calls;
+}
+
+function gitRefused(cmd) {
+  for (const { sub, args, all } of gitCalls(cmd)) {
+    if (all.includes("--no-index")) return true;
+    const allowed = GIT_ALLOWED[sub];
+    if (allowed) {
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === "--") break;
+        if (!a.startsWith("-")) continue;
+        if (!allowed.test(a)) return true;
+        if (a === "-n" && !/^\d+$/.test(args[++i] ?? "")) return true;
+      }
+    } else if (args.some((a) => GIT_CONTENT_REFUSED.test(a))) return true;
+  }
+  return false;
+}
+
 const DIFF_NAMES =
   /^--(?:stat(?:=\S*)?|numstat|shortstat|name-only|name-status)$/;
 const FIND_BLOCKED =
-  /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls|printf)$/;
+  /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls|printf|files0-from)$/;
+// tree --fromfile reads a listing from a file and prints its lines.
+const TREE_BLOCKED = /^--fromfile/;
 const FIND_PATTERN =
   /^-(?:name|iname|path|ipath|wholename|iwholename|regex|iregex|lname|ilname)$/;
 const PIPE_FILTER = /^(?:head|tail|wc|sort|uniq)$/;
@@ -1371,15 +1490,17 @@ function nameOnlyStage(words, g, base) {
   let args = words.slice(1);
   const paths = [];
   if (tool === "git") {
+    // Flags were checked against GIT_ALLOWED by gitRefused.
     if (args[0] === "--no-pager") args = args.slice(1);
     const sub = args.shift();
-    const patch = args.some((a) => PATCH_FLAG.test(a) || SHORT_PATCH.test(a));
-    if (sub === "log" || sub === "diff") {
-      if (patch) return false;
-      if (sub === "diff" && !args.some((a) => DIFF_NAMES.test(a))) return false;
-    } else if (sub !== "status" && sub !== "branch") return false;
-    for (const a of args) if (!a.startsWith("-")) paths.push(a);
+    if (!GIT_ALLOWED[sub]) return false;
+    if (sub === "diff" && !args.some((a) => DIFF_NAMES.test(a))) return false;
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "-n") i++;
+      else if (!args[i].startsWith("-")) paths.push(args[i]);
+    }
   } else if (tool === "ls" || tool === "tree") {
+    if (tool === "tree" && args.some((a) => TREE_BLOCKED.test(a))) return false;
     for (const a of args) if (!a.startsWith("-")) paths.push(a);
   } else if (tool === "find") {
     for (let i = 0; i < args.length; i++) {
@@ -1438,6 +1559,56 @@ function outputTouches(text, g, base) {
   return verdict;
 }
 
+// Git patch output (log, show, diff, stash show) names each file in its
+// headers, relative to the repository root. Every named file must be a
+// tracked or run-written, non-ignored repository file; patch lines with no
+// header that can be read redact the result too.
+const PATCH_LINE =
+  /^(?:@@ |diff --|--- |\+\+\+ |index [0-9a-f]+\.\.|Binary files |GIT binary patch|rename (?:from|to) |copy (?:from|to) |similarity index)/;
+
+function headerPaths(line) {
+  if (line.startsWith("diff --git ")) {
+    const rest = line.slice(11);
+    const n = (rest.length - 5) / 2;
+    if (Number.isInteger(n) && n > 0) {
+      const p = rest.slice(2, 2 + n);
+      if (rest === `a/${p} b/${p}`) return [p];
+    }
+    const m = /^a\/(.+) b\/(.+)$/.exec(rest);
+    return m ? [m[1], m[2]] : null;
+  }
+  if (/^diff --(?:cc|combined) /.test(line))
+    return [line.replace(/^diff --(?:cc|combined) /, "")];
+  const dash = /^(?:---|\+\+\+) (.*?)(?:\t.*)?$/.exec(line);
+  if (dash) {
+    if (dash[1] === "/dev/null") return [];
+    const m = /^[ab]\/(.+)$/.exec(dash[1]);
+    return m ? [m[1]] : null;
+  }
+  const moved = /^(?:rename|copy) (?:from|to) (.+)$/.exec(line);
+  if (moved) return [moved[1]];
+  return [];
+}
+
+function patchTouches(text, g) {
+  let patch = false;
+  let named = 0;
+  for (const line of text.split("\n")) {
+    if (!PATCH_LINE.test(line)) continue;
+    patch = true;
+    const paths = headerPaths(line);
+    if (paths === null) return "source";
+    for (const p of paths) {
+      if (p.startsWith('"')) return "source";
+      named++;
+      const abs = normalise(p, g.repoRoot, g.homeDir);
+      if (!insideRepo(abs, g.repoRoot)) return "outside";
+      if (g.isRepoFile(abs) !== true) return "source";
+    }
+  }
+  return patch && named === 0 ? "source" : "ok";
+}
+
 // Marks tool results the cleaner must redact whole, and drops entries made
 // outside the repo. Fails closed: with no licence only the receipt tool's own
 // output, empty results and exact write confirmations survive.
@@ -1492,6 +1663,10 @@ function guardEvents(events, g) {
         if (verdict !== "outside")
           verdict =
             outputTouches(e.text ?? "", g, base) === "ok" ? verdict : "source";
+        if (verdict !== "outside" && gitCalls(cmd).length > 0) {
+          const p = patchTouches(e.text ?? "", g);
+          if (p !== "ok") verdict = p;
+        }
         if (verdict === "outside") e.redactOutside = true;
         else if (verdict === "source") e.redactSource = true;
       }
