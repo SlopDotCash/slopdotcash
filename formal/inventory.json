@@ -4571,14 +4571,14 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "c5d6e105aa8a465bfee8456ce37985ff60d20a420c5f5d9005c2fe6294869583",
+      "sha256": "e8996460197da03ee98ddd8c42464ba5e542a927abd5dc7ddf2bd7ceadd8b524",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/points/local_git_objects.qnt"
       ],
       "candidateLines": [
-        36, 54, 87, 108, 110, 128, 168, 246, 278, 301, 311, 316, 320, 324, 325,
-        326, 329, 331, 333, 338, 348, 357, 379, 389, 398, 406
+        36, 54, 87, 108, 110, 128, 168, 256, 288, 311, 321, 326, 330, 334, 335,
+        336, 339, 341, 343, 348, 358, 367, 389, 399, 408, 416
       ],
       "review": "mapped-abstraction"
     },
@@ -16154,7 +16154,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "5f2f393f920075cb4444232e5cf24362adaf5ed1c67dfc96f20efe86c2ef67d3",
+      "sha256": "cdd135379022e53600cb522151f456877e3d3250367cb044279e60703edac8de",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -16179,6 +16179,9 @@
         "mismatchedValidatorReadsLiveTest",
         "prFileServerErrorRecoversTest",
         "prFileServerErrorsStayBoundedTest",
+        "pullReadServerErrorRecoversTest",
+        "pullReadValidationErrorsRecoverTest",
+        "pullReadValidationErrorsStayBoundedTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
         "repeatedSecondaryLimitFailsTest",
