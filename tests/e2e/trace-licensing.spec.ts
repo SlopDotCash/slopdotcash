@@ -295,6 +295,45 @@ test("v2-confirmed account is asked to confirm again for v3", async ({
   ]);
 });
 
+test("v3 rows offer no License until the account confirms again for v3", async ({
+  page,
+  diagnostics,
+}) => {
+  const server: Server = {
+    enabled: true,
+    confirmed: "private-trace-v2",
+    traces: [
+      { ...run(1), termsVersion: "private-trace-v3" as const },
+      { ...run(2), termsVersion: "private-trace-v2" as const },
+    ],
+    pageSize: 100,
+  };
+  const { section } = await openSettings(page, diagnostics, server);
+  const v3Row = section.getByRole("button", {
+    name: "License trace of Nov 19, 2026, asi",
+  });
+  const v2Row = section.getByRole("button", {
+    name: "License trace of Nov 18, 2026, eliza",
+  });
+  const all = section.getByRole("button", { name: /^License all/u });
+  await expect(
+    section.getByText(/Confirm again to license them/u),
+  ).toBeVisible();
+  await expect(v2Row).toBeVisible();
+  await expect(v3Row).toHaveCount(0);
+  await expect(all).toHaveCount(0);
+  await section
+    .getByRole("checkbox", {
+      name: "My model provider's terms let me license these runs' output, including the code they contain.",
+    })
+    .check();
+  await section
+    .getByRole("button", { name: "Confirm for v3", exact: true })
+    .click();
+  await expect(v3Row).toBeVisible();
+  await expect(all).toBeVisible();
+});
+
 test("v3 rows are labelled v3", async ({ page, diagnostics }) => {
   const rows = [
     { ...run(1), termsVersion: "private-trace-v3" as const },

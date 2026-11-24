@@ -486,7 +486,7 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
             Your traces ({COUNT.format(totals.traces)}) · licensed{" "}
             {COUNT.format(totals.licensed)}
           </p>
-          {current.enabled && totals.eligible > 0 ? (
+          {current.enabled && !needsV3 && totals.eligible > 0 ? (
             <div className="handoff-actions">
               <button
                 className="button secondary-button"
@@ -505,7 +505,9 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
                 {formatDate(row.finalizedAt)} · {row.projectId} · {row.provider}
                 /{row.model} · {TERMS_LABELS[row.termsVersion]} ·{" "}
                 {LICENCE_LABELS[row.licence]}
-                {current.enabled && row.licence !== "licensed" ? (
+                {current.enabled &&
+                row.licence !== "licensed" &&
+                !(needsV3 && row.termsVersion === "private-trace-v3") ? (
                   <>
                     {" "}
                     <button
