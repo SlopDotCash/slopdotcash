@@ -12,7 +12,6 @@ interface StandingDeployVm {
     function computeCreateAddress(address, uint256) external pure returns (address);
 }
 
-
 /// @dev The standing deposit deployment script: Robinhood Chain only, the fixed 365-day reclaim delay, the
 /// named roles, and refusals.
 contract StandingDepositsDeployTest {
