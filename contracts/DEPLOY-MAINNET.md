@@ -150,6 +150,30 @@ and kept fees. On that day no project had the setting on, the record-only
 period had recorded no deposit and no fee row, and the first SLOP rate had
 been published (effective 20 November 2026 23:00 UTC).
 
+### Standing deposit contract (24 November 2026)
+
+A second `SubmissionDeposits` (`contracts/evm/src/SubmissionDeposits.sol`,
+unchanged) holds standing deposits (operator decision, 23 November 2026; PRD
+section 5, "Standing deposit", and section 6, FEE-08). It was deployed on
+Robinhood Chain on 24 November 2026 with
+`contracts/evm/script/DeployStandingDeposits.sol` from `main` at `5c86837d`,
+at `0x446604d5c3Cc99c60CCE3d5C4357BC60f5b45993`.
+
+| Network                | Deployment transaction                                               | Block     | Block time (UTC)     |
+| ---------------------- | -------------------------------------------------------------------- | --------- | -------------------- |
+| Robinhood Chain (4663) | `0x473d7504451f8d226fb60fba9c669f7215e8d60da825e51ff2b9c39afcc53016` | 122128533 | 2026-11-24T09:40:49Z |
+
+Read back the same day: owner `0xbCA4736F59d03F07cFac9415A5936fECb06b2eA7`
+(the S.P. operating wallet), resolver
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525` (the submission-fee Worker's,
+named in the constructor), no pending owner, reclaim delay 31,536,000 seconds
+(365 days), no deposits, deposits not paused. Its runtime code equals that of
+the per pull request contract except for the immutable reclaim delay (runtime
+code hash `0x25d7a45bb28b2ed5d579dfa937041394f2a4a4ec5850babb41c7b940921d7631`).
+The deployer `0x5d9823205961809c02ddeb9e736254367706eEDe` paid gas and holds
+no role. Sourcify has a full match. The Etherscan-family explorers are not
+verified.
+
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
 The owner approved this exact program upgrade.
