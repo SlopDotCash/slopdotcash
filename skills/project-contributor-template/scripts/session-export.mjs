@@ -3,9 +3,12 @@
 // found, so the contributor sees the cleaned file before it is sent.
 import { spawnSync } from "node:child_process";
 import {
+  closeSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
   statSync,
   writeFileSync,
@@ -63,8 +66,11 @@ const SECRET_SHAPES = [
   /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]{0,40}["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi,
   /(?<!-)--[A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]{0,40}\s+["']?[A-Za-z0-9._~+/=-]{12,}/gi,
 ];
+// user:password@, or a token alone of 16 or more characters (as `git remote
+// -v` prints it). The lookbehind starts a scheme only at a run's first
+// character, so long input is scanned in linear time.
 const URL_CREDENTIALS =
-  /((?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/@:]+:[^\s/@]+@/gi;
+  /((?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,30}:\/\/)(?:[^\s/@:]+:[^\s/@]+|[^\s/@:]{16,})@/gi;
 
 const SAFE_ABSOLUTE = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
 // An absolute path with at least two segments, not part of a URL or a word.
@@ -268,6 +274,20 @@ function dropContent(args, ctx, counts) {
   return out;
 }
 
+// Keeps the tool name and argument keys; every value becomes SOURCE.
+function redactArgValues(args, counts) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    bump(counts, "SOURCE");
+    return SOURCE;
+  }
+  const out = {};
+  for (const k of Object.keys(args)) {
+    out[k] = SOURCE;
+    bump(counts, "SOURCE");
+  }
+  return out;
+}
+
 export function cleanEvents(events, ctx) {
   const counts = {};
   const repo = ctx.repoRoot.replace(/\/+$/, "");
@@ -305,7 +325,12 @@ export function cleanEvents(events, ctx) {
       CONTENT_TOOL.test(e.tool);
     if (e.text !== undefined) e.text = cleanString(String(e.text));
     if (e.args !== undefined) {
-      const args = contentTool ? dropContent(e.args, ctx, counts) : e.args;
+      const args =
+        original.redactArgs === true
+          ? redactArgValues(e.args, counts)
+          : contentTool
+            ? dropContent(e.args, ctx, counts)
+            : e.args;
       e.args = mapStrings(args, (s) => (s === SOURCE ? s : cleanString(s)));
     }
     if (e.path !== undefined) e.path = cleanString(String(e.path));
@@ -377,6 +402,9 @@ function listDir(dir) {
   }
 }
 
+// Only Claude Code session files are read. Codex clients write the log
+// themselves and pass --log; readCodex stays for when one real Codex rollout
+// has been checked against it.
 function candidateFiles(homeDir) {
   const found = [];
   const claude = join(homeDir, ".claude", "projects");
@@ -388,38 +416,60 @@ function candidateFiles(homeDir) {
             path: join(claude, d.name, f.name),
             client: "claude-code",
           });
-  const walk = (dir) => {
-    for (const d of listDir(dir)) {
-      const full = join(dir, d.name);
-      if (d.isDirectory()) walk(full);
-      else if (
-        d.isFile() &&
-        d.name.startsWith("rollout-") &&
-        d.name.endsWith(".jsonl")
-      )
-        found.push({ path: full, client: "codex" });
-    }
-  };
-  walk(join(homeDir, ".codex", "sessions"));
   return found;
+}
+
+const SEARCH_CHUNK_BYTES = 1024 * 1024;
+// Allows for coarse file-system timestamps when comparing with the run start.
+const MTIME_SLACK_MS = 5000;
+
+// Reads the file in chunks and stops at the first match, so a large file
+// without the marker is never held in memory whole.
+export function fileContains(path, needle, chunkBytes = SEARCH_CHUNK_BYTES) {
+  const target = Buffer.from(needle);
+  if (target.length === 0) return true;
+  const keep = target.length - 1;
+  const buf = Buffer.alloc(chunkBytes + keep);
+  let fd;
+  try {
+    fd = openSync(path, "r");
+    let carried = 0;
+    for (;;) {
+      const n = readSync(fd, buf, carried, chunkBytes, null);
+      if (n === 0) return false;
+      const end = carried + n;
+      if (buf.subarray(0, end).includes(target)) return true;
+      carried = Math.min(keep, end);
+      buf.copy(buf, 0, end - carried, end);
+    }
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 export function findSessionFile(marker, opts) {
   if (!marker) return null;
+  const since =
+    typeof opts.startedAt === "string" ? Date.parse(opts.startedAt) : NaN;
   const files = [];
   for (const c of candidateFiles(opts.homeDir)) {
     try {
-      files.push({ ...c, mtime: statSync(c.path).mtimeMs });
+      const mtime = statSync(c.path).mtimeMs;
+      // A file not written since the run began cannot hold its session.
+      if (!Number.isNaN(since) && mtime < since - MTIME_SLACK_MS) continue;
+      files.push({ ...c, mtime });
     } catch {}
   }
   files.sort((a, b) => b.mtime - a.mtime);
   for (const f of files) {
     try {
-      const text = readFileSync(f.path, "utf8");
-      if (!text.includes(marker)) continue;
-      const read = f.client === "claude-code" ? readClaudeCode : readCodex;
-      const lines = text.split("\n").filter((l) => l.trim() !== "");
-      if (read(lines, marker).length > 0)
+      if (!fileContains(f.path, marker)) continue;
+      const lines = readFileSync(f.path, "utf8")
+        .split("\n")
+        .filter((l) => l.trim() !== "");
+      if (readClaudeCode(lines, marker).length > 0)
         return { path: f.path, client: f.client };
     } catch {}
   }
@@ -668,7 +718,7 @@ export async function repoLicence(repo, fetchImpl) {
   }
 }
 
-function git(repoRoot, args, input) {
+export function git(repoRoot, args, input) {
   const r = spawnSync("git", ["-C", repoRoot, ...args], {
     input,
     maxBuffer: 256 * 1024 * 1024,
@@ -695,14 +745,15 @@ function writtenPaths(events) {
 
 // Built once per export: tracked files plus files this run wrote, minus
 // anything .gitignore covers. Lookups afterwards are set membership.
-export function makeRepoIndex(events, repoRoot, homeDir) {
+export function makeRepoIndex(events, repoRoot, homeDir, runGit = git) {
   const root = repoRoot.replace(/\/+$/, "");
   let realRoot = root;
   try {
     realRoot = realpathSync(root);
   } catch {}
   const tracked = new Set();
-  const listed = git(root, ["ls-files", "-z"]);
+  // A failed listing treats no file as tracked.
+  const listed = runGit(root, ["ls-files", "-z"]);
   if (listed && listed.status === 0)
     for (const rel of listed.stdout.toString("utf8").split("\0"))
       if (rel) tracked.add(`${root}/${rel}`);
@@ -718,14 +769,20 @@ export function makeRepoIndex(events, repoRoot, homeDir) {
   const ignored = new Set();
   const rels = [...candidates].map((a) => a.slice(root.length + 1));
   if (rels.length > 0) {
-    const r = git(
+    const r = runGit(
       root,
       ["check-ignore", "--stdin", "-z"],
       `${rels.join("\0")}\0`,
     );
-    if (r && r.status === 0)
+    if (r && r.status === 0) {
       for (const rel of r.stdout.toString("utf8").split("\0"))
         if (rel) ignored.add(`${root}/${rel}`);
+    } else if (r?.status !== 1) {
+      // Exit 1 means none is ignored. Anything else (128 is fatal, for
+      // example a path behind a symlinked directory) fails closed: every
+      // written file that is not tracked counts as ignored.
+      for (const abs of written) if (!tracked.has(abs)) ignored.add(abs);
+    }
   }
   const gx = { repoRoot: root, realRoot };
   return {
@@ -835,7 +892,12 @@ function readSmallText(path, budget) {
   }
 }
 
-export function collectKnownSecrets(index, homeDir, skip = new Set()) {
+export function collectKnownSecrets(
+  index,
+  homeDir,
+  skip = new Set(),
+  runGit = git,
+) {
   const strings = new Set();
   let capped = false;
   // Home credential files first, so a cap never drops their strings.
@@ -844,20 +906,24 @@ export function collectKnownSecrets(index, homeDir, skip = new Set()) {
     const text = readSmallText(join(homeDir, f));
     if (text !== null) addSecretStrings(text, strings);
   }
-  const listed = git(index.root, ["ls-files", "-z", "-o"]);
+  const listed = runGit(index.root, ["ls-files", "-z", "-o"]);
   // A file the run wrote is skipped only when it is not gitignored: an edited
   // .env still holds secrets a tracked script may print.
   const ignored = new Set();
-  const ign = git(index.root, [
+  const ign = runGit(index.root, [
     "ls-files",
     "-z",
     "-o",
     "-i",
     "--exclude-standard",
   ]);
-  if (ign && ign.status === 0)
+  if (ign && ign.status === 0) {
     for (const rel of ign.stdout.toString("utf8").split("\0"))
       if (rel) ignored.add(`${index.root}/${rel}`);
+  } else {
+    // Unknown: read every written file into the guard.
+    for (const abs of index.written) ignored.add(abs);
+  }
   if (listed && listed.status === 0) {
     let files = 0;
     const budget = { left: MAX_GUARD_TOTAL_BYTES, over: false };
@@ -894,6 +960,21 @@ export function collectKnownSecrets(index, homeDir, skip = new Set()) {
 
 const WRITE_TOOL = /^(?:write|edit|multiedit|notebookedit|apply_patch)$/i;
 const SEARCH_TOOL = /^(?:grep|glob|search|find)$/i;
+// Shell tools whose command the guard reads: Claude Code's Bash, the Codex
+// shell tools and agent-written logs that name a shell.
+const SHELL_TOOL =
+  /^(?:bash|shell|sh|zsh|exec_command|local_shell|container\.exec|shell_command|run_shell_command|run_terminal_cmd)$/i;
+// Only these tools' results can be kept, and only these tools' argument
+// values are written out. Every other tool (MCP tools, web fetch and search,
+// subagents, browsers) has its result and argument values replaced.
+function analysedTool(tool) {
+  return (
+    SHELL_TOOL.test(tool) ||
+    READ_TOOL.test(tool) ||
+    WRITE_TOOL.test(tool) ||
+    SEARCH_TOOL.test(tool)
+  );
+}
 const SINGLE_RECEIPT =
   /^\s*(?:node(?:js)?\s+)?(?:\S*\/)?run-receipt\.mjs(?:\s+[^;&|\n\r<>`$()\\]*)?\s*$/;
 
@@ -1092,6 +1173,11 @@ function guardEvents(events, g) {
   for (const e of events) {
     if (e.cwd !== undefined && isOutside(e.cwd, g.repoRoot, g.homeDir))
       continue;
+    if (
+      e.kind === "tool_call" &&
+      !analysedTool(typeof e.tool === "string" ? e.tool : "")
+    )
+      e.redactArgs = true;
     if (e.kind === "tool_result") {
       const call = e.call;
       const cmd = commandText(call?.input);
@@ -1104,7 +1190,7 @@ function guardEvents(events, g) {
         const ok =
           t === "" || (WRITE_TOOL.test(tool) && exactConfirmation(t, call));
         if (!ok) e.redactSource = true;
-      } else if (!call) {
+      } else if (!call || !analysedTool(tool)) {
         e.redactSource = true;
       } else if (leavesRepo(call, g, base)) e.redactOutside = true;
       else if (e.path !== undefined) {
@@ -1138,6 +1224,46 @@ function guardEvents(events, g) {
   return out;
 }
 
+// Blocks a client injects into a user turn or a tool result: reminders and
+// the output of commands the user ran in the client. They are removed whole
+// before guarding, because the shell guard never sees where they came from.
+const INJECTED_OPEN =
+  /<(system-reminder|bash-stdout|bash-stderr|local-command-stdout|local-command-stderr)>/g;
+
+export function stripInjected(text) {
+  if (!text.includes("<")) return text;
+  let out = "";
+  let from = 0;
+  INJECTED_OPEN.lastIndex = 0;
+  for (;;) {
+    const m = INJECTED_OPEN.exec(text);
+    if (m === null) break;
+    out += text.slice(from, m.index);
+    const close = `</${m[1]}>`;
+    const end = text.indexOf(close, m.index + m[0].length);
+    // An unclosed block is removed to the end of the text.
+    if (end < 0) return out;
+    from = end + close.length;
+    INJECTED_OPEN.lastIndex = from;
+  }
+  return out + text.slice(from);
+}
+
+function dropInjected(events) {
+  const out = [];
+  for (const e of events) {
+    if (
+      (e.kind === "user" || e.kind === "tool_result") &&
+      typeof e.text === "string"
+    ) {
+      const text = stripInjected(e.text);
+      if (e.kind === "user" && text.trim() === "") continue;
+      out.push(text === e.text ? e : { ...e, text });
+    } else out.push(e);
+  }
+  return out;
+}
+
 function readPathFor(input) {
   if (!input || typeof input !== "object") return undefined;
   for (const k of PATH_KEYS) if (typeof input[k] === "string") return input[k];
@@ -1145,9 +1271,14 @@ function readPathFor(input) {
 }
 
 // Guards, cleans and writes one session. `raw` holds reader events in order;
-// the header records where they came from. Returns null when the result cannot
-// fit the size limit.
-async function writeCleanedSession(raw, source, opts, skip = new Set()) {
+// the header records where they came from. Returns null when the guard leaves
+// no event (no session record) or the result cannot fit the size limit.
+export async function writeCleanedSession(
+  raw,
+  source,
+  opts,
+  { skip = new Set(), detectedClient = null } = {},
+) {
   const licence = await repoLicence(opts.repo, opts.fetchImpl);
   const keepRepoFiles = licence !== null && OSI_LICENCES.has(licence);
   const userName =
@@ -1156,7 +1287,7 @@ async function writeCleanedSession(raw, source, opts, skip = new Set()) {
   const known = collectKnownSecrets(index, opts.homeDir, skip);
   const isRepoFile = keepRepoFiles ? index.isRepoFile : () => false;
   const repoRoot = index.root;
-  const guarded = guardEvents(raw, {
+  const guarded = guardEvents(dropInjected(raw), {
     repoRoot,
     realRoot: index.realRoot,
     homeDir: opts.homeDir,
@@ -1164,6 +1295,7 @@ async function writeCleanedSession(raw, source, opts, skip = new Set()) {
     isRepoFile,
     capped: known.capped,
   });
+  if (guarded.length === 0) return null;
   const { events, counts } = cleanEvents(guarded, {
     repoRoot: opts.repoRoot,
     homeDir: opts.homeDir,
@@ -1177,6 +1309,7 @@ async function writeCleanedSession(raw, source, opts, skip = new Set()) {
     format: "slop-session-v1",
     source,
     client: opts.client,
+    detectedClient,
     clientVersion: opts.clientVersion,
     provider: opts.provider,
     model: opts.model,
@@ -1197,7 +1330,13 @@ async function writeCleanedSession(raw, source, opts, skip = new Set()) {
   if (fitted === null) return null;
   mkdirSync(dirname(opts.outPath), { recursive: true });
   writeFileSync(opts.outPath, `${fitted.lines.join("\n")}\n`);
-  return { path: opts.outPath, source, counts, licence };
+  return {
+    path: opts.outPath,
+    source,
+    counts,
+    licence,
+    repoFilesKept: keepRepoFiles,
+  };
 }
 
 export async function exportSession(opts) {
@@ -1207,7 +1346,10 @@ export async function exportSession(opts) {
     counts: {},
     licence: null,
   };
-  const found = findSessionFile(opts.marker, { homeDir: opts.homeDir });
+  const found = findSessionFile(opts.marker, {
+    homeDir: opts.homeDir,
+    startedAt: opts.startedAt,
+  });
   if (!found) return fallback;
   let lines;
   try {
@@ -1217,10 +1359,13 @@ export async function exportSession(opts) {
   } catch {
     return fallback;
   }
-  const read = found.client === "claude-code" ? readClaudeCode : readCodex;
-  const raw = read(lines, opts.marker);
+  const raw = readClaudeCode(lines, opts.marker);
   if (raw.length === 0) return fallback;
-  return (await writeCleanedSession(raw, "client-file", opts)) ?? fallback;
+  return (
+    (await writeCleanedSession(raw, "client-file", opts, {
+      detectedClient: found.client,
+    })) ?? fallback
+  );
 }
 
 // ---- Fallback: a log the agent wrote itself, one JSON event per line with
@@ -1275,6 +1420,7 @@ export async function exportAgentLog(opts) {
   // would otherwise turn every line it holds into a redaction.
   const skip = new Set([logReal, resolve(opts.logPath)]);
   return (
-    (await writeCleanedSession(raw, "agent-written", opts, skip)) ?? unavailable
+    (await writeCleanedSession(raw, "agent-written", opts, { skip })) ??
+    unavailable
   );
 }

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   symlinkSync,
   utimesSync,
@@ -19,6 +20,7 @@ import {
   cleanEvents,
   collectKnownSecrets,
   exportSession,
+  fileContains,
   findSessionFile,
   makeRepoIndex,
   OSI_LICENCES,
@@ -26,6 +28,7 @@ import {
   readCodex,
   repoLicence,
   truncateToLimit,
+  writeCleanedSession,
 } from "../skills/project-contributor-template/scripts/session-export.mjs";
 
 const ctx = (over = {}) => ({
@@ -241,7 +244,6 @@ test("long unbroken input cleans quickly", () => {
     `--${"token".repeat(200_000)}`,
     `-${"-token".repeat(150_000)}`,
     "abandon ".repeat(100_000),
-    `https://${"a".repeat(500_000)}@`,
     `https://a:${"b".repeat(500_000)}`,
   ];
   for (const text of inputs) {
@@ -317,6 +319,21 @@ function world() {
     ...over,
   });
   return { base, homeDir, repoRoot, session, opts };
+}
+
+// Codex rollouts are not found by the export (no real rollout checked yet);
+// their reader and the guard are still exercised through the writer.
+async function exportCodexFile(opts) {
+  const dir = join(opts.homeDir, ".codex", "sessions", "2026", "11", "23");
+  const lines = readdirSync(dir)
+    .filter((f) => f.startsWith("rollout-"))
+    .flatMap((f) => readFileSync(join(dir, f), "utf8").split("\n"))
+    .filter((l) => l.trim() !== "");
+  return writeCleanedSession(
+    readCodex(lines, opts.marker),
+    "client-file",
+    opts,
+  );
 }
 
 test("picks newest file and drops events before the marker", async () => {
@@ -561,7 +578,7 @@ test("unlicensed repo redacts every tool result except known confirmations", asy
       }),
     ].join("\n")}\n`,
   );
-  const cx = await exportSession({
+  const cx = await exportCodexFile({
     ...w.opts(unlicensed),
     homeDir: home,
     client: "codex",
@@ -681,7 +698,7 @@ test("entries whose working directory is outside the repo are dropped", async ()
   const dir = join(home, ".codex", "sessions", "2026", "11", "23");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "rollout-1.jsonl"), `${lines.join("\n")}\n`);
-  const res = await exportSession({
+  const res = await exportCodexFile({
     ...w.opts(),
     homeDir: home,
     client: "codex",
@@ -860,7 +877,7 @@ test("licensed shell results are kept only when the command is fully resolvable"
       }),
     ].join("\n")}\n`,
   );
-  const cx = await exportSession({
+  const cx = await exportCodexFile({
     ...w.opts(),
     homeDir: home,
     client: "codex",
@@ -1248,4 +1265,306 @@ test("collect and clean of 50,000 strings on a 4 MB session stay fast", () => {
   assert.equal(known.capped, false);
   assert.ok(ms < 2000, `took ${ms}ms`);
   assert.ok(!out.events[0].text.includes("tok_999_49_QQQQqqqq"));
+});
+
+// ---- final fix wave ----
+const body = (events) => JSON.stringify(events);
+
+test("results of tools outside the allowlist are redacted and their argument values too", async () => {
+  const w = world();
+  build(w, ({ call }) => {
+    call(
+      "mcp__gmail__get_message",
+      { messageId: "MSG-ID-1234567" },
+      "From: Bob <bob@example.com>, phone 555-0100. MAIL-BODY",
+    );
+    call(
+      "WebFetch",
+      { url: "https://example.com/page", prompt: "FETCH-PROMPT" },
+      "FETCHED-PAGE-BODY",
+    );
+    call(
+      "Task",
+      { description: "look", prompt: "TASK-PROMPT-TEXT" },
+      "TASK-RESULT-BODY about another project",
+    );
+    call("WebSearch", { query: "SEARCH-QUERY" }, "SEARCH-RESULT-BODY");
+    call("Bash", { command: "cat src/a.ts" }, "export const a = 1;");
+  });
+  for (const over of [{}, unlicensed]) {
+    const { events } = await runOut(w, over);
+    const text = body(events);
+    for (const bad of [
+      "MAIL-BODY",
+      "bob@example.com",
+      "555-0100",
+      "FETCHED-PAGE-BODY",
+      "TASK-RESULT-BODY",
+      "SEARCH-RESULT-BODY",
+      "MSG-ID-1234567",
+      "example.com/page",
+      "FETCH-PROMPT",
+      "TASK-PROMPT-TEXT",
+      "SEARCH-QUERY",
+    ])
+      assert.ok(!text.includes(bad), bad);
+    const calls = events.filter((e) => e.kind === "tool_call");
+    const mcp = calls.find((e) => e.tool === "mcp__gmail__get_message");
+    assert.deepEqual(mcp.args, { messageId: "[REDACTED:SOURCE]" });
+    const task = calls.find((e) => e.tool === "Task");
+    assert.deepEqual(task.args, {
+      description: "[REDACTED:SOURCE]",
+      prompt: "[REDACTED:SOURCE]",
+    });
+    const bash = calls.find((e) => e.tool === "Bash" && e.args.command);
+    assert.ok(bash, "shell arguments stay readable");
+  }
+  const { events } = await runOut(w);
+  assert.ok(results(events).some((e) => e.text === "export const a = 1;"));
+});
+
+test("a codex rollout is not read by the export", async () => {
+  const w = world();
+  const home = mkdtempSync(join(tmpdir(), "slop-cx-"));
+  const dir = join(home, ".codex", "sessions", "2026", "11", "23");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "rollout-1.jsonl"),
+    `${fixture("codex.jsonl", w.repoRoot)}\n`,
+  );
+  assert.ok(
+    readCodex(
+      fixture("codex.jsonl", w.repoRoot).split("\n").filter(Boolean),
+      MARKER,
+    ).length > 0,
+  );
+  assert.equal(findSessionFile(MARKER, { homeDir: home }), null);
+  const res = await exportSession({
+    ...w.opts(),
+    homeDir: home,
+    client: "codex",
+  });
+  assert.equal(res.source, "fallback-needed");
+  assert.ok(!existsSync(w.opts().outPath));
+});
+
+const failing = (match) => (repoRoot, args, input) => {
+  if (match(args)) return { status: 128, stdout: Buffer.alloc(0) };
+  const r = spawnSync("git", ["-C", repoRoot, ...args], { input });
+  return r.status === null ? null : r;
+};
+
+test("a git check that fails counts every written untracked file as ignored", async () => {
+  const w = world();
+  const events = [
+    {
+      kind: "tool_call",
+      tool: "Edit",
+      args: { file_path: join(w.repoRoot, ".env") },
+    },
+    {
+      kind: "tool_call",
+      tool: "Write",
+      args: { file_path: join(w.repoRoot, "src", "new.ts") },
+    },
+  ];
+  const real = makeRepoIndex(events, w.repoRoot, w.homeDir);
+  assert.equal(real.isRepoFile(join(w.repoRoot, ".env")), false);
+  assert.equal(real.isRepoFile(join(w.repoRoot, "src", "new.ts")), true);
+  const ignoreFails = makeRepoIndex(
+    events,
+    w.repoRoot,
+    w.homeDir,
+    failing((a) => a[0] === "check-ignore"),
+  );
+  assert.equal(ignoreFails.isRepoFile(join(w.repoRoot, ".env")), false);
+  assert.equal(
+    ignoreFails.isRepoFile(join(w.repoRoot, "src", "new.ts")),
+    false,
+  );
+  assert.equal(ignoreFails.isRepoFile(join(w.repoRoot, "src", "a.ts")), true);
+  const listFails = makeRepoIndex(
+    events,
+    w.repoRoot,
+    w.homeDir,
+    failing((a) => a[0] === "ls-files"),
+  );
+  assert.equal(listFails.isRepoFile(join(w.repoRoot, "src", "a.ts")), false);
+  // A written path behind a symlinked directory makes check-ignore exit 128.
+  symlinkSync(join(w.repoRoot, "src"), join(w.repoRoot, "link"));
+  const linked = makeRepoIndex(
+    [
+      ...events,
+      {
+        kind: "tool_call",
+        tool: "Write",
+        args: { file_path: join(w.repoRoot, "link", "b.ts") },
+      },
+    ],
+    w.repoRoot,
+    w.homeDir,
+  );
+  assert.equal(linked.isRepoFile(join(w.repoRoot, ".env")), false);
+  // The content guard reads a written file when the ignore list fails.
+  writeFileSync(join(w.repoRoot, ".env"), "API_KEY=Zq81mmWritten77\n");
+  const known = collectKnownSecrets(
+    real,
+    w.homeDir,
+    new Set(),
+    failing((a) => a.includes("-i")),
+  );
+  assert.ok(known.strings.includes("Zq81mmWritten77"));
+});
+
+test("token-only url user-info is redacted and stays linear", () => {
+  const out = clean([
+    ev(
+      "tool_result",
+      "origin\thttps://ghx0123456789abcdefTOKEN@github.com/o/r (fetch)",
+    ),
+    ev("tool_result", "ssh://git@github.com/o/r and https://bob@host.example"),
+  ]);
+  assert.ok(!out.events[0].text.includes("ghx0123456789abcdefTOKEN"));
+  assert.ok(out.events[0].text.includes("[REDACTED:CREDENTIAL]@github.com"));
+  assert.equal(
+    out.events[1].text,
+    "ssh://git@github.com/o/r and https://bob@host.example",
+  );
+  for (const [text, kept] of [
+    [`https://${"a".repeat(500_000)}`, true],
+    [`https://${"a".repeat(500_000)}@`, false],
+    [`https://${"a".repeat(500_000)}:`, true],
+  ]) {
+    const start = performance.now();
+    const res = clean([ev("tool_result", text)]);
+    const ms = performance.now() - start;
+    assert.ok(ms < 1000, `${ms} ms`);
+    assert.equal(res.events[0].text === text, kept);
+  }
+});
+
+test("session files older than the run are not read, and a match is found across read chunks", () => {
+  const w = world();
+  assert.equal(
+    findSessionFile(MARKER, { homeDir: w.homeDir })?.path,
+    w.session,
+  );
+  utimesSync(w.session, new Date(1000), new Date(1000));
+  assert.equal(
+    findSessionFile(MARKER, {
+      homeDir: w.homeDir,
+      startedAt: "2026-11-23T00:00:00.000Z",
+    }),
+    null,
+  );
+  const dir = mkdtempSync(join(tmpdir(), "slop-chunk-"));
+  const needle = "slop-run:abc";
+  for (let at = 0; at < 40; at++) {
+    const p = join(dir, `f${at}`);
+    writeFileSync(p, `${"x".repeat(at)}${needle}${"y".repeat(7)}`);
+    assert.equal(fileContains(p, needle, 16), true, String(at));
+  }
+  const miss = join(dir, "miss");
+  writeFileSync(miss, `${"x".repeat(100)}slop-run:ab`);
+  assert.equal(fileContains(miss, needle, 16), false);
+});
+
+test("injected harness blocks are removed from user and tool result text", async () => {
+  const w = world();
+  build(w, ({ entry, call }) => {
+    entry("user", "<system-reminder>SYS-REMINDER-BODY</system-reminder>");
+    entry(
+      "user",
+      "fix it <bash-stdout>BASH-OUT-BODY</bash-stdout><bash-stderr>BASH-ERR-BODY</bash-stderr>",
+    );
+    entry(
+      "user",
+      "<local-command-stdout>LOCAL-OUT</local-command-stdout>ok <local-command-stderr>LOCAL-ERR",
+    );
+    call(
+      "Bash",
+      { command: "cat src/a.ts" },
+      "export const a = 1;<system-reminder>RESULT-REMINDER</system-reminder>",
+    );
+  });
+  const { events } = await runOut(w);
+  const text = body(events);
+  for (const bad of [
+    "SYS-REMINDER-BODY",
+    "BASH-OUT-BODY",
+    "BASH-ERR-BODY",
+    "LOCAL-OUT",
+    "LOCAL-ERR",
+    "RESULT-REMINDER",
+    "system-reminder",
+  ])
+    assert.ok(!text.includes(bad), bad);
+  const users = events.filter((e) => e.kind === "user").map((e) => e.text);
+  assert.deepEqual(users, ["fix it ", "ok "]);
+  assert.ok(results(events).some((e) => e.text === "export const a = 1;"));
+});
+
+test("a session the guard empties is no session record", async () => {
+  const w = world();
+  build(w, ({ entry }) => entry("user", "OUTSIDE"), "/home/u/other");
+  const res = await exportSession(w.opts());
+  assert.equal(res.source, "fallback-needed");
+  assert.ok(!existsSync(w.opts().outPath));
+});
+
+test("the header records the client found in the session file", async () => {
+  const w = world();
+  const { header } = await runOut(w, { client: "other-client" });
+  assert.equal(header.client, "other-client");
+  assert.equal(header.detectedClient, "claude-code");
+});
+
+test("codex shapes still pass the guard when read directly", async () => {
+  const w = world();
+  const line = (n, type, payload) =>
+    JSON.stringify({ timestamp: `2026-11-23T10:00:0${n}Z`, type, payload });
+  const fc = (id, args) => ({
+    type: "function_call",
+    name: "shell",
+    arguments: JSON.stringify(args),
+    call_id: id,
+  });
+  const lines = [
+    line(0, "session_meta", { cwd: w.repoRoot }),
+    line(
+      1,
+      "response_item",
+      fc("a", { command: ["node", "run-receipt.mjs", "start"] }),
+    ),
+    line(2, "response_item", {
+      type: "function_call_output",
+      call_id: "a",
+      output: MARKER,
+    }),
+    line(
+      3,
+      "response_item",
+      fc("b", { command: "cat key", workdir: join(w.repoRoot, "secrets") }),
+    ),
+    line(4, "response_item", {
+      type: "function_call_output",
+      call_id: "b",
+      output: "SECRET-BODY",
+    }),
+    line(5, "response_item", fc("c", { command: ["bash", "-lc", "cat .env"] })),
+    line(6, "response_item", {
+      type: "function_call_output",
+      call_id: "c",
+      output: "SECRET-BODY",
+    }),
+  ];
+  const res = await writeCleanedSession(
+    readCodex(lines, MARKER),
+    "client-file",
+    {
+      ...w.opts(),
+      client: "codex",
+    },
+  );
+  assert.ok(!readFileSync(res.path, "utf8").includes("SECRET-BODY"));
 });

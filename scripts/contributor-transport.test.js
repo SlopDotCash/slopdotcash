@@ -672,6 +672,25 @@ test("trace-off stops session uploads and trace-on restores them", async () => {
   assert.equal(JSON.parse(readFileSync(settings, "utf8")).upload, true);
 });
 
+test("a damaged session setting skips and says how to reset it", async () => {
+  await freshConfig();
+  const dir = join(process.env.XDG_CONFIG_HOME, "slop");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "session-upload.json"), "{");
+  const { stdout } = await capture(() =>
+    installed.receipt.main(
+      sessionArgs("run_00000000000000000000000000"),
+      sessionDeps(async () => {
+        throw new Error("no request expected");
+      }),
+    ),
+  );
+  assert.equal(
+    stdout,
+    "Session upload skipped (settings file unreadable; run trace-on to reset).\n",
+  );
+});
+
 test("session uploads v3 and records the pull request before finalize", async () => {
   await freshConfig();
   const { runId, stdout: startOutput } = await startRun();
@@ -731,6 +750,10 @@ test("disclosure precedes sign-in and names v3 and the cleaner", async () => {
     assert.deepEqual(order.slice(0, 2), ["disclosure", "assertion"]);
     assert.equal(order.disclosed.termsVersion, "private-trace-v3");
     assert.equal(order.disclosed.cleaner, installed.exporter.CLEANER_VERSION);
+    assert.equal(
+      order.disclosed.projectCode,
+      "Project code: kept (licence MIT)",
+    );
   } finally {
     await slop.close();
   }
@@ -746,9 +769,11 @@ test("v3 disclosure copy", async () => {
       termsVersion: "private-trace-v3",
       cleaner: "slop-session-cleaner-1",
       counts: { CREDENTIAL: 2, SOURCE: 1 },
+      projectCode: "Project code: kept (licence MIT)",
     }),
   );
   const lines = stderr.split("\n");
+  assert.ok(lines.includes("Project code: kept (licence MIT)"), stderr);
   assert.ok(
     lines.includes(
       "This session will be uploaded under private-trace-v3: https://slop.cash/protocol/private-trace-v3.md",
