@@ -25,6 +25,9 @@ server's read for agent discovery, and Slopbot's advisory review of one pull
 request. Time is whole hours. The funding rule of the
 [monthly listing](../frontend/poolListing.md) composes with this one by
 conjunction.
+The [backlog rule](./backlogRule.md) is the required limit beside it: a
+project out of rotation under that rule leaves the lists even when its
+intake cap is not reached.
 
 ## Story: Pause new contributors while the review queue is full
 
