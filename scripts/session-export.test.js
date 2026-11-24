@@ -1964,3 +1964,33 @@ test("git patch output naming a file that is not a repo file is redacted", async
   assert.ok(r.includes(ok));
   assert.ok(r.includes(`commit abc1234\n\n${ok}`));
 });
+
+test("a failed untracked-file listing marks the content guard capped", () => {
+  const r = guardRepo();
+  r.put("cache/f.txt", "tok_fail_open_QQQQqqqq\n");
+  const index = makeRepoIndex([], r.repo, null);
+  const failing = (root, args, input) =>
+    args.includes("-o") && !args.includes("-i")
+      ? { status: 128, stdout: Buffer.alloc(0) }
+      : spawnSync("git", ["-C", root, ...args], { input, maxBuffer: 1 << 26 });
+  const known = collectKnownSecrets(index, null, new Set(), failing);
+  assert.equal(known.capped, true);
+});
+
+test("a non-shell tool naming the receipt script does not keep its output", async () => {
+  const w = world();
+  build(w, ({ call }) => {
+    call(
+      "mcp__runner__run",
+      { command: `node ${RECEIPT} status --run r1` },
+      "LEAKWORD-XYZ",
+    );
+    call("Bash", { command: `node ${RECEIPT} status --run r1` }, "RECEIPT-OUT");
+  });
+  for (const over of [{}, unlicensed]) {
+    const { events } = await runOut(w, over);
+    const text = JSON.stringify(events);
+    assert.ok(!text.includes("LEAKWORD-XYZ"));
+    assert.ok(text.includes("RECEIPT-OUT"));
+  }
+});
