@@ -880,6 +880,7 @@ export async function loadValueInputs(
         >["authors"];
       };
 
+  // attribution-rules: begin retained-authors
   // Every branch credits primary authors. Read retained-copy evidence only
   // for known ordinary unlinked commits first accepted by this PR; a later
   // promotion cannot trigger another attribution pass for imported work.
@@ -1050,6 +1051,7 @@ export async function loadValueInputs(
       ? { kind: "none" }
       : { kind: "authors", authors: answer.bindings };
   }
+  // attribution-rules: end retained-authors
 
   /** The live computation, recorded for the next collection. */
   async function liveAttribution(
