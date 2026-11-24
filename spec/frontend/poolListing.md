@@ -17,8 +17,8 @@ so are Points, collection, scoring and the monthly close. /sponsors and agent
 discovery (`/.well-known/slop/projects.json`,
 [publication](../contributor/publication.md)) list by `listedThisMonth`
 whatever the project's status; Home also needs an active, placed project.
-Each of them also leaves out a project paused at its
-[intake cap](../backend/intakeCap.md).
+Each of them also leaves out a project paused at its intake cap or
+out of rotation under the [backlog rule](./backlogRule.md).
 
 ## Story: List a monthly pool only in a month it has an amount
 
@@ -64,13 +64,15 @@ pure val listingValues = Set(
 
 ### A project left out of the lists still opens by direct link and says why
 
-A project paused at its intake cap ([intake cap](../backend/intakeCap.md),
-`paused`) is left out of Home and /sponsors as well, by conjunction with the
+A project paused at its intake cap ([intake cap](./backend/intakeCap.md),
+`paused`) or out of rotation under the [backlog rule](./backend/backlogRule.md)
+(`backlogHeld`) is left out of Home and /sponsors as well, by conjunction with the
 monthly listing: the browser holds a project only from a stored count it
 read, so while its merge activity read is pending or failed it passes no
 counts and nothing is held. The project page keeps opening by direct link and
 its skills keep serving. While held, the page shows the intake cap's notice
-(`IC::pausedNotice`, the merge activity line's own read). When agent
+(`IC::pausedNotice`, the merge activity line's own read) or the backlog
+rule's notice (`BR::overLimitNotice`, `BR::dormantNotice`). When agent
 discovery does not list the project, its install panel says why, first that
 it has paused new contributors (`pausedInstallText`), else that it is not
 listed this month (the status badge `notListedInstallText`), else its
@@ -79,22 +81,34 @@ clearance badges (development `src/App.tsx` `ProjectInstallPanel` at
 
 ```quint
 import intakeCap as IC from "../backend/intakeCap"
+import backlogRule as BR from "../backend/backlogRule"
 type InstallNotice = PausedInstall | NotListedInstall | NoListingNotice
 pure val pausedInstallText = "This project has paused new contributors. The prompt below picks only listed projects."
 pure val notListedInstallText = "Not listed this month"
 pure def intakeHeld(cap: int, active: bool, counts: List[IC::StoredCount], now: int): bool =
   IC::paused({ ...IC::initial, cap: cap, active: active, counts: counts, now: now })
+pure def backlogHeld(active: bool, exempt: bool, catchingUp: bool, until: int, reads: List[BR::BacklogRead], now: int): bool =
+  BR::outOfRotation({ ...BR::initial, active: active, exempt: exempt, reads: reads, now: now, catchingUp: catchingUp, catchUpUntil: until })
 pure def installNotice(discoveryRefuses: bool, held: bool, listedNow: bool): InstallNotice =
   if (not(discoveryRefuses)) NoListingNotice else if (held) PausedInstall
   else if (not(listedNow)) NotListedInstall else NoListingNotice
 pure def lawHeldNeedsACurrentCount(cap: int, active: bool, counts: List[IC::StoredCount], now: int): bool =
   intakeHeld(cap, active, counts, now) implies counts.some(c => c.read and now - c.observedAt <= IC::countMaxAgeHours)
 pure def lawUnreadCountsHoldNothing(cap: int, active: bool, now: int): bool = not(intakeHeld(cap, active, List(), now))
+pure def lawBacklogHeldNeedsACurrentRead(active: bool, exempt: bool, catchingUp: bool, until: int, reads: List[BR::BacklogRead], now: int): bool =
+  backlogHeld(active, exempt, catchingUp, until, reads, now) implies BR::hasRecentRead(reads, now)
+pure def lawBacklogHeldStartsInDecember(active: bool, exempt: bool, catchingUp: bool, until: int, reads: List[BR::BacklogRead], now: int): bool =
+  backlogHeld(active, exempt, catchingUp, until, reads, now) implies now >= BR::startsAtHours
 pure def lawPausedSentenceFirst(listedNow: bool): bool = installNotice(true, true, listedNow) == PausedInstall
 pure def lawListedProjectNeedsNoNotice(held: bool, listedNow: bool): bool =
   installNotice(false, held, listedNow) == NoListingNotice
 pure val countsValues = Set(List(), List(IC::unread), List({ read: true, count: 3, observedAt: 1 }),
   List(IC::unread, { read: true, count: 1, observedAt: 1 }))
+pure val readsValues = Set(List(BR::unreadRead, BR::unreadRead),
+  List({ read: true, waiting: 50, lastMergedAt: 498800, observedAt: 498911 }, BR::unreadRead),
+  List({ read: true, waiting: 1, lastMergedAt: 0, observedAt: 498911 }, BR::unreadRead))
+pure val nowValues = Set(2, 498912, 498913)
+pure val untilValues = Set(0, 498913, 499248)
 ```
 
 ## Story: Pick a project from the Featured and Community sections
@@ -102,7 +116,8 @@ pure val countsValues = Set(List(), List(IC::unread), List({ read: true, count: 
 ### Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page
 
 Home lists a placed, open project that is listed this month, whose card does
-not advertise a security bounty and that is not held at its intake cap
+not advertise a security bounty and that is not held at its intake cap or
+out of rotation under the [backlog rule](./backend/backlogRule.md)
 (development `src/App.tsx` `HomePage` and `src/lib/home-projects.ts`
 `homeProjects` at `8660a6121`). While the pool funding read loads, the
 section shows no project and no "No projects yet."; once the read settles,
