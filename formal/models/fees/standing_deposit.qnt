@@ -191,7 +191,7 @@ module standing_deposit {
   run withdrawalStopsNewCoversTest = init.then(firstMerge).then(post).then(pay).then(withdraw).then(openPr(0))
     .then(cover(0).fail())
   run pendingStrikeHoldsRefundTest = init.then(firstMerge).then(post).then(pay).then(openPr(0)).then(cover(0))
-    .then(close(0)).then(label(0)).then(check(0)).then(withdraw).then(passWait)
+    .then(close(0)).then(label(0)).then(check(0)).then(withdraw).then(endWindow(0)).then(passWait)
     .expect(due == "none" and prs.get(0).cover == "pending")
   run ownerRefusalAsksTest = init.then(firstMerge).then(post).then(pay).then(ownerRefuses).then(openPr(0))
     .then(cover(0).fail())

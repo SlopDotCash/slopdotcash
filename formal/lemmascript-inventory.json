@@ -2300,7 +2300,7 @@
 {"path":"contracts/evm/test/SonnetParity.t.sol","sha256":"de524c6f8f0b4499733debdcafa697c656ace3250b459f839f0b370864e94917","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/evm/test/StandingDepositsDeploy.t.sol","sha256":"ee6a2de45bd4ecb272f5396b6cfa20a6202d7ceba3b71c85b9ce6525d2611eb2","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/evm/test/StandingDepositsDeploy.t.sol","sha256":"e2a993fa9c44906903215ab3586b8e8c02a138ba424185d42e7782ad97ddec54","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/evm/test/SubmissionDeposits.t.sol","sha256":"426ab237d0687d5be41e392ab2bc814163fcf218a9cbd59baf90a36441881578","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
