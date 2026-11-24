@@ -2,7 +2,13 @@ import { expect, test } from "bun:test";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { VALUE_REFERENCE_QUERY } from "../workers/slopbot/value-reference-query";
 import {
-  COLLECTION_MEMO_FULL_INTERVAL_MS,
+  ATTRIBUTION_AUDIT_ONE_IN,
+  ATTRIBUTION_CHANGED_CODE_AUDIT_ONE_IN,
+  ATTRIBUTION_REFRESH_MS,
+  ATTRIBUTION_RULES_DIGEST,
+  ATTRIBUTION_RULES_VERSION,
+  attributionRefreshAge,
+  attributionRulesDigest,
   CollectionMemoSession,
   openCollectionMemo,
   parseCollectionMemo,
@@ -263,8 +269,15 @@ test("an unchanged attribution is reused with no discovery reads", async () => {
   expect(reused.result.implementationAttributionHolds).toEqual(
     live.result.implementationAttributionHolds,
   );
-  // The reused entry carries forward for the next collection.
-  expect(second.next.get("PR_two")).toEqual(first.next.get("PR_two"));
+  // The reused entry carries forward for the next collection, keeping the
+  // time it was computed so the rolling refresh still reaches it.
+  const carried = second.next.get("PR_two");
+  const { computedAt, ...rest } = carried ?? { computedAt: null };
+  const { computedAt: _first, ...original } = first.next.get("PR_two") ?? {
+    computedAt: null,
+  };
+  expect(rest).toEqual(original);
+  expect(computedAt).toBe("2026-11-19T01:00:00.000Z");
 });
 
 test.each([
@@ -379,30 +392,175 @@ test("a reused author is read live, so a renamed account shows its new login", a
   expect(authors?.get(head)?.originalCommitSha).toBe(authorSha);
 });
 
-test("a memo from different code, a forced run or an old line is full", () => {
+test("only other attribution rules, a forced run or no memo is full", async () => {
   const first = firstSession();
+  await collect(world(), first);
   const memo = parseCollectionMemo(
     first.serialize(cutoff, "2026-11-19T01:00:00.000Z"),
   );
-  const at = (now: string, codeDigest = digest, forceFull = false) =>
-    openCollectionMemo({ memo, forceFull, now: new Date(now), codeDigest });
-  expect(at("2026-11-19T06:00:00.000Z").mode).toBe("incremental");
-  expect(at("2026-11-19T06:00:00.000Z", "a".repeat(64)).reason).toBe(
-    "attribution code changed",
+  expect(memo.attributionRulesVersion).toBe(ATTRIBUTION_RULES_VERSION);
+  const at = (
+    now: string,
+    codeDigest = digest,
+    forceFull = false,
+    rulesVersion = ATTRIBUTION_RULES_VERSION,
+  ) =>
+    openCollectionMemo({
+      memo,
+      forceFull,
+      now: new Date(now),
+      codeDigest,
+      rulesVersion,
+    });
+  const same = at("2026-11-19T06:00:00.000Z");
+  expect(same.mode).toBe("incremental");
+  expect(same.auditOneIn).toBe(ATTRIBUTION_AUDIT_ONE_IN);
+  // Other code with the same rules keeps the saved answers and audits more.
+  const changed = at("2026-11-19T06:00:00.000Z", "a".repeat(64));
+  expect(changed.mode).toBe("incremental");
+  expect(changed.prior.size).toBe(1);
+  expect(changed.auditOneIn).toBe(ATTRIBUTION_CHANGED_CODE_AUDIT_ONE_IN);
+  expect(changed.reason).toBe(
+    `code changed since the previous memo; auditing 1 in ${ATTRIBUTION_CHANGED_CODE_AUDIT_ONE_IN}`,
   );
-  expect(at("2026-11-19T06:00:00.000Z", digest, true).mode).toBe("full");
-  expect(
-    at(
-      new Date(
-        Date.parse("2026-11-19T01:00:00.000Z") +
-          COLLECTION_MEMO_FULL_INTERVAL_MS +
-          1,
-      ).toISOString(),
-    ).reason,
-  ).toBe("weekly full collection");
+  // A raised rules version discards every saved answer.
+  const rules = at(
+    "2026-11-19T06:00:00.000Z",
+    digest,
+    false,
+    ATTRIBUTION_RULES_VERSION + 1,
+  );
+  expect(rules.mode).toBe("full");
+  expect(rules.reason).toBe("attribution rules changed");
+  expect(rules.prior.size).toBe(0);
+  const forced = at("2026-11-19T06:00:00.000Z", digest, true);
+  expect(forced.mode).toBe("full");
   // A full run keeps immutable commit statistics but no attribution entries.
-  const full = at("2026-11-19T06:00:00.000Z", digest, true);
-  expect(full.prior.size).toBe(0);
+  expect(forced.prior.size).toBe(0);
+  expect(
+    openCollectionMemo({
+      memo: null,
+      forceFull: false,
+      now: new Date("2026-11-19T06:00:00.000Z"),
+      codeDigest: digest,
+    }).mode,
+  ).toBe("full");
+});
+
+test("a week-old memo is not a full run; each answer is refreshed on its own age", async () => {
+  const first = firstSession();
+  await collect(world(), first);
+  const memo = parseCollectionMemo(
+    first.serialize(cutoff, "2026-11-19T01:00:00.000Z"),
+  );
+  const age = attributionRefreshAge("PR_two");
+  expect(age).toBeGreaterThanOrEqual(ATTRIBUTION_REFRESH_MS / 2);
+  expect(age).toBeLessThanOrEqual(ATTRIBUTION_REFRESH_MS);
+  const open = (offset: number) =>
+    openCollectionMemo({
+      memo,
+      forceFull: false,
+      now: new Date(Date.parse("2026-11-19T01:00:00.000Z") + offset),
+      codeDigest: digest,
+    });
+  const young = open(age - 1);
+  expect(young.mode).toBe("incremental");
+  expect(young.prior.has("PR_two")).toBe(true);
+  expect(young.expired).toBe(0);
+  const old = open(ATTRIBUTION_REFRESH_MS + 1);
+  expect(old.mode).toBe("incremental");
+  expect(old.prior.has("PR_two")).toBe(false);
+  expect(old.expired).toBe(1);
+});
+
+test("answers are refreshed on spread ages, not all on one day", () => {
+  const ages = Array.from({ length: 400 }, (_, index) =>
+    attributionRefreshAge(`PR_${index}`),
+  );
+  const half = ATTRIBUTION_REFRESH_MS / 2;
+  const early = ages.filter((age) => age < half + half / 2).length;
+  expect(early).toBeGreaterThan(120);
+  expect(early).toBeLessThan(280);
+});
+
+test("an expired answer is computed live and dated by this run", async () => {
+  const first = firstSession();
+  await collect(world(), first);
+  const memo = parseCollectionMemo(
+    first.serialize(cutoff, "2026-11-19T01:00:00.000Z"),
+  );
+  const later = openCollectionMemo({
+    memo,
+    forceFull: false,
+    now: new Date(
+      Date.parse("2026-11-19T01:00:00.000Z") + ATTRIBUTION_REFRESH_MS + 1,
+    ),
+    codeDigest: digest,
+  });
+  const again = await collect(world(), later);
+  expect(later.stats.reused).toBe(0);
+  expect(later.stats.live).toBe(1);
+  expect(again.reads.some((path) => path.endsWith("/pulls/2"))).toBe(true);
+  const next = parseCollectionMemo(
+    later.serialize(cutoff, "2026-11-27T00:00:00.000Z"),
+  );
+  expect(next.attributions[0]?.computedAt).toBe("2026-11-27T00:00:00.000Z");
+});
+
+test("changed code audits one in ten reusable answers", () => {
+  const session = new CollectionMemoSession(
+    "incremental",
+    digest,
+    cutoff,
+    "test",
+    [],
+    [],
+    ATTRIBUTION_CHANGED_CODE_AUDIT_ONE_IN,
+  );
+  const sampled = Array.from({ length: 2000 }, (_, index) =>
+    session.audits(`PR_${index}`, cutoff),
+  ).filter(Boolean).length;
+  expect(sampled).toBeGreaterThan(140);
+  expect(sampled).toBeLessThan(260);
+});
+
+test("a version 1 memo is read as rules version 1, dated at its last full run", () => {
+  const first = firstSession();
+  const current = JSON.parse(
+    first.serialize(cutoff, "2026-11-19T01:00:00.000Z"),
+  );
+  current.attributions = [
+    {
+      outcomeId: "PR_two",
+      fence: {
+        number: 2,
+        url: `https://github.com/${repo}/pull/2`,
+        headRefOid: head,
+        mergedAt: "2026-11-10T10:00:00.000Z",
+        updatedAt: "2026-11-10T10:00:00.000Z",
+        repositoryNodeId: "R_x",
+        eligibleCommitShas: [head],
+      },
+      pulls: [],
+      references: [],
+      incoming: [],
+      result: { kind: "none" },
+    },
+  ];
+  const { attributionRulesVersion: _version, ...v1 } = current;
+  v1.format = "slop-collection-memo-v1";
+  v1.lastFullAt = "2026-11-18T00:00:00.000Z";
+  const memo = parseCollectionMemo(JSON.stringify(v1));
+  expect(memo.attributionRulesVersion).toBe(1);
+  expect(memo.attributions[0]?.computedAt).toBe("2026-11-18T00:00:00.000Z");
+});
+
+test("the attribution rules pin matches its sources", () => {
+  const actual = attributionRulesDigest();
+  if (actual !== ATTRIBUTION_RULES_DIGEST)
+    throw new Error(
+      `The attribution rules changed (scripts/collection-memo.ts ATTRIBUTION_RULES_SOURCES). If a saved attribution answer could now come out differently, raise ATTRIBUTION_RULES_VERSION. Then set ATTRIBUTION_RULES_DIGEST to ${actual}.`,
+    );
 });
 
 test("a malformed memo is rejected whole", () => {
