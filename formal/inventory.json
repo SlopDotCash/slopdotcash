@@ -372,12 +372,13 @@
     },
     {
       "path": "backend/notifications/incomplete-assessments.ts",
-      "sha256": "ca59dbc3f8ba434beb3e3559a66e3c1066dea959ed5ddb1e33cb191ffa2df11a",
+      "sha256": "27bdc0d729a267c54e5fff8757cffebc3f7556caed43391f2bd6b2ac69fa5270",
       "models": [
+        "formal/models/api/api_incomplete_assessment_access.qnt",
         "formal/models/api/api_incomplete_assessments.qnt",
         "formal/models/api/incomplete_assessment_queries.qnt"
       ],
-      "candidateLines": [71, 162, 218],
+      "candidateLines": [71, 190, 246],
       "review": "mapped-abstraction"
     },
     {
@@ -11274,6 +11275,16 @@
         "sameSourceCanNotifyTwoRecipientsOnceTest",
         "sourceRefusalPreventsReviewRedirectTest",
         "sourceWithNoEligibleRecipientHasNoNoticeTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_incomplete_assessment_access.qnt",
+      "sha256": "e32b87c663ff8c2e348fc6e894a4c7e2f7bf024f00ec3744967b22010f3499b2",
+      "sources": ["backend/notifications/incomplete-assessments.ts"],
+      "scenarios": [
+        "fullOutageIsUnavailableTest",
+        "nonMaintainerWithGoneRepositoryGetsEmptyListTest",
+        "oneGoneRepositoryHidesOnlyItsRowsTest"
       ]
     },
     {

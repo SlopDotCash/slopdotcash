@@ -75,7 +75,6 @@ export async function readIncompleteAssessments(
     project.revision,project.manifest,r.repository_id,r.owner,r.repo ${source}`)
     .all<Context>();
   const admin = deps.adminGithubIds?.has(actor.githubId) === true;
-  const checked = new Set<string>();
   const allowed = new Map<
     string,
     {
@@ -86,6 +85,15 @@ export async function readIncompleteAssessments(
     }
   >();
   const manifests = new Map<string, string>();
+  const candidates = new Map<
+    string,
+    {
+      row: Context;
+      projectName: string;
+      repository: string;
+      manifestId: string;
+    }
+  >();
   for (const row of contexts.results) {
     const manifest = assertProjectDefinition(JSON.parse(row.manifest));
     const original = `${row.owner}/${row.repo}`.toLowerCase();
@@ -102,19 +110,36 @@ export async function readIncompleteAssessments(
         String(row.repository_id) !== manifest.authority.repositoryId)
     )
       continue;
-    const repository = currentRepositoryPath(manifest.repositories[index]);
     const scope = `${manifest.id}:${row.repository_id}`;
-    if (!checked.has(scope)) {
-      let access = admin;
-      if (!admin) {
-        if (!deps.repositoryAccess || !actor.githubLogin)
-          fail(
-            503,
-            "github_unavailable",
-            "Maintainer access could not be checked.",
-          );
+    if (!candidates.has(scope))
+      candidates.set(scope, {
+        row,
+        projectName: manifest.name,
+        repository: currentRepositoryPath(manifest.repositories[index]),
+        manifestId: manifest.id,
+      });
+  }
+  if (
+    !admin &&
+    candidates.size > 0 &&
+    (!deps.repositoryAccess || !actor.githubLogin)
+  )
+    fail(503, "github_unavailable", "Maintainer access could not be checked.");
+  // Each repository is checked on its own and at the same time. A repository
+  // whose check fails (a deleted repository, a lost installation, a provider
+  // error) hides only its own rows; it never exposes them. The queue is
+  // unavailable only when no repository could be checked at all.
+  const results = await Promise.all(
+    [...candidates.entries()].map(
+      async ([scope, candidate]): Promise<
+        [string, "allowed" | "denied" | "unavailable"]
+      > => {
+        if (admin) return [scope, "allowed"];
+        const { row, repository } = candidate;
         try {
-          const result = await deps.repositoryAccess(
+          const result = await (
+            deps.repositoryAccess as RepositoryAccessReader
+          )(
             { path: repository, githubId: String(row.repository_id) },
             actor as GithubActor,
           );
@@ -125,33 +150,36 @@ export async function readIncompleteAssessments(
             result.repository.full_name.toLowerCase() !==
               repository.toLowerCase()
           )
-            fail(
-              503,
-              "github_unavailable",
-              "Repository identity could not be checked.",
-            );
-          access =
+            return [scope, "unavailable"];
+          return [
+            scope,
             (result.permission === "admin" || result.permission === "write") &&
-            result.repository.private === false;
+            result.repository.private === false
+              ? "allowed"
+              : "denied",
+          ];
         } catch {
-          fail(
-            503,
-            "github_unavailable",
-            "Maintainer access could not be checked.",
-          );
+          return [scope, "unavailable"];
         }
-      }
-      checked.add(scope);
-      if (access) {
-        allowed.set(scope, {
-          projectId: manifest.id,
-          projectName: manifest.name,
-          repository,
-          repositoryId: row.repository_id,
-        });
-        manifests.set(row.project_id, row.manifest);
-      }
-    }
+      },
+    ),
+  );
+  if (
+    results.length > 0 &&
+    results.every(([, outcome]) => outcome === "unavailable")
+  )
+    fail(503, "github_unavailable", "Maintainer access could not be checked.");
+  for (const [scope, outcome] of results) {
+    if (outcome !== "allowed") continue;
+    const candidate = candidates.get(scope);
+    if (!candidate) continue;
+    allowed.set(scope, {
+      projectId: candidate.manifestId,
+      projectName: candidate.projectName,
+      repository: candidate.repository,
+      repositoryId: candidate.row.repository_id,
+    });
+    manifests.set(candidate.row.project_id, candidate.row.manifest);
   }
   const rows = await deps.db
     .prepare(`SELECT project.id AS project_id,r.repository_id,r.pull_request_number,
