@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import {
   closeSync,
+  globSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -187,6 +188,18 @@ function makeKnownMatcher(list) {
   };
 }
 
+// A home folder with one of these names says nothing about its owner and the
+// word is common, so it is not removed as a name.
+const GENERIC_HOME_NAMES = new Set([
+  "home",
+  "root",
+  "user",
+  "users",
+  "tmp",
+  "var",
+  "private",
+]);
+
 function makeStringCleaner(ctx, counts) {
   const known = makeKnownMatcher(ctx.knownSecrets);
   const values = [
@@ -204,12 +217,53 @@ function makeStringCleaner(ctx, counts) {
   ].sort((a, b) => b.length - a.length);
   const repo = ctx.repoRoot.replace(/\/+$/, "");
   const home = (ctx.homeDir ?? "").replace(/\/+$/, "");
-  const user =
-    ctx.userName && ctx.userName.length >= 3
-      ? new RegExp(`(?<![\\w-])${escapeRegExp(ctx.userName)}(?![\\w-])`, "g")
+  // Claude Code names folders after a path with every other character as a
+  // hyphen (/Users/x becomes -Users-x), so a name is bounded by
+  // non-alphanumerics only.
+  const homeSlug =
+    home && home !== "/"
+      ? new RegExp(
+          `${escapeRegExp(home.replace(/[^A-Za-z0-9]/g, "-"))}(?![A-Za-z0-9])`,
+          "g",
+        )
       : null;
+  const names = [
+    ...new Set(
+      [ctx.userName, basename(home)].filter(
+        (n) =>
+          typeof n === "string" && n.length >= 3 && !GENERIC_HOME_NAMES.has(n),
+      ),
+    ),
+  ];
+  const user =
+    names.length > 0
+      ? new RegExp(
+          `(?<![A-Za-z0-9])(?:${names.map(escapeRegExp).join("|")})(?![A-Za-z0-9])`,
+          "g",
+        )
+      : null;
+  const local = () => {
+    bump(counts, "LOCAL_PATH");
+    return LOCAL_PATH;
+  };
   return (text) => {
     let s = text;
+    // Paths first: a secret that is also part of the repository path must
+    // not stop the path becoming repo-relative.
+    s = s.replace(ABSOLUTE_PATH, (p) => {
+      const n = normalise(p, repo, home);
+      if (n === repo) return ".";
+      if (n.startsWith(`${repo}/`)) return n.slice(repo.length + 1);
+      return p;
+    });
+    if (home && home !== "/") {
+      const parts = s.split(home);
+      if (parts.length > 1) {
+        bump(counts, "LOCAL_PATH", parts.length - 1);
+        s = parts.join(LOCAL_PATH);
+      }
+    }
+    if (homeSlug) s = s.replace(homeSlug, local);
     for (const v of values) {
       const parts = s.split(v);
       if (parts.length > 1) {
@@ -228,25 +282,9 @@ function makeStringCleaner(ctx, counts) {
       bump(counts, "CREDENTIAL");
       return `${scheme}${CREDENTIAL}@`;
     });
-    s = s.replace(ABSOLUTE_PATH, (p) => {
-      const n = normalise(p, repo, home);
-      if (n === repo) return ".";
-      if (n.startsWith(`${repo}/`)) return n.slice(repo.length + 1);
-      return p;
-    });
-    if (home && home !== "/") {
-      const parts = s.split(home);
-      if (parts.length > 1) {
-        bump(counts, "LOCAL_PATH", parts.length - 1);
-        s = parts.join(LOCAL_PATH);
-      }
-    }
-    if (user) {
-      s = s.replace(user, () => {
-        bump(counts, "LOCAL_PATH");
-        return LOCAL_PATH;
-      });
-    }
+    // The bare name last, so a secret that contains it is still matched
+    // whole above.
+    if (user) s = s.replace(user, local);
     return s;
   };
 }
@@ -404,18 +442,30 @@ function listDir(dir) {
 
 // Only Claude Code session files are read. Codex clients write the log
 // themselves and pass --log; readCodex stays for when one real Codex rollout
-// has been checked against it.
+// has been checked against it. A run made by a subagent lives in
+// <project>/<session>/subagents/*.jsonl, where every record is a sidechain.
 function candidateFiles(homeDir) {
   const found = [];
   const claude = join(homeDir, ".claude", "projects");
-  for (const d of listDir(claude))
-    if (d.isDirectory())
-      for (const f of listDir(join(claude, d.name)))
-        if (f.isFile() && f.name.endsWith(".jsonl"))
-          found.push({
-            path: join(claude, d.name, f.name),
-            client: "claude-code",
-          });
+  const add = (dir, sidechain) => {
+    for (const f of listDir(dir))
+      if (f.isFile() && f.name.endsWith(".jsonl"))
+        found.push({
+          path: join(dir, f.name),
+          client: "claude-code",
+          sidechain,
+        });
+  };
+  for (const d of listDir(claude)) {
+    if (!d.isDirectory()) continue;
+    const project = join(claude, d.name);
+    add(project, false);
+    for (const s of listDir(project)) {
+      if (!s.isDirectory()) continue;
+      add(join(project, s.name), true);
+      add(join(project, s.name, "subagents"), true);
+    }
+  }
   return found;
 }
 
@@ -469,8 +519,8 @@ export function findSessionFile(marker, opts) {
       const lines = readFileSync(f.path, "utf8")
         .split("\n")
         .filter((l) => l.trim() !== "");
-      if (readClaudeCode(lines, marker).length > 0)
-        return { path: f.path, client: f.client };
+      if (readClaudeCode(lines, marker, { sidechain: f.sidechain }).length > 0)
+        return { path: f.path, client: f.client, sidechain: f.sidechain };
     } catch {}
   }
   return null;
@@ -580,10 +630,12 @@ function windowItems(items, marker) {
   return started ? events : [];
 }
 
-export function readClaudeCode(lines, marker) {
+// A main session file skips sidechain records (a subagent's own work); a
+// subagent's file is read with `sidechain`, since all its records are.
+export function readClaudeCode(lines, marker, { sidechain = false } = {}) {
   const items = [];
   for (const r of parseLines(lines)) {
-    if (!r || r.isSidechain === true) continue;
+    if (!r || (r.isSidechain === true && !sidechain)) continue;
     if (r.type !== "user" && r.type !== "assistant") continue;
     const content = r.message?.content;
     const t = r.timestamp;
@@ -785,10 +837,16 @@ export function makeRepoIndex(events, repoRoot, homeDir, runGit = git) {
     }
   }
   const gx = { repoRoot: root, realRoot };
+  const kept = () => [...tracked, ...written].filter((a) => !ignored.has(a));
   return {
     root,
     realRoot,
     written,
+    // True when a tracked or run-written, non-ignored file lies under dir.
+    hasFilesUnder: (dir) => {
+      const prefix = `${dir.replace(/\/+$/, "")}/`;
+      return kept().some((a) => a.startsWith(prefix));
+    },
     isRepoFile: (abs) => {
       const a = realTarget(abs, gx);
       return (
@@ -847,30 +905,112 @@ const SECRET_SPLIT = /[\s"'`,;{}()[\]=:#@/]+/;
 const URL_USERINFO =
   /(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*:\/\/([^\s/@:]+)(?::([^\s/@]*))?@/g;
 
+// A bare host name (github.com, api.example.co.uk) is never stored: it would
+// damage every URL that names it.
+const HOST_NAME = /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i;
+
+function addGuardString(into, v) {
+  if (v && v.length >= 8 && !HOST_NAME.test(v)) into.add(v);
+}
+
+const cleanValue = (v) =>
+  v
+    .trim()
+    .replace(/^["']+/, "")
+    .replace(/["',;]+$/, "");
+
 export function addSecretStrings(text, into) {
   for (const line of text.split(/\r?\n/)) {
-    const clean = (v) =>
-      v
-        .trim()
-        .replace(/^["']+/, "")
-        .replace(/["',;]+$/, "");
-    const t = line.trim();
-    if (t.length >= 8) into.add(t);
-    const whole = clean(line);
-    if (whole.length >= 8) into.add(whole);
+    addGuardString(into, line.trim());
+    addGuardString(into, cleanValue(line));
     for (const sep of ["=", ":"]) {
       const i = line.indexOf(sep);
       if (i < 0) continue;
-      const v = clean(line.slice(i + 1));
-      if (v.length >= 8) into.add(v);
+      addGuardString(into, cleanValue(line.slice(i + 1)));
     }
     // Pieces, so inline comments, one-line JSON, YAML, .netrc and bare tokens
     // are caught. Ordinary words over-redact; that is accepted.
     for (const m of line.matchAll(URL_USERINFO))
-      for (const part of [m[1], m[2]])
-        if (part && part.length >= 8) into.add(part);
+      for (const part of [m[1], m[2]]) addGuardString(into, part);
     for (const piece of line.split(SECRET_SPLIT))
-      if (piece.length >= 8 && /[\p{L}\p{N}]/u.test(piece)) into.add(piece);
+      if (/[\p{L}\p{N}]/u.test(piece)) addGuardString(into, piece);
+  }
+}
+
+// Keys whose values are credentials in the home credential files. A key is
+// read after its last ':' or '/', without leading underscores, lower case, so
+// npm's //host/:_authToken becomes authtoken.
+const CREDENTIAL_KEYS = new Set([
+  "oauth_token",
+  "token",
+  "authtoken",
+  "password",
+  "secret",
+  "auth",
+  "aws_access_key_id",
+  "aws_secret_access_key",
+  "aws_session_token",
+  "identitytoken",
+  "registrytoken",
+]);
+
+function credentialKey(raw) {
+  return raw
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .split(/[:/]/)
+    .pop()
+    .replace(/^_+/, "")
+    .toLowerCase();
+}
+
+// Home credential files hold host names, user names and settings beside the
+// secrets, so only values of credential keys are stored. .netrc and
+// .git-credentials also give their logins.
+export function addCredentialValues(file, text, into) {
+  if (file === ".netrc") {
+    const words = text.split(/\s+/);
+    for (let i = 0; i < words.length - 1; i++)
+      if (/^(?:login|password|account)$/.test(words[i]))
+        addGuardString(into, words[i + 1]);
+    return;
+  }
+  if (file.endsWith(".json")) {
+    try {
+      const walk = (v) => {
+        if (Array.isArray(v)) for (const x of v) walk(x);
+        else if (v && typeof v === "object")
+          for (const [k, x] of Object.entries(v)) {
+            if (typeof x === "string" && CREDENTIAL_KEYS.has(credentialKey(k)))
+              addGuardString(into, x);
+            else walk(x);
+          }
+      };
+      walk(JSON.parse(text));
+      return;
+    } catch {}
+  }
+  for (const line of text.split(/\r?\n/)) {
+    if (file === ".git-credentials") {
+      for (const m of line.matchAll(URL_USERINFO))
+        for (const part of [m[1], m[2]]) addGuardString(into, part);
+      continue;
+    }
+    const t = line.trim();
+    if (t === "" || t.startsWith("#") || t.startsWith(";")) continue;
+    // npm keys hold ':' (//host/:_authToken=...); elsewhere the first of '='
+    // or ':' ends the key, since base64 values hold '='.
+    const eq = t.indexOf("=");
+    const colon = t.indexOf(":");
+    const i =
+      file === ".npmrc" || colon < 0
+        ? eq
+        : eq < 0
+          ? colon
+          : Math.min(eq, colon);
+    if (i <= 0) continue;
+    if (!CREDENTIAL_KEYS.has(credentialKey(t.slice(0, i)))) continue;
+    addGuardString(into, cleanValue(t.slice(i + 1)));
   }
 }
 
@@ -904,7 +1044,7 @@ export function collectKnownSecrets(
   for (const f of HOME_SECRET_FILES) {
     if (!homeDir) break;
     const text = readSmallText(join(homeDir, f));
-    if (text !== null) addSecretStrings(text, strings);
+    if (text !== null) addCredentialValues(f, text, strings);
   }
   const listed = runGit(index.root, ["ls-files", "-z", "-o"]);
   // A file the run wrote is skipped only when it is not gitignored: an edited
@@ -1064,7 +1204,9 @@ function unresolvable(call, cwd, g) {
         normalise(cwd, cwd, g.homeDir);
     if (!same) return true;
   }
-  if (/[*?[\]{}\\]/.test(cmd)) return true;
+  // Braces and backslashes change words in ways the guard does not follow;
+  // * ? [ ] are expanded locally (globTouches).
+  if (/[{}\\]/.test(cmd)) return true;
   if (/\$\(|`|\$[A-Za-z_{'"]/.test(cmd)) return true;
   if (/(?:^|[\s;&|(])(?:xargs|eval|source)\b/.test(cmd)) return true;
   if (/(?:^|[;&|(]\s*)\.\s/.test(cmd) || /^\s*\.\s/.test(cmd)) return true;
@@ -1128,11 +1270,52 @@ function fileStatus(abs, g) {
   return g.isRepoFile(real) === true ? "ok" : "source";
 }
 
+const GLOB_CHARS = /[*?[\]]/;
+const MAX_GLOB_MATCHES = 500;
+
+// A glob word is expanded locally from the command's directory. It passes
+// only when it matches at least one file and every match is a tracked or
+// run-written, non-ignored file inside the repository.
+function globTouches(word, g, base) {
+  if (word.includes("**")) return "source";
+  let matches;
+  try {
+    matches = globSync(expandTilde(word, g.homeDir), { cwd: base });
+  } catch {
+    return "source";
+  }
+  if (matches.length === 0 || matches.length > MAX_GLOB_MATCHES)
+    return "source";
+  let verdict = "ok";
+  for (const m of matches) {
+    const abs = resolve(base, m);
+    if (!insideRepo(abs, g.repoRoot)) return "outside";
+    const st = fileStatus(abs, g);
+    if (st === "outside") return "outside";
+    if (st !== "ok" || !isFile(abs)) verdict = "source";
+  }
+  return verdict;
+}
+
+function isFile(abs) {
+  try {
+    return statSync(abs).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function commandTouches(cmd, g, base) {
   let verdict = "ok";
   for (const raw of cmd.split(/[\s;&|<>()"'`=,]+/).slice(0, 400)) {
     if (!raw || raw.startsWith("-")) continue;
     if (SAFE_ABSOLUTE.has(raw)) continue;
+    if (GLOB_CHARS.test(raw)) {
+      const st = globTouches(raw, g, base);
+      if (st === "outside") return "outside";
+      if (st === "source") verdict = "source";
+      continue;
+    }
     const abs = normalise(raw, base, g.homeDir);
     if (
       (raw.includes("/") || raw.startsWith("~")) &&
@@ -1144,6 +1327,96 @@ function commandTouches(cmd, g, base) {
     if (st === "source" || st === "dir") verdict = "source";
   }
   return verdict;
+}
+
+// ---- Name-only commands: their output is names and metadata, not file
+// contents, so it is kept when every path they name lies inside the
+// repository. The content guard still strips secret values from it.
+const PATCH_FLAG =
+  /^(?:-p|-u|-c|-m|--cc|--patch.*|-U\d*|--unified.*|-L.*|--word-diff.*|--color-words.*|--ext-diff|--textconv|--full-diff|--show-signature|--notes.*|--raw)$/;
+const SHORT_PATCH = /^-[A-Za-z0-9]*[pucmLU][A-Za-z0-9]*$/;
+const DIFF_NAMES =
+  /^--(?:stat(?:=\S*)?|numstat|shortstat|name-only|name-status)$/;
+const FIND_BLOCKED =
+  /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls|printf)$/;
+const FIND_PATTERN =
+  /^-(?:name|iname|path|ipath|wholename|iwholename|regex|iregex|lname|ilname)$/;
+const PIPE_FILTER = /^(?:head|tail|wc|sort|uniq)$/;
+
+function dirOk(abs, g) {
+  const real = realTarget(abs, g);
+  if (!insideRepo(real, g.repoRoot)) return false;
+  return real === g.repoRoot || g.hasFilesUnder?.(real) === true;
+}
+
+// A named path may be missing (a branch or revision name), a repository
+// file, or a directory holding at least one repository file.
+function namedPathOk(word, g, base) {
+  if (/^[~$]/.test(word)) return false;
+  if (GLOB_CHARS.test(word)) return globTouches(word, g, base) === "ok";
+  const abs = normalise(word, base, g.homeDir);
+  if (!insideRepo(abs, g.repoRoot)) return false;
+  let st;
+  try {
+    st = statSync(abs);
+  } catch {
+    return true;
+  }
+  if (st.isDirectory()) return dirOk(abs, g);
+  return fileStatus(abs, g) === "ok";
+}
+
+function nameOnlyStage(words, g, base) {
+  const tool = words[0];
+  let args = words.slice(1);
+  const paths = [];
+  if (tool === "git") {
+    if (args[0] === "--no-pager") args = args.slice(1);
+    const sub = args.shift();
+    const patch = args.some((a) => PATCH_FLAG.test(a) || SHORT_PATCH.test(a));
+    if (sub === "log" || sub === "diff") {
+      if (patch) return false;
+      if (sub === "diff" && !args.some((a) => DIFF_NAMES.test(a))) return false;
+    } else if (sub !== "status" && sub !== "branch") return false;
+    for (const a of args) if (!a.startsWith("-")) paths.push(a);
+  } else if (tool === "ls" || tool === "tree") {
+    for (const a of args) if (!a.startsWith("-")) paths.push(a);
+  } else if (tool === "find") {
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (FIND_BLOCKED.test(a)) return false;
+      if (FIND_PATTERN.test(a)) i++;
+      else if (!a.startsWith("-") && a !== "!" && a !== "(" && a !== ")")
+        paths.push(a);
+    }
+  } else return false;
+  return paths.every((p) => namedPathOk(p, g, base));
+}
+
+export function nameOnlyCommand(cmd, g, base) {
+  if (!dirOk(base, g)) return false;
+  const c = cmd
+    .replace(/\s[12]?>&[12](?=\s|$)/g, " ")
+    .replace(/\s2>\s*\/dev\/null(?=\s|$)/g, " ");
+  // Redirections, background jobs and subshells are not followed.
+  if (/[<>()\n\r]|(?<!&)&(?!&)/.test(c)) return false;
+  const statements = c.split(/&&|\|\||;/);
+  for (const statement of statements) {
+    const stages = statement.split("|");
+    for (let i = 0; i < stages.length; i++) {
+      const words = stages[i].trim().split(/\s+/).filter(Boolean).map(unquote);
+      if (words.length === 0) return false;
+      if (i === 0) {
+        if (!nameOnlyStage(words, g, base)) return false;
+      } else if (
+        !PIPE_FILTER.test(words[0]) ||
+        // flags and counts only: a file argument would be read
+        !words.slice(1).every((w) => /^(?:-[A-Za-z]+\d*|-?\d+)$/.test(w))
+      )
+        return false;
+    }
+  }
+  return true;
 }
 
 function outputTouches(text, g, base) {
@@ -1203,6 +1476,10 @@ function guardEvents(events, g) {
         e.redactSource = true;
       } else if (g.capped || unresolvable(call, e.cwd, g)) {
         e.redactSource = true;
+      } else if (SHELL_TOOL.test(tool) && nameOnlyCommand(cmd, g, base)) {
+        // names and metadata only; output that points outside still goes
+        if (outputTouches(e.text ?? "", g, base) === "outside")
+          e.redactOutside = true;
       } else {
         let verdict = commandTouches(cmd, g, base);
         if (SEARCH_TOOL.test(tool)) {
@@ -1273,6 +1550,18 @@ function readPathFor(input) {
 // Guards, cleans and writes one session. `raw` holds reader events in order;
 // the header records where they came from. Returns null when the guard leaves
 // no event (no session record) or the result cannot fit the size limit.
+const HEADER_COUNTS_RESERVE = 512;
+const MARKER = /\[REDACTED:([A-Z_]+)\]/g;
+
+// Counts every marker in the written lines, so the header matches what a
+// reader of the file sees.
+export function countMarkers(lines) {
+  const counts = {};
+  for (const line of lines)
+    for (const m of line.matchAll(MARKER)) bump(counts, m[1]);
+  return counts;
+}
+
 export async function writeCleanedSession(
   raw,
   source,
@@ -1293,10 +1582,11 @@ export async function writeCleanedSession(
     homeDir: opts.homeDir,
     keepRepoFiles,
     isRepoFile,
+    hasFilesUnder: keepRepoFiles ? index.hasFilesUnder : () => false,
     capped: known.capped,
   });
   if (guarded.length === 0) return null;
-  const { events, counts } = cleanEvents(guarded, {
+  const { events } = cleanEvents(guarded, {
     repoRoot: opts.repoRoot,
     homeDir: opts.homeDir,
     userName,
@@ -1322,18 +1612,28 @@ export async function writeCleanedSession(
     licence,
     repoFilesKept: keepRepoFiles,
     contentGuard: known.capped ? "capped" : "on",
-    counts,
+    counts: {},
     rules: RULES_URL,
   };
-  const all = [header, ...events].map((o) => JSON.stringify(o));
-  const fitted = truncateToLimit(all, LIMIT_BYTES);
+  // The header is written last, with the markers actually left in the
+  // events, so its size is reserved first.
+  const reserve =
+    Buffer.byteLength(JSON.stringify(header)) + HEADER_COUNTS_RESERVE;
+  const fitted = truncateToLimit(
+    events.map((o) => JSON.stringify(o)),
+    LIMIT_BYTES - reserve,
+  );
   if (fitted === null) return null;
+  header.counts = countMarkers(fitted.lines);
   mkdirSync(dirname(opts.outPath), { recursive: true });
-  writeFileSync(opts.outPath, `${fitted.lines.join("\n")}\n`);
+  writeFileSync(
+    opts.outPath,
+    `${[JSON.stringify(header), ...fitted.lines].join("\n")}\n`,
+  );
   return {
     path: opts.outPath,
     source,
-    counts,
+    counts: header.counts,
     licence,
     repoFilesKept: keepRepoFiles,
   };
@@ -1359,7 +1659,9 @@ export async function exportSession(opts) {
   } catch {
     return fallback;
   }
-  const raw = readClaudeCode(lines, opts.marker);
+  const raw = readClaudeCode(lines, opts.marker, {
+    sidechain: found.sidechain === true,
+  });
   if (raw.length === 0) return fallback;
   return (
     (await writeCleanedSession(raw, "client-file", opts, {
