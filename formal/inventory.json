@@ -163,12 +163,12 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "6b30f8c8c03db2613f40b5507321c1f78923259dbf810c013427e1d643afb131",
+      "sha256": "596bcb6e445a6601f50b0761a52c72e1325d5b093d222c2387aa43fe79d580a7",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
-      "candidateLines": [93],
+      "candidateLines": [98],
       "review": "mapped-abstraction"
     },
     {
@@ -5517,7 +5517,7 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "ed25a05a1d85ca1cd3380caad3111af474844cfdc3d46a82e9f0007fe10dd2aa",
+      "sha256": "621e9cdedf17d5fad55d54b1a7a0e52d8b081dac6cc2454c2c4abd4c4b6806ed",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/historical_net_outcome_retirement.qnt",
@@ -5525,8 +5525,8 @@
       ],
       "candidateLines": [
         3, 250, 251, 252, 253, 255, 260, 303, 318, 319, 325, 326, 461, 1170,
-        1399, 1419, 1556, 1557, 1558, 1564, 1566, 1568, 1570, 1572, 1575, 1577,
-        1625, 1627, 1683, 1701, 1708, 1840, 1935, 2106
+        1399, 1419, 1563, 1564, 1565, 1571, 1573, 1575, 1577, 1579, 1582, 1584,
+        1589, 1592, 1594, 1646, 1648, 1704, 1722, 1731, 1864, 1959, 2130
       ],
       "review": "mapped-abstraction"
     },
@@ -16105,7 +16105,7 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "8d5812c9950116ec1361b6f41ed3e794ce3d35e5df21dd1d4d9942345d343149",
+      "sha256": "c8511993722bea3cd02b5125284863b8a7a2d660f09bd001e1dca9da2344ccbe",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
@@ -16141,6 +16141,9 @@
         "privateReviewNeedsOptInTest",
         "qualifiedPrivateReviewCanBeRetrievedTest",
         "scopeChangeAfterPrivateStagingRefusesReceiptTest",
+        "separateCatalogQueueAcceptsCompleteScopeWithoutActiveAssessmentsTest",
+        "separateCatalogQueueRefusesActiveAssessmentTest",
+        "separateCatalogQueueRefusesPartialCatalogTest",
         "unrelatedAppendAllowsReceiptTest",
         "verifiedClosureReviewCanBeStagedTest",
         "verifiedEmptyCutTest",

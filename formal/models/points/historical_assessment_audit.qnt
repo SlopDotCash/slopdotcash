@@ -13,6 +13,7 @@
 // @evidence scripts/historical-replay-review.test.ts
 // @evidence scripts/historical-value-replay.test.ts
 // @evidence scripts/leaderboard-source-recovery.test.ts
+// @evidence scripts/reviewed-historical-points.test.ts
 // @source scripts/run-reviewed-historical-points.ts
 // @source .github/workflows/reviewed-historical-points.yml
 // The read-only path reports a conclusion at a fixed journal cut. Completeness
@@ -27,6 +28,7 @@ module historical_assessment_audit {
     legacyRead: int,
     invalid: bool,
     relevant: bool,
+    requireNoActive: bool,
     current: bool,
     status: str,
     reviewAvailable: bool,
@@ -45,6 +47,7 @@ module historical_assessment_audit {
     legacyRead: 0,
     invalid: false,
     relevant: false,
+    requireNoActive: false,
     current: true,
     status: "unsealed",
     reviewAvailable: false,
@@ -54,13 +57,16 @@ module historical_assessment_audit {
     rejectedClosureReview: false,
   }
 
-  action capture(trusted: bool, scoped: bool, apply: bool, joint: int, legacy: int): bool = all {
+  action captureScope(trusted: bool, scoped: bool, apply: bool, joint: int, legacy: int, requireNoActive: bool): bool = all {
     s.phase == "idle",
     trusted,
     scoped,
     not(apply),
-    s' = s.with("phase", "reading").with("jointExpected", joint).with("legacyExpected", legacy),
+    s' = s.with("phase", "reading").with("jointExpected", joint).with("legacyExpected", legacy)
+      .with("requireNoActive", requireNoActive),
   }
+  action capture(trusted: bool, scoped: bool, apply: bool, joint: int, legacy: int): bool =
+    captureScope(trusted, scoped, apply, joint, legacy, false)
 
   action observe(joint: bool, valid: bool, activeInScope: bool): bool = all {
     s.phase == "reading",
@@ -118,6 +124,7 @@ module historical_assessment_audit {
     complete,
     not(s.rejectedClosureReview),
     not(s.rejectedRemovedMerge),
+    not(s.requireNoActive and s.relevant),
     explicit,
     qualified,
     verifiedReadback,
@@ -126,6 +133,7 @@ module historical_assessment_audit {
   action seal = all {
     s.phase == "reading" or s.phase == "staged",
     s.current,
+    s.requireNoActive implies (complete and not(s.relevant)),
     s' = s.with("phase", "sealed").with("reviewAvailable", s.phase == "staged").with(
       "status",
       if (complete and not(s.rejectedClosureReview) and not(s.rejectedRemovedMerge))
@@ -137,6 +145,7 @@ module historical_assessment_audit {
   action step = any {
     capture(true, true, false, 0, 0),
     capture(true, true, false, 1, 1),
+    captureScope(true, true, false, 1, 1, true),
     observe(true, true, true),
     observe(true, true, false),
     observe(true, false, false),
@@ -172,10 +181,23 @@ module historical_assessment_audit {
     s.rejectedClosureReview implies (not(s.reviewAvailable) and s.status != "requires-value-replay"),
     s.rejectedRemovedMerge implies (not(s.reviewAvailable) and s.status != "requires-value-replay"),
     s.retainedRemovedMerge implies (complete and s.relevant),
+    (s.requireNoActive and s.phase == "sealed") implies s.status == "no-scoped-active-assessments",
+    (s.requireNoActive and s.reviewAvailable) implies not(s.relevant),
   }
 
   run verifiedEmptyCutTest = init.then(capture(true, true, false, 0, 0))
     .then(seal).expect(s.status == "no-scoped-active-assessments" and invariant)
+  run separateCatalogQueueAcceptsCompleteScopeWithoutActiveAssessmentsTest = init
+    .then(captureScope(true, true, false, 1, 1, true))
+    .then(observe(true, true, false)).then(observe(false, true, false))
+    .then(stageReview(true, true, true)).then(seal).expect(s.reviewAvailable and invariant)
+  action finishCatalog = any { stageReview(true, true, true), seal }
+  run separateCatalogQueueRefusesActiveAssessmentTest = init
+    .then(captureScope(true, true, false, 1, 0, true)).then(observe(true, true, true))
+    .then(finishCatalog.fail())
+  run separateCatalogQueueRefusesPartialCatalogTest = init
+    .then(captureScope(true, true, false, 1, 1, true)).then(observe(true, true, false))
+    .then(finishCatalog.fail())
   run bothCatalogsRequiredTest = init.then(capture(true, true, false, 1, 1))
     .then(observe(true, true, false)).then(seal).expect(s.status == "incomplete" and invariant)
   run matchedActiveRecordRequiresReplayTest = init.then(capture(true, true, false, 1, 1))
