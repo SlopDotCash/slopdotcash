@@ -14784,7 +14784,7 @@
     },
     {
       "path": "formal/models/fees/standing_deposit.qnt",
-      "sha256": "9638f7676d7f8a155e185c81bee11b17a19a296e626628e1404d0b846c3aa3fc",
+      "sha256": "1908288cf25bdea76682c9976602267e92deedc2669c5d1c924cd14a4eedd7cf",
       "sources": [
         "migrations/0149_standing_deposits.sql",
         "migrations/0150_standing_deposit_merged_authors.sql",
