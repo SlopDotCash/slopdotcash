@@ -677,6 +677,10 @@
   outline: 2px solid currentColor;
   outline-offset: 2px;
 }
+/* An opened case is scrolled to; keep it below the 88px sticky header. */
+.security-case-back {
+  scroll-margin-top: calc(88px + 1rem);
+}
 .security-page h2,
 .security-page h3,
 .security-page h4 {
