@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "46a762a79d92ef4b7c9cf9de0239c35295d31a6762e36b8512fc39a9ce212d71",
+  "inventorySha256": "c39e82cdc66f2da830a1929795253df14633d547a5d34aca4f445504e7c0b689",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -284,7 +284,8 @@
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_queue.qnt"
       ],
       "lexicallyUnmentionedValues": ["return", "uphold"],
       "review": "candidate-only"
@@ -298,7 +299,8 @@
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_queue.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -312,49 +314,53 @@
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_queue.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 774,
+      "line": 778,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_queue.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 899,
+      "line": 903,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_queue.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 1040,
+      "line": 1044,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_queue.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -464,6 +470,30 @@
         "formal/models/api/api_private_intake.qnt"
       ],
       "lexicallyUnmentionedValues": ["off", "on"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/operator-queue.ts",
+      "line": 167,
+      "name": "AttemptState",
+      "kind": "string-union",
+      "values": ["complete", "failed", "running", "unavailable"],
+      "models": ["formal/models/api/api_security_queue.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/operator-queue.ts",
+      "line": 175,
+      "name": "reason",
+      "kind": "string-union",
+      "values": ["daily-limit", "none-eligible", "not-started"],
+      "models": ["formal/models/api/api_security_queue.qnt"],
+      "lexicallyUnmentionedValues": [
+        "daily-limit",
+        "none-eligible",
+        "not-started"
+      ],
       "review": "candidate-only"
     },
     {

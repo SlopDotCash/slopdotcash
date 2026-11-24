@@ -331,6 +331,54 @@ The fixture tests prove the controls, not the model. The release qualifies
 the routine call with the real provider
 (`scripts/qualify-security-routine.ts`).
 
+## Operator analysis retry and queue counts
+
+A report's automatic analysis runs behind the request that filed it with
+`BACKGROUND_ANALYSIS_TIMEOUT_MS` (25 seconds, because Cloudflare stops
+`waitUntil` work about 30 seconds after the response) and is never retried
+by itself; only an owner pressing Analyze runs it again, with
+`ANALYSIS_TIMEOUT_MS` (120 seconds). `/api/v1/operator/security-queue`
+(`operator-queue.ts`; PRD section 8, operator decision of 24 November 2026)
+lets one operator job see the queue and retry those analyses with the full
+limit. It answers only a request with
+`Authorization: Bearer <OPERATOR_FEED_TOKEN>`, compared in constant time by
+the same check as the reserved-awards feed (`backend/payments/README.md`);
+while the Pages secret is unset, shorter than 32 characters, or the token is
+missing or wrong, the API returns its ordinary not-found answer. Other
+methods with the right token answer 405, as the other operator routes do.
+Every answer has `cache-control: no-store`.
+
+"Open" means a verified case with `receipt_state` `received` or `triaging`
+that does not wait for its deposit (`report-deposit-hold.ts`).
+`needs-information` waits on the reporter and every other state records a
+decision, so neither counts.
+
+`GET` answers
+`{"schema":"slop-security-queue-v1","generatedAt":...,"projects":[...]}`,
+one row per project with an open report: `projectId`, `open`,
+`withoutAnalysis` (open reports the owner's Analyze would accept with no
+attempt for the current report version), `analysisFailed` (the same, with a
+latest attempt that failed, was unavailable, or is still `running` after 15
+minutes), `undecidedOver7Days` and `oldestOpenAt`. It never carries a case
+id, a reporter, report text or an advisory id.
+
+`POST` (any body is ignored) runs at most one analysis inside the request,
+with `ANALYSIS_TIMEOUT_MS`, through `runCaseAnalysis`. It takes the oldest
+open report that `analysisMayStart` accepts and that does not wait for its
+deposit (both read again just before the run), with fewer than four attempts
+for its current report version and no attempt started in the last 30
+minutes. It starts nothing once 150 attempts of any origin started in the
+current UTC day. Answers:
+
+- `{"ran":true,"state":"complete"|"failed"|"unavailable","remainingEligible":N}`
+- `{"ran":false,"reason":"daily-limit"}`
+- `{"ran":false,"reason":"none-eligible"}`
+- `{"ran":false,"reason":"not-started"}`: the chosen report changed, or
+  another caller claimed the same attempt first (the attempt row's primary
+  key makes the claim run once).
+
+The analysis stays advisory, exactly as from the owner's Analyze.
+
 ## Report deposit
 
 PRD section 8, "Report deposit", operator decision of 21 November 2026
