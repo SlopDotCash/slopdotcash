@@ -1,0 +1,14 @@
+{"timestamp": "2026-11-23T10:00:00Z", "type": "session_meta", "payload": {"id": "x", "cwd": "{{REPO}}"}}
+{"timestamp": "2026-11-23T10:00:01Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "EARLY-EVENT before the marker"}]}}
+{"timestamp": "2026-11-23T10:00:02Z", "type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{\"command\": [\"node\", \"run-receipt.mjs\", \"start\"]}", "call_id": "c0"}}
+{"timestamp": "2026-11-23T10:00:03Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "c0", "output": "Project run started.\nslop-run:run-abc123"}}
+{"timestamp": "2026-11-23T10:00:04Z", "type": "turn_context", "payload": {"cwd": "{{REPO}}", "model": "TURN-CONTEXT-BODY"}}
+{"timestamp": "2026-11-23T10:00:05Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [{"type": "summary_text", "text": "SECRET-REASONING"}], "encrypted_content": "ENC"}}
+{"timestamp": "2026-11-23T10:00:06Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "EVENT-MSG-BODY"}}
+{"timestamp": "2026-11-23T10:00:07Z", "type": "response_item", "payload": {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "DEVELOPER-PROMPT"}]}}
+{"timestamp": "2026-11-23T10:00:08Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>ENV-CONTEXT</environment_context>"}]}}
+{"timestamp": "2026-11-23T10:00:09Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Please fix the bug"}]}}
+{"timestamp": "2026-11-23T10:00:10Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "On it"}], "newField": "LEAK-ME"}}
+{"timestamp": "2026-11-23T10:00:11Z", "type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{\"command\": [\"cat\", \"src/a.ts\"]}", "call_id": "c1"}}
+{"timestamp": "2026-11-23T10:00:12Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "c1", "output": [{"type": "input_text", "text": "export const a = 1;"}]}}
+{"timestamp": "2026-11-23T10:00:13Z", "type": "future-thing", "payload": {"data": "FUTURE-BODY"}}
