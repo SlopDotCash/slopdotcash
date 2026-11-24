@@ -165,8 +165,8 @@ function api() {
     expect(stored.status).toBe(201);
     return runId;
   };
-  /** The licensing setting and its account history, as Task 3 writes them. */
-  const setting = (enabled: boolean) => {
+  /** The licensing setting and its account history, as the handler writes them. */
+  const setting = (enabled: boolean, termsVersion = "private-trace-v2") => {
     const at = new Date(now).toISOString();
     sqlite
       .query(
@@ -179,9 +179,14 @@ function api() {
       sqlite
         .query(
           `INSERT INTO trace_licensing_events (github_id, kind, terms_version, at)
-           VALUES (?, ?, 'private-trace-v2', ?) RETURNING id`,
+           VALUES (?, ?, ?, ?) RETURNING id`,
         )
-        .get(ACTOR, enabled ? "enabled" : "disabled", at) as never,
+        .get(
+          ACTOR,
+          enabled ? "enabled" : "disabled",
+          termsVersion,
+          at,
+        ) as never,
     );
   };
   return {
@@ -356,12 +361,89 @@ describe("trace terms version and upload licence", () => {
   test("invalid termsVersion is 400", async () => {
     const t = api();
     const runId = await t.createRun();
-    for (const value of ["private-trace-v3", "", 2, null]) {
+    for (const value of ["private-trace-v4", "", 2, null]) {
       const refused = await t.intent(runId, value);
       expect(refused.status).toBe(400);
       expect(refused.json.error).toBe("invalid_request");
     }
     expect(t.version(runId)).toBeNull();
+  });
+
+  test("intent accepts private-trace-v3", async () => {
+    const t = api();
+    const runId = await t.createRun();
+    const accepted = await t.intent(runId, "private-trace-v3");
+    expect(accepted.status).toBe(201);
+    expect(t.version(runId)).toBe("private-trace-v3");
+  });
+
+  test("v3 upload is licensed only when the setting was enabled under v3", async () => {
+    const t = api();
+    t.setting(true, "private-trace-v3");
+    const latestEnabled = enabledEventId(t);
+    t.advance(1000);
+    const runId = await t.uploaded("private-trace-v3");
+    t.advance(1000);
+    const at = new Date(T0 + 2000).toISOString();
+    expect((await t.finalize(runId)).status).toBe(200);
+    expect(t.version(runId)).toBe("private-trace-v3");
+    expect(t.licences(runId)).toEqual([
+      {
+        run_id: runId,
+        github_id: ACTOR,
+        state: "licensed",
+        basis: "upload",
+        updated_at: at,
+      },
+    ]);
+    expect(t.events(runId)).toEqual([
+      {
+        run_id: runId,
+        github_id: ACTOR,
+        kind: "granted",
+        reason: "upload",
+        account_event_id: latestEnabled,
+        at,
+      },
+    ]);
+  });
+
+  test("v2-era enable does not license v3", async () => {
+    const t = api();
+    t.setting(true, "private-trace-v2");
+    const runId = await t.uploaded("private-trace-v3");
+    expect((await t.finalize(runId)).status).toBe(200);
+    expect(t.version(runId)).toBe("private-trace-v3");
+    expect(t.licences(runId)).toEqual([]);
+    expect(t.events(runId)).toEqual([]);
+  });
+
+  test("a v3 enable that was later turned off does not license v3", async () => {
+    const t = api();
+    t.setting(true, "private-trace-v3");
+    t.advance(1000);
+    t.setting(false, "private-trace-v3");
+    const runId = await t.uploaded("private-trace-v3");
+    expect((await t.finalize(runId)).status).toBe(200);
+    expect(t.licences(runId)).toEqual([]);
+    expect(t.events(runId)).toEqual([]);
+  });
+
+  test("v2 upload still licensed under a v2 enable", async () => {
+    const t = api();
+    t.setting(true, "private-trace-v2");
+    const runId = await t.uploaded("private-trace-v2");
+    expect((await t.finalize(runId)).status).toBe(200);
+    expect(t.licences(runId)).toHaveLength(1);
+    expect(t.events(runId)).toHaveLength(1);
+  });
+
+  test("v2 upload is licensed under a v3 enable", async () => {
+    const t = api();
+    t.setting(true, "private-trace-v3");
+    const runId = await t.uploaded("private-trace-v2");
+    expect((await t.finalize(runId)).status).toBe(200);
+    expect(t.licences(runId)).toHaveLength(1);
   });
 
   test("finalizing twice adds no second event", async () => {

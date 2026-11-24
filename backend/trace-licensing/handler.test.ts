@@ -219,6 +219,7 @@ test("the trace list starts off, newest first, with totals and pull request link
     enabled: false,
     since: null,
     providerTermsConfirmed: false,
+    confirmedTermsVersion: null,
   });
   expect(response.body.totals).toEqual({
     traces: 3,
@@ -305,6 +306,7 @@ test("turning on records the setting and one account event", async () => {
     enabled: true,
     since: NOW,
     providerTermsConfirmed: true,
+    confirmedTermsVersion: "private-trace-v3",
   });
   expect(response.body.withdrawn).toBe(0);
   expect(
@@ -317,7 +319,7 @@ test("turning on records the setting and one account event", async () => {
     {
       github_id: ALICE,
       kind: "enabled",
-      terms_version: "private-trace-v2",
+      terms_version: "private-trace-v3",
       affected_count: 0,
       at: NOW,
     },
@@ -337,6 +339,7 @@ test("turning on twice or off twice is idempotent and writes no extra history", 
     enabled: true,
     since: NOW,
     providerTermsConfirmed: true,
+    confirmedTermsVersion: "private-trace-v3",
   });
   expect(h.history()).toEqual({ account: 2, licence: 1 });
 
@@ -358,6 +361,7 @@ test("turning on twice or off twice is idempotent and writes no extra history", 
     enabled: false,
     since: null,
     providerTermsConfirmed: false,
+    confirmedTermsVersion: null,
   });
   expect(h.history()).toEqual({ account: 3, licence: 2 });
 });
@@ -379,6 +383,7 @@ test("turning off withdraws every licensed trace with one event each", async () 
     enabled: false,
     since: null,
     providerTermsConfirmed: true,
+    confirmedTermsVersion: null,
   });
   // Only Alice's two licences; Bob's stays licensed.
   expect(off.body.withdrawn).toBe(2);
@@ -458,7 +463,7 @@ test("opting in chosen traces licenses them with one account event and one event
     )
     .get() as { id: number; affected_count: number; terms_version: string };
   expect(event.affected_count).toBe(2);
-  expect(event.terms_version).toBe("private-trace-v2");
+  expect(event.terms_version).toBe("private-trace-v3");
   expect(
     h.sqlite
       .query(
@@ -705,8 +710,147 @@ test("turning on while already on needs no confirmation and writes nothing", asy
       enabled: true,
       since: NOW,
       providerTermsConfirmed: true,
+      confirmedTermsVersion: "private-trace-v3",
     });
   }
+  expect(h.history()).toEqual({ account: 1, licence: 0 });
+});
+
+test("a setting turned on under v2 is confirmed again under v3", async () => {
+  const h = await harness();
+  const a = h.run(ALICE);
+  const V2_AT = "2026-11-21T00:00:00.000Z";
+  // Turned on and one trace opted in under v2, as the v2 handler wrote it.
+  h.sqlite
+    .query(
+      `INSERT INTO trace_licensing_settings (github_id, enabled, provider_terms_confirmed, changed_at)
+       VALUES (?, 1, 1, ?)`,
+    )
+    .run(ALICE, V2_AT);
+  h.sqlite
+    .query(
+      `INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at)
+       VALUES (?, 'enabled', 'private-trace-v2', 0, ?)`,
+    )
+    .run(ALICE, V2_AT);
+  h.sqlite
+    .query(
+      `INSERT INTO trace_licences (run_id, github_id, state, basis, updated_at)
+       VALUES (?, ?, 'licensed', 'opt_in', ?)`,
+    )
+    .run(a, ALICE, V2_AT);
+  const before = await h.get(ALICE);
+  expect(before.body.setting).toEqual({
+    enabled: true,
+    since: V2_AT,
+    providerTermsConfirmed: true,
+    confirmedTermsVersion: "private-trace-v2",
+  });
+  // Without the tick the v3 confirmation is refused and nothing is written.
+  for (const body of [
+    { enabled: true },
+    { enabled: true, providerTermsConfirmed: false },
+  ]) {
+    const refused = await h.setting(ALICE, body);
+    expect(refused.status).toBe(422);
+    expect(refused.body.error).toBe("provider_terms_unconfirmed");
+  }
+  expect(h.history()).toEqual({ account: 1, licence: 0 });
+  const confirmed = await h.setting(ALICE, ENABLE);
+  expect(confirmed.status).toBe(200);
+  expect(confirmed.body).toEqual({
+    setting: {
+      enabled: true,
+      since: V2_AT,
+      providerTermsConfirmed: true,
+      confirmedTermsVersion: "private-trace-v3",
+    },
+    withdrawn: 0,
+  });
+  expect(
+    h.sqlite
+      .query(
+        "SELECT kind, terms_version, at FROM trace_licensing_events ORDER BY id",
+      )
+      .all(),
+  ).toEqual([
+    { kind: "enabled", terms_version: "private-trace-v2", at: V2_AT },
+    { kind: "enabled", terms_version: "private-trace-v3", at: NOW },
+  ]);
+  // The confirmation touches no licence, and a repeat writes nothing.
+  expect(
+    h.sqlite.query("SELECT run_id, state FROM trace_licences").all(),
+  ).toEqual([{ run_id: a, state: "licensed" }]);
+  h.tick();
+  expect((await h.setting(ALICE, ENABLE)).status).toBe(200);
+  expect(h.history()).toEqual({ account: 2, licence: 0 });
+});
+
+test("a v3 trace is not licensed by a setting last confirmed under v2", async () => {
+  const h = await harness();
+  const v2 = h.run(ALICE);
+  const v3 = h.run(ALICE, { termsVersion: "private-trace-v3" });
+  const V2_AT = "2026-11-21T00:00:00.000Z";
+  h.sqlite
+    .query(
+      `INSERT INTO trace_licensing_settings (github_id, enabled, provider_terms_confirmed, changed_at)
+       VALUES (?, 1, 1, ?)`,
+    )
+    .run(ALICE, V2_AT);
+  h.sqlite
+    .query(
+      `INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at)
+       VALUES (?, 'enabled', 'private-trace-v2', 0, ?)`,
+    )
+    .run(ALICE, V2_AT);
+  // A chosen v3 run, alone or beside a v2 run, needs the v3 confirmation.
+  for (const runIds of [[v3], [v2, v3]]) {
+    const refused = await h.optIn(ALICE, { runIds });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("confirm_again");
+  }
+  expect(h.history()).toEqual({ account: 1, licence: 0 });
+  expect(h.count("SELECT count(*) AS n FROM trace_licences")).toBe(0);
+  // "License all" leaves the v3 run out until the confirmation.
+  const all = await h.optIn(ALICE, { all: true, expectedCount: 1 });
+  expect(all.status).toBe(200);
+  expect(all.body).toEqual({ licensed: 1 });
+  expect(
+    h.sqlite.query("SELECT run_id FROM trace_licences ORDER BY run_id").all(),
+  ).toEqual([{ run_id: v2 }]);
+  // The v2 run alone is still licensable by choice; after the confirmation
+  // the v3 run is too.
+  h.tick();
+  expect((await h.setting(ALICE, ENABLE)).status).toBe(200);
+  h.tick();
+  const chosen = await h.optIn(ALICE, { runIds: [v3] });
+  expect(chosen.status).toBe(200);
+  expect(chosen.body).toEqual({ licensed: 1 });
+});
+
+test("a banned account cannot confirm again under v3", async () => {
+  const h = await harness();
+  h.sqlite
+    .query(
+      `INSERT INTO trace_licensing_settings (github_id, enabled, provider_terms_confirmed, changed_at)
+       VALUES (?, 1, 1, ?)`,
+    )
+    .run(ALICE, NOW);
+  h.sqlite
+    .query(
+      `INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at)
+       VALUES (?, 'enabled', 'private-trace-v2', 0, ?)`,
+    )
+    .run(ALICE, NOW);
+  seedParticipationBan(
+    h.sqlite,
+    { githubId: ALICE, githubLogin: "alice-gh" },
+    { githubId: "900000999", githubLogin: "admin" },
+    NOW,
+  );
+  const refused = await h.setting(ALICE, ENABLE);
+  expect(refused.status).toBe(403);
+  expect(refused.body.error).toBe("participation_banned");
   expect(h.history()).toEqual({ account: 1, licence: 0 });
 });
 

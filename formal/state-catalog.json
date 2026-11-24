@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "66228392c8789f7a97a35b3a4dc73450719ba8cb03dd328ee0629567ca5cf590",
+  "inventorySha256": "51b9d68074e174ee54e36798e47f8b82c57ac064838a1cc22734618bbf41a346",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2358,6 +2358,20 @@
       "values": ["clear", "pending", "strike", "watch"],
       "models": ["formal/models/fees/standing_deposit.qnt"],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0151_trace_terms_v3.sql",
+      "line": 61,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["awaiting_trace", "finalized", "trace_uploaded"],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
+      "lexicallyUnmentionedValues": [
+        "awaiting_trace",
+        "finalized",
+        "trace_uploaded"
+      ],
       "review": "candidate-only"
     },
     {
