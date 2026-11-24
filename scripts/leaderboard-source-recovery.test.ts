@@ -15,6 +15,7 @@ import {
   appendPointAwards,
   applyPointsSnapshot,
   awardForScore,
+  emptyPointsJournal,
   latestPoints,
   type PointsJournal,
   pointKey,
@@ -34,6 +35,8 @@ import {
   collectSearchReferences,
   type GenerateOptions,
   GitHubGraphqlClient,
+  type GraphqlExecutor,
+  generateHistoricalLeaderboardFromGitHub,
   generateLeaderboardFromGitHub,
   implementationDigestCandidates,
   JOINT_SOURCE_CONFIRMATION_DELAY_MS,
@@ -55,6 +58,7 @@ import {
   type PullRequestGitFilesInput,
   readPullRequestGitFiles,
 } from "./pull-request-git-files";
+import { HISTORICAL_POINTS_AUDIT_WINDOW } from "./reviewed-historical-points";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -452,6 +456,159 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
       },
     },
   ]),
+});
+
+test("the historical collector checks frozen closed bindings immediately after hydration", async () => {
+  const repositoryNodeId = required(repository.expectedNodeId);
+  const closedAt = "2026-10-10T12:00:00Z";
+  const closed = {
+    ...nodeFor(retained),
+    id: "PR_fixture_closed",
+    number: 88,
+    url: `https://github.com/${repository.id}/pull/88`,
+    state: "CLOSED",
+    mergedAt: null,
+    closedAt,
+    repository: { id: repositoryNodeId, isPrivate: false },
+  };
+  const baseline = emptyPointsJournal(GENERATED_AT);
+  const scope = {
+    projectId: project.id,
+    repository: repository.id,
+    repositoryNodeId,
+    manifestSha256: sha256(JSON.stringify(project)),
+  };
+  const audit = {
+    repository: repository.id,
+    repositoryNodeId,
+    ...HISTORICAL_POINTS_AUDIT_WINDOW,
+    sources: [],
+  };
+  const operations: string[] = [];
+  const rateLimit = {
+    cost: 1,
+    consumedDuringRun: 0,
+    limit: 5_000,
+    remaining: 5_000,
+    resetAt: "2026-11-30T00:00:00Z",
+  };
+  const continued = new Error("ordinary collection continued");
+  globalThis.fetch = (async () => {
+    throw new Error("The frozen joint preflight needs no external reads");
+  }) as unknown as typeof fetch;
+  const client: GraphqlExecutor = {
+    getRateLimit: () => rateLimit,
+    getRequestCount: () => operations.length,
+    async execute(query, variables) {
+      if (query.includes("query LeaderboardPreflight")) {
+        operations.push("repository");
+        return {
+          repository: {
+            id: repositoryNodeId,
+            isPrivate: false,
+            updatedAt: closedAt,
+          },
+        };
+      }
+      if (
+        query.includes("query LeaderboardSearchReferences") &&
+        !String(variables?.searchQuery).includes("is:issue")
+      ) {
+        operations.push("pull search");
+        return { search: { issueCount: 0, ...connection([]) } };
+      }
+      if (query.includes("query LeaderboardPullRequestDetails")) {
+        operations.push("closed hydration");
+        expect(variables?.ids).toEqual([closed.id]);
+        return { nodes: [closed] };
+      }
+      operations.push("ordinary collection");
+      throw continued;
+    },
+  };
+  const recordJson = JSON.stringify({
+    schemaVersion: "slop-work-unit-record:v1",
+    projectId: project.id,
+    sourceDigest: "a".repeat(64),
+    sources: [
+      {
+        repository: repository.id,
+        repositoryNodeId,
+        repositoryDatabaseId: 1,
+        pullRequestNodeId: closed.id,
+        pullRequestNumber: closed.number,
+        headSha: closed.headRefOid,
+        mergeSha: null,
+        policySha: "b".repeat(40),
+        sourceDigest: "c".repeat(64),
+        occurredAt: closedAt,
+      },
+    ],
+    claims: [],
+    units: [],
+    supersedes: [],
+    legacyPredecessors: [],
+    producerRevision: "d".repeat(40),
+    assessedAt: GENERATED_AT,
+    revisionReason: null,
+  });
+  const digest = sha256(recordJson);
+  const row = {
+    sequence: 1,
+    record_digest: digest,
+    record_json: recordJson,
+    recorded_at: GENERATED_AT,
+    project_id: project.id,
+    source_digest: "a".repeat(64),
+    source_keys_json: JSON.stringify([[repositoryNodeId, closed.id]]),
+  };
+  const run = (joint: (typeof row)[]) =>
+    generateHistoricalLeaderboardFromGitHub(
+      client,
+      {
+        scope,
+        audit,
+        baseline,
+        catalog: {
+          heads: {
+            legacyThrough: 0,
+            jointThrough: joint.length,
+            legacyRepoCount: 0,
+            jointScopedCount: joint.length,
+            d1PointsDigest: sha256(JSON.stringify(baseline)),
+            d1PointsCount: 0,
+            enforcementGeneration: 0,
+            registryRevision: 1,
+            registryManifestSha256: scope.manifestSha256,
+          },
+          legacy: [],
+          joint,
+        },
+        closedContexts: new Map([
+          [
+            closed.id,
+            {
+              number: closed.number,
+              digest,
+              headSha: closed.headRefOid,
+              occurredAt: closedAt,
+            },
+          ],
+        ]),
+      },
+      { evidenceToken: "fixture-token" },
+    );
+  const failure = await run([]).catch((error) => error);
+  expect(JSON.parse(JSON.stringify(failure))).toEqual({
+    name: "HistoricalClosedOutcomeError",
+    reason: "lifecycle",
+    check: "approved-context-missing-decision",
+  });
+  expect(operations.at(-1)).toBe("closed hydration");
+  const hydrated = [...operations];
+  operations.length = 0;
+  await expect(run([row])).rejects.toBe(continued);
+  expect(operations).toEqual([...hydrated, "ordinary collection"]);
 });
 test("only a complete changed single-commit submission can have an empty acceptance marker", () => {
   const tree = { oid: "1".repeat(40) };
