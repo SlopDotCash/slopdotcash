@@ -713,7 +713,7 @@ const backlog = pool("j4-backlog", 1446, "300000000", "$300");
 const wantedIssue = { number: 7, title: "Fix the build cache", url: `https://github.com/${steward.login}/${capped.id}/issues/7`, openPullRequests: 0 };
 
 async function observed(project: Listed, openOutside: number, wanted: ReadonlyArray<typeof wantedIssue> | null, waitingOutside = 0, at: string | null = null) {
-  const now = at ??  new Date().toISOString();
+  const now = at ?? new Date().toISOString();
   const label = wanted === null ? null : wantedLabelName;
   await site.sql(
     "INSERT OR REPLACE INTO repository_merge_activity(project_id,repository,observed_at,attempted_at,failure,last_merged_at,waiting_outside,waiting_capped,merged_outside_30d,median_merge_hours,open_outside,open_outside_capped,wanted_label,wanted_issues,wanted_label_ready) VALUES(?,?,?,?,NULL,?,?,0,1,30,?,0,?,?,?)",
