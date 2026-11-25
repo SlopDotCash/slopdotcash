@@ -680,6 +680,14 @@ jobs:
       - name: Publish the global skills, discovery index and sitemap
         run: node apps/contributor/dist/programs/main.js site --out "$BUNDLE/site" --registry "$BUNDLE/registry/snapshot.json"
 
+      # Every release rebuilds /data/record.json. The rebuild never fails the
+      # release, and pull requests skip it.
+      - name: Rebuild the public record
+        run: node scripts/record/build-record.mjs --out "$BUNDLE/site/data/record.json"
+        env:
+          SLOP_RECORD_BUILD: ${{ github.event_name != 'pull_request' && '1' || '0' }}
+          SLOP_RECORD_GITHUB_TOKEN: ${{ github.event_name != 'pull_request' && github.token || '' }}
+
       - name: Bind the release manifest
         id: manifest
         run: |
