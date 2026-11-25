@@ -241,3 +241,52 @@ immutable; and finalization fails unless the object is attached. Failed
 export, upload, finalization, or receipt joins do not block GitHub submission.
 Usage and traces never change Points, rank, share, or the payment of a
 contribution.
+
+
+## Private trace privacy contract v3
+
+This section is version 3 of the content and privacy contract for a Slop private trace (operator decision, 23 November 2026). It adds session export and the rule that repository file contents are kept only for openly licensed repositories. Version 2 above stays published unchanged at /protocol/private-trace-v2.md and keeps governing every trace uploaded under it. Version 1 stays published unchanged at /protocol/private-trace-v1.md and keeps governing every trace uploaded under it. A trace is governed by the version its uploading client showed.
+
+### Status
+
+Licensing under this version follows the same setting as version 2, with one change: a setting confirmed under version 2 does not cover a trace uploaded under version 3. Upload licence and opt-in refuse with `confirm_again` until the contributor confirms again under version 3, and the account page asks to confirm again. A banned account cannot confirm under version 3. The skills still offer upload under version 1 and version 2. This section takes effect for a trace only when a client shows it before upload, and licensing takes effect only when the account setting described below exists, the contributor turns it on, and the contributor has confirmed again under version 3.
+
+### Consent and default upload
+
+Version 3 keeps the consent and default upload rules of version 2. The client shows the terms version with the file's digest before sending it, and the same client that produced the trace is the one that has the trace. The content is uploaded by default, as soon as the client has the trace, and the contributor may opt out before or after the content is collected. The same consent requirement also applies to session export: the exporter cleans the session locally, the contributor reviews the cleaned file, and only the cleaned file is uploaded.
+
+### Session export
+
+The contributor skill exports a cleaned agent session under this version. It finds the session file by the `slop-run:<id>` marker, cleans it locally with cleaner `slop-session-cleaner-1`, and writes the cleaned file for the contributor to review before upload. Repository file contents are kept only when the repository licence is an OSI licence. A read result leaves the machine only when the repository is openly licensed and the file is inside the repository and tracked, or when a name-only command names only paths inside the repository. An event naming a path outside the repository is replaced whole. Any other outcome is a redaction marker. The cleaned file is tagged with terms version `private-trace-v3`, and the run records that version in D1.
+
+### Licensing for pay
+
+Version 3 keeps the licensing for pay rules of version 2, with the confirm-again rule of the Status section above. Only a trace joined to a merged or closed pull request whose outcome Slop has recorded may be offered under a paid licence. A trace that is not joined to a merged or closed pull request cannot be licensed or sold. If a trace is ever licensed, its written licence will forbid re-identifying any person from the trace, building a personal profile from it, and reselling it on its own. Any buyer will buy one trace only, and the contributor whose work it is receives 50% of what the buyer pays for a sale, split evenly across the traces in the sale. By turning licensing on, the contributor confirms that the terms of the model provider used in each trace allow that trace to be licensed on those terms, and the contributor confirms again under version 3 for every trace uploaded under version 3. Before any trace leaves Slop, Slop scans it for credentials and holds back every trace that matches. Slop may publish counts and rates computed from traces uploaded under this version, and from versions 1 and 2.
+
+### Required scope and permitted records
+
+Version 3 keeps the scope and permitted records of version 2, with one addition: the terms version of the trace is a permitted record, stored on the run in D1, so that a trace is always governed by the version its uploading client showed. A session export carries the same scope: it keeps only what the export cleaner allows out, and the cleaned file the contributor reviewed is the record that is uploaded.
+
+### Required exclusions and redaction
+
+Version 3 keeps the exclusions and redaction rules of version 2. The contributor or the client must remove or redact the following from a private trace before it is uploaded, and the session export cleaner does the same locally before the cleaned file is written: credentials of every kind, including passwords, tokens, API keys, private keys and session cookies; anything that could identify a person other than the trace's owner; content from private repositories and projects, except content the owner put into the session itself; messages, files and artifacts unrelated to the work under review; content of files whose read was denied, even when the command line arguments or prompts name those files; source code that an LLM wrote into the session, except the portion of a file that is necessary to understand how the work proceeded; and any other source code unless the repository licence is an OSI licence. A client that redacts automatically must disclose its rules in a way the contributor can read before sending anything, and Slop will not silently change those rules.
+
+### Storage, access, and retention
+
+Version 3 keeps the storage, access and retention rules of version 2. A private trace is stored in D1 and R2 in Slop's Cloudflare account; there is no cross-region replication. Slop's employees and systems do not access the content of a private trace except to fix a bug, to answer a support request from the trace's owner, or when legally compelled. A private trace that no licensing or sale has touched expires after one year. A trace that is licensed or sold is kept for the duration of the licence.
+
+### Integrity requirements
+
+Version 3 keeps the integrity requirements of version 2. A private trace must be authentic, complete, final and consistent: the hash of the uploaded file must match the hash computed by the uploading client, the file must be complete, the file must not change after upload, and the trace's contents must be consistent with the metadata in its manifest.
+
+## Session export
+
+The contributor skill exports a cleaned agent session under trace terms `private-trace-v3`. It finds the session file by the `slop-run:<id>` marker, where `<id>` is the run id, cleans it locally with cleaner `slop-session-cleaner-1`, and writes the cleaned file for the contributor to review before upload. The raw session file never leaves the machine.
+
+### Cleaning rules
+
+A read result leaves the machine only when the repository is openly licensed and the file is inside the repository and tracked, or when a name-only command names only paths inside the repository. A name-only command is `ls`, `tree`, `git status`, `git log` without a patch, `git diff` names, `git branch`, or `find` without actions. Its output of names is kept when every path it names is inside the repository, even when the names include untracked files. An event naming a path outside the repository is replaced whole. Any other outcome is a redaction marker. Repository file contents are kept only when the repository licence is one of the OSI licences listed in `spec/contributor/sessionExport.md`.
+
+### Review and upload
+
+The contributor reviews the cleaned file before it is sent, and the cleaned file is tagged with terms version `private-trace-v3`. The run records that version in D1 through migration `0151_trace_terms_v3.sql`. Redaction is pattern matching, never a guarantee: the exporter discloses its rules and the contributor inspects the cleaned file before authorizing the upload.
