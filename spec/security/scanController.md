@@ -103,6 +103,10 @@ because a change to the list definition changes the published list. An import
 the closure cannot resolve refuses the list:
 `scripts/scanner-inputs.mjs` fails naming the unresolvable import, so the
 deploy step fails and the release publishes no list.
+Generated files under `apps/security/gen/` are not scanner inputs: they do not
+exist on a clean checkout, they are generated from the spec sources that are
+already listed, and a relative import into `gen/` is treated as satisfied by
+those sources.
 
 ### Each release publishes its input list beside the template index
 
