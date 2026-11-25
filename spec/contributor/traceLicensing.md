@@ -1,16 +1,16 @@
 # Trace licensing consent records
 
-Design 2026-11-22, contract version 2 (`private-trace-v2`). A port of main PR #3274 (development copy #3290) for issue #3295. The reference model is `formal/models/api/api_trace_licensing.qnt` on main, cut to contract version 2 here: there is no version 3, no confirm-again rule and no reconfirmation. Version 3 belongs to #3326 (PR #3335) and is not ported here. See [Server-side trace run and progress events](./traceServer.md) and the [private trace privacy contract v2](../../apps/contributor/docs/private-trace-v1.md#private-trace-privacy-contract-v2). The product rule is `docs/slop-product-requirements.md`, § Trace licensing, on main.
+Design 2026-11-22, contract version 2 (`private-trace-v2`). A port of main PR #3274 (development copy #3290) for issue #3295. The reference model is `formal/models/api/api_trace_licensing.qnt` on main, cut to contract version 2 here: the model confirms only under `private-trace-v2`, with no confirm-again rule and no reconfirmation. The `terms_version` CHECKs already admit `private-trace-v3`, so a future v3 confirmation needs no further migration. The confirmation version is the latest enabled event's `terms_version`; the confirm-again refusal is handler work, not modelled here. Version 3 belongs to #3326 (PR #3335) and is not ported here. See [Server-side trace run and progress events](./traceServer.md) and the [private trace privacy contract v2](../../apps/contributor/docs/private-trace-v1.md#private-trace-privacy-contract-v2). The product rule is `docs/slop-product-requirements.md`, § Trace licensing, on main.
 
 A contributor licenses Slop traces for pay. Licensing is a separate yes from uploading: upload alone never licenses a trace, and the setting is off by default. By turning licensing on, the contributor confirms that the terms of the model provider used in each run allow them to license that run's output. The contributor receives 50% of what the buyer pays for a sale, split evenly across the traces in that sale. Only a trace joined to a merged or closed pull request whose outcome Slop has recorded may be offered.
 
-The setting is one row per account. Each trace keeps its own licence and an append-only licence history, and every change to the setting writes an append-only account event in the same batch. Migration `0148_trace_licensing.sql` adds `terms_version` to `trace_runs` (v1 or v2, v1 backfill), `trace_licensing_settings`, `trace_licensing_events`, `trace_licences` and `trace_licence_events`, and the inbox kind `trace_licensing_available`.
+The setting is one row per account. Each trace keeps its own licence and an append-only licence history, and every change to the setting writes an append-only account event in the same batch. Migration `0148_trace_licensing.sql` adds `terms_version` to `trace_runs` (v1, v2 or v3, v1 backfill), `trace_licensing_settings`, `trace_licensing_events`, `trace_licences` and `trace_licence_events`, and the inbox kind `trace_licensing_available`.
 
 Not in this port: the handlers behind the routes, the settings section, the one-time notice and the Dafny proof. They are follow-ups listed in the pull request.
 
 ## Story: the account setting
 
-The setting is off until the contributor turns it on and confirms the provider terms. Turning it on writes an `enabled` account event; turning it off writes a `disabled` account event with the number of licences withdrawn. A flip to the state already in force writes nothing. Enabling is refused when the account is closed or banned. Disabling is allowed for a banned account. The setting shows on or off and the last change.
+The setting is off until the contributor turns it on and confirms the provider terms. Turning it on writes an `enabled` account event, which records the terms version, so the account's confirmation version is the terms version of the latest enabled event; turning it off writes a `disabled` account event with the number of licences withdrawn. A flip to the state already in force writes nothing. Enabling is refused when the account is closed or banned. Disabling is allowed for a banned account. The setting shows on or off and the last change.
 
 ## Story: a licence
 
@@ -22,7 +22,7 @@ Three signed-in routes, declared in `apps/contributor/src/client/licensing.vibe`
 
 - `GET /api/v1/traces/me` lists the account's finalized traces with id, state, terms version and current licence, and the setting.
 - `PUT /api/v1/traces/licensing` flips the setting and confirms the provider terms. It answers with the setting and the number of licences withdrawn. A flip refused inside the batch answers `setting_changed` when the setting moved under the caller.
-- `POST /api/v1/trace-licences` opts traces in, either a chosen list of run ids or every eligible trace with an expected count. It answers with the number licensed. A bulk opt-in whose count moved answers `count_changed`.
+- `POST /api/v1/traces/licences` opts traces in, either a chosen list of run ids or every eligible trace with an expected count. It answers with the number licensed. A bulk opt-in whose count moved answers `count_changed`. The opt-in payload is a discriminated union: a chosen list (`kind: "chosen"`, `runIds`, `expectedCount`) or the whole account (`kind: "all"`); the handler must reject a chosen opt-in with more than MAX_RUN_IDS runIds.
 
 The issue writes the setting route as `/api/v1/trace-licensing`; the shipped path on main is `/api/v1/traces/licensing`, and this port uses the shipped path.
 
@@ -37,6 +37,8 @@ One inbox notice tells every account with at least one finalized trace, not part
 The notifier and the hand-run announce script are follow-ups; the migration already admits the kind.
 
 ## Quint model
+
+### The setting is one row per account
 
 ```quint
 // @source migrations/0148_trace_licensing.sql
@@ -101,31 +103,49 @@ pure def withdrawAll(s: TraceLicensing): TraceLicensing =
   s.with("traces", s.traces.mapValues(t =>
     if (t.lic == 1) t.with("lic", 2).with("ev", 2) else t))
 
+```
+
+### A finalized run keeps one permanent exact trace
+
+```quint
+
 pure def finalize(s: TraceLicensing, i: int, v: int): TraceLicensing =
-  if (not(s.traces.contains(i)) or s.traces.get(i).final) s
+  if (not(s.traces.contains(i)) or s.traces.get(i).final) s.with("wrote", false)
   else if (s.on and not(s.banned) and v == 2)
     s.with("traces", s.traces.set(i, { final: true, v: v, lic: 1, ev: 1, basis: 1 })).with("wrote", false)
   else
     s.with("traces", s.traces.set(i, s.traces.get(i).with("final", true).with("v", v))).with("wrote", false)
 
+```
+
+### Enabling licensing records the setting and withdraws nothing
+
+```quint
+
 pure def enable(s: TraceLicensing): TraceLicensing =
-  if (s.closed or s.banned or s.on) s
+  if (s.closed or s.banned or s.on) s.with("wrote", false)
   else s.with("on", true).with("conf", 2).with("wrote", true)
 
 pure def noopToggle(s: TraceLicensing): TraceLicensing =
-  if (s.closed) s
+  if (s.closed) s.with("wrote", false)
   else s.with("wrote", false)
 
 pure def disable(s: TraceLicensing): TraceLicensing =
-  if (s.closed or not(s.on)) s
+  if (s.closed or not(s.on)) s.with("wrote", false)
   else withdrawAll(s.with("on", false).with("wrote", true))
 
+```
+
+### Opting in licences chosen traces, or the whole account
+
+```quint
+
 pure def optIn(s: TraceLicensing, i: int): TraceLicensing =
-  if (not(s.on) or s.closed or s.banned or not(eligible(s, i))) s
+  if (not(s.on) or s.closed or s.banned or not(eligible(s, i))) s.with("wrote", false)
   else s.with("traces", s.traces.set(i, s.traces.get(i).with("lic", 1).with("ev", 1).with("basis", 2))).with("wrote", true)
 
 pure def optInAll(s: TraceLicensing, expected: int): TraceLicensing =
-  if (not(s.on) or s.closed or s.banned or expected != eligibleCount(s) or expected == 0) s
+  if (not(s.on) or s.closed or s.banned or expected != eligibleCount(s) or expected == 0) s.with("wrote", false)
   else s.with("traces", s.traces.keys().mapBy(i =>
     if (eligible(s, i)) s.traces.get(i).with("lic", 1).with("ev", 1).with("basis", 2) else s.traces.get(i))).with("wrote", true)
 
@@ -134,17 +154,29 @@ pure def optInAll(s: TraceLicensing, expected: int): TraceLicensing =
 // account is closed or banned.
 pure def optInRefused(s: TraceLicensing, expected: int): TraceLicensing = s
 
+```
+
+### Closing an account withdraws every licence and hides the account
+
+```quint
+
 pure def close(s: TraceLicensing): TraceLicensing =
-  if (s.closed) s
+  if (s.closed) s.with("wrote", false)
   else withdrawAll(s.with("closed", true).with("on", false).with("wrote", s.on or licensedCount(s) > 0))
 
 pure def reopen(s: TraceLicensing): TraceLicensing =
-  if (not(s.closed)) s
+  if (not(s.closed)) s.with("wrote", false)
   else s.with("closed", false).with("wrote", false)
 
 pure def ban(s: TraceLicensing): TraceLicensing =
-  if (s.banned) s
+  if (s.banned) s.with("wrote", false)
   else s.with("banned", true).with("wrote", false)
+
+```
+
+### Every licence is backed by a granted event on a finalized trace
+
+```quint
 
 law lawLicenceBacked(s: TraceLicensing): bool =
   s.traces.values().forall(t => t.lic != 1 or (t.ev == 1 and t.final))
@@ -166,12 +198,15 @@ law lawClosedHoldsNothing(s: TraceLicensing): bool =
 
 These samples cover both trace versions, both settings, the ban and the close, and the boundaries where a step writes nothing.
 
+### The samples cover both versions, both settings, the ban and the close
+
 ```quint
 val uploadWhileOnSample = finalize(finalize(enable(empty), 1, 2), 2, 1)
 val turnOffWithdrawsSample = optInRefused(disable(finalize(enable(empty), 1, 2)), 1)
 val closeWithdrawsSample = reopen(close(finalize(enable(empty), 1, 2)))
 val staleCountSample = optInRefused(finalize(finalize(enable(empty), 1, 1), 2, 1), 1)
 val staleCountLicensedSample = optInAll(staleCountSample, 2)
+val staleCountOptInAllSample = optInAll(finalize(finalize(enable(empty), 1, 1), 2, 1), 1)
 val bannedTurnsOffSample = optInRefused(disable(ban(finalize(enable(empty), 1, 2))), 1)
 val banKeepsLicenceSample = ban(finalize(enable(empty), 1, 2))
 val noopWritesNothingSample = noopToggle(enable(empty))
@@ -203,6 +238,10 @@ test staleCountRefusedTest = {
   assert(not(staleCountSample.wrote))
   assert(licensedCount(staleCountLicensedSample) == 2)
   assert(staleCountLicensedSample.wrote)
+}
+test staleCountOptInAllTest = {
+  assert(not(staleCountOptInAllSample.wrote))
+  assert(licensedCount(staleCountOptInAllSample) == 0)
 }
 
 test bannedTurnsOffTest = {
