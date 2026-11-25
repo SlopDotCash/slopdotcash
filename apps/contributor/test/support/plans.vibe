@@ -53,7 +53,9 @@ export const plannedSecurity = Layer.mergeAll(
   } satisfies Clearance.Shape),
 )
 
-schema PlannedCount {
+schema PlannedCount { 
+    readonly waitingOutside: number 
+  readonly lastMergedAt: string | null
   readonly projectId: string
   readonly openOutside: number
   readonly observedAt: string
@@ -76,8 +78,8 @@ export const plannedIntake = Layer.mergeAll(
     counts: () => effect {
       intake.asked += 1
       if (intake.plan.answer === "Fail") throw new RowMismatch({ text: "repository_merge_activity", issue: "the planned count read fails" })
-      const byProject = new Map<string, Array<{ readonly openOutside: number; readonly observedAt: string }>>()
-      for (const { projectId, openOutside, observedAt } of intake.plan.counts) byProject.set(projectId, [...byProject.get(projectId) ?? [], { openOutside, observedAt }])
+      const byProject = new Map<string, Array<{ readonly openOutside: number; readonly observedAt: string; readonly waitingOutside: number; readonly lastMergedAt: string | null }>>()
+      for (const { projectId, openOutside, observedAt, waitingOutside, lastMergedAt } of intake.plan.counts) byProject.set(projectId, [...byProject.get(projectId) ?? [], { openOutside, observedAt, waitingOutside, lastMergedAt }])
       return byProject
     },
   } satisfies IntakeCounts.Shape),
