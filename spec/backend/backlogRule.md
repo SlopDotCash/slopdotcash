@@ -243,11 +243,12 @@ when the steward is an Organization, under the Inbox kind
 `project_revision`, with event keys under `backlog-rule:`:
 `backlog-rule:<project>:preview` once, before 1 December 2026, when the
 project would leave on the current figures;
-`backlog-rule:<project>:dormant-warning` once when dormancy is four days
-away; and one notice each time the project leaves rotation, keyed on the
-reason and the last merge date. The scheduled Slopbot run sends them right
-after it refreshes merge activity; a failure to send never fails that
-read. No notice names a contributor or an amount.
+`backlog-rule:<project>:warn:<last merge>` once when dormancy is four days
+away; and one notice each time the project leaves rotation, keyed as
+`backlog-rule:<project>:out:<reason>:<last merge or none>`. The scheduled
+Slopbot run sends them right after it refreshes merge activity; a failure
+to send never fails that read. The Slopbot sender itself is a later change. 
+No notice names a contributor or an amount.
 
 ```quint
 pure val inboxKind = "project_revision"
@@ -278,7 +279,7 @@ pure val lastStartMonthValues = Set(0, 202611, 202612)
 pure val nowMonthValues = Set(202611, 202612)
 pure val repositoryValues = Set(0, 1)
 pure val historyValues = Set(List(), List(498912))
-pure val keyValues = Set("backlog-rule:example:preview", "backlog-rule:example:dormant-warning", "backlog-rule:example:left:over-limit:498800")
+pure val keyValues = Set("backlog-rule:example:preview", "backlog-rule:example:warn:498800", "backlog-rule:example:out:over-limit:498800")
 pure val byValues = Set(owner, registry, schedule, browserReader, discoveryServer, slopbot)
 pure val weight_storeRead = 3
 pure val weight_startCatchUp = 2
