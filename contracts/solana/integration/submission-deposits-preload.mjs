@@ -36,7 +36,8 @@ export const usdcAuthority = fixtureKey("usdc-mint-and-freeze-authority");
 export const agedMint = fixtureKey("aged-mint").publicKey;
 export const agedPayer = fixtureKey("aged-payer");
 export const agedKept = fixtureKey("aged-kept").publicKey;
-/** Ids far above anything the stage creates, so live deposits never meet them. */
+/** Ids far above anything the stage creates, so live deposits never meet them. The same
+ * numbers serve as the aged payer's nonces. */
 export const AGED_REACHED = 9_000_000_001n;
 export const AGED_EARLY = 9_000_000_002n;
 export const AGED_AMOUNT = 2_000_000n;
@@ -176,17 +177,19 @@ async function main() {
       const [, bump] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("deposit"),
+          agedPayer.publicKey.toBuffer(),
           new BN(id.toString()).toArrayLike(Buffer, "le", 8),
         ],
         programId,
       );
       account(
         label,
-        addresses.deposit(id),
+        addresses.deposit(agedPayer.publicKey, id),
         programId,
         await coder.encode("deposit", {
           id: new BN(id.toString()),
           payer: agedPayer.publicKey,
+          nonce: new BN(id.toString()),
           mint: agedMint,
           keptTo: agedKept,
           item: [...Buffer.alloc(32, 9)],
