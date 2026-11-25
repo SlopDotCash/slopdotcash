@@ -508,7 +508,11 @@ deposit buys a faster or better review.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report
-reads require current case authority and an audit record. Contributor trace
+reads require current case authority and an audit record. A member may create
+one personal read-only key in Settings; sent as a bearer token it is read as
+that member on GET requests for the list or one record of `security-cases` and
+`security-submissions` only, and it can change nothing (operator decision,
+25 November 2026; PRD section 8). Contributor trace
 bodies remain unreadable, except operator export of a licensed trace under
 contract version 2. See PRD sections 8–10.
 
