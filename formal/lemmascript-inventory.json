@@ -15888,7 +15888,7 @@
 {"name":"<ArrowFunction@358>","kind":"ArrowFunction","line":358,"sha256":"c922b60506a7fc4bd9f93ef0c9cc06a7ce8a843710cd3fe445c8f712cf2d091c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@375>","kind":"ArrowFunction","line":375,"sha256":"cead1fdf0fb3d57f4abd1743a56328554d27a803bab535c20fc52da9eb0843a2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/slopbot/value-work-unit-journal.ts","sha256":"d72d1ade9688cd6604d898f58c437fb0a28e2ed8283bf15555659536a1dca9ff","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/slopbot/value-work-unit-journal.ts","sha256":"13f8c3f7ef0ea035a77e234fde76907f1ad94198e669b1f6307c99bcdb30e694","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"prepareWorkUnitRecord","kind":"FunctionDeclaration","line":73,"sha256":"3be9559efce005a2a2a1b6be233d357ff320a5b77343b139cb97c7058ecda312","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
 {"name":"<ArrowFunction@91>","kind":"ArrowFunction","line":91,"sha256":"65db015eaad14bee7c08bf8ec91d16321d6f29482ed5571463602744b3c56bab","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@100>","kind":"ArrowFunction","line":100,"sha256":"4ba86f263cc44c9b7736f31383935097b083f6918f53caa745beae96384dac39","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -15901,7 +15901,7 @@
 {"name":"workUnitAssessmentKey","kind":"FunctionDeclaration","line":206,"sha256":"b9db906e2550754e21a81bd85535c1a109a2d7c47c14ef1006b811ed7d8b0f4b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"appendWorkUnitRecord","kind":"FunctionDeclaration","line":220,"sha256":"41739a3cb548490be6d7c15c0f8318074efb49c99e830ea69fa760dd9c6cca19","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"currentWorkUnitRecord","kind":"FunctionDeclaration","line":276,"sha256":"2815274799710076c67dfaef36ff32fc224aad476d273fd6ebedbc5510c0cd8a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"workUnitHistory","kind":"FunctionDeclaration","line":296,"sha256":"e8fe3923703bab85ad86f7b2a8b4cd1df080819718f59c401956c7537eee9194","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
+{"name":"workUnitHistory","kind":"FunctionDeclaration","line":296,"sha256":"07397ba97b3358750e63f9ccfbefd750d9901f516f16fecf186109b16e4c58ce","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"workers/slopbot/value-work-unit-publication.ts","sha256":"1910b894728224389e8e92cc987ea68adb7ec156a9597836c27856ad79e08924","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"verifyCurrentWorkUnitSource","kind":"FunctionDeclaration","line":43,"sha256":"c23a06fea42a28dee0e0f95c6d876d6ed58dc8147552155c58104954ed48db2a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
