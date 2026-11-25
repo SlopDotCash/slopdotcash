@@ -393,6 +393,16 @@ confirmation, caps, appeals, reopen protection, the seven-day uncertain
 label-only rule and explicit production activation. Fixtures prove controls,
 not actual model qualification (owner decision, 25 October 2026).
 
+Slopbot never merges. A project owner may turn on the `slopbot:ready` label
+(PRD section 5); a person merges a labelled pull request. Pilot on Slop's own
+repository only (operator decision, 25 November 2026): while the repository
+variable `SLOPBOT_AUTO_MERGE` equals `on`, the repository's own
+`ready-auto-merge.yml` workflow, started by hand on `main`, merges a labelled
+pull request into the registered integration branch after re-checking the
+label's origin, the approvals at the exact head commit, the merge state and
+that nothing under `.github/` changed. Never give Slopbot Contents write, never
+add another trigger to that workflow, and never have it run pull request code.
+
 ## Installer and attribution
 
 The public checksum detects corruption only. The trust root of a project
