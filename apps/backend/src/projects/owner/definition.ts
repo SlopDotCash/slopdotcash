@@ -1117,3 +1117,26 @@ export function transitionProblem(previous: unknown, next: unknown, nowIso: stri
     assertCatchUpTransition(previous, next, nowIso);
   });
 }
+
+/**
+ * Records the start of a catch-up pause the owner just started, so the
+ * fourteen-day and once-per-month limits can be checked against it. A pause
+ * that only moves or ends keeps the history the server already recorded.
+ */
+export function applyCatchUpChange(previous: unknown, next: unknown, nowIso: string): unknown {
+  const previousSlopbot = isRecord(previous) && isRecord(previous.slopbot) ? previous.slopbot : undefined;
+  const nextSlopbot = isRecord(next) && isRecord(next.slopbot) ? next.slopbot : undefined;
+  const previousUntil = typeof previousSlopbot?.catchUpUntil === "string" ? previousSlopbot.catchUpUntil : undefined;
+  const nextUntil = typeof nextSlopbot?.catchUpUntil === "string" ? nextSlopbot.catchUpUntil : undefined;
+  if (nextUntil === undefined || nextUntil === previousUntil) return next;
+  if (previousUntil !== undefined && Date.parse(previousUntil) > Date.parse(nowIso)) return next;
+  if (!isRecord(next)) return next;
+  const history = list(nextSlopbot?.catchUpHistory).filter(isRecord);
+  return {
+    ...next,
+    slopbot: {
+      ...nextSlopbot,
+      catchUpHistory: [...history, { startedAt: nowIso }],
+    },
+  };
+}
