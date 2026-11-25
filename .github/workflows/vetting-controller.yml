@@ -100,7 +100,7 @@ jobs:
               continue
             fi
             if [ -z "$released_sha" ]; then
-              released_sha="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/head_sha" --jq .sha)"
+              released_sha="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released" --jq .head_sha)"
             fi
             if [ "$released_sha" != "$head" ]; then
               changed="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/compare/$released_sha...$head" --jq 'if .status == "ahead" and (.files | length) < 300 then [.files[] | .filename, (.previous_filename // empty)] | map(select(test("^(apps/security/|spec/security/|[.]github/workflows/vetting-controller[.]yml$|package[.]json$|pnpm-lock[.]yaml$|scripts/scanner-inputs[.]mjs$)") and (test("^spec/security/") or (test("[.]md$") | not)) and (test("[.]proof[.]dfy$") | not) and (test("(^|/)test/") | not) and (test("[.]test[.]" ) | not))) | length else "out-of-order" end' 2>/dev/null || echo unreadable)"
