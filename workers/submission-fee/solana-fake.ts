@@ -122,6 +122,8 @@ export class FakeSolana {
   readonly history = new Map<string, string[]>();
   readonly mempool = new Map<string, Uint8Array>();
   readonly broadcasts: string[] = [];
+  /** Payer transactions a wallet sent, as raw wire bytes by signature. */
+  readonly wallet = new Map<string, { wire: Uint8Array; failed: boolean }>();
   private nonce = 0n;
 
   constructor(readonly idl: SubmissionDepositsIdl = nonceIdl()) {
@@ -536,6 +538,22 @@ export class FakeSolana {
     return signature;
   }
 
+  /** Finalizes a transaction a payer's wallet signed and sent. */
+  landWallet(wire: Uint8Array, failed = false) {
+    this.slot += 1;
+    this.height += 1;
+    this.time += 1;
+    const signature = solanaBase58(wire.slice(1, 65));
+    this.wallet.set(signature, { wire, failed });
+    this.landed.set(signature, {
+      slot: this.slot,
+      blockTime: this.time,
+      failed,
+      json: {},
+    });
+    return signature;
+  }
+
   private info(address: string) {
     const account =
       address === submissionConfigAddress(this.programId)
@@ -584,8 +602,21 @@ export class FakeSolana {
             err: this.landed.get(signature)?.failed ? { failed: true } : null,
           }),
         );
-      case "getTransaction":
+      case "getTransaction": {
+        const sent = this.wallet.get(params[0] as string);
+        if (sent)
+          return {
+            slot: this.landed.get(params[0] as string)?.slot,
+            transaction: [solanaBase64(sent.wire), "base64"],
+            meta: {
+              err: sent.failed ? { InstructionError: [0, "Custom"] } : null,
+              innerInstructions: [],
+            },
+          };
         return this.landed.get(params[0] as string)?.json ?? null;
+      }
+      case "getBalance":
+        return { context, value: 1_000_000_000 };
       case "getLatestBlockhash":
         return {
           context,
@@ -597,7 +628,13 @@ export class FakeSolana {
       case "simulateTransaction": {
         const wire = solanaBase64Bytes(params[0] as string);
         const { keys, calls } = this.compiled(wire.slice(65));
-        const refused = this.refusal(keys[0], calls);
+        // A payer's own deposit or reclaim: the fixture lets it through.
+        const own = ["deposit", "reclaim"].some((name) =>
+          this.discriminator("instructions", name).every(
+            (byte, index) => calls[0]?.data[index] === byte,
+          ),
+        );
+        const refused = own ? null : this.refusal(keys[0], calls);
         return {
           context,
           value: {

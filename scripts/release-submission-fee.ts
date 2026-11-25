@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
+  isSolanaFeeNetwork,
   SUBMISSION_FEE_CONTRACTS,
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
   SUBMISSION_FEE_START_BLOCKS,
 } from "../src/lib/submission-fee.mjs";
 import {
   parseConfig,
+  parseSolanaMode,
   type SubmissionFeeEnv,
 } from "../workers/submission-fee/config";
 import { DEPOSIT_CRON, RATE_CRON } from "../workers/submission-fee/index";
@@ -30,6 +33,12 @@ const OPTIONAL_SECRETS = [
   "RPC_URL_SUBMISSION_FEE_BASE",
   "RPC_URL_SUBMISSION_FEE_ROBINHOOD",
 ];
+// The Solana ledger's secrets (operator decision, 25 November 2026). They may
+// be installed before Solana is switched on; a Solana mode other than off
+// needs the endpoint, and live needs the resolver seed too.
+const SOLANA_ENDPOINT = "RPC_URL_SUBMISSION_FEE_SOLANA";
+const SOLANA_SEED = "SUBMISSION_FEE_SOLANA_RESOLVER_SEED";
+const SOLANA_SECRETS = [SOLANA_ENDPOINT, SOLANA_SEED];
 
 /**
  * The Worker's keyed chain endpoints, taken from the release's
@@ -81,6 +90,7 @@ export function assertSubmissionFeeRelease(
     contracts: SUBMISSION_FEE_CONTRACTS,
     startBlocks: SUBMISSION_FEE_START_BLOCKS,
   },
+  solanaSwitchedOn: boolean = SUBMISSION_FEE_SOLANA_SWITCHED_ON,
 ): string {
   const database = config.d1_databases;
   const crons = config.triggers?.crons ?? [];
@@ -109,7 +119,10 @@ export function assertSubmissionFeeRelease(
   // A key in the reviewed file would be a published secret.
   if (
     Object.keys(config.vars).some(
-      (name) => name === SECRET || OPTIONAL_SECRETS.includes(name),
+      (name) =>
+        name === SECRET ||
+        OPTIONAL_SECRETS.includes(name) ||
+        SOLANA_SECRETS.includes(name),
     )
   )
     throw new Error("Submission fee secrets must not be in wrangler.toml");
@@ -124,10 +137,42 @@ export function assertSubmissionFeeRelease(
   const mode = (config.vars.SUBMISSION_FEE_MODE ?? "off").trim();
   if (mode !== "off" && mode !== settings.mode)
     throw new Error("Submission fee mode is not recognised");
-  if (mode === "live") {
+  // The Solana ledger has its own switch. The pages offer Solana exactly
+  // while the Worker settles it, and a mode other than off needs the
+  // published program and its secrets.
+  const solanaMode = parseSolanaMode(config.vars);
+  if ((solanaMode === "live") !== solanaSwitchedOn)
+    throw new Error(
+      "SUBMISSION_FEE_SOLANA_MODE live and SUBMISSION_FEE_SOLANA_SWITCHED_ON change together",
+    );
+  if (solanaMode !== "off") {
+    const solana = Object.keys(tables.contracts).filter(isSolanaFeeNetwork);
     if (
-      Object.keys(tables.contracts).length === 0 ||
-      Object.keys(tables.contracts).some(
+      solana.length === 0 ||
+      solana.some(
+        (network) =>
+          !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(
+            tables.contracts[network] ?? "",
+          ) || !Number.isSafeInteger(tables.startBlocks[network]),
+      )
+    )
+      throw new Error(
+        "Submission fee Solana mode needs the program id and its start slot",
+      );
+    const inventory = secretNames();
+    if (
+      !inventory.includes(SOLANA_ENDPOINT) ||
+      (solanaMode === "live" && !inventory.includes(SOLANA_SEED))
+    )
+      throw new Error("Submission fee Solana secret inventory is not ready");
+  }
+  if (mode === "live") {
+    const evm = Object.keys(tables.contracts).filter(
+      (network) => !isSolanaFeeNetwork(network),
+    );
+    if (
+      evm.length === 0 ||
+      evm.some(
         (network) =>
           !/^0x[0-9a-fA-F]{40}$/u.test(tables.contracts[network] ?? "") ||
           !Number.isSafeInteger(tables.startBlocks[network]),
@@ -141,7 +186,10 @@ export function assertSubmissionFeeRelease(
     if (
       !inventory.includes(SECRET) ||
       inventory.some(
-        (name) => name !== SECRET && !OPTIONAL_SECRETS.includes(name),
+        (name) =>
+          name !== SECRET &&
+          !OPTIONAL_SECRETS.includes(name) &&
+          !SOLANA_SECRETS.includes(name),
       )
     )
       throw new Error("Submission fee resolver secret inventory is not ready");

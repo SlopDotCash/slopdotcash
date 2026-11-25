@@ -5,11 +5,13 @@
  *   GET /api/v1/submission-fee/rate
  *   GET /api/v1/submission-fee/items/<repositoryId>/<pullNumber>
  *   GET /api/v1/submission-fee/reports/<caseId>
+ *   POST /api/v1/submission-fee/solana (`solana-pay.ts`; 404 while Solana
+ *     is not offered)
  *
- * All serve stored D1 rows only: the SLOP rate the rate job wrote, the pull
+ * The reads serve stored D1 rows only: the SLOP rate the rate job wrote, the pull
  * request's row Slopbot wrote, the report deposit row the security API wrote
  * (PRD section 8, "Report deposit"), and the payment the submission-fee
- * Worker recorded. None reads a chain or GitHub, and none changes anything.
+ * Worker recorded. No read touches a chain or GitHub, and none changes anything.
  * The report read names no project, reporter, title or report text.
  */
 
@@ -26,6 +28,7 @@ import {
 } from "../../src/lib/submission-fee.mjs";
 import type { D1Database, D1QueryStatement } from "../d1";
 import { apiErrorResponse, json } from "../http";
+import { handleSolanaFeePay, type SolanaFeeDeployment } from "./solana-pay";
 
 type Database = D1Database<D1QueryStatement>;
 
@@ -142,7 +145,15 @@ async function reportDeposit(db: Database, caseId: string) {
 
 export async function handleSubmissionFeeApi(
   request: Request,
-  deps: { db: Database; now?: () => Date },
+  deps: {
+    db: Database;
+    now?: () => Date;
+    /**
+     * The published Solana deployment with a private endpoint, or null while
+     * Solana is not offered. Absent means not offered.
+     */
+    solana?: () => SolanaFeeDeployment | null;
+  },
 ): Promise<Response | null> {
   const { pathname } = new URL(request.url);
   if (
@@ -152,6 +163,17 @@ export async function handleSubmissionFeeApi(
     return null;
   const respond = (status: number, body: unknown) =>
     json(status, body, { cacheControl: CACHE_CONTROL });
+  if (pathname.replace(/\/$/u, "") === `${SUBMISSION_FEE_PATH}/solana`) {
+    try {
+      return await handleSolanaFeePay(request, {
+        db: deps.db,
+        now: deps.now ?? (() => new Date()),
+        deployment: deps.solana ?? (() => null),
+      });
+    } catch (caught) {
+      return apiErrorResponse(caught, { label: "submission fee API failure" });
+    }
+  }
   if (request.method !== "GET" && request.method !== "HEAD")
     return respond(405, { error: "method_not_allowed" });
   const at = (deps.now?.() ?? new Date()).toISOString();

@@ -15,11 +15,13 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
 import {
+  isSolanaFeeNetwork,
   SUBMISSION_FEE_BURN,
   SUBMISSION_FEE_CHAIN_IDS,
   SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_KEPT_TO,
   SUBMISSION_FEE_SLOP_DECIMALS,
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
   SUBMISSION_FEE_STABLE_DECIMALS,
   SUBMISSION_FEE_TOKENS,
   type SubmissionFeeTerms,
@@ -48,6 +50,26 @@ export type FeeWay = {
   kind: "stable" | "slop";
 };
 
+/**
+ * The Solana way to pay (operator decision, 25 November 2026): USDC into the
+ * `slop-submission-deposits` program. Every field equals the published
+ * tables, exactly; base58 is case-sensitive.
+ */
+export type SolanaFeeWay = {
+  network: string;
+  /** The deposit program's id. */
+  programId: string;
+  /** The USDC mint. */
+  token: string;
+  symbol: string;
+  decimals: number;
+  /** Base units to deposit. */
+  amount: string;
+  /** The wallet whose associated token account receives a kept fee. */
+  keptTo: string;
+  kind: "stable";
+};
+
 export type FeeOutcome = "refund_due" | "kept_due" | "refunded" | "kept";
 
 export type FeePayment = {
@@ -71,6 +93,8 @@ export type FeeItem = {
   stableMinor: string;
   askedAt: string;
   due: FeeWay[];
+  /** The Solana way to pay, when it is due and offered; else null. */
+  solana: SolanaFeeWay | null;
   /**
    * True when the record lists SLOP but the published SLOP rate could not be
    * read, so the SLOP amount could not be checked and SLOP is not offered.
@@ -108,6 +132,8 @@ const REPO = /^[A-Za-z0-9._-]{1,100}$/u;
 const NUMBER = /^[1-9][0-9]{0,9}$/u;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
 const HASH = /^0x[0-9a-fA-F]{64}$/u;
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
+const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/u;
 const AMOUNT = /^[1-9][0-9]{0,38}$/u;
 const UINT128_MAX = (1n << 128n) - 1n;
 const OUTCOMES: readonly string[] = [
@@ -288,6 +314,72 @@ function way(
 }
 
 /**
+ * The published Solana way to pay a stablecoin fee, or null while the
+ * program id is not published or Solana is not switched on. It is built from
+ * the tables alone.
+ */
+export function publishedSolanaWay(
+  stableMinor: string,
+  tables: FeeTables = PUBLISHED_FEE_TABLES,
+): SolanaFeeWay | null {
+  if ((tables.solanaOn ?? SUBMISSION_FEE_SOLANA_SWITCHED_ON) !== true)
+    return null;
+  const network = Object.keys(tables.tokens).find(isSolanaFeeNetwork);
+  if (!network) return null;
+  const programId = tables.contracts[network];
+  const token = tables.tokens[network].usdc;
+  const keptTo = tables.keptTo[network];
+  if (
+    typeof programId !== "string" ||
+    !SOLANA_ADDRESS.test(programId) ||
+    typeof token !== "string" ||
+    !SOLANA_ADDRESS.test(token) ||
+    typeof keptTo !== "string" ||
+    !SOLANA_ADDRESS.test(keptTo) ||
+    !validStableFee(stableMinor)
+  )
+    return null;
+  return {
+    network,
+    programId,
+    token,
+    symbol: "USDC",
+    decimals: SUBMISSION_FEE_STABLE_DECIMALS,
+    amount: stableMinor,
+    keptTo,
+    kind: "stable",
+  };
+}
+
+/**
+ * Checks the record's Solana entry against the published way, field by
+ * field and exactly. An entry that differs refuses the whole record.
+ */
+function solanaWay(
+  value: unknown,
+  stableMinor: string,
+  tables: FeeTables,
+): SolanaFeeWay | null {
+  const entry = record(value);
+  const published = publishedSolanaWay(stableMinor, tables);
+  // This page does not offer Solana: the entry is left out, never repaired.
+  if (published === null) return null;
+  if (
+    entry.network !== published.network ||
+    entry.contract !== published.programId ||
+    entry.chainId !== null ||
+    entry.token !== published.token ||
+    entry.keptTo !== published.keptTo ||
+    entry.symbol !== published.symbol ||
+    entry.decimals !== published.decimals ||
+    entry.amount !== stableMinor ||
+    entry.minimumAccepted !== stableMinor
+  )
+    throw new FeeRecordError();
+  return published;
+}
+
+/**
  * A way to pay that this browser tab saved with a wallet request. It is
  * checked against the published tables again before any transaction is read
  * for it; its amount is the one that was reviewed then.
@@ -388,7 +480,17 @@ export function readFeeItem(
   )
     throw new FeeRecordError();
   const stableMinor = body.stableMinor;
-  const listed = body.due.map((entry) => way(entry, stableMinor, tables));
+  const onSolana = (entry: unknown) =>
+    isSolanaFeeNetwork(String((entry as { network?: unknown } | null)?.network));
+  const solanaListed = body.due.filter(onSolana);
+  if (solanaListed.length > 1) throw new FeeRecordError();
+  const solana =
+    solanaListed.length === 1
+      ? solanaWay(solanaListed[0], stableMinor, tables)
+      : null;
+  const listed = body.due
+    .filter((entry) => !onSolana(entry))
+    .map((entry) => way(entry, stableMinor, tables));
   if (
     new Set(
       listed.map((entry) => `${entry.network}:${entry.token.toLowerCase()}`),
@@ -411,7 +513,11 @@ export function readFeeItem(
       throw new FeeRecordError();
     return true;
   });
-  const settled = readFeeSettlement(body, due.length, tables);
+  const settled = readFeeSettlement(
+    body,
+    due.length + solanaListed.length,
+    tables,
+  );
   return {
     repositoryId,
     pullNumber,
@@ -419,6 +525,7 @@ export function readFeeItem(
     stableMinor,
     askedAt: settled.askedAt,
     due,
+    solana,
     slopWithheld: due.length !== listed.length,
     paid: settled.paid,
     outcome: settled.outcome,
@@ -453,7 +560,9 @@ export function readFeeSettlement(
       typeof payment.finalized !== "boolean"
     )
       throw new FeeRecordError();
-    const token = text(payment.token, ADDRESS);
+    // A Solana payment names a mint and a signature, both base58.
+    const solana = isSolanaFeeNetwork(network);
+    const token = text(payment.token, solana ? SOLANA_ADDRESS : ADDRESS);
     paid = {
       at: instant(payment.at),
       network,
@@ -461,7 +570,7 @@ export function readFeeSettlement(
       token,
       ...tokenFacts(network, token, tables),
       amount: text(payment.amount, AMOUNT),
-      transaction: text(payment.transaction, HASH),
+      transaction: text(payment.transaction, solana ? SOLANA_SIGNATURE : HASH),
       finalized: payment.finalized,
     };
   }
@@ -480,7 +589,10 @@ export function readFeeSettlement(
     resolveTransaction:
       body.resolveTransaction === null || body.resolveTransaction === undefined
         ? null
-        : text(body.resolveTransaction, HASH),
+        : text(
+            body.resolveTransaction,
+            paid && isSolanaFeeNetwork(paid.network) ? SOLANA_SIGNATURE : HASH,
+          ),
   };
 }
 
