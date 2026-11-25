@@ -409,3 +409,8 @@ pure val weight_observeOtherRunKey = 2
 pure val weight_finalize = 6
 pure val weight_appendEvent = 8
 ```
+
+
+## Trace licensing
+
+A run records the terms version its uploading client showed, or none when no version was shown. A run finalized under `private-trace-v2` while the account's licensing setting is on, and the account is not banned, gets an upload licence. Migration `0148_trace_licensing.sql` stores the version on the run. The setting, the licences and their append-only history are [Trace licensing consent records](./traceLicensing.md).
