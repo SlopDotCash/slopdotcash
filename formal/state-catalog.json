@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "ce190e137c0c9b9d4e59830931d18a23d1c0b5a2a35eac0eaa3f256f46df107f",
+  "inventorySha256": "8d620e9d17ac2a35050a79ac3875cbd62826d585977fb0197190c3e53752e62d",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -474,21 +474,27 @@
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 170,
+      "line": 172,
       "name": "AttemptState",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
-      "models": ["formal/models/api/api_security_queue.qnt"],
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 178,
+      "line": 180,
       "name": "reason",
       "kind": "string-union",
       "values": ["daily-limit", "none-eligible", "not-started"],
-      "models": ["formal/models/api/api_security_queue.qnt"],
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "daily-limit",
         "none-eligible",
