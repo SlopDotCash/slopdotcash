@@ -2536,7 +2536,7 @@
 {"path":"contracts/solana/programs/slop-escrow/src/token_policy.rs","sha256":"3ef54af0a483a0e463f8763bc554781c4daa1dfee90b42fe9387741f9bd1d79d","language":"rust","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/solana/programs/slop-submission-deposits/src/lib.rs","sha256":"ab23f8089011e139856420338bb423ea8b17b51be66eff31cb5ca57d248f40ee","language":"rust","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/solana/programs/slop-submission-deposits/src/lib.rs","sha256":"ee1344b40f32c190e8d09dd5594400d8e464a8427a9f25d54492ca5f5818ef5d","language":"rust","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/solana/scripts/acceptance-extended.ts","sha256":"85d9ed32a3b9618b2429d8993d1cbb97597a0a4343a63714e5f80ff2152907db","language":"typescript","disposition":"callables-inventoried","functions":[

@@ -1,6 +1,7 @@
 # Submission deposits on Solana: mainnet deployment runbook
 
-Prepared on 20 November 2026. **Nobody has run these steps.** The repository
+Prepared on 20 November 2026, revised on 25 November 2026 (the record's address,
+and four hardened steps: 5, 8 and 9). **Nobody has run these steps.** The repository
 owner signs every transaction in this runbook; no agent and no Slop service
 does. The program is `contracts/solana/programs/slop-submission-deposits`; see
 its [README section](../contracts/solana/README.md#submission-deposits) and the
@@ -41,11 +42,21 @@ the Worker, the pay page and the fee switch each say so.
   role in the program. It can also be the upgrade authority for the minutes
   between deployment and step 9.
 
+In the commands below `$PAYER` and `$UPGRADE_AUTHORITY` are signers: the path of
+a keypair file, or a hardware wallet URL such as `usb://ledger`. The solana CLI
+(checked on 2.3.0: `solana program deploy --help` lists
+`--upgrade-authority <UPGRADE_AUTHORITY_SIGNER>`, and so do `write-buffer
+--buffer-authority` and `set-upgrade-authority --upgrade-authority`) does not
+accept a bare address there, because the authority signs the deployment and its
+own removal. `$UPGRADE_AUTHORITY_PUBKEY` is that signer's address
+(`solana-keygen pubkey "$UPGRADE_AUTHORITY"`), which is what the input file of
+step 6 and the read-backs name.
+
 The reclaim delay is fixed at 30 days by the planner and cannot be changed after
 `initialize`.
 
 What it costs, at the rent rate of 20 November 2026 (check with `solana rent`):
-about 3.02 SOL for the program's own account (432,704 bytes in the local build;
+about 3.02 SOL for the program's own account (433,968 bytes in the local build of 25 November;
 the pinned image's build may differ by a little). That rent can only be
 recovered by closing the program, which needs the upgrade authority, so once
 step 9 is done it is spent for good. About 0.002 SOL for the Config and about
@@ -111,17 +122,26 @@ its keypair; none relies on the CLI's default wallet.
 ## 5. Deploy
 
 ```sh
-solana program write-buffer "$SO" -u "$RPC" --keypair "$PAYER"   # prints BUFFER
+solana program write-buffer "$SO" -u "$RPC" --keypair "$PAYER" \
+  --buffer-authority "$UPGRADE_AUTHORITY"                         # prints BUFFER
 solana program dump "$BUFFER" buffer.so -u "$RPC"
 cmp <(head -c "$(wc -c < "$SO")" buffer.so) "$SO"    # the buffer holds exactly the build
 solana program deploy --program-id ~/slop-submission-deposits-program.json \
   --buffer "$BUFFER" --max-len "$(wc -c < "$SO")" \
   --upgrade-authority "$UPGRADE_AUTHORITY" --keypair "$PAYER" -u "$RPC"
-solana program show "$PROGRAM" -u "$RPC"             # Authority: the upgrade authority
+solana program show "$PROGRAM" -u "$RPC"             # Authority: $UPGRADE_AUTHORITY_PUBKEY
 solana program dump "$PROGRAM" deployed.so -u "$RPC"
 sha256sum deployed.so                                # DEPLOYED_CODE_SHA256
 solana-verify get-program-hash "$PROGRAM" -u "$RPC"  # must equal REVIEWED_EXECUTABLE_HASH
 ```
+
+The buffer is written under the upgrade authority, not under the payer: the
+loader deploys a buffer only when the buffer's authority is the authority that
+signs the deployment, so a buffer written with the payer's default authority is
+refused in the next command unless the two are the same key. `--buffer` takes
+the buffer's address here, because the buffer already exists. `solana program
+show` must print `$UPGRADE_AUTHORITY_PUBKEY` as the authority. If it prints
+anything else, stop: `initialize` can be signed only by the key shown there.
 
 `DEPLOYED_CODE_SHA256` hashes every byte of the program's data account after its
 45-byte header. With `--max-len` equal to the build's size it equals
@@ -204,9 +224,38 @@ in `vault`, the USDC mint, `openTotal` `"0"` and `balance` `"0"`.
 Also confirm in an explorer that the deployment, the `initialize` and the
 `open_vault` transactions moved no tokens.
 
+**Hard stop.** Do not go on to step 9 unless this read-back printed a `config`
+and you compared three values in it, character by character, with what you
+decided in step 1: `owner`, `resolver`, and `reclaimDelaySeconds` equal to
+`2592000`. After step 9 none of this can be repaired by replacing the program.
+
+- No `config`, or an error: `initialize` has not landed. Go back to step 6.
+  Removing the upgrade authority now would end the program for good (step 9).
+- A wrong `owner`, `resolver` or delay: do not remove the authority. Nothing
+  holds tokens yet. The simplest repair is a fresh program address (step 2) and
+  a new deployment; the delay and a lost owner cannot be corrected in place.
+- A read through a different RPC endpoint is a useful second opinion; an RPC
+  failure is not a pass.
+
 ## 9. Remove the upgrade authority
 
 This is the owner's decision from step 1. It cannot be undone.
+
+**Removing the authority before `initialize` has landed kills the program.**
+`initialize` can be signed only by the program's upgrade authority. Once there
+is none, nobody can ever create the Config, no deposit can ever be made, the
+address is spent and so is the program's rent (about 3 SOL). The only way on is
+a new address and a new deployment. So this step starts with two reads, and
+both must pass immediately before the removal, in the same sitting:
+
+```sh
+solana program show "$PROGRAM" -u "$RPC"
+#   Program Id: $PROGRAM, Authority: $UPGRADE_AUTHORITY_PUBKEY (not "none", not another key)
+node scripts/submission-deposits-plan.mjs status deposits-input.json
+#   step 8's hard stop again: config present, owner, resolver, reclaimDelaySeconds 2592000
+```
+
+Only then:
 
 ```sh
 solana program set-upgrade-authority "$PROGRAM" --final \

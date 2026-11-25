@@ -27,6 +27,7 @@ import {
   ata,
   BPF_UPGRADEABLE_LOADER,
   balance,
+  base58,
   chainTime,
   context,
   deposit,
@@ -294,7 +295,7 @@ test("reclaim opens after thirty days and not an hour before", async () => {
   assert.equal(await balance(addresses.vault(agedMint)), 0n);
 });
 
-test("the Worker's reads: finalized accounts by id, and the outcome of a closed deposit from its transaction", async () => {
+test("the Worker's reads: open deposits by a filtered scan, and the outcome of a closed deposit from its transaction", async () => {
   const item = Buffer.alloc(32, 3);
   const open = await deposit({
     from: contributor,
@@ -339,42 +340,75 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
   assert.equal(count, closed.id);
   assert.equal(config.data[120], 0);
 
-  // 2. Every id up to the count, in one read. Present means open; absent means settled.
-  const ids = [];
-  for (let id = 1n; id <= count; id++) ids.push(id);
-  const records = await connection.getMultipleAccountsInfo(
-    ids.map((id) => addresses.deposit(id)),
-    "finalized",
+  // 2. Every open deposit, in one read: the program's accounts that start with the Deposit
+  // discriminator and have its size. No address is computed from the count.
+  const scanned = await connection.getProgramAccounts(programId, {
+    commitment: "finalized",
+    filters: [
+      { dataSize: 169 },
+      {
+        memcmp: {
+          offset: 0,
+          bytes: base58(discriminator("account", "Deposit")),
+        },
+      },
+    ],
+  });
+  const byId = new Map(
+    scanned.map(({ pubkey, account }) => [
+      account.data.readBigUInt64LE(8),
+      { address: pubkey, account },
+    ]),
   );
-  const present = ids.filter((_, index) => records[index] !== null);
+  // Present means open: the fresh deposit of the reclaim test and this one. The deposit
+  // recorded as `closed` is absent, which is how a reader learns it is settled.
+  const present = [...byId.keys()].sort((left, right) => Number(left - right));
   assert.deepEqual(present, [open.id - 1n, open.id]);
-  const data = records[Number(open.id) - 1].data;
+  assert.equal(byId.has(closed.id), false);
   assert.equal(
-    records[Number(open.id) - 1].owner.toBase58(),
-    programId.toBase58(),
+    await connection.getAccountInfo(closed.address, "finalized"),
+    null,
   );
-  assert.equal(data.length, 161);
+  const found = byId.get(open.id);
+  assert.equal(found.address.toBase58(), open.address.toBase58());
+  const data = found.account.data;
+  assert.equal(found.account.owner.toBase58(), programId.toBase58());
+  assert.equal(data.length, 169);
   assert.deepEqual(data.subarray(0, 8), discriminator("account", "Deposit"));
   assert.equal(data.readBigUInt64LE(8), open.id);
   assert.equal(
     new PublicKey(data.subarray(16, 48)).toBase58(),
     contributor.publicKey.toBase58(),
   );
+  assert.equal(data.readBigUInt64LE(48), open.nonce);
   assert.equal(
-    new PublicKey(data.subarray(48, 80)).toBase58(),
+    new PublicKey(data.subarray(56, 88)).toBase58(),
     USDC_MINT.toBase58(),
   );
   assert.equal(
-    new PublicKey(data.subarray(80, 112)).toBase58(),
+    new PublicKey(data.subarray(88, 120)).toBase58(),
     FEE_WALLET.toBase58(),
   );
-  assert.deepEqual(data.subarray(112, 144), item);
-  assert.equal(data.readBigUInt64LE(144), FEE);
-  const depositedAt = Number(data.readBigInt64LE(152));
+  assert.deepEqual(data.subarray(120, 152), item);
+  assert.equal(data.readBigUInt64LE(152), FEE);
+  const depositedAt = Number(data.readBigInt64LE(160));
+  // The address follows from the stored payer, nonce and bump alone.
+  assert.equal(
+    PublicKey.createProgramAddressSync(
+      [
+        Buffer.from("deposit"),
+        data.subarray(16, 48),
+        data.subarray(48, 56),
+        data.subarray(168, 169),
+      ],
+      programId,
+    ).toBase58(),
+    found.address.toBase58(),
+  );
 
   // 3. The creating transaction of the open deposit, and its block time.
   const history = await connection.getSignaturesForAddress(
-    addresses.deposit(open.id),
+    open.address,
     {},
     "finalized",
   );
@@ -399,10 +433,12 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
     new PublicKey(madeData.subarray(48, 80)).toBase58(),
     FEE_WALLET.toBase58(),
   );
+  assert.equal(madeData.readBigUInt64LE(80), open.nonce);
+  assert.equal(madeData.length, 88);
 
   // 4. A settled deposit: the newest transaction on its address says how it ended.
   const [last] = await connection.getSignaturesForAddress(
-    addresses.deposit(closed.id),
+    closed.address,
     { limit: 1 },
     "finalized",
   );
@@ -419,7 +455,7 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
     discriminator("global", "resolve"),
   );
   assert.equal(settledData[8], 1); // refunded
-  note(`finalized read of ${count} ids: open ${present.join(", ")}`);
+  note(`finalized scan, count ${count}: open ${present.join(", ")}`);
 
   // 5. The runbook's read-back of the same finalized state.
   const read = await status(reviewed, await runtime());

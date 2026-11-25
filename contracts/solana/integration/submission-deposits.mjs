@@ -1,6 +1,6 @@
 /** Shared fixture and call helpers of the submission deposit suites. Local validator only. */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import anchor from "@coral-xyz/anchor";
 import {
@@ -55,7 +55,8 @@ export const addresses = {
   config: () => pda("config"),
   ledger: (mint) => pda("ledger", mint.toBuffer()),
   vault: (mint) => pda("vault", mint.toBuffer()),
-  deposit: (id) => pda("deposit", u64(id)),
+  /** A deposit's record: its payer and the number the payer chose. */
+  deposit: (payer, nonce) => pda("deposit", payer.toBuffer(), u64(nonce)),
   programData: () =>
     PublicKey.findProgramAddressSync(
       [programId.toBuffer()],
@@ -172,10 +173,57 @@ export const readConfig = () =>
   program.account.config.fetch(addresses.config(), "confirmed");
 export const readLedger = (mint) =>
   program.account.ledger.fetch(addresses.ledger(mint), "confirmed");
-export const readDeposit = (id) =>
-  program.account.deposit.fetchNullable(addresses.deposit(id), "confirmed");
-export const nextId = async () =>
-  BigInt((await readConfig()).depositCount.toString()) + 1n;
+/** A number the payer has not used: eight random bytes, as the pay page would pick. */
+export const freshNonce = () => randomBytes(8).readBigUInt64LE();
+export const depositDiscriminator = createHash("sha256")
+  .update("account:Deposit")
+  .digest()
+  .subarray(0, 8);
+export const base58 = (bytes) => anchor.utils.bytes.bs58.encode(bytes);
+
+/** Every open deposit, found the way an off-chain reader finds them: the program's accounts
+ * that start with the Deposit discriminator, optionally narrowed to one stored id. */
+export async function openDeposits({ id, commitment = "confirmed" } = {}) {
+  const filters = [
+    { memcmp: { offset: 0, bytes: base58(depositDiscriminator) } },
+  ];
+  if (id !== undefined)
+    filters.push({ memcmp: { offset: 8, bytes: base58(u64(id)) } });
+  const found = await connection.getProgramAccounts(programId, {
+    commitment,
+    filters,
+  });
+  return found.map(({ pubkey, account }) => ({
+    address: pubkey,
+    data: account.data,
+    record: program.coder.accounts.decode("deposit", account.data),
+  }));
+}
+
+/** Addresses of the deposits this process made, by id, so a closed one can still be named. */
+const made = new Map();
+export const depositAt = (id) => {
+  const address = made.get(BigInt(id));
+  assert.ok(address, `deposit ${id} was not made by this process`);
+  return address;
+};
+/** The address of deposit `id`: remembered, or found among the open deposits. */
+export async function locate(id) {
+  const known = made.get(BigInt(id));
+  if (known) return known;
+  const [found] = await openDeposits({ id });
+  return found?.address ?? null;
+}
+/** The open record with this id, or null. A reused address holding another id is not it. */
+export async function readDeposit(id) {
+  const address = await locate(id);
+  if (!address) return null;
+  const record = await program.account.deposit.fetchNullable(
+    address,
+    "confirmed",
+  );
+  return record && BigInt(record.id.toString()) === BigInt(id) ? record : null;
+}
 
 export function initialize({
   authority = payer,
@@ -214,19 +262,23 @@ export function openVault(mint, { funder = payer, accounts = {} } = {}) {
     .rpc();
 }
 
-/** Builder of a deposit. `id` is the id the caller expects to be next. */
+/** Builder of a deposit. `nonce` is the payer's own number for it; a fresh one by default. */
 export async function depositCall({
   from,
   mint,
   amount,
   keptTo,
   item = Buffer.alloc(32, 7),
-  id,
+  nonce = freshNonce(),
   accounts = {},
 }) {
-  const expected = id ?? (await nextId());
   return program.methods
-    .deposit([...item], new BN(amount.toString()), keptTo)
+    .deposit(
+      [...item],
+      new BN(amount.toString()),
+      keptTo,
+      new BN(nonce.toString()),
+    )
     .accountsStrict({
       payer: from.publicKey,
       config: addresses.config(),
@@ -234,7 +286,7 @@ export async function depositCall({
       mint,
       source: ata(from.publicKey, mint),
       vault: addresses.vault(mint),
-      deposit: addresses.deposit(expected),
+      deposit: addresses.deposit(from.publicKey, nonce),
       tokenProgram: TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       ...accounts,
@@ -242,24 +294,37 @@ export async function depositCall({
     .signers([from]);
 }
 
-/** Makes a deposit and returns its id and transaction signature. */
+/** Records a landed deposit: the id the program assigned is read from its event. */
+export async function landed({ from, nonce, signature }) {
+  const event = (await events(signature)).find(
+    (entry) => entry.name === "deposited",
+  );
+  assert.ok(event, "the transaction made no deposit");
+  const id = BigInt(event.data.id.toString());
+  const address = addresses.deposit(from.publicKey, nonce);
+  made.set(id, address);
+  return { id, nonce, address, signature };
+}
+
+/** Makes a deposit and returns its id, nonce, address and transaction signature. */
 export async function deposit(input) {
-  const id = input.id ?? (await nextId());
-  const signature = await (await depositCall({ ...input, id })).rpc();
-  return { id, signature };
+  const nonce = input.nonce ?? freshNonce();
+  const signature = await (await depositCall({ ...input, nonce })).rpc();
+  return landed({ from: input.from, nonce, signature });
 }
 
 /** Builder of a resolve. Defaults follow the recorded deposit, as the Worker would. */
 export async function resolveCall({ resolver, id, refund, accounts = {} }) {
   const record = await readDeposit(id);
   assert.ok(record, `deposit ${id} is not open`);
+  const address = await locate(id);
   const wallet = refund ? record.payer : record.keptTo;
   return program.methods
     .resolve(refund)
     .accountsStrict({
       resolver: resolver.publicKey,
       config: addresses.config(),
-      deposit: addresses.deposit(id),
+      deposit: address,
       ledger: addresses.ledger(record.mint),
       mint: record.mint,
       vault: addresses.vault(record.mint),
@@ -275,12 +340,13 @@ export const resolve = async (input) => (await resolveCall(input)).rpc();
 export async function reclaimCall({ from, id, destination, accounts = {} }) {
   const record = await readDeposit(id);
   assert.ok(record, `deposit ${id} is not open`);
+  const address = await locate(id);
   return program.methods
     .reclaim()
     .accountsStrict({
       payer: from.publicKey,
       config: addresses.config(),
-      deposit: addresses.deposit(id),
+      deposit: address,
       ledger: addresses.ledger(record.mint),
       mint: record.mint,
       vault: addresses.vault(record.mint),
