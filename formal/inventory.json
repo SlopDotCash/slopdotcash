@@ -3958,12 +3958,13 @@
     },
     {
       "path": "scripts/accepted-implementation-memo.ts",
-      "sha256": "0573899f50e20cbf34f628111ea6e481732441a60222676e2487b9ad89b3b221",
+      "sha256": "aba9595b4d35c3374d2b01bc16ec5937fbd1cd6d9a385f81c90d5d8437e0ac27",
       "models": [
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/implementation_memo_audit.qnt",
         "formal/models/points/incremental_collection.qnt"
       ],
-      "candidateLines": [342],
+      "candidateLines": [379, 472, 474],
       "review": "mapped-abstraction"
     },
     {
@@ -4166,11 +4167,14 @@
     },
     {
       "path": "scripts/collection-memo.ts",
-      "sha256": "8460e97e663036b4bc5ddd687e6675d234d518bd49c295b13a713f602341f0ad",
-      "models": ["formal/models/points/incremental_collection.qnt"],
+      "sha256": "c732c37145d9360cd807edc8eba15bca11fd038b239c6c2499bf6c63cfcbb078",
+      "models": [
+        "formal/models/points/implementation_memo_audit.qnt",
+        "formal/models/points/incremental_collection.qnt"
+      ],
       "candidateLines": [
-        65, 91, 259, 264, 270, 452, 454, 455, 458, 473, 481, 486, 517, 528, 561,
-        707
+        65, 102, 128, 296, 301, 307, 489, 491, 492, 495, 510, 518, 523, 563,
+        574, 607, 753
       ],
       "review": "mapped-abstraction"
     },
@@ -4515,7 +4519,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "bed360f257c98fcc43e208f1b2c14ecc5d213bd21f75eb57636cf29cf1470025",
+      "sha256": "5e3d91586deea6aa12663104d1281df4fe8b827aed79bf1dfd979410debf4f8a",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4524,22 +4528,23 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/implementation_memo_audit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        44, 231, 242, 251, 342, 354, 356, 359, 588, 676, 697, 733, 764, 829,
-        876, 904, 995, 1028, 1037, 1049, 1085, 1182, 1378, 1613, 1675, 1683,
-        1741, 1794, 1797, 1990, 1999, 2004, 2011, 2094, 2095, 2261, 2262, 2345,
-        2378, 2389, 2416, 2418, 2422, 2432, 2434, 2446, 2456, 2466, 2491, 2494,
-        2495, 2498, 2500, 2525, 2577, 2882, 2885, 3185, 3305, 3426, 3439, 3450,
-        3451, 3638, 3639, 3830, 3846, 3858, 3865, 3891, 3901, 3905, 3909, 3913,
-        3968, 3987, 4014, 4031, 4065, 4066, 4068, 4084, 4101, 4102, 4103, 4112,
-        4117, 4297, 4655, 4677, 4686, 4736, 4771, 4777, 4784, 4853, 4941, 5127,
-        5258, 5556, 5742, 6094, 6104, 6106, 6119, 6147, 6149, 6150, 6154, 6158,
-        6214, 6280, 6333, 6336, 6425, 6473, 6540, 6550, 6557
+        44, 232, 243, 252, 343, 355, 357, 360, 592, 680, 701, 737, 768, 833,
+        881, 910, 1001, 1034, 1043, 1055, 1091, 1188, 1384, 1619, 1681, 1689,
+        1747, 1800, 1803, 1996, 2005, 2010, 2017, 2100, 2101, 2267, 2268, 2351,
+        2384, 2395, 2422, 2424, 2428, 2438, 2440, 2452, 2462, 2472, 2497, 2500,
+        2501, 2504, 2506, 2531, 2583, 2890, 2893, 3193, 3313, 3434, 3447, 3458,
+        3459, 3646, 3647, 3838, 3854, 3866, 3873, 3899, 3909, 3913, 3917, 3921,
+        3976, 3995, 4022, 4039, 4073, 4074, 4076, 4092, 4109, 4110, 4111, 4120,
+        4125, 4305, 4663, 4685, 4694, 4744, 4779, 4785, 4792, 4861, 4952, 5144,
+        5146, 5212, 5309, 5607, 5793, 6169, 6179, 6181, 6194, 6222, 6224, 6225,
+        6229, 6233, 6289, 6355, 6408, 6411, 6500, 6557, 6632, 6642, 6649
       ],
       "review": "mapped-abstraction"
     },
@@ -5753,9 +5758,9 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "f38f2ba7eafb17a79f3577891aa1b31a7c0d83dfb66f256a5b280ee3a97647a7",
+      "sha256": "8e31f2f210d3cf91f974efd0949baf4670de12db46899469bfd6b17d2b331ac9",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [315, 316],
+      "candidateLines": [317, 318],
       "review": "mapped-abstraction"
     },
     {
@@ -16467,6 +16472,23 @@
         "standaloneAssessmentWithEarlierAcceptanceNeedsJointReviewTest",
         "transportFailureDoesNotBecomeCreditTest",
         "zeroLineWorkWithIndependentPathsCanScoreTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/implementation_memo_audit.qnt",
+      "sha256": "abc8179b25e0a0af7e68db6b47af2edd8d299a4fa872e2fdc4c0e9f2d77dd599",
+      "sources": [
+        "scripts/accepted-implementation-memo.ts",
+        "scripts/collection-memo.ts",
+        "scripts/generate-leaderboard.ts"
+      ],
+      "scenarios": [
+        "auditDifferenceDiscardsEverySavedEntryTest",
+        "changedRulesDiscardsMemoTest",
+        "inconclusiveAuditKeepsSavedEntryTest",
+        "matchingAuditKeepsMemoTest",
+        "missingMemoReadsLiveTest",
+        "savedEntryIsReusedAcrossCodeChangeTest"
       ]
     },
     {

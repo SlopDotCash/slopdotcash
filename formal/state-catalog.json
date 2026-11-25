@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "42cd8b96d26a11bb636f353a873f172a2ad7c533b0839d5e6335d30b3ef543d1",
+  "inventorySha256": "df9221ef7171ecf2d8e07ea2507a67c4d2af17e1f98a87a73f3ac5cbffe7037c",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2423,21 +2423,27 @@
     },
     {
       "path": "scripts/collection-memo.ts",
-      "line": 91,
+      "line": 128,
       "name": "state",
       "kind": "string-union",
       "values": ["CLOSED", "MERGED", "OPEN"],
-      "models": ["formal/models/points/incremental_collection.qnt"],
+      "models": [
+        "formal/models/points/implementation_memo_audit.qnt",
+        "formal/models/points/incremental_collection.qnt"
+      ],
       "lexicallyUnmentionedValues": ["CLOSED", "MERGED", "OPEN"],
       "review": "candidate-only"
     },
     {
       "path": "scripts/collection-memo.ts",
-      "line": 638,
+      "line": 684,
       "name": "CollectionMode",
       "kind": "string-union",
       "values": ["full", "incremental"],
-      "models": ["formal/models/points/incremental_collection.qnt"],
+      "models": [
+        "formal/models/points/implementation_memo_audit.qnt",
+        "formal/models/points/incremental_collection.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -2540,7 +2546,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 286,
+      "line": 287,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2552,6 +2558,7 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/implementation_memo_audit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2562,7 +2569,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 536,
+      "line": 537,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2582,6 +2589,7 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/implementation_memo_audit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2600,7 +2608,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4082,
+      "line": 4090,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2612,6 +2620,7 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/implementation_memo_audit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2622,7 +2631,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4686,
+      "line": 4694,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2634,6 +2643,7 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/implementation_memo_audit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",

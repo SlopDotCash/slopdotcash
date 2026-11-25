@@ -829,7 +829,8 @@ decision, 19 November 2026). Saved commit attributions in the collection memo su
 code changes; a change that could make a saved answer come out differently
 must raise `ATTRIBUTION_RULES_VERSION` in `scripts/collection-memo.ts`, and a
 test pins the rule sources (PRD section 11, operator decision, 24 November
-2026). Every production release requires current main equivalence. Every
+2026). The accepted implementation memo follows the same rule with
+`IMPLEMENTATION_MEMO_RULES_VERSION` (operator decision, 25 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
