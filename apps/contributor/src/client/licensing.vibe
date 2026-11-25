@@ -45,11 +45,11 @@ export schema TraceLicensingChanged {
 export schema TraceLicencesOptInChosen {
   readonly kind: "chosen"
   readonly runIds: ReadonlyArray<string>
-  readonly expectedCount: number
-}
+}  
 
 export schema TraceLicencesOptInAll {
   readonly kind: "all"
+  readonly expectedCount: number
 }
 // The handler enforces the discriminated union: a chosen opt-in with
 // more than MAX_RUN_IDS runIds is rejected. The cap lives in the
