@@ -249,7 +249,8 @@ test("security reports recover a failed list with account-bound private reads", 
       path: "security-submissions",
       expectedActor: route.request().headers()["x-slop-expected-github-id"],
     });
-    return lists === 2
+    // A failed list read is asked once more, so the outage fails both.
+    return lists === 2 || lists === 3
       ? route.fulfill({
           status: 503,
           json: {
@@ -298,7 +299,7 @@ test("security reports recover a failed list with account-bound private reads", 
   ).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
-  expect(lists).toBe(3);
+  expect(lists).toBe(4);
   expect(privateRequests).toEqual(
     expect.arrayContaining([
       { path: "security-cases", expectedActor: "4242" },

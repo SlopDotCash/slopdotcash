@@ -127,8 +127,25 @@ type ApiErrorOptions = {
 };
 
 /**
+ * True when the database refused or lost a query for a reason that passes by
+ * itself: it was overloaded, restarting, importing or unreachable. A failed
+ * statement, such as a constraint or a missing column, is never one of these.
+ */
+export function databaseTemporarilyUnavailable(caught: unknown): boolean {
+  return (
+    caught instanceof Error &&
+    /^D1_[A-Z_]+/u.test(caught.message) &&
+    /overloaded|queued for too long|network connection lost|exceeded timeout|to be reset|D1_RESET_DO|reset because its code was updated|transient issue|long-running import|currently importing/iu.test(
+      caught.message,
+    )
+  );
+}
+
+/**
  * Maps a refusal to its status and code. A server failure is logged under a
- * fixed label and returns "Internal error" unless its message is public.
+ * fixed label and returns "Internal error" unless its message is public. A
+ * database that is temporarily unavailable answers 503 so a client can tell
+ * "try again" from a defect.
  */
 export function apiErrorResponse(
   caught: unknown,
@@ -148,6 +165,11 @@ export function apiErrorResponse(
     if (detail) console.error(label, detail(status));
     else console.error(label);
   }
+  if (error.status === undefined && databaseTemporarilyUnavailable(caught))
+    return respond(503, {
+      error: "temporarily_unavailable",
+      message: "Temporarily unavailable. Try again.",
+    });
   return respond(status, {
     error:
       typeof error.code === "string" &&
