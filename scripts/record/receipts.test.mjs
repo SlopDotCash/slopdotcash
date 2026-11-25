@@ -93,9 +93,9 @@ test("amounts round half to even", () => {
 });
 
 test("the fee is 2% of the gross award", () => {
-  assert.equal(feeOn(382439023n), 7804879n); // Feed, October 2026 payoutFeesPaidBase
-  assert.equal(feeOn(150256329n), 3066456n); // The Network, October 2026 payoutFeesPaidBase
-  assert.equal(feeOn(9800000n), 200000n); // a 1 USDC qualification transfer
+  assert.equal(feeOn(382439023n), 7804879n);
+  assert.equal(feeOn(150256329n), 3066456n);
+  assert.equal(feeOn(9800000n), 200000n);
 });
 
 test("payments with a bad id, a bad month, a bad decimal or a zero net are dropped", () => {
