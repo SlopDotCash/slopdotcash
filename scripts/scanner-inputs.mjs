@@ -25,7 +25,7 @@ export const SCANNER_FILES = [
 const IMPORT_FROM = /from\s+["']([^"']+)["']/g;
 const IMPORT_SIDE_EFFECT = /import\s+["']([^"']+)["']/g;
 const EXTENSIONS = [".vibe", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
-const SKIP_DIRECTORIES = new Set(["node_modules", "dist"]);
+const SKIP_DIRECTORIES = new Set(["node_modules", "dist", "gen"]);
 
 function isTestFile(file) {
   return file.includes(".test.") || file.includes("/test/") || file.startsWith("test/");
@@ -80,6 +80,11 @@ export function scannerImportClosure(root) {
       for (const match of source.matchAll(pattern)) {
         const specifier = match[1];
         if (specifier.startsWith(".")) {
+          // gen/ files are generated from the spec; their sources are already inputs.
+          const target = toPosix(join(dirname(file), specifier));
+          if (target.split("/").includes("gen")) {
+            continue;
+          }
           const resolved = resolveImport(root, file, specifier);
           if (!closure.has(resolved)) {
             queue.push(resolved);
