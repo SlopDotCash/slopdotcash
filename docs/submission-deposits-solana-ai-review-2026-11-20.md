@@ -3,7 +3,11 @@
 This is an AI-assisted internal review of
 `contracts/solana/programs/slop-submission-deposits/src/lib.rs` by the same agent
 session that wrote it. It is not an audit, and nobody independent of the project
-has reviewed the program. An independent agent pass, given only the source and
+has reviewed the program. **Changed on 25 November 2026:** item 1 below was
+settled by changing the program before deployment; see
+"[Change of 25 November 2026](#change-of-25-november-2026)". The source hash,
+build sizes, test counts and deliberate-defect results in this note describe the
+program as it was on 20 November, before that change. An independent agent pass, given only the source and
 the specification, was started and did not run (the account's model spending
 limit stopped it before it read a line); the adversarial read below is the
 author's own and carries the author's blind spots. The program is not deployed.
@@ -23,7 +27,7 @@ account its payer owns or the associated token account of its kept wallet, be
 paid twice, or be released by anyone but the resolver or, after the delay, the
 payer. One limit was found that the EVM contract does not have (item 1 below):
 whoever keeps making deposits can make other payers' deposits fail and retry.
-It delays; it moves nothing.
+It delays; it moves nothing. That limit was removed on 25 November 2026.
 
 ## What was run
 
@@ -78,7 +82,11 @@ prove the build of `main`.
 
 ## For a second reader
 
-1. **The next id is part of the record's address.** A deposit must name the
+1. **The next id is part of the record's address.** *Changed on 25 November
+   2026, operator decision: the record's address is now derived from the payer
+   and a number the payer picks, and the id is assigned inside the record. The
+   rest of this item describes the design of 20 November and why it was
+   changed.* A deposit must name the
    account of id `deposit_count + 1`. Two deposits built against the same count
    have one winner; the other fails (`ConstraintSeeds`) and is rebuilt. Someone
    who keeps landing deposits of any mint whose vault they opened can therefore
@@ -138,6 +146,86 @@ prove the build of `main`.
     ProgramData account**, as in `slop-escrow`. A program deployed with a
     non-upgradeable loader has no such account and could not be initialized;
     the runbook deploys with the upgradeable loader.
+
+## Change of 25 November 2026
+
+Operator decision, 25 November 2026, taken before deployment because the program
+is meant to become unchangeable.
+
+What changed in the program, and nothing else:
+
+- `deposit(item, amount, kept_to, nonce)` has a fourth argument, a `u64` the
+  payer chooses.
+- The `Deposit` account's seeds are `"deposit"`, the payer's address, and the
+  nonce as 8 bytes little-endian. They were `"deposit"` and the next id.
+- The record stores the nonce after the payer (169 bytes with its discriminator;
+  it was 161). The program still sets `id = deposit_count + 1` and stores it.
+- `resolve` and `reclaim` take the `Deposit` account by its address and check it
+  against the payer, nonce and bump stored in it.
+- The `Deposited` event also carries the nonce.
+
+Why: with the id in the address a payer signed against the current count, so any
+deposit that landed first made theirs fail with `ConstraintSeeds`, and a stream
+of one-unit deposits of a throwaway mint could keep every payer failing. With
+the payer and the nonce in the address, no transaction of anyone else can change
+the address a signed deposit names.
+
+What was checked, by reading and by test:
+
+- **No other account of `deposit` depends on the count.** `config`, `ledger`,
+  `mint`, `source`, `vault` and the two programs are fixed by `"config"`, the
+  mint, and the payer's own token account. Only the `Deposit` address named the
+  count, and it no longer does.
+- **Concurrent deposits serialize and none fails for it.** Every deposit still
+  writes `Config` (the count) and the mint's `Ledger` and vault, so the runtime
+  runs deposits of one block one after another. Each reads the count when it
+  runs, takes the next id, and writes it back. The lifecycle suite signs two
+  deposits of two payers against the same state and sends both: both land. It
+  also signs one deposit, lets a third party land three more (two of a mint
+  made for the purpose), then sends the signed one: it lands with the fourth
+  id. Under the 20 November program the first of those tests had exactly one
+  winner and the second failed.
+- **Nobody can create or occupy another payer's address.** The payer is a
+  `Signer`, and the `init` constraint derives the address from that signer's
+  key and the nonce argument. A transaction that names the address of
+  (someone else, nonce), or of (payer, another nonce), or the old id-derived
+  address, is refused with `ConstraintSeeds` (tested for each). Only this
+  program can sign for an address derived from its id, so no other program can
+  create an account there either. Anyone can send lamports to such an address
+  before the payer uses it; `init` then allocates and assigns the funded
+  account instead of creating it, the deposit lands, and the lamports go to the
+  payer when the record closes (tested).
+- **A reused (payer, nonce) is refused while its record is open**: the System
+  Program reports the account as already in use, nothing is moved and the
+  count does not advance (tested, with the same and with different arguments).
+  Only that payer can cause it, and only for themselves.
+
+Two consequences for whoever reads the program off chain, neither a way to move
+or lose tokens:
+
+- **Open deposits are found by scanning, not by counting.** A reader asks for
+  the program's accounts that begin with the `Deposit` discriminator
+  (`getProgramAccounts`) and reads the id stored in each. A deposit it recorded
+  earlier whose account is gone is settled. The rehearsal suite does this by
+  hand at finalized commitment. A public RPC endpoint may restrict
+  `getProgramAccounts`; the Worker needs one that serves it.
+- **An address is free again after its record is closed.** The same payer can
+  later make a new deposit with the same nonce; it gets a new id at the old
+  address (tested). So an address does not identify a deposit over time: a
+  reader keys a deposit by its stored id and its creating transaction, checks
+  the stored id whenever it reads an address, and takes a deposit's outcome
+  from the first `resolve` or `reclaim` on that address after its creating
+  transaction, not simply the newest transaction there. The program could
+  prevent reuse only by keeping every record forever, which would cost each
+  payer the rent the closing returns. A payer who reuses a nonce affects only
+  how their own deposits read.
+
+Also unchanged and still true: ids count up from 1 with no gap, in landing
+order, because the count only moves inside a successful deposit.
+
+What was run on 25 November 2026 is in the pull request that made the change and
+in the build notes; the table and the deliberate-defect results above were not
+rerun in full. The 40 deliberate defects of 20 November were not repeated.
 
 ## Not covered
 

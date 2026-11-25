@@ -695,7 +695,7 @@ Accounts, all program-derived:
 | `Config` | `"config"` | owner, pending owner, resolver, reclaim delay, deposit count, pause flag | the upgrade authority, at `initialize` | never |
 | `Ledger` | `"ledger"`, mint | the mint and `open_total`, the sum of its open deposits | whoever calls `open_vault` | never |
 | vault | `"vault"`, mint | a classic SPL token account; its token authority is the `Ledger` | whoever calls `open_vault` | never |
-| `Deposit` | `"deposit"`, id as 8 bytes little-endian | one open deposit | the payer | on its outcome; the rent returns to the payer |
+| `Deposit` | `"deposit"`, payer, nonce as 8 bytes little-endian | one open deposit, with the id the program gave it | the payer | on its outcome; the rent returns to the payer |
 
 - The program's upgrade authority calls `initialize(owner, resolver, reclaim_delay)`
   once. Nobody else can, the delay must be above zero and at most 365 days, and
@@ -703,13 +703,17 @@ Accounts, all program-derived:
   authority is removed.
 - Anyone calls `open_vault` once per mint. Only mints of the classic SPL Token
   program are admitted; a Token-2022 mint is refused whatever its extensions.
-- Anyone calls `deposit(item, amount, kept_to)`. `item` is the same 32 bytes as
-  on the EVM chains (`submissionFeeItem` in `src/lib/submission-fee.mjs`). The
-  program moves exactly `amount` from a token account the payer owns into the
-  vault and records the payer, the mint, the amount and `kept_to`, a wallet.
-  None of those can change afterwards. Ids count up from 1, and the next id is
-  part of the record's address, so two deposits built against the same count
-  have one winner and the other is rebuilt. The program keeps no list of
+- Anyone calls `deposit(item, amount, kept_to, nonce)`. `item` is the same 32
+  bytes as on the EVM chains (`submissionFeeItem` in
+  `src/lib/submission-fee.mjs`). The program moves exactly `amount` from a token
+  account the payer owns into the vault and records the payer, the mint, the
+  amount and `kept_to`, a wallet. None of those can change afterwards. `nonce`
+  is any number the payer has not used for a deposit that is still open (eight
+  random bytes will do): the record's address is that of the signing payer and
+  the nonce, so it does not depend on what anyone else does. The program still
+  numbers deposits from 1 in the order they land and stores that id, with the
+  nonce, in the record. The same payer and nonce while that record is open is
+  refused, because its account already exists. The program keeps no list of
   accepted mints, amounts or kept wallets; that check is off chain.
 - The resolver calls `resolve(refund)` once per open deposit: `true` sends the
   amount to the payer's associated token account, `false` to the associated
@@ -728,8 +732,25 @@ Where it differs from the EVM contract, and why:
 - **A deposit's record is closed on its outcome.** An account costs rent, about
   0.002 SOL for this record; kept forever it would be a charge on every fee that
   never comes back. Closed, the rent returns to the payer on a refund, a kept
-  fee and a reclaim alike. An id at or below `deposit_count` with no account has
-  been settled, and the transaction that closed it says how.
+  fee and a reclaim alike. A deposit a reader has recorded whose account is
+  gone has been settled, and the transaction that closed it says how.
+- **A record's address comes from its payer and a number the payer picks**
+  (operator decision, 25 November 2026), not from a counter. The first design
+  put the next id into the address, so a payer signed against the current
+  count and any deposit that landed first made theirs fail, and anyone could
+  keep every payer failing for the price of tiny deposits of a throwaway mint.
+  Now a signed deposit stays valid whatever lands before it. Every deposit
+  still writes `Config` to take its id, so deposits in one block run one after
+  another, but none fails for it. Nobody else can create a record at a payer's
+  address: the payer signs, and the program derives the address from the
+  signer. Lamports sent to such an address beforehand do not stop the deposit
+  and end up with the payer when the record closes. What it costs: open
+  deposits can no longer be listed by counting; a reader asks the cluster for
+  the program's accounts that start with the `Deposit` discriminator
+  (`getProgramAccounts`) and reads each stored id. And an address is free
+  again once its record is closed, so a payer who reuses a nonce later gets a
+  new deposit with a new id at the old address: a reader identifies a deposit
+  by its stored id and its creating transaction, never by its address alone.
 - **Wallets, and token accounts of those wallets.** The record names wallets.
   A refund and a kept fee go to the wallet's associated token account, the one
   address that follows from the wallet and the mint, so the resolver chooses
@@ -772,12 +793,11 @@ vault, which blocks every movement of that mint until it is thawed, and no
 instruction works around that. A payer who hands their associated token account
 to another owner cannot be refunded to it and reclaims instead. Tokens sent to a
 vault without `deposit` belong to no deposit and cannot be moved by anyone.
-There is no rescue instruction. Because the next id is part of a record's
-address, someone who keeps landing deposits can keep other payers' deposits
-failing and retrying; each such deposit locks its rent until it is reclaimed
-after the delay, nothing is lost or misdirected, and the pause is the owner's
-only lever (it stops honest deposits too). The review note describes the
-alternative.
+There is no rescue instruction. Anyone can make deposits of any classic mint,
+including worthless ones; each costs its maker a transaction fee and locks its
+rent until it is settled or reclaimed, takes the next id, and does not affect
+anybody else's deposit. A reader that lists open deposits sees them and drops
+the ones whose mint, amount or kept wallet it does not accept.
 
 `scripts/test-submission-deposits.sh` (`bun run test:contracts:solana:submission-deposits`
 from the repository root) builds the program, requires the committed
@@ -792,16 +812,20 @@ delay is fixed once per deployment:
   real fee wallet address as the kept wallet; the item hash the site computes;
   a refund, a kept fee and a frozen payer; two deposits loaded at genesis, one
   five minutes past thirty days (reclaimed) and one an hour short (refused);
-  the finalized reads a Worker will make, decoded by hand; and removal of the
+  the finalized reads a Worker will make (the filtered account scan and the
+  transactions on a record's address), decoded by hand; and removal of the
   upgrade authority, after which deposits and refunds still work.
 - `integration/submission-deposits.e2e.mjs`, with a six-second delay: every
   instruction and every refusal, including each wrong destination a resolver
-  could name, the rent recipient, single settlement, frozen, closed and
+  could name, two payers who sign against the same state and both land, a
+  signed deposit that still lands after a third party's deposits, a reused
+  nonce, a record address derived from somebody else's key, the rent recipient, single settlement, frozen, closed and
   handed-over token accounts, a batch that is all or nothing, reclaim timing,
   pausing, the roles, stray tokens, and mints of zero and nine decimals.
 - `integration/submission-deposits-invariant.e2e.mjs`: a seeded random campaign
   of 240 steps over two mints that checks after every step that each vault
-  equals its ledger's open total and the sum of the open deposits, that each
+  equals its ledger's open total and the sum of the open deposits, that the
+  program's `Deposit` accounts are exactly the open deposits, that each
   record is present exactly while open, and that every wallet holds what the
   outcomes imply.
 

@@ -179,7 +179,7 @@ export const depositDiscriminator = createHash("sha256")
   .update("account:Deposit")
   .digest()
   .subarray(0, 8);
-const base58 = (bytes) => anchor.utils.bytes.bs58.encode(bytes);
+export const base58 = (bytes) => anchor.utils.bytes.bs58.encode(bytes);
 
 /** Every open deposit, found the way an off-chain reader finds them: the program's accounts
  * that start with the Deposit discriminator, optionally narrowed to one stored id. */
