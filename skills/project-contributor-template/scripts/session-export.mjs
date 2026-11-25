@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const CLEANER_VERSION = "slop-session-cleaner-1";
@@ -34,27 +34,156 @@ export const SECRET_SHAPES = [
   /\bBearer\s+[A-Za-z0-9._~+/-]{10,}\b/g,
 ];
 
-export function isNameOnlyCommand(command) {
-  const text = String(command ?? "").trim();
-  if (text === "ls" || text.startsWith("ls ")) return true;
-  if (text === "tree" || text.startsWith("tree ")) return true;
-  if (text === "git status" || text.startsWith("git status ")) return true;
-  if (text === "git branch" || text.startsWith("git branch ")) return true;
-  if (text === "git log" || text.startsWith("git log ")) {
-    return !/(?:^|\s)(?:-p|--patch)(?:\s|$)/.test(text);
-  }
-  if (text === "git diff" || text.startsWith("git diff ")) {
-    return /(?:^|\s)--name-only(?:\s|$)/.test(text) || /(?:^|\s)--name-status(?:\s|$)/.test(text);
-  }
-  if (text === "find" || text.startsWith("find ")) {
-    return !/(?:^|\s)(?:-exec|-delete|-print0)(?:\s|$)/.test(text);
+const FIND_ACTION_FLAGS = [
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-delete",
+  "-print0",
+  "-fprint",
+  "-fprintf",
+  "-fls",
+  "-printf",
+];
+
+const GIT_LOG_FLAGS = new Set([
+  "--oneline",
+  "--name-only",
+  "--name-status",
+  "--graph",
+  "--decorate",
+  "--all",
+  "--branches",
+  "--tags",
+  "--remotes",
+  "--no-merges",
+  "--first-parent",
+  "--abbrev-commit",
+  "--since",
+  "--until",
+  "--author",
+  "--grep",
+  "--max-count",
+  "-n",
+]);
+
+const GIT_DIFF_FLAGS = new Set([
+  "--name-only",
+  "--name-status",
+  "--cached",
+  "--staged",
+]);
+
+const PRETTY_FORMATS = new Set(["oneline", "short", "medium"]);
+
+function hasShellOperator(text) {
+  let quote = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '"') quote = null;
+      else if (char === "$" || char === "`") return true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if ("|&;><`$()\n\r".includes(char)) return true;
   }
   return false;
 }
 
+function splitCommand(text) {
+  return (text.match(/'[^']*'|"[^"]*"|\S+/g) ?? []).map((token) => {
+    if (token.length >= 2 && token.startsWith("'") && token.endsWith("'")) return token.slice(1, -1);
+    if (token.length >= 2 && token.startsWith('"') && token.endsWith('"')) return token.slice(1, -1);
+    return token;
+  });
+}
+
+function isAllowedFlag(token, allowed) {
+  if (!token.startsWith("-") || token === "-" || token === "--") return true;
+  const name = token.split("=")[0];
+  if (allowed.has(name)) return true;
+  return /^-\d+$/.test(token);
+}
+
+function isGitLogCommand(args) {
+  for (const token of args) {
+    if (token === "--pretty" || token === "--format") return false;
+    if (token.startsWith("--pretty=") || token.startsWith("--format=")) {
+      if (!PRETTY_FORMATS.has(token.split("=")[1])) return false;
+      continue;
+    }
+    if (!isAllowedFlag(token, GIT_LOG_FLAGS)) return false;
+  }
+  return true;
+}
+
+function isGitDiffCommand(args) {
+  if (!args.some((token) => token === "--name-only" || token === "--name-status")) return false;
+  return args.every((token) => isAllowedFlag(token, GIT_DIFF_FLAGS));
+}
+
+function isFindCommand(args) {
+  return args.every((token) => {
+    if (!token.startsWith("-")) return true;
+    return !FIND_ACTION_FLAGS.some((flag) => token.startsWith(flag));
+  });
+}
+
+export function isNameOnlyCommand(command) {
+  const text = String(command ?? "").trim();
+  if (text.length === 0 || hasShellOperator(text)) return false;
+  const tokens = splitCommand(text);
+  const program = tokens[0];
+  const args = tokens.slice(1);
+  if (program === "ls") return true;
+  if (program === "tree") {
+    return !args.some((token) => token === "--fromfile" || token.startsWith("--fromfile="));
+  }
+  if (program === "git") {
+    const subcommand = tokens[1];
+    const rest = tokens.slice(2);
+    if (subcommand === "status" || subcommand === "branch") return true;
+    if (subcommand === "log") return isGitLogCommand(rest);
+    if (subcommand === "diff") return isGitDiffCommand(rest);
+    return false;
+  }
+  if (program === "find") return isFindCommand(args);
+  return false;
+}
+
+function resolveRealPath(path) {
+  const lexical = resolve(path);
+  try {
+    return realpathSync(lexical);
+  } catch {
+    return lexical;
+  }
+}
+
+export function toRepoRelativePath(path, repoRoot) {
+  const root = resolveRealPath(repoRoot);
+  const target = resolveRealPath(isAbsolute(path) ? path : join(repoRoot, path));
+  const relativePath = relative(root, target);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return null;
+  return relativePath;
+}
+
 export function isPathInsideRepo(path, repoRoot) {
-  const root = resolve(repoRoot);
-  const target = isAbsolute(path) ? resolve(path) : resolve(root, path);
+  const root = resolveRealPath(repoRoot);
+  const target = resolveRealPath(isAbsolute(path) ? path : join(repoRoot, path));
   return target === root || target.startsWith(root + sep);
 }
 
@@ -78,9 +207,10 @@ export function redactSecrets(text) {
 
 export function redactLocalPaths(text, repoRoot) {
   const root = resolve(repoRoot);
-  return String(text).replace(/(?:\/[A-Za-z0-9._-]+)+\/?/g, (match) => {
-    const target = resolve(match);
-    return target === root || target.startsWith(root + sep) ? match : MARKER_LOCAL_PATH;
+  return String(text).replace(/(^|[\s"'(\[{=:,;])(\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\/?)/g, (match, prefix, path) => {
+    const target = resolve(path);
+    if (target === root || target.startsWith(root + sep)) return match;
+    return prefix + MARKER_LOCAL_PATH;
   });
 }
 
@@ -102,12 +232,19 @@ export function cleanSessionEvent(event, context) {
     return { type: "redacted", marker: MARKER_OUTSIDE_REPO, cleaner: CLEANER_VERSION };
   }
   const inside = paths.length === 0 || paths.every((path) => isPathInsideRepo(path, repoRoot));
-  const tracked = paths.length > 0 && paths.every((path) => trackedPaths.has(path));
+  const tracked = paths.length > 0 && paths.every((path) => {
+    const relativePath = toRepoRelativePath(path, repoRoot);
+    return relativePath !== null && trackedPaths.has(relativePath);
+  });
   const nameOnly = typeof event.command === "string" && isNameOnlyCommand(event.command);
-  const resultField = typeof event.result === "string" ? "result" : typeof event.output === "string" ? "output" : null;
-  if (resultField === null) return scrubValue(event, repoRoot);
+  const hasResult = typeof event.result === "string";
+  const hasOutput = typeof event.output === "string";
+  if (!hasResult && !hasOutput) return scrubValue(event, repoRoot);
   if (!keepsReadResult({ licensed, tracked, nameOnly, inside, outside })) {
-    return scrubValue({ ...event, [resultField]: MARKER_SOURCE }, repoRoot);
+    const redacted = { ...event };
+    if (hasResult) redacted.result = MARKER_SOURCE;
+    if (hasOutput) redacted.output = MARKER_SOURCE;
+    return scrubValue(redacted, repoRoot);
   }
   return scrubValue(event, repoRoot);
 }
@@ -194,7 +331,7 @@ const USAGE = `Usage: node session-export.mjs --run <id> --dir <dir> --licence <
 
 Finds the session file carrying the slop-run:<id> marker, cleans it locally with slop-session-cleaner-1, and writes the cleaned file for review under trace terms private-trace-v3. The raw file never leaves the machine.
 
-Cleaning rules: a read result is kept only when the repository licence is an OSI licence, every path it names is inside the repository, and the file is tracked or the command only lists names (ls, tree, git status, git log without a patch, git diff --name-only, git branch, find without actions). An event naming a path outside the repository is replaced whole. Anything else is replaced with [REDACTED:SOURCE]. Credential shapes and absolute paths outside the repository are replaced with [REDACTED:CREDENTIAL] and [REDACTED:LOCAL_PATH]. Pattern matching never guarantees that every secret is found; inspect the cleaned file before sending it.
+Cleaning rules: a read result is kept only when the repository licence is an OSI licence, every path it names is inside the repository, and the file is tracked or the command only lists names (ls, tree, git status, git log with only listing flags, git diff --name-only, git branch, find without actions). A command that pipes, redirects, chains or substitutes another command is not name-only. An event naming a path outside the repository is replaced whole. Anything else is replaced with [REDACTED:SOURCE]. Credential shapes and absolute paths outside the repository are replaced with [REDACTED:CREDENTIAL] and [REDACTED:LOCAL_PATH]. Pattern matching never guarantees that every secret is found; inspect the cleaned file before sending it.
 `;
 
 function parseArgs(argv) {
