@@ -73,7 +73,7 @@ export effect function servedWithBlobUrls(world: World, sha: string) {
 }
 
 function census(world: World) {
-  return () => ({
+  return (body: Readonly<Record<string, unknown>>) => typeof body["data"] !== "object" || body["data"] === null || !("search" in body["data"]) ? body : ({
     data: {
       search: {
         issueCount: pulls.length,
