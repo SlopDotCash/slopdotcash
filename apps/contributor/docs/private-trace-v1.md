@@ -255,7 +255,7 @@ Licensing under this version follows the same setting as version 2, with one cha
 
 Version 3 keeps the consent and default upload rules of version 2. The client shows the terms version with the file's digest before sending it, and the same client that produced the trace is the one that has the trace. The content is uploaded by default, as soon as the client has the trace, and the contributor may opt out before or after the content is collected. The same consent requirement also applies to session export: the exporter cleans the session locally, the contributor reviews the cleaned file, and only the cleaned file is uploaded.
 
-### Session export
+### Session export under version 3
 
 The contributor skill exports a cleaned agent session under this version. It finds the session file by the `slop-run:<id>` marker, cleans it locally with cleaner `slop-session-cleaner-1`, and writes the cleaned file for the contributor to review before upload. Repository file contents are kept only when the repository licence is an OSI licence. A read result leaves the machine only when the repository is openly licensed and the file is inside the repository and tracked, or when a name-only command names only paths inside the repository. An event naming a path outside the repository is replaced whole. Any other outcome is a redaction marker. The cleaned file is tagged with terms version `private-trace-v3`, and the run records that version in D1.
 
