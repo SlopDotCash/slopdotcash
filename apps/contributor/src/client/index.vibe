@@ -2,10 +2,14 @@
 import type { AnyRoute } from "@repo/platform/route"
 import { api as publication } from "./publication.vibe"
 import { traceApi } from "./traces.vibe"
+import { licensingApi } from "./licensing.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = [...publication, ...traceApi]
+
+export const api: ReadonlyArray<AnyRoute> = [...publication, ...traceApi, ...licensingApi]
+
 
 export { DiscoveryRow, ProjectDiscovery, ProjectTerms, projectDiscovery, projectTerms } from "./publication.vibe"
+
 
 export { ReceiptRefused, verifyRunReceipt } from "./receipts/verify.vibe"
 export { type Parsed, type ReceiptPolicyProject, type ReceiptProject, type ReceiptRegistry, joinPolicy, markerOf, parseRunMarker, parseRunReceipt, receiptOf, signingPayload } from "./receipts/receipt.ts"
