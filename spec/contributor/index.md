@@ -39,3 +39,5 @@ obligation.
 - [Server-side trace run and progress events](./traceServer.md)
 - [Opened pull request record](./openedRun.md)
 - [Authenticated pull_request_opened evidence](./prOpened.md)
+
+- [Session export under trace terms v3](./sessionExport.md)
