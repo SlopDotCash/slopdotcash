@@ -170,7 +170,7 @@ export function projectBacklogNotice(project: Pick<ShownProject, "id" | "status"
   const parsed = catchUpUntil === undefined ? Number.NaN : Date.parse(catchUpUntil);
   const until = Number.isFinite(parsed) ? Math.floor(parsed / hourMs) : 0;
   const now = Math.floor(nowMs / hourMs);
-  if (until > now) return catchUpNotice;
+  if (until > now && catchUpUntil !== undefined) return catchUpNotice(formatDate(catchUpUntil));
   const reads = (merge.value?.get(project.id) ?? []).map(storedBacklogRead);
   if (!backlogHeld(active, backlogExempt(project), false, until, reads, now)) return undefined;
   return overLimitHeld(reads, now) ? overLimitNotice : dormantNotice;
