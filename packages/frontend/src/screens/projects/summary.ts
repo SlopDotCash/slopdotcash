@@ -5,11 +5,11 @@ import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settleme
 import { fromAmount, parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod, periodContaining, type Period } from "@repo/settlement/kernels/calendar";
 import { Result, Schema } from "effect";
-import type { BacklogRead } from ".../../../gen/backend__backlogRule.ts";
-import { catchUpNotice, dormantNotice, overLimitHeld, overLimitNotice } from ".../../../gen/backend__backlogRule.ts";
+import type { BacklogRead } from "../../../gen/backend__backlogRule.ts";
+import { catchUpNotice, dormantNotice, overLimitHeld, overLimitNotice } from "../../../gen/backend__backlogRule.ts";
 import type { StoredCount } from "../../../gen/backend__intakeCap.ts";
 import { wantedLabelName } from "../../../gen/backend__mergeActivity.ts";
-import { backlogHeld, intakeHeld, type ListingFacts } from ".../../../gen/frontend__poolListing.ts";
+import { backlogHeld, intakeHeld, type ListingFacts } from "../../../gen/frontend__poolListing.ts";
 import { type PromiseFacts, promiseWarning } from "../../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { type WantedRead, wantedListed } from "../../../gen/frontend__views.ts";
