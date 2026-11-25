@@ -22,6 +22,10 @@
  *   Analyze would accept. A report gets at most four attempts per report
  *   version, at least 30 minutes apart, and the route starts no attempt once
  *   150 attempts (of any origin) started in the current UTC day.
+ *   Before that it imports the GitHub private reports of projects with a
+ *   security program (`importGithubReports` in `handler.ts`) and writes the
+ *   week's reminders to reviewers whose project
+ *   has reports waiting more than seven days (`owner-reminders.ts`).
  *
  * "Open" means a verified report with no decision yet: `receipt_state` is
  * `received` or `triaging`, and the report does not wait for its deposit.
@@ -39,6 +43,7 @@ import {
   retryable,
   runCaseAnalysis,
 } from "./analysis";
+import { sendOwnerReminders } from "./owner-reminders";
 import { depositHeld, depositHeldSql } from "./report-deposit-hold";
 
 type Database = D1Database<D1QueryStatement>;
@@ -246,6 +251,11 @@ export async function handleSecurityQueue(
     token: string | undefined;
     /** The same dependencies as the owner's Analyze. */
     analysis: AnalysisDependencies;
+    /**
+     * The automatic import of programs' GitHub private reports
+     * (`importGithubReports`). It never throws; absent, nothing is imported.
+     */
+    importReports?: () => Promise<unknown>;
   },
 ): Promise<Response | null> {
   const url = new URL(request.url);
@@ -269,10 +279,21 @@ export async function handleSecurityQueue(
         },
         { cacheControl: CACHE_CONTROL },
       );
-    if (request.method === "POST")
+    if (request.method === "POST") {
+      // New GitHub reports are imported first, so this run's retry and
+      // reminders already see them.
+      try {
+        await deps.importReports?.();
+      } catch {
+        console.error("security queue: automatic import failed");
+      }
+      // The weekly reminder to reviewers rides on this job's schedule. It
+      // writes at most one notice a reviewer a week and never throws.
+      await sendOwnerReminders(deps.analysis.db, deps.analysis.now());
       return json(200, await runSecurityQueueRetry(deps.analysis), {
         cacheControl: CACHE_CONTROL,
       });
+    }
     return json(
       405,
       { error: "method_not_allowed" },
