@@ -75,6 +75,7 @@
     "src/lib/network-names.ts",
     "src/lib/referral-claims.ts",
     "src/lib/referral-code.ts",
+    "src/lib/security-read-key.ts",
     "src/lib/trace-licensing.ts",
     "src/lib/repo-requests.ts",
     "src/lib/contributor-allocation.ts",
