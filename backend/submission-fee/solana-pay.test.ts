@@ -30,6 +30,12 @@ import {
 } from "../../src/lib/submission-fee-page";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
+  feeNeededComment,
+  feePaidComment,
+  feeWays,
+  solanaFeeOffered,
+} from "../../workers/slopbot/submission-fee";
+import {
   FakeSolana,
   fakeAddress,
 } from "../../workers/submission-fee/fixtures/solana-fake";
@@ -453,4 +459,39 @@ test("a payer takes back a recorded deposit only after the program's delay, into
       })
     ).status,
   ).toBe(400);
+});
+
+test("Slopbot's comment names Solana only once the pay page takes it", () => {
+  const facts = {
+    owner: "acme",
+    repo: "widgets",
+    number: PULL,
+    repositoryId: Number(REPOSITORY),
+    item: ITEM,
+    stableMinor: "2000000",
+    ways: feeWays("2000000", [], NOW),
+  };
+  // As deployed: no program id, Solana switched off.
+  expect(solanaFeeOffered()).toBe(false);
+  expect(feeNeededComment(facts)).not.toContain("Solana");
+  // A published program alone, or the switch alone, offers nothing.
+  expect(solanaFeeOffered({ "solana-mainnet": fakeAddress(200) }, false)).toBe(
+    false,
+  );
+  expect(solanaFeeOffered({ "solana-mainnet": null }, true)).toBe(false);
+  expect(solanaFeeOffered({ "solana-mainnet": fakeAddress(200) }, true)).toBe(
+    true,
+  );
+  const offered = feeNeededComment({ ...facts, solana: true });
+  expect(offered).toContain("The pay page also takes 2 USDC on Solana.");
+  // The table of direct contract calls stays EVM only.
+  expect(offered).not.toContain("solana-mainnet");
+  expect(
+    feePaidComment({
+      ...facts,
+      paidNetwork: "solana-mainnet",
+      paidDepositId: 4,
+      outcome: null,
+    }),
+  ).toContain("deposit 4 on Solana");
 });
