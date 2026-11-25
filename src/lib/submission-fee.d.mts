@@ -1,6 +1,9 @@
 /** Types for the refundable submission fee (PRD section 6). */
 
+/** The fee networks with a chain id, a block count and an EVM contract. */
 export type SubmissionFeeNetwork = "base-mainnet" | "robinhood-mainnet";
+/** The fee networks whose deposits are accounts of the Solana program. */
+export type SubmissionFeeSolanaNetwork = "solana-mainnet";
 
 export type SubmissionFeeTokenTable = Readonly<
   Record<string, { usdc?: string; usdg?: string; slop?: string }>
@@ -13,6 +16,8 @@ export type SubmissionFeeTerms = {
   readonly keptTo?: Readonly<Record<string, string>>;
   readonly burn?: string;
   readonly chainIds?: Readonly<Record<string, number>>;
+  /** Whether a published Solana program is offered; tests and rehearsals only. */
+  readonly solanaOn?: boolean;
 };
 
 export type SubmissionFeeRate = {
@@ -55,9 +60,20 @@ export declare const SUBMISSION_FEE_BURN: string;
 export declare const SUBMISSION_FEE_KEPT_TO: Readonly<Record<string, string>>;
 export declare const SUBMISSION_FEE_TOKENS: SubmissionFeeTokenTable;
 export declare const SUBMISSION_FEE_CONTRACTS: Readonly<
-  Record<SubmissionFeeNetwork, string | null>
+  Record<SubmissionFeeNetwork, string | null> &
+    Record<SubmissionFeeSolanaNetwork, string | null>
 >;
 export declare const SUBMISSION_FEE_SWITCHED_ON: boolean;
+export declare const SUBMISSION_FEE_SOLANA_NETWORKS: readonly string[];
+export declare const SUBMISSION_FEE_SOLANA_SWITCHED_ON: boolean;
+export declare const SUBMISSION_FEE_SOLANA_COMMITMENT: "finalized";
+export declare const SUBMISSION_FEE_SOLANA_RENT_LAMPORTS: string;
+export declare function isSolanaFeeNetwork(network: string): boolean;
+export declare function submissionFeeSameAddress(
+  network: string,
+  left: unknown,
+  right: unknown,
+): boolean;
 export declare const SUBMISSION_FEE_DEFAULT_MINOR: string;
 export declare const SUBMISSION_FEE_MIN_MINOR: string;
 export declare const SUBMISSION_FEE_MAX_MINOR: string;
@@ -67,7 +83,8 @@ export declare const SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS: number;
 export declare const SUBMISSION_FEE_KEEP_LABEL: "slop-keep-fee";
 export declare const SUBMISSION_FEE_RECLAIM_DAYS: number;
 export declare const SUBMISSION_FEE_START_BLOCKS: Readonly<
-  Record<SubmissionFeeNetwork, number | null>
+  Record<SubmissionFeeNetwork, number | null> &
+    Record<SubmissionFeeSolanaNetwork, number | null>
 >;
 export declare const SUBMISSION_FEE_CHAIN_IDS: Readonly<
   Record<SubmissionFeeNetwork, number>

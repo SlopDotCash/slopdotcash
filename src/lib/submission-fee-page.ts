@@ -90,7 +90,8 @@ export type FeeItem = {
 export type FeeRates = { current: string | null; previous: string | null };
 
 /** The published tables, with every key present. */
-export type FeeTables = Required<SubmissionFeeTerms>;
+export type FeeTables = Required<Omit<SubmissionFeeTerms, "solanaOn">> &
+  Pick<SubmissionFeeTerms, "solanaOn">;
 
 export const PUBLISHED_FEE_TABLES: FeeTables = {
   tokens: SUBMISSION_FEE_TOKENS,

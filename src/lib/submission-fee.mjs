@@ -15,9 +15,20 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
 
 export const SUBMISSION_FEE_BURN = "0x000000000000000000000000000000000000dEaD";
+/**
+ * The fee networks whose addresses are Solana addresses (operator decision,
+ * 25 November 2026; PRD section 6, "Submission fee deposits", "Solana"). On
+ * them a deposit is an account of the `slop-submission-deposits` program, an
+ * address is base58 and is compared exactly, and only USDC is accepted. SLOP
+ * stays payable on Robinhood Chain only.
+ */
+export const SUBMISSION_FEE_SOLANA_NETWORKS = Object.freeze(["solana-mainnet"]);
 export const SUBMISSION_FEE_KEPT_TO = {
   "base-mainnet": "0x8f77C37D8650776bFe73c9b12B15209eE15D9b86", // Slop fee wallet
   "robinhood-mainnet": "0x8f77C37D8650776bFe73c9b12B15209eE15D9b86", // Slop fee wallet
+  // Slop's Solana fee wallet (`contracts/DEPLOY-MAINNET.md`). A wallet, not a
+  // token account: a kept fee goes to its associated USDC account.
+  "solana-mainnet": "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
 };
 export const SUBMISSION_FEE_TOKENS = {
   "base-mainnet": { usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
@@ -25,6 +36,8 @@ export const SUBMISSION_FEE_TOKENS = {
     usdg: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
     slop: "0xfeb4E36FA4a2A494FF25ae4a63491e4c584A67AE",
   },
+  // Circle's USDC mint on Solana, a classic SPL Token mint.
+  "solana-mainnet": { usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
 };
 /**
  * The `SubmissionDeposits` contracts, deployed 19 November 2026 by the same
@@ -34,7 +47,29 @@ export const SUBMISSION_FEE_TOKENS = {
 export const SUBMISSION_FEE_CONTRACTS = {
   "base-mainnet": "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
   "robinhood-mainnet": "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
+  // The `slop-submission-deposits` program id. Null until the program is
+  // deployed: while it is null nothing offers, reads or sends on Solana.
+  "solana-mainnet": null,
 };
+/**
+ * True only while a Solana deposit is recorded and settled, which is while
+ * `SUBMISSION_FEE_SOLANA_MODE` in `workers/submission-fee/wrangler.toml` is
+ * `live`. While it is false no page, comment or API lists Solana as a way to
+ * pay, whatever the program id says. A test holds the two together; change
+ * them in the same reviewed change.
+ */
+export const SUBMISSION_FEE_SOLANA_SWITCHED_ON = false;
+/**
+ * A Solana deposit is read at this commitment only, for marking a pull
+ * request paid as much as for settling: there is no earlier "confirmed"
+ * step as on the EVM chains.
+ */
+export const SUBMISSION_FEE_SOLANA_COMMITMENT = "finalized";
+/**
+ * The rent a payer locks with a Solana deposit's account (161 bytes). The
+ * program returns it to the payer on every outcome.
+ */
+export const SUBMISSION_FEE_SOLANA_RENT_LAMPORTS = "2011440";
 /**
  * True only while Slopbot asks contributors for the fee, which is while
  * `SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `live`. The
@@ -69,6 +104,8 @@ export const SUBMISSION_FEE_RECLAIM_DAYS = 30;
 export const SUBMISSION_FEE_START_BLOCKS = {
   "base-mainnet": 59572869,
   "robinhood-mainnet": 118349901,
+  // The slot of the program's `initialize` transaction, set with its id.
+  "solana-mainnet": null,
 };
 export const SUBMISSION_FEE_CHAIN_IDS = {
   "base-mainnet": 8453,
@@ -107,7 +144,25 @@ const UINT64_MAX = (1n << 64n) - 1n;
 const AMOUNT = /^(0|[1-9][0-9]{0,38})$/u;
 const RATE = /^(0|[1-9][0-9]{0,11})(\.[0-9]{1,18})?$/u;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
 const ONE = 10n ** 18n;
+
+/** Whether a fee network's addresses are Solana addresses. */
+export function isSolanaFeeNetwork(network) {
+  return SUBMISSION_FEE_SOLANA_NETWORKS.includes(network);
+}
+
+/**
+ * Whether two addresses of one fee network are the same address. EVM hex is
+ * compared without regard to case; Solana base58 is case-sensitive and is
+ * compared exactly.
+ */
+export function submissionFeeSameAddress(network, left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  return isSolanaFeeNetwork(network)
+    ? left === right
+    : left.toLowerCase() === right.toLowerCase();
+}
 
 function uint64(value, name) {
   const text = typeof value === "bigint" ? value.toString() : String(value);
@@ -281,11 +336,6 @@ export function slopFeeDueAt(stableMinor, rates, at) {
   return (before < now ? before : now).toString();
 }
 
-const same = (left, right) =>
-  typeof left === "string" &&
-  typeof right === "string" &&
-  left.toLowerCase() === right.toLowerCase();
-
 /**
  * Which accepted token an address is on a network: "stable", "slop" or null.
  * `tokens` and the rest of `terms` default to the mainnet tables above; a
@@ -293,7 +343,14 @@ const same = (left, right) =>
  */
 export function submissionFeeTokenKind(network, token, terms = {}) {
   const tokens = (terms.tokens ?? SUBMISSION_FEE_TOKENS)[network];
-  if (!tokens || typeof token !== "string" || !ADDRESS.test(token)) return null;
+  if (!tokens || typeof token !== "string") return null;
+  if (isSolanaFeeNetwork(network))
+    // USDC only, and the mint address exactly as published.
+    return SOLANA_ADDRESS.test(token) && tokens.usdc === token
+      ? "stable"
+      : null;
+  if (!ADDRESS.test(token)) return null;
+  const same = (left, right) => submissionFeeSameAddress(network, left, right);
   if (same(tokens.usdc, token) || same(tokens.usdg, token)) return "stable";
   if (same(tokens.slop, token)) return "slop";
   return null;
@@ -328,7 +385,8 @@ export function submissionDepositCounts(
   const feeWallet = (terms.keptTo ?? SUBMISSION_FEE_KEPT_TO)[network];
   const wanted =
     kind === "stable" ? feeWallet : (terms.burn ?? SUBMISSION_FEE_BURN);
-  if (!wanted || !same(deposit.keptTo, wanted)) return refuse("wrong_kept_to");
+  if (!wanted || !submissionFeeSameAddress(network, deposit.keptTo, wanted))
+    return refuse("wrong_kept_to");
   if (!item) return refuse("unknown_item");
   if (typeof item.stableMinor !== "string" || !AMOUNT.test(item.stableMinor))
     return refuse("item_fee_invalid");
@@ -456,7 +514,10 @@ export function nextSlopRate({ current, at, week, day }) {
  * Every way to pay a stablecoin fee at `at`: one entry per network and
  * accepted token, with the amount in base units, the contract (null for a
  * network without one) and where a kept fee goes. SLOP is listed only while a rate is
- * in force.
+ * in force. A Solana network is listed only once its program id is published
+ * and Solana is switched on (`terms.solanaOn`, by default
+ * `SUBMISSION_FEE_SOLANA_SWITCHED_ON`); its `contract` is the program id and
+ * its `chainId` is null.
  */
 export function submissionFeeOptions(stableMinor, rates, at, terms = {}) {
   const tokens = terms.tokens ?? SUBMISSION_FEE_TOKENS;
@@ -470,8 +531,14 @@ export function submissionFeeOptions(stableMinor, rates, at, terms = {}) {
     ? slopFeeBase(stableMinor, slopRatesAt(rates, at).current.slopPerUsd)
     : null;
   const options = [];
+  const solanaOn = terms.solanaOn ?? SUBMISSION_FEE_SOLANA_SWITCHED_ON;
   for (const network of Object.keys(tokens).sort()) {
     const entry = tokens[network];
+    if (
+      isSolanaFeeNetwork(network) &&
+      (solanaOn !== true || typeof contracts[network] !== "string")
+    )
+      continue;
     const base = {
       network,
       chainId: chainIds[network] ?? null,

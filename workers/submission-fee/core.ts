@@ -35,6 +35,7 @@ import {
   type SubmissionFeeRate,
   type SubmissionFeeTerms,
   submissionDepositCounts,
+  submissionFeeSameAddress,
   submissionFeeTokenKind,
   submissionResolveAction,
 } from "../../src/lib/submission-fee.mjs";
@@ -174,6 +175,12 @@ export interface ChainDeposit {
   item: string;
   /** 0 none, 1 open, 2 refunded, 3 kept, 4 reclaimed. */
   state: number;
+  /**
+   * True only on Solana, for a deposit whose record account no longer
+   * exists: the program closes the record on every outcome, so the deposit
+   * is settled and the other fields are empty.
+   */
+  closed?: true;
 }
 
 /**
@@ -478,12 +485,23 @@ export function failureReason(error: unknown): string {
   return [step, ...parts].join("/").slice(0, 240);
 }
 
-export interface NetworkDependencies {
+/**
+ * The part of a chain client that judging, parking and sending use. The
+ * Solana ledger has its own scan (`solana-core.ts`) and shares these steps.
+ */
+export type ResolverChain = Pick<
+  FeeChain,
+  "deposit" | "address" | "probe" | "prepare" | "broadcast" | "status"
+>;
+
+export interface NetworkDependencies<
+  Chain extends ResolverChain = FeeChain,
+> {
   mode: Exclude<Mode, "off">;
   network: NetworkConfig;
   terms: SubmissionFeeTerms;
   store: FeeStore;
-  chain: FeeChain;
+  chain: Chain;
   now: () => Date;
   randomId: () => string;
   log: (event: Record<string, unknown>) => void;
@@ -521,8 +539,6 @@ export interface NetworkResult {
   /** Parked deposits returned to the queue in this run. */
   released: number;
 }
-
-const lower = (value: string) => value.toLowerCase();
 
 async function withTimes(
   chain: FeeChain,
@@ -667,7 +683,7 @@ export async function scan(
  * that names one is an unknown item like any other.
  */
 export async function judge(
-  deps: NetworkDependencies,
+  deps: NetworkDependencies<ResolverChain>,
 ): Promise<{ judged: number; paid: number }> {
   const { store, network, terms } = deps;
   const rates = await store.rates();
@@ -777,7 +793,7 @@ export async function judge(
  * after it is finalized, as on the other ledgers, and is then refused.
  */
 async function judgeStanding(
-  deps: NetworkDependencies,
+  deps: NetworkDependencies<ResolverChain>,
   deposit: DepositRow,
 ): Promise<{ judged: number; paid: number }> {
   const { store, network, terms } = deps;
@@ -827,7 +843,9 @@ async function judgeStanding(
  * of the pull request or of the report it paid. Returns the entries to send,
  * oldest deposit first.
  */
-export async function plan(deps: NetworkDependencies): Promise<SendEntry[]> {
+export async function plan(
+  deps: NetworkDependencies<ResolverChain>,
+): Promise<SendEntry[]> {
   const { store, network } = deps;
   const entries: SendEntry[] = [];
   const parked = await store.parked(network.network);
@@ -869,7 +887,9 @@ export async function plan(deps: NetworkDependencies): Promise<SendEntry[]> {
  * unpaused, a payer taken off a blacklist) or that are no longer open on
  * chain (reclaimed by their payer). Signs nothing.
  */
-export async function recheck(deps: NetworkDependencies): Promise<number> {
+export async function recheck(
+  deps: NetworkDependencies<ResolverChain>,
+): Promise<number> {
   const { store, chain, network } = deps;
   if (chain.address() === null) return 0;
   const before = new Date(
@@ -881,7 +901,8 @@ export async function recheck(deps: NetworkDependencies): Promise<number> {
     before,
     PARKED_CHECKS_PER_RUN,
   )) {
-    const open = (await chain.deposit(entry.id)).state === 1;
+    const record = await chain.deposit(entry.id);
+    const open = record.closed !== true && record.state === 1;
     const free = !open || (await chain.probe(entry)) === "ok";
     await store.checkedParked(
       network.network,
@@ -902,7 +923,9 @@ export async function recheck(deps: NetworkDependencies): Promise<number> {
 }
 
 /** Reconciles the send in flight. True while one is still unsettled. */
-export async function reconcile(deps: NetworkDependencies): Promise<boolean> {
+export async function reconcile(
+  deps: NetworkDependencies<ResolverChain>,
+): Promise<boolean> {
   const { store, chain, network } = deps;
   const send = await store.openSend(network.network);
   if (!send) return false;
@@ -982,22 +1005,30 @@ function sameEntries(left: readonly SendEntry[], right: readonly SendEntry[]) {
  * contract or key parks nothing.
  */
 export async function send(
-  deps: NetworkDependencies,
+  deps: NetworkDependencies<ResolverChain>,
   planned: readonly SendEntry[],
 ): Promise<{ send: NetworkResult["send"]; parked: number }> {
   const { store, chain, network, mode } = deps;
   const entries: SendEntry[] = [];
+  // EVM addresses are compared without regard to case, Solana ones exactly.
+  const same = (left: string, right: string) =>
+    submissionFeeSameAddress(chainOf(network), left, right);
+  const batchSize = network.maxBatch ?? MAX_BATCH;
   for (const entry of planned) {
-    if (entries.length === MAX_BATCH) break;
+    if (entries.length === batchSize) break;
     const row = await store.deposit(network.network, entry.id);
     const onChain = await chain.deposit(entry.id);
+    if (!row)
+      throw new Error("A stored deposit differs from the contract's record");
+    // Solana only: the record account is gone, so the deposit is settled and
+    // its settlement is on its way through the scan.
+    if (onChain.closed === true) continue;
     if (
-      !row ||
-      lower(onChain.payer) !== lower(row.payer) ||
-      lower(onChain.token) !== lower(row.token) ||
+      !same(onChain.payer, row.payer) ||
+      !same(onChain.token, row.token) ||
       onChain.amount !== row.amount ||
-      lower(onChain.keptTo) !== lower(row.keptTo) ||
-      lower(onChain.item) !== lower(row.item)
+      !same(onChain.keptTo, row.keptTo) ||
+      onChain.item.toLowerCase() !== row.item.toLowerCase()
     )
       throw new Error("A stored deposit differs from the contract's record");
     // Already resolved or reclaimed on chain: its event is still on its way
@@ -1128,7 +1159,8 @@ export async function send(
       const alone: { entry: SendEntry; result: ProbeResult }[] = [];
       for (const entry of batch) {
         // Resolved or reclaimed since it was read: nothing to send or park.
-        if ((await chain.deposit(entry.id)).state !== 1) continue;
+        const current = await chain.deposit(entry.id);
+        if (current.closed === true || current.state !== 1) continue;
         alone.push({ entry, result: await chain.probe(entry) });
       }
       const through = alone.filter(({ result }) => result === "ok");

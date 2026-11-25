@@ -14,6 +14,12 @@
  * `off` does nothing. `dry_run` reads and records, including the list it
  * would send, loads no key and signs nothing. `live` adds the resolver key.
  * A network whose contract is not deployed yet is skipped and reported.
+ *
+ * The Solana ledger (operator decision, 25 November 2026) has its own switch,
+ * `SUBMISSION_FEE_SOLANA_MODE`, with the same three values and its own key.
+ * It reads the `slop-submission-deposits` program's accounts instead of an
+ * event log (`solana-core.ts`) and nothing at all while the program id in
+ * `src/lib/submission-fee.mjs` is null. The rate job is the EVM mode's.
  */
 
 import { createEvmFeeChain, readPoolRate } from "./chain";
@@ -22,8 +28,12 @@ import {
   chainOf,
   parseConfig,
   parseMode,
+  parseSolanaConfig,
+  parseSolanaMode,
   resolverKey,
+  type SolanaFeeConfig,
   type SubmissionFeeEnv,
+  solanaResolverSeed,
 } from "./config";
 import {
   type FeeChain,
@@ -34,7 +44,17 @@ import {
   runNetwork,
 } from "./core";
 import { type RateResult, runRate } from "./rate";
-import { D1FeeStore, type SubmissionFeeD1Database } from "./store";
+import {
+  createSolanaFeeChain,
+  type SolanaFeeChain,
+  type SolanaLedgerConfig,
+} from "./solana";
+import { runSolanaLedger, type SolanaResult } from "./solana-core";
+import {
+  D1FeeStore,
+  D1SolanaFeeStore,
+  type SubmissionFeeD1Database,
+} from "./store";
 
 export interface Env extends SubmissionFeeEnv {
   SUBMISSION_FEE_DB: SubmissionFeeD1Database;
@@ -49,6 +69,9 @@ export interface Overrides {
   /** Replaces the reviewed tables with a local deployment. */
   config?: (config: SubmissionFeeConfig) => SubmissionFeeConfig;
   chain?: (network: NetworkConfig, privateKey?: string) => FeeChain;
+  /** Replaces the reviewed Solana tables with a local deployment. */
+  solanaConfig?: (config: SolanaFeeConfig) => SolanaFeeConfig;
+  solanaChain?: (network: SolanaLedgerConfig, seed?: string) => SolanaFeeChain;
   readPrice?: () => Promise<{ scaled: bigint; blockNumber: number }>;
   log?: (event: Record<string, unknown>) => void;
   /** Receives a network's own error, which the run result never carries. */
@@ -60,11 +83,15 @@ export type DepositRun =
   | { status: "items_table_missing"; unset: string[] }
   | {
       status: "ran";
-      mode: "dry_run" | "live";
+      /** The EVM ledgers' mode. */
+      mode: "off" | "dry_run" | "live";
+      /** The Solana ledger's own mode; absent while it is off. */
+      solanaMode?: "dry_run" | "live";
       /** Networks with no deployed contract: nothing was read there. */
       unset: string[];
       networks: (
         | NetworkResult
+        | SolanaResult
         | { network: string; error: string; reason?: string }
       )[];
     };
@@ -82,42 +109,125 @@ export async function runDeposits(
   now: () => Date = () => new Date(),
   overrides: Overrides = {},
 ): Promise<DepositRun> {
-  // Off is inert even when the rest of the configuration is incomplete.
-  if (parseMode(env) === "off") return { status: "off" };
-  const config = configured(env, overrides);
-  if (config.mode === "off") return { status: "off" };
+  // Each family has its own switch. Off is inert even when the rest of that
+  // family's configuration is incomplete.
+  const evmMode = parseMode(env);
+  const solanaMode = parseSolanaMode(env);
+  if (evmMode === "off" && solanaMode === "off") return { status: "off" };
+  const config = evmMode === "off" ? null : configured(env, overrides);
+  const parsedSolana = parseSolanaConfig(env);
+  const solana = overrides.solanaConfig
+    ? overrides.solanaConfig(parsedSolana)
+    : parsedSolana;
+  if ((config === null || config.mode === "off") && solana.mode === "off")
+    return { status: "off" };
   const log = overrides.log ?? print;
-  for (const network of config.unset)
+  const unset = [...(config?.unset ?? [])];
+  // A switched-on Solana ledger with no published program reads nothing.
+  if (solana.mode !== "off" && solana.ledger === null)
+    unset.push("solana-mainnet");
+  for (const network of unset)
     log({ event: "submission_fee_contract_unset", network });
   const store = labelled(new D1FeeStore(env.SUBMISSION_FEE_DB), "store");
   // Slopbot's table (migration 0141) names the pull requests a fee was asked
   // for. Without it no deposit can be matched, so nothing is read.
   if (!(await store.hasItems())) {
     log({ event: "submission_fee_items_table_missing" });
-    return { status: "items_table_missing", unset: config.unset };
+    return { status: "items_table_missing", unset };
   }
-  // dry_run never loads the key.
-  const secret = config.mode === "live" ? resolverKey(env) : undefined;
-  if (config.mode === "live" && config.networks.length > 0 && !secret)
-    throw new TypeError("live mode needs SUBMISSION_FEE_RESOLVER_KEY");
   const networks: (
     | NetworkResult
+    | SolanaResult
     | { network: string; error: string; reason: string }
   )[] = [];
-  for (const network of config.networks) {
+  const failed = (network: string, error: unknown) => {
+    // One network's failure never stops the other; the next run retries.
+    overrides.onError?.(error);
+    // The reason names the step and the error classes only; see
+    // `failureReason`.
+    networks.push({
+      network,
+      error: message(error),
+      reason: failureReason(error),
+    });
+  };
+  if (config !== null && config.mode !== "off") {
+    // dry_run never loads the key.
+    const secret = config.mode === "live" ? resolverKey(env) : undefined;
+    if (config.mode === "live" && config.networks.length > 0 && !secret)
+      throw new TypeError("live mode needs SUBMISSION_FEE_RESOLVER_KEY");
+    for (const network of config.networks) {
+      try {
+        networks.push(
+          await runNetwork({
+            mode: config.mode,
+            network,
+            terms: config.terms,
+            store,
+            chain: labelled(
+              overrides.chain
+                ? overrides.chain(network, secret)
+                : createEvmFeeChain({
+                    network,
+                    privateKey: secret,
+                    fetch: overrides.fetch,
+                  }),
+              "chain",
+            ),
+            now,
+            randomId: () => crypto.randomUUID(),
+            log,
+            // The other ledgers on this chain share the resolver key and nonce.
+            siblings: config.networks
+              .filter(
+                (other) =>
+                  other.network !== network.network &&
+                  chainOf(other) === chainOf(network),
+              )
+              .map((other) => other.network),
+          }),
+        );
+      } catch (error) {
+        failed(network.network, error);
+      }
+    }
+  }
+  if (solana.mode !== "off" && solana.ledger !== null) {
+    const ledger = solana.ledger;
     try {
+      // dry_run never loads the seed.
+      const seed = solana.mode === "live" ? solanaResolverSeed(env) : undefined;
+      if (solana.mode === "live" && !seed)
+        throw new TypeError(
+          "live mode needs SUBMISSION_FEE_SOLANA_RESOLVER_SEED",
+        );
       networks.push(
-        await runNetwork({
-          mode: config.mode,
-          network,
-          terms: config.terms,
-          store,
+        await runSolanaLedger({
+          mode: solana.mode,
+          network: ledger,
+          // The mainnet tables; a local rehearsal's mint and fee wallet come
+          // with its ledger.
+          terms: {
+            ...(config?.terms ?? {}),
+            tokens: {
+              ...(config?.terms.tokens ?? {}),
+              [ledger.network]: { usdc: ledger.mint },
+            },
+            keptTo: {
+              ...(config?.terms.keptTo ?? {}),
+              [ledger.network]: ledger.feeWallet,
+            },
+          },
+          store: labelled(
+            new D1SolanaFeeStore(env.SUBMISSION_FEE_DB),
+            "store",
+          ),
           chain: labelled(
-            overrides.chain
-              ? overrides.chain(network, secret)
-              : createEvmFeeChain({
-                  network,
-                  privateKey: secret,
+            overrides.solanaChain
+              ? overrides.solanaChain(ledger, seed)
+              : createSolanaFeeChain({
+                  network: ledger,
+                  seed,
                   fetch: overrides.fetch,
                 }),
             "chain",
@@ -125,29 +235,19 @@ export async function runDeposits(
           now,
           randomId: () => crypto.randomUUID(),
           log,
-          // The other ledgers on this chain share the resolver key and nonce.
-          siblings: config.networks
-            .filter(
-              (other) =>
-                other.network !== network.network &&
-                chainOf(other) === chainOf(network),
-            )
-            .map((other) => other.network),
         }),
       );
     } catch (error) {
-      // One network's failure never stops the other; the next run retries.
-      overrides.onError?.(error);
-      // The reason names the step and the error classes only; see
-      // `failureReason`.
-      networks.push({
-        network: network.network,
-        error: message(error),
-        reason: failureReason(error),
-      });
+      failed(ledger.network, error);
     }
   }
-  return { status: "ran", mode: config.mode, unset: config.unset, networks };
+  return {
+    status: "ran",
+    mode: config?.mode ?? "off",
+    ...(solana.mode === "off" ? {} : { solanaMode: solana.mode }),
+    unset,
+    networks,
+  };
 }
 
 export async function runRates(

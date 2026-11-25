@@ -722,7 +722,10 @@ describe("the ways to pay", () => {
     expect(SUBMISSION_FEE_START_BLOCKS).toEqual({
       [BASE]: 59572869,
       [RC]: 118349901,
+      // The Solana program is not deployed: no id, no start slot.
+      "solana-mainnet": null,
     });
+    expect(SUBMISSION_FEE_CONTRACTS["solana-mainnet"]).toBeNull();
     // A network without a contract is listed with none.
     expect(
       submissionFeeOptions("2000000", [], AT, {
