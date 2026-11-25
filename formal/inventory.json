@@ -1400,21 +1400,21 @@
     },
     {
       "path": "backend/submission-fee/handler.ts",
-      "sha256": "3b4e12f7c4dbeb47384aca393d71a993c01e278fe76a3c67618e76c5e8d45d56",
+      "sha256": "fbc8bdfbf6f09758ebb6ebf5c5e860290f37af82835767e8b4e845ffdfe855f2",
       "models": [
         "formal/models/api/api_security_report_deposit.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/ui/ui_submission_fee_solana_pay.qnt"
       ],
-      "candidateLines": [136, 164, 165, 268],
+      "candidateLines": [136, 166, 167, 276],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/submission-fee/solana-pay.ts",
-      "sha256": "cafeb22c2b5da7f986fd9a7511b58d000f473d621263684842477ff49df10a3b",
+      "sha256": "94cfdc20df3ae35f0709a02b85553b843940030f40cf21e3c19feb7498ff600d",
       "models": ["formal/models/ui/ui_submission_fee_solana_pay.qnt"],
-      "candidateLines": [16, 80, 89, 266, 276, 352, 363, 372],
+      "candidateLines": [16, 108, 118, 174, 394, 416, 426, 511, 525],
       "review": "mapped-abstraction"
     },
     {
@@ -2381,7 +2381,7 @@
     },
     {
       "path": "contracts/solana/submission-deposits.ts",
-      "sha256": "8c092d653b7012cfcc4fcdbf4d3654533431987a94a9ed743c8e42f06e09aff3",
+      "sha256": "e9145689f7522961bafd8a7e35e37dbeba5e912f82409bb6ba1359f996624cd9",
       "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -2464,7 +2464,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "7683b881ef29f36499054245921a8bc381f74af19d6f0b44d13ac5e429a8f486",
+      "sha256": "7b50294f8c46a6c663c70e652907adcd46bb1624436bb60b52f232baf738d21e",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2476,7 +2476,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [646, 647, 683, 696],
+      "candidateLines": [647, 648, 684, 697],
       "review": "mapped-abstraction"
     },
     {
@@ -3990,9 +3990,11 @@
     },
     {
       "path": "migrations/0155_submission_fee_solana.sql",
-      "sha256": "a7786e286cb274c79878d9c0ecf0405473f79013c55abfcf3af6540a19c0c06d",
+      "sha256": "0eebec78596176f777e7075d456d6204131c3d845d80fe056b1301108ec3407d",
       "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
-      "candidateLines": [26, 41, 48, 50, 51, 54, 56, 62, 63, 72, 73, 74, 75],
+      "candidateLines": [
+        7, 30, 45, 52, 54, 55, 58, 60, 66, 67, 76, 77, 78, 79, 82, 117
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -6968,14 +6970,14 @@
     },
     {
       "path": "src/SubmissionFeePage.tsx",
-      "sha256": "c7431cad2a7f7dd0f93d87215375f6cbd4249f62ac8bf19792a03fe744a1ec61",
+      "sha256": "a07b978f9b75b88a1209778fe72e0e8e3547cdc235f981b5338a5f56a64a68d9",
       "models": [
         "formal/models/ui/ui_submission_fee_pay.qnt",
         "formal/models/ui/ui_submission_fee_solana_pay.qnt"
       ],
       "candidateLines": [
-        2, 88, 183, 293, 294, 453, 466, 474, 475, 476, 478, 479, 482, 485, 486,
-        495, 528, 530, 534, 540, 550, 551
+        2, 89, 184, 301, 302, 303, 477, 490, 498, 499, 500, 502, 503, 506, 509,
+        510, 519, 552, 554, 558, 564, 574, 575
       ],
       "review": "mapped-abstraction"
     },
@@ -8373,12 +8375,12 @@
     },
     {
       "path": "src/lib/submission-fee-page.ts",
-      "sha256": "7b6b73f2adf7574b4e2f07fccac802f40284c6aa363a8fe5b081ae5e63ef7c9c",
+      "sha256": "ee28b163d357068fbae5820605b74f777de95415d1f0ad70b5de3fcfe8be9bc4",
       "models": [
         "formal/models/ui/ui_submission_fee_pay.qnt",
         "formal/models/ui/ui_submission_fee_solana_pay.qnt"
       ],
-      "candidateLines": [85, 562, 576],
+      "candidateLines": [85, 567, 586],
       "review": "mapped-abstraction"
     },
     {
@@ -8403,7 +8405,7 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "db9332733a86073e6ec071e145f9621445c376305739f86882e99555b65cac93",
+      "sha256": "dfc496b16ed82e531dc02d4f56f3b628235bc7856f21a98294006298ae2f6241",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
@@ -8411,7 +8413,7 @@
         "formal/models/fees/submission_fee_solana_deposit.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "candidateLines": [67, 117, 139, 420, 431],
+      "candidateLines": [67, 126, 148, 429, 440],
       "review": "mapped-abstraction"
     },
     {
@@ -10829,18 +10831,19 @@
     },
     {
       "path": "workers/submission-fee/solana-core.ts",
-      "sha256": "fd183450e95a175df556d16ae01438bb465ef337d14864cca475413f8b2c51be",
+      "sha256": "74b1f8f45a2202e31a736afeaecfcc7c4fe36b00696b127e37650d9eb3f93255",
       "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
-      "candidateLines": [10, 24, 25, 131, 178, 190],
+      "candidateLines": [10, 19, 45, 46, 89, 179, 384, 386, 510, 529, 558, 560],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/submission-fee/solana.ts",
-      "sha256": "0866794ee02aae6e33565901837e712df1a19ff176aaaa6c5052c4d3d52b0375",
+      "sha256": "9389cca61ed51d638054f32d01bd49f8941d23646dd1a9a53767d97398ea57b3",
       "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
       "candidateLines": [
-        5, 75, 82, 86, 94, 106, 118, 126, 130, 200, 213, 247, 314, 416, 565,
-        588, 597, 661, 670, 672, 693, 694, 695, 697
+        5, 82, 90, 104, 111, 113, 133, 138, 184, 189, 193, 281, 296, 330, 348,
+        433, 527, 595, 733, 805, 814, 878, 887, 888, 889, 904, 908, 911, 912,
+        913, 915
       ],
       "review": "mapped-abstraction"
     },
@@ -10853,7 +10856,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "sha256": "59b4c7daa57415cbe4f2d44bed0f0655903db50da7ac93e05a94c6b5d2165be2",
+      "sha256": "9ba174eede6f821eb352db8e2f5137c9477c8774d6189cf5877e01156db7800b",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
@@ -10862,12 +10865,13 @@
         "formal/models/fees/submission_fee_solana_deposit.qnt"
       ],
       "candidateLines": [
-        62, 89, 117, 192, 226, 243, 245, 247, 262, 287, 402, 421, 423, 426, 441,
-        446, 458, 469, 475, 476, 503, 512, 589, 611, 633, 659, 701, 702, 726,
-        727, 760, 763, 795, 807, 811, 813, 815, 822, 833, 891, 898, 900, 908,
-        915, 916, 923, 933, 962, 971, 972, 976, 1010, 1043, 1063, 1084, 1127,
-        1137, 1146, 1161, 1226, 1233, 1235, 1244, 1251, 1255, 1280, 1289, 1290,
-        1294
+        63, 90, 118, 193, 227, 244, 246, 248, 263, 288, 403, 422, 424, 427, 442,
+        447, 459, 470, 476, 477, 504, 513, 590, 612, 634, 660, 702, 703, 727,
+        728, 761, 764, 796, 808, 812, 814, 816, 823, 834, 892, 899, 901, 909,
+        916, 917, 924, 934, 963, 972, 973, 977, 1011, 1044, 1064, 1085, 1096,
+        1125, 1185, 1209, 1210, 1217, 1229, 1240, 1241, 1255, 1298, 1300, 1318,
+        1347, 1395, 1415, 1480, 1487, 1489, 1498, 1505, 1509, 1534, 1543, 1544,
+        1548
       ],
       "review": "mapped-abstraction"
     },
@@ -15282,7 +15286,7 @@
     },
     {
       "path": "formal/models/fees/submission_fee_solana_deposit.qnt",
-      "sha256": "9947852ee9baa4dbdb7caa43654619e5891c3ea2cac34e3965835d769dcee492",
+      "sha256": "604b7c08986fe1a86b7e4d2489a2471d86325dd6ea17d6ca835594a9c55ccfb5",
       "sources": [
         "contracts/solana/submission-deposits.ts",
         "migrations/0155_submission_fee_solana.sql",
@@ -15296,19 +15300,24 @@
         "workers/submission-fee/store.ts"
       ],
       "scenarios": [
+        "belowFeeIsFinalTest",
+        "belowFeeReclaimIsNotSearchedTest",
         "changedAddressIsNotSignedForTest",
+        "courtesyRefundTest",
         "dryRunSignsNothingTest",
         "expiredSendIsSentAgainTest",
         "expiredThenResentTest",
         "keptIsIncomeOnceTest",
         "offReadsNothingTest",
-        "otherMintNeverResolvedTest",
         "parkedReturnsWhenUsableTest",
+        "payerReclaimIsSearchedInStepsTest",
         "refundOnMergeTest",
-        "refusedDepositRefundedTest",
         "reusedAddressKeepsOwnOutcomeTest",
+        "searchIsOpenedOnceTest",
+        "setAsideIsTriedAgainTest",
         "settledUnseenIsNeverRecordedTest",
         "signedBytesCannotSettleLaterDepositTest",
+        "unlistedDepositIsNeverRecordedTest",
         "unpublishedTakesNoDepositTest",
         "unusableAccountParksTest"
       ]
@@ -22199,7 +22208,7 @@
     },
     {
       "path": "formal/models/ui/ui_submission_fee_solana_pay.qnt",
-      "sha256": "66cbfe1d3c7c99220412185f2269cf718b1ccd2ceb141020aebae9bc68b15e39",
+      "sha256": "32934e00a9bf56f656bab14de060491bb4e23a151f28eccb75844275e78079a3",
       "sources": [
         "backend/submission-fee/handler.ts",
         "backend/submission-fee/solana-pay.ts",
@@ -22216,9 +22225,15 @@
         "failedTransactionReturnsTheFormTest",
         "foreignPlanIsRefusedTest",
         "notOfferedAsksNothingTest",
+        "overTheLimitPreparesNoReclaimTest",
+        "overTheLimitReadsNothingTest",
         "paidElsewhereAsksNoWalletTest",
         "pendingIsNotSentAgainTest",
         "reloadKeepsTheStoredRequestTest",
+        "takeBackBeforeTheDelayPreparesNothingTest",
+        "takeBackNeedsNoRecordTest",
+        "takeBackWithNoDepositPreparesNothingTest",
+        "unlistedOffersNoTakeBackTest",
         "usedNonceIsRedrawnTest"
       ]
     },

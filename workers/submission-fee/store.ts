@@ -1108,7 +1108,8 @@ export const SOLANA_NEVER_RESOLVED = [
   "amount_below_due",
   "item_fee_invalid",
 ] as const;
-const NEVER_RESOLVED = `(d.accepted = 0 AND d.reject_reason IN (${SOLANA_NEVER_RESOLVED.map(
+// Never null: a deposit not judged yet (`accepted` null) is not one of them.
+const NEVER_RESOLVED = `(d.accepted IS 0 AND COALESCE(d.reject_reason, '') IN (${SOLANA_NEVER_RESOLVED.map(
   (reason) => `'${reason}'`,
 ).join(", ")}))`;
 const OPEN_STATES = "('open', 'refund_due', 'kept_due')";

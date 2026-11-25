@@ -45,10 +45,15 @@ import {
   type Instruction,
   message,
 } from "../../contracts/solana/transactions";
-import { submissionFeeItem } from "../../src/lib/submission-fee.mjs";
+import {
+  SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES,
+  SUBMISSION_FEE_SOLANA_RENT_LAMPORTS,
+  submissionFeeItem,
+} from "../../src/lib/submission-fee.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseSolanaConfig } from "./config";
 import { type Env, runDeposits } from "./index";
+import { SOLANA_REQUESTS_PER_RUN } from "./solana";
 import type { SubmissionFeeD1Database } from "./store";
 
 const PORT = Number(process.env.SLOP_FEE_SOLANA_TEST_PORT ?? "19899");
@@ -147,6 +152,8 @@ async function rpc<T>(method: string, params: unknown[] = []): Promise<T> {
   return body.result as T;
 }
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+/** Seconds after a deposit before its payer may reclaim it, in this run. */
+const RECLAIM_DELAY = 60;
 
 /** Signs and sends one transaction and waits until it is finalized. */
 async function send(
@@ -165,6 +172,47 @@ async function send(
   ]);
   await finalized(id);
   return id;
+}
+/**
+ * Transactions that merely name an address: a one-lamport transfer to
+ * oneself with the address as an extra account the System program ignores.
+ * Sent without waiting; the last one is waited for.
+ */
+async function junk(
+  signer: { seed: Uint8Array; address: string },
+  address: string,
+  count: number,
+  salt: number,
+) {
+  const latest = await rpc<{ value: { blockhash: string } }>(
+    "getLatestBlockhash",
+    [{ commitment: "finalized" }],
+  );
+  let last = "";
+  for (let index = 0; index < count; index += 1) {
+    const data = new Uint8Array(12);
+    const view = new DataView(data.buffer);
+    view.setUint32(0, 2, true);
+    view.setBigUint64(4, BigInt(salt * 1000 + index + 1), true);
+    const body = message(signer.address, latest.value.blockhash, [
+      {
+        program: SYSTEM,
+        accounts: [
+          { key: signer.address, write: true },
+          { key: signer.address, write: true },
+          { key: address, write: false },
+        ],
+        data,
+      },
+    ]);
+    last = await rpc<string>("sendTransaction", [
+      solanaBase64(
+        concat(Uint8Array.of(1), ed25519.sign(body, signer.seed), body),
+      ),
+      { encoding: "base64", preflightCommitment: "finalized" },
+    ]);
+  }
+  await finalized(last);
 }
 async function finalized(signature: string) {
   for (let attempt = 0; attempt < 240; attempt += 1) {
@@ -243,7 +291,8 @@ async function main() {
   const genesisHash = await rpc<string>("getGenesisHash");
   console.log(`validator ready on ${RPC}`);
 
-  // The deployment: initialize (30 days), then the mint's vault.
+  // The deployment: initialize (a reclaim delay of one minute, so a payer's
+  // own reclaim can be made here), then the mint's vault.
   await send(authority, [
     submissionInstruction(
       PROGRAM,
@@ -258,7 +307,7 @@ async function main() {
       {
         owner: owner.address,
         resolver: resolver.address,
-        reclaim_delay: 2_592_000n,
+        reclaim_delay: BigInt(RECLAIM_DELAY),
       },
     ),
   ]);
@@ -472,24 +521,88 @@ async function main() {
     "all five recorded as refunded",
   );
 
-  // 6. A reclaim before the delay is refused by the program itself.
-  let refused = false;
-  try {
-    await send(payerB, [
+  // 6. A payer's own reclaim, with transactions that merely name the record
+  // before and after it: refused by the program before its delay, then found
+  // by the Worker's bounded search and recorded, a few reads in each run.
+  ask(15);
+  await pay(payerA, 15, 300n);
+  const recordC = submissionDepositAddress(PROGRAM, payerA.address, 300n);
+  const reclaimC = () =>
+    send(payerA, [
       reclaimInstruction({
         programId: PROGRAM,
-        payer: payerB.address,
-        deposit: submissionDepositAddress(PROGRAM, payerB.address, 1n),
+        payer: payerA.address,
+        deposit: recordC,
         mint,
-        destination: strayB,
+        destination: ata(mint, payerA.address),
       }),
     ]);
+  let refused = false;
+  try {
+    await reclaimC();
   } catch {
     refused = true;
   }
   check(
     refused,
-    "the page's reclaim instruction is well formed and refused before the 30 days",
+    "the page's reclaim instruction is well formed and refused before the delay",
+  );
+  const rent = await rpc<{ value: number }>("getBalance", [
+    recordC,
+    { commitment: "finalized" },
+  ]);
+  check(
+    String(rent.value) === SUBMISSION_FEE_SOLANA_RENT_LAMPORTS &&
+      rent.value ===
+        (await rpc<number>("getMinimumBalanceForRentExemption", [
+          SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES,
+        ])),
+    `the record holds the published rent, ${SUBMISSION_FEE_SOLANA_RENT_LAMPORTS} lamports`,
+  );
+  result = await run();
+  // Deposits 1 to 8 were made above.
+  const last = 9;
+  check(
+    result.recorded === 1 && row(last)?.deposit_account === recordC,
+    "the deposit is recorded and pays pull request 15",
+  );
+  check(
+    String(row(last)?.tx_hash ?? "").length > 60,
+    "its creating transaction was found in one read of its address",
+  );
+  const paidAt = Date.parse(row(last)?.block_time as string) / 1000;
+  await junk(authority, recordC, 30, 1);
+  // The program reads the cluster's own clock, which can run behind the
+  // wall clock: wait until the finalized chain's time is past the delay.
+  for (;;) {
+    const slot = await rpc<number>("getSlot", [{ commitment: "finalized" }]);
+    const time = await rpc<number | null>("getBlockTime", [slot]);
+    if (time !== null && time > paidAt + RECLAIM_DELAY + 2) break;
+    await sleep(1000);
+  }
+  const held = await balance(payerA.address);
+  const reclaimed = await reclaimC();
+  await junk(authority, recordC, 30, 2);
+  let runs = 0;
+  let most = 0;
+  while (row(last)?.state !== "reclaimed") {
+    result = await run();
+    check(result.error === undefined, "the run reports no failed step");
+    most = Math.max(most, Number(result.requests));
+    runs += 1;
+    if (runs > 8) throw new Error("FAILED: the search did not end");
+  }
+  check(
+    row(last)?.resolve_tx === reclaimed && item(15).outcome === "refunded",
+    `the reclaim is found among 60 other transactions in ${runs} runs, and recorded`,
+  );
+  check(
+    (await balance(payerA.address)) === held + FEE,
+    "the payer's USDC account rose by the reclaimed fee",
+  );
+  check(
+    most > 0 && most < SOLANA_REQUESTS_PER_RUN,
+    `no run made more than ${most} requests (limit ${SOLANA_REQUESTS_PER_RUN})`,
   );
   check(row(3)?.state === "refund_due", "deposit 3 is still due and open");
   console.log("PASS");

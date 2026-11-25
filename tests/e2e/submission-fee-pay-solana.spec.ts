@@ -286,7 +286,10 @@ test("a prepared transaction that is not the page's own message is never handed 
 
 test("a wallet can ask to take a Solana deposit back whatever Slop recorded", async ({
   page,
+  diagnostics,
 }) => {
+  // The route refuses with a reason, which the page shows.
+  diagnostics.allowResponse(422, "POST", "/api/v1/submission-fee/solana");
   await switchFeeOn(page, TABLES);
   const solana = await serveSolana(page);
   await serveFeeRecord(page, REPOSITORY, 7, () =>

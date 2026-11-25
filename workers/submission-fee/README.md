@@ -379,54 +379,120 @@ What differs from the EVM ledgers (`solana-core.ts`, `solana.ts`,
 
 - **Reads.** There is no event log. An open deposit is an account of the
   program, closed on its outcome. Each run reads the program's `Config` and
-  then every `Deposit` account (`getProgramAccounts`, filtered by size and
-  discriminator, at a slot not before the `Config` read), all at `finalized`
-  commitment. A pull request is marked paid only by a finalized deposit;
-  there is no earlier confirmed step. The cluster is authenticated by its
-  genesis hash first.
+  then lists the open `Deposit` accounts with `getProgramAccounts` at a slot
+  not before the `Config` read, all at `finalized` commitment. The endpoint
+  filters the list: the record's size (169 bytes), its first eight bytes,
+  the table's mint at byte 56 and the fee wallet as kept wallet at byte 88.
+  Only the eight bytes of each record's id are returned. A deposit of
+  another mint, or with another kept wallet, is therefore never fetched or
+  recorded; its payer reclaims it from the program. The full records of the
+  new ids are then read together, up to 100 in a run. A pull request is
+  marked paid only by a finalized deposit; there is no earlier confirmed
+  step. The cluster is authenticated by its genesis hash first.
 - **Keys.** A deposit is keyed by the id the program stored in its record.
   The record's address follows from the payer and a nonce the payer picked,
   and the same payer and nonce can be used again after a settlement, so an
   address is never a key. The address is kept beside the row
   (`deposit_account`, migration 0155). The cursor row holds the next deposit
   id, not a block.
-- **Settlement.** A recorded deposit whose account is gone, or now holds
-  another id, is settled. Its outcome is the first `resolve` or `reclaim` on
-  that address after the transaction that created it, read from the executed
-  instructions of that finalized transaction, never from its logs. A refund
-  or kept fee is recorded only when the transaction shows the program's own
-  transfer of the exact amount of the deposit's mint into an account the
-  right wallet owns, which rose by at least that amount. A deposit made and
-  settled before the Worker ever recorded it is logged
-  (`submission_fee_solana_settled_unseen`) and not recorded.
+- **Nothing depends on an address's history.** Anyone can send a
+  transaction that merely names an address for the base fee, so the Worker
+  never needs the whole list of an address's transactions:
+  - A deposit is recorded from its record alone: `block_time` is the cluster
+    time the program stored, `block_number` the finalized slot the record
+    was read at. For a deposit that names a pull request or report Slop
+    asked a fee for (25 in a run), one page of the address's signatures is
+    read and up to two transactions whose block time is the record's own; a
+    successful `deposit` there whose payer, mint, item, amount, kept wallet
+    and nonce are the record's is stored as `tx_hash`. Otherwise `tx_hash`
+    is the record's address. Recording never waits on it.
+  - A settlement the Worker sent itself is proven from that transaction,
+    whose signature is in the send's row. The send in flight is reconciled
+    before the scan, so this happens in the run that finds it finalized.
+  - Any other settlement (the payer's own reclaim) is searched for only
+    between the slot the record was last known open at and the slot it was
+    first seen gone at (`submission_fee_solana_settlements`). Transactions
+    after the second slot, and failed ones, are passed over without being
+    read. A run reads at most 6 pages of signatures and 20 transactions for
+    all searches together and stores where it stopped (`before_tx`,
+    `candidate_tx`); the next run continues there. The oldest settlement in
+    that span is the deposit's.
+- **Settlement proof.** From the executed instructions of the finalized
+  transaction, never from its logs. A refund or kept fee is recorded only
+  when the transaction shows the program's own transfer of the exact amount
+  of the deposit's mint into an account the right wallet owns, which rose by
+  at least that amount.
+- **One deposit never stops another.** Each outcome is its own write. A
+  deposit that cannot be read, proven or sent is logged
+  (`submission_fee_solana_set_aside`, with `read_failed`, `proof_failed`,
+  `request_limit`, `not_found` or `record_differs`, never provider text),
+  kept with that word where it has a row to keep it in, and tried again
+  later. Every step of a run (reconcile, list, scan, judge, recheck, plan,
+  send) runs by itself: one that fails is named in the result's `steps` and
+  the run ends with `error`, after the other steps ran. A failed listing
+  does not stop what is already due from being sent.
+- **Deposits the Worker never resolves.** A recorded deposit whose amount is
+  below its pull request's fee (`amount_below_due`, `item_fee_invalid`), like
+  one of another mint or kept wallet, is final for the Worker: it leaves
+  what is tracked and planned and is not read again. Its payer reclaims it
+  after 30 days. This differs from the EVM ledgers, where such a deposit of
+  an accepted token is refunded. A deposit of the right amount that paid for
+  nothing (an unknown item after a day, a pull request already paid) is
+  still refunded as a courtesy, after every deposit that paid a pull
+  request, and only while less than half of the day's lamport limit is
+  spent (`submission_fee_solana_courtesy_refunds_wait`).
 - **Addresses** are base58 and compared exactly. USDC is the only accepted
-  mint. A deposit of another mint is recorded, refused
-  (`token_not_accepted`) and never resolved.
+  mint.
 - **Sending.** One transaction carries up to five `resolve` instructions,
-  each naming the id the Worker recorded, and is all or nothing. Right before
-  it builds an instruction the Worker reads the record again at finalized
-  commitment and builds from that record; it builds nothing when the record
-  is gone or holds another id. Before a refund it checks that the payer's
-  associated USDC account exists, is of that mint, is still the payer's and
-  is not frozen (the same for the fee wallet's before a kept fee); otherwise
-  the deposit is parked as under "A payout the token refuses" and looked at
-  again a day later. The Worker never creates a token account.
+  each naming the id the Worker recorded, and is all or nothing. A planned
+  or in-flight deposit's record address is always found, by id, however many
+  deposits are recorded. Right before it builds the instructions the Worker
+  reads the records again together at finalized commitment and builds from
+  them; it builds nothing when a record is gone or holds another id, never
+  for another mint, and a kept fee only to the fee wallet of the table.
+  Before a refund it checks that the payer's associated USDC account exists,
+  is of that mint, is still the payer's and is not frozen (the same for the
+  fee wallet's before a kept fee); otherwise the deposit is parked as under
+  "A payout the token refuses" and looked at again a day later. The Worker
+  never creates a token account.
 - **The journal.** Sends are in `submission_fee_solana_sends`. The signed
   bytes are recorded before the broadcast and resent unchanged while their
-  blockhash can still land. A send is failed only once the finalized chain
-  is past its last valid block height without it; its deposits are then sent
-  again in a new transaction.
+  blockhash can still land. A send is failed only when the finalized chain
+  is past its last valid block height and a node that has itself seen that
+  finalized slot does not know its signature; the slot and height come from
+  one answer (`getEpochInfo`), and a node behind it leaves the send in
+  flight. Its deposits are then sent again in a new transaction. Such a
+  send paid no fee and is not counted in the day's lamports.
+- **Requests.** One run makes at most 300 requests to the Solana endpoint
+  (`SOLANA_REQUESTS_PER_RUN`): the client counts every request and refuses
+  the one after the last before it is sent. The steps' own limits add up to
+  230 (`SOLANA_STEP_REQUESTS` in `solana-core.ts`, with the count for each
+  step). The result reports `requests`, and `open`, the number of listed
+  records; 1,000 or more is also logged (`submission_fee_solana_open_high`).
+  The listing itself is one request whose answer grows by about 150 bytes
+  for each open record of the table's mint and fee wallet; the endpoint
+  offers no way to page it.
 - **Limits and secrets.** `SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX` and
   `SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY` bound the network fee. The
   secrets are `RPC_URL_SUBMISSION_FEE_SOLANA`, a keyed https endpoint that
-  serves finalized reads, `getProgramAccounts`, `getSignaturesForAddress`
-  and `getTransaction` (there is no public default), and for `live`
+  serves finalized reads, `getProgramAccounts` with filters and a data
+  slice, `getMultipleAccounts`, `getSignaturesForAddress`, `getTransaction`
+  and `getEpochInfo` (there is no public default), and for `live`
   `SUBMISSION_FEE_SOLANA_RESOLVER_SEED`, the resolver's 32-byte ed25519 seed
   as 64 hex digits. The resolver key pays only the network fee; a deposit's
-  rent returns to its payer. A key that is not the program's resolver signs
+  rent (2,067,120 lamports, the rent-exempt minimum of its 169 bytes)
+  returns to its payer. A key that is not the program's resolver signs
   nothing (`submission_fee_solana_resolver_differs`).
 - **Kept fees** are fee income of the Solana fee wallet under the same rule
   as below, by exact address.
+
+The pay page's route, `POST /api/v1/submission-fee/solana`
+(`backend/submission-fee/solana-pay.ts`), reads the Pages payment endpoint,
+not this Worker's. It counts requests before reading anything: 20 a minute
+from one address, 30 a minute for one pull request, 120 a minute in all,
+and at most six reads a request. A payer's reclaim there needs no row of
+this Worker: the wallet's open deposits for the pull request are found on
+chain by payer and item.
 
 Switching Solana on, each step the operator's and each its own reviewed
 change: deploy and initialize the program and open its USDC vault

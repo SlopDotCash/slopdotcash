@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "47c886c40d78a045477b9d3d13ee159c1675c125853743453a4b8ae0715fee75",
+  "inventorySha256": "7ddc9f451a131a19593d4489ca411977b0120e277910343d22a54d777d4085a8",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2422,7 +2422,7 @@
     },
     {
       "path": "migrations/0155_submission_fee_solana.sql",
-      "line": 31,
+      "line": 35,
       "name": "mode",
       "kind": "sql-check",
       "values": ["dry_run", "live"],
@@ -2432,7 +2432,7 @@
     },
     {
       "path": "migrations/0155_submission_fee_solana.sql",
-      "line": 41,
+      "line": 45,
       "name": "state",
       "kind": "sql-check",
       "values": ["failed", "finalized", "recorded", "submitted", "unknown"],
@@ -5509,8 +5509,18 @@
       "review": "candidate-only"
     },
     {
+      "path": "workers/submission-fee/solana-core.ts",
+      "line": 179,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["kept", "reclaimed", "refunded"],
+      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "workers/submission-fee/solana.ts",
-      "line": 118,
+      "line": 104,
       "name": "state",
       "kind": "string-union",
       "values": ["kept", "reclaimed", "refunded"],
@@ -5520,7 +5530,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 184,
+      "line": 185,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -5536,7 +5546,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 807,
+      "line": 808,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],
@@ -5552,7 +5562,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 1055,
+      "line": 1056,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],

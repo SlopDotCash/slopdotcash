@@ -1030,6 +1030,20 @@ describe("transactions that merely name a record address", () => {
     ).toBeLessThan(90);
   });
 
+  test("a deposit reclaimed before it was ever judged is still followed to its outcome", async () => {
+    const t = setup();
+    // Nobody asked a fee for pull request 7 yet: the deposit waits unjudged.
+    const made = t.pay(7);
+    expect(await t.ledger()).toMatchObject({ recorded: 1, judged: 0 });
+    expect(t.deposit(1)).toMatchObject({ accepted: null, state: "open" });
+    const reclaimed = t.chain.reclaim(made.account);
+    expect(await t.ledger()).toMatchObject({ resolved: 1 });
+    expect(t.deposit(1)).toMatchObject({
+      state: "reclaimed",
+      resolve_tx: reclaimed,
+    });
+  });
+
   test("a settlement is never taken from before the slot the record was last seen open at", async () => {
     const t = setup();
     t.ask(7);
@@ -1178,6 +1192,7 @@ describe("limits of one run", () => {
   });
 
   test("the steps' own limits add up to less than the run's", () => {
+    expect(SOLANA_STEP_REQUESTS).toBe(230);
     expect(SOLANA_STEP_REQUESTS).toBeLessThan(SOLANA_REQUESTS_PER_RUN);
   });
 });

@@ -74,7 +74,7 @@ import type { D1SolanaFeeStore, TrackedSolanaDeposit } from "./store";
 
 /**
  * The most requests each part of a run makes to the Solana endpoint. They
- * add up to 261; `SOLANA_REQUESTS_PER_RUN` (300) is enforced by the client
+ * add up to 230; `SOLANA_REQUESTS_PER_RUN` (300) is enforced by the client
  * itself, which refuses the request after the last.
  *
  *   authenticate the cluster                                    1
@@ -93,7 +93,8 @@ import type { D1SolanaFeeStore, TrackedSolanaDeposit } from "./store";
  *     (up to six attempts and five single simulations),
  *     broadcast                                      5 + 30 + 25 + 1
  */
-export const SOLANA_STEP_REQUESTS = 261;
+export const SOLANA_STEP_REQUESTS =
+  1 + 2 + (1 + 75) + 20 + (6 + 20) + 1 + 25 + 3 + 15 + (5 + 30 + 25 + 1);
 /** Recorded deposits compared with the listing in one run. */
 export const SOLANA_TRACKED_PER_RUN = 5000;
 /** New deposits recorded in one run: one read of their records. */

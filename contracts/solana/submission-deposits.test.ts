@@ -2,6 +2,10 @@
 // the IDL, and a deposit's record is addressed by its payer and nonce.
 import { expect, test } from "bun:test";
 import { bytesToHex } from "../../src/lib/byte-encoding";
+import {
+  SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES,
+  SUBMISSION_FEE_SOLANA_RENT_LAMPORTS,
+} from "../../src/lib/submission-fee.mjs";
 import { fakeAddress } from "../../workers/submission-fee/fixtures/solana-fake";
 import { solanaAssociatedTokenAddress, solanaBase58 } from "./adapter";
 import {
@@ -13,6 +17,8 @@ import {
   SUBMISSION_DEPOSITS_IDL,
   submissionConfigAddress,
   submissionDepositAddress,
+  submissionDepositOffset,
+  submissionDepositSize,
   submissionLedgerAddress,
   submissionVaultAddress,
 } from "./submission-deposits";
@@ -160,4 +166,21 @@ test("an account of another size or kind is refused", () => {
   expect(() => decodeSubmissionConfig(bytes("Deposit", 122), idl)).toThrow(
     "layout",
   );
+});
+
+test("the published record size and rent follow the committed IDL", () => {
+  // 8 bytes of discriminator, then id, payer, nonce, mint, kept wallet,
+  // item, amount, time and bump.
+  expect(submissionDepositSize(idl)).toBe(
+    8 + 8 + 32 + 8 + 32 + 32 + 32 + 8 + 8 + 1,
+  );
+  expect(SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES).toBe(submissionDepositSize(idl));
+  // The rent-exempt minimum: 6,960 lamports for each byte of the record and
+  // of the 128 bytes of account overhead.
+  expect(SUBMISSION_FEE_SOLANA_RENT_LAMPORTS).toBe("2067120");
+  expect(submissionDepositOffset("id", idl)).toBe(8);
+  expect(submissionDepositOffset("payer", idl)).toBe(16);
+  expect(submissionDepositOffset("mint", idl)).toBe(56);
+  expect(submissionDepositOffset("kept_to", idl)).toBe(88);
+  expect(submissionDepositOffset("item", idl)).toBe(120);
 });
