@@ -1230,6 +1230,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/security/read-key.ts",
+      "sha256": "a9d698654cad1040cad3a066aaac3440edb2705271e5f2194a6af6c3534aed3a",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [52, 69, 77, 84, 88, 91, 93, 103, 108, 158],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/security/report-analysis.ts",
       "sha256": "3779a495ba3ad99f44dc0fefcd419bfdae5bb1514b373f1216c1bc0a9f54f43e",
       "models": [
@@ -2433,7 +2440,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "9aa1d7765f69dc606be035eefabe9043ca1111e844f2ba0cb0df09465828d2ac",
+      "sha256": "261958891de3208ddcb8cce09c9968ebf7980ab6003d342eedd5124520301e8c",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2445,7 +2452,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [609, 610, 646, 659],
+      "candidateLines": [623, 624, 660, 673],
       "review": "mapped-abstraction"
     },
     {
@@ -3948,6 +3955,13 @@
       "sha256": "b2cec009c31627b0d88c370a18b57ce31af150e9da7d356d38750fc49ce2fb7e",
       "models": ["formal/models/api/api_security_advisory_state.qnt"],
       "candidateLines": [1, 3, 6, 7, 11],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0154_security_read_keys.sql",
+      "sha256": "99923696199d8ee3fb0696376cfffce1afd0452489d9cabe89895aa285b5b532",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -6423,7 +6437,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "b7ab3f6ac388b75be351d1203bd6a2dc8383d6e6987acbe49c888b80f4cb0df8",
+      "sha256": "d967bfd7ae2c8816b2bd29c8d027450fbb6d68e00bbb6d005060279256c10ca9",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -6435,20 +6449,20 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        20, 25, 97, 126, 127, 128, 130, 136, 146, 155, 158, 166, 169, 171, 173,
-        174, 195, 197, 253, 254, 255, 258, 259, 260, 261, 278, 284, 291, 299,
-        309, 316, 323, 337, 357, 374, 393, 394, 399, 423, 426, 427, 428, 429,
-        430, 432, 433, 450, 541, 542, 543, 545, 547, 548, 555, 556, 570, 572,
-        574, 576, 578, 581, 582, 586, 588, 590, 600, 601, 606, 608, 620, 621,
-        648, 652, 653, 663, 664, 675, 677, 684, 685, 704, 710, 736, 737, 738,
-        739, 742, 752, 777, 826, 839, 844, 853, 919, 939, 945, 954, 960, 965,
-        967, 970, 976, 977, 988, 997, 1005, 1007, 1016, 1019, 1020, 1021, 1022,
-        1024, 1025, 1028, 1029, 1040, 1073, 1077, 1134, 1135, 1205, 1215, 1220,
-        1238, 1240, 1242, 1245, 1246, 1247, 1249, 1317, 1321, 1423, 1424, 1425,
-        1455, 1456, 1497, 1498, 1499, 1501, 1508, 1510, 1514, 1516, 1518, 1527,
-        1528, 1534, 1540, 1545, 1554, 1555, 1556, 1557, 1560, 1561, 1563, 1568,
-        1569, 1572, 1573, 1575, 1581, 1587, 1588, 1589, 1590, 1593, 1594, 1602,
-        1614
+        20, 25, 98, 127, 128, 129, 131, 137, 147, 156, 159, 167, 170, 172, 174,
+        175, 196, 198, 254, 255, 256, 259, 260, 261, 262, 279, 285, 292, 300,
+        310, 317, 324, 338, 358, 375, 394, 395, 400, 424, 427, 428, 429, 430,
+        431, 433, 434, 451, 542, 543, 544, 546, 548, 549, 556, 557, 571, 573,
+        575, 577, 579, 582, 583, 587, 589, 591, 601, 602, 607, 609, 621, 622,
+        649, 653, 654, 664, 665, 676, 678, 685, 686, 705, 711, 737, 738, 739,
+        740, 743, 753, 778, 827, 840, 845, 854, 920, 940, 946, 955, 961, 966,
+        968, 971, 977, 978, 989, 998, 1006, 1008, 1017, 1020, 1021, 1022, 1023,
+        1025, 1026, 1029, 1030, 1041, 1074, 1078, 1145, 1146, 1216, 1226, 1231,
+        1249, 1251, 1253, 1256, 1257, 1258, 1260, 1328, 1332, 1434, 1435, 1436,
+        1466, 1467, 1508, 1509, 1510, 1512, 1519, 1521, 1525, 1527, 1529, 1538,
+        1539, 1545, 1551, 1556, 1565, 1566, 1567, 1568, 1571, 1572, 1574, 1579,
+        1580, 1583, 1584, 1586, 1592, 1598, 1599, 1600, 1601, 1604, 1605, 1613,
+        1625
       ],
       "review": "mapped-abstraction"
     },
@@ -6851,6 +6865,15 @@
         1, 70, 78, 141, 142, 144, 151, 161, 162, 167, 172, 179, 192, 230, 241,
         242, 294, 321, 358, 403, 405, 406, 408, 411, 414, 415, 615, 617, 622,
         631
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/SecurityReadKey.tsx",
+      "sha256": "51befcd572c5636285b60c3d111d23fa4b9b59453e1999f9d666002885859944",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [
+        7, 19, 36, 37, 39, 45, 53, 62, 80, 81, 84, 89, 97, 120, 126
       ],
       "review": "mapped-abstraction"
     },
@@ -8165,6 +8188,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure preservation of existing security terms/default split while rebuilding form fields; state is owned by the editor."
+    },
+    {
+      "path": "src/lib/security-read-key.ts",
+      "sha256": "f7149202bcf3ecfcdad4006fc03d94c46e5241725ab8e4164fb56c960895f694",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/security-report-deposit.mjs",
@@ -12162,6 +12192,22 @@
         "unscreenedReportIsSkippedTest",
         "unsetSecretIsNotFoundTest",
         "wrongOrMissingTokenIsNotFoundTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_read_key.qnt",
+      "sha256": "766d54726669c45a082cd7101f07e7f69242ebd36a88a96c96974c027136c36e",
+      "sources": [
+        "backend/security/read-key.ts",
+        "migrations/0154_security_read_keys.sql",
+        "src/SecurityReadKey.tsx",
+        "src/lib/security-read-key.ts"
+      ],
+      "scenarios": [
+        "closedAccountReadsNothingTest",
+        "createdKeyReadsTest",
+        "replacedKeyStopsTest",
+        "revokedKeyStopsTest"
       ]
     },
     {
