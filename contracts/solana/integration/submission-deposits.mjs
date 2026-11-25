@@ -313,14 +313,21 @@ export async function deposit(input) {
   return landed({ from: input.from, nonce, signature });
 }
 
-/** Builder of a resolve. Defaults follow the recorded deposit, as the Worker would. */
-export async function resolveCall({ resolver, id, refund, accounts = {} }) {
+/** Builder of a resolve. Defaults follow the recorded deposit, as the Worker would, and
+ * name its id; `expectedId` overrides the id the instruction claims to settle. */
+export async function resolveCall({
+  resolver,
+  id,
+  refund,
+  expectedId = id,
+  accounts = {},
+}) {
   const record = await readDeposit(id);
   assert.ok(record, `deposit ${id} is not open`);
   const address = await locate(id);
   const wallet = refund ? record.payer : record.keptTo;
   return program.methods
-    .resolve(refund)
+    .resolve(refund, new BN(expectedId.toString()))
     .accountsStrict({
       resolver: resolver.publicKey,
       config: addresses.config(),

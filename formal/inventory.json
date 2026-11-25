@@ -2125,11 +2125,11 @@
     },
     {
       "path": "contracts/solana/integration/submission-deposits.mjs",
-      "sha256": "937fe396aff688c9da0257196b470a18b632f07e0145b579dd7c92683b4e7aca",
+      "sha256": "9c30121ae110120534e51f90f227abeef2ae0e7ceadaee5a41f9addaa31933da",
       "models": [
         "formal/models/contracts/solana_submission_deposits_suite.qnt"
       ],
-      "candidateLines": [38, 167, 179, 422],
+      "candidateLines": [38, 167, 179, 429],
       "review": "mapped-abstraction"
     },
     {
@@ -2242,9 +2242,9 @@
     },
     {
       "path": "contracts/solana/programs/slop-submission-deposits/src/lib.rs",
-      "sha256": "ee1344b40f32c190e8d09dd5594400d8e464a8427a9f25d54492ca5f5818ef5d",
+      "sha256": "42828469a7456d53a46177e7cba1f8c1e74b2154ff20d81a4cc43d9954080365",
       "models": ["formal/models/contracts/solana_submission_deposits.qnt"],
-      "candidateLines": [12, 26, 230, 261, 262, 459, 557],
+      "candidateLines": [12, 26, 235, 266, 267, 464, 562],
       "review": "mapped-abstraction"
     },
     {
@@ -2350,12 +2350,13 @@
     },
     {
       "path": "contracts/solana/scripts/submission-deposits-plan.mjs",
-      "sha256": "65a734ae1533bb4eb87555933bb896962a1b4a86550a25bb2cff9087c79c23ef",
+      "sha256": "acfcb4c50fb7a19bf783898e97aa3747cfd7196edbe01c992d40c85cf4505501",
       "models": [
         "formal/models/contracts/solana_submission_deposits_deployment.qnt"
       ],
       "candidateLines": [
-        11, 39, 87, 123, 129, 159, 167, 192, 195, 212, 214, 228
+        11, 52, 56, 109, 145, 151, 207, 211, 214, 263, 271, 310, 318, 343, 346,
+        366, 372
       ],
       "review": "mapped-abstraction"
     },
@@ -14133,7 +14134,7 @@
     },
     {
       "path": "formal/models/contracts/solana_submission_deposits.qnt",
-      "sha256": "e07286c7d4284bbbe8ac18f392be6e18f0e32bc690e669c92618b85711196831",
+      "sha256": "e47349fb78a5d839e8e97e41cbb166e717961f52811bb0d7162a6e53b7152046",
       "sources": [
         "contracts/solana/programs/slop-submission-deposits/Cargo.toml",
         "contracts/solana/programs/slop-submission-deposits/src/lib.rs"
@@ -14151,6 +14152,7 @@
         "cancelledOwnershipCannotBeAcceptedTest",
         "depositInBetweenDoesNotInvalidateTest",
         "earlyReclaimRefusedTest",
+        "freeAddressCannotBeResolvedTest",
         "idIsAssignedInLandingOrderTest",
         "initializeRefusesABadDelayTest",
         "initializeRefusesAMissingOwnerTest",
@@ -14163,6 +14165,7 @@
         "missingKeptWalletRefusedTest",
         "newResolverCannotRedirectTest",
         "newResolverStillHasOnlyTheTwoOutcomesTest",
+        "newerDepositSettlesUnderItsOwnIdTest",
         "noDepositBeforeInitializeTest",
         "nonceIsFreeAgainOnceSettledTest",
         "onlyTheAuthorityInitializesTest",
@@ -14192,25 +14195,38 @@
         "secondDepositHasItsOwnClockTest",
         "settledCannotBeReclaimedTest",
         "squatterCannotBlockAPayerTest",
+        "staleKeptResolveIsRefusedTest",
+        "staleRefundResolveIsRefusedTest",
+        "staleResolveByAddressIsRefusedTest",
         "twoDepositsSettleIndependentlyTest",
         "twoPayersBuiltOnOneStateBothLandReversedTest",
-        "twoPayersBuiltOnOneStateBothLandTest"
+        "twoPayersBuiltOnOneStateBothLandTest",
+        "wrongIdAtAnOpenAddressIsRefusedTest"
       ]
     },
     {
       "path": "formal/models/contracts/solana_submission_deposits_deployment.qnt",
-      "sha256": "c9d94a77132c1b4921d7c99f1806c70814581dc8650cdc85a5909dbec7ad11ba",
+      "sha256": "26cebafc660d1d7e323d1d010bb1240dd518d22960f65f4293a2366a222a6de7",
       "sources": ["contracts/solana/scripts/submission-deposits-plan.mjs"],
       "scenarios": [
         "initializeIsSentOnceTest",
+        "noSecondSmokeDepositWhileOneIsOpenTest",
+        "noSmokeDepositBeforeInitializeTest",
+        "noSmokeDepositWithoutAVaultTest",
+        "noSmokeRefundWithoutADepositTest",
         "nonClassicMintHasNoVaultPlanTest",
         "nothingBeforeDeploymentTest",
+        "onlyTheResolverSendsTheSmokeRefundTest",
         "openVaultIsNotPlannedTwiceTest",
         "plannedButUnsentInitializeDiesWithTheAuthorityTest",
         "removedAuthorityIsNeverPlannedForTest",
         "runbookOrderTest",
         "secondInitializeIsNotPlannedTest",
         "sharedRolesPlanNothingTest",
+        "smokeRefundIsSentOnceTest",
+        "smokeTestTwiceBeforeTheAuthorityIsRemovedTest",
+        "smokeTestWorksAfterTheAuthorityIsRemovedTest",
+        "staleSmokeRefundIsRefusedTest",
         "strangerCannotSendTheInitializePlanTest",
         "unreviewedBytesPlanNothingTest",
         "vaultNeedsNoAuthorityTest",

@@ -15,7 +15,7 @@ author's own and carries the author's blind spots. The program is not deployed.
 Source reviewed: SHA-256
 `ab23f8089011e139856420338bb423ea8b17b51be66eff31cb5ca57d248f40ee`, Anchor 0.32.1,
 platform tools v1.52, `anchor-lang` and `anchor-spl` 0.32.1 from the workspace
-`Cargo.lock`. The local build is 432,704 bytes with SHA-256
+`Cargo.lock`. The local build of 20 November was 432,704 bytes with SHA-256
 `078cb016274d46ddb114fa47af5b0238a942dde06367c30330801800b7988c33`; a
 local build is not the pinned image's build and its hash is not the deployable
 one (the pinned image's is below).
@@ -25,9 +25,10 @@ one (the pinned image's is below).
 No defect was found that lets a deposit's tokens reach anything but a token
 account its payer owns or the associated token account of its kept wallet, be
 paid twice, or be released by anyone but the resolver or, after the delay, the
-payer. One limit was found that the EVM contract does not have (item 1 below):
-whoever keeps making deposits can make other payers' deposits fail and retry.
-It delays; it moves nothing. That limit was removed on 25 November 2026.
+payer. One limit was found in the program of 20 November that the EVM contract
+does not have (item 1 below): whoever kept making deposits could make other
+payers' deposits fail and retry. It delayed; it moved nothing. The program no
+longer has that limit: the record's address was changed on 25 November 2026.
 
 ## What was run
 
@@ -82,24 +83,19 @@ prove the build of `main`.
 
 ## For a second reader
 
-1. **The next id is part of the record's address.** *Changed on 25 November
-   2026, operator decision: the record's address is now derived from the payer
-   and a number the payer picks, and the id is assigned inside the record. The
-   rest of this item describes the design of 20 November and why it was
-   changed.* A deposit must name the
-   account of id `deposit_count + 1`. Two deposits built against the same count
-   have one winner; the other fails (`ConstraintSeeds`) and is rebuilt. Someone
-   who keeps landing deposits of any mint whose vault they opened can therefore
-   keep honest deposits failing. Each of the attacker's deposits locks its rent
-   (about 0.002 SOL) for the 30 days until reclaim and costs a transaction fee;
-   nothing is lost by anyone and no deposit is misdirected. The owner's only
-   lever is the pause, which stops honest deposits too. The alternative is a
-   record address derived from the payer and a number the payer picks, with the
-   id assigned inside the record; that removes the race and makes a reader find
-   open deposits with `getProgramAccounts` instead of by id. Kept as built
-   because the address-by-id rule is what makes "an id is used once" and "absent
-   means settled" true by construction. This is the owner's call before
-   deployment.
+1. **The record's address (settled on 25 November 2026).** The record's address
+   is derived from the payer and a number the payer picks, and the program
+   assigns the id inside the record. That is the current design; see
+   "[Change of 25 November 2026](#change-of-25-november-2026)". What follows in
+   this item is history. On 20 November the next id was part of the address: a
+   deposit had to name the account of id `deposit_count + 1`, two deposits
+   built against the same count had one winner and the other failed
+   (`ConstraintSeeds`), and someone who kept landing deposits of any mint whose
+   vault they had opened could keep honest deposits failing. Each such deposit
+   locked its rent for the 30 days until reclaim and cost a transaction fee;
+   nothing was lost and no deposit was misdirected, and the owner's only lever
+   was the pause. This note left the choice to the owner, who chose the
+   payer-and-nonce address before deployment.
 2. **The upgrade authority.** While it exists, its holder can replace the
    program and move every open deposit. Nothing in the program limits that and
    nothing can. The runbook removes it; the README forbids calling the program
@@ -162,7 +158,16 @@ What changed in the program, and nothing else:
   it was 161). The program still sets `id = deposit_count + 1` and stores it.
 - `resolve` and `reclaim` take the `Deposit` account by its address and check it
   against the payer, nonce and bump stored in it.
+- `resolve(refund, expected_id)` has a second argument, the id of the deposit
+  the resolver means. If the record at the address stores another id, the
+  instruction fails with the new error `WrongDeposit` (code 6012) before
+  anything moves. `reclaim` has no such argument: only the payer signs it, and
+  it returns whatever record is at that address to that same payer.
 - The `Deposited` event also carries the nonce.
+
+The local build of the changed program is 434,888 bytes with SHA-256
+`910c412e483042bc366b9f2c1312ba1934c957c5e48207a8e41cbdb74e602774` (placeholder
+program id; a local build is not the pinned image's build).
 
 Why: with the id in the address a payer signed against the current count, so any
 deposit that landed first made theirs fail with `ConstraintSeeds`, and a stream
@@ -214,18 +219,33 @@ or lose tokens:
   address (tested). So an address does not identify a deposit over time: a
   reader keys a deposit by its stored id and its creating transaction, checks
   the stored id whenever it reads an address, and takes a deposit's outcome
-  from the first `resolve` or `reclaim` on that address after its creating
-  transaction, not simply the newest transaction there. The program could
-  prevent reuse only by keeping every record forever, which would cost each
-  payer the rent the closing returns. A payer who reuses a nonce affects only
-  how their own deposits read.
+  from the successful `resolve` on that address whose `expected_id` is the
+  deposit's id, or else from the first successful `reclaim` there after its
+  creating transaction, not simply the newest transaction there. The program
+  could prevent reuse only by keeping every record forever, which would cost
+  each payer the rent the closing returns. A payer who reuses a nonce affects
+  only how their own deposits read.
+- **Why `resolve` names an id.** An independent re-review of this change on
+  25 November found no way to lose funds and named this gap: the resolver
+  builds a resolve for deposit 5 at address A; before it lands the payer
+  reclaims 5 (after the delay) and makes deposit 9 at A; without the id the
+  resolve would have settled 9 with the outcome meant for 5, for example
+  keeping a fee that should have been judged by itself. With `expected_id` it
+  is refused. Tested on the real program: a kept resolve signed for the first
+  deposit, then a reclaim and a new deposit at the same payer and nonce in one
+  transaction (new id, balances and rent exactly as before, nothing paid
+  twice), then the old resolve, refused with `WrongDeposit` and moving
+  nothing; also a resolve naming another open deposit's id, or id 0. The same
+  nonce twice in one transaction is refused whole.
 
 Also unchanged and still true: ids count up from 1 with no gap, in landing
 order, because the count only moves inside a successful deposit.
 
 What was run on 25 November 2026 is in the pull request that made the change and
-in the build notes; the table and the deliberate-defect results above were not
-rerun in full. The 40 deliberate defects of 20 November were not repeated.
+in the build notes; the table and the deliberate-defect results above describe
+the program of 20 November and were not rerun in full. The 40 deliberate
+defects of 20 November were not repeated. The runbook gained a smoke test on
+mainnet with the real resolver before the upgrade authority is removed.
 
 ## Not covered
 

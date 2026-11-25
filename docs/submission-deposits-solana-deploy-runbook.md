@@ -1,7 +1,10 @@
 # Submission deposits on Solana: mainnet deployment runbook
 
-Prepared on 20 November 2026, revised on 25 November 2026 (the record's address,
-and four hardened steps: 5, 8 and 9). **Nobody has run these steps.** The repository
+Prepared on 20 November 2026, revised on 25 November 2026: the record's address
+and the id a `resolve` names; step 5 (the buffer's authority, signers); step 8
+(a hard stop); a new step 9 (a smoke test with the real resolver); step 10 (reads
+before the authority is removed). **Nobody has run these steps on a public
+cluster.** The repository
 owner signs every transaction in this runbook; no agent and no Slop service
 does. The program is `contracts/solana/programs/slop-submission-deposits`; see
 its [README section](../contracts/solana/README.md#submission-deposits) and the
@@ -26,21 +29,23 @@ the Worker, the pay page and the fee switch each say so.
   ownership over in two steps. It can never move, redirect or resolve a deposit.
   A wallet whose key is backed up.
 - **Resolver** (`resolver`). It settles each deposit to its payer or to its kept
-  wallet. It must differ from the owner. If the Worker's Solana resolver key does
-  not exist yet, name an address nobody controls, for example the incinerator
-  `1nc1nerator11111111111111111111111111111111`: nobody can then resolve, payers
-  can still reclaim after 30 days, and the owner names the real resolver later
-  with `set_resolver`.
+  wallet. It must differ from the owner. Name the real resolver: the key the
+  Worker will use on Solana. It must exist before step 6, hold a little SOL for
+  transaction fees, and its holder must be able to sign two transactions by
+  hand in step 9, because the program is tested with that key before it becomes
+  unchangeable. Do not start with a placeholder address nobody controls: the
+  smoke test could not run, and `resolve` would first be exercised on mainnet
+  after the last moment at which a fault could still be repaired.
 - **The upgrade authority, and when it is removed.** Whoever holds it can
   replace the program's code, and with it move every open deposit. Removing it
-  (step 9) gives the program the standing of the Base and Robinhood Chain
+  (step 10) gives the program the standing of the Base and Robinhood Chain
   contracts, which nobody can change, and cannot be undone. Recommended: remove
   it in the same sitting, after step 8's checks, and in any case before the fee
-  is switched on for Solana. Until it is removed, do not describe the program as
+  is switched on for Solana, and never before step 9's smoke test has passed. Until it is removed, do not describe the program as
   fixed or not upgradeable anywhere.
 - **Deployer and fee payer** (`$PAYER`). Any wallet with enough SOL. It holds no
   role in the program. It can also be the upgrade authority for the minutes
-  between deployment and step 9.
+  between deployment and step 10.
 
 In the commands below `$PAYER` and `$UPGRADE_AUTHORITY` are signers: the path of
 a keypair file, or a hardware wallet URL such as `usb://ledger`. The solana CLI
@@ -55,12 +60,24 @@ step 6 and the read-backs name.
 The reclaim delay is fixed at 30 days by the planner and cannot be changed after
 `initialize`.
 
-What it costs, at the rent rate of 20 November 2026 (check with `solana rent`):
-about 3.02 SOL for the program's own account (433,968 bytes in the local build of 25 November;
-the pinned image's build may differ by a little). That rent can only be
+What it costs. Sizes, measured on the local build of 25 November 2026 (the
+pinned image's build may differ by a little): the program's data account is
+434,933 bytes (the 434,888-byte program after a 45-byte header), the program
+account 36 bytes, the Config 122, a ledger 50, a vault 165, a `Deposit` 169.
+Rent is the cluster's to say, so ask it and do not rely on a figure here:
+
+```sh
+solana rent 434933 -u "$RPC"   # the program's data account
+solana rent 169 -u "$RPC"      # one Deposit record, returned when it closes
+```
+
+For orientation only: a local validator of solana 2.3.0 charges 6,960 lamports
+per byte including a 128-byte overhead, which makes about 3.03 SOL for the
+program; the public devnet endpoint answered 2.21 SOL for the same size on
+25 November 2026. Mainnet was not asked. The program's rent can only be
 recovered by closing the program, which needs the upgrade authority, so once
-step 9 is done it is spent for good. About 0.002 SOL for the Config and about
-0.003 SOL for the USDC vault and its ledger. Transaction fees on top.
+step 10 is done it is spent for good. The Config, the USDC ledger and its vault
+together cost well under 0.01 SOL at either rate. Transaction fees on top.
 
 ## 2. Set the program address in the source
 
@@ -224,20 +241,97 @@ in `vault`, the USDC mint, `openTotal` `"0"` and `balance` `"0"`.
 Also confirm in an explorer that the deployment, the `initialize` and the
 `open_vault` transactions moved no tokens.
 
-**Hard stop.** Do not go on to step 9 unless this read-back printed a `config`
+**Hard stop.** Do not go on to the smoke test or to step 10 unless this read-back printed a `config`
 and you compared three values in it, character by character, with what you
 decided in step 1: `owner`, `resolver`, and `reclaimDelaySeconds` equal to
-`2592000`. After step 9 none of this can be repaired by replacing the program.
+`2592000`. After step 10 none of this can be repaired by replacing the program.
 
 - No `config`, or an error: `initialize` has not landed. Go back to step 6.
-  Removing the upgrade authority now would end the program for good (step 9).
+  Removing the upgrade authority now would end the program for good (step 10).
 - A wrong `owner`, `resolver` or delay: do not remove the authority. Nothing
   holds tokens yet. The simplest repair is a fresh program address (step 2) and
   a new deployment; the delay and a lost owner cannot be corrected in place.
 - A read through a different RPC endpoint is a useful second opinion; an RPC
   failure is not a pass.
 
-## 9. Remove the upgrade authority
+## 9. Smoke test on mainnet, with the real resolver
+
+The last check while a fault can still be repaired by replacing the program:
+one base unit of USDC (0.000001 USDC) goes in and comes back, twice, at the
+same payer and nonce. It exercises `deposit`, the real resolver's `resolve` with
+the id it names, the closing of a record, and a second deposit at an address
+that was used before. Nothing is kept; the only costs are transaction fees.
+
+Needed: `$PAYER` holds at least one base unit of USDC in its associated token
+account; the resolver holds a little SOL and its holder is at hand to sign.
+
+Add two fields to `deposits-input.json`. `payer` is already `$PAYER`'s address.
+
+```json
+  "keptTo": "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
+  "smokeNonce": "1"
+```
+
+Write down the starting figures:
+
+```sh
+spl-token balance EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --owner <PAYER_PUBKEY> -u "$RPC"
+spl-token balance EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --owner 9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY -u "$RPC"
+node scripts/submission-deposits-plan.mjs status deposits-input.json   # depositCount N, vault 0 and 0
+```
+
+Round one.
+
+```sh
+SLOP_SOLANA_RECENT_BLOCKHASH="$(solana -u "$RPC" block --output json | jq -r .blockhash)" \
+node scripts/submission-deposits-plan.mjs smoke-deposit deposits-input.json > smoke-deposit-plan.json
+```
+
+Check `smoke-deposit-plan.json`: `amount` is `"1"`, `mint` is the USDC mint,
+`keptTo` the fee wallet, `requiredSigner` is `$PAYER`, `depositCountBefore` is N.
+Note its `deposit` address. `$PAYER` signs `transactionBase64` and sends it, as
+in step 6. Wait until it is finalized, then run `status` again: `depositCount`
+is N+1, and the vault's `openTotal` and `balance` are both `"1"`.
+
+```sh
+SLOP_SOLANA_RECENT_BLOCKHASH="$(solana -u "$RPC" block --output json | jq -r .blockhash)" \
+node scripts/submission-deposits-plan.mjs smoke-resolve deposits-input.json > smoke-resolve-plan.json
+```
+
+Check `smoke-resolve-plan.json`: `depositId` is N+1, `refund` is `true`,
+`refundTo` is `$PAYER`'s USDC account, `requiredSigner` is the resolver. The
+planner refuses if the Config's resolver is not the one in the input file, or
+if the record at that address is anything but the one-unit smoke deposit. The
+resolver signs `transactionBase64` and sends it; the resolver pays the fee.
+Wait until it is finalized, then run `status`: the vault's `openTotal` and
+`balance` are `"0"` again.
+
+Round two: run the same two commands again, with the same `smokeNonce`. The
+`deposit` address in the plan must be the same as in round one,
+`depositCountBefore` is N+1, and the resolve plan's `depositId` is N+2. This is
+the case of an address that held a deposit before.
+
+Confirm, and stop if any of these is not so:
+
+- `$PAYER`'s USDC balance equals the starting figure, and so does the fee
+  wallet's.
+- `status`: `depositCount` is N+2; the vault's `openTotal` and `balance` are
+  `"0"`.
+- `solana account <the deposit address> -u "$RPC"` says the account does not
+  exist.
+- In an explorer, each of the four transactions moved exactly one base unit of
+  USDC between `$PAYER`'s account and the vault, and nothing else.
+
+If a step fails: do not remove the upgrade authority. A deposit that is open
+and cannot be refunded is one base unit, which `$PAYER` can reclaim after 30
+days. While the authority exists the program can be replaced with a corrected
+build (see the end of this runbook); once it is removed it cannot.
+
+The two smoke deposits carry an item no pull request hashes to (the SHA-256 of
+`slop-submission-deposits:deployment-smoke-test`) and one base unit, so a
+reader of the program never takes them for a fee.
+
+## 10. Remove the upgrade authority
 
 This is the owner's decision from step 1. It cannot be undone.
 
@@ -246,13 +340,15 @@ This is the owner's decision from step 1. It cannot be undone.
 is none, nobody can ever create the Config, no deposit can ever be made, the
 address is spent and so is the program's rent (about 3 SOL). The only way on is
 a new address and a new deployment. So this step starts with two reads, and
-both must pass immediately before the removal, in the same sitting:
+both must pass immediately before the removal, in the same sitting, and step
+9's smoke test must have passed:
 
 ```sh
 solana program show "$PROGRAM" -u "$RPC"
 #   Program Id: $PROGRAM, Authority: $UPGRADE_AUTHORITY_PUBKEY (not "none", not another key)
 node scripts/submission-deposits-plan.mjs status deposits-input.json
-#   step 8's hard stop again: config present, owner, resolver, reclaimDelaySeconds 2592000
+#   step 8's hard stop again: config present, owner, resolver, reclaimDelaySeconds 2592000,
+#   and after the smoke test: the vault's openTotal and balance both "0"
 ```
 
 Only then:
@@ -272,7 +368,7 @@ rent.
 If the authority is kept instead, record who holds it and why in the deployment
 record, and treat that key as able to take every open deposit.
 
-## 10. Publish the verification (optional)
+## 11. Publish the verification (optional)
 
 ```sh
 solana-verify verify-from-repo -u "$RPC" --program-id "$PROGRAM" \
@@ -284,7 +380,7 @@ The escrow's record notes that the default `solana-verify` image cannot build
 this lockfile; if it fails for that reason, the hashes of steps 3 and 5 are the
 evidence and this step is skipped.
 
-## 11. Record it
+## 12. Record it
 
 A separate reviewed change, not part of deployment:
 
@@ -294,16 +390,18 @@ A separate reviewed change, not part of deployment:
 - The fee constants, the Worker's Solana reader and the pay page's Solana flow
   are later changes. Nothing reads the program until they exist, and no fee is
   asked on Solana until the switch says so.
-- When the Worker's Solana resolver key exists and holds a little SOL, the owner
-  calls `set_resolver(<that address>)` and the change is recorded the same way.
+- Record the two smoke test deposits (their ids, the four transactions) with
+  the deployment.
+- If the resolver key is ever replaced, the owner calls
+  `set_resolver(<the new address>)` and the change is recorded the same way.
 - Once deployed from `contracts/solana/programs`, the program is inside Slop's
   own loss-of-funds security program (PRD section 8).
 
 ## If something is wrong after deployment
 
-Before step 9: the upgrade authority can replace the program with a corrected
+Before step 10: the upgrade authority can replace the program with a corrected
 build, through the escrow's buffer procedure in `contracts/DEPLOY-MAINNET.md`
-section 2. After step 9: the program cannot be changed. The owner calls
+section 2. After step 10: the program cannot be changed. The owner calls
 `pause_deposits(true)` so no new deposit arrives, the resolver refunds what is
 open (or payers reclaim after 30 days), and a corrected program is deployed at a
 new address. Pausing never blocks a refund, a kept payment or a reclaim.

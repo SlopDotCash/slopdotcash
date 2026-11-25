@@ -403,7 +403,11 @@
         "Settles one open deposit, once: `refund` sends its amount to the payer's associated",
         "token account, otherwise to the associated token account of its `kept_to`. The resolver",
         "has no other choice of destination. The Deposit account is closed and its rent returns",
-        "to the payer. Works while deposits are paused."
+        "to the payer. Works while deposits are paused.",
+        "",
+        "`expected_id` is the id of the deposit the resolver means to settle. An address is",
+        "free again once its record is closed, so the same payer and nonce can later hold a",
+        "newer deposit; a resolve built for the earlier one is refused instead of settling it."
       ],
       "discriminator": [246, 150, 236, 206, 108, 63, 58, 10],
       "accounts": [
@@ -504,6 +508,10 @@
         {
           "name": "refund",
           "type": "bool"
+        },
+        {
+          "name": "expected_id",
+          "type": "u64"
         }
       ]
     },
@@ -686,6 +694,11 @@
       "code": 6011,
       "name": "Arithmetic",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6012,
+      "name": "WrongDeposit",
+      "msg": "The account holds a different deposit than the one named"
     }
   ],
   "types": [
