@@ -9,9 +9,14 @@ owner signs every transaction in this runbook; no agent and no Slop service
 does. The program is `contracts/solana/programs/slop-submission-deposits`; see
 its [README section](../contracts/solana/README.md#submission-deposits) and the
 [AI-assisted review note](submission-deposits-solana-ai-review-2026-11-20.md).
-The steps were rehearsed on a local validator only
-(`contracts/solana/integration/submission-deposits-rehearsal.e2e.mjs`), not on
-devnet or mainnet.
+The steps were rehearsed on a local validator only, not on devnet or mainnet:
+by `contracts/solana/integration/submission-deposits-rehearsal.e2e.mjs`, which
+preloads the program, and on 25 November 2026 by running the commands of steps
+2 and 4 to 10 in order with throwaway keys (the solana CLI's `write-buffer`,
+`deploy --buffer`, `set-upgrade-authority --final`, `spl-token`, and every
+planner mode), using a stand-in mint and a host build instead of step 3's
+pinned image. A devnet run was not possible that day: the devnet RPC faucet
+answered that it is closed, and the web faucet needs a person.
 
 One deployment on Solana mainnet. A deployment moves no tokens and activates
 nothing. No Slop service reads the program until its address is recorded in a
@@ -73,11 +78,37 @@ solana rent 169 -u "$RPC"      # one Deposit record, returned when it closes
 
 For orientation only: a local validator of solana 2.3.0 charges 6,960 lamports
 per byte including a 128-byte overhead, which makes about 3.03 SOL for the
-program; the public devnet endpoint answered 2.21 SOL for the same size on
-25 November 2026. Mainnet was not asked. The program's rent can only be
+program. The public mainnet and devnet endpoints both answered 5,080 lamports
+per byte on 25 November 2026: 2,210,109,880 lamports (about 2.21 SOL) for the
+program's data account, 833,120 for the program account, 1,270,000 for the
+Config, 904,240 for a ledger, 1,488,440 for a vault or any other token account,
+1,508,760 for a `Deposit`. The program's rent can only be
 recovered by closing the program, which needs the upgrade authority, so once
 step 10 is done it is spent for good. The Config, the USDC ledger and its vault
 together cost well under 0.01 SOL at either rate. Transaction fees on top.
+
+The rent is paid once, not twice. `write-buffer` puts the whole of it into the
+buffer account, and `deploy --buffer` moves those lamports into the program's
+data account and closes the buffer. In the local run of 25 November 2026
+`write-buffer` sent 432 transactions (2,160,000 lamports of fees at 5,000
+each, no priority fee) and the deployment cost two signatures and the program
+account's rent. At the public rate that is about 2.215 SOL for `$PAYER` through
+step 5, plus about 0.0013 SOL for `initialize`. Hold at least 2.5 SOL, more if
+a priority fee is set. The vault and the fee wallet's token account cost
+`$PAYER` about 0.004 SOL more, and each smoke deposit locks about 0.0015 SOL
+that comes back when it is resolved.
+
+Have ready before step 5, each tried beforehand:
+
+- A way to sign and send a prepared transaction. Steps 6, 7 and 9 each hand
+  over a base64 unsigned legacy transaction whose blockhash lasts about a
+  minute. The solana CLI cannot sign one. The local run used a short script on
+  `@solana/web3.js` (`Transaction.from`, `sign`, `sendRawTransaction`); a
+  wallet that imports a base64 transaction works as well. The resolver's
+  holder needs the same for step 9.
+- Docker running and `solana-verify` installed, for step 3 and the hash reads
+  of step 5.
+- `jq`, `node` and the `spl-token` CLI.
 
 ## 2. Set the program address in the source
 
@@ -91,8 +122,13 @@ reviewed change into `main` (public values only):
 
 - `declare_id!` in `contracts/solana/programs/slop-submission-deposits/src/lib.rs`
 - `slop_submission_deposits` in `contracts/solana/Anchor.toml`
-- `"address"` in `contracts/solana/idl/slop_submission_deposits.json` (rebuild
-  it: `anchor idl build -p slop_submission_deposits --out idl/slop_submission_deposits.json`)
+- `"address"` in `contracts/solana/idl/slop_submission_deposits.json`, which
+  holds it twice (rebuild it:
+  `anchor idl build -p slop_submission_deposits --out idl/slop_submission_deposits.json`,
+  then, from the repository root,
+  `bun x @biomejs/biome format --write contracts/solana/idl/slop_submission_deposits.json`;
+  the build writes the file in another layout, and after formatting the
+  change is those two lines)
 
 Run `bun run test:contracts:solana:submission-deposits`; it fails if the
 committed IDL and the build disagree. Record the merged commit as `$COMMIT`.
@@ -164,6 +200,25 @@ anything else, stop: `initialize` can be signed only by the key shown there.
 45-byte header. With `--max-len` equal to the build's size it equals
 `REVIEWED_SO_SHA256`.
 
+After the deployment the buffer's address no longer exists; its lamports are
+the program's. `solana program show` prints the program's length without the
+header (`Data Length: 434888` for this build).
+
+If `write-buffer` stops part way, the CLI prints a recovery phrase for the
+buffer's random keypair on the terminal. To avoid that, generate a buffer
+keypair file first and pass it as `--buffer <file>` to `write-buffer`; running
+the same command again then continues into the same buffer. `solana program
+close <BUFFER> --authority "$UPGRADE_AUTHORITY" --recipient <PAYER_PUBKEY> --keypair "$PAYER" -u "$RPC"`
+returns the lamports of a buffer that will not be used; name the recipient,
+because the CLI otherwise sends them to its default wallet. The local run
+closed an unused buffer this way. The `--buffer <file>` advice is from the
+CLI's help; no interrupted upload was rehearsed.
+
+The planner reads the cluster at finalized commitment. Before each planner
+command in steps 6 to 10, wait until the transaction before it is finalized
+(`solana confirm <signature> -u "$RPC"` says `Finalized`), or the planner
+reports the state from before it.
+
 ## 6. Create the Config, once, with the upgrade authority
 
 Write `deposits-input.json`:
@@ -191,6 +246,10 @@ export SLOP_SOLANA_GENESIS=5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d
 SLOP_SOLANA_RECENT_BLOCKHASH="$(solana -u "$RPC" block --output json | jq -r .blockhash)" \
 node scripts/submission-deposits-plan.mjs initialize deposits-input.json > initialize-plan.json
 ```
+
+Installed without lifecycle scripts, every planner command first prints
+`bigint: Failed to load bindings, pure JS will be used` on standard error. It
+is harmless and is not part of the plan file.
 
 Check `initialize-plan.json`: `requiredSigner` is the upgrade authority, `owner`
 and `resolver` are the two you chose, `reclaimDelaySeconds` is `2592000`. The
@@ -263,7 +322,11 @@ the id it names, the closing of a record, and a second deposit at an address
 that was used before. Nothing is kept; the only costs are transaction fees.
 
 Needed: `$PAYER` holds at least one base unit of USDC in its associated token
-account; the resolver holds a little SOL and its holder is at hand to sign.
+account (the planner uses that account and no other, so it must exist:
+`spl-token address --verbose --owner <PAYER_PUBKEY> --token EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v -u "$RPC"`);
+the resolver holds a little SOL (each `resolve` cost it 5,000 lamports in the
+local run) and its holder is at hand to sign. `$PAYER` also needs about
+0.0015 SOL free for each deposit's record, returned when it is resolved.
 
 Add two fields to `deposits-input.json`. `payer` is already `$PAYER`'s address.
 
@@ -338,7 +401,8 @@ This is the owner's decision from step 1. It cannot be undone.
 **Removing the authority before `initialize` has landed kills the program.**
 `initialize` can be signed only by the program's upgrade authority. Once there
 is none, nobody can ever create the Config, no deposit can ever be made, the
-address is spent and so is the program's rent (about 3 SOL). The only way on is
+address is spent and so is the program's rent (about 2.21 SOL at the rate
+mainnet answered on 25 November 2026). The only way on is
 a new address and a new deployment. So this step starts with two reads, and
 both must pass immediately before the removal, in the same sitting, and step
 9's smoke test must have passed:
