@@ -39,6 +39,7 @@
     "referral-accrual:dry-run": "bun workers/referral-accrual/dry-run.ts",
     "test:submission-fee": "bun test --timeout 30000 ./src/lib/submission-fee.test.ts ./workers/submission-fee ./backend/submission-fee ./workers/fee-converter/submission-fee-income.test.ts ./scripts/release-submission-fee.test.ts ./contracts/solana/submission-deposits.test.ts",
     "test:submission-fee:anvil": "bun workers/submission-fee/anvil.integration.ts",
+    "test:submission-fee:solana": "bun workers/submission-fee/solana-local.integration.ts",
     "payments:keep": "bun scripts/payment-keeper/run.ts",
     "fee-converter:dry-run": "bun workers/fee-converter/dry-run.ts",
     "test:fee-converter:fork": "bun workers/fee-converter/fork.integration.ts",

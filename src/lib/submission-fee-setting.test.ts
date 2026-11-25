@@ -217,6 +217,10 @@ test("the item of a pull request is the contract's hash", () => {
   for (const bad of [0, -1, 1.5, "x", 2n ** 64n])
     expect(() => submissionFeeItem(bad as never, 1)).toThrow(TypeError);
   expect(new Set(Object.values(SUBMISSION_FEE_KEPT_TO))).toEqual(
-    new Set(["0x8f77C37D8650776bFe73c9b12B15209eE15D9b86"]),
+    // The EVM fee wallet and Slop's Solana fee wallet.
+    new Set([
+      "0x8f77C37D8650776bFe73c9b12B15209eE15D9b86",
+      "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
+    ]),
   );
 });

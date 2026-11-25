@@ -130,6 +130,11 @@ function hexBytes(value: string, name: string): Uint8Array {
 function encode(type: IdlType, value: unknown, name: string): Uint8Array {
   if (type === "pubkey") return solanaPublicKeyBytes(value as string);
   if (type === "u64") return u64(value as bigint, name);
+  if (type === "i64") {
+    const bytes = new Uint8Array(8);
+    new DataView(bytes.buffer).setBigInt64(0, value as bigint, true);
+    return bytes;
+  }
   if (type === "bool") {
     if (typeof value !== "boolean")
       throw new TypeError(`${name} must be true or false`);
@@ -172,6 +177,21 @@ function build(
     }),
     data,
   };
+}
+
+/**
+ * Any instruction of the program by its IDL name, for the deployment
+ * planner's instructions (`initialize`, `open_vault`) in a local rehearsal.
+ * The Worker and the pay page use only the three builders below.
+ */
+export function submissionInstruction(
+  programId: string,
+  name: string,
+  accounts: Record<string, string>,
+  args: Record<string, unknown> = {},
+  idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
+): Instruction {
+  return build(idl, programId, name, accounts, args);
 }
 
 /** The program's singleton `Config` (`["config"]`). */
