@@ -66,10 +66,19 @@ export const SUBMISSION_FEE_SOLANA_SWITCHED_ON = false;
  */
 export const SUBMISSION_FEE_SOLANA_COMMITMENT = "finalized";
 /**
- * The rent a payer locks with a Solana deposit's account (161 bytes). The
- * program returns it to the payer on every outcome.
+ * The size of a Solana deposit's record account, discriminator included. A
+ * test holds it to the committed IDL of the program.
  */
-export const SUBMISSION_FEE_SOLANA_RENT_LAMPORTS = "2011440";
+export const SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES = 169;
+/**
+ * The rent a payer locks with a Solana deposit's record: the rent-exempt
+ * minimum of an account of that size, which is 6,960 lamports for each of
+ * its bytes and of the 128 bytes of account overhead. The program returns
+ * it to the payer on every outcome.
+ */
+export const SUBMISSION_FEE_SOLANA_RENT_LAMPORTS = String(
+  (SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES + 128) * 6960,
+);
 /**
  * True only while Slopbot asks contributors for the fee, which is while
  * `SUBMISSION_FEE_MODE` in `workers/slopbot/wrangler.toml` is `live`. The

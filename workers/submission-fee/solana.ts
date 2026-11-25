@@ -32,6 +32,7 @@ import {
   submissionCreation,
   submissionDepositAddress,
   submissionDepositDiscriminator,
+  submissionDepositOffset,
   submissionDepositSize,
   submissionSettlement,
 } from "../../contracts/solana/submission-deposits";
@@ -71,57 +72,119 @@ export interface SolanaOpenDeposit extends SubmissionDeposit {
   account: string;
 }
 
-export interface SolanaSnapshot {
+/**
+ * The open deposit records of the accepted mint whose kept wallet is the fee
+ * wallet, by record address, with the id each holds. A record of any other
+ * mint or kept wallet is filtered out by the endpoint and never fetched: the
+ * Worker never resolves one, and its payer reclaims it from the program.
+ */
+export interface SolanaListing {
   /** The finalized slot the `Config` was read at. */
   slot: number;
-  /** Deposits ever made at that slot, and so the latest id. */
+  /** Deposits ever made at that slot, of every mint. */
   depositCount: number;
   depositsPaused: boolean;
   resolver: string;
-  /**
-   * Every open deposit at a finalized slot not before `slot`. It can hold
-   * deposits made after `slot`, whose ids are above `depositCount`.
-   */
-  open: SolanaOpenDeposit[];
-  /** The finalized slot `open` was read at. */
+  /** Record address to deposit id, read at `openSlot`. */
+  open: Map<string, number>;
+  /** The finalized slot the records were listed at, not before `slot`. */
   openSlot: number;
+}
+
+/** The facts of a recorded deposit a settlement is proven against. */
+export interface SolanaSettledRow {
+  account: string;
+  payer: string;
+  token: string;
+  amount: string;
+  keptTo: string;
+}
+
+export interface SolanaSettlement {
+  state: "refunded" | "kept" | "reclaimed";
+  txHash: string;
+  at: string;
+}
+
+/** Where a search for a settlement stands (migration 0155). */
+export interface SolanaSearch {
+  /** The record was still open at this finalized slot. */
+  afterSlot: number;
+  /** The record was first seen gone at this finalized slot. */
+  untilSlot: number;
+  /** Continue with the transactions before this signature; null to start. */
+  before: string | null;
+  /** The oldest settlement found so far between the two slots. */
+  candidate: string | null;
+}
+
+export type SolanaSearchStep =
+  | { done: true; settlement: SolanaSettlement | null }
+  | { done: false; before: string | null; candidate: string | null };
+
+/** What one run may still spend on searches, shared by every deposit. */
+export interface SolanaSearchBudget {
+  pages: number;
+  reads: number;
 }
 
 export interface SolanaFeeChain extends ResolverChain {
   genesisHash(): Promise<string>;
-  snapshot(): Promise<SolanaSnapshot>;
+  /** The program's `Config` alone, at a finalized slot. */
+  config(): Promise<Omit<SolanaListing, "open" | "openSlot">>;
+  listing(): Promise<SolanaListing>;
   /**
-   * The finalized transaction that created the deposit a record address held
-   * at `atSlot`. A payer can use an address again once its deposit is
-   * settled, so this is the newest creation on the address at or before that
-   * slot, not the first.
+   * The full records at these addresses (at most 100), read together at a
+   * finalized slot not before `minSlot`. Null where no record of this
+   * program is there.
    */
-  created(
+  records(
+    accounts: readonly string[],
+    minSlot: number,
+  ): Promise<{ slot: number; records: Map<string, SubmissionDeposit | null> }>;
+  /**
+   * The transaction that created a deposit, when one bounded read of its
+   * address finds it: a successful `deposit` at the record's own cluster
+   * time whose payer, mint, item, amount, kept wallet and nonce are the
+   * record's. Null otherwise. The Worker records the deposit either way.
+   */
+  creation(
     account: string,
-    atSlot: number,
-  ): Promise<{ signature: string; slot: number }>;
+    record: SubmissionDeposit,
+  ): Promise<{ signature: string; slot: number } | null>;
   /**
-   * How a recorded deposit whose record is gone, or now holds another
-   * deposit, was settled: the first `resolve` or `reclaim` on its address
-   * after the transaction that created it, proven from that finalized
-   * transaction. Null while that transaction is not readable yet.
+   * The settlement a transaction the Worker sent made of a deposit, proven
+   * from that transaction. Null while the transaction is not readable.
    */
-  settlement(row: {
-    account: string;
-    /** The signature of the transaction that created this deposit. */
-    txHash: string;
-    payer: string;
-    token: string;
-    amount: string;
-    keptTo: string;
-  }): Promise<{
-    state: "refunded" | "kept" | "reclaimed";
-    txHash: string;
-    at: string;
-  } | null>;
+  settledBy(
+    signature: string,
+    row: SolanaSettledRow,
+  ): Promise<SolanaSettlement | null>;
+  /**
+   * One bounded step of the search for a settlement nobody told the Worker
+   * about: the oldest `resolve` or `reclaim` on the record address between
+   * the slot it was still open at and the slot it was seen gone at. Spends
+   * from `budget` and returns where to continue when that runs out.
+   */
+  search(
+    row: SolanaSettledRow,
+    search: SolanaSearch,
+    budget: SolanaSearchBudget,
+  ): Promise<SolanaSearchStep>;
   /** Names the record address of a deposit id for the resolver's steps. */
   track(depositId: number, account: string): void;
+  /** Where the record address of an untracked deposit id is looked up. */
+  locate(lookup: (depositId: number) => Promise<string | null>): void;
+  /** Requests made to the endpoint so far in this run. */
+  requests(): number;
 }
+
+/**
+ * The recorded reason of a send that never landed: its blockhash expired
+ * while a node that had seen the finalized chain past it did not know its
+ * signature. It paid no fee, so it is not counted in the day's spend.
+ */
+export const SOLANA_EXPIRED = "blockhash expired before the transaction landed";
 
 /** The provider did not answer usefully. Carries a status or code, no text. */
 export class SolanaFeeRpcError extends Error {
@@ -135,11 +198,26 @@ export class SolanaFeeRpcError extends Error {
   }
 }
 
-/** Signatures read per page, and pages read, for one address. */
-const SIGNATURE_PAGE = 1000;
-const SIGNATURE_PAGES = 3;
-/** Transactions after a deposit's creation looked at for its settlement. */
-const SETTLEMENT_CANDIDATES = 25;
+/** The run has made every request it may; nothing more is asked. */
+export class SolanaFeeBudgetError extends Error {
+  constructor() {
+    super("The run's Solana request limit is reached");
+    this.name = "SolanaFeeBudgetError";
+  }
+}
+
+/**
+ * Requests one run may make to the Solana endpoint. Every request goes
+ * through one counter, and the request after the last is refused before it
+ * is sent. The steps' own limits (solana-core.ts) add up to less.
+ */
+export const SOLANA_REQUESTS_PER_RUN = 300;
+/** Signatures read per page for one address. */
+export const SOLANA_SIGNATURE_PAGE = 1000;
+/** Transactions read to find the one that created a deposit. */
+const CREATION_READS = 2;
+/** Records read together in one request. */
+export const SOLANA_RECORDS_PER_READ = 100;
 /** A legacy transaction's size limit, in bytes. */
 export const SOLANA_TRANSACTION_BYTES = 1232;
 /**
@@ -176,6 +254,8 @@ interface SolanaFeeChainOptions {
   fetch?: typeof fetch;
   /** Tests only: another program interface than the committed IDL. */
   idl?: SubmissionDepositsIdl;
+  /** Tests only: another request limit for the run. */
+  requests?: number;
 }
 
 export function createSolanaFeeChain(
@@ -197,10 +277,13 @@ export function createSolanaFeeChain(
     : null;
   const resolver = seed ? solanaBase58(ed25519.getPublicKey(seed)) : null;
   const tracked = new Map<number, string>();
+  let lookup: ((depositId: number) => Promise<string | null>) | null = null;
   const FINAL = "finalized";
+  const limit = options.requests ?? SOLANA_REQUESTS_PER_RUN;
 
   let sequence = 0;
   async function rpc(method: string, params: unknown[]): Promise<unknown> {
+    if (sequence >= limit) throw new SolanaFeeBudgetError();
     const id = ++sequence;
     let body: Obj;
     try {
@@ -262,29 +345,63 @@ export function createSolanaFeeChain(
     };
   };
 
-  const record = async (depositId: number) => {
-    const address = tracked.get(depositId);
-    if (!address) throw new Error("A Solana deposit's record is not known");
-    const { value } = await account(address);
-    if (value === null) return { address, deposit: null };
-    const deposit = decodeSubmissionDeposit(
-      accountBytes(value, programId),
-      idl,
+  /** Up to 100 accounts read together at one finalized slot. */
+  const accounts = async (
+    addresses: readonly string[],
+    minContextSlot?: number,
+  ) => {
+    if (addresses.length === 0 || addresses.length > SOLANA_RECORDS_PER_READ)
+      throw new Error("Between 1 and 100 accounts are read together");
+    const result = object(
+      await rpc("getMultipleAccounts", [
+        addresses,
+        {
+          commitment: FINAL,
+          encoding: "base64",
+          ...(minContextSlot === undefined ? {} : { minContextSlot }),
+        },
+      ]),
     );
+    const values = list(result.value);
+    if (values.length !== addresses.length)
+      throw new Error("Invalid Solana response");
+    return { slot: integer(object(result.context).slot), values };
+  };
+
+  /** The deposit record in an account, or null when it holds none. */
+  const recordOf = (value: unknown): SubmissionDeposit | null => {
+    if (value === null || value === undefined) return null;
+    // An account at this address that another program owns holds no record.
+    if (object(value).owner !== programId) return null;
+    return decodeSubmissionDeposit(accountBytes(value, programId), idl);
+  };
+
+  const addressOf = async (depositId: number) => {
+    const known = tracked.get(depositId);
+    if (known) return known;
+    const found = lookup ? await lookup(depositId) : null;
+    if (!found) throw new Error("A Solana deposit's record is not known");
+    tracked.set(depositId, found);
+    return found;
+  };
+
+  const record = async (depositId: number) => {
+    const address = await addressOf(depositId);
+    const deposit = recordOf((await account(address)).value);
     // The payer used the address again: this deposit's own record is closed.
-    if (deposit.id !== depositId) return { address, deposit: null };
+    if (deposit === null || deposit.id !== depositId)
+      return { address, deposit: null };
     return { address, deposit };
   };
 
   /**
-   * Whether a payout can be delivered: the wallet's associated token account
-   * of the mint exists, is a classic SPL Token account of that mint, is
-   * still owned by the wallet and is not frozen. The program never creates
-   * a token account and neither does this Worker.
+   * Whether a payout can be delivered: the account is the wallet's
+   * associated token account of the mint, a classic SPL Token account of
+   * that mint, still owned by the wallet and not frozen. The program never
+   * creates a token account and neither does this Worker.
    */
-  const deliverable = async (mint: string, wallet: string) => {
-    const { value } = await account(solanaAssociatedTokenAddress(mint, wallet));
-    if (value === null) return false;
+  const deliverable = (value: unknown, mint: string, wallet: string) => {
+    if (value === null || value === undefined) return false;
     const info = object(value);
     const data = list(info.data);
     if (
@@ -309,40 +426,55 @@ export function createSolanaFeeChain(
       throw new Error(
         "Signing is disabled without SUBMISSION_FEE_SOLANA_RESOLVER_SEED",
       );
-    const built: Instruction[] = [];
-    for (const entry of entries) {
-      // Read again at finalized commitment right before building: the
-      // instruction is built from this record and names its id, never from
-      // an address alone.
-      const { address, deposit } = await record(entry.id);
+    if (entries.length === 0 || entries.length > SOLANA_MAX_BATCH)
+      throw new Error("A resolve transaction carries one to five deposits");
+    const addresses: string[] = [];
+    for (const entry of entries) addresses.push(await addressOf(entry.id));
+    // Read again at finalized commitment right before building: each
+    // instruction is built from the record read here and names its id,
+    // never from an address alone.
+    const read = await accounts(addresses);
+    const open: SubmissionDeposit[] = [];
+    for (const [at, entry] of entries.entries()) {
+      const deposit = recordOf(read.values[at]);
       // Settled since it was planned, or the address now holds a later
       // deposit: nothing is built or signed for it.
-      if (deposit === null)
+      if (deposit === null || deposit.id !== entry.id)
         throw new SendRevertedError("A deposit of the batch is settled");
-      // Never an instruction for a mint outside the reviewed table.
-      if (deposit.mint !== network.mint)
-        throw new Error("A planned deposit is of a mint outside the table");
+      // Never an instruction for a mint outside the reviewed table, and a
+      // kept fee only to the fee wallet of the table. Neither can be
+      // planned; a deposit that fails here is set aside alone.
       if (
-        !(await deliverable(
-          deposit.mint,
-          entry.refund ? deposit.payer : deposit.keptTo,
-        ))
+        deposit.mint !== network.mint ||
+        (!entry.refund && deposit.keptTo !== network.feeWallet)
       )
         throw new PayoutFailedError(entry.id);
-      built.push(
-        resolveInstruction(
-          {
-            programId,
-            resolver,
-            deposit: address,
-            record: deposit,
-            refund: entry.refund,
-          },
-          idl,
-        ),
-      );
+      open.push(deposit);
     }
-    return built;
+    // The destinations, read together at a slot not before the records'.
+    const wallets = open.map((deposit, at) =>
+      entries[at].refund ? deposit.payer : deposit.keptTo,
+    );
+    const destinations = await accounts(
+      wallets.map((wallet) =>
+        solanaAssociatedTokenAddress(network.mint, wallet),
+      ),
+      read.slot,
+    );
+    return open.map((deposit, at) => {
+      if (!deliverable(destinations.values[at], network.mint, wallets[at]))
+        throw new PayoutFailedError(entries[at].id);
+      return resolveInstruction(
+        {
+          programId,
+          resolver,
+          deposit: addresses[at],
+          record: deposit,
+          refund: entries[at].refund,
+        },
+        idl,
+      );
+    });
   };
 
   const lifetime = async () => {
@@ -392,14 +524,15 @@ export function createSolanaFeeChain(
     throw new Error("The resolve simulation could not run");
   };
 
-  const signatures = async (address: string, before?: string) =>
+  /** One page of the finalized transactions naming an address, newest first. */
+  const signatures = async (address: string, before: string | null) =>
     list(
       await rpc("getSignaturesForAddress", [
         address,
         {
           commitment: FINAL,
-          limit: SIGNATURE_PAGE,
-          ...(before === undefined ? {} : { before }),
+          limit: SOLANA_SIGNATURE_PAGE,
+          ...(before === null ? {} : { before }),
         },
       ]),
     ).map((entry) => {
@@ -410,24 +543,16 @@ export function createSolanaFeeChain(
         signature: row.signature,
         slot: integer(row.slot),
         failed: row.err !== null && row.err !== undefined,
+        blockTime: Number.isSafeInteger(row.blockTime)
+          ? Number(row.blockTime)
+          : null,
       };
     });
 
-  /** Every finalized transaction naming an address, newest first. */
-  const history = async (address: string) => {
-    const all: { signature: string; slot: number; failed: boolean }[] = [];
-    let before: string | undefined;
-    for (let page = 0; ; page += 1) {
-      const batch = await signatures(address, before);
-      all.push(...batch);
-      if (batch.length < SIGNATURE_PAGE) return all;
-      if (page === SIGNATURE_PAGES - 1)
-        throw new Error("A deposit record has too many transactions to read");
-      before = batch[batch.length - 1].signature;
-    }
-  };
-
+  const read = new Map<string, Obj>();
   const transaction = async (signature: string) => {
+    const known = read.get(signature);
+    if (known) return known;
     const result = await rpc("getTransaction", [
       signature,
       {
@@ -436,7 +561,53 @@ export function createSolanaFeeChain(
         maxSupportedTransactionVersion: 0,
       },
     ]);
-    return result === null ? null : object(result);
+    if (result === null) return null;
+    const found = object(result);
+    read.set(signature, found);
+    return found;
+  };
+
+  /**
+   * The record's own facts, proven from what the transaction did: the
+   * program's transfer of the exact amount of the deposit's mint, into an
+   * account the right wallet owns, which rose by at least as much.
+   */
+  const proven = (
+    tx: Obj,
+    signature: string,
+    row: SolanaSettledRow,
+  ): SolanaSettlement | null => {
+    const settled = submissionSettlement(tx, programId, row.account, idl);
+    if (settled === null) return null;
+    const wallet = settled.kind === "kept" ? row.keptTo : row.payer;
+    if (
+      settled.mint !== row.token ||
+      settled.amount !== row.amount ||
+      settled.destinationOwner !== wallet ||
+      BigInt(settled.destinationRose) < BigInt(row.amount) ||
+      (settled.kind !== "reclaimed" &&
+        settled.destination !== solanaAssociatedTokenAddress(row.token, wallet))
+    )
+      throw new Error("A settlement does not prove the deposit's transfer");
+    const seconds = integer(tx.blockTime);
+    if (seconds <= 0) throw new Error("Invalid Solana response");
+    return {
+      state: settled.kind,
+      txHash: signature,
+      at: new Date(seconds * 1000).toISOString(),
+    };
+  };
+
+  const readConfig = async () => {
+    const { slot, value } = await account(submissionConfigAddress(programId));
+    if (value === null) throw new Error("The deposit program has no Config");
+    const config = decodeSubmissionConfig(accountBytes(value, programId), idl);
+    return {
+      slot,
+      depositCount: config.depositCount,
+      depositsPaused: config.depositsPaused,
+      resolver: config.resolver,
+    };
   };
 
   return {
@@ -446,17 +617,16 @@ export function createSolanaFeeChain(
       return hash;
     },
 
-    async snapshot() {
-      const configAddress = submissionConfigAddress(programId);
-      const { slot, value } = await account(configAddress);
-      if (value === null) throw new Error("The deposit program has no Config");
-      const config = decodeSubmissionConfig(
-        accountBytes(value, programId),
-        idl,
-      );
-      // Every Deposit account, read at a slot not before the Config's, so no
-      // deposit numbered at or below `depositCount` can be missing from it
-      // unless it is already settled.
+    config: readConfig,
+
+    async listing() {
+      const config = await readConfig();
+      const slot = config.slot;
+      const id = submissionDepositOffset("id", idl);
+      // The endpoint filters: a record of this program (size and first eight
+      // bytes), of the table's mint, whose kept wallet is the fee wallet.
+      // Only the eight bytes of each record's id are returned. Read at a
+      // slot not before the Config's.
       const found = object(
         await rpc("getProgramAccounts", [
           programId,
@@ -465,6 +635,7 @@ export function createSolanaFeeChain(
             encoding: "base64",
             withContext: true,
             minContextSlot: slot,
+            dataSlice: { offset: id, length: 8 },
             filters: [
               { dataSize: submissionDepositSize(idl) },
               {
@@ -473,108 +644,156 @@ export function createSolanaFeeChain(
                   bytes: solanaBase58(submissionDepositDiscriminator(idl)),
                 },
               },
+              {
+                memcmp: {
+                  offset: submissionDepositOffset("mint", idl),
+                  bytes: network.mint,
+                },
+              },
+              {
+                memcmp: {
+                  offset: submissionDepositOffset("kept_to", idl),
+                  bytes: network.feeWallet,
+                },
+              },
             ],
           },
         ]),
       );
-      if (integer(object(found.context).slot) < slot)
+      const openSlot = integer(object(found.context).slot);
+      if (openSlot < slot)
         throw new Error("The deposit accounts were read before the Config");
-      const open: SolanaOpenDeposit[] = [];
+      const open = new Map<string, number>();
       const ids = new Set<number>();
       for (const entry of list(found.value).map(object)) {
         if (typeof entry.pubkey !== "string")
           throw new Error("Invalid Solana response");
-        const deposit = decodeSubmissionDeposit(
-          accountBytes(entry.account, programId),
-          idl,
-        );
-        // Only the program can create an account it owns, and it creates a
-        // deposit's record only at the address of its payer and nonce.
-        if (
-          entry.pubkey !==
-          submissionDepositAddress(programId, deposit.payer, deposit.nonce)
-        )
-          throw new Error("A deposit record is not at its own address");
-        if (ids.has(deposit.id))
+        const bytes = accountBytes(entry.account, programId);
+        if (bytes.length !== 8) throw new Error("Invalid Solana response");
+        const value = new DataView(
+          bytes.buffer,
+          bytes.byteOffset,
+          8,
+        ).getBigUint64(0, true);
+        if (value < 1n || value > BigInt(Number.MAX_SAFE_INTEGER))
+          throw new Error("Invalid Solana response");
+        if (ids.has(Number(value)))
           throw new Error("Two open deposits carry one id");
-        ids.add(deposit.id);
-        open.push({ ...deposit, account: entry.pubkey });
+        ids.add(Number(value));
+        open.set(entry.pubkey, Number(value));
       }
-      return {
-        slot,
-        depositCount: config.depositCount,
-        depositsPaused: config.depositsPaused,
-        resolver: config.resolver,
-        open: open.sort((left, right) => left.id - right.id),
-        openSlot: integer(object(found.context).slot),
-      };
+      return { ...config, open, openSlot };
     },
 
-    async created(address, atSlot) {
-      // Newest first: the newest successful `deposit` naming this record at
-      // or before the slot the record was read at. A later one would have
-      // replaced what was read; an earlier one created a deposit that is
-      // settled.
-      for (const candidate of await history(address)) {
-        if (candidate.failed || candidate.slot > atSlot) continue;
+    async records(addresses, minSlot) {
+      const found = await accounts(addresses, minSlot);
+      const records = new Map<string, SubmissionDeposit | null>();
+      for (const [at, address] of addresses.entries()) {
+        let deposit: SubmissionDeposit | null = null;
+        try {
+          deposit = recordOf(found.values[at]);
+          // Only the program can create an account it owns, and it creates
+          // a deposit's record only at the address of its payer and nonce.
+          if (
+            deposit !== null &&
+            address !==
+              submissionDepositAddress(programId, deposit.payer, deposit.nonce)
+          )
+            deposit = null;
+        } catch {
+          // An account that does not decode as a record holds none.
+          deposit = null;
+        }
+        records.set(address, deposit);
+      }
+      return { slot: found.slot, records };
+    },
+
+    async creation(address, deposit) {
+      // One page, newest first. The creating transaction ran at the cluster
+      // time the program stored in the record, so every other transaction
+      // that merely names the address is passed over without being read.
+      const candidates = (await signatures(address, null)).filter(
+        (entry) => !entry.failed && entry.blockTime === deposit.depositedAt,
+      );
+      for (const candidate of candidates.slice(0, CREATION_READS)) {
         const tx = await transaction(candidate.signature);
         if (tx === null) continue;
-        if (submissionCreation(tx, programId, address, idl))
+        if (submissionCreation(tx, programId, address, idl, deposit))
           return { signature: candidate.signature, slot: integer(tx.slot) };
       }
-      throw new Error("The transaction that created a deposit was not found");
+      return null;
     },
 
-    async settlement(row) {
-      const all = await history(row.account);
-      const createdAt = all.findIndex(
-        (entry) => entry.signature === row.txHash,
-      );
-      if (createdAt < 0)
-        throw new Error(
-          "A deposit's creating transaction is not in its history",
-        );
-      // Oldest first, from the transaction right after the creation: the
-      // first settlement on the address after it is this deposit's. A later
-      // one belongs to a deposit that used the address again.
-      const after = all.slice(0, createdAt).reverse();
-      for (const candidate of after.slice(0, SETTLEMENT_CANDIDATES)) {
-        if (candidate.failed) continue;
-        const tx = await transaction(candidate.signature);
-        // Not readable yet: nothing after it can be taken for the first.
-        if (tx === null) return null;
-        const settled = submissionSettlement(tx, programId, row.account, idl);
-        if (settled === null) continue;
-        // The record's own facts, proven from what the transaction did: the
-        // program's transfer of the exact amount of the deposit's mint, into
-        // an account the right wallet owns, which rose by at least as much.
-        const wallet = settled.kind === "kept" ? row.keptTo : row.payer;
-        if (
-          settled.mint !== row.token ||
-          settled.amount !== row.amount ||
-          settled.destinationOwner !== wallet ||
-          BigInt(settled.destinationRose) < BigInt(row.amount) ||
-          (settled.kind !== "reclaimed" &&
-            settled.destination !==
-              solanaAssociatedTokenAddress(row.token, wallet))
-        )
-          throw new Error("A settlement does not prove the deposit's transfer");
-        const seconds = integer(tx.blockTime);
-        if (seconds <= 0) throw new Error("Invalid Solana response");
-        return {
-          state: settled.kind,
-          txHash: candidate.signature,
-          at: new Date(seconds * 1000).toISOString(),
-        };
+    async settledBy(signature, row) {
+      const tx = await transaction(signature);
+      if (tx === null) return null;
+      const settled = proven(tx, signature, row);
+      if (settled === null)
+        throw new Error("A finalized send does not settle its deposit");
+      return settled;
+    },
+
+    async search(row, search, budget) {
+      let before = search.before;
+      let candidate = search.candidate;
+      const paused = (): SolanaSearchStep => ({
+        done: false,
+        before,
+        candidate,
+      });
+      for (;;) {
+        if (budget.pages <= 0) return paused();
+        budget.pages -= 1;
+        const page = await signatures(row.account, before);
+        let reachedStart = false;
+        for (const entry of page) {
+          // At or before the slot the record was still open at: the
+          // settlement cannot be this old, and nothing older is read.
+          if (entry.slot <= search.afterSlot) {
+            reachedStart = true;
+            break;
+          }
+          // After the record was seen gone, or failed: not the settlement.
+          if (entry.slot <= search.untilSlot && !entry.failed) {
+            if (budget.reads <= 0) return paused();
+            budget.reads -= 1;
+            const tx = await transaction(entry.signature);
+            // Not readable yet: the same place is read again next time.
+            if (tx === null) return paused();
+            // Newest first, so a later match here is an older settlement:
+            // the first one after the record was last seen open.
+            if (
+              submissionSettlement(tx, programId, row.account, idl) !== null
+            )
+              candidate = entry.signature;
+          }
+          before = entry.signature;
+        }
+        if (reachedStart || page.length < SOLANA_SIGNATURE_PAGE) break;
       }
-      if (after.length > SETTLEMENT_CANDIDATES)
-        throw new Error("A deposit record has too many transactions to read");
-      return null;
+      if (candidate === null) return { done: true, settlement: null };
+      if (!read.has(candidate)) {
+        if (budget.reads <= 0) return paused();
+        budget.reads -= 1;
+      }
+      const tx = await transaction(candidate);
+      if (tx === null) return paused();
+      const settled = proven(tx, candidate, row);
+      if (settled === null)
+        throw new Error("A settlement candidate settles nothing");
+      return { done: true, settlement: settled };
     },
 
     track(depositId, address) {
       tracked.set(depositId, address);
     },
+
+    locate(found) {
+      lookup = found;
+    },
+
+    requests: () => sequence,
 
     async deposit(depositId): Promise<ChainDeposit> {
       const { deposit } = await record(depositId);
@@ -667,29 +886,32 @@ export function createSolanaFeeChain(
         send.evmNonce === null
       )
         throw new Error("Submission fee journal deployment differs");
-      // The height is read first. If the finalized chain is already past the
-      // transaction's last valid height, any block that could hold it is
-      // finalized too, so a signature the node then does not know never
-      // landed and never will.
-      const height = integer(
-        await rpc("getBlockHeight", [{ commitment: FINAL }]),
+      // The finalized slot and its block height, from one answer. If the
+      // finalized chain is already past the transaction's last valid
+      // height, every block that could hold it is finalized too.
+      const epoch = object(
+        await rpc("getEpochInfo", [{ commitment: FINAL }]),
       );
-      const found = list(
-        object(
-          await rpc("getSignatureStatuses", [
-            [send.txId],
-            { searchTransactionHistory: true },
-          ]),
-        ).value,
+      const finalizedSlot = integer(epoch.absoluteSlot);
+      const height = integer(epoch.blockHeight);
+      const statuses = object(
+        await rpc("getSignatureStatuses", [
+          [send.txId],
+          { searchTransactionHistory: true },
+        ]),
       );
+      const found = list(statuses.value);
       if (found.length !== 1) throw new Error("Invalid Solana response");
-      if (found[0] === null)
-        return height > send.evmNonce
-          ? {
-              kind: "failed",
-              reason: "blockhash expired before the transaction landed",
-            }
-          : { kind: "rebroadcast" };
+      if (found[0] === null) {
+        if (height <= send.evmNonce) return { kind: "rebroadcast" };
+        // "Not found" counts only from a node that has itself seen the
+        // finalized slot the height was read at. A node behind it may not
+        // know a transaction that landed, so the send stays in flight and
+        // the next run asks again.
+        if (integer(object(statuses.context).slot) < finalizedSlot)
+          return { kind: "pending" };
+        return { kind: "failed", reason: SOLANA_EXPIRED };
+      }
       const status = object(found[0]);
       if (status.confirmationStatus !== FINAL) return { kind: "pending" };
       if (status.err !== null && status.err !== undefined)

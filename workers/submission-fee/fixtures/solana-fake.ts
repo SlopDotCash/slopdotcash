@@ -17,6 +17,7 @@ import {
 } from "../../../contracts/solana/adapter";
 import {
   decodeSubmissionDeposit,
+  depositInstruction,
   SUBMISSION_DEPOSITS_IDL,
   type SubmissionDepositsIdl,
   submissionConfigAddress,
@@ -105,6 +106,8 @@ export class FakeSolana {
   /** Makes account reads lag the Config read by refusing `minContextSlot`. */
   calls: string[] = [];
   failMethod: string | null = null;
+  /** When set, signature statuses are answered by a node at this slot. */
+  statusSlot: number | null = null;
   /** Runs before each request is answered; a test changes the chain here. */
   onCall: ((method: string, params: unknown[]) => void) | null = null;
   readonly accounts = new Map<string, Account>();
@@ -312,7 +315,19 @@ export class FakeSolana {
                   keys.indexOf(meta.address ?? named[meta.name]),
                 ),
                 data: encodeBase58Bytes(
-                  join(Uint8Array.from(spec.discriminator), new Uint8Array(80)),
+                  depositInstruction(
+                    {
+                      programId: this.programId,
+                      payer: input.payer,
+                      mint,
+                      source: solanaAssociatedTokenAddress(mint, input.payer),
+                      item: input.item,
+                      amount,
+                      keptTo,
+                      nonce,
+                    },
+                    this.idl,
+                  ).data,
                 ),
               },
             ],
@@ -322,6 +337,40 @@ export class FakeSolana {
       },
     });
     return { id, account, signature };
+  }
+
+  /**
+   * Transactions that merely name an address, as anyone can send for the
+   * base fee: finalized, successful, and nothing to do with the program.
+   * They land in the current slot unless `advance` moves the chain first.
+   */
+  junk(address: string, count: number, advance = false) {
+    for (let index = 0; index < count; index += 1) {
+      if (advance) {
+        this.slot += 1;
+        this.height += 1;
+        this.time += 1;
+      }
+      const keys = [fakeAddress(240), address, fakeAddress(241)];
+      this.record(this.signature(), [address], {
+        slot: this.slot,
+        blockTime: this.time,
+        failed: false,
+        json: {
+          slot: this.slot,
+          blockTime: this.time,
+          transaction: {
+            message: {
+              accountKeys: keys,
+              instructions: [
+                { programIdIndex: 2, accounts: [1], data: encodeBase58Bytes(Uint8Array.of(1)) },
+              ],
+            },
+          },
+          meta: { err: null, innerInstructions: [] },
+        },
+      });
+    }
   }
 
   /** The program's instructions of a message, in order. */
@@ -612,12 +661,15 @@ export class FakeSolana {
       case "getProgramAccounts": {
         const options = params[1] as {
           minContextSlot: number;
+          dataSlice?: { offset: number; length: number };
           filters: {
             dataSize?: number;
             memcmp?: { offset: number; bytes: string };
           }[];
         };
         if (options.minContextSlot > this.slot) throw new Error("behind");
+        if (options.filters.length > 4) throw new Error("too many filters");
+        const slice = options.dataSlice;
         return {
           context,
           value: [...this.accounts]
@@ -627,22 +679,58 @@ export class FakeSolana {
                 options.filters.every((filter) =>
                   filter.memcmp
                     ? decodeBase58Bytes(filter.memcmp.bytes).every(
-                        (byte, index) => account.data[index] === byte,
+                        (byte, index) =>
+                          account.data[
+                            (filter.memcmp?.offset ?? 0) + index
+                          ] === byte,
                       )
                     : account.data.length === filter.dataSize,
                 ),
             )
-            .map(([pubkey]) => ({ pubkey, account: this.info(pubkey) })),
+            .map(([pubkey, account]) => ({
+              pubkey,
+              account: slice
+                ? {
+                    owner: account.owner,
+                    data: [
+                      solanaBase64(
+                        account.data.slice(
+                          slice.offset,
+                          slice.offset + slice.length,
+                        ),
+                      ),
+                      "base64",
+                    ],
+                    lamports: 1,
+                    executable: false,
+                  }
+                : this.info(pubkey),
+            })),
         };
       }
-      case "getSignaturesForAddress":
-        return (this.history.get(params[0] as string) ?? []).map(
+      case "getMultipleAccounts": {
+        const addresses = params[0] as string[];
+        const options = params[1] as { minContextSlot?: number };
+        if (addresses.length > 100) throw new Error("too many accounts");
+        if ((options.minContextSlot ?? 0) > this.slot) throw new Error("behind");
+        return { context, value: addresses.map((address) => this.info(address)) };
+      }
+      case "getSignaturesForAddress": {
+        const options = params[1] as { before?: string; limit?: number };
+        const all = this.history.get(params[0] as string) ?? [];
+        const from =
+          options.before === undefined ? 0 : all.indexOf(options.before) + 1;
+        if (options.before !== undefined && from === 0)
+          throw new Error("unknown signature");
+        return all.slice(from, from + (options.limit ?? 1000)).map(
           (signature) => ({
             signature,
             slot: this.landed.get(signature)?.slot,
+            blockTime: this.landed.get(signature)?.blockTime,
             err: this.landed.get(signature)?.failed ? { failed: true } : null,
           }),
         );
+      }
       case "getTransaction": {
         const sent = this.wallet.get(params[0] as string);
         if (sent)
@@ -690,6 +778,8 @@ export class FakeSolana {
         return { context, value: 5000 };
       case "getBlockHeight":
         return this.height;
+      case "getEpochInfo":
+        return { absoluteSlot: this.slot, blockHeight: this.height };
       case "sendTransaction": {
         const wire = solanaBase64Bytes(params[0] as string);
         const signature = wire.slice(1, 65);
@@ -709,9 +799,12 @@ export class FakeSolana {
       }
       case "getSignatureStatuses": {
         const [signature] = params[0] as string[];
-        const landed = this.landed.get(signature);
+        // A node behind the finalized chain knows neither the slot nor
+        // what landed since.
+        const behind = this.statusSlot !== null;
+        const landed = behind ? undefined : this.landed.get(signature);
         return {
-          context,
+          context: behind ? { slot: this.statusSlot } : context,
           value: [
             landed
               ? {

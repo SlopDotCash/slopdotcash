@@ -3,9 +3,13 @@
 -- `slop-submission-deposits` program are recorded in the existing
 -- `submission_fee_deposits` table under network 'solana-mainnet':
 -- `deposit_id` is the id the program stored in the record, `token` the mint,
--- `payer` and `kept_to` the wallets, `tx_hash` the signature of the
--- transaction that created the record and `block_number` its slot. The row
--- of that network in `submission_fee_cursors` holds the next deposit id to
+-- `payer` and `kept_to` the wallets, `block_time` the cluster time the
+-- program stored and `block_number` the finalized slot the Worker first read
+-- the record at. `tx_hash` is the signature of the transaction that created
+-- the record when one bounded read finds it, and otherwise the record's own
+-- address: recording a deposit never waits on the history of an address,
+-- which anyone can fill with transactions that merely name it. The row of
+-- that network in `submission_fee_cursors` holds the next deposit id to
 -- record, not a block.
 --
 -- A Solana deposit's record is an account whose address does not follow from
@@ -74,3 +78,41 @@ WHEN OLD.state IN ('recorded', 'finalized', 'failed')
 BEGIN SELECT RAISE(ABORT, 'submission fee send state is final'); END;
 CREATE TRIGGER submission_fee_solana_sends_no_delete BEFORE DELETE ON submission_fee_solana_sends
 BEGIN SELECT RAISE(ABORT, 'submission fee sends are permanent'); END;
+
+-- The finalized slot of the last listing of open records that every tracked
+-- deposit was compared with. A deposit found gone later was still open at
+-- this slot, which bounds where its settlement can be.
+CREATE TABLE submission_fee_solana_scans (
+  network TEXT PRIMARY KEY,
+  compared_slot INTEGER NOT NULL CHECK (compared_slot >= 0),
+  updated_at TEXT NOT NULL
+) STRICT;
+
+-- One row for each recorded deposit whose record is gone and whose outcome
+-- is not recorded yet. The Worker proves a settlement it sent itself from
+-- that transaction. For any other (the payer's own reclaim), it reads the
+-- record address's transactions between `after_slot` (the record was still
+-- open) and `until_slot` (it was first seen gone), a bounded number in each
+-- run: `before_tx` is where the next run continues, newest first, and
+-- `candidate_tx` the oldest settlement found so far. A read that fails is
+-- written to `reason` (a short fixed word, never provider text) and tried
+-- again later; it never stops the run or another deposit. `done_at` is set
+-- when the outcome is recorded.
+CREATE TABLE submission_fee_solana_settlements (
+  network TEXT NOT NULL,
+  deposit_id INTEGER NOT NULL,
+  after_slot INTEGER NOT NULL CHECK (after_slot >= 0),
+  until_slot INTEGER NOT NULL CHECK (until_slot >= after_slot),
+  before_tx TEXT CHECK (before_tx IS NULL OR length(before_tx) BETWEEN 64 AND 88),
+  candidate_tx TEXT CHECK (candidate_tx IS NULL OR length(candidate_tx) BETWEEN 64 AND 88),
+  reason TEXT CHECK (reason IS NULL OR (length(reason) BETWEEN 1 AND 60 AND reason NOT GLOB '*[^a-z_]*')),
+  checks INTEGER NOT NULL CHECK (checks >= 0),
+  first_at TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  done_at TEXT,
+  PRIMARY KEY (network, deposit_id)
+) STRICT;
+CREATE INDEX submission_fee_solana_settlements_open
+  ON submission_fee_solana_settlements(network, checked_at) WHERE done_at IS NULL;
+CREATE TRIGGER submission_fee_solana_settlements_no_delete BEFORE DELETE ON submission_fee_solana_settlements
+BEGIN SELECT RAISE(ABORT, 'submission fee settlement searches are permanent'); END;

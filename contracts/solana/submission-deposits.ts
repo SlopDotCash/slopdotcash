@@ -307,6 +307,20 @@ export function submissionDepositDiscriminator(
   return layout(idl, "Deposit").discriminator;
 }
 
+/**
+ * Where a field of every `Deposit` account starts, for an account filter
+ * that compares bytes at a fixed place (`id`, `payer`, `mint`, `kept_to`,
+ * `item`).
+ */
+export function submissionDepositOffset(
+  field: string,
+  idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
+): number {
+  const found = layout(idl, "Deposit").fields.get(field);
+  if (!found) throw new Error(`The IDL's Deposit has no ${field}`);
+  return found.offset;
+}
+
 export function decodeSubmissionConfig(
   bytes: Uint8Array,
   idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
@@ -547,18 +561,47 @@ export function submissionCreation(
   programId: string,
   deposit: string,
   idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
+  /**
+   * The record this transaction must have created. With it the instruction's
+   * arguments (item, amount, kept wallet, nonce), payer and mint must be the
+   * record's own, byte for byte.
+   */
+  record?: SubmissionDeposit,
 ): boolean {
   const executed = executedInstructions(transaction);
   if (executed === null) return false;
   const spec = instruction(idl, "deposit");
-  const at = spec.accounts.findIndex((meta) => meta.name === "deposit");
+  const place = (name: string) =>
+    spec.accounts.findIndex((meta) => meta.name === name);
+  const at = place("deposit");
+  const want = record
+    ? depositInstruction(
+        {
+          programId,
+          payer: record.payer,
+          mint: record.mint,
+          // Any token account of the payer can be the source.
+          source: record.payer,
+          item: record.item,
+          amount: BigInt(record.amount),
+          keptTo: record.keptTo,
+          nonce: record.nonce,
+        },
+        idl,
+      )
+    : null;
   return executed.flat.some(({ ix }) => {
     const call = executed.parts(ix);
     return (
       call.program === programId &&
       call.data.length >= 8 &&
       spec.discriminator.every((byte, index) => call.data[index] === byte) &&
-      call.accounts[at] === deposit
+      call.accounts[at] === deposit &&
+      (want === null ||
+        (call.data.length === want.data.length &&
+          call.data.every((byte, index) => byte === want.data[index]) &&
+          call.accounts[place("payer")] === record?.payer &&
+          call.accounts[place("mint")] === record?.mint))
     );
   });
 }

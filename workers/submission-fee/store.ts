@@ -44,6 +44,7 @@ import {
   type SendState,
   type StandingRow,
 } from "./core";
+import { SOLANA_EXPIRED } from "./solana";
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -1088,13 +1089,69 @@ const solanaSendOf = (row: SolanaSendRecord): SendRow => ({
   updatedAt: row.updated_at,
   finalizedAt: row.finalized_at,
 });
+// A send whose blockhash expired before it landed paid no fee, so it is not
+// part of the day's spend. A transaction that landed and failed did pay.
 const SOLANA_SPENT_TODAY = `(SELECT COALESCE(SUM(CAST(maximum_lamports AS INTEGER)), 0)
-    FROM submission_fee_solana_sends WHERE network = ? AND mode = 'live' AND created_at >= ?)`;
+    FROM submission_fee_solana_sends WHERE network = ? AND mode = 'live' AND created_at >= ?
+     AND NOT (state = 'failed' AND reason = '${SOLANA_EXPIRED}'))`;
 
-/** A recorded Solana deposit that is still open, with its record's address. */
-export interface OpenSolanaDeposit {
-  deposit: DepositRow;
+/**
+ * Why the Worker never resolves a recorded Solana deposit: it is of a mint
+ * outside the table, its kept wallet is not the fee wallet, or its amount is
+ * not the fee. Such a deposit is final for the Worker: it is left out of
+ * what is tracked and planned, and its payer reclaims it from the program
+ * after 30 days.
+ */
+export const SOLANA_NEVER_RESOLVED = [
+  "token_not_accepted",
+  "wrong_kept_to",
+  "amount_below_due",
+  "item_fee_invalid",
+] as const;
+const NEVER_RESOLVED = `(d.accepted = 0 AND d.reject_reason IN (${SOLANA_NEVER_RESOLVED.map(
+  (reason) => `'${reason}'`,
+).join(", ")}))`;
+const OPEN_STATES = "('open', 'refund_due', 'kept_due')";
+
+/** A recorded Solana deposit the Worker may still resolve. */
+export interface TrackedSolanaDeposit {
+  depositId: number;
   account: string;
+  payer: string;
+  token: string;
+  amount: string;
+  keptTo: string;
+  /** The finalized slot its record was first read at. */
+  blockNumber: number;
+}
+type TrackedRecord = {
+  deposit_id: number;
+  deposit_account: string;
+  payer: string;
+  token: string;
+  amount: string;
+  kept_to: string;
+  block_number: number;
+};
+const TRACKED =
+  "d.deposit_id, d.deposit_account, d.payer, d.token, d.amount, d.kept_to, d.block_number";
+const trackedOf = (row: TrackedRecord): TrackedSolanaDeposit => ({
+  depositId: row.deposit_id,
+  account: row.deposit_account,
+  payer: row.payer,
+  token: row.token,
+  amount: row.amount,
+  keptTo: row.kept_to,
+  blockNumber: row.block_number,
+});
+
+/** A search for a gone deposit's settlement, as stored (migration 0155). */
+export interface SolanaSearchRow extends TrackedSolanaDeposit {
+  afterSlot: number;
+  untilSlot: number;
+  before: string | null;
+  candidate: string | null;
+  checks: number;
 }
 
 /**
@@ -1134,25 +1191,214 @@ export class D1SolanaFeeStore extends D1FeeStore {
     await this.db.batch(statements);
   }
 
-  /** Finalized deposits still in an open state, oldest first. */
-  async openSolanaDeposits(
+  /**
+   * Recorded deposits the Worker may still resolve, those with something
+   * due first, then oldest first. A deposit it never resolves is not in the
+   * list, so no number of them can push another deposit out of it.
+   */
+  async trackedSolanaDeposits(
     network: string,
     limit: number,
-  ): Promise<OpenSolanaDeposit[]> {
+  ): Promise<TrackedSolanaDeposit[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT ${DEPOSIT}, d.deposit_account FROM submission_fee_deposits d
+        `SELECT ${TRACKED} FROM submission_fee_deposits d
           WHERE d.network = ? AND d.finalized_at IS NOT NULL
-            AND d.state IN ('open', 'refund_due', 'kept_due')
+            AND d.deposit_account IS NOT NULL
+            AND d.state IN ${OPEN_STATES} AND NOT ${NEVER_RESOLVED}
+          ORDER BY (d.state <> 'open') DESC, d.deposit_id LIMIT ?`,
+      )
+      .bind(network, limit)
+      .all<TrackedRecord>();
+    return results.map(trackedOf);
+  }
+
+  /** The record address of one recorded deposit, whatever its state. */
+  async solanaAccount(network: string, depositId: number) {
+    const row = await this.db
+      .prepare(
+        "SELECT deposit_account FROM submission_fee_deposits WHERE network = ? AND deposit_id = ?",
+      )
+      .bind(network, depositId)
+      .first<{ deposit_account: string | null }>();
+    return row?.deposit_account ?? null;
+  }
+
+  /**
+   * Deposits of the Worker's own finalized sends whose outcome is not
+   * recorded yet, each with the signature of the transaction that settled
+   * it.
+   */
+  async ownSolanaSettlements(network: string, limit: number) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${TRACKED}, s.tx_id FROM submission_fee_solana_sends s,
+                json_each(s.deposits) j
+           JOIN submission_fee_deposits d
+             ON d.network = s.network AND d.deposit_id = json_extract(j.value, '$.id')
+          WHERE s.network = ? AND s.state = 'finalized' AND s.tx_id IS NOT NULL
+            AND d.deposit_account IS NOT NULL AND d.state IN ${OPEN_STATES}
+          ORDER BY s.finalized_at, d.deposit_id LIMIT ?`,
+      )
+      .bind(network, limit)
+      .all<TrackedRecord & { tx_id: string }>();
+    return results.map((row) => ({ ...trackedOf(row), txId: row.tx_id }));
+  }
+
+  /** Accepted deposits with something due: they are sent before the rest. */
+  async acceptedSolanaDue(network: string, limit: number) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT d.deposit_id FROM submission_fee_deposits d
+          WHERE d.network = ? AND d.accepted = 1
+            AND d.state IN ('refund_due', 'kept_due')
           ORDER BY d.deposit_id LIMIT ?`,
       )
       .bind(network, limit)
-      .all<DepositRecord & { deposit_account: string | null }>();
-    return results.map((row) => {
-      if (typeof row.deposit_account !== "string")
-        throw new Error("A recorded Solana deposit has no record address");
-      return { deposit: depositOf(row), account: row.deposit_account };
-    });
+      .all<{ deposit_id: number }>();
+    return new Set(results.map((row) => row.deposit_id));
+  }
+
+  /** Lamports of network fees the resolver's sends of this UTC day paid. */
+  async solanaSpentToday(network: string, now: Date) {
+    const row = await this.db
+      .prepare(`SELECT ${SOLANA_SPENT_TODAY} AS spent`)
+      .bind(network, utcDay(now))
+      .first<{ spent: number }>();
+    return BigInt(row?.spent ?? 0);
+  }
+
+  /** A deposit the Worker never resolves is never planned. */
+  override async resolvable(network: string) {
+    return (await super.resolvable(network)).filter(
+      ({ deposit }) =>
+        !(
+          deposit.accepted === 0 &&
+          (SOLANA_NEVER_RESOLVED as readonly string[]).includes(
+            deposit.rejectReason ?? "",
+          )
+        ),
+    );
+  }
+
+  async comparedSlot(network: string) {
+    const row = await this.db
+      .prepare(
+        "SELECT compared_slot FROM submission_fee_solana_scans WHERE network = ?",
+      )
+      .bind(network)
+      .first<{ compared_slot: number }>();
+    return row ? row.compared_slot : null;
+  }
+
+  async setComparedSlot(network: string, slot: number, at: string) {
+    await this.db
+      .prepare(
+        `INSERT INTO submission_fee_solana_scans (network, compared_slot, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(network) DO UPDATE SET
+           compared_slot = excluded.compared_slot, updated_at = excluded.updated_at
+         WHERE excluded.compared_slot > submission_fee_solana_scans.compared_slot`,
+      )
+      .bind(network, slot, at)
+      .run();
+  }
+
+  /** Opens the search for a gone deposit's settlement, once. */
+  async openSolanaSearch(
+    network: string,
+    depositId: number,
+    afterSlot: number,
+    untilSlot: number,
+    at: string,
+  ) {
+    await this.db
+      .prepare(
+        `INSERT INTO submission_fee_solana_settlements
+           (network, deposit_id, after_slot, until_slot, checks, first_at, checked_at)
+         VALUES (?, ?, ?, ?, 0, ?, ?)
+         ON CONFLICT(network, deposit_id) DO NOTHING`,
+      )
+      .bind(network, depositId, afterSlot, Math.max(afterSlot, untilSlot), at, at)
+      .run();
+  }
+
+  /** The searches still open, the one looked at longest ago first. */
+  async solanaSearches(
+    network: string,
+    limit: number,
+  ): Promise<SolanaSearchRow[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${TRACKED}, x.after_slot, x.until_slot, x.before_tx,
+                x.candidate_tx, x.checks
+           FROM submission_fee_solana_settlements x
+           JOIN submission_fee_deposits d
+             ON d.network = x.network AND d.deposit_id = x.deposit_id
+          WHERE x.network = ? AND x.done_at IS NULL
+            AND d.deposit_account IS NOT NULL AND d.state IN ${OPEN_STATES}
+          ORDER BY x.checked_at, x.deposit_id LIMIT ?`,
+      )
+      .bind(network, limit)
+      .all<
+        TrackedRecord & {
+          after_slot: number;
+          until_slot: number;
+          before_tx: string | null;
+          candidate_tx: string | null;
+          checks: number;
+        }
+      >();
+    return results.map((row) => ({
+      ...trackedOf(row),
+      afterSlot: row.after_slot,
+      untilSlot: row.until_slot,
+      before: row.before_tx,
+      candidate: row.candidate_tx,
+      checks: row.checks,
+    }));
+  }
+
+  /** The ids, among these, that already have a search row. */
+  async searchedSolana(network: string) {
+    const { results } = await this.db
+      .prepare(
+        "SELECT deposit_id FROM submission_fee_solana_settlements WHERE network = ? AND done_at IS NULL",
+      )
+      .bind(network)
+      .all<{ deposit_id: number }>();
+    return new Set(results.map((row) => row.deposit_id));
+  }
+
+  /** Where a search stands after one step, with a fixed word when it failed. */
+  async saveSolanaSearch(
+    network: string,
+    depositId: number,
+    step: {
+      before: string | null;
+      candidate: string | null;
+      reason: string | null;
+      done?: boolean;
+    },
+    at: string,
+  ) {
+    await this.db
+      .prepare(
+        `UPDATE submission_fee_solana_settlements
+            SET before_tx = ?, candidate_tx = ?, reason = ?, checks = checks + 1,
+                checked_at = ?, done_at = ?
+          WHERE network = ? AND deposit_id = ? AND done_at IS NULL`,
+      )
+      .bind(
+        step.before,
+        step.candidate,
+        step.reason,
+        at,
+        step.done === true ? at : null,
+        network,
+        depositId,
+      )
+      .run();
   }
 
   override async openSend(network: string) {

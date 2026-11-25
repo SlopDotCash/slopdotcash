@@ -216,7 +216,7 @@ test("a contributor pays 2 USDC on Solana with one wallet request the page built
   await expect(review).toContainText(way.token);
   await expect(review).toContainText(SUBMISSION_FEE_KEPT_TO[NETWORK]);
   await expect(review).toContainText(WALLET);
-  await expect(review).toContainText("0.00201144 SOL");
+  await expect(review).toContainText("0.00206712 SOL");
   await expectAccessibleReflow(page, "fee-solana-review");
   expect(solana.signed).toHaveLength(0);
   await review

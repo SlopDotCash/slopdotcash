@@ -18,6 +18,7 @@ import {
 import { message as legacyMessage } from "../../contracts/solana/transactions";
 import {
   SUBMISSION_FEE_CONTRACTS,
+  SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES,
   SUBMISSION_FEE_SOLANA_SWITCHED_ON,
   SUBMISSION_FEE_START_BLOCKS,
   submissionFeeItem,
@@ -25,12 +26,15 @@ import {
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseSolanaConfig, type SolanaFeeConfig } from "./config";
 import { FakeSolana, fakeAddress } from "./fixtures/solana-fake";
+import { PayoutFailedError } from "./core";
 import { type Env, runDeposits } from "./index";
 import {
   createSolanaFeeChain,
   SOLANA_MAX_BATCH,
+  SOLANA_REQUESTS_PER_RUN,
   SOLANA_TRANSACTION_BYTES,
 } from "./solana";
+import { SOLANA_OPEN_ALERT, SOLANA_STEP_REQUESTS } from "./solana-core";
 import type { SubmissionFeeD1Database } from "./store";
 
 const ITEMS = `CREATE TABLE IF NOT EXISTS submission_fee_items (
@@ -58,7 +62,10 @@ const PAYER = fakeAddress(11);
 const OTHER = fakeAddress(12);
 const idl = SUBMISSION_DEPOSITS_IDL;
 
-function setup(mode: "dry_run" | "live" = "live") {
+function setup(
+  mode: "dry_run" | "live" = "live",
+  limits: { perDay?: string } = {},
+) {
   const { db, sqlite } = sqliteD1();
   sqlite.exec(ITEMS);
   const chain = new FakeSolana(idl);
@@ -72,7 +79,7 @@ function setup(mode: "dry_run" | "live" = "live") {
     SUBMISSION_FEE_MODE: "off",
     SUBMISSION_FEE_SOLANA_MODE: mode,
     SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX: "10000",
-    SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY: "12000",
+    SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY: limits.perDay ?? "12000",
     RPC_URL_SUBMISSION_FEE_SOLANA: "https://solana.invalid/key",
     SUBMISSION_FEE_SOLANA_RESOLVER_SEED: SEED,
   };
@@ -85,16 +92,22 @@ function setup(mode: "dry_run" | "live" = "live") {
       feeWallet: chain.feeWallet,
       genesisHash,
     });
-  const run = () =>
+  const run = (options: { requests?: number } = {}) =>
     runDeposits(env, () => new Date(clock.at), {
       solanaConfig,
       solanaChain: (network, seed) =>
-        createSolanaFeeChain({ network, seed, fetch: chain.fetch, idl }),
+        createSolanaFeeChain({
+          network,
+          seed,
+          fetch: chain.fetch,
+          idl,
+          ...options,
+        }),
       log: (event) => logs.push(event),
       onError: (error) => errors.push(error),
     });
-  const ledger = async () => {
-    const result = await run();
+  const ledger = async (options: { requests?: number } = {}) => {
+    const result = await run(options);
     if (result.status !== "ran") throw new Error(result.status);
     expect(result.networks).toHaveLength(1);
     return result.networks[0] as Record<string, unknown>;
@@ -127,6 +140,20 @@ function setup(mode: "dry_run" | "live" = "live") {
     sqlite
       .query("SELECT * FROM submission_fee_solana_sends ORDER BY rowid")
       .all() as Record<string, unknown>[];
+  const searches = () =>
+    sqlite
+      .query(
+        "SELECT * FROM submission_fee_solana_settlements ORDER BY deposit_id",
+      )
+      .all() as Record<string, unknown>[];
+  const count = (where = "1 = 1") =>
+    (
+      sqlite
+        .query(
+          `SELECT COUNT(*) AS n FROM submission_fee_deposits WHERE ${where}`,
+        )
+        .get() as { n: number }
+    ).n;
   const pay = (
     pull: number,
     overrides: Parameters<FakeSolana["pay"]>[0] | object = {},
@@ -152,6 +179,8 @@ function setup(mode: "dry_run" | "live" = "live") {
     item,
     deposit,
     sends,
+    searches,
+    count,
     pay,
     later,
   };
@@ -269,35 +298,79 @@ describe("reading deposits", () => {
     expect(await t.ledger()).toMatchObject({ recorded: 0, judged: 0, paid: 0 });
   });
 
-  test("a deposit whose kept wallet is not the fee wallet does not count", async () => {
+  test("a deposit whose kept wallet is not the fee wallet is never fetched or recorded", async () => {
     const t = setup();
     t.ask(7);
     t.pay(7, { keptTo: OTHER });
-    await t.ledger();
-    expect(t.deposit(1)).toMatchObject({
-      accepted: 0,
-      reject_reason: "wrong_kept_to",
-      kept_to: OTHER,
+    expect(await t.ledger()).toMatchObject({
+      open: 0,
+      recorded: 0,
+      finalizedThrough: 1,
     });
+    expect(t.deposit(1)).toBeNull();
     expect(t.item(7).paid_deposit_id).toBeNull();
   });
 
-  test("a deposit of another mint is refused and never resolved", async () => {
+  test("a deposit of another mint is never fetched, recorded or resolved", async () => {
     const t = setup();
     t.ask(7);
     t.pay(7, { mint: fakeAddress(99) });
-    await t.ledger();
-    expect(t.deposit(1)).toMatchObject({
-      accepted: 0,
-      reject_reason: "token_not_accepted",
-    });
+    expect(await t.ledger()).toMatchObject({ open: 0, recorded: 0 });
+    expect(t.deposit(1)).toBeNull();
     t.later(48 * 3600_000);
     expect(await t.ledger()).toMatchObject({ send: "none" });
     expect(t.sends()).toEqual([]);
     expect(t.chain.calls).not.toContain("sendTransaction");
   });
 
-  test("a deposit settled before it was ever recorded is skipped, and the cursor moves on", async () => {
+  test("the endpoint filters the listing and returns ids only", async () => {
+    const t = setup();
+    t.ask(7);
+    t.pay(7);
+    const asked: unknown[][] = [];
+    t.chain.onCall = (method, params) => {
+      if (method === "getProgramAccounts") asked.push(params);
+    };
+    await t.ledger();
+    expect(asked).toHaveLength(1);
+    expect(asked[0][1]).toMatchObject({
+      commitment: "finalized",
+      dataSlice: { offset: 8, length: 8 },
+      filters: [
+        { dataSize: SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES },
+        { memcmp: { offset: 0 } },
+        { memcmp: { offset: 56, bytes: t.chain.mint } },
+        { memcmp: { offset: 88, bytes: t.chain.feeWallet } },
+      ],
+    });
+  });
+
+  test("a deposit below the fee is recorded, refused and never resolved or tracked", async () => {
+    const t = setup();
+    t.ask(7);
+    t.pay(7, { amount: 1n });
+    await t.ledger();
+    expect(t.deposit(1)).toMatchObject({
+      accepted: 0,
+      reject_reason: "amount_below_due",
+      state: "open",
+    });
+    t.later(48 * 3600_000);
+    const before = t.chain.calls.length;
+    expect(await t.ledger()).toMatchObject({ send: "none", searching: 0 });
+    // Nothing is read for it again: the listing, and no more.
+    expect(t.chain.calls.slice(before)).toEqual([
+      "getGenesisHash",
+      "getAccountInfo",
+      "getProgramAccounts",
+    ]);
+    expect(t.sends()).toEqual([]);
+    // Its payer takes it back; the Worker does not follow that either.
+    t.chain.reclaim(t.deposit(1)?.deposit_account as string);
+    expect(await t.ledger()).toMatchObject({ resolved: 0, searching: 0 });
+  });
+
+  test("a deposit settled before it was ever recorded is passed over, and the cursor moves on", async () => {
     const t = setup();
     t.ask(7);
     t.ask(8);
@@ -308,23 +381,38 @@ describe("reading deposits", () => {
     expect(result).toMatchObject({ recorded: 1, finalizedThrough: 2 });
     expect(t.deposit(1)).toBeNull();
     expect(t.deposit(2)).toMatchObject({ accepted: 1 });
-    expect(t.logs).toContainEqual({
-      event: "submission_fee_solana_settled_unseen",
-      network: NETWORK,
-      count: 1,
-    });
   });
 
-  test("a failed read leaves the cursor where it was", async () => {
+  test("a failed listing is reported, leaves the cursor where it was, and the next run records", async () => {
     const t = setup();
     t.ask(7);
     t.pay(7);
     t.chain.failMethod = "getProgramAccounts";
     const failed = await t.ledger();
-    expect(failed.reason).toBe("chain.snapshot/SolanaFeeRpcError:status-503");
+    expect(failed).toMatchObject({
+      error: "submission_fee_operation_failed",
+      steps: { list: "chain.listing/SolanaFeeRpcError:status-503" },
+    });
     expect(t.deposit(1)).toBeNull();
     t.chain.failMethod = null;
-    expect(await t.ledger()).toMatchObject({ recorded: 1, paid: 1 });
+    const next = await t.ledger();
+    expect(next).toMatchObject({ recorded: 1, paid: 1 });
+    expect(next.error).toBeUndefined();
+  });
+
+  test("a failed listing does not stop what is already due from being sent", async () => {
+    const t = setup();
+    t.ask(7);
+    t.pay(7);
+    await t.ledger();
+    t.decide(7, "refund_due");
+    t.chain.failMethod = "getProgramAccounts";
+    const result = await t.ledger();
+    expect(result).toMatchObject({
+      send: "sent",
+      steps: { list: "chain.listing/SolanaFeeRpcError:status-503" },
+    });
+    expect(t.sends()).toMatchObject([{ state: "submitted" }]);
   });
 });
 
@@ -425,9 +513,21 @@ describe("settling deposits", () => {
     ).meta;
     meta.postTokenBalances = meta.preTokenBalances;
     const result = await t.ledger();
-    expect(result.reason).toBe("chain.settlement/Error");
+    // The one deposit is set aside with a fixed reason; the run goes on.
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({ resolved: 0, searching: 1 });
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_solana_set_aside",
+      network: NETWORK,
+      depositId: 1,
+      step: "own_settlement",
+      reason: "proof_failed",
+    });
     expect(t.deposit(1)).toMatchObject({ state: "kept_due" });
     expect(t.item(7).outcome).toBe("kept_due");
+    expect(t.searches()).toMatchObject([
+      { deposit_id: 1, reason: "proof_failed", done_at: null },
+    ]);
   });
 
   test("a payer's own reclaim is recorded as reclaimed and the pull request as refunded", async () => {
@@ -811,5 +911,406 @@ describe("a record address that changes hands between the read and the signature
     expect(chain.landed.get(prepared.txId)?.failed).toBe(true);
     expect(chain.accounts.has(made.account)).toBe(true);
     expect(await client.deposit(1)).toMatchObject({ closed: true });
+  });
+});
+
+// Anyone can name any address in a transaction for the base fee, and anyone
+// can deposit any mint. Neither may stop the ledger or another deposit.
+describe("transactions that merely name a record address", () => {
+  test("3,500 of them on a new deposit do not stop it being recorded and paid", async () => {
+    const t = setup();
+    t.ask(7);
+    t.ask(8);
+    const made = t.pay(7);
+    t.chain.junk(made.account, 3500, true);
+    t.pay(8);
+    const result = await t.ledger();
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({ recorded: 2, paid: 2 });
+    expect(Number(result.requests)).toBeLessThan(SOLANA_REQUESTS_PER_RUN);
+    // The creating transaction is behind the first page: the row names the
+    // record's address in its place.
+    expect(t.deposit(1)).toMatchObject({
+      tx_hash: made.account,
+      deposit_account: made.account,
+      accepted: 1,
+    });
+    expect(t.item(7)).toMatchObject({ paid_deposit_id: 1 });
+    // One page of signatures was read for it, and no more.
+    expect(
+      t.chain.calls.filter((call) => call === "getSignaturesForAddress"),
+    ).toHaveLength(2);
+  });
+
+  test("ones in the very second of the deposit are not mistaken for its creation", async () => {
+    const t = setup();
+    t.ask(7);
+    const made = t.pay(7);
+    t.chain.junk(made.account, 10);
+    expect(await t.ledger()).toMatchObject({ recorded: 1, paid: 1 });
+    expect(t.deposit(1)).toMatchObject({ tx_hash: made.account });
+    // Two transactions were read for it, not ten.
+    expect(t.chain.calls.filter((call) => call === "getTransaction")).toHaveLength(
+      2,
+    );
+  });
+
+  test("the Worker's own refund is recorded from its own transaction whatever names the address", async () => {
+    const t = setup();
+    t.ask(7);
+    const made = t.pay(7);
+    await t.ledger();
+    t.decide(7, "refund_due");
+    await t.ledger();
+    const signature = t.sends()[0].tx_id as string;
+    t.chain.junk(made.account, 2000, true);
+    t.chain.land(signature);
+    t.chain.junk(made.account, 5000, true);
+    const before = t.chain.calls.length;
+    const result = await t.ledger();
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({ resolved: 1, searching: 0 });
+    expect(t.deposit(1)).toMatchObject({
+      state: "refunded",
+      resolve_tx: signature,
+    });
+    expect(t.item(7).outcome).toBe("refunded");
+    // The address's own history was not read at all.
+    expect(t.chain.calls.slice(before)).not.toContain(
+      "getSignaturesForAddress",
+    );
+  });
+
+  test("40 of them before a payer's reclaim and 30 after delay only that deposit's record", async () => {
+    const t = setup();
+    t.ask(7);
+    t.ask(8);
+    const made = t.pay(7);
+    await t.ledger();
+    t.chain.junk(made.account, 40, true);
+    const reclaimed = t.chain.reclaim(made.account);
+    t.chain.junk(made.account, 30, true);
+    // Another contributor pays and is refunded while the search goes on.
+    t.pay(8, { payer: OTHER });
+    const first = await t.ledger();
+    expect(first.error).toBeUndefined();
+    expect(first).toMatchObject({ recorded: 1, paid: 1, searching: 1 });
+    expect(Number(first.requests)).toBeLessThan(SOLANA_REQUESTS_PER_RUN);
+    expect(t.deposit(1)).toMatchObject({ state: "open" });
+    expect(t.searches()).toMatchObject([{ deposit_id: 1, done_at: null }]);
+    expect(t.searches()[0].before_tx).not.toBeNull();
+    // Whatever names the address after the record was seen gone is passed
+    // over without being read.
+    t.chain.junk(made.account, 1500, true);
+    t.decide(8, "refund_due");
+    const second = await t.ledger();
+    expect(second.error).toBeUndefined();
+    expect(second).toMatchObject({ send: "sent" });
+    t.chain.land(t.sends()[0].tx_id as string);
+    // The search continues where it stopped, a bounded number of reads a run.
+    let runs = 2;
+    while (t.deposit(1)?.state === "open") {
+      const result = await t.ledger();
+      expect(result.error).toBeUndefined();
+      expect(Number(result.requests)).toBeLessThan(SOLANA_REQUESTS_PER_RUN);
+      runs += 1;
+      if (runs > 10) throw new Error("the search does not end");
+    }
+    expect(runs).toBeGreaterThan(2);
+    expect(t.deposit(1)).toMatchObject({
+      state: "reclaimed",
+      resolve_tx: reclaimed,
+    });
+    expect(t.item(7).outcome).toBe("refunded");
+    expect(t.deposit(2)).toMatchObject({ state: "refunded" });
+    expect(t.searches()[0].done_at).not.toBeNull();
+    // 71 transactions lie between the two slots; none of the 1,500 was read.
+    expect(
+      t.chain.calls.filter((call) => call === "getTransaction").length,
+    ).toBeLessThan(90);
+  });
+
+  test("a settlement is never taken from before the slot the record was last seen open at", async () => {
+    const t = setup();
+    t.ask(7);
+    t.ask(8);
+    // The same payer and nonce twice: the first deposit is reclaimed before
+    // the Worker ever sees the address.
+    const first = t.pay(7, { nonce: 9n });
+    t.chain.reclaim(first.account);
+    const second = t.pay(8, { nonce: 9n });
+    expect(second.account).toBe(first.account);
+    await t.ledger();
+    expect(t.deposit(2)).toMatchObject({ accepted: 1, state: "open" });
+    const reclaimed = t.chain.reclaim(second.account);
+    await t.ledger();
+    expect(t.deposit(2)).toMatchObject({
+      state: "reclaimed",
+      resolve_tx: reclaimed,
+    });
+  });
+});
+
+describe("deposits the Worker never resolves", () => {
+  test("600 deposits of a worthless mint, then one honest deposit, which is refunded", async () => {
+    const t = setup();
+    const worthless = fakeAddress(99);
+    for (let index = 0; index < 600; index += 1)
+      t.pay(1000 + index, { payer: OTHER, mint: worthless });
+    t.ask(7);
+    t.pay(7);
+    const first = await t.ledger();
+    expect(first.error).toBeUndefined();
+    expect(first).toMatchObject({ open: 1, recorded: 1, paid: 1 });
+    expect(t.count()).toBe(1);
+    t.decide(7, "refund_due");
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    t.chain.land(t.sends()[0].tx_id as string);
+    const last = await t.ledger();
+    expect(last.error).toBeUndefined();
+    expect(t.deposit(601)).toMatchObject({ state: "refunded" });
+    expect(t.item(7).outcome).toBe("refunded");
+  });
+
+  test("600 dust deposits of the accepted mint, then one honest deposit, which is refunded", async () => {
+    const t = setup("live", { perDay: "30000" });
+    for (let index = 0; index < 600; index += 1)
+      t.pay(1000 + index, { payer: OTHER, amount: 1n });
+    t.ask(7);
+    t.pay(7);
+    // One read of records a run: the honest deposit is reached in seven.
+    let runs = 0;
+    while (t.deposit(601) === null) {
+      const result = await t.ledger();
+      expect(result.error).toBeUndefined();
+      expect(Number(result.requests)).toBeLessThan(SOLANA_REQUESTS_PER_RUN);
+      runs += 1;
+      if (runs > 7) throw new Error("the honest deposit is never recorded");
+    }
+    expect(t.item(7)).toMatchObject({ paid_deposit_id: 601 });
+    // The deposit that paid a pull request is sent for by itself, at once.
+    t.decide(7, "refund_due");
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    expect(t.sends()[0].deposits).toBe('[{"id":601,"refund":true}]');
+    t.chain.land(t.sends()[0].tx_id as string);
+    await t.ledger();
+    expect(t.deposit(601)).toMatchObject({ state: "refunded" });
+    // A day on, the deposits for nothing are refused. They are refunded as
+    // a courtesy, five to a transaction, until half of the day's network
+    // fees is spent; the rest of the day is kept for pull requests.
+    t.later(48 * 3600_000);
+    for (let run = 0; run < 8; run += 1) {
+      const result = await t.ledger();
+      expect(result.error).toBeUndefined();
+      const last = t.sends().at(-1);
+      if (last?.state === "submitted") t.chain.land(last.tx_id as string);
+    }
+    expect(
+      t.count("accepted = 0 AND reject_reason = 'unknown_item'"),
+    ).toBe(600);
+    expect(t.sends()).toHaveLength(4);
+    expect(t.count("state = 'refunded'")).toBe(16);
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_solana_courtesy_refunds_wait",
+      network: NETWORK,
+    });
+    // A pull request's refund still goes out that day.
+    t.ask(9);
+    t.pay(9);
+    await t.ledger();
+    t.decide(9, "refund_due");
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    expect(t.sends().at(-1)?.deposits).toBe('[{"id":602,"refund":true}]');
+  });
+
+  test("600 deposits below a known pull request's fee are final and never sent for", async () => {
+    const t = setup();
+    t.ask(5);
+    for (let index = 0; index < 600; index += 1)
+      t.pay(5, { payer: OTHER, amount: 1n });
+    t.ask(7);
+    t.pay(7);
+    for (let runs = 0; t.deposit(601) === null; runs += 1) {
+      if (runs > 7) throw new Error("the honest deposit is never recorded");
+      expect((await t.ledger()).error).toBeUndefined();
+    }
+    expect(t.count("reject_reason = 'amount_below_due'")).toBe(600);
+    t.decide(7, "refund_due");
+    const result = await t.ledger();
+    expect(result).toMatchObject({ send: "sent" });
+    expect(t.sends()[0].deposits).toBe('[{"id":601,"refund":true}]');
+    t.chain.land(t.sends()[0].tx_id as string);
+    const after = await t.ledger();
+    expect(after).toMatchObject({ send: "none", resolved: 1 });
+    expect(t.deposit(601)).toMatchObject({ state: "refunded" });
+    expect(t.sends()).toHaveLength(1);
+  });
+
+  test("a count of open records past the threshold is in the log and the result", async () => {
+    const t = setup();
+    for (let index = 0; index < SOLANA_OPEN_ALERT; index += 1)
+      t.pay(1000 + index, { payer: OTHER, amount: 1n });
+    const result = await t.ledger();
+    expect(result).toMatchObject({ open: SOLANA_OPEN_ALERT, recorded: 100 });
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_solana_open_high",
+      network: NETWORK,
+      open: SOLANA_OPEN_ALERT,
+    });
+  });
+});
+
+describe("limits of one run", () => {
+  test("the request after the last is refused before it is sent, and the run reports it", async () => {
+    const t = setup();
+    t.ask(7);
+    t.pay(7);
+    const result = await t.ledger({ requests: 3 });
+    expect(t.chain.calls).toHaveLength(3);
+    expect(result).toMatchObject({
+      requests: 3,
+      error: "submission_fee_operation_failed",
+      steps: { scan: "chain.records/SolanaFeeBudgetError" },
+    });
+    // Nothing was half recorded; the next run records it.
+    expect(t.deposit(1)).toBeNull();
+    expect(await t.ledger()).toMatchObject({ recorded: 1, paid: 1 });
+  });
+
+  test("the steps' own limits add up to less than the run's", () => {
+    expect(SOLANA_STEP_REQUESTS).toBeLessThan(SOLANA_REQUESTS_PER_RUN);
+  });
+});
+
+describe("a send that may or may not have landed", () => {
+  test("a node behind the finalized chain cannot fail a send; it stays in flight", async () => {
+    const t = setup();
+    t.ask(7);
+    t.pay(7);
+    await t.ledger();
+    t.decide(7, "refund_due");
+    await t.ledger();
+    const first = t.sends()[0];
+    // The transaction lands, and the chain moves past its last valid height.
+    t.chain.land(first.tx_id as string);
+    t.chain.height = (first.last_valid_block_height as number) + 5;
+    // The node that answers for signatures is behind: it does not know it.
+    t.chain.statusSlot = t.chain.slot - 1;
+    expect(await t.ledger()).toMatchObject({ send: "in_flight" });
+    expect(t.sends()).toMatchObject([{ state: "submitted" }]);
+    expect(t.chain.broadcasts).toHaveLength(1);
+    // Once it has caught up, the send is finalized, not failed.
+    t.chain.statusSlot = null;
+    await t.ledger();
+    expect(t.sends()).toMatchObject([{ state: "finalized" }]);
+    expect(t.deposit(1)).toMatchObject({ state: "refunded" });
+    expect(t.sends()).toHaveLength(1);
+  });
+
+  test("an expired send that never landed does not count against the day's lamports", async () => {
+    const t = setup();
+    for (const pull of [7, 8]) {
+      t.ask(pull);
+      t.pay(pull);
+    }
+    await t.ledger();
+    t.decide(7, "refund_due");
+    // Two sends of 5,000 lamports are inside 12,000; a third would not be.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(await t.ledger()).toMatchObject({ send: "sent" });
+      if (attempt === 2) break;
+      t.chain.mempool.clear();
+      t.chain.height =
+        (t.sends().at(-1)?.last_valid_block_height as number) + 1;
+    }
+    expect(t.sends()).toMatchObject([
+      { state: "failed" },
+      { state: "failed" },
+      { state: "submitted" },
+    ]);
+    t.chain.land(t.sends()[2].tx_id as string);
+    await t.ledger();
+    t.decide(8, "refund_due");
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    t.chain.land(t.sends()[3].tx_id as string);
+    await t.ledger();
+    expect(t.sends()).toHaveLength(4);
+  });
+});
+
+describe("what a resolve may be built for", () => {
+  const client = (chain: FakeSolana) => {
+    const network = parseSolanaConfig(
+      {
+        SUBMISSION_FEE_SOLANA_MODE: "live",
+        SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX: "10000",
+        SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY: "12000",
+        RPC_URL_SUBMISSION_FEE_SOLANA: "https://solana.invalid/key",
+      },
+      {
+        network: NETWORK,
+        programId: chain.programId,
+        startSlot: 1000,
+        mint: chain.mint,
+        feeWallet: chain.feeWallet,
+        genesisHash: chain.genesis,
+      },
+    ).ledger;
+    if (!network) throw new Error("no ledger");
+    return createSolanaFeeChain({ network, seed: SEED, fetch: chain.fetch });
+  };
+
+  test("a kept fee is built only to the fee wallet of the table", async () => {
+    const chain = new FakeSolana();
+    chain.resolver = RESOLVER;
+    chain.tokenAccount(OTHER, chain.mint);
+    const made = chain.pay({
+      payer: PAYER,
+      item: submissionFeeItem(REPOSITORY, 7),
+      keptTo: OTHER,
+    });
+    const solana = client(chain);
+    solana.track(1, made.account);
+    const failure = await solana
+      .prepare([{ id: 1, refund: false }], async () => {})
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(PayoutFailedError);
+    expect((failure as PayoutFailedError).depositId).toBe(1);
+    expect(chain.calls).not.toContain("simulateTransaction");
+    // Its refund to the payer is still allowed.
+    await solana.prepare([{ id: 1, refund: true }], async () => {});
+  });
+
+  test("a deposit of another mint is never built for", async () => {
+    const chain = new FakeSolana();
+    chain.resolver = RESOLVER;
+    const made = chain.pay({
+      payer: PAYER,
+      item: submissionFeeItem(REPOSITORY, 7),
+      mint: fakeAddress(99),
+    });
+    const solana = client(chain);
+    solana.track(1, made.account);
+    expect(
+      await solana
+        .prepare([{ id: 1, refund: true }], async () => {})
+        .catch((error: unknown) => error),
+    ).toBeInstanceOf(PayoutFailedError);
+    expect(chain.calls).not.toContain("simulateTransaction");
+  });
+
+  test("an id nobody tracked is looked up, and an unknown one is refused", async () => {
+    const chain = new FakeSolana();
+    chain.resolver = RESOLVER;
+    const made = chain.pay({
+      payer: PAYER,
+      item: submissionFeeItem(REPOSITORY, 7),
+    });
+    const solana = client(chain);
+    solana.locate(async (id) => (id === 1 ? made.account : null));
+    expect(await solana.deposit(1)).toMatchObject({ state: 1, payer: PAYER });
+    await expect(solana.deposit(2)).rejects.toThrow(
+      "A Solana deposit's record is not known",
+    );
   });
 });

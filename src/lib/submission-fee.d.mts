@@ -67,6 +67,7 @@ export declare const SUBMISSION_FEE_SWITCHED_ON: boolean;
 export declare const SUBMISSION_FEE_SOLANA_NETWORKS: readonly string[];
 export declare const SUBMISSION_FEE_SOLANA_SWITCHED_ON: boolean;
 export declare const SUBMISSION_FEE_SOLANA_COMMITMENT: "finalized";
+export declare const SUBMISSION_FEE_SOLANA_DEPOSIT_BYTES: number;
 export declare const SUBMISSION_FEE_SOLANA_RENT_LAMPORTS: string;
 export declare function isSolanaFeeNetwork(network: string): boolean;
 export declare function submissionFeeSameAddress(
