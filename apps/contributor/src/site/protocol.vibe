@@ -1,5 +1,5 @@
 // spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"
-import { historicalProtocolCommit, protocolPublishable } from "../../gen/contributor_publication.effect.vibe"
+import { historicalProtocolCommit, protocolPublishable } from "../../gen/contributor__publication.effect.vibe"
 import { IDENTITY_RECORD, identityRecordText, validateIdentityRecord } from "../client/identity/record.schema.ts"
 import { type SiteFile, refused, sourceText, textFile } from "./sources.vibe"
 
