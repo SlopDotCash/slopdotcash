@@ -1,0 +1,59 @@
+// spec/contributor/traceLicensing.md, "Three signed-in routes"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export type TraceTermsVersion = "private-trace-v1" | "private-trace-v2"
+export type TraceLicenceState = "licensed" | "withdrawn"
+export type TraceLicenceBasis = "upload" | "opt_in"
+
+export schema TraceLicensingSetting {
+  readonly enabled: boolean
+  readonly since: string | null
+  readonly providerTermsConfirmed: boolean
+}
+
+export schema TraceLicenceRow {
+  readonly id: string
+  readonly finalizedAt: string
+  readonly projectId: string
+  readonly repository: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly termsVersion: TraceTermsVersion
+  readonly licence: TraceLicenceState | null
+  readonly pullRequestUrl: string | null
+}
+
+export schema TracesMe {
+  readonly setting: TraceLicensingSetting
+  readonly traces: ReadonlyArray<TraceLicenceRow>
+  readonly totalTraces: number
+  readonly totalLicensed: number
+  readonly nextCursor: string | null
+}
+
+export schema TraceLicensingChange {
+  readonly enabled: boolean
+  readonly providerTermsConfirmed: boolean
+}
+
+export schema TraceLicensingChanged {
+  readonly setting: TraceLicensingSetting
+  readonly withdrawn: number
+}
+
+export schema TraceLicencesOptIn {
+  readonly kind: "chosen" | "all"
+  readonly runIds?: ReadonlyArray<string>
+  readonly expectedCount?: number
+}
+
+export schema TraceLicencesOptedIn {
+  readonly licensed: number
+}
+
+export const tracesMeRoute = route({ method: "GET", path: "/api/v1/traces/me", access: "bearer", limitKib: 1, request: undefined, answer: TracesMe, rejected: "account_closed", cache: "no-store" })
+export const traceLicensingRoute = route({ method: "PUT", path: "/api/v1/traces/licensing", access: "bearer", limitKib: 80, request: TraceLicensingChange, answer: TraceLicensingChanged, rejected: "setting_changed", cache: "no-store" })
+export const traceLicencesRoute = route({ method: "POST", path: "/api/v1/trace-licences", access: "bearer", limitKib: 80, request: TraceLicencesOptIn, answer: TraceLicencesOptedIn, rejected: "count_changed", cache: "no-store" })
+
+export const licensingApi: ReadonlyArray<AnyRoute> = [tracesMeRoute, traceLicensingRoute, traceLicencesRoute]
