@@ -3,20 +3,26 @@
 Prepared on 20 November 2026, revised on 25 November 2026: the record's address
 and the id a `resolve` names; step 5 (the buffer's authority, signers); step 8
 (a hard stop); a new step 9 (a smoke test with the real resolver); step 10 (reads
-before the authority is removed). **Nobody has run these steps on a public
-cluster.** The repository
+before the authority is removed). **Nobody has run these steps on mainnet.**
+They were run on devnet on 25 November 2026 with throwaway keys (below). The repository
 owner signs every transaction in this runbook; no agent and no Slop service
 does. The program is `contracts/solana/programs/slop-submission-deposits`; see
 its [README section](../contracts/solana/README.md#submission-deposits) and the
 [AI-assisted review note](submission-deposits-solana-ai-review-2026-11-20.md).
-The steps were rehearsed on a local validator only, not on devnet or mainnet:
-by `contracts/solana/integration/submission-deposits-rehearsal.e2e.mjs`, which
-preloads the program, and on 25 November 2026 by running the commands of steps
-2 and 4 to 10 in order with throwaway keys (the solana CLI's `write-buffer`,
-`deploy --buffer`, `set-upgrade-authority --final`, `spl-token`, and every
-planner mode), using a stand-in mint and a host build instead of step 3's
-pinned image. A devnet run was not possible that day: the devnet RPC faucet
-answered that it is closed, and the web faucet needs a person.
+The steps were rehearsed on a local validator
+(`contracts/solana/integration/submission-deposits-rehearsal.e2e.mjs`, which
+preloads the program) and, on 25 November 2026, by running the commands of
+steps 2 and 4 to 10 in order with throwaway keys, first on a local validator
+and then on devnet (the solana CLI's `write-buffer`, `deploy --buffer`,
+`set-upgrade-authority --final`, `spl-token`, and every planner mode), using a
+stand-in mint and a host build instead of step 3's pinned image. The devnet
+program is `CS1Nf65yt1Sw8nNctYCxuVRgT84fPCxCk3K3b9jbnVjm`, deployed in
+transaction
+`3LCGiMxHoY9MVwEcUJEREhftrpHnUdSNcZ67cAKHhvH2dqwRqyQfkBef92fUr8nFkzMMcGJ4PULK4yCfcEBpe6CT`,
+its upgrade authority removed. It is a rehearsal and no Slop service reads it.
+Not rehearsed anywhere: step 3's pinned image, `solana-verify`, step 11, an
+interrupted upload, a priority fee, and a hardware wallet as signer. The
+devnet RPC faucet is closed, so a devnet deployer has to be funded by hand.
 
 One deployment on Solana mainnet. A deployment moves no tokens and activates
 nothing. No Slop service reads the program until its address is recorded in a
@@ -97,6 +103,16 @@ step 5, plus about 0.0013 SOL for `initialize`. Hold at least 2.5 SOL, more if
 a priority fee is set. The vault and the fee wallet's token account cost
 `$PAYER` about 0.004 SOL more, and each smoke deposit locks about 0.0015 SOL
 that comes back when it is resolved.
+
+Measured on devnet on 25 November 2026, with no priority fee: the upload
+2,212,269,880 lamports (the rent and 432 fees, in 7 seconds), the deployment
+843,120, `initialize` 1,275,000, the authority's removal 5,000, which is
+2,214,393,000 lamports for the deployer in all; `open_vault` 2,397,680 and the
+fee wallet's token account 1,493,440 for the payer; each deposit 5,000 and
+1,508,760 locked until it is resolved; each `resolve` 5,000 for the resolver.
+A deposit used 19,300 to 23,800 compute units and a `resolve` about 16,560.
+Each transaction read as finalized at the first check, about a second after
+it was sent.
 
 Have ready before step 5, each tried beforehand:
 
@@ -243,9 +259,23 @@ bytes, the upgrade authority, the two roles, and that no Config exists:
 cd contracts/solana && npm ci --ignore-scripts --legacy-peer-deps
 export SLOP_SOLANA_RPC_URL="$RPC"
 export SLOP_SOLANA_GENESIS=5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d
-SLOP_SOLANA_RECENT_BLOCKHASH="$(solana -u "$RPC" block --output json | jq -r .blockhash)" \
+blockhash() {
+  curl -s "$RPC" -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"getLatestBlockhash","params":[{"commitment":"finalized"}]}' |
+    jq -er .result.value.blockhash
+}
+blockhash   # must print a blockhash; stop if it prints nothing or an error
+SLOP_SOLANA_RECENT_BLOCKHASH="$(blockhash)" \
 node scripts/submission-deposits-plan.mjs initialize deposits-input.json > initialize-plan.json
 ```
+
+The blockhash is read with the RPC method, not with `solana block`: on
+25 November 2026 `solana block --output json` of CLI 2.3.0 failed on both
+devnet and mainnet with `RPC response error -32015: Transaction version (1) is
+not supported by the requesting client`, and the planner then stopped with
+`Invalid public key input`, which is what an empty blockhash looks like. The
+`blockhash` function is used again in steps 7 and 9; define it in the shell
+that runs them.
 
 Installed without lifecycle scripts, every planner command first prints
 `bigint: Failed to load bindings, pure JS will be used` on standard error. It
@@ -265,7 +295,7 @@ resolver by the owner's `set_resolver`. Check both twice before signing.
 ## 7. Open the USDC vault and check the kept destination
 
 ```sh
-SLOP_SOLANA_RECENT_BLOCKHASH="$(solana -u "$RPC" block --output json | jq -r .blockhash)" \
+SLOP_SOLANA_RECENT_BLOCKHASH="$(blockhash)" \
 node scripts/submission-deposits-plan.mjs vault deposits-input.json > vault-plan.json
 ```
 
@@ -346,7 +376,7 @@ node scripts/submission-deposits-plan.mjs status deposits-input.json   # deposit
 Round one.
 
 ```sh
-SLOP_SOLANA_RECENT_BLOCKHASH="$(solana -u "$RPC" block --output json | jq -r .blockhash)" \
+SLOP_SOLANA_RECENT_BLOCKHASH="$(blockhash)" \
 node scripts/submission-deposits-plan.mjs smoke-deposit deposits-input.json > smoke-deposit-plan.json
 ```
 
@@ -357,7 +387,7 @@ in step 6. Wait until it is finalized, then run `status` again: `depositCount`
 is N+1, and the vault's `openTotal` and `balance` are both `"1"`.
 
 ```sh
-SLOP_SOLANA_RECENT_BLOCKHASH="$(solana -u "$RPC" block --output json | jq -r .blockhash)" \
+SLOP_SOLANA_RECENT_BLOCKHASH="$(blockhash)" \
 node scripts/submission-deposits-plan.mjs smoke-resolve deposits-input.json > smoke-resolve-plan.json
 ```
 
