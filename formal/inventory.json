@@ -1127,12 +1127,13 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "68ec1f7f588d2464051b63d3603d56381a48878055407ca7425abf37b21c8a6f",
+      "sha256": "92285661c3be1703c508d0fa1a9c7e998c2357c2b8b0ecf7f0360470fe17e153",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_automatic_import.qnt",
         "formal/models/api/api_security_routine_decisions.qnt",
         "formal/models/api/notification_escalation.qnt",
         "formal/models/api/submission_receipt_verification.qnt",
@@ -1145,13 +1146,13 @@
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
-        316, 317, 368, 370, 377, 439, 447, 449, 522, 593, 661, 673, 695, 697,
-        705, 709, 725, 791, 944, 986, 1131, 1151, 1184, 1207, 1223, 1356, 1398,
-        1399, 1401, 1403, 1423, 1525, 1555, 1574, 1673, 1674, 1689, 1704, 1729,
-        1800, 1804, 1849, 1874, 2057, 2100, 2225, 2593, 2619, 2644, 2698, 2865,
-        2868, 2869, 2908, 2917, 2937, 2983, 3034, 3035, 3037, 3080, 3142, 3171,
-        3177, 3183, 3213, 3250, 3261, 3279, 3285, 3369, 3377, 3379, 3394, 3490,
-        3499, 3505, 3517, 3520, 3521, 3549, 3553, 3556, 3593
+        317, 318, 369, 371, 378, 440, 448, 450, 523, 594, 662, 674, 696, 698,
+        706, 710, 726, 792, 945, 987, 1132, 1152, 1185, 1208, 1224, 1357, 1399,
+        1400, 1402, 1404, 1424, 1448, 1473, 1583, 1613, 1632, 1731, 1732, 1747,
+        1762, 1787, 1858, 1862, 1907, 1932, 2115, 2158, 2283, 2651, 2677, 2702,
+        2756, 2923, 2926, 2927, 2966, 2975, 2995, 3041, 3092, 3093, 3095, 3138,
+        3200, 3229, 3235, 3241, 3271, 3308, 3319, 3337, 3343, 3427, 3435, 3437,
+        3452, 3548, 3557, 3563, 3575, 3578, 3579, 3607, 3611, 3614, 3651
       ],
       "review": "mapped-abstraction"
     },
@@ -1167,9 +1168,12 @@
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "sha256": "35505543e0935019ccee70c5d3074ca284d7e2aadc4fdb91e362639f00d1915e",
-      "models": ["formal/models/api/api_security_queue.qnt"],
-      "candidateLines": [2, 30, 98, 107, 121, 175, 222, 225, 233],
+      "sha256": "a8cc0e6e169fdd00102cb8a6817a4226f79456bd2a699fe9abe68bd9e98c5e6a",
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
+      "candidateLines": [2, 32, 100, 109, 123, 177, 224, 227, 235, 283],
       "review": "mapped-abstraction"
     },
     {
@@ -2427,7 +2431,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "f919af529d834b6729ae0e9619392ea4da6720895d22542d0dd1278578bef13e",
+      "sha256": "9aa1d7765f69dc606be035eefabe9043ca1111e844f2ba0cb0df09465828d2ac",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2439,7 +2443,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [605, 606, 642, 655],
+      "candidateLines": [609, 610, 646, 659],
       "review": "mapped-abstraction"
     },
     {
@@ -12078,6 +12082,20 @@
         "lostAccessWaitsTest",
         "ownerClosesSavedRequestTest",
         "serverFinishesTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_automatic_import.qnt",
+      "sha256": "50ffe55917e8c4778ceee111819638c23d80b25fb213d38131e8157718824253",
+      "sources": [
+        "backend/security/handler.ts",
+        "backend/security/operator-queue.ts"
+      ],
+      "scenarios": [
+        "importsOnceTest",
+        "laterReportIsImportedTest",
+        "outageWritesNothingTest",
+        "recoveryImportsTest"
       ]
     },
     {

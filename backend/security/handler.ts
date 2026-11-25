@@ -124,6 +124,7 @@ import {
 } from "./reporting-readiness";
 import {
   handleRoutineApi,
+  ROUTINE_ACTOR,
   ROUTINE_PROOF_NEXT_ACTION,
   routineClosed,
   sweepRoutineDecisions,
@@ -1421,6 +1422,63 @@ async function reconcileProgram(
     claimant: scope === "own" ? actor.githubId : null,
   });
   return { state: "ok", received, reports };
+}
+
+/** Programs read in one automatic import; the rest wait for the next run. */
+const AUTOMATIC_IMPORT_PROGRAMS = 5;
+
+/**
+ * Imports the GitHub private reports of active projects that have a security
+ * program (operator decision, 25 November 2026; PRD section 8). A report
+ * filed straight on the program's repository used to become a case only when
+ * its reporter linked it or a maintainer pressed Import, so it was never
+ * screened for duplicates or analyzed. This is the maintainer's import run on
+ * a schedule under the automatic journal actor: it records each unrecorded
+ * report as a verified case and asks nobody for a deposit. It writes nothing
+ * to GitHub. A project without a program is never read, an unreadable list
+ * writes nothing, and one program's failure does not stop the others.
+ */
+export async function importGithubReports(
+  deps: SecurityApiDependencies,
+): Promise<{ programs: number; received: number; unavailable: number }> {
+  const programs =
+    (
+      await deps.db
+        .prepare(
+          "SELECT id FROM projects WHERE status = 'active' AND json_type(manifest, '$.securityBounty') = 'object' ORDER BY id",
+        )
+        .all<{ id: string }>()
+    ).results ?? [];
+  // More programs than one run reads take turns by the clock.
+  const start =
+    programs.length > AUTOMATIC_IMPORT_PROGRAMS
+      ? Math.floor(deps.now().getTime() / 300_000) % programs.length
+      : 0;
+  const turn = [...programs.slice(start), ...programs.slice(0, start)].slice(
+    0,
+    AUTOMATIC_IMPORT_PROGRAMS,
+  );
+  let received = 0;
+  let unavailable = 0;
+  for (const { id } of turn) {
+    try {
+      const terms = await reportingContext(deps, id, true);
+      const result = await reconcileProgram(
+        deps,
+        id,
+        terms,
+        ROUTINE_ACTOR,
+        "all",
+      );
+      if (result.state === "ok") received += result.received.length;
+      else unavailable += 1;
+    } catch {
+      // Never log a project, a case or report content.
+      console.error("security automatic import: one program failed");
+      unavailable += 1;
+    }
+  }
+  return { programs: turn.length, received, unavailable };
 }
 
 async function maintainsProject(
