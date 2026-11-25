@@ -2385,13 +2385,23 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         const timedOut = controller.signal.aborted;
         const retryable = timedOut || isTransientNetworkError(cause);
         if (!retryable || attempt === maxAttempts) {
-          throw new Error(
-            timedOut
-              ? `${apiLabel} request timed out after ${this.#requestTimeoutMs}ms (${attempt}/${maxAttempts})`
-              : `${apiLabel} network request failed (${attempt}/${maxAttempts})`,
-            { cause },
-          );
+          const message = timedOut
+            ? `${apiLabel} request timed out after ${this.#requestTimeoutMs}ms (${attempt}/${maxAttempts}${describePageSize(activeVariables)})`
+            : `${apiLabel} network request failed (${attempt}/${maxAttempts})`;
+          // A GraphQL request GitHub never answered inside the deadline on
+          // any attempt is the same condition as its gateway's own 504: the
+          // request asked for more than one answer can assemble. It keeps
+          // that status so a node batch caller splits the batch instead of
+          // failing the run.
+          if (timedOut && restPath === undefined)
+            throw new GraphqlUpstreamError(message, 504, { cause });
+          throw new Error(message, { cause });
         }
+        // A timed-out GraphQL page is narrowed before the next attempt, as a
+        // gateway failure's page is below.
+        if (timedOut && restPath === undefined)
+          activeVariables =
+            narrowedPageSize(activeVariables) ?? activeVariables;
         await retryDelay(this.#retryBaseDelayMs * 2 ** (attempt - 1));
         continue;
       } finally {
