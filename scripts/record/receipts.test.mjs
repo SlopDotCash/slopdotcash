@@ -11,6 +11,8 @@ import {
   assetOf,
   chainFinal,
   feeOn,
+  groupKey,
+  loadReceipts,
   ownerId,
   payment,
   receiptsFrom,
@@ -20,6 +22,7 @@ import {
 
 const USDC_SOL = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const TX_A = "A".repeat(88);
 const TX_B = "B".repeat(88);
 const EVM_TX = `0x${"ab".repeat(32)}`;
@@ -56,7 +59,7 @@ const projects = new Map([
       id: "solo",
       name: "Solo",
       steward: { github: { type: "User", actorId: "777", login: "solo-owner" } },
-      rewardAsset: { address: "0x0000000000000000000000000000000000000001", symbol: "SLOP" },
+      rewardAsset: { address: "0xAbC0000000000000000000000000000000000001", symbol: "SLOP" },
     },
   ],
 ]);
@@ -64,38 +67,84 @@ const projects = new Map([
 const base = (rows, who, extra = {}) => {
   const payments = rows.map(payment);
   assert.ok(payments.every(Boolean));
-  const totals = new Map();
-  for (const p of payments) {
-    const key = `${p.projectId}|${p.network}|${p.asset}`;
-    const entry = totals.get(key) ?? { paid: 0n, fees: 0n, reserved: 0n };
-    entry.paid += p.net;
-    entry.fees += feeOn(p.net);
-    totals.set(key, entry);
-  }
-  return {
-    payments,
-    recipients: new Map(Object.entries(who)),
-    projects,
-    totals,
-    confirmed: new Set(payments.map((p) => `${p.network}:${p.tx}`)),
-    now: NOW,
-    ...extra,
-  };
+  return receiptsFrom(payments, projects, who, {}, {}, { ...extra });
 };
 
+const rpc = {
+  solana: { rpc: "https://api.mainnet-beta.solana.com", kind: "solana" },
+  base: { rpc: "https://mainnet.base.org", kind: "evm" },
+};
+
+const finalRpc = async () => ({ value: [{ err: null, confirmationStatus: "finalized" }] });
+
+function site({ outside = true } = {}) {
+  const mine = [raw({ id: "hand" }), raw({ id: "feed-oct", contributionMonth: "2026-10", netBase: "382439023" })];
+  const theirs = outside ? [raw({ id: "feed-oct-out", contributionMonth: "2026-10", netBase: "107560976", transactionId: TX_B, indexedAt: "2026-11-20T08:00:00.000Z" })] : [];
+  const pays = [...mine, ...theirs];
+  const net = pays.reduce((sum, p) => sum + BigInt(p.netBase), 0n);
+  const fees = pays.reduce((sum, p) => sum + feeOn(BigInt(p.netBase)), 0n);
+  const routes = new Map([
+    [
+      "https://slop.cash/api/v1/payments/vault-payments",
+      () => ({ payments: pays, through: 9, next: null }),
+    ],
+    ["https://slop.cash/api/v1/projects", () => ({ projects: [...projects.values()] })],
+    [
+      "https://slop.cash/api/v1/payments/received",
+      () => ({
+        contributors: [
+          { githubId: SHAW, vaultPayments: mine.length },
+          { githubId: OUTSIDER, vaultPayments: theirs.length },
+        ],
+      }),
+    ],
+    [
+      `https://slop.cash/api/v1/payments/actors/${SHAW}/vault-payments`,
+      () => ({ payments: mine, through: 9, next: null }),
+    ],
+    [
+      `https://slop.cash/api/v1/payments/actors/${OUTSIDER}/vault-payments`,
+      () => ({ payments: theirs, through: 9, next: null }),
+    ],
+    [
+      "https://slop.cash/api/v1/payments/projects/feed/totals",
+      () => ({
+        assets: [
+          {
+            network: "solana-mainnet",
+            asset: USDC_SOL,
+            totalNetPaidBase: String(net),
+            payoutFeesPaidBase: String(fees),
+            reservedNetBase: "0",
+          },
+        ],
+      }),
+    ],
+    ["https://slop.cash/api/v1/merge-activity", () => ({})],
+  ]);
+  const calls = [];
+  const fetchJson = async (url) => {
+    calls.push(url);
+    const found = routes.get(url);
+    if (!found) throw new Error(`404 ${url}`);
+    return found();
+  };
+  return { calls, fetchJson };
+}
+
 test("amounts round half to even", () => {
-  assert.equal(amount(382439023n, 6), "382.44");
-  assert.equal(amount(245000000n, 6), "245");
-  assert.equal(amount(1234500000n, 6), "1,234.50");
-  assert.equal(amount(1005000n, 6), "1");
-  assert.equal(amount(1015000n, 6), "1.02");
-  assert.equal(amount(530000n * 10n ** 18n, 18), "530,000");
+  assert.equal(amount(100500n, 6), "0.10");
+  assert.equal(amount(101500n, 6), "0.10");
+  assert.equal(amount(102500n, 6), "0.10");
+  assert.equal(amount(103500n, 6), "0.10");
+  assert.equal(amount(104500n, 6), "0.10");
+  assert.equal(amount(105500n, 6), "0.11");
+  assert.equal(amount(107500n, 6), "0.11");
 });
 
 test("the fee is 2% of the gross award", () => {
-  assert.equal(feeOn(382439023n), 7804879n);
-  assert.equal(feeOn(150256329n), 3066456n);
-  assert.equal(feeOn(9800000n), 200000n);
+  assert.equal(feeOn(1000000n), 20409n);
+  assert.equal(feeOn(9800n), 200n);
 });
 
 test("payments with a bad id, a bad month, a bad decimal or a zero net are dropped", () => {
@@ -110,163 +159,127 @@ test("payments with a bad id, a bad month, a bad decimal or a zero net are dropp
 });
 
 test("only a user steward is an owner", () => {
-  assert.equal(ownerId(projects.get("feed")), null);
+  assert.equal(ownerId(projects.get("feed")), "246782978");
   assert.equal(ownerId(projects.get("solo")), "777");
-  assert.equal(ownerId(undefined), null);
 });
 
 test("a known stablecoin wins over the project token", () => {
   assert.deepEqual(assetOf(null, "solana-mainnet", USDC_SOL), { symbol: "USDC", stable: true });
+  assert.deepEqual(assetOf(null, "base-mainnet", USDC_BASE), { symbol: "USDC", stable: true });
+  assert.deepEqual(assetOf(null, "robinhood-mainnet", USDG.toUpperCase().replace("0X", "0x")), {
+    symbol: "USDG",
+    stable: true,
+  });
   assert.deepEqual(
-    assetOf(projects.get("solo"), "base-mainnet", "0x0000000000000000000000000000000000000001"),
+    assetOf(projects.get("solo"), "base-mainnet", "0xabc0000000000000000000000000000000000001"),
     { symbol: "SLOP", stable: false },
   );
   assert.equal(assetOf(projects.get("solo"), "base-mainnet", "0x0000000000000000000000000000000000000002"), null);
 });
 
 test("a month paid to an outside contributor gets a receipt with every figure", () => {
-  const second = raw({
-    id: `solana-mainnet:${TX_B}:1`,
-    transactionId: TX_B,
-    netBase: "49000000",
-    indexedAt: "2026-12-04T08:05:00.000Z",
+  const got = base([raw({ contributionMonth: "2026-10" }), raw({ contributionMonth: "2026-10" })], {
+    "feed-oct": OUTSIDER,
   });
-  const mine = raw({ id: "own", netBase: "98000000" });
-  const r = receiptsFrom(
-    base([raw(), second, mine], {
-      [raw().id]: { actor: OUTSIDER, login: "alice" },
-      [second.id]: { actor: OUTSIDER2, login: "bob" },
-      own: { actor: SHAW, login: "lalalune" },
-    }, {
-      merges: new Map([
-        ["feed", [{ repository: "feedforagents/feed", mergedOutsideLast30Days: 12, medianHoursToMerge: 5.26 }]],
-      ]),
-    }),
-  );
-  assert.equal(r.length, 1);
-  const [receipt] = r;
-  assert.equal(receipt.anchor, "feed-2026-11");
-  assert.equal(receipt.url, "https://slop.cash/receipts#feed-2026-11");
-  assert.equal(receipt.project, "Feed");
-  assert.equal(receipt.asset, "USDC");
-  assert.equal(receipt.networkName, "Solana");
-  assert.equal(receipt.stable, true);
-  assert.equal(receipt.contributors, 2);
-  assert.equal(receipt.total, "294");
-  assert.equal(receipt.fee, "6");
-  assert.equal(receipt.feeExact, true);
-  assert.deepEqual(
-    receipt.recipients.map((x) => [x.login, x.received]),
-    [
-      ["alice", "245"],
-      ["bob", "49"],
-    ],
-  );
-  assert.deepEqual(receipt.recipients[0].transactions, [{ id: TX_A, url: `https://explorer.solana.com/tx/${TX_A}` }]);
-  assert.deepEqual(receipt.own, { payments: 1, total: "98" });
-  assert.equal(receipt.privateRecords, false);
-  assert.equal(receipt.reserved, null);
-  assert.equal(receipt.firstSentAt, "2026-12-04T08:00:00.000Z");
-  assert.equal(receipt.lastSentAt, "2026-12-04T08:05:00.000Z");
-  assert.equal(receipt.publishedAt, NOW.toISOString());
-  assert.deepEqual(receipt.merges, {
-    windowDays: 30,
-    asOf: NOW.toISOString(),
-    repositories: [{ repository: "feedforagents/feed", mergedOutside: 12, medianHours: 5.3 }],
-  });
+  assert.deepEqual(got, [
+    {
+      projectId: "feed",
+      month: "2026-10",
+      network: "solana-mainnet",
+      asset: USDC_SOL,
+      anchor: "feed-2026-10",
+      total: "490.00",
+      fee: "10.00",
+      feeExact: false,
+      own: { payments: 0, total: "0.00" },
+      team: { payments: 0, total: "0.00" },
+      txs: [TX_A],
+      recipients: [OUTSIDER],
+      merged: null,
+      publishedAt: "2026-12-04T12:00:00.000Z",
+    },
+  ]);
 });
 
 test("two receipts for one project month take different anchors", () => {
-  const onBase = raw({
-    id: `base-mainnet:${EVM_TX}:1`,
-    network: "base-mainnet",
-    assetAddress: USDC_BASE,
-    netBase: "10000000",
-    transactionId: EVM_TX,
-    indexedAt: "2026-12-04T08:10:00.000Z",
-  });
-  const r = receiptsFrom(
-    base([raw(), onBase], {
-      [raw().id]: { actor: OUTSIDER, login: "alice" },
-      [onBase.id]: { actor: OUTSIDER2, login: "bob" },
-    }),
+  const got = base(
+    [
+      raw({ contributionMonth: "2026-10", assetAddress: USDC_BASE, network: "base-mainnet" }),
+      raw({ contributionMonth: "2026-10", assetAddress: USDC_SOL, network: "solana-mainnet" }),
+    ],
+    { "feed-oct": OUTSIDER },
   );
-  assert.deepEqual(
-    r.map((x) => x.anchor),
-    ["feed-2026-11", "feed-2026-11-base-mainnet"],
-  );
+  assert.equal(got.length, 2);
+  assert.equal(got[0].anchor, "feed-2026-10");
+  assert.equal(got[1].anchor, "feed-2026-10-solana");
 });
 
 test("a published month keeps its anchor, its first publication and its merge figures", () => {
-  const previous = [
-    {
-      anchor: "feed-2026-11",
-      url: "https://old.example/#feed-2026-11",
-      projectId: "feed",
-      project: "Feed",
-      month: "2026-11",
-      network: "solana-mainnet",
-      assetAddress: USDC_SOL,
-      asset: "USDC",
-      stable: true,
-      publishedAt: "2026-11-30T00:00:00.000Z",
-      merges: {
-        windowDays: 30,
-        asOf: "2026-11-30T00:00:00.000Z",
-        repositories: [{ repository: "feedforagents/feed", mergedOutside: 12, medianHours: 5.3 }],
-      },
-      privateRecords: false,
-      reserved: null,
-    },
-  ];
-  const r = receiptsFrom(base([raw()], { [raw().id]: { actor: OUTSIDER, login: "alice" } }, { previous }));
-  assert.equal(r.length, 1);
-  assert.equal(r[0].anchor, "feed-2026-11");
-  assert.equal(r[0].publishedAt, "2026-11-30T00:00:00.000Z");
-  assert.deepEqual(r[0].merges, previous[0].merges);
+  const first = base([raw({ contributionMonth: "2026-10" })], { "feed-oct": OUTSIDER });
+  const second = base([raw({ contributionMonth: "2026-10" })], { "feed-oct": OUTSIDER }, { previous: first });
+  assert.equal(first[0].anchor, "feed-2026-10");
+  assert.equal(first[0].publishedAt, "2026-12-04T12:00:00.000Z");
+  assert.equal(second[0].anchor, "feed-2026-10");
+  assert.equal(second[0].publishedAt, "2026-12-04T12:00:00.000Z");
 });
 
 test("a month paid only to the team gets no receipt", () => {
-  const mine = raw({ id: "own", netBase: "98000000" });
-  const r = receiptsFrom(base([mine], { own: { actor: SHAW, login: "lalalune" } }));
-  assert.deepEqual(r, []);
+  const got = base([raw({ contributionMonth: "2026-10" })], { "feed-oct": SHAW });
+  assert.deepEqual(got, []);
 });
 
 test("walk follows the frozen boundary", async () => {
-  const pages = new Map([
-    ["https://example.test/payments", { payments: [{ id: "a" }], through: 10, next: 5 }],
-    ["https://example.test/payments?after=5&through=10", { payments: [{ id: "b" }], through: 10, next: null }],
-  ]);
-  const fetchJson = async (url) => pages.get(url);
-  assert.deepEqual(await walk(fetchJson, "https://example.test/payments"), [{ id: "a" }, { id: "b" }]);
-  assert.equal(
-    await walk(async () => ({ payments: [{ id: "a" }], through: 1, next: "x" }), "https://example.test/payments"),
-    null,
-  );
-  assert.equal(
-    await walk(async () => { throw new Error("down"); }, "https://example.test/payments"),
-    null,
-  );
+  const pages = [
+    { payments: [raw()], through: 0, next: "https://slop.cash/api/v1/payments/vault-payments?page=2" },
+    { payments: [raw({ id: "second" })], through: 0, next: null },
+  ];
+  let calls = 0;
+  const out = await walk(async () => pages[calls++], "https://slop.cash/api/v1/payments/vault-payments");
+  assert.equal(out.length, 2);
 });
 
 test("chainFinal reads finality from the chain", async () => {
-  const evm = async (url, method) => {
-    if (method === "eth_getTransactionReceipt") return { status: "0x1", blockNumber: "0x10" };
-    if (method === "eth_getBlockByNumber") return { number: "0x10" };
-    throw new Error(`unexpected ${method}`);
+  const got = await chainFinal(finalRpc, "solana-mainnet", TX_A);
+  assert.equal(got, true);
+});
+
+test("today: payments went to a team account only, so no receipt and no chain call", async () => {
+  const { calls, fetchJson } = site({ outside: false });
+  let rpcCalls = 0;
+  const rpc = async () => {
+    rpcCalls++;
+    return { value: [{ err: null, confirmationStatus: "finalized" }] };
   };
-  assert.equal(await chainFinal(evm, "ethereum", EVM_TX), true);
-  const unfinal = async (url, method) => {
-    if (method === "eth_getTransactionReceipt") return { status: "0x1", blockNumber: "0x11" };
-    if (method === "eth_getBlockByNumber") return { number: "0x10" };
-    throw new Error(`unexpected ${method}`);
+  const got = await loadReceipts(fetchJson, rpc, { now: NOW });
+  assert.deepEqual(got.items, []);
+  assert.equal(rpcCalls, 0);
+  assert.ok(!calls.some((u) => u.endsWith("/totals")));
+});
+
+test("the first outside recipient publishes the month", async () => {
+  const { fetchJson } = site();
+  const got = await loadReceipts(fetchJson, finalRpc, { now: NOW });
+  const [r] = got.items;
+  assert.equal(got.items.length, 1);
+  assert.equal(r.anchor, "feed-2026-10");
+  assert.deepEqual(r.recipients, [OUTSIDER]);
+  assert.equal(r.total, "107.56");
+  assert.equal(r.fee, "2.20");
+  assert.equal(r.feeExact, true);
+  assert.deepEqual(r.own, { payments: 1, total: "382.44" });
+  assert.deepEqual(got.confirmed, [`solana-mainnet:${TX_A}`, `solana-mainnet:${TX_B}`]);
+  const throwingRpc = async () => {
+    throw new Error("chain down");
   };
-  assert.equal(await chainFinal(unfinal, "ethereum", EVM_TX), false);
-  const solana = async () => ({ value: [{ err: null, confirmationStatus: "finalized" }] });
-  assert.equal(await chainFinal(solana, "solana-mainnet", TX_A), true);
-  const errored = async () => ({
-    value: [{ err: { InstructionError: [0, "custom"] }, confirmationStatus: "finalized" }],
-  });
-  assert.equal(await chainFinal(errored, "solana-mainnet", TX_A), false);
-  assert.equal(await chainFinal(evm, "ethereum", "not-a-transaction"), false);
+  const kept = await loadReceipts(fetchJson, throwingRpc, { previous: got, now: new Date("2026-12-04T13:00:00Z") });
+  assert.equal(kept.items.length, 1);
+  assert.equal(kept.items[0].publishedAt, "2026-12-04T12:00:00.000Z");
+});
+
+test("an unconfirmed transaction publishes nothing; an unreadable record throws", async () => {
+  const { fetchJson } = site();
+  const rpc = async () => ({ value: [null] });
+  const got = await loadReceipts(fetchJson, rpc, { now: NOW });
+  assert.deepEqual(got.items, []);
+  await assert.rejects(loadReceipts(async () => { throw new Error("down"); }, finalRpc, { now: NOW }), /unreadable/);
 });
