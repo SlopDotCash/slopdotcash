@@ -10116,12 +10116,12 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "sha256": "a1415c1f3cddd6d5b74d99ae90c67cfde24045f9c76ad1d203b7dadae091d80c",
+      "sha256": "57402700f2fec6b5bd501d617d1d1d34723bf5da6bcda0eaeb5df12e4a3ae25d",
       "models": ["formal/models/fees/standing_deposit.qnt"],
       "candidateLines": [
-        14, 48, 54, 61, 66, 70, 77, 100, 102, 107, 117, 119, 123, 129, 131, 144,
-        148, 180, 183, 190, 194, 203, 204, 205, 208, 215, 245, 252, 261, 269,
-        280
+        14, 49, 55, 62, 67, 71, 78, 101, 103, 108, 118, 120, 124, 130, 132, 145,
+        149, 181, 184, 191, 195, 204, 205, 206, 209, 216, 256, 265, 277, 284,
+        293, 301, 312
       ],
       "review": "mapped-abstraction"
     },
