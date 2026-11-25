@@ -209,7 +209,7 @@ export function receiptsFrom(rows, projects, { now = new Date() } = {}) {
     const [projectId, month, network, asset] = key.split("|");
     groups.set(key, { projectId, month, network, asset, rows });
   }
-  const before = new Map(previous.map((r) => [groupKey(r.projectId, r.month, r.network, r.asset), r]));
+  const before = new Map(previous.map((r) => [groupKey(r), r]));
   const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b));
   const out = [];
   const anchors = new Set();
