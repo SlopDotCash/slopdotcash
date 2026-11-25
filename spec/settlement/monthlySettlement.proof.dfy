@@ -245,13 +245,29 @@ lemma MsListed(m: settlement__monthly_Monthly, actor: int)
   }
 }
 
-// The vault covered the created obligations: they total the payable shares, which the coordinator covered.
-lemma MsCovered(s: MonthlySettlement, earlierUnreserved: seq<int>, otherOpenPledges: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
-  requires inv(s) && canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans)
-  ensures settlement__money_compareAmounts(s.escrow.free, settlement__monthly_obligationTotal(createObligations(s, earlierUnreserved, otherOpenPledges, bans).month)) >= 0
+// Every other month's open pledge is a valid amount, so the held-back sum is one too.
+lemma MsHeldValid(ps: seq<settlement__escrow_Pledge>, period: int, start: seq<int>)
+  requires settlement__money_validAmount(start)
+  requires forall p :: p in ps ==> settlement__money_validAmount(p.amount)
+  ensures settlement__money_validAmount(Std.Collections.Seq.FoldLeft((t: settlement__money_Amount, p: settlement__escrow_Pledge) => (if (p.open && (p.period != period)) then settlement__money_addAmounts(t, p.amount) else t), start, ps))
+  decreases |ps|
 {
-  var after := createObligations(s, earlierUnreserved, otherOpenPledges, bans);
-  var o := observation(s, earlierUnreserved, otherOpenPledges);
+  if |ps| > 0 {
+    assert ps[0] in ps;
+    var next := if (ps[0].open && (ps[0].period != period)) then settlement__money_addAmounts(start, ps[0].amount) else start;
+    settlement__money_lawAdditionValid_ensures(start, ps[0].amount);
+    assert forall p :: p in ps[1..] ==> p in ps;
+    MsHeldValid(ps[1..], period, next);
+  }
+}
+
+// The vault covered the created obligations: they total the payable shares, which the coordinator covered.
+lemma MsCovered(s: MonthlySettlement, earlierUnreserved: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
+  requires inv(s) && canCreateObligations(s, earlierUnreserved, bans)
+  ensures settlement__money_compareAmounts(s.escrow.free, settlement__monthly_obligationTotal(createObligations(s, earlierUnreserved, bans).month)) >= 0
+{
+  var after := createObligations(s, earlierUnreserved, bans);
+  var o := observation(s, earlierUnreserved);
   var p := settlement__monthly_payable(s.month, bans);
   var total := settlement__monthly_payableTotal(p);
   assert alwaysChildInvariants(s);
@@ -265,37 +281,41 @@ lemma MsCovered(s: MonthlySettlement, earlierUnreserved: seq<int>, otherOpenPled
     (sum: settlement__money_Amount, share: settlement__allocation_Share) => settlement__money_addAmounts(sum, share.amount),
     settlement__money_zero, after.month.obligations, p);
   assert settlement__monthly_obligationTotal(after.month) == total;
+  var held := otherOpenPledges(s);
+  MsChildInv(s);
+  assert settlement__escrow_alwaysPledgesCovered(s.escrow);
+  MsHeldValid(s.escrow.pledges, s.month.period, settlement__money_zero);
   var needed := settlement__money_addAmounts(total, earlierUnreserved);
   var free := s.escrow.free;
   settlement__money_lawAdditionValid_ensures(total, earlierUnreserved);
-  settlement__money_lawAdditionValid_ensures(needed, otherOpenPledges);
+  settlement__money_lawAdditionValid_ensures(needed, held);
   settlement__money_lawAddMonotone_ensures(total, earlierUnreserved);
-  settlement__money_lawAddMonotone_ensures(needed, otherOpenPledges);
+  settlement__money_lawAddMonotone_ensures(needed, held);
   settlement__money_lawNumericOrderTotal_ensures(total, needed);
-  settlement__money_lawNumericOrderTotal_ensures(needed, settlement__money_addAmounts(needed, otherOpenPledges));
+  settlement__money_lawNumericOrderTotal_ensures(needed, settlement__money_addAmounts(needed, held));
   settlement__money_lawNumericOrderTotal_ensures(total, free);
-  settlement__money_lawNumericOrderTotal_ensures(free, settlement__money_addAmounts(needed, otherOpenPledges));
+  settlement__money_lawNumericOrderTotal_ensures(free, settlement__money_addAmounts(needed, held));
   settlement__money_lawZeroOrder_ensures(free);
   settlement__money_lawZeroOrder_ensures(needed);
   if settlement__money_positiveAmount(needed) {
-    settlement__money_lawNumericOrderTransitive_ensures(total, needed, settlement__money_addAmounts(needed, otherOpenPledges));
-    settlement__money_lawNumericOrderTransitive_ensures(total, settlement__money_addAmounts(needed, otherOpenPledges), free);
+    settlement__money_lawNumericOrderTransitive_ensures(total, needed, settlement__money_addAmounts(needed, held));
+    settlement__money_lawNumericOrderTransitive_ensures(total, settlement__money_addAmounts(needed, held), free);
   } else {
     settlement__money_lawNumericOrderTransitive_ensures(total, needed, settlement__money_zero);
     settlement__money_lawNumericOrderTransitive_ensures(total, settlement__money_zero, free);
   }
 }
 
-lemma MsCreate(s: MonthlySettlement, earlierUnreserved: seq<int>, otherOpenPledges: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
-  requires inv(s) && canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans)
-  requires settlement__monthly_inv(createObligations(s, earlierUnreserved, otherOpenPledges, bans).month)
-  ensures alwaysPoolWithinUnreserved(createObligations(s, earlierUnreserved, otherOpenPledges, bans))
-  ensures alwaysObligationsMatchVault(createObligations(s, earlierUnreserved, otherOpenPledges, bans))
-  ensures alwaysLeafAwardsAreObligations(createObligations(s, earlierUnreserved, otherOpenPledges, bans))
-  ensures alwaysLeafAwardsReserveTheirObligation(createObligations(s, earlierUnreserved, otherOpenPledges, bans))
-  ensures stepObligationsOnFreshCoveringHead(s, "createObligations", createObligations(s, earlierUnreserved, otherOpenPledges, bans))
+lemma MsCreate(s: MonthlySettlement, earlierUnreserved: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
+  requires inv(s) && canCreateObligations(s, earlierUnreserved, bans)
+  requires settlement__monthly_inv(createObligations(s, earlierUnreserved, bans).month)
+  ensures alwaysPoolWithinUnreserved(createObligations(s, earlierUnreserved, bans))
+  ensures alwaysObligationsMatchVault(createObligations(s, earlierUnreserved, bans))
+  ensures alwaysLeafAwardsAreObligations(createObligations(s, earlierUnreserved, bans))
+  ensures alwaysLeafAwardsReserveTheirObligation(createObligations(s, earlierUnreserved, bans))
+  ensures stepObligationsOnFreshCoveringHead(s, "createObligations", createObligations(s, earlierUnreserved, bans))
 {
-  var after := createObligations(s, earlierUnreserved, otherOpenPledges, bans);
+  var after := createObligations(s, earlierUnreserved, bans);
   assert alwaysChildInvariants(s);
   assert s.month.phase.Frozen?;
   assert alwaysAdmittedOnlyWhenFunded(s);
@@ -308,7 +328,7 @@ lemma MsCreate(s: MonthlySettlement, earlierUnreserved: seq<int>, otherOpenPledg
   MsPoolBound(after);
   assert forall o :: o in after.month.obligations ==> o.progress.Created?;
   MsAllCreated(after.month);
-  MsCovered(s, earlierUnreserved, otherOpenPledges, bans);
+  MsCovered(s, earlierUnreserved, bans);
 }
 
 lemma MsAdmit(s: MonthlySettlement, authorization: settlement__escrow_RootAuthorization, ev: settlement__escrow_ChainEvent)
@@ -385,6 +405,245 @@ lemma MsObserveConflict(s: MonthlySettlement, actor: int)
 {
 }
 
+// The one obligation of an actor is the one obligationFor finds.
+lemma MsTheObligation(m: settlement__monthly_Monthly, o: settlement__monthly_Obligation)
+  requires settlement__monthly_alwaysObligationsMatchShares(m) && o in m.obligations
+  ensures settlement__monthly_obligationFor(m, o.actor) == o
+{
+  var p := (x: settlement__monthly_Obligation) => (x.actor == o.actor);
+  assert |Std.Collections.Seq.Filter(p, m.obligations)| == 1;
+  ProofLib.FilterMember(p, m.obligations, o);
+}
+
+// The obligation found by a positive actor has that actor.
+lemma MsFoundActor(m: settlement__monthly_Monthly, actor: int)
+  requires settlement__monthly_obligationFor(m, actor).actor > 0
+  ensures settlement__monthly_obligationFor(m, actor).actor == actor
+{
+  var p := (o: settlement__monthly_Obligation) => (o.actor == actor);
+  var kept := Std.Collections.Seq.Filter(p, m.obligations);
+  if 0 < |kept| { ProofLib.FilterMember(p, m.obligations, kept[0]); }
+}
+
+// The admitted month of a period is the one month the vault holds for it.
+lemma MsMonthIs(e: settlement__escrow_Escrow, i: int)
+  requires settlement__escrow_alwaysMonths(e) && 0 <= i < |e.months|
+  ensures settlement__escrow_monthFor(e, e.months[i].period) == e.months[i]
+{
+  var m := e.months[i];
+  var p := (x: settlement__escrow_MonthReserve) => (x.period == m.period);
+  assert m in e.months;
+  assert |Std.Collections.Seq.Filter(p, e.months)| == 1;
+  ProofLib.FilterMember(p, e.months, m);
+}
+
+// A positive amount at most another valid amount makes that one positive too.
+lemma MsPositiveBelow(a: seq<int>, b: seq<int>)
+  requires settlement__money_validAmount(a) && settlement__money_validAmount(b)
+  requires settlement__money_positiveAmount(a) && settlement__money_compareAmounts(a, b) <= 0
+  ensures settlement__money_positiveAmount(b)
+{
+  assert settlement__money_validAmount(settlement__money_zero);
+  settlement__money_lawNumericOrderTotal_ensures(a, settlement__money_zero);
+  settlement__money_lawNumericOrderTotal_ensures(b, settlement__money_zero);
+  settlement__money_lawNumericOrderTransitive_ensures(settlement__money_zero, a, b);
+}
+
+// The admitted leaves keep their obligations while the leaves and the obligations stay and the remainder grows no larger.
+lemma MsLeavesFrame(s: MonthlySettlement, t: MonthlySettlement)
+  requires alwaysAdmittedLeavesUnconflicted(s)
+  requires t.leaves == s.leaves && t.month.project == s.month.project && t.month.period == s.month.period && t.month.obligations == s.month.obligations
+  requires settlement__money_positiveAmount(admittedMonth(t).remaining) ==> settlement__money_positiveAmount(admittedMonth(s).remaining)
+  ensures alwaysAdmittedLeavesUnconflicted(t)
+{
+  forall actor ensures obligationOf(t, actor) == obligationOf(s, actor) {
+    assert settlement__monthly_keyFor(t.month, 0) == settlement__monthly_keyFor(s.month, 0);
+  }
+}
+
+// With nothing of the admitted month pending, both leaf rules hold.
+lemma MsLeavesVacuous(t: MonthlySettlement)
+  requires !settlement__money_positiveAmount(admittedMonth(t).remaining)
+  ensures alwaysAdmittedLeavesUnconflicted(t) && alwaysAdmittedLeavesNeverConflict(t)
+{
+}
+
+// A vault without months holds back no remainder.
+lemma MsNoMonthVacuous(t: MonthlySettlement)
+  requires |t.escrow.months| == 0
+  ensures alwaysAdmittedLeavesUnconflicted(t) && alwaysAdmittedLeavesNeverConflict(t)
+{
+  MsNoMonth(t.escrow, t.month.period);
+  settlement__money_lawEqualReflexive_ensures(settlement__money_zero);
+  MsLeavesVacuous(t);
+}
+
+// While the pool is pending, an unconflicted leaf's source is free or holds its matching award.
+lemma MsLeavesNeverConflict(t: MonthlySettlement)
+  requires alwaysAdmittedLeavesUnconflicted(t) && alwaysObligationsMatchVault(t)
+  requires alwaysUnreservedSourcesFreeWhilePooled(t) && alwaysPoolIsTheMonthRemainder(t)
+  ensures alwaysAdmittedLeavesNeverConflict(t)
+{
+  var r := admittedMonth(t).remaining;
+  if settlement__money_positiveAmount(r) {
+    settlement__money_lawEqualOrder_ensures(t.escrow.pending, r, settlement__money_zero);
+    assert settlement__money_positiveAmount(t.escrow.pending);
+    forall actor | actor in t.leaves ensures !chainHolds(t, actor) || chainMatches(t, actor) {
+      MsListed(t.month, actor);
+      assert obligationMatches(t, actor);
+    }
+  }
+}
+
+// One obligation's progress changes to an unconflicted state: the admitted leaves stay unconflicted.
+lemma MsLeavesRecorded(s: MonthlySettlement, t: MonthlySettlement, w: int, q: settlement__monthly_ObligationState)
+  requires alwaysAdmittedLeavesUnconflicted(s)
+  requires settlement__monthly_alwaysObligationsMatchShares(t.month)
+  requires !q.Conflicted?
+  requires t.leaves == s.leaves
+  requires |t.month.obligations| == |s.month.obligations|
+  requires forall i :: 0 <= i < |s.month.obligations| ==> t.month.obligations[i] == (if s.month.obligations[i].actor == w then s.month.obligations[i].(progress := q) else s.month.obligations[i])
+  requires settlement__money_positiveAmount(admittedMonth(t).remaining) ==> settlement__money_positiveAmount(admittedMonth(s).remaining)
+  ensures alwaysAdmittedLeavesUnconflicted(t)
+{
+  if settlement__money_positiveAmount(admittedMonth(t).remaining) {
+    forall a | a in t.leaves ensures obligationOf(t, a).actor > 0 && !obligationOf(t, a).progress.Conflicted? {
+      var o := obligationOf(s, a);
+      MsListed(s.month, a);
+      MsFoundActor(s.month, a);
+      var i :| 0 <= i < |s.month.obligations| && s.month.obligations[i] == o;
+      var n := t.month.obligations[i];
+      assert n in t.month.obligations;
+      assert n.actor == a;
+      MsTheObligation(t.month, n);
+    }
+  }
+}
+
+// The root admits the month's created obligations as its leaves, none conflicted.
+lemma MsAdmitLeaves(s: MonthlySettlement, authorization: settlement__escrow_RootAuthorization, ev: settlement__escrow_ChainEvent)
+  requires inv(s) && canAdmitRoot(s, authorization, ev)
+  ensures alwaysAdmittedLeavesUnconflicted(admitRoot(s, authorization, ev))
+{
+  var t := admitRoot(s, authorization, ev);
+  assert alwaysChildInvariants(s);
+  var p := (o: settlement__monthly_Obligation) => o.progress.Created?;
+  var created := Std.Collections.Seq.Filter(p, s.month.obligations);
+  assert t.leaves == createdActors(s);
+  forall actor | actor in t.leaves ensures obligationOf(t, actor).actor > 0 && !obligationOf(t, actor).progress.Conflicted? {
+    var i :| 0 <= i < |created| && created[i].actor == actor;
+    var o := created[i];
+    ProofLib.FilterMember(p, s.month.obligations, o);
+    MsTheObligation(s.month, o);
+    assert t.month == s.month;
+  }
+}
+
+// A proven leaf is drawn from a positive remainder.
+lemma MsLeafFromPositive(s: MonthlySettlement, proof: settlement__escrow_LeafProof, ev: settlement__escrow_ChainEvent)
+  requires inv(s) && canMaterialize(s, proof, ev)
+  ensures settlement__money_positiveAmount(admittedMonth(s).remaining)
+{
+  assert alwaysChildInvariants(s);
+  MsMonthValid(s.escrow, s.month.period);
+  MsPositiveBelow(proof.gross, admittedMonth(s).remaining);
+}
+
+// A reserve release leaves no more of the month pending than before.
+lemma MsReleaseShrinks(s: MonthlySettlement, release: settlement__escrow_ReleaseAuthorization, ev: settlement__escrow_ChainEvent, by_: string)
+  requires inv(s) && canReleaseReserve(s, release, ev, by_)
+  requires settlement__escrow_alwaysMonths(releaseReserve(s, release, ev, by_).escrow)
+  ensures settlement__money_positiveAmount(admittedMonth(releaseReserve(s, release, ev, by_)).remaining) ==> settlement__money_positiveAmount(admittedMonth(s).remaining)
+{
+  var t := releaseReserve(s, release, ev, by_);
+  var period := s.month.period;
+  assert alwaysChildInvariants(s);
+  var p := (x: settlement__escrow_MonthReserve) => (x.period == period);
+  var kept := Std.Collections.Seq.Filter(p, t.escrow.months);
+  if settlement__money_positiveAmount(admittedMonth(t).remaining) && 0 < |kept| {
+    ProofLib.FilterMember(p, t.escrow.months, kept[0]);
+    var i :| 0 <= i < |t.escrow.months| && t.escrow.months[i] == kept[0];
+    var before := s.escrow.months[i];
+    MsMonthIs(s.escrow, i);
+    MsMonthValid(s.escrow, period);
+    if before.period == release.period {
+      settlement__money_lawSubtractionAtMost_ensures(before.remaining, release.releasedGross);
+      settlement__money_lawEqualOrder_ensures(release.releasedGross, before.remaining, before.remaining);
+      settlement__money_lawEqualReflexive_ensures(before.remaining);
+      settlement__money_lawSubtractionValid_ensures(before.remaining, release.releasedGross);
+      MsPositiveBelow(t.escrow.months[i].remaining, before.remaining);
+    }
+  } else if settlement__money_positiveAmount(admittedMonth(t).remaining) {
+    settlement__money_lawEqualReflexive_ensures(settlement__money_zero);
+  }
+}
+
+// An observed conflict is of an obligation the pool does not hold.
+lemma MsConflictUnpooled(s: MonthlySettlement, actor: int)
+  requires inv(s) && canObserveConflict(s, actor)
+  ensures !settlement__money_positiveAmount(admittedMonth(s).remaining)
+{
+  assert alwaysChildInvariants(s);
+  var o := obligationOf(s, actor);
+  MsListed(s.month, actor);
+  MsFoundActor(s.month, actor);
+  assert obligationMatches(s, actor);
+  if o.progress.Created? {
+    MsNoRemainderWhenHeld(s, actor);
+  } else {
+    var source := observedFact(s, actor).source;
+    var p := (x: settlement__monthly_Obligation) => (x.source == source);
+    var b := settlement__monthly_obligationBySource(s.month, source);
+    var kept := Std.Collections.Seq.Filter(p, s.month.obligations);
+    assert 0 < |kept|;
+    ProofLib.FilterMember(p, s.month.obligations, kept[0]);
+    assert b in s.month.obligations && b.source == source;
+    assert b.source == settlement__monthly_keyFor(s.month, b.actor);
+    assert b.actor == actor;
+    MsTheObligation(s.month, b);
+  }
+}
+
+// An escrow event that keeps the awards, months and pool gives every view the composition reads the same value.
+lemma MsEscrowViewsSame(e: settlement__escrow_Escrow, f: settlement__escrow_Escrow)
+  requires f.awards == e.awards && f.months == e.months && f.pending == e.pending
+  ensures forall source :: settlement__escrow_awardFor(f, source) == settlement__escrow_awardFor(e, source)
+  ensures forall source :: settlement__escrow_sourceFree(f, source) == settlement__escrow_sourceFree(e, source)
+  ensures forall origin :: settlement__escrow_hasAwardOf(f, origin) == settlement__escrow_hasAwardOf(e, origin)
+  ensures forall origin, period :: settlement__escrow_awardActorsFor(f, origin, period) == settlement__escrow_awardActorsFor(e, origin, period)
+  ensures forall period :: settlement__escrow_monthFor(f, period) == settlement__escrow_monthFor(e, period)
+{
+}
+
+// With the month, the leaves, the cursor and those escrow views unchanged, every rule of the composition holds again.
+lemma MsEscrowOnlyFrame(s: MonthlySettlement, t: MonthlySettlement)
+  requires inv(s)
+  requires settlement__monthly_inv(t.month) && settlement__escrow_inv(t.escrow)
+  requires t.month == s.month && t.leaves == s.leaves && t.cursor == s.cursor
+  requires t.escrow.awards == s.escrow.awards && t.escrow.months == s.escrow.months && t.escrow.pending == s.escrow.pending
+  ensures alwaysOneAwardPerObligation(t) && alwaysPoolWithinUnreserved(t) && alwaysAdmittedOnlyWhenFunded(t)
+  ensures alwaysPoolOnlyWhenAdmitted(t) && alwaysPoolIsTheMonthRemainder(t) && alwaysCursorInRange(t)
+  ensures alwaysReleasedMonthHasNoLeafAward(t) && alwaysPendingPoolIsExactlyUnreserved(t)
+  ensures alwaysAdmittedLeavesUnconflicted(t) && alwaysUnreservedSourcesFreeWhilePooled(t)
+  ensures alwaysLeafAwardsAreObligations(t) && alwaysCursorSourceBacked(t) && alwaysLeafAwardsReserveTheirObligation(t)
+  ensures alwaysAdmittedLeavesNeverConflict(t) && alwaysObligationsMatchVault(t)
+{
+  MsEscrowViewsSame(s.escrow, t.escrow);
+  assert admittedMonth(t) == admittedMonth(s);
+  forall actor ensures sourceOf(t, actor) == sourceOf(s, actor) && obligationOf(t, actor) == obligationOf(s, actor)
+    && chainHolds(t, actor) == chainHolds(s, actor) && chainMatches(t, actor) == chainMatches(s, actor)
+    && chainPaid(t, actor) == chainPaid(s, actor) && obligationMatches(t, actor) == obligationMatches(s, actor)
+    && leafAwardReserves(t, actor) == leafAwardReserves(s, actor) {
+    assert settlement__escrow_awardFor(t.escrow, sourceOf(t, actor)) == settlement__escrow_awardFor(s.escrow, sourceOf(s, actor));
+  }
+  assert alwaysOneAwardPerObligation(s) && alwaysPoolWithinUnreserved(s) && alwaysAdmittedOnlyWhenFunded(s);
+  assert alwaysPoolOnlyWhenAdmitted(s) && alwaysPoolIsTheMonthRemainder(s) && alwaysCursorInRange(s);
+  assert alwaysReleasedMonthHasNoLeafAward(s) && alwaysPendingPoolIsExactlyUnreserved(s);
+  assert alwaysAdmittedLeavesUnconflicted(s) && alwaysUnreservedSourcesFreeWhilePooled(s);
+  assert alwaysLeafAwardsAreObligations(s) && alwaysCursorSourceBacked(s) && alwaysLeafAwardsReserveTheirObligation(s);
+  assert alwaysAdmittedLeavesNeverConflict(s) && alwaysObligationsMatchVault(s);
+}
+
 lemma deploy_ensures(s: MonthlySettlement, asset: settlement__escrow_AssetIdentity, mint: settlement__escrow_MintFacts, purpose: settlement__escrow_VaultPurpose, delay: int, cap: seq<int>, turnOn: bool)
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysOneAwardPerObligation(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysPoolWithinUnreserved(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
@@ -397,10 +656,12 @@ lemma deploy_ensures(s: MonthlySettlement, asset: settlement__escrow_AssetIdenti
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysCursorInRange(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysReleasedMonthHasNoLeafAward(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysPendingPoolIsExactlyUnreserved(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
+  ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysAdmittedLeavesUnconflicted(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysUnreservedSourcesFreeWhilePooled(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysLeafAwardsAreObligations(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysCursorSourceBacked(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysLeafAwardsReserveTheirObligation(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
+  ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysAdmittedLeavesNeverConflict(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysObligationsMatchVault(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> stepObligationsOnFreshCoveringHead(s, "deploy", deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> stepUnderfundedOnFreshHead(s, "deploy", deploy(s, asset, mint, purpose, delay, cap, turnOn)))
@@ -414,6 +675,8 @@ lemma deploy_ensures(s: MonthlySettlement, asset: settlement__escrow_AssetIdenti
     MsDeploy(s, asset, mint, purpose, delay, cap, turnOn);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    assert alwaysChildLifecycle(s);
+    MsNoMonthVacuous(after);
   }
 }
 
@@ -429,10 +692,12 @@ lemma openMonth_ensures(s: MonthlySettlement, period: int)
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysCursorInRange(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysReleasedMonthHasNoLeafAward(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysPendingPoolIsExactlyUnreserved(openMonth(s, period)))
+  ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysAdmittedLeavesUnconflicted(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysUnreservedSourcesFreeWhilePooled(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysLeafAwardsAreObligations(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysCursorSourceBacked(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysLeafAwardsReserveTheirObligation(openMonth(s, period)))
+  ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysAdmittedLeavesNeverConflict(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> alwaysObligationsMatchVault(openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> stepObligationsOnFreshCoveringHead(s, "openMonth", openMonth(s, period)))
   ensures (inv(s) ==> canOpenMonth(s, period) ==> stepUnderfundedOnFreshHead(s, "openMonth", openMonth(s, period)))
@@ -442,10 +707,13 @@ lemma openMonth_ensures(s: MonthlySettlement, period: int)
   if inv(s) && canOpenMonth(s, period) {
     var after := openMonth(s, period);
     MsChildInv(s);
-    settlement__monthly_openMonth_ensures(s.month, period);
+    settlement__monthly_openMonth_ensures(s.month, s.month.project, period);
     MsOpenMonth(s, period);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    assert alwaysAdmittedOnlyWhenFunded(s);
+    assert |s.escrow.months| == 0;
+    MsNoMonthVacuous(after);
   }
 }
 
@@ -461,10 +729,12 @@ lemma observeClock_ensures(s: MonthlySettlement, now: int)
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysCursorInRange(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysReleasedMonthHasNoLeafAward(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysPendingPoolIsExactlyUnreserved(observeClock(s, now)))
+  ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysAdmittedLeavesUnconflicted(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysUnreservedSourcesFreeWhilePooled(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysLeafAwardsAreObligations(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysCursorSourceBacked(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysLeafAwardsReserveTheirObligation(observeClock(s, now)))
+  ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysAdmittedLeavesNeverConflict(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> alwaysObligationsMatchVault(observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> stepObligationsOnFreshCoveringHead(s, "observeClock", observeClock(s, now)))
   ensures (inv(s) ==> canObserveClock(s, now) ==> stepUnderfundedOnFreshHead(s, "observeClock", observeClock(s, now)))
@@ -478,6 +748,8 @@ lemma observeClock_ensures(s: MonthlySettlement, now: int)
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -493,10 +765,12 @@ lemma observeEligibility_ensures(s: MonthlySettlement, eligibility: settlement__
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysCursorInRange(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysReleasedMonthHasNoLeafAward(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysPendingPoolIsExactlyUnreserved(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysAdmittedLeavesUnconflicted(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysUnreservedSourcesFreeWhilePooled(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysLeafAwardsAreObligations(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysCursorSourceBacked(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysLeafAwardsReserveTheirObligation(observeEligibility(s, eligibility)))
+  ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysAdmittedLeavesNeverConflict(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> alwaysObligationsMatchVault(observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> stepObligationsOnFreshCoveringHead(s, "observeEligibility", observeEligibility(s, eligibility)))
   ensures (inv(s) ==> canObserveEligibility(s, eligibility) ==> stepUnderfundedOnFreshHead(s, "observeEligibility", observeEligibility(s, eligibility)))
@@ -510,6 +784,8 @@ lemma observeEligibility_ensures(s: MonthlySettlement, eligibility: settlement__
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -525,10 +801,12 @@ lemma observeRevision_ensures(s: MonthlySettlement, revision: settlement__monthl
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysCursorInRange(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysReleasedMonthHasNoLeafAward(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysPendingPoolIsExactlyUnreserved(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysAdmittedLeavesUnconflicted(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysUnreservedSourcesFreeWhilePooled(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysLeafAwardsAreObligations(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysCursorSourceBacked(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysLeafAwardsReserveTheirObligation(observeRevision(s, revision)))
+  ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysAdmittedLeavesNeverConflict(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> alwaysObligationsMatchVault(observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> stepObligationsOnFreshCoveringHead(s, "observeRevision", observeRevision(s, revision)))
   ensures (inv(s) ==> canObserveRevision(s, revision) ==> stepUnderfundedOnFreshHead(s, "observeRevision", observeRevision(s, revision)))
@@ -542,6 +820,8 @@ lemma observeRevision_ensures(s: MonthlySettlement, revision: settlement__monthl
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -557,10 +837,12 @@ lemma observeSettings_ensures(s: MonthlySettlement, automatic: bool, settingsSeq
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysCursorInRange(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysReleasedMonthHasNoLeafAward(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysPendingPoolIsExactlyUnreserved(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysAdmittedLeavesUnconflicted(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysUnreservedSourcesFreeWhilePooled(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysLeafAwardsAreObligations(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysCursorSourceBacked(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysLeafAwardsReserveTheirObligation(observeSettings(s, automatic, settingsSequence)))
+  ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysAdmittedLeavesNeverConflict(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> alwaysObligationsMatchVault(observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> stepObligationsOnFreshCoveringHead(s, "observeSettings", observeSettings(s, automatic, settingsSequence)))
   ensures (inv(s) ==> canObserveSettings(s, automatic, settingsSequence) ==> stepUnderfundedOnFreshHead(s, "observeSettings", observeSettings(s, automatic, settingsSequence)))
@@ -574,6 +856,8 @@ lemma observeSettings_ensures(s: MonthlySettlement, automatic: bool, settingsSeq
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -589,10 +873,12 @@ lemma adjust_ensures(s: MonthlySettlement, actor: int, amount: seq<int>, expecte
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysCursorInRange(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysReleasedMonthHasNoLeafAward(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysPendingPoolIsExactlyUnreserved(adjust(s, actor, amount, expectedSequence, fact)))
+  ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysAdmittedLeavesUnconflicted(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysUnreservedSourcesFreeWhilePooled(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysLeafAwardsAreObligations(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysCursorSourceBacked(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysLeafAwardsReserveTheirObligation(adjust(s, actor, amount, expectedSequence, fact)))
+  ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysAdmittedLeavesNeverConflict(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> alwaysObligationsMatchVault(adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> stepObligationsOnFreshCoveringHead(s, "adjust", adjust(s, actor, amount, expectedSequence, fact)))
   ensures (inv(s) ==> canAdjust(s, actor, amount, expectedSequence, fact) ==> stepUnderfundedOnFreshHead(s, "adjust", adjust(s, actor, amount, expectedSequence, fact)))
@@ -606,6 +892,8 @@ lemma adjust_ensures(s: MonthlySettlement, actor: int, amount: seq<int>, expecte
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -621,10 +909,12 @@ lemma finalize_ensures(s: MonthlySettlement, expectedSequence: int, fact: settle
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysCursorInRange(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysReleasedMonthHasNoLeafAward(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysPendingPoolIsExactlyUnreserved(finalize(s, expectedSequence, fact)))
+  ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysAdmittedLeavesUnconflicted(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysUnreservedSourcesFreeWhilePooled(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysLeafAwardsAreObligations(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysCursorSourceBacked(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysLeafAwardsReserveTheirObligation(finalize(s, expectedSequence, fact)))
+  ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysAdmittedLeavesNeverConflict(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> alwaysObligationsMatchVault(finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> stepObligationsOnFreshCoveringHead(s, "finalize", finalize(s, expectedSequence, fact)))
   ensures (inv(s) ==> canFinalize(s, expectedSequence, fact) ==> stepUnderfundedOnFreshHead(s, "finalize", finalize(s, expectedSequence, fact)))
@@ -638,6 +928,8 @@ lemma finalize_ensures(s: MonthlySettlement, expectedSequence: int, fact: settle
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -653,10 +945,12 @@ lemma propose_ensures(s: MonthlySettlement, snapshot: settlement__payoutExclusio
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysCursorInRange(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysReleasedMonthHasNoLeafAward(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysPendingPoolIsExactlyUnreserved(propose(s, snapshot, exclusions, revision)))
+  ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysAdmittedLeavesUnconflicted(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysUnreservedSourcesFreeWhilePooled(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysLeafAwardsAreObligations(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysCursorSourceBacked(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysLeafAwardsReserveTheirObligation(propose(s, snapshot, exclusions, revision)))
+  ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysAdmittedLeavesNeverConflict(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> alwaysObligationsMatchVault(propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> stepObligationsOnFreshCoveringHead(s, "propose", propose(s, snapshot, exclusions, revision)))
   ensures (inv(s) ==> canPropose(s, snapshot, exclusions, revision) ==> stepUnderfundedOnFreshHead(s, "propose", propose(s, snapshot, exclusions, revision)))
@@ -666,10 +960,12 @@ lemma propose_ensures(s: MonthlySettlement, snapshot: settlement__payoutExclusio
   if inv(s) && canPropose(s, snapshot, exclusions, revision) {
     var after := propose(s, snapshot, exclusions, revision);
     MsChildInv(s);
-    settlement__monthly_propose_ensures(s.month, snapshot, exclusions, revision);
+    settlement__monthly_propose_ensures(s.month, snapshot, exclusions, revision, 0, settlement__monthly_noShareRecord);
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -685,10 +981,12 @@ lemma autoFreeze_ensures(s: MonthlySettlement)
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysCursorInRange(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysReleasedMonthHasNoLeafAward(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysPendingPoolIsExactlyUnreserved(autoFreeze(s)))
+  ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysAdmittedLeavesUnconflicted(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysUnreservedSourcesFreeWhilePooled(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysLeafAwardsAreObligations(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysCursorSourceBacked(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysLeafAwardsReserveTheirObligation(autoFreeze(s)))
+  ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysAdmittedLeavesNeverConflict(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> alwaysObligationsMatchVault(autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> stepObligationsOnFreshCoveringHead(s, "autoFreeze", autoFreeze(s)))
   ensures (inv(s) ==> canAutoFreeze(s) ==> stepUnderfundedOnFreshHead(s, "autoFreeze", autoFreeze(s)))
@@ -702,6 +1000,8 @@ lemma autoFreeze_ensures(s: MonthlySettlement)
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -717,10 +1017,12 @@ lemma deposit_ensures(s: MonthlySettlement, funds: settlement__escrow_Deposit, e
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysCursorInRange(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysReleasedMonthHasNoLeafAward(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysPendingPoolIsExactlyUnreserved(deposit(s, funds, ev)))
+  ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysAdmittedLeavesUnconflicted(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysUnreservedSourcesFreeWhilePooled(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysLeafAwardsAreObligations(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysCursorSourceBacked(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysLeafAwardsReserveTheirObligation(deposit(s, funds, ev)))
+  ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysAdmittedLeavesNeverConflict(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> alwaysObligationsMatchVault(deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> stepObligationsOnFreshCoveringHead(s, "deposit", deposit(s, funds, ev)))
   ensures (inv(s) ==> canDeposit(s, funds, ev) ==> stepUnderfundedOnFreshHead(s, "deposit", deposit(s, funds, ev)))
@@ -731,9 +1033,8 @@ lemma deposit_ensures(s: MonthlySettlement, funds: settlement__escrow_Deposit, e
     var after := deposit(s, funds, ev);
     MsChildInv(s);
     settlement__escrow_deposit_ensures(s.escrow, funds, ev);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -749,10 +1050,12 @@ lemma setMonthly_ensures(s: MonthlySettlement, cap: seq<int>, turnOn: bool, ev: 
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysCursorInRange(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysReleasedMonthHasNoLeafAward(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysPendingPoolIsExactlyUnreserved(setMonthly(s, cap, turnOn, ev, by_)))
+  ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysAdmittedLeavesUnconflicted(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysUnreservedSourcesFreeWhilePooled(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysLeafAwardsAreObligations(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysCursorSourceBacked(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysLeafAwardsReserveTheirObligation(setMonthly(s, cap, turnOn, ev, by_)))
+  ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysAdmittedLeavesNeverConflict(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> alwaysObligationsMatchVault(setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> stepObligationsOnFreshCoveringHead(s, "setMonthly", setMonthly(s, cap, turnOn, ev, by_)))
   ensures (inv(s) ==> canSetMonthly(s, cap, turnOn, ev, by_) ==> stepUnderfundedOnFreshHead(s, "setMonthly", setMonthly(s, cap, turnOn, ev, by_)))
@@ -763,9 +1066,41 @@ lemma setMonthly_ensures(s: MonthlySettlement, cap: seq<int>, turnOn: bool, ev: 
     var after := setMonthly(s, cap, turnOn, ev, by_);
     MsChildInv(s);
     settlement__escrow_setMonthly_ensures(s.escrow, cap, turnOn, ev, by_);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
+    MsEscrowOnlyFrame(s, after);
+  }
+}
+
+lemma pledgeMonths_ensures(s: MonthlySettlement, fromPeriod: int, count: int, pledge: seq<int>, ev: settlement__escrow_ChainEvent, by_: string)
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysOneAwardPerObligation(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysPoolWithinUnreserved(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysChildRules(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysChildLifecycle(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysChildInvariants(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysAdmittedOnlyWhenFunded(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysPoolOnlyWhenAdmitted(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysPoolIsTheMonthRemainder(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysCursorInRange(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysReleasedMonthHasNoLeafAward(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysPendingPoolIsExactlyUnreserved(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysAdmittedLeavesUnconflicted(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysUnreservedSourcesFreeWhilePooled(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysLeafAwardsAreObligations(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysCursorSourceBacked(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysLeafAwardsReserveTheirObligation(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysAdmittedLeavesNeverConflict(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> alwaysObligationsMatchVault(pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> stepObligationsOnFreshCoveringHead(s, "pledgeMonths", pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> stepUnderfundedOnFreshHead(s, "pledgeMonths", pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> stepCursorMonotoneByOne(s, pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+  ensures (inv(s) ==> canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) ==> stepRootAdmitsOnlyFreeSources(s, "pledgeMonths", pledgeMonths(s, fromPeriod, count, pledge, ev, by_)))
+{
+  if inv(s) && canPledgeMonths(s, fromPeriod, count, pledge, ev, by_) {
+    var after := pledgeMonths(s, fromPeriod, count, pledge, ev, by_);
+    MsChildInv(s);
+    settlement__escrow_pledgeMonths_ensures(s.escrow, fromPeriod, count, pledge, ev, by_);
+    MsChildInvBack(s, after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -781,10 +1116,12 @@ lemma observeHead_ensures(s: MonthlySettlement, time: int)
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysCursorInRange(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysReleasedMonthHasNoLeafAward(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysPendingPoolIsExactlyUnreserved(observeHead(s, time)))
+  ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysAdmittedLeavesUnconflicted(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysUnreservedSourcesFreeWhilePooled(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysLeafAwardsAreObligations(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysCursorSourceBacked(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysLeafAwardsReserveTheirObligation(observeHead(s, time)))
+  ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysAdmittedLeavesNeverConflict(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> alwaysObligationsMatchVault(observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> stepObligationsOnFreshCoveringHead(s, "observeHead", observeHead(s, time)))
   ensures (inv(s) ==> canObserveHead(s, time) ==> stepUnderfundedOnFreshHead(s, "observeHead", observeHead(s, time)))
@@ -797,71 +1134,83 @@ lemma observeHead_ensures(s: MonthlySettlement, time: int)
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
-lemma createObligations_ensures(s: MonthlySettlement, earlierUnreserved: seq<int>, otherOpenPledges: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysOneAwardPerObligation(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPoolWithinUnreserved(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysChildRules(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysChildLifecycle(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysChildInvariants(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysAdmittedOnlyWhenFunded(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPoolOnlyWhenAdmitted(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPoolIsTheMonthRemainder(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysCursorInRange(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysReleasedMonthHasNoLeafAward(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPendingPoolIsExactlyUnreserved(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysUnreservedSourcesFreeWhilePooled(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysLeafAwardsAreObligations(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysCursorSourceBacked(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysLeafAwardsReserveTheirObligation(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysObligationsMatchVault(createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> stepObligationsOnFreshCoveringHead(s, "createObligations", createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> stepUnderfundedOnFreshHead(s, "createObligations", createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> stepCursorMonotoneByOne(s, createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) ==> stepRootAdmitsOnlyFreeSources(s, "createObligations", createObligations(s, earlierUnreserved, otherOpenPledges, bans)))
+lemma createObligations_ensures(s: MonthlySettlement, earlierUnreserved: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysOneAwardPerObligation(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysPoolWithinUnreserved(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysChildRules(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysChildLifecycle(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysChildInvariants(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysAdmittedOnlyWhenFunded(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysPoolOnlyWhenAdmitted(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysPoolIsTheMonthRemainder(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysCursorInRange(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysReleasedMonthHasNoLeafAward(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysPendingPoolIsExactlyUnreserved(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysAdmittedLeavesUnconflicted(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysUnreservedSourcesFreeWhilePooled(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysLeafAwardsAreObligations(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysCursorSourceBacked(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysLeafAwardsReserveTheirObligation(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysAdmittedLeavesNeverConflict(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> alwaysObligationsMatchVault(createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> stepObligationsOnFreshCoveringHead(s, "createObligations", createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> stepUnderfundedOnFreshHead(s, "createObligations", createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> stepCursorMonotoneByOne(s, createObligations(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canCreateObligations(s, earlierUnreserved, bans) ==> stepRootAdmitsOnlyFreeSources(s, "createObligations", createObligations(s, earlierUnreserved, bans)))
 {
-  if inv(s) && canCreateObligations(s, earlierUnreserved, otherOpenPledges, bans) {
-    var after := createObligations(s, earlierUnreserved, otherOpenPledges, bans);
+  if inv(s) && canCreateObligations(s, earlierUnreserved, bans) {
+    var after := createObligations(s, earlierUnreserved, bans);
     MsChildInv(s);
-    settlement__monthly_createObligations_ensures(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans);
+    settlement__monthly_createObligations_ensures(s.month, observation(s, earlierUnreserved), bans);
     MsChildInvBack(s, after);
-    MsCreate(s, earlierUnreserved, otherOpenPledges, bans);
+    MsCreate(s, earlierUnreserved, bans);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    assert alwaysAdmittedOnlyWhenFunded(s);
+    assert s.month.phase.Frozen?;
+    assert |after.escrow.months| == 0;
+    MsNoMonthVacuous(after);
   }
 }
 
-lemma noteUnderfunded_ensures(s: MonthlySettlement, earlierUnreserved: seq<int>, otherOpenPledges: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysOneAwardPerObligation(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPoolWithinUnreserved(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysChildRules(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysChildLifecycle(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysChildInvariants(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysAdmittedOnlyWhenFunded(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPoolOnlyWhenAdmitted(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPoolIsTheMonthRemainder(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysCursorInRange(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysReleasedMonthHasNoLeafAward(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysPendingPoolIsExactlyUnreserved(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysUnreservedSourcesFreeWhilePooled(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysLeafAwardsAreObligations(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysCursorSourceBacked(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysLeafAwardsReserveTheirObligation(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> alwaysObligationsMatchVault(noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> stepObligationsOnFreshCoveringHead(s, "noteUnderfunded", noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> stepUnderfundedOnFreshHead(s, "noteUnderfunded", noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> stepCursorMonotoneByOne(s, noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
-  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) ==> stepRootAdmitsOnlyFreeSources(s, "noteUnderfunded", noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans)))
+lemma noteUnderfunded_ensures(s: MonthlySettlement, earlierUnreserved: seq<int>, bans: seq<settlement__monthly_BanExclusion>)
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysOneAwardPerObligation(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysPoolWithinUnreserved(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysChildRules(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysChildLifecycle(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysChildInvariants(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysAdmittedOnlyWhenFunded(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysPoolOnlyWhenAdmitted(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysPoolIsTheMonthRemainder(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysCursorInRange(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysReleasedMonthHasNoLeafAward(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysPendingPoolIsExactlyUnreserved(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysAdmittedLeavesUnconflicted(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysUnreservedSourcesFreeWhilePooled(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysLeafAwardsAreObligations(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysCursorSourceBacked(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysLeafAwardsReserveTheirObligation(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysAdmittedLeavesNeverConflict(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> alwaysObligationsMatchVault(noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> stepObligationsOnFreshCoveringHead(s, "noteUnderfunded", noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> stepUnderfundedOnFreshHead(s, "noteUnderfunded", noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> stepCursorMonotoneByOne(s, noteUnderfunded(s, earlierUnreserved, bans)))
+  ensures (inv(s) ==> canNoteUnderfunded(s, earlierUnreserved, bans) ==> stepRootAdmitsOnlyFreeSources(s, "noteUnderfunded", noteUnderfunded(s, earlierUnreserved, bans)))
 {
-  if inv(s) && canNoteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans) {
-    var after := noteUnderfunded(s, earlierUnreserved, otherOpenPledges, bans);
+  if inv(s) && canNoteUnderfunded(s, earlierUnreserved, bans) {
+    var after := noteUnderfunded(s, earlierUnreserved, bans);
     MsChildInv(s);
-    settlement__monthly_noteUnderfunded_ensures(s.month, observation(s, earlierUnreserved, otherOpenPledges), bans);
+    settlement__monthly_noteUnderfunded_ensures(s.month, observation(s, earlierUnreserved), bans);
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -877,10 +1226,12 @@ lemma commitObligation_ensures(s: MonthlySettlement, actor: int, ev: settlement_
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysCursorInRange(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysReleasedMonthHasNoLeafAward(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysPendingPoolIsExactlyUnreserved(commitObligation(s, actor, ev, by_)))
+  ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysAdmittedLeavesUnconflicted(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysUnreservedSourcesFreeWhilePooled(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysLeafAwardsAreObligations(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysCursorSourceBacked(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysLeafAwardsReserveTheirObligation(commitObligation(s, actor, ev, by_)))
+  ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysAdmittedLeavesNeverConflict(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> alwaysObligationsMatchVault(commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> stepObligationsOnFreshCoveringHead(s, "commitObligation", commitObligation(s, actor, ev, by_)))
   ensures (inv(s) ==> canCommitObligation(s, actor, ev, by_) ==> stepUnderfundedOnFreshHead(s, "commitObligation", commitObligation(s, actor, ev, by_)))
@@ -896,6 +1247,10 @@ lemma commitObligation_ensures(s: MonthlySettlement, actor: int, ev: settlement_
     MsCommitObligation(s, actor, ev, by_);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    assert alwaysPoolIsTheMonthRemainder(s);
+    settlement__money_lawEqualOrder_ensures(s.escrow.pending, admittedMonth(s).remaining, settlement__money_zero);
+    assert after.escrow.months == s.escrow.months;
+    MsLeavesVacuous(after);
   }
 }
 
@@ -911,10 +1266,12 @@ lemma commitManualAward_ensures(s: MonthlySettlement, source: settlement__escrow
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysCursorInRange(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysReleasedMonthHasNoLeafAward(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysPendingPoolIsExactlyUnreserved(commitManualAward(s, source, actor, gross, ev, by_)))
+  ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysAdmittedLeavesUnconflicted(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysUnreservedSourcesFreeWhilePooled(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysLeafAwardsAreObligations(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysCursorSourceBacked(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysLeafAwardsReserveTheirObligation(commitManualAward(s, source, actor, gross, ev, by_)))
+  ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysAdmittedLeavesNeverConflict(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> alwaysObligationsMatchVault(commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> stepObligationsOnFreshCoveringHead(s, "commitManualAward", commitManualAward(s, source, actor, gross, ev, by_)))
   ensures (inv(s) ==> canCommitManualAward(s, source, actor, gross, ev, by_) ==> stepUnderfundedOnFreshHead(s, "commitManualAward", commitManualAward(s, source, actor, gross, ev, by_)))
@@ -928,6 +1285,8 @@ lemma commitManualAward_ensures(s: MonthlySettlement, source: settlement__escrow
     MsManual(s, source, actor, gross, ev, by_);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -943,10 +1302,12 @@ lemma payAward_ensures(s: MonthlySettlement, actor: int, destination: string, ve
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysCursorInRange(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysReleasedMonthHasNoLeafAward(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysPendingPoolIsExactlyUnreserved(payAward(s, actor, destination, version, ev)))
+  ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysAdmittedLeavesUnconflicted(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysUnreservedSourcesFreeWhilePooled(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysLeafAwardsAreObligations(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysCursorSourceBacked(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysLeafAwardsReserveTheirObligation(payAward(s, actor, destination, version, ev)))
+  ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysAdmittedLeavesNeverConflict(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> alwaysObligationsMatchVault(payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> stepObligationsOnFreshCoveringHead(s, "payAward", payAward(s, actor, destination, version, ev)))
   ensures (inv(s) ==> canPayAward(s, actor, destination, version, ev) ==> stepUnderfundedOnFreshHead(s, "payAward", payAward(s, actor, destination, version, ev)))
@@ -960,6 +1321,8 @@ lemma payAward_ensures(s: MonthlySettlement, actor: int, destination: string, ve
     MsPay(s, actor, destination, version, ev);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -975,10 +1338,12 @@ lemma observeExistingAward_ensures(s: MonthlySettlement, actor: int)
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysCursorInRange(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysReleasedMonthHasNoLeafAward(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysPendingPoolIsExactlyUnreserved(observeExistingAward(s, actor)))
+  ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysAdmittedLeavesUnconflicted(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysUnreservedSourcesFreeWhilePooled(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysLeafAwardsAreObligations(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysCursorSourceBacked(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysLeafAwardsReserveTheirObligation(observeExistingAward(s, actor)))
+  ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysAdmittedLeavesNeverConflict(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> alwaysObligationsMatchVault(observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> stepObligationsOnFreshCoveringHead(s, "observeExistingAward", observeExistingAward(s, actor)))
   ensures (inv(s) ==> canObserveExistingAward(s, actor) ==> stepUnderfundedOnFreshHead(s, "observeExistingAward", observeExistingAward(s, actor)))
@@ -993,6 +1358,8 @@ lemma observeExistingAward_ensures(s: MonthlySettlement, actor: int)
     MsObserveExisting(s, actor);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsNoRemainderWhenHeld(s, actor);
+    MsLeavesVacuous(after);
   }
 }
 
@@ -1008,10 +1375,12 @@ lemma observePaid_ensures(s: MonthlySettlement, actor: int)
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysCursorInRange(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysReleasedMonthHasNoLeafAward(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysPendingPoolIsExactlyUnreserved(observePaid(s, actor)))
+  ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysAdmittedLeavesUnconflicted(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysUnreservedSourcesFreeWhilePooled(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysLeafAwardsAreObligations(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysCursorSourceBacked(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysLeafAwardsReserveTheirObligation(observePaid(s, actor)))
+  ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysAdmittedLeavesNeverConflict(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> alwaysObligationsMatchVault(observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> stepObligationsOnFreshCoveringHead(s, "observePaid", observePaid(s, actor)))
   ensures (inv(s) ==> canObservePaid(s, actor) ==> stepUnderfundedOnFreshHead(s, "observePaid", observePaid(s, actor)))
@@ -1025,6 +1394,8 @@ lemma observePaid_ensures(s: MonthlySettlement, actor: int)
     MsObservePaid(s, actor);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesRecorded(s, after, actor, settlement__monthly_ObligationState.Paid);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -1040,10 +1411,12 @@ lemma observeConflict_ensures(s: MonthlySettlement, actor: int)
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysCursorInRange(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysReleasedMonthHasNoLeafAward(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysPendingPoolIsExactlyUnreserved(observeConflict(s, actor)))
+  ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysAdmittedLeavesUnconflicted(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysUnreservedSourcesFreeWhilePooled(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysLeafAwardsAreObligations(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysCursorSourceBacked(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysLeafAwardsReserveTheirObligation(observeConflict(s, actor)))
+  ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysAdmittedLeavesNeverConflict(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> alwaysObligationsMatchVault(observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> stepObligationsOnFreshCoveringHead(s, "observeConflict", observeConflict(s, actor)))
   ensures (inv(s) ==> canObserveConflict(s, actor) ==> stepUnderfundedOnFreshHead(s, "observeConflict", observeConflict(s, actor)))
@@ -1057,6 +1430,8 @@ lemma observeConflict_ensures(s: MonthlySettlement, actor: int)
     MsObserveConflict(s, actor);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsConflictUnpooled(s, actor);
+    MsLeavesVacuous(after);
   }
 }
 
@@ -1072,10 +1447,12 @@ lemma admitRoot_ensures(s: MonthlySettlement, authorization: settlement__escrow_
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysCursorInRange(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysReleasedMonthHasNoLeafAward(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysPendingPoolIsExactlyUnreserved(admitRoot(s, authorization, ev)))
+  ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysAdmittedLeavesUnconflicted(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysUnreservedSourcesFreeWhilePooled(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysLeafAwardsAreObligations(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysCursorSourceBacked(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysLeafAwardsReserveTheirObligation(admitRoot(s, authorization, ev)))
+  ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysAdmittedLeavesNeverConflict(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> alwaysObligationsMatchVault(admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> stepObligationsOnFreshCoveringHead(s, "admitRoot", admitRoot(s, authorization, ev)))
   ensures (inv(s) ==> canAdmitRoot(s, authorization, ev) ==> stepUnderfundedOnFreshHead(s, "admitRoot", admitRoot(s, authorization, ev)))
@@ -1090,6 +1467,8 @@ lemma admitRoot_ensures(s: MonthlySettlement, authorization: settlement__escrow_
     MsAdmit(s, authorization, ev);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsAdmitLeaves(s, authorization, ev);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -1105,10 +1484,12 @@ lemma materialize_ensures(s: MonthlySettlement, proof: settlement__escrow_LeafPr
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysCursorInRange(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysReleasedMonthHasNoLeafAward(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysPendingPoolIsExactlyUnreserved(materialize(s, proof, ev)))
+  ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysAdmittedLeavesUnconflicted(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysUnreservedSourcesFreeWhilePooled(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysLeafAwardsAreObligations(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysCursorSourceBacked(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysLeafAwardsReserveTheirObligation(materialize(s, proof, ev)))
+  ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysAdmittedLeavesNeverConflict(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> alwaysObligationsMatchVault(materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> stepObligationsOnFreshCoveringHead(s, "materialize", materialize(s, proof, ev)))
   ensures (inv(s) ==> canMaterialize(s, proof, ev) ==> stepUnderfundedOnFreshHead(s, "materialize", materialize(s, proof, ev)))
@@ -1123,6 +1504,9 @@ lemma materialize_ensures(s: MonthlySettlement, proof: settlement__escrow_LeafPr
     MsMaterialize(s, proof, ev);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeafFromPositive(s, proof, ev);
+    MsLeavesRecorded(s, after, proof.actor, settlement__monthly_ObligationState.Reserved);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -1138,10 +1522,12 @@ lemma advanceCursor_ensures(s: MonthlySettlement, proof: settlement__escrow_Leaf
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysCursorInRange(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysReleasedMonthHasNoLeafAward(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysPendingPoolIsExactlyUnreserved(advanceCursor(s, proof, nonceSettled)))
+  ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysAdmittedLeavesUnconflicted(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysUnreservedSourcesFreeWhilePooled(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysLeafAwardsAreObligations(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysCursorSourceBacked(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysLeafAwardsReserveTheirObligation(advanceCursor(s, proof, nonceSettled)))
+  ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysAdmittedLeavesNeverConflict(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> alwaysObligationsMatchVault(advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> stepObligationsOnFreshCoveringHead(s, "advanceCursor", advanceCursor(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceCursor(s, proof, nonceSettled) ==> stepUnderfundedOnFreshHead(s, "advanceCursor", advanceCursor(s, proof, nonceSettled)))
@@ -1154,6 +1540,8 @@ lemma advanceCursor_ensures(s: MonthlySettlement, proof: settlement__escrow_Leaf
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -1169,10 +1557,12 @@ lemma advanceZeroRemaining_ensures(s: MonthlySettlement, proof: settlement__escr
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysCursorInRange(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysReleasedMonthHasNoLeafAward(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysPendingPoolIsExactlyUnreserved(advanceZeroRemaining(s, proof, nonceSettled)))
+  ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysAdmittedLeavesUnconflicted(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysUnreservedSourcesFreeWhilePooled(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysLeafAwardsAreObligations(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysCursorSourceBacked(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysLeafAwardsReserveTheirObligation(advanceZeroRemaining(s, proof, nonceSettled)))
+  ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysAdmittedLeavesNeverConflict(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> alwaysObligationsMatchVault(advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> stepObligationsOnFreshCoveringHead(s, "advanceZeroRemaining", advanceZeroRemaining(s, proof, nonceSettled)))
   ensures (inv(s) ==> canAdvanceZeroRemaining(s, proof, nonceSettled) ==> stepUnderfundedOnFreshHead(s, "advanceZeroRemaining", advanceZeroRemaining(s, proof, nonceSettled)))
@@ -1185,6 +1575,8 @@ lemma advanceZeroRemaining_ensures(s: MonthlySettlement, proof: settlement__escr
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 
@@ -1200,10 +1592,12 @@ lemma withdraw_ensures(s: MonthlySettlement, gross: seq<int>, ev: settlement__es
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysCursorInRange(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysReleasedMonthHasNoLeafAward(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysPendingPoolIsExactlyUnreserved(withdraw(s, gross, ev, by_)))
+  ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysAdmittedLeavesUnconflicted(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysUnreservedSourcesFreeWhilePooled(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysLeafAwardsAreObligations(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysCursorSourceBacked(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysLeafAwardsReserveTheirObligation(withdraw(s, gross, ev, by_)))
+  ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysAdmittedLeavesNeverConflict(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> alwaysObligationsMatchVault(withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> stepObligationsOnFreshCoveringHead(s, "withdraw", withdraw(s, gross, ev, by_)))
   ensures (inv(s) ==> canWithdraw(s, gross, ev, by_) ==> stepUnderfundedOnFreshHead(s, "withdraw", withdraw(s, gross, ev, by_)))
@@ -1214,9 +1608,8 @@ lemma withdraw_ensures(s: MonthlySettlement, gross: seq<int>, ev: settlement__es
     var after := withdraw(s, gross, ev, by_);
     MsChildInv(s);
     settlement__escrow_withdraw_ensures(s.escrow, gross, ev, by_);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -1232,10 +1625,12 @@ lemma upgradeToRelease_ensures(s: MonthlySettlement, ev: settlement__escrow_Chai
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysCursorInRange(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysReleasedMonthHasNoLeafAward(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysPendingPoolIsExactlyUnreserved(upgradeToRelease(s, ev)))
+  ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysAdmittedLeavesUnconflicted(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysUnreservedSourcesFreeWhilePooled(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysLeafAwardsAreObligations(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysCursorSourceBacked(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysLeafAwardsReserveTheirObligation(upgradeToRelease(s, ev)))
+  ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysAdmittedLeavesNeverConflict(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> alwaysObligationsMatchVault(upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> stepObligationsOnFreshCoveringHead(s, "upgradeToRelease", upgradeToRelease(s, ev)))
   ensures (inv(s) ==> canUpgradeToRelease(s, ev) ==> stepUnderfundedOnFreshHead(s, "upgradeToRelease", upgradeToRelease(s, ev)))
@@ -1246,9 +1641,8 @@ lemma upgradeToRelease_ensures(s: MonthlySettlement, ev: settlement__escrow_Chai
     var after := upgradeToRelease(s, ev);
     MsChildInv(s);
     settlement__escrow_upgradeToRelease_ensures(s.escrow, ev);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -1264,10 +1658,12 @@ lemma releaseReserve_ensures(s: MonthlySettlement, release: settlement__escrow_R
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysCursorInRange(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysReleasedMonthHasNoLeafAward(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysPendingPoolIsExactlyUnreserved(releaseReserve(s, release, ev, by_)))
+  ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysAdmittedLeavesUnconflicted(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysUnreservedSourcesFreeWhilePooled(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysLeafAwardsAreObligations(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysCursorSourceBacked(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysLeafAwardsReserveTheirObligation(releaseReserve(s, release, ev, by_)))
+  ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysAdmittedLeavesNeverConflict(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> alwaysObligationsMatchVault(releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> stepObligationsOnFreshCoveringHead(s, "releaseReserve", releaseReserve(s, release, ev, by_)))
   ensures (inv(s) ==> canReleaseReserve(s, release, ev, by_) ==> stepUnderfundedOnFreshHead(s, "releaseReserve", releaseReserve(s, release, ev, by_)))
@@ -1282,6 +1678,9 @@ lemma releaseReserve_ensures(s: MonthlySettlement, release: settlement__escrow_R
     MsRelease(s, release, ev, by_);
     MsChildInvBack(s, after);
     MsOneAward(after);
+    MsReleaseShrinks(s, release, ev, by_);
+    MsLeavesFrame(s, after);
+    MsLeavesNeverConflict(after);
   }
 }
 

@@ -40,16 +40,33 @@ runs:
         exit 1
     - id: setup-pnpm
       uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+    - id: restore-dafny
+      if: inputs.verification == 'true' && inputs.job != 'contracts' && !startsWith(inputs.job, 'simulate-')
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/dafny-4.11.0-x64-ubuntu-22.04.zip
+        key: dafny-release-${{ runner.os }}-${{ runner.arch }}-a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179
     - name: Install Dafny
       if: inputs.verification == 'true' && inputs.job != 'contracts' && !startsWith(inputs.job, 'simulate-')
       shell: bash
       run: |
         version=4.11.0
-        curl --fail --location --retry 3 -o "$RUNNER_TEMP/dafny.zip" "https://github.com/dafny-lang/dafny/releases/download/v$version/dafny-$version-x64-ubuntu-22.04.zip"
-        echo "a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179  $RUNNER_TEMP/dafny.zip" | sha256sum --check --strict
-        unzip -q "$RUNNER_TEMP/dafny.zip" -d "$RUNNER_TEMP"
+        archive="$RUNNER_TEMP/dafny-$version-x64-ubuntu-22.04.zip"
+        checksum="a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179"
+        if ! { [ -f "$archive" ] && printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --strict --status; }; then
+          curl --fail --location --retry 3 -o "$archive" "https://github.com/dafny-lang/dafny/releases/download/v$version/dafny-$version-x64-ubuntu-22.04.zip"
+          printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --strict
+        fi
+        unzip -q "$archive" -d "$RUNNER_TEMP"
         "$RUNNER_TEMP/dafny/dafny" --version
         echo "$RUNNER_TEMP/dafny" >> "$GITHUB_PATH"
+    - if: inputs.verification == 'true' && inputs.job == 'verify' && steps.restore-dafny.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/dafny-4.11.0-x64-ubuntu-22.04.zip
+        key: dafny-release-${{ runner.os }}-${{ runner.arch }}-a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179
     - name: Install Foundry
       if: inputs.verification == 'true'
       uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09

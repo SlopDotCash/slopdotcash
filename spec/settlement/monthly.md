@@ -338,7 +338,11 @@ pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Mo
 The owner path needs the same authority and current sequence and a month
 that has ended (409 `month_open`), except the reviewed closeout month, which
 it may finalize from its recorded early close time, and is refused until 24
-hours after the latest cut (`cut_notice_pending`). The automatic
+hours after the latest cut (`cut_notice_pending`). It is refused for a
+project that is inactive, paused, restricted or retired (409
+`project_restricted`) or whose vault network is not served (409
+`vault_not_served`), whatever its pledge or the default says
+(`apps/settlement/src/monthly/owner.vibe` `finalizeMonth`). The automatic
 path needs the cutoff, a month from 2026-11 on and a served vault network,
 and either the automatic default with a project that is not paused or
 restricted, or the owner's on-chain pledge for the month in the vault that
@@ -355,8 +359,10 @@ persistent outage violates that assumption and is surfaced operationally.
 pure def financialTermsSame(proposed: RevisionFact, observed: RevisionFact): bool =
   proposed.vault == observed.vault and proposed.asset == observed.asset and proposed.feePolicy == observed.feePolicy
 pure def cutNoticeElapsed(m: Monthly): bool = m.latestCutAt == 0 or m.now >= m.latestCutAt + cutNoticeSeconds
+pure def ownerMayFinalize(e: Eligibility): bool =
+  e.active and not(e.paused) and not(e.restricted) and not(e.retired) and e.networkServed
 pure def canFinalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): bool =
-  m.phase == Proposed and manages(fact, m) and expectedSequence == m.sequence and financialTermsSame(m.revision, m.currentRevision)
+  m.phase == Proposed and ownerMayFinalize(m.eligibility) and manages(fact, m) and expectedSequence == m.sequence and financialTermsSame(m.revision, m.currentRevision)
     and cutNoticeElapsed(m) and (m.now >= monthEnd(m.period) or (m.earlyCloseAt > 0 and m.now >= m.earlyCloseAt))
 pure def finalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): Monthly =
   { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor, frozenAt: m.now }
@@ -609,7 +615,10 @@ often. Discovered by simulation: a withdrawal needs a cut and then a change of
 that contributor back to the proposed amount before the month freezes, so
 changes and cuts are tried more often than owner finalization; a month allows
 only as many changes as there are sampled expected sequences, so this cannot
-crowd out later events. Discovered by simulation: churn of the observed
+crowd out later events. The same sample limit bounds owner finalization,
+which needs the current sequence: after three changes no sampled expected
+sequence matches, so such a month, for example one changed, cut and then
+withdrawn, can freeze in the samples only automatically. Discovered by simulation: churn of the observed
 revision before the proposal left the proposal's revision stale, so revisions
 are observed no more often than other facts.
 
@@ -617,8 +626,11 @@ Discovered by simulation: every copy of an event picks all its parameters on
 every step, so a run costs in proportion to the total weight. Weights about
 six times as high for proposals, changes and cuts reached a withdrawn cut no
 sooner and made each run about three and a half times as long, so every
-event that is not favoured has weight 1 or 2, and the events after a freeze
-keep their order relative to one another.
+event that is not favoured has weight 1 or 2. Among the events after a
+freeze, creating, reserving and paying obligations stay tried more often than
+the automatic freeze, the underfunded notice and a conflict, but those three
+now share one weight, so the automatic freeze is no longer tried less often
+than the underfunded notice.
 
 Discovered by simulation: a change back up can withdraw a cut only to the
 proposed amount, and a sole contributor is proposed the whole pool, which no
@@ -631,8 +643,9 @@ simulation: once a month observes eligibility revision 2, which it never
 leaves, every sampled authority fact was stale, so an owner and a steward
 under revision 2 are sampled too. Discovered by simulation: no sampled
 eligibility was restricted, so a restricted project is sampled too; it can
-still be proposed, changed, cut and finalized by hand, but the automatic
-cutoff freezes it only under its pledge.
+still be proposed, changed and cut, but neither the owner nor the automatic
+default freezes it, and the automatic cutoff freezes it only under its
+pledge.
 
 Discovered by simulation: with the earlier weights and samples a search for a
 withdrawn cut could outlast its hour on a loaded machine. With these, 200

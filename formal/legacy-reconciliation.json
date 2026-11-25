@@ -35952,15 +35952,15 @@
             "newerRootPending",
             "canMarkAttempt",
             "canSubmit",
-            "newerRootIncomplete",
             "revertsIfSent",
+            "vaultStepInFlight",
             "submit"
           ],
-          "note": "Newest-first ordering is carried as an in-run guard: a batch row is attempted only after every newer pending row of the batch was processed. Across runs canSubmit refuses to send an older-period row while a newer unadmitted v2 root of the same vault is incomplete (newerRootIncomplete), and refuses an unadmitted v2 root whose signed source sequence differs from the vault's recorded awards (sourceOf) or that an older in-flight step of its vault (submitted, or a live journal attempt) would precede under sameSignerNonceOrder (revertsIfSent)."
+          "note": "Newest-first ordering is carried as an in-run guard: a batch row is attempted only after every newer pending row of the batch was processed, as the source sorts one run's items. Across runs, like the source, the successor does not wait for a newer root; it refuses only an unadmitted v2 root whose signed source sequence differs from the vault's recorded awards (sourceOf) or that another in-flight step of its project, network and vault (submitted, or a live journal attempt, of any period) would precede under sameSignerNonceOrder (revertsIfSent, vaultStepInFlight)."
         },
         "runPassOldestFirst": {
           "status": "abstraction",
-          "note": "Counter-example ordering that is never part of step; the successor excludes it within a run by the newest-first canMarkAttempt/newerRootPending guard and across runs by the canSubmit refusals newerRootIncomplete and revertsIfSent (stale source sequence, or an older in-flight step under sameSignerNonceOrder), and states the consequence as alwaysNoReorderingRevert in monthlyExecution."
+          "note": "Counter-example ordering that is never part of step; the successor excludes it within a run by the newest-first canMarkAttempt/newerRootPending guard and refuses every reverting root send by revertsIfSent (stale source sequence, or another in-flight step of the vault under sameSignerNonceOrder); submit records the semantic revert condition reorderReverts as invalidated, and alwaysNoReorderingRevert in monthlyExecution requires that it never holds."
         },
         "tick": {
           "status": "rule",
@@ -36008,22 +36008,23 @@
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
             "newerRootPending",
-            "newerRootIncomplete",
+            "canMarkAttempt",
             "canSubmit",
             "sometimesNewestFirst"
           ],
-          "note": "The newer v2 root is submitted and completes while the older row waits, witnessed by sometimesNewestFirst."
+          "note": "Within a run the newer v2 root is attempted and submitted before the older row (newerRootPending), and it completes while the older row waits, witnessed by sometimesNewestFirst."
         },
         "oldestFirstRevertsReservationTest": {
           "status": "rule",
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
+            "reorderReverts",
             "revertsIfSent",
             "submit",
             "observeFinality",
             "alwaysNoReorderingRevert"
           ],
-          "note": "The successor keeps the revert mechanics: an unadmitted root sent at a stale source sequence, or behind an older in-flight step of its vault, is invalidated (revertsIfSent) and its landing counts a revert in observeFinality. The newest-first run order and the canSubmit refusals (newerRootIncomplete, revertsIfSent) make the oldest-first revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
+          "note": "The successor keeps the revert mechanics: submit marks a root invalidated when reorderReverts holds (its signed source sequence moved, or an award-recording step of the same vault was sent earlier and is in flight), and a finalized landing of an invalidated root returns it to pending and counts a revert in observeFinality. The newest-first run order and the coarser canSubmit refusal revertsIfSent make that revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
         },
         "prerequisiteAddedForLruCandidateTest": {
           "status": "rule",
@@ -36043,11 +36044,11 @@
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
             "newerRootPending",
-            "newerRootIncomplete",
             "canSubmit",
-            "submit"
+            "submit",
+            "canSignAttempt"
           ],
-          "note": "A failed newer-root prerequisite is processed in the run (SendResult Failed), so newerRootPending no longer blocks the original older row, which is then attempted in the same run; canSubmit answers it Failed while the newer unadmitted root is incomplete (newerRootIncomplete), so the run continues and the older row stays pending. The successor is stricter than the legacy test, which sends the older row; a newer root at a stale source sequence is reattested via monthlyCommitment signEvm."
+          "note": "A failed newer-root prerequisite is processed in the run (SendResult Failed), so newerRootPending no longer blocks the original older row, which is then attempted and sent in the same run, as the legacy test sends it; canSubmit refuses that send only when it is itself an unadmitted v2 root that would revert (revertsIfSent). The older row's commit moves the source sequence under the newer unadmitted root, which a later attempt then reattests (canSignAttempt here, signEvm in monthlyCommitment)."
         },
         "raceRun": {
           "status": "abstraction",

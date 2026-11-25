@@ -9,17 +9,19 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import type * as TS from "typescript";
 import type { Model } from "./gen.ts";
 import { conformance, type Machine } from "./conform.ts";
 import { explore } from "./explore.ts";
 import { abandonedProof, ensuresOf, LIB_FILE, libraryFor, proofPaths, prove, type Offered, type Proof } from "./prove.ts";
-import { bin, run, startAttached } from "./run.ts";
+import { bin, exec, run, startAttached } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, isStd, located, type Spec } from "./parse.ts";
 import { contracts, citationLookup, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, moved, showPending, ledgerFile, readReviewLock, writeLedger, type Pending, type Accepted, type ReviewLock } from "./review.ts";
 import { cacheCredentials, dafnyVersion, entry, recall, remembered, steady, store, certifyInstallation, collectGarbage, evaluatorForCheck, isActionEntry, toolchainFingerprint, type Memory } from "./cache.ts";
 import { generated, mirrorGen, publishGen, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { simulation, type Simulation } from "./simulate.ts";
-import { sha, digest, indent, packageScripts, pruneSidecars, configured, testInputs, tests, VITEST_CONFIG, readSrc, codeDirs, codeDirOf, owner, projectRoot, allDone, UNREAD, workspacePackages, writeWhole, type Reported, type SrcFile } from "./util.ts";
+import { tests, VITEST_CONFIG } from "./testing/check.ts";
+import { sha, digest, indent, packageScripts, pruneSidecars, configured, testInputs, readSrc, codeDirs, codeDirOf, owner, specOwnerPaths, projectRoot, allDone, UNREAD, workspacePackages, writeWhole, tsApi, type Reported, type SrcFile } from "./util.ts";
 import { profile, type TestProfile } from "./testing/profile.ts";
 import { setupProjectAgents } from "./skill-links.ts";
 
@@ -80,11 +82,15 @@ function lockProject(root: string): () => void {
   const holderOf = (lock: string) => { try { return parseInt(fs.readFileSync(lock, "utf8"), 10); } catch { return NaN; /* removed in the meantime */ } };
   const refuse = (holder: number): never => { throw new Error(`another check or accept is running in this project (process ${holder}); wait for it to finish. If no such process is running, delete ${path.relative(root, file)}`); };
   for (let attempt = 0; ; attempt++) {
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
-      fs.writeFileSync(file, `${process.pid}\n`, { flag: "wx" });
+      fs.writeFileSync(tmp, `${process.pid}\n`);
+      fs.linkSync(tmp, file);
       return () => fs.rmSync(file, { force: true });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    } finally {
+      fs.rmSync(tmp, { force: true });
     }
     const holder = holderOf(file);
     if (alive(holder) || attempt) refuse(holder);
@@ -458,13 +464,13 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   let specs: Spec[];
   let srcFiles: SrcFile[];
   const proofInputs = () => proofFiles(root).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]);
-  let proofsRead: string[][];
+  let proofsRead: string[][] = [];
   let lock: ReviewLock;
   /** The scripts of the root and of each owner, by its prefix (util.ts, `codeDirs`). */
   let scripts: Map<string, Record<string, string>>;
   try {
     srcFiles = readSrc(root);
-    proofsRead = proofInputs();
+    if (accept) proofsRead = proofInputs();
     specs = readSpecs(root);
     lock = readReviewLock(root);
     scripts = new Map(codeDirs(root).map((dir) => [dir, packageScripts(path.join(root, dir))]));
@@ -480,6 +486,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   /** Each spec's simulation starts once its model is generated; they run at once and are reported in the specs' order. */
   const simulations: { spec: Spec; model: Model; domain: any; simulated: Promise<Simulation> }[] = [];
   const proofWork = new AbortController();
+  let loadedReady = false;
   let simulatedAll: EndPhase | undefined;
   let lastSimulation: number | undefined;
   const simulationSettled = observe && (() => { lastSimulation = performance.now(); });
@@ -489,8 +496,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     try {
       if (!model) throw error;
       models.push(model);
-      fs.mkdirSync(loaded, { recursive: true });
-      for (const f of ["package.json", `${spec.name}.ts`]) fs.copyFileSync(path.join(root, "gen", f), path.join(loaded, f));
+      if (!loadedReady) {
+        fs.mkdirSync(loaded, { recursive: true });
+        fs.copyFileSync(path.join(root, "gen", "package.json"), path.join(loaded, "package.json"));
+        loadedReady = true;
+      }
+      fs.copyFileSync(path.join(root, "gen", `${spec.name}.ts`), path.join(loaded, `${spec.name}.ts`));
       domain = await import(pathToFileURL(path.join(loaded, `${spec.name}.ts`)).href);
     } catch (e) {
       if (e instanceof InstallationChanged) {
@@ -509,6 +520,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     const simulated = simulation(memory, spec, specs, model, domain, seed).then((simulation) => {
       if (simulation.said.some((result) => !result.ok && result.stage === "sometimes")) proofWork.abort();
       return simulation;
+    }, (error) => {
+      proofWork.abort();
+      throw error;
     });
     // Report a rejected simulation in the same order as other results.
     if (simulationSettled) void simulated.then(simulationSettled, simulationSettled);
@@ -876,7 +890,7 @@ async function watch(root: string) {
   const containers = ["apps", "packages"];
   const attach = () => {
     const areas = read("spec").filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-    const packages = containers.flatMap((dir) => [dir, ...areas.map((area) => `${dir}/${area}`)]);
+    const packages = [...containers, ...areas.flatMap((area) => specOwnerPaths(root, area))];
     const own = (dir: string) => read(dir).filter((e) => e.isDirectory() && !UNREAD.test(e.name) && e.name !== "gen" && !(dir === "" && containers.includes(e.name))
       && !fs.existsSync(path.join(root, dir, e.name, "package.json"))).map((e): [string, boolean] => [`${dir}${e.name}`, true]);
     const owners = codeDirs(root);
@@ -926,14 +940,14 @@ async function generateFiles(root: string, output = root, ownerName?: string) {
 }
 
 async function generateOwner(root: string, name: string) {
-  const ownerDir = codeDirs(root).find((dir) => path.basename(dir) === name);
+  const ownerDir = badSpecName(name) ? undefined : owner(root, `spec/${name}/`);
   if (!ownerDir) throw new Error(`${name}: no package owns spec/${name}/`);
   const release = lockProject(root);
   try {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "vibestack-owner-gen-"));
     try {
       const specs = await generateFiles(root, scratch, name);
-      mirrorGen(root, specs, { scratch, ownerDir });
+      mirrorGen(root, specs, { scratch, ownerDir: `${ownerDir}/` });
     } finally {
       fs.rmSync(scratch, { recursive: true, force: true });
     }
@@ -943,13 +957,14 @@ async function generateOwner(root: string, name: string) {
 }
 
 type GenerationLayout = { kind: "ordinary" | "proof-directory"; owners: [string, string | null][]; dirs: string[] } | { kind: "invalid" };
+const inProofDirectory = (file: string) => file.includes(".proof.dfy/");
 
 function generationLayout(root: string): GenerationLayout {
   try {
     const files = specFiles(root);
     const areas = [...new Set(files.map((file) => file.split("/")).filter((parts) => parts.length > 2).map((parts) => parts[1]))].sort();
     return {
-      kind: files.some((file) => file.split("/").some((part) => part.endsWith(".proof.dfy"))) ? "proof-directory" : "ordinary",
+      kind: files.some(inProofDirectory) ? "proof-directory" : "ordinary",
       owners: areas.map((area) => [area, owner(root, `spec/${area}/`) ?? null]),
       dirs: codeDirs(root),
     };
@@ -1014,11 +1029,119 @@ function generationConfig(root: string, args: string[], env: NodeJS.ProcessEnv) 
   return { path: projectedPath, index, count: separate ? 2 : option ? 1 : 0 };
 }
 
+const legacyProofInput = /^!(spec|(?:apps|packages)\/\*\/spec)\/\*\*\/\*\.proof\.dfy$/;
+
+function turboOption(args: readonly string[], name: string): { index: number; count: number; value?: string } | undefined {
+  const index = args.findLastIndex((arg) => arg === name || arg.startsWith(`${name}=`));
+  if (index < 0) return;
+  const separate = args[index] === name;
+  const value = separate ? args[index + 1] : args[index].slice(name.length + 1);
+  return { index, count: separate ? 2 : 1, value: value && (!separate || !value.startsWith("-")) ? value : undefined };
+}
+
+async function sameTurboWorkspace(root: string, args: readonly string[]): Promise<boolean> {
+  const cwd = turboOption(args, "--cwd");
+  if (!cwd) return true;
+  if (!cwd.value) return false;
+  try {
+    const workspace = fs.realpathSync(root);
+    const directory = projectRoot(cwd.value, root);
+    const relative = path.relative(workspace, directory);
+    if (!relative) return true;
+    if (path.isAbsolute(relative) || relative.split(path.sep)[0] === ".." || args.includes("--skip-infer")) return false;
+    let member: string | undefined;
+    for (let at = directory; path.relative(workspace, at); at = path.dirname(at)) {
+      if ([".git", "pnpm-workspace.yaml"].some((file) => fs.existsSync(path.join(at, file)))) return false;
+      if (!member && fs.existsSync(path.join(at, "package.json"))) member = at;
+    }
+    if (!member) return true;
+    const listed = await exec("pnpm", ["list", "--recursive", "--depth", "-1", "--json"], root);
+    const projects: unknown = listed.status === 0 ? JSON.parse(listed.stdout) : undefined;
+    return Array.isArray(projects) && projects.some((project: unknown) =>
+      typeof project === "object" && project !== null && "path" in project && project.path === member);
+  } catch {
+    return false;
+  }
+}
+
+type LegacySpecInput = { directory: string; kind: "invalid" } | { directory: string; kind: "hidden"; models: [string, string][] };
+
+function legacySpecInputs(root: string, scopes: readonly string[]): LegacySpecInput[] {
+  const signature: LegacySpecInput[] = [];
+  for (const scope of new Set(scopes)) {
+    const [container] = scope.split("/");
+    const directory = path.join(root, container);
+    const entry = fs.lstatSync(directory, { throwIfNoEntry: false });
+    if (!entry) continue;
+    const projects = scope === "spec" ? [root] : entry.isDirectory()
+      ? fs.readdirSync(directory, { withFileTypes: true }).filter((item) => item.isDirectory()).map((item) => path.join(directory, item.name))
+      : [];
+    for (const project of projects.sort()) {
+      const name = path.relative(root, path.join(project, "spec"));
+      const spec = fs.lstatSync(path.join(root, name), { throwIfNoEntry: false });
+      if (!spec) continue;
+      if (!spec.isDirectory()) {
+        signature.push({ directory: name, kind: "invalid" });
+        continue;
+      }
+      try {
+        const hidden = specFiles(project).filter(inProofDirectory);
+        if (hidden.length) signature.push({ directory: name, kind: "hidden", models: hidden.map((file) => [file, digest(fs.readFileSync(path.join(project, file), "utf8"))]) });
+      } catch {
+        signature.push({ directory: name, kind: "invalid" });
+      }
+    }
+  }
+  return signature;
+}
+
+function configProperty(ts: typeof TS, node: TS.Expression | undefined, name: string): TS.Expression | undefined {
+  if (!node || !ts.isObjectLiteralExpression(node)) return;
+  const matches = node.properties.filter((property): property is TS.PropertyAssignment =>
+    ts.isPropertyAssignment(property) && ts.isStringLiteral(property.name) && property.name.text === name);
+  if (matches.length === 1) return matches[0].initializer;
+}
+
+async function legacyGenerationConfig(root: string, args: string[], env: NodeJS.ProcessEnv) {
+  const boundary = args.indexOf("--");
+  const options = boundary < 0 ? args : args.slice(0, boundary);
+  const explicit = turboOption(options, "--root-turbo-json");
+  const selected = explicit?.value ?? env.TURBO_ROOT_TURBO_JSON;
+  if ((explicit && !explicit.value) || selected === "") return;
+  const files = selected === undefined ? ["turbo.json", "turbo.jsonc"].map((name) => path.join(root, name)).filter((file) => fs.existsSync(file)) : [path.resolve(root, selected)];
+  if (files.length !== 1) return;
+  const [file] = files;
+  let text: string;
+  try { text = fs.readFileSync(file, "utf8"); } catch { return; }
+  const ts = tsApi();
+  const source = ts.parseJsonText(file, text);
+  const tasks = configProperty(ts, source.statements[0]?.expression, "tasks");
+  const gen = configProperty(ts, tasks, "//#gen");
+  const inputs = configProperty(ts, gen, "inputs");
+  if (!inputs || !ts.isArrayLiteralExpression(inputs)) return;
+  const scopes = inputs.elements.flatMap((element) => ts.isStringLiteral(element) ? legacyProofInput.exec(element.text)?.slice(1) ?? [] : []);
+  if (!scopes.length || !await sameTurboWorkspace(root, options)) return;
+  const layout = JSON.stringify({ version: 1, hidden: legacySpecInputs(root, scopes), layout: generationLayout(root) });
+  const input = `.cache/gen-legacy-${digest(layout)}.json`;
+  const position = inputs.getStart(source) + 1;
+  const overlay = text.slice(0, position) + `${JSON.stringify(input)},` + text.slice(position);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vibestack-turbo-"));
+  const config = path.join(directory, path.basename(file));
+  try {
+    const marker = path.join(root, input);
+    if (!fs.lstatSync(marker, { throwIfNoEntry: false })?.isFile() || fs.readFileSync(marker, "utf8") !== layout) writeWhole(marker, layout);
+    fs.writeFileSync(config, overlay, { mode: 0o600 });
+    return { args: args.toSpliced(explicit?.index ?? 0, explicit?.count ?? 0, `--root-turbo-json=${config}`), directory };
+  } catch (error) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function runTasks(root: string, args: string[]): Promise<number | null> {
   const fingerprint = path.join(root, ".cache", "toolchain.json");
   const text = JSON.stringify(await steady(toolchainFingerprint)) + "\n";
-  fs.mkdirSync(path.dirname(fingerprint), { recursive: true });
-  if (!fs.existsSync(fingerprint) || fs.readFileSync(fingerprint, "utf8") !== text) fs.writeFileSync(fingerprint, text);
+  if (!fs.existsSync(fingerprint) || fs.readFileSync(fingerprint, "utf8") !== text) writeWhole(fingerprint, text);
   let env: NodeJS.ProcessEnv = { ...process.env, TURBO_TELEMETRY_DISABLED: "1", VIBESTACK_QUINT_EVALUATOR: evaluatorIdentity(root) ?? randomUUID() };
   const credentials = path.join(os.homedir(), ".config", "vibestack", "turbo-cache.json");
   if (env.TURBO_TOKEN === undefined && fs.existsSync(credentials)) {
@@ -1028,13 +1151,18 @@ async function runTasks(root: string, args: string[]): Promise<number | null> {
   }
   const turboPackage = createRequire(bin("turbo", root)).resolve("turbo/package.json");
   const turboEntry = path.resolve(path.dirname(turboPackage), JSON.parse(fs.readFileSync(turboPackage, "utf8")).bin.turbo);
-  const config = generationConfig(root, args, env);
-  const options = config ? args.toSpliced(config.index, config.count, "--root-turbo-json", config.path) : args;
-  const child = spawn(process.execPath, [turboEntry, "run", ...options], { cwd: root, env, stdio: "inherit" });
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", resolve);
-  });
+  const legacy = await legacyGenerationConfig(root, args, env);
+  try {
+    const config = legacy ? undefined : generationConfig(root, args, env);
+    const options = legacy?.args ?? (config ? args.toSpliced(config.index, config.count, "--root-turbo-json", config.path) : args);
+    const child = spawn(process.execPath, [turboEntry, "run", ...options], { cwd: root, env, stdio: "inherit" });
+    return await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", resolve);
+    });
+  } finally {
+    if (legacy) fs.rmSync(legacy.directory, { recursive: true, force: true });
+  }
 }
 
 /** The `spec` command, on `process.argv`. */

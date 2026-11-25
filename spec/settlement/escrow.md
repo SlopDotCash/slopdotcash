@@ -20,7 +20,12 @@ handlers `deposit`, `commit`, `pledge_month`, `expire_pledge`, `commit_monthly`,
 [EVM escrow](../contracts/evmEscrow.md) and [Solana escrow](../contracts/solanaEscrow.md)
 state the same pledge, cap and release rules per network.
 It started from the EVM monthly reserve draft, retired from `formal/drafts/`
-once its rules were stated here and in the contract units (git history keeps it).
+(git history keeps it). Its rules are stated here and in the contract units,
+except two: its goal of more than one admitted month while pool gross is
+pending, and the half of its compatible-rows rule that allows one award per
+monthly leaf position. Unique periods and unique sources are `alwaysMonths`
+and `alwaysAwards`; `leafUnused` refuses a used leaf position, but no rule
+here states it.
 The legacy V1 `commitMonthly` path, which commits every leaf in one call, is
 still callable on deployed EVM vaults; an independently signed V1
 transaction can win after V2 publication, so this unit applies it. The
@@ -657,7 +662,8 @@ Each award has a unique source, a positive gross, the fee its vault purpose
 requires, and a paid record only with a destination, positive binding
 version and transaction. Each withdrawal fee is `ceil(gross / 50)`. Each
 admitted month is unique by period, never holds more remainder than it
-admitted, and a monthly leaf belongs to an admitted month. The pledged total
+admitted, and a monthly leaf belongs to an admitted month, as does each
+released Solana leaf, so a month admitted later starts untouched. The pledged total
 is the sum of the open pledges and the free balance always covers it; each
 period holds one positive pledge, a bounty vault and a vault not yet created
 hold none, and on EVM an open pledge's period has no admitted root.
@@ -676,6 +682,7 @@ pure def alwaysWithdrawalFees(e: Escrow): bool = e.withdrawals.every(w => M::val
 pure def alwaysMonths(e: Escrow): bool = e.months.every(m => validPeriod(m.period) and m.root != "" and m.allocationDigest != ""
   and M::validAmount(m.remaining) and M::validAmount(m.released) and M::validAmount(m.admittedGross)
   and M::compareAmounts(m.remaining, m.admittedGross) <= 0 and e.months.select(other => other.period == m.period).length() == 1)
+pure def alwaysReleasedLeavesAdmitted(e: Escrow): bool = e.releasedLeaves.every(l => hasMonth(e, l.period))
 pure def alwaysBountyVaultHasNoMonths(e: Escrow): bool = e.purpose == BountyPurpose implies e.months.length() == 0 and not(e.monthlyEnabled)
 pure def alwaysPledgesCovered(e: Escrow): bool =
   M::equalAmounts(e.pledged, openPledged(e.pledges)) and M::validAmount(e.pledged) and M::compareAmounts(e.free, e.pledged) >= 0
@@ -786,6 +793,9 @@ base unit reaches the twelve-period bound (November 2026 to October 2027)
 within two deposits, while thirteen is refused; amounts of five and eight
 reach a pledge above the monthly cap, which raises it, and a pledge as large
 as the free balance, which blocks other spending.
+Discovered by proof: a deposit parameter named `deposit` shadowed the
+`deposit` transition in the generated Dafny, so it is named `funds` and its
+samples `fundsValues`; the samples themselves are unchanged.
 
 ```quint
 pure val evValues = Set(

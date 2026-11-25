@@ -27,7 +27,7 @@ Earlier snapshots remain in the original project history.
 
 `vibestack/`, `SPEC.md`, the agent skills and the root engineering
 configuration are vendored from the reviewed `lalalune/vibestack` source
-snapshot commit `f7c4c7750992d2160dcba4d00fc1bf69c95ea57c`. The vendor update takes
+snapshot commit `b7f1827be748d4a97aee094d9961371d553012a7`. The vendor update takes
 the delta from `e4e2ab38f761897657c918f073e19114874b37ff` and retains Slop's
 product, verification and release configuration. The readiness audit compared Slop `development` at
 `87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
@@ -40,7 +40,7 @@ These local patches differ from that commit:
 | Patch | Files | Reason |
 | --- | --- | --- |
 | Guide and license | `vibestack/README.md`, `vibestack/LICENSE` | The upstream README with links rebased to `../`; the root README describes Slop |
-| Exported contrast and positive design fixture | `vibestack/design/tokens.ts`, `vibestack/design/test/fixtures/good.tsx`, `vibestack/design/test/design.test.ts`, root `package.json` export `./design/tokens` | `@repo/ui` tests its colors with the exported contrast function; the positive lint fixture uses Slop's `shadow-panel` and `z-modal` tokens. The journey retains every row/value assertion in Slop's authored order and uses the token builder after real CLI idempotence checks. Upstream already supports the `info` color and focus-ring contrast |
+| Design token export and token-aligned Studio/fixture classes | root `package.json` export `./design/tokens`, `vibestack/design/test/design.test.ts`, `vibestack/studio/src/page/*.tsx` | `@repo/ui` tests its colors with the upstream-exported `contrast` function from `vibestack/design/tokens`; `design.test.ts` adapts `shadow-sm`/`shadow-lg` in the empty-scale lint fixture, and Studio's page maps 18 Tailwind utility classes (`z-30`/`z-40`, `leading-normal`/`leading-relaxed`, `font-normal`, `shadow-sm`/`shadow-lg`) to Slop's `tokens.json` scales |
 | Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`. `packages/contracts` is a workspace package with native Foundry and Rust tasks |
 | Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md` | Slop keeps signer custody, frozen-source exclusions, package exports and UI-driver rules. Upstream's comment and effect rules allow only the inventoried existing counts; new violations fail |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |

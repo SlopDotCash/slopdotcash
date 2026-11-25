@@ -252,13 +252,14 @@
       ],
       "inputs": [
         ".gitignore",
+        "eslint.config.js",
         "vibestack/**",
         "!vibestack/examples/{assistant,dashboard,fullstack}/**",
         "!vibestack/selftests/{docs,examples}.ts",
         "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static,__traces__}/**",
         "!**/.DS_Store",
-        "!{apps,packages,vibestack/studio,vibestack/examples}/**/gen/**",
-        "apps/**",
+        "!{packages,vibestack/studio,vibestack/examples}/**/gen/**",
+        "apps/*/package.json",
         "packages/**",
         ".agents/**",
         "AGENTS.md",
@@ -321,6 +322,17 @@
       "dependsOn": [
         "@repo/design-system#build",
         "@repo/app#typecheck",
+        "@repo/backend#typecheck",
+        "@repo/contributor#typecheck",
+        "@repo/fees#typecheck",
+        "@repo/frontend#typecheck",
+        "@repo/operations#typecheck",
+        "@repo/platform#typecheck",
+        "@repo/points#typecheck",
+        "@repo/ports#typecheck",
+        "@repo/security#typecheck",
+        "@repo/settlement#typecheck",
+        "@repo/slopbot#typecheck",
         "vibestack-studio#typecheck"
       ],
       "inputs": [
@@ -463,9 +475,7 @@
         "^build",
         "//#gen"
       ],
-      "outputs": [
-        ".vibe/declarations/**"
-      ]
+      "outputs": []
     },
     "@repo/design-system#build": {
       "dependsOn": [
@@ -482,6 +492,10 @@
       "outputs": [
         "evm/out/**"
       ]
+    },
+    "@repo/contracts#typecheck": {
+      "dependsOn": [],
+      "outputs": []
     },
     "@repo/contracts#test": {
       "dependsOn": [],

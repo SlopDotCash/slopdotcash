@@ -530,3 +530,38 @@ export default defineConfig(
   { files: own, plugins: { code }, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
   { files: ["packages/ui/src/components/**"], ignores: ["**/*.meta.tsx"], rules: { "code/comments": ["error", { jsdoc: true, left: commented }] } },
 )
+
+if (import.meta.main) {
+  const { spawnSync } = await import("node:child_process")
+  const { constants } = await import("node:os")
+  const { default: process } = await import("node:process")
+  const vibeFiles = "**/*.{vibe,vibex}"
+  const groups = [
+    ["packages/frontend"],
+    ["packages/contracts", "packages/design-system", "packages/platform", "packages/ports", "packages/ui"],
+    ["apps/app", "apps/backend", "apps/contributor", "apps/fees", "apps/operations"],
+    ["apps/points", "apps/security", "apps/settlement", "apps/slopbot"],
+  ]
+  const ignoreVibe = ["--ignore-pattern", vibeFiles]
+  const ignoreGroups = groups.flat().flatMap((dir) => ["--ignore-pattern", `${dir}/`])
+  const extra = process.argv.slice(2)
+  const hasTarget = extra.some((arg) => !arg.startsWith("-"))
+  const passes = extra.length
+    ? [[...(hasTarget ? [] : ["."]), "--max-warnings", "0", ...extra]]
+    : [
+      [vibeFiles, "--no-error-on-unmatched-pattern", "--max-warnings", "0"],
+      ...groups.map((group) => [...group, ...ignoreVibe, "--no-error-on-unmatched-pattern", "--max-warnings", "0"]),
+      [".", ...ignoreVibe, ...ignoreGroups, "--max-warnings", "0"],
+    ]
+  let status = 0
+  for (const args of passes) {
+    const result = spawnSync("eslint", args, { stdio: "inherit" })
+    if (result.error) throw result.error
+    if (result.signal) {
+      status = 128 + constants.signals[result.signal]
+      break
+    }
+    status = Math.max(status, result.status ?? 2)
+  }
+  process.exitCode = status
+}
