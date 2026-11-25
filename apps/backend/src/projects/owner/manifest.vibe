@@ -58,10 +58,12 @@ export effect function newProjectRefusal(manifest: Json, actor: Creator, storedA
   const program = objectOf(manifest.securityBounty)
   const programFunding = objectOf(program?.funding)
   const settlement = objectOf(program?.settlement)
+  const slopbot = objectOf(manifest.slopbot)
   const rules: ReadonlyArray<readonly [boolean, string]> = [
     [manifest.status === "paused", "New projects must start paused"],
     [manifest.listingTier === "community", "New projects are listed in the community tier"],
     [list(manifest.repositories).length === 1, "A new project lists exactly one repository"],
+    [slopbot?.catchUpUntil === undefined && slopbot?.catchUpHistory === undefined, "A new project is not catching up on reviews; start it from the project's settings once it is listed"],
     [skill?.publishAtRoot === false, "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md"],
     [skill?.sourcePath === contributorTemplate && reviewSkill?.sourcePath === reviewerTemplate, "New projects use generated skills from the canonical templates"],
     [try fieldsComplete(manifest), "Complete the contribution rules that generate the project skills"],
@@ -85,7 +87,7 @@ export effect function newProjectRefusal(manifest: Json, actor: Creator, storedA
     ],
   ]
   const broken = rules.find(([valid]) => !valid)
-  if (broken !== undefined) return broken[1] === "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md" ? refusal(putProjectsById.invalidManifestRootSkillPublicationIs) : invalidManifest(broken[1])
+  if (broken !== undefined) return broken[1] === "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md" ? refusal(putProjectsById.invalidManifestRootSkillPublicationIs) : broken[1] === "A new project is not catching up on reviews; start it from the project's settings once it is listed" ? refusal(putProjectsById.catchUpRefusedANewProjectIs) : invalidManifest(broken[1])
   if (program === undefined) return undefined
   const split = objectOf(program.split)
   if (split?.researcherBasisPoints === 10000 && split.slopBasisPoints === 0) return refusal(postProjects.securitySplitRestricted)
