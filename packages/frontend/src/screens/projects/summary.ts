@@ -146,23 +146,25 @@ export function projectHeld(project: Pick<ShownProject, "id" | "status" | "recor
   return intakeHeld(intakeCap, active, (merge.value?.get(project.id) ?? []).map(storedCount), Math.floor(nowMs / hourMs));
 }
 
-/** Whether the backlog rule never judges this project: it is not a monthly-pool project, or its monthly amount this month is zero. @throws {RangeError} */
-export function backlogExempt(project: Pick<ShownProject, "reward">, nowMs: number): boolean {
-  return project.reward.kind !== "monthly-pool" || capOf(project, periodContaining(Math.floor(nowMs / 1000))) <= 0n;
+/** Whether the backlog rule never judges this project: it is not a monthly-pool project, it only pays bounties, or its configured monthly cap is zero. @throws {never} */
+export function backlogExempt(project: Pick<ShownProject, "reward" | "securityBounty">): boolean {
+  if (project.reward.kind !== "monthly-pool") return true;
+    if (project.securityBounty?.rewardMode === "bounty-only") return true;
+    return project.reward.monthlyCapMinor <= 0n;
 }
 
 /** Whether the backlog rule holds this project out of rotation: active, judged, not catching up, and over the limit or dormant on a recent read; a pending or failed read holds nothing. @throws {RangeError} */
-export function projectOutOfRotation(project: Pick<ShownProject, "id" | "status" | "record" | "reward">, merge: Shown<MergeIndex>, nowMs: number): boolean {
+export function projectOutOfRotation(project: Pick<ShownProject, "id" | "status" | "record" | "reward" | "securityBounty">, merge: Shown<MergeIndex>, nowMs: number): boolean {
   if (merge.status !== "Current" && merge.status !== "Stale") return false;
   const { active, catchUpUntil } = slopbotSettings(project);
   const parsed = catchUpUntil === undefined ? Number.NaN : Date.parse(catchUpUntil);
   const until = Number.isFinite(parsed) ? Math.floor(parsed / hourMs) : 0;
   const now = Math.floor(nowMs / hourMs);
-  return backlogHeld(active, backlogExempt(project, nowMs), until > now, until, (merge.value?.get(project.id) ?? []).map(storedBacklogRead), now);
+  return backlogHeld(active, backlogExempt(project), until > now, until, (merge.value?.get(project.id) ?? []).map(storedBacklogRead), now);
 }
 
 /** The one line the project page shows while the backlog rule holds it out of rotation, or while a catch-up pause runs; nothing otherwise. @throws {RangeError} */
-export function projectBacklogNotice(project: Pick<ShownProject, "id" | "status" | "record" | "reward">, merge: Shown<MergeIndex>, nowMs: number): string | undefined {
+export function projectBacklogNotice(project: Pick<ShownProject, "id" | "status" | "record" | "reward" | "securityBounty">, merge: Shown<MergeIndex>, nowMs: number): string | undefined {
   if (merge.status !== "Current" && merge.status !== "Stale") return undefined;
   const { active, catchUpUntil } = slopbotSettings(project);
   const parsed = catchUpUntil === undefined ? Number.NaN : Date.parse(catchUpUntil);
@@ -170,7 +172,7 @@ export function projectBacklogNotice(project: Pick<ShownProject, "id" | "status"
   const now = Math.floor(nowMs / hourMs);
   if (until > now) return catchUpNotice;
   const reads = (merge.value?.get(project.id) ?? []).map(storedBacklogRead);
-  if (!backlogHeld(active, backlogExempt(project, nowMs), false, until, reads, now)) return undefined;
+  if (!backlogHeld(active, backlogExempt(project), false, until, reads, now)) return undefined;
   return overLimitHeld(reads, now) ? overLimitNotice : dormantNotice;
 }
 
