@@ -9,7 +9,6 @@
 // and a successful read can only add to them, because a published receipt is
 // carried forward even when its payments are no longer in the public record.
 // The stage's own exit is always success, so the release continues.
-//
 // The fresh record comes from the injected `buildFresh` function
 // ({ fetchJson, fetchBytes, rpcCall, previous, leaderboard, now }) => record,
 // which the live source aggregation supplies (scripts/record/agg.mjs, a
@@ -18,7 +17,6 @@
 // fresh build failed. The receipts in a fresh record are counted by
 // scripts/record/receipts.mjs (loadReceipts) and merged with the previous
 // receipts, so a published receipt never disappears.
-
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -61,7 +59,10 @@ export function keepPublished(previousItems, items, page = RECEIPTS_PAGE) {
   const kept = (Array.isArray(previousItems) ? previousItems : []).filter(
     (item) => item && typeof item === "object" && typeof item.anchor === "string" && !anchors.has(item.anchor),
   );
-  return [...items, ...kept.map((item) => ({ ...item, url: `${page}#${item.anchor}` }))];
+  return [...items, ...kept].map((item) => ({
+    ...item,
+    url: `${page}#${item.anchor}`,
+  }));
 }
 
 // The previous record, read from the first source that answers with one.
