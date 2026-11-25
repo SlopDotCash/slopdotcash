@@ -232,7 +232,7 @@ export function describe(result) {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.url === pathToFileURL(process.argv[1]?? "").href) {
   const args = process.argv.slice(2);
   const outIndex = args.indexOf("--out");
   const out = outIndex >= 0 ? args[outIndex + 1] : undefined;
