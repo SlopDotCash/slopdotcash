@@ -3924,6 +3924,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0152_work_unit_source_numbers.sql",
+      "sha256": "7d00d4d179d0727473048f111dde9710f1da27c8539f349c8dbbeb6ffa478a63",
+      "models": ["formal/models/slopbot/bot_joint_journal.qnt"],
+      "candidateLines": [18, 22, 24, 30, 37, 39],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "9899cdca6be784f19ab4c30e435ca00ca917a17bdc93a1450de205aaaf2cd7e4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -10516,7 +10523,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-journal.ts",
-      "sha256": "d72d1ade9688cd6604d898f58c437fb0a28e2ed8283bf15555659536a1dca9ff",
+      "sha256": "13f8c3f7ef0ea035a77e234fde76907f1ad94198e669b1f6307c99bcdb30e694",
       "models": [
         "formal/models/slopbot/bot_joint_journal.qnt",
         "formal/models/slopbot/bot_publication_transaction.qnt",
@@ -18097,9 +18104,10 @@
     },
     {
       "path": "formal/models/slopbot/bot_joint_journal.qnt",
-      "sha256": "4605ddba77f981a49e884bfa25c240ffab182f21067cd1e31322744b9b95d693",
+      "sha256": "6082a0f3a046f6b662a439a1eb9487fa89e4ac1b10edf5e2792cd2c2e3929f49",
       "sources": [
         "migrations/0046_slopbot_work_unit_journal.sql",
+        "migrations/0152_work_unit_source_numbers.sql",
         "workers/slopbot/value-work-unit-journal.ts"
       ],
       "scenarios": [
