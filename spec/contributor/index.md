@@ -13,7 +13,7 @@ attribution records and closure eligibility remain separate from submission.
 The contributor write paths modeled here (server run, upload intent, capability
 upload, attachment, finalization, progress events, session run creation) and
 the start of work refuse while a mirrored ban holds. The mirror is set only by
-the standing service, with an increasing epoch; that it equals the
+the standing service, with an increasing epoch, that it equals the
 participation standing the [access area](../backend/access.md) owns is a composition
 obligation.
 
@@ -37,5 +37,6 @@ obligation.
 - [Private trace retries](./runEvidence.md)
 - [Contributor session exchange](./sessionExchange.md)
 - [Server-side trace run and progress events](./traceServer.md)
+- [Trace licensing consent records](./traceLicensing.md)
 - [Opened pull request record](./openedRun.md)
 - [Authenticated pull_request_opened evidence](./prOpened.md)
