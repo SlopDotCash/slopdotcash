@@ -66,6 +66,43 @@ export const ATTRIBUTION_RULES_SOURCES: readonly {
  */
 export const ATTRIBUTION_RULES_DIGEST =
   "0446736c656f090c26112c3098bcb2fc9d9bc5fea09085788bfbb31fac105e53";
+/** About one reused accepted-implementation entry in this many is also read live. */
+export const IMPLEMENTATION_MEMO_AUDIT_ONE_IN = 50;
+/** The audit sample when code changed since the memo but its rules did not. */
+export const IMPLEMENTATION_MEMO_CHANGED_CODE_AUDIT_ONE_IN = 10;
+/**
+ * Raise this whenever a change could make a saved accepted-implementation
+ * entry come out differently: how a native change digest is computed or
+ * proved, how an earlier pull request is observed (query, acceptance, shape),
+ * or what the memo keys and keeps. A raised version makes the next collection
+ * read all of that evidence live.
+ */
+export const IMPLEMENTATION_MEMO_RULES_VERSION = 1;
+/**
+ * The sources that hold those rules. A `region` names the
+ * `// implementation-memo-rules: begin <region>` and `// implementation-memo-rules:
+ * end <region>` markers that bound the rules inside a larger file.
+ */
+export const IMPLEMENTATION_MEMO_RULES_SOURCES: readonly {
+  path: string;
+  region?: string;
+}[] = [
+  { path: "scripts/accepted-implementation-memo.ts" },
+  { path: "scripts/accepted-implementation-digests.ts" },
+  { path: "scripts/pull-request-git-files.ts" },
+  { path: "scripts/value-merge-ingestion.ts", region: "public-git" },
+  { path: "scripts/generate-leaderboard.ts", region: "previous-query" },
+  { path: "scripts/generate-leaderboard.ts", region: "acceptance" },
+  { path: "scripts/generate-leaderboard.ts", region: "shape" },
+  { path: "scripts/generate-leaderboard.ts", region: "observation" },
+];
+/**
+ * Digest of IMPLEMENTATION_MEMO_RULES_SOURCES when
+ * IMPLEMENTATION_MEMO_RULES_VERSION was last reviewed. A test fails when they
+ * differ: decide whether the change needs a new version, then update this.
+ */
+export const IMPLEMENTATION_MEMO_RULES_DIGEST =
+  "e3a417a95448a7b23554c80adb9336b4db8f69d79108525fd4a431a7112beb4c";
 const MAX_MEMO_BYTES = 512 * 1024 * 1024;
 const MAX_COMMIT_LINES = 2_000_000;
 const MAX_ATTRIBUTIONS = 200_000;
@@ -498,11 +535,20 @@ export function attributionRulesDigest(
   root = resolve(dirname(new URL(import.meta.url).pathname), ".."),
   sources = ATTRIBUTION_RULES_SOURCES,
 ): string {
+  return rulesDigest(root, sources, "attribution-rules");
+}
+
+/** The same digest for any pinned rule set; `marker` names its region comments. */
+export function rulesDigest(
+  root = resolve(dirname(new URL(import.meta.url).pathname), ".."),
+  sources: readonly { path: string; region?: string }[],
+  marker: string,
+): string {
   const parts = sources.map(({ path, region }) => {
     const source = readFileSync(join(root, path), "utf8");
     if (!region) return [path, source];
-    const begin = `// attribution-rules: begin ${region}\n`;
-    const end = `// attribution-rules: end ${region}\n`;
+    const begin = `// ${marker}: begin ${region}\n`;
+    const end = `// ${marker}: end ${region}\n`;
     const start = source.indexOf(begin);
     const stop = source.indexOf(end);
     if (
@@ -511,7 +557,7 @@ export function attributionRulesDigest(
       source.indexOf(begin, start + 1) >= 0 ||
       source.indexOf(end, stop + 1) >= 0
     )
-      fail(`attribution rules region ${region} in ${path} is not marked once`);
+      fail(`${marker} region ${region} in ${path} is not marked once`);
     return [path, region, source.slice(start, stop + end.length)];
   });
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");

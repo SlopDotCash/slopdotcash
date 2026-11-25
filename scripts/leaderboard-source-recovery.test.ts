@@ -2134,6 +2134,43 @@ async function verifyCrossWindowCredit(
         before.ledger.filter((event) => event.source.id === unaffected.id),
       );
     }
+    // Audit sample: every saved entry is read again live. Matching evidence
+    // changes nothing; one differing saved entry discards them all and the
+    // evidence is read once more, so the snapshot equals a memo-less one.
+    const saved = memo.serialize(digest, GENERATED_AT);
+    const restore = (bytes: string) => {
+      const restored = ImplementationMemo.parse(
+        bytes,
+        digest,
+        new Date(GENERATED_AT),
+      );
+      restored.auditOneIn = 1;
+      return restored;
+    };
+    let discards = 0;
+    const agreeing = restore(saved);
+    const audited = await f.generate({
+      ...options,
+      implementationMemo: agreeing,
+      onImplementationMemoAudit: () => discards++,
+    });
+    expect(audited.ledger).toEqual(warm.ledger);
+    expect(agreeing.stats.audited).toBeGreaterThan(0);
+    expect(discards).toBe(0);
+    if (mode === "cross-window-submitted") {
+      const edited = JSON.parse(saved);
+      expect(edited.digests.length).toBeGreaterThan(0);
+      for (const row of edited.digests) row.digest = "e".repeat(64);
+      const disagreeing = restore(JSON.stringify(edited));
+      const recovered = await f.generate({
+        ...options,
+        implementationMemo: disagreeing,
+        onImplementationMemoAudit: () => discards++,
+      });
+      expect(discards).toBe(1);
+      expect(disagreeing.stats.auditMismatches).toBe(1);
+      expect(recovered.ledger).toEqual(cold.ledger);
+    }
   } finally {
     await f.close();
   }
