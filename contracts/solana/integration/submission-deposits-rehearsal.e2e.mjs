@@ -19,6 +19,9 @@ import { submissionFeeItem } from "../../../src/lib/submission-fee.mjs";
 import {
   initializePlan,
   RECLAIM_DELAY_SECONDS,
+  SMOKE_ITEM,
+  smokeDepositPlan,
+  smokeResolvePlan,
   status,
   vaultPlan,
 } from "../scripts/submission-deposits-plan.mjs";
@@ -27,6 +30,7 @@ import {
   ata,
   BPF_UPGRADEABLE_LOADER,
   balance,
+  base58,
   chainTime,
   context,
   deposit,
@@ -294,7 +298,7 @@ test("reclaim opens after thirty days and not an hour before", async () => {
   assert.equal(await balance(addresses.vault(agedMint)), 0n);
 });
 
-test("the Worker's reads: finalized accounts by id, and the outcome of a closed deposit from its transaction", async () => {
+test("the Worker's reads: open deposits by a filtered scan, and the outcome of a closed deposit from its transaction", async () => {
   const item = Buffer.alloc(32, 3);
   const open = await deposit({
     from: contributor,
@@ -339,42 +343,75 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
   assert.equal(count, closed.id);
   assert.equal(config.data[120], 0);
 
-  // 2. Every id up to the count, in one read. Present means open; absent means settled.
-  const ids = [];
-  for (let id = 1n; id <= count; id++) ids.push(id);
-  const records = await connection.getMultipleAccountsInfo(
-    ids.map((id) => addresses.deposit(id)),
-    "finalized",
+  // 2. Every open deposit, in one read: the program's accounts that start with the Deposit
+  // discriminator and have its size. No address is computed from the count.
+  const scanned = await connection.getProgramAccounts(programId, {
+    commitment: "finalized",
+    filters: [
+      { dataSize: 169 },
+      {
+        memcmp: {
+          offset: 0,
+          bytes: base58(discriminator("account", "Deposit")),
+        },
+      },
+    ],
+  });
+  const byId = new Map(
+    scanned.map(({ pubkey, account }) => [
+      account.data.readBigUInt64LE(8),
+      { address: pubkey, account },
+    ]),
   );
-  const present = ids.filter((_, index) => records[index] !== null);
+  // Present means open: the fresh deposit of the reclaim test and this one. The deposit
+  // recorded as `closed` is absent, which is how a reader learns it is settled.
+  const present = [...byId.keys()].sort((left, right) => Number(left - right));
   assert.deepEqual(present, [open.id - 1n, open.id]);
-  const data = records[Number(open.id) - 1].data;
+  assert.equal(byId.has(closed.id), false);
   assert.equal(
-    records[Number(open.id) - 1].owner.toBase58(),
-    programId.toBase58(),
+    await connection.getAccountInfo(closed.address, "finalized"),
+    null,
   );
-  assert.equal(data.length, 161);
+  const found = byId.get(open.id);
+  assert.equal(found.address.toBase58(), open.address.toBase58());
+  const data = found.account.data;
+  assert.equal(found.account.owner.toBase58(), programId.toBase58());
+  assert.equal(data.length, 169);
   assert.deepEqual(data.subarray(0, 8), discriminator("account", "Deposit"));
   assert.equal(data.readBigUInt64LE(8), open.id);
   assert.equal(
     new PublicKey(data.subarray(16, 48)).toBase58(),
     contributor.publicKey.toBase58(),
   );
+  assert.equal(data.readBigUInt64LE(48), open.nonce);
   assert.equal(
-    new PublicKey(data.subarray(48, 80)).toBase58(),
+    new PublicKey(data.subarray(56, 88)).toBase58(),
     USDC_MINT.toBase58(),
   );
   assert.equal(
-    new PublicKey(data.subarray(80, 112)).toBase58(),
+    new PublicKey(data.subarray(88, 120)).toBase58(),
     FEE_WALLET.toBase58(),
   );
-  assert.deepEqual(data.subarray(112, 144), item);
-  assert.equal(data.readBigUInt64LE(144), FEE);
-  const depositedAt = Number(data.readBigInt64LE(152));
+  assert.deepEqual(data.subarray(120, 152), item);
+  assert.equal(data.readBigUInt64LE(152), FEE);
+  const depositedAt = Number(data.readBigInt64LE(160));
+  // The address follows from the stored payer, nonce and bump alone.
+  assert.equal(
+    PublicKey.createProgramAddressSync(
+      [
+        Buffer.from("deposit"),
+        data.subarray(16, 48),
+        data.subarray(48, 56),
+        data.subarray(168, 169),
+      ],
+      programId,
+    ).toBase58(),
+    found.address.toBase58(),
+  );
 
   // 3. The creating transaction of the open deposit, and its block time.
   const history = await connection.getSignaturesForAddress(
-    addresses.deposit(open.id),
+    open.address,
     {},
     "finalized",
   );
@@ -399,10 +436,12 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
     new PublicKey(madeData.subarray(48, 80)).toBase58(),
     FEE_WALLET.toBase58(),
   );
+  assert.equal(madeData.readBigUInt64LE(80), open.nonce);
+  assert.equal(madeData.length, 88);
 
   // 4. A settled deposit: the newest transaction on its address says how it ended.
   const [last] = await connection.getSignaturesForAddress(
-    addresses.deposit(closed.id),
+    closed.address,
     { limit: 1 },
     "finalized",
   );
@@ -419,7 +458,9 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
     discriminator("global", "resolve"),
   );
   assert.equal(settledData[8], 1); // refunded
-  note(`finalized read of ${count} ids: open ${present.join(", ")}`);
+  assert.equal(settledData.readBigUInt64LE(9), closed.id); // the id it named
+  assert.equal(settledData.length, 17);
+  note(`finalized scan, count ${count}: open ${present.join(", ")}`);
 
   // 5. The runbook's read-back of the same finalized state.
   const read = await status(reviewed, await runtime());
@@ -436,6 +477,96 @@ test("the Worker's reads: finalized accounts by id, and the outcome of a closed 
   assert.equal(read.vault.address, addresses.vault(USDC_MINT).toBase58());
   assert.equal(read.vault.openTotal, (2n * FEE).toString());
   assert.equal(read.vault.balance, read.vault.openTotal);
+});
+
+test("the runbook's smoke test: one base unit in and back, twice at the same nonce, through the plans", async () => {
+  const smoke = {
+    ...reviewed,
+    payer: contributor.publicKey.toBase58(),
+    keptTo: FEE_WALLET.toBase58(),
+    smokeNonce: "20261125",
+  };
+  const account = ata(contributor.publicKey, USDC_MINT);
+  const held = await balance(account);
+  const vaulted = await balance(addresses.vault(USDC_MINT));
+  const kept = await balance(ata(FEE_WALLET, USDC_MINT));
+  const address = addresses.deposit(contributor.publicKey, 20261125n);
+  // Nothing to refund before the deposit, and a malformed nonce is refused.
+  await assert.rejects(
+    smokeResolvePlan(smoke, await runtime()),
+    /No open deposit at this payer and nonce/,
+  );
+  await assert.rejects(
+    smokeDepositPlan({ ...smoke, smokeNonce: "-1" }, await runtime()),
+    /smokeNonce must be a decimal string/,
+  );
+  await assert.rejects(
+    smokeResolvePlan(
+      { ...smoke, resolver: owner.publicKey.toBase58() },
+      await runtime(),
+    ),
+    /not the reviewed resolver/,
+  );
+  const ids = [];
+  for (const round of [1, 2]) {
+    const count = BigInt((await readConfig()).depositCount.toString());
+    const plan = await smokeDepositPlan(smoke, await runtime());
+    assert.equal(plan.operation, "smoke-deposit");
+    assert.equal(plan.amount, "1");
+    assert.equal(plan.deposit, address.toBase58());
+    assert.equal(plan.depositCountBefore, count.toString());
+    await signAndSend(plan, contributor);
+    assert.equal(await balance(account), held - 1n);
+    assert.equal(await balance(addresses.vault(USDC_MINT)), vaulted + 1n);
+    // A second deposit is not planned while this one is open.
+    await assert.rejects(
+      smokeDepositPlan(smoke, await runtime()),
+      /already open at this payer and nonce/,
+    );
+    const refund = await smokeResolvePlan(smoke, await runtime());
+    assert.equal(refund.operation, "smoke-resolve");
+    assert.equal(refund.depositId, (count + 1n).toString());
+    assert.equal(refund.refundTo, account.toBase58());
+    ids.push(BigInt(refund.depositId));
+    const record = await context.program.account.deposit.fetch(
+      address,
+      "finalized",
+    );
+    assert.deepEqual(Buffer.from(record.item), SMOKE_ITEM);
+    await signAndSend(refund, resolver);
+    assert.equal(
+      await connection.getAccountInfo(address, "finalized"),
+      null,
+      `round ${round}`,
+    );
+    assert.equal(await balance(account), held);
+    assert.equal(await balance(addresses.vault(USDC_MINT)), vaulted);
+  }
+  // The same address held two deposits, one after the other, with two ids.
+  assert.equal(ids[1], ids[0] + 1n);
+  assert.equal(await balance(ata(FEE_WALLET, USDC_MINT)), kept);
+  // The plan refuses to refund anything but the one-unit smoke deposit.
+  await deposit({
+    from: contributor,
+    mint: USDC_MINT,
+    amount: FEE,
+    keptTo: FEE_WALLET,
+    nonce: 20261125n,
+  });
+  const latest = await connection.getLatestBlockhash();
+  await connection.confirmTransaction(
+    {
+      signature: (await connection.getSignaturesForAddress(address))[0]
+        .signature,
+      ...latest,
+    },
+    "finalized",
+  );
+  await assert.rejects(
+    smokeResolvePlan(smoke, await runtime()),
+    /not the smoke deposit/,
+  );
+  note(`smoke test: deposits ${ids.join(" and ")} at ${address.toBase58()}`);
 });
 
 test("with the upgrade authority removed the program keeps working and cannot be initialized again", async () => {
