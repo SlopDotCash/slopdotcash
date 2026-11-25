@@ -8,13 +8,18 @@
  *
  *   1. read the program's `Config` and every open deposit account at
  *      finalized commitment; record the open deposits numbered at or above
- *      the cursor, and for each recorded deposit whose account is gone,
- *      record how the finalized transaction that closed it settled it;
+ *      the cursor, and for each recorded deposit whose account is gone or
+ *      now holds another deposit, record how the first settlement on that
+ *      address after its creation settled it;
  *   2. judge each new deposit and mark its pull request paid (`judge`);
  *   3. copy what each pull request's row says is due onto its deposit
  *      (`plan`);
  *   4. reconcile the one send in flight, then record and send the next
  *      (`reconcile`, `send`).
+ *
+ * A deposit is keyed by the id the program stored in its record, never by
+ * the record's address: the address follows from the payer and a number the
+ * payer picked, and the payer can use it again after a settlement.
  *
  * Everything is read at finalized commitment, so a pull request is marked
  * paid only by a finalized deposit; there is no earlier confirmed step. The
@@ -80,12 +85,10 @@ export async function scanSolana(
   const resolutions: FinalizedPage["resolutions"] = [];
   for (const { deposit, account } of known) {
     chain.track(deposit.depositId, account);
-    const current = open.get(account);
-    if (current) {
-      if (current.id !== deposit.depositId)
-        throw new Error("A deposit record now carries another id");
-      continue;
-    }
+    // Still open only while the address holds this very deposit. A payer
+    // can use an address again once its deposit is settled, so a record
+    // with another id there means this one is settled too.
+    if (open.get(account)?.id === deposit.depositId) continue;
     if (resolutions.length >= SOLANA_SETTLEMENTS_PER_RUN) continue;
     const settled = await chain.settlement({ account, ...deposit });
     if (settled === null) {
@@ -116,7 +119,7 @@ export async function scanSolana(
   const deposits: (DepositedEvent & { blockTime: string })[] = [];
   const accounts = new Map<number, string>();
   for (const entry of fresh) {
-    const created = await chain.created(entry.account);
+    const created = await chain.created(entry.account, snapshot.openSlot);
     deposits.push({
       kind: "deposited",
       depositId: entry.id,

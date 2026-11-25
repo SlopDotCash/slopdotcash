@@ -30,7 +30,9 @@ import {
   type SubmissionDepositsIdl,
   submissionConfigAddress,
   submissionCreation,
+  submissionDepositAddress,
   submissionDepositDiscriminator,
+  submissionDepositSize,
   submissionSettlement,
 } from "../../contracts/solana/submission-deposits";
 import { CLASSIC_TOKEN_PROGRAM } from "../../contracts/solana/token";
@@ -81,20 +83,33 @@ export interface SolanaSnapshot {
    * deposits made after `slot`, whose ids are above `depositCount`.
    */
   open: SolanaOpenDeposit[];
+  /** The finalized slot `open` was read at. */
+  openSlot: number;
 }
 
 export interface SolanaFeeChain extends ResolverChain {
   genesisHash(): Promise<string>;
   snapshot(): Promise<SolanaSnapshot>;
-  /** The finalized transaction that created a deposit's record. */
-  created(account: string): Promise<{ signature: string; slot: number }>;
   /**
-   * How a recorded deposit whose record is gone was settled, proven from the
-   * finalized transaction that closed it, or null while that transaction is
-   * not readable yet.
+   * The finalized transaction that created the deposit a record address held
+   * at `atSlot`. A payer can use an address again once its deposit is
+   * settled, so this is the newest creation on the address at or before that
+   * slot, not the first.
+   */
+  created(
+    account: string,
+    atSlot: number,
+  ): Promise<{ signature: string; slot: number }>;
+  /**
+   * How a recorded deposit whose record is gone, or now holds another
+   * deposit, was settled: the first `resolve` or `reclaim` on its address
+   * after the transaction that created it, proven from that finalized
+   * transaction. Null while that transaction is not readable yet.
    */
   settlement(row: {
     account: string;
+    /** The signature of the transaction that created this deposit. */
+    txHash: string;
     payer: string;
     token: string;
     amount: string;
@@ -123,7 +138,7 @@ export class SolanaFeeRpcError extends Error {
 /** Signatures read per page, and pages read, for one address. */
 const SIGNATURE_PAGE = 1000;
 const SIGNATURE_PAGES = 3;
-/** Newest transactions looked at for the one that closed a record. */
+/** Transactions after a deposit's creation looked at for its settlement. */
 const SETTLEMENT_CANDIDATES = 25;
 /** A legacy transaction's size limit, in bytes. */
 export const SOLANA_TRANSACTION_BYTES = 1232;
@@ -249,8 +264,8 @@ export function createSolanaFeeChain(
     const { value } = await account(address);
     if (value === null) return { address, deposit: null };
     const deposit = decodeSubmissionDeposit(accountBytes(value, programId), idl);
-    if (deposit.id !== depositId)
-      throw new Error("A Solana deposit's record names another id");
+    // The payer used the address again: this deposit's own record is closed.
+    if (deposit.id !== depositId) return { address, deposit: null };
     return { address, deposit };
   };
 
@@ -387,6 +402,20 @@ export function createSolanaFeeChain(
       };
     });
 
+  /** Every finalized transaction naming an address, newest first. */
+  const history = async (address: string) => {
+    const all: { signature: string; slot: number; failed: boolean }[] = [];
+    let before: string | undefined;
+    for (let page = 0; ; page += 1) {
+      const batch = await signatures(address, before);
+      all.push(...batch);
+      if (batch.length < SIGNATURE_PAGE) return all;
+      if (page === SIGNATURE_PAGES - 1)
+        throw new Error("A deposit record has too many transactions to read");
+      before = batch[batch.length - 1].signature;
+    }
+  };
+
   const transaction = async (signature: string) => {
     const result = await rpc("getTransaction", [
       signature,
@@ -419,6 +448,7 @@ export function createSolanaFeeChain(
             withContext: true,
             minContextSlot: slot,
             filters: [
+              { dataSize: submissionDepositSize(idl) },
               {
                 memcmp: {
                   offset: 0,
@@ -440,6 +470,13 @@ export function createSolanaFeeChain(
           accountBytes(entry.account, programId),
           idl,
         );
+        // Only the program can create an account it owns, and it creates a
+        // deposit's record only at the address of its payer and nonce.
+        if (
+          entry.pubkey !==
+          submissionDepositAddress(programId, deposit.payer, deposit.nonce)
+        )
+          throw new Error("A deposit record is not at its own address");
         if (ids.has(deposit.id))
           throw new Error("Two open deposits carry one id");
         ids.add(deposit.id);
@@ -451,44 +488,41 @@ export function createSolanaFeeChain(
         depositsPaused: config.depositsPaused,
         resolver: config.resolver,
         open: open.sort((left, right) => left.id - right.id),
+        openSlot: integer(object(found.context).slot),
       };
     },
 
-    async created(address) {
-      // Oldest first: the record's first successful transaction that is this
-      // program's `deposit` naming this record.
-      const all: { signature: string; slot: number; failed: boolean }[] = [];
-      let before: string | undefined;
-      for (let page = 0; page < SIGNATURE_PAGES; page += 1) {
-        const batch = await signatures(address, before);
-        all.push(...batch);
-        if (batch.length < SIGNATURE_PAGE) break;
-        before = batch[batch.length - 1].signature;
-        if (page === SIGNATURE_PAGES - 1)
-          throw new Error("A deposit record has too many transactions to read");
-      }
-      for (const candidate of all.reverse()) {
-        if (candidate.failed) continue;
+    async created(address, atSlot) {
+      // Newest first: the newest successful `deposit` naming this record at
+      // or before the slot the record was read at. A later one would have
+      // replaced what was read; an earlier one created a deposit that is
+      // settled.
+      for (const candidate of await history(address)) {
+        if (candidate.failed || candidate.slot > atSlot) continue;
         const tx = await transaction(candidate.signature);
         if (tx === null) continue;
         if (submissionCreation(tx, programId, address, idl))
-          return {
-            signature: candidate.signature,
-            slot: integer(tx.slot),
-          };
+          return { signature: candidate.signature, slot: integer(tx.slot) };
       }
       throw new Error("The transaction that created a deposit was not found");
     },
 
     async settlement(row) {
-      const recent = (await signatures(row.account)).slice(
-        0,
-        SETTLEMENT_CANDIDATES,
+      const all = await history(row.account);
+      const createdAt = all.findIndex(
+        (entry) => entry.signature === row.txHash,
       );
-      for (const candidate of recent) {
+      if (createdAt < 0)
+        throw new Error("A deposit's creating transaction is not in its history");
+      // Oldest first, from the transaction right after the creation: the
+      // first settlement on the address after it is this deposit's. A later
+      // one belongs to a deposit that used the address again.
+      const after = all.slice(0, createdAt).reverse();
+      for (const candidate of after.slice(0, SETTLEMENT_CANDIDATES)) {
         if (candidate.failed) continue;
         const tx = await transaction(candidate.signature);
-        if (tx === null) continue;
+        // Not readable yet: nothing after it can be taken for the first.
+        if (tx === null) return null;
         const settled = submissionSettlement(tx, programId, row.account, idl);
         if (settled === null) continue;
         // The record's own facts, proven from what the transaction did: the
@@ -513,6 +547,8 @@ export function createSolanaFeeChain(
           at: new Date(seconds * 1000).toISOString(),
         };
       }
+      if (after.length > SETTLEMENT_CANDIDATES)
+        throw new Error("A deposit record has too many transactions to read");
       return null;
     },
 

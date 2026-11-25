@@ -26,18 +26,6 @@ import {
 import { CLASSIC_TOKEN_PROGRAM } from "../../contracts/solana/token";
 import { decodeBase58Bytes, encodeBase58Bytes } from "../../src/lib/base58";
 
-/** The committed IDL with the payer-chosen `nonce` on `deposit`. */
-export function nonceIdl(
-  idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
-): SubmissionDepositsIdl {
-  const copy = structuredClone(idl) as SubmissionDepositsIdl;
-  const deposit = copy.instructions.find((entry) => entry.name === "deposit");
-  if (!deposit) throw new Error("The IDL has no deposit instruction");
-  if (!deposit.args.some((argument) => argument.name === "nonce"))
-    deposit.args.push({ name: "nonce", type: "u64" });
-  return copy;
-}
-
 const u64 = (value: bigint) => {
   const bytes = new Uint8Array(8);
   new DataView(bytes.buffer).setBigUint64(0, value, true);
@@ -126,7 +114,7 @@ export class FakeSolana {
   readonly wallet = new Map<string, { wire: Uint8Array; failed: boolean }>();
   private nonce = 0n;
 
-  constructor(readonly idl: SubmissionDepositsIdl = nonceIdl()) {
+  constructor(readonly idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL) {
     this.tokenAccount(this.feeWallet, this.mint);
     this.accounts.set(submissionVaultAddress(this.programId, this.mint), {
       owner: CLASSIC_TOKEN_PROGRAM,
@@ -241,6 +229,8 @@ export class FakeSolana {
     keptTo?: string;
     /** A token account for the payer; false leaves the payer without one. */
     tokenAccount?: boolean;
+    /** The payer's nonce; the same one names the same record address. */
+    nonce?: bigint;
   }) {
     const mint = input.mint ?? this.mint;
     const amount = input.amount ?? 2_000_000n;
@@ -251,17 +241,16 @@ export class FakeSolana {
     this.time += 1;
     const id = this.count;
     this.nonce += 1n;
-    const account = submissionDepositAddress(
-      this.programId,
-      input.payer,
-      this.nonce,
-    );
+    const nonce = input.nonce ?? this.nonce;
+    const account = submissionDepositAddress(this.programId, input.payer, nonce);
+    if (this.accounts.has(account)) throw new Error("account already in use");
     if (input.tokenAccount !== false && !this.accounts.has(solanaAssociatedTokenAddress(mint, input.payer)))
       this.tokenAccount(input.payer, mint);
     this.accounts.set(account, {
       owner: this.programId,
       data: this.accountData("Deposit", {
         id: u64(BigInt(id)),
+        nonce: u64(nonce),
         payer: solanaPublicKeyBytes(input.payer),
         mint: solanaPublicKeyBytes(mint),
         kept_to: solanaPublicKeyBytes(keptTo),
@@ -579,17 +568,25 @@ export class FakeSolana {
       case "getProgramAccounts": {
         const options = params[1] as {
           minContextSlot: number;
-          filters: { memcmp: { offset: number; bytes: string } }[];
+          filters: {
+            dataSize?: number;
+            memcmp?: { offset: number; bytes: string };
+          }[];
         };
         if (options.minContextSlot > this.slot) throw new Error("behind");
-        const want = decodeBase58Bytes(options.filters[0].memcmp.bytes);
         return {
           context,
           value: [...this.accounts]
             .filter(
               ([, account]) =>
                 account.owner === params[0] &&
-                want.every((byte, index) => account.data[index] === byte),
+                options.filters.every((filter) =>
+                  filter.memcmp
+                    ? decodeBase58Bytes(filter.memcmp.bytes).every(
+                        (byte, index) => account.data[index] === byte,
+                      )
+                    : account.data.length === filter.dataSize,
+                ),
             )
             .map(([pubkey]) => ({ pubkey, account: this.info(pubkey) })),
         };

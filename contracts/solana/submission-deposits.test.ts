@@ -2,17 +2,15 @@
 // the IDL, and a deposit's record is addressed by its payer and nonce.
 import { expect, test } from "bun:test";
 import { bytesToHex } from "../../src/lib/byte-encoding";
-import { fakeAddress, nonceIdl } from "../../workers/submission-fee/solana-fake";
+import { fakeAddress } from "../../workers/submission-fee/solana-fake";
 import { solanaAssociatedTokenAddress, solanaBase58 } from "./adapter";
 import {
   decodeSubmissionConfig,
   decodeSubmissionDeposit,
   depositInstruction,
-  depositTakesNonce,
   reclaimInstruction,
   resolveInstruction,
   SUBMISSION_DEPOSITS_IDL,
-  type SubmissionDepositsIdl,
   submissionConfigAddress,
   submissionDepositAddress,
   submissionLedgerAddress,
@@ -25,16 +23,7 @@ const MINT = fakeAddress(201);
 const PAYER = fakeAddress(11);
 const KEPT = fakeAddress(202);
 const ITEM = `0x${"ab".repeat(32)}`;
-const idl = nonceIdl();
-/** The interface before the payer-chosen nonce. */
-const withoutNonce = (() => {
-  const copy = structuredClone(idl) as SubmissionDepositsIdl;
-  const deposit = copy.instructions.find((entry) => entry.name === "deposit");
-  if (deposit)
-    deposit.args = deposit.args.filter((argument) => argument.name !== "nonce");
-  return copy;
-})();
-
+const idl = SUBMISSION_DEPOSITS_IDL;
 const u64 = (value: bigint) => {
   const bytes = new Uint8Array(8);
   new DataView(bytes.buffer).setBigUint64(0, value, true);
@@ -93,28 +82,6 @@ test("deposit carries the item, the exact amount, the kept wallet and the nonce,
     key: CLASSIC_TOKEN_PROGRAM,
     write: false,
   });
-});
-
-test("nothing is built for a program whose deposit takes no nonce", () => {
-  expect(depositTakesNonce(idl)).toBe(true);
-  expect(depositTakesNonce(withoutNonce)).toBe(false);
-  expect(() =>
-    depositInstruction(
-      {
-        programId: PROGRAM,
-        payer: PAYER,
-        mint: MINT,
-        source: solanaAssociatedTokenAddress(MINT, PAYER),
-        item: ITEM,
-        amount: 1n,
-        keptTo: KEPT,
-        nonce: 1n,
-      },
-      withoutNonce,
-    ),
-  ).toThrow("no payer-chosen nonce");
-  // The committed interface is read as it stands, whichever scheme it has.
-  expect(typeof depositTakesNonce(SUBMISSION_DEPOSITS_IDL)).toBe("boolean");
 });
 
 test("resolve never takes a destination: a refund goes to the payer's associated account, a kept fee to the kept wallet's", () => {

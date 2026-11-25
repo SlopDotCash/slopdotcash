@@ -12,6 +12,7 @@ import {
 } from "../../contracts/solana/adapter";
 import {
   resolveInstruction,
+  SUBMISSION_DEPOSITS_IDL,
   submissionDepositAddress,
 } from "../../contracts/solana/submission-deposits";
 import { message as legacyMessage } from "../../contracts/solana/transactions";
@@ -29,7 +30,7 @@ import {
   SOLANA_MAX_BATCH,
   SOLANA_TRANSACTION_BYTES,
 } from "./solana";
-import { FakeSolana, fakeAddress, nonceIdl } from "./solana-fake";
+import { FakeSolana, fakeAddress } from "./solana-fake";
 import type { SubmissionFeeD1Database } from "./store";
 
 const ITEMS = `CREATE TABLE IF NOT EXISTS submission_fee_items (
@@ -55,7 +56,7 @@ const RESOLVER = solanaBase58(
 );
 const PAYER = fakeAddress(11);
 const OTHER = fakeAddress(12);
-const idl = nonceIdl();
+const idl = SUBMISSION_DEPOSITS_IDL;
 
 function setup(mode: "dry_run" | "live" = "live") {
   const { db, sqlite } = sqliteD1();
@@ -615,5 +616,85 @@ describe("the resolve transaction", () => {
       ),
     ]);
     expect([...wire.slice(65)]).toEqual([...expected]);
+  });
+});
+
+describe("a record address used again", () => {
+  test("each deposit keeps its own id, creating transaction and outcome", async () => {
+    const t = setup();
+    t.ask(7);
+    t.ask(8);
+    const first = t.pay(7, { nonce: 5n });
+    await t.ledger();
+    t.decide(7, "refund_due");
+    await t.ledger();
+    const refund = t.sends()[0].tx_id as string;
+    t.chain.land(refund);
+    // Before the Worker runs again the payer deposits with the same nonce:
+    // the same address now holds deposit 2.
+    const second = t.pay(8, { nonce: 5n });
+    expect(second.account).toBe(first.account);
+    expect(second.id).toBe(2);
+    const result = await t.ledger();
+    expect(result).toMatchObject({ recorded: 1, resolved: 1, paid: 1 });
+    expect(t.deposit(1)).toMatchObject({
+      state: "refunded",
+      tx_hash: first.signature,
+      resolve_tx: refund,
+      deposit_account: first.account,
+    });
+    expect(t.deposit(2)).toMatchObject({
+      state: "open",
+      tx_hash: second.signature,
+      deposit_account: first.account,
+      accepted: 1,
+    });
+    expect(t.item(7).outcome).toBe("refunded");
+    expect(t.item(8)).toMatchObject({ paid_deposit_id: 2, outcome: null });
+    // The second deposit is kept. Its outcome is the first settlement after
+    // its own creation, not the earlier refund on the same address.
+    t.decide(8, "kept_due");
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    const kept = t.sends()[1].tx_id as string;
+    expect(t.sends()[1].deposits).toBe('[{"id":2,"refund":false}]');
+    t.chain.land(kept);
+    // And the address is used a third time before the next run.
+    t.ask(9);
+    const third = t.pay(9, { nonce: 5n });
+    expect(third.account).toBe(first.account);
+    await t.ledger();
+    expect(t.deposit(2)).toMatchObject({ state: "kept", resolve_tx: kept });
+    expect(t.deposit(1)).toMatchObject({ state: "refunded", resolve_tx: refund });
+    expect(t.deposit(3)).toMatchObject({
+      state: "open",
+      tx_hash: third.signature,
+    });
+    expect(t.item(8).outcome).toBe("kept");
+    expect(
+      t.chain.balance(
+        solanaAssociatedTokenAddress(t.chain.mint, t.chain.feeWallet),
+      ),
+    ).toBe(2_000_000n);
+  });
+
+  test("a due deposit whose address now holds another deposit is not sent for", async () => {
+    const t = setup();
+    t.ask(7);
+    t.ask(8);
+    const first = t.pay(7, { nonce: 5n });
+    await t.ledger();
+    // The payer reclaims by hand and deposits again with the same nonce
+    // while the first deposit's refund is due.
+    t.decide(7, "refund_due");
+    const reclaimed = t.chain.reclaim(first.account);
+    t.pay(8, { nonce: 5n });
+    const result = await t.ledger();
+    expect(result).toMatchObject({ resolved: 1, send: "none" });
+    expect(t.deposit(1)).toMatchObject({
+      state: "reclaimed",
+      resolve_tx: reclaimed,
+    });
+    expect(t.deposit(2)).toMatchObject({ state: "open" });
+    expect(t.sends()).toEqual([]);
   });
 });

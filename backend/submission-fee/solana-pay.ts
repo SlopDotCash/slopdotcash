@@ -347,14 +347,14 @@ export async function handleSolanaFeePay(
     // first, as the Worker recorded it with its record's address.
     const recorded = await deps.db
       .prepare(
-        `SELECT deposit_account, token FROM submission_fee_deposits
+        `SELECT deposit_id, deposit_account, token FROM submission_fee_deposits
           WHERE network = ? AND item = ? AND payer = ?
             AND deposit_account IS NOT NULL
             AND (? = 1 OR state IN ('open', 'refund_due', 'kept_due'))
           ORDER BY deposit_id LIMIT 20`,
       )
       .bind(deployment.network, row.item, wallet, checking ? 1 : 0)
-      .all<{ deposit_account: string; token: string }>();
+      .all<{ deposit_id: number; deposit_account: string; token: string }>();
     if (step === "reclaim-check") {
       const named = recorded.results.find(
         (entry) => entry.deposit_account === body.deposit,
@@ -391,7 +391,14 @@ export async function handleSolanaFeePay(
       // Already settled: its record is closed.
       if (bytes === null) continue;
       const record = decodeSubmissionDeposit(bytes, deployment.idl);
-      if (record.payer !== wallet || record.mint !== entry.token) continue;
+      // The address may hold a later deposit of the same payer and nonce;
+      // only the recorded deposit itself is offered.
+      if (
+        record.id !== entry.deposit_id ||
+        record.payer !== wallet ||
+        record.mint !== entry.token
+      )
+        continue;
       const from = record.depositedAt + delay;
       if (from * 1000 > deps.now().getTime()) {
         earliest = earliest === null ? from : Math.min(earliest, from);

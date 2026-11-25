@@ -70,6 +70,7 @@
     "src/lib/owner-commitment-actions.ts",
     "src/lib/monthly-release-actions.ts",
     "src/lib/solana-vault-actions.ts",
+    "src/lib/solana-fee-deposit.ts",
     "src/lib/project-api.ts",
     "src/lib/evm-fee-deposit.ts",
     "src/lib/submission-fee-page.ts",

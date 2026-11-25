@@ -15,8 +15,9 @@
  * deposit is the program address of `["deposit", payer, nonce]`, where the
  * payer picks `nonce` (an unsigned 64-bit number, little-endian) and passes
  * it to `deposit`. The program still numbers deposits 1, 2, 3 in its `Config`
- * and stores that id in the record. A program whose `deposit` takes no
- * `nonce` predates that scheme; `depositInstruction` refuses to build for it.
+ * and stores that id in the record, with the nonce. An address is not a
+ * key: once a deposit is settled its record is closed and the same payer
+ * and nonce can make a new deposit at the same address, with a new id.
  */
 
 import { decodeBase58Bytes, encodeBase58Bytes } from "../../src/lib/base58";
@@ -108,15 +109,6 @@ function instruction(idl: SubmissionDepositsIdl, name: string): IdlInstruction {
   if (!found || found.discriminator.length !== 8)
     throw new Error(`The IDL has no ${name} instruction`);
   return found;
-}
-
-/** Whether this program's `deposit` takes the payer-chosen `nonce`. */
-export function depositTakesNonce(
-  idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
-): boolean {
-  return instruction(idl, "deposit").args.some(
-    (argument) => argument.name === "nonce" && argument.type === "u64",
-  );
 }
 
 function u64(value: bigint, name: string): Uint8Array {
@@ -232,6 +224,8 @@ export interface SubmissionDeposit {
   amount: string;
   /** The cluster clock when the deposit was made, in seconds. */
   depositedAt: number;
+  /** The payer-chosen number in the record's address. */
+  nonce: bigint;
 }
 
 function reader(bytes: Uint8Array, shape: Layout) {
@@ -277,6 +271,13 @@ function reader(bytes: Uint8Array, shape: Layout) {
   };
 }
 
+/** The size in bytes of every `Deposit` account, for an account filter. */
+export function submissionDepositSize(
+  idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
+): number {
+  return layout(idl, "Deposit").size;
+}
+
 /** The first eight bytes of every `Deposit` account, for an account filter. */
 export function submissionDepositDiscriminator(
   idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
@@ -314,6 +315,7 @@ export function decodeSubmissionDeposit(
     item: read.bytes32("item"),
     amount: amount.toString(),
     depositedAt: read.safeI64("deposited_at"),
+    nonce: read.u64("nonce"),
   };
 }
 
@@ -335,10 +337,6 @@ export function depositInstruction(
   },
   idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
 ): Instruction {
-  if (!depositTakesNonce(idl))
-    throw new Error(
-      "This deposit program's interface has no payer-chosen nonce; nothing is built for it",
-    );
   if (input.amount <= 0n) throw new TypeError("amount must be above zero");
   return build(
     idl,

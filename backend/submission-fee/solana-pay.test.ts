@@ -8,7 +8,10 @@ import {
   solanaBase58,
   solanaBase64Bytes,
 } from "../../contracts/solana/adapter";
-import { submissionDepositAddress } from "../../contracts/solana/submission-deposits";
+import {
+  SUBMISSION_DEPOSITS_IDL,
+  submissionDepositAddress,
+} from "../../contracts/solana/submission-deposits";
 import {
   solanaFeeMessage,
   solanaReclaimMessage,
@@ -29,7 +32,6 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   FakeSolana,
   fakeAddress,
-  nonceIdl,
 } from "../../workers/submission-fee/solana-fake";
 import { handleSubmissionFeeApi } from "./handler";
 
@@ -38,7 +40,7 @@ const REPOSITORY = "4242";
 const PULL = 7;
 const ITEM = submissionFeeItem(REPOSITORY, PULL);
 const NETWORK = "solana-mainnet";
-const idl = nonceIdl();
+const idl = SUBMISSION_DEPOSITS_IDL;
 const seed = Uint8Array.from({ length: 32 }, () => 3);
 const WALLET = solanaBase58(ed25519.getPublicKey(seed));
 const realFetch = globalThis.fetch;
