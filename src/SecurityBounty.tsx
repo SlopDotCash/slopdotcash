@@ -112,6 +112,7 @@ import {
   reportDepositStatusText,
 } from "./lib/report-deposit-page";
 import { formatAssetSymbol, type RewardAsset } from "./lib/reward-asset.mjs";
+import { advisoryGithubLine } from "./lib/security-advisory-state";
 import {
   formatSecurityAmount,
   isFullAwardSplit,
@@ -1287,7 +1288,13 @@ type SecurityCase = {
     ownerRequest: Record<string, unknown> | null;
   } | null;
   paymentDeadline: string | null;
-  advisory?: { repository: string; ghsa: string; url: string } | null;
+  advisory?: {
+    repository: string;
+    ghsa: string;
+    url: string;
+    /** GitHub's last listed state; null when Slop has not read it. */
+    githubState?: string | null;
+  } | null;
   receiptState?: string;
   remediationState?: string;
   disclosureState?: string;
@@ -3990,6 +3997,11 @@ function CaseDetail({
   const activeTriagers = (record.triagers ?? []).filter(
     (entry) => entry.revokedAt === null,
   );
+  const githubLine = advisoryGithubLine({
+    githubState: record.advisory?.githubState,
+    receiptState: record.receiptState,
+    maintainer: record.viewerRoles.includes("security-maintainer"),
+  });
   // Disclosure is shown once a fix exists or a decision was recorded.
   const disclosureRelevant =
     ["resolved", "mitigation-verified"].includes(
@@ -4075,6 +4087,19 @@ function CaseDetail({
             </>
           ) : null}
         </Fact>
+        {record.advisory && githubLine ? (
+          <Fact term="On GitHub">
+            {githubLine.label}
+            {githubLine.closeOnGithub ? (
+              <>
+                {". Slop does not close it there. "}
+                <ExternalLinkAnchor href={record.advisory.url}>
+                  Close {record.advisory.ghsa} on GitHub
+                </ExternalLinkAnchor>
+              </>
+            ) : null}
+          </Fact>
+        ) : null}
         {record.receiptState ? (
           <Fact term="Owner response">
             <StatusBadge tone={RECEIPT_TONES[record.receiptState] ?? "neutral"}>

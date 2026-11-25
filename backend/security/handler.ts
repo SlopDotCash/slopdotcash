@@ -296,11 +296,6 @@ function frozenTerms(row: CaseRow): FrozenTerms | null {
   return row.terms === null ? null : (JSON.parse(row.terms) as FrozenTerms);
 }
 
-function advisoryUrl(row: CaseRow): string | null {
-  if (row.advisory_ghsa === null) return null;
-  return `https://github.com/${row.advisory_repository}/security/advisories/${row.advisory_ghsa}`;
-}
-
 const OPEN_RECEIPT = ["received", "needs-information", "triaging"];
 
 /**
@@ -546,6 +541,8 @@ type CaseContext = {
   reservation: ReservationRow | null;
   intake: Awaited<ReturnType<typeof storedIntakeViewForCase>>;
   forwarded: { repository: string; advisory_ghsa: string } | null;
+  /** GitHub's last listed state of the case's advisory, when known. */
+  advisoryState: string | null;
   /** The report's deposit, shown to its reporter only. */
   deposit: ReportDepositView | null;
 };
@@ -569,6 +566,7 @@ async function caseContexts(
       reservation: null,
       intake: null,
       forwarded: null,
+      advisoryState: null,
       deposit: null,
     });
   const ids = rows.map((row) => row.id);
@@ -604,6 +602,27 @@ async function caseContexts(
       const context = contexts.get(row.case_id);
       if (context) context.forwarded = row;
     }
+  }
+  const identities = new Map<string, { repository: string; ghsa: string }>();
+  for (const row of rows) {
+    const forwarded = contexts.get(row.id)?.forwarded ?? null;
+    if (row.advisory_ghsa !== null)
+      identities.set(row.id, {
+        repository: row.advisory_repository,
+        ghsa: row.advisory_ghsa,
+      });
+    else if (forwarded)
+      identities.set(row.id, {
+        repository: forwarded.repository,
+        ghsa: forwarded.advisory_ghsa,
+      });
+  }
+  const states = await advisoryStates(deps, [...identities.values()]);
+  for (const [caseId, identity] of identities) {
+    const context = contexts.get(caseId);
+    if (context)
+      context.advisoryState =
+        states.get(`${identity.repository}/${identity.ghsa}`) ?? null;
   }
   for (const [caseId, context] of contexts) {
     context.settlement = settlements.get(caseId) ?? null;
@@ -793,21 +812,30 @@ async function caseView(
             )
             .bind(row.id)
             .first<{ repository: string; advisory_ghsa: string }>();
+  const advisoryIdentity =
+    row.advisory_ghsa === null
+      ? forwarded
+        ? { repository: forwarded.repository, ghsa: forwarded.advisory_ghsa }
+        : null
+      : { repository: row.advisory_repository, ghsa: row.advisory_ghsa };
+  const githubState =
+    advisoryIdentity === null
+      ? null
+      : preloaded
+        ? preloaded.advisoryState
+        : ((await advisoryStates(deps, [advisoryIdentity])).get(
+            `${advisoryIdentity.repository}/${advisoryIdentity.ghsa}`,
+          ) ?? null);
   const shared = {
     ...base,
     advisory:
-      row.advisory_ghsa === null
-        ? forwarded
-          ? {
-              repository: forwarded.repository,
-              ghsa: forwarded.advisory_ghsa,
-              url: `https://github.com/${forwarded.repository}/security/advisories/${forwarded.advisory_ghsa}`,
-            }
-          : null
+      advisoryIdentity === null
+        ? null
         : {
-            repository: row.advisory_repository,
-            ghsa: row.advisory_ghsa,
-            url: advisoryUrl(row),
+            ...advisoryIdentity,
+            url: `https://github.com/${advisoryIdentity.repository}/security/advisories/${advisoryIdentity.ghsa}`,
+            // GitHub's last listed state; null when Slop has not read it.
+            githubState,
           },
     intake: preloaded
       ? preloaded.intake
@@ -1383,6 +1411,71 @@ async function rejectUnconfirmedClaims(
   }
 }
 
+/** The advisory states GitHub reports; any other value is not kept. */
+const ADVISORY_STATES = new Set(["triage", "draft", "published", "closed"]);
+
+/**
+ * Keeps the state GitHub reported for each listed private report, so a case
+ * can show whether its advisory is still open on GitHub (operator decision,
+ * 25 November 2026; PRD section 8). Display only. A row is written only when
+ * the state is new or changed. A failure here never fails the import.
+ */
+async function recordAdvisoryStates(
+  deps: SecurityApiDependencies,
+  repository: string,
+  reports: readonly GithubPrivateReport[],
+): Promise<void> {
+  const at = deps.now().toISOString();
+  const known = reports.filter((report) => ADVISORY_STATES.has(report.state));
+  try {
+    for (const part of chunked(known)) {
+      await deps.db.batch(
+        part.map((report) =>
+          deps.db
+            .prepare(
+              "INSERT INTO security_advisory_states (repository, ghsa, state, changed_at) VALUES (?, ?, ?, ?) ON CONFLICT(repository, ghsa) DO UPDATE SET state = excluded.state, changed_at = excluded.changed_at WHERE security_advisory_states.state <> excluded.state",
+            )
+            .bind(repository, report.ghsa, report.state, at),
+        ),
+      );
+    }
+  } catch {
+    // Never log a repository, an advisory or report content.
+    console.error("security advisory states: one write failed");
+  }
+}
+
+/**
+ * The stored GitHub state of each advisory, keyed `repository/ghsa`. An
+ * advisory GitHub has not listed to Slop has no entry.
+ */
+async function advisoryStates(
+  deps: SecurityApiDependencies,
+  advisories: readonly { repository: string; ghsa: string }[],
+): Promise<Map<string, string>> {
+  const states = new Map<string, string>();
+  const wanted = new Set(
+    advisories.map((entry) => `${entry.repository}/${entry.ghsa}`),
+  );
+  const ghsas = [...new Set(advisories.map((entry) => entry.ghsa))];
+  for (const part of chunked(ghsas)) {
+    const rows =
+      (
+        await deps.db
+          .prepare(
+            `SELECT repository, ghsa, state FROM security_advisory_states WHERE ghsa IN (${part.map(() => "?").join(",")})`,
+          )
+          .bind(...part)
+          .all<{ repository: string; ghsa: string; state: string }>()
+      ).results ?? [];
+    for (const row of rows) {
+      const key = `${row.repository}/${row.ghsa}`;
+      if (wanted.has(key)) states.set(key, row.state);
+    }
+  }
+  return states;
+}
+
 /**
  * Reconciles a program with GitHub: records the private reports that have no
  * case yet and settles older unconfirmed links. `own` limits it to the
@@ -1408,6 +1501,9 @@ async function reconcileProgram(
           (report) => report.author.githubId === actor.githubId,
         )
       : list.reports;
+  // The whole list is what GitHub holds, so only that scope records states.
+  if (scope === "all")
+    await recordAdvisoryStates(deps, terms.intake.repository, list.reports);
   const received = await recordPrivateReports(deps, {
     projectId,
     terms,
