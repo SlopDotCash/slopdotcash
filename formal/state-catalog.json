@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "df9221ef7171ecf2d8e07ea2507a67c4d2af17e1f98a87a73f3ac5cbffe7037c",
+  "inventorySha256": "ce190e137c0c9b9d4e59830931d18a23d1c0b5a2a35eac0eaa3f256f46df107f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -474,7 +474,7 @@
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 167,
+      "line": 170,
       "name": "AttemptState",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -484,7 +484,7 @@
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 175,
+      "line": 178,
       "name": "reason",
       "kind": "string-union",
       "values": ["daily-limit", "none-eligible", "not-started"],
