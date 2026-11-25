@@ -186,13 +186,14 @@ gate is unchanged.
 ```quint
 import poolListing as PL from "../frontend/poolListing"
 import intakeCap as IC from "../backend/intakeCap"
+import backlogRule as BR from "../backend/backlogRule"
 type MonthListing = ListedThisMonth | NotListedThisMonth
 type IntakeListing = IntakeOpen | IntakePaused | IntakeUnread
 pure def monthListingOf(facts: PL::ListingFacts): MonthListing =
   if (PL::listedThisMonth(facts)) ListedThisMonth else NotListedThisMonth
-pure def intakeListingOf(countsRead: bool, cap: int, projectActive: bool, now: int, counts: List[IC::StoredCount]): IntakeListing =
+pure def intakeListingOf(countsRead: bool, cap: int, projectActive: bool, now: int, counts: List[IC::StoredCount], backlogExempt: bool, catchUpUntil: int, backlogReads: List[BR::BacklogRead]): IntakeListing =
   if (not(countsRead)) IntakeUnread
-  else if (IC::paused({ ...IC::initial, cap: cap, active: projectActive, now: now, counts: counts })) IntakePaused
+  else if (IC::paused({ ...IC::initial, cap: cap, active: projectActive, now: now, counts: counts }) or PL::backlogHeld(projectActive, backlogExempt, catchUpUntil > now, catchUpUntil, backlogReads, now)) IntakePaused
   else IntakeOpen
 pure def lawNotListedProjectNotDiscovered(known: ArtifactFacts): bool =
   known.monthListing == NotListedThisMonth implies not(discoverable(known))
@@ -203,11 +204,13 @@ pure def lawPausedAtCapNotDiscovered(known: ArtifactFacts): bool =
 pure def lawFailedCountReadPausesNothing(known: ArtifactFacts): bool =
   discoverable({ ...known, intake: IntakeUnread }) iff discoverable({ ...known, intake: IntakeOpen })
 pure def lawUnreadCountsPauseNothing(cap: int, projectActive: bool, now: int, counts: List[IC::StoredCount]): bool =
-  intakeListingOf(false, cap, projectActive, now, counts) == IntakeUnread
-  and intakeListingOf(true, cap, projectActive, now, List()) == IntakeOpen
+  intakeListingOf(false, cap, projectActive, now, counts, false, 0, List()) == IntakeUnread
+  and intakeListingOf(true, cap, projectActive, now, List(), false, 0, List()) == IntakeOpen
 pure def lawRecentCountAtCapPauses(cap: int, now: int, counts: List[IC::StoredCount]): bool =
   (cap >= IC::minCap and counts.some(c => IC::countAtCap(cap, c, now)))
-    implies intakeListingOf(true, cap, true, now, counts) == IntakePaused
+    implies intakeListingOf(true, cap, true, now, counts, false, 0, List()) == IntakePaused
+pure def lawOutOfRotationPauses(cap: int): bool =
+  intakeListingOf(true, cap, true, BR::startsAtHours, List(), false, 0, List({ read: true, waiting: 50, lastMergedAt: 0, observedAt: BR::startsAtHours })) == IntakePaused
 pure def lawListingGatesServeByDirectLink(known: ArtifactFacts, route: ArtifactRouteKind): bool =
   route != DiscoveryRoute implies
     artifactAnswer(route, { ...known, monthListing: NotListedThisMonth, intake: IntakePaused })
