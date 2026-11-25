@@ -32,6 +32,7 @@ import {
   SUBMISSION_FEE_KEEP_LABEL,
   SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
   SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
   type SubmissionFeeNetwork,
   type SubmissionFeeRate,
   submissionFeeItem,
@@ -118,7 +119,21 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
 const NETWORK_NAMES: Readonly<Record<string, string>> = {
   "base-mainnet": "Base",
   "robinhood-mainnet": "Robinhood Chain",
+  "solana-mainnet": "Solana",
 };
+
+/**
+ * Whether the pay page takes USDC on Solana (operator decision, 25 November
+ * 2026): the deposit program's id is published and Solana is switched on.
+ * The table below lists the EVM contracts only; a Solana deposit is one
+ * instruction the pay page builds, so the comment points there.
+ */
+export function solanaFeeOffered(
+  contracts: Readonly<Record<string, string | null>> = feeContracts.current,
+  switchedOn: boolean = SUBMISSION_FEE_SOLANA_SWITCHED_ON,
+): boolean {
+  return switchedOn && typeof contracts["solana-mainnet"] === "string";
+}
 
 /**
  * Every way to pay a fee now, from the same rule the submission-fee Worker
@@ -213,6 +228,8 @@ type CommentFacts = {
   item: string;
   stableMinor: string;
   ways: readonly FeeWay[];
+  /** Whether the pay page takes USDC on Solana; absent means the published state. */
+  solana?: boolean;
 };
 
 /** The stablecoins on offer, as "USDC or USDG". */
@@ -248,6 +265,11 @@ export function feeNeededComment(facts: CommentFacts): string {
     ].join("\n"),
     "**How to pay**",
     `Pay page: https://slop.cash/fee/${facts.owner}/${facts.repo}/${facts.number}`,
+    ...((facts.solana ?? solanaFeeOffered())
+      ? [
+          `The pay page also takes ${amount} USDC on Solana. A refund there goes to the paying wallet's own USDC account, and a kept deposit goes to Slop.`,
+        ]
+      : []),
     "Or use the deposit contract directly: approve the contract for the amount on the token, then call `deposit(item, token, amount, keptTo)` with one row of this table. Any wallet can pay, and a refund goes to the wallet that paid.",
     `\`item\`: \`${facts.item}\``,
     [
@@ -279,7 +301,9 @@ export function feePaidComment(
   const where =
     facts.paidDepositId !== null && network
       ? `: deposit ${facts.paidDepositId} on ${network.networkName}`
-      : "";
+      : facts.paidDepositId !== null && facts.paidNetwork === "solana-mainnet"
+        ? `: deposit ${facts.paidDepositId} on Solana`
+        : "";
   const outcome =
     facts.outcome === null
       ? []

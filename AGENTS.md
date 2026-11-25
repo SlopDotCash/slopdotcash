@@ -129,6 +129,13 @@ alias only.
     the same key resolves the deposit on a private security report (PRD
     section 8, "Report deposit") with the same two outcomes, a refund to the
     payer or "kept" to the burn address, for the row the security API marked.
+    Operator decision of 25 November 2026: a separate Solana resolver key
+    (`SUBMISSION_FEE_SOLANA_RESOLVER_SEED`) may call only `resolve` on the
+    `slop-submission-deposits` program, with the same two outcomes, a refund
+    to the payer's associated token account or "kept" to the fee wallet's;
+    it holds no tokens, pays only its transactions' network fee, and is
+    never the program's owner. `SUBMISSION_FEE_SOLANA_MODE` is `off`, the
+    program is not deployed and no such key exists yet.
     Operator decision of 23 November 2026: it also resolves standing deposits
     in a second deployment of the same contract on Robinhood Chain (PRD
     section 6, FEE-08), with the same two outcomes, for the row Slopbot marked.

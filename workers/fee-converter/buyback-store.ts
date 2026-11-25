@@ -104,8 +104,15 @@ export class D1BuybackStore implements BuybackStore {
    * finalized receipt proved the transfer of the deposit's exact amount to
    * that destination, and dates it by that block. A refunded or reclaimed
    * deposit is not income. Kept SLOP goes to the burn address, never to the
-   * fee wallet, so it matches no row here. The contract exists only on EVM
-   * networks.
+   * fee wallet, so it matches no row here.
+   *
+   * On Solana (operator decision, 25 November 2026) the deposit program
+   * sends a kept USDC deposit to the fee wallet's associated token account.
+   * The Worker records it as `kept` only after the finalized transaction
+   * that closed the deposit's record showed the program's transfer of the
+   * exact amount and that account, owned by the fee wallet, rising by it.
+   * A row's `token` is the mint and its `kept_to` the wallet; both are
+   * base58 and are compared exactly.
    */
   private async keptSubmissionFees(
     network: Network,
@@ -114,15 +121,18 @@ export class D1BuybackStore implements BuybackStore {
     since: string,
   ) {
     const definition = NETWORK_DEFINITIONS[network];
-    if (definition.family !== "evm" || definition.escrowNetworks.length === 0)
-      return 0n;
+    if (definition.escrowNetworks.length === 0) return 0n;
+    const same =
+      definition.family === "evm"
+        ? "lower(token) = lower(?) AND lower(kept_to) = lower(?)"
+        : "token = ? AND kept_to = ?";
     const { results } = await this.db
       .prepare(
         `SELECT amount FROM submission_fee_deposits
           WHERE network IN (${definition.escrowNetworks.map(() => "?").join(", ")})
             AND state = 'kept' AND accepted = 1 AND finalized_at IS NOT NULL
             AND resolve_tx IS NOT NULL AND resolved_at >= ?
-            AND lower(token) = lower(?) AND lower(kept_to) = lower(?)`,
+            AND ${same}`,
       )
       .bind(...definition.escrowNetworks, since, token, feeWallet)
       .all<{ amount: string | null }>();

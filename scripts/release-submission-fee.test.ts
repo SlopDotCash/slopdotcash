@@ -195,3 +195,113 @@ test("keyed endpoints come from the release map by network, and a bad map is ref
     expect(thrown).not.toContain("secret-key");
   }
 });
+
+const SOLANA_PROGRAM = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY";
+const withSolana = {
+  contracts: { ...deployed.contracts, "solana-mainnet": SOLANA_PROGRAM },
+  startBlocks: { ...deployed.startBlocks, "solana-mainnet": 30 },
+};
+const withoutSolana = {
+  contracts: { ...deployed.contracts, "solana-mainnet": null },
+  startBlocks: { ...deployed.startBlocks, "solana-mainnet": null },
+};
+const evmSecrets = ["SUBMISSION_FEE_RESOLVER_KEY"];
+
+test("the checked-in Worker ships Solana off, and an unpublished Solana program does not stop the EVM release", () => {
+  expect(checkedIn().vars.SUBMISSION_FEE_SOLANA_MODE).toBe("off");
+  expect(
+    assertSubmissionFeeRelease(
+      checkedIn(),
+      production,
+      () => evmSecrets,
+      withoutSolana,
+    ),
+  ).toBe("live");
+  // Solana secrets installed ahead of the switch are not a foreign secret.
+  expect(
+    assertSubmissionFeeRelease(
+      checkedIn(),
+      production,
+      () => [
+        ...evmSecrets,
+        "RPC_URL_SUBMISSION_FEE_SOLANA",
+        "SUBMISSION_FEE_SOLANA_RESOLVER_SEED",
+      ],
+      withoutSolana,
+    ),
+  ).toBe("live");
+});
+
+test("a Solana mode other than off needs the published program and the endpoint; live also needs the seed and the page switch", () => {
+  const recordOnly = checkedIn();
+  recordOnly.vars.SUBMISSION_FEE_SOLANA_MODE = "dry_run";
+  const endpoint = [...evmSecrets, "RPC_URL_SUBMISSION_FEE_SOLANA"];
+  expect(() =>
+    assertSubmissionFeeRelease(
+      recordOnly,
+      production,
+      () => endpoint,
+      withoutSolana,
+    ),
+  ).toThrow("program id and its start slot");
+  expect(() =>
+    assertSubmissionFeeRelease(
+      recordOnly,
+      production,
+      () => evmSecrets,
+      withSolana,
+    ),
+  ).toThrow("Solana secret inventory is not ready");
+  expect(
+    assertSubmissionFeeRelease(
+      recordOnly,
+      production,
+      () => endpoint,
+      withSolana,
+    ),
+  ).toBe("live");
+  const live = checkedIn();
+  live.vars.SUBMISSION_FEE_SOLANA_MODE = "live";
+  // Live without the page switch, and the page switch without live.
+  expect(() =>
+    assertSubmissionFeeRelease(live, production, () => endpoint, withSolana),
+  ).toThrow("change together");
+  expect(() =>
+    assertSubmissionFeeRelease(
+      checkedIn(),
+      production,
+      () => endpoint,
+      withSolana,
+      true,
+    ),
+  ).toThrow("change together");
+  expect(() =>
+    assertSubmissionFeeRelease(
+      live,
+      production,
+      () => endpoint,
+      withSolana,
+      true,
+    ),
+  ).toThrow("Solana secret inventory is not ready");
+  expect(
+    assertSubmissionFeeRelease(
+      live,
+      production,
+      () => [...endpoint, "SUBMISSION_FEE_SOLANA_RESOLVER_SEED"],
+      withSolana,
+      true,
+    ),
+  ).toBe("live");
+  const unknown = checkedIn();
+  unknown.vars.SUBMISSION_FEE_SOLANA_MODE = "on";
+  expect(() =>
+    assertSubmissionFeeRelease(unknown, production, () => endpoint, withSolana),
+  ).toThrow("SUBMISSION_FEE_SOLANA_MODE");
+  const leaked = checkedIn();
+  (leaked.vars as Record<string, string>).SUBMISSION_FEE_SOLANA_RESOLVER_SEED =
+    "00".repeat(32);
+  expect(() =>
+    assertSubmissionFeeRelease(leaked, production, never, withSolana),
+  ).toThrow("must not be in wrangler.toml");
+});

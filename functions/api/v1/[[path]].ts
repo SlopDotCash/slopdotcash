@@ -114,6 +114,12 @@ import {
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { GithubActor } from "../../../src/lib/project-contracts";
+import {
+  SUBMISSION_FEE_CONTRACTS,
+  SUBMISSION_FEE_KEPT_TO,
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
+  SUBMISSION_FEE_TOKENS,
+} from "../../../src/lib/submission-fee.mjs";
 import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
 import {
   loadRegistryPaymentDeployments,
@@ -551,7 +557,25 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (referralsResponse !== null) return referralsResponse;
   const mergeActivity = await handleMergeActivityApi(request, { db });
   if (mergeActivity !== null) return mergeActivity;
-  const submissionFee = await handleSubmissionFeeApi(request, { db, now });
+  const submissionFee = await handleSubmissionFeeApi(request, {
+    db,
+    now,
+    rateLimitSecret: env.TRACE_AUTH_SECRET,
+    // Offered only once the program id is published and Solana is switched
+    // on; the endpoint is the private payment one and never leaves here.
+    solana: () => {
+      const programId = SUBMISSION_FEE_CONTRACTS["solana-mainnet"];
+      return SUBMISSION_FEE_SOLANA_SWITCHED_ON && programId !== null
+        ? {
+            network: "solana-mainnet",
+            programId,
+            mint: SUBMISSION_FEE_TOKENS["solana-mainnet"].usdc as string,
+            feeWallet: SUBMISSION_FEE_KEPT_TO["solana-mainnet"],
+            rpcUrl: paymentRpcUrl(env, "solana-mainnet"),
+          }
+        : null;
+    },
+  });
   if (submissionFee !== null) return submissionFee;
   const poolFunding = await handlePoolFundingApi(request, { db, tier });
   if (poolFunding !== null) return poolFunding;

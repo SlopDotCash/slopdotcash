@@ -110,6 +110,21 @@ export async function checkSolanaCreationTransaction(
   return checkTransaction(config, wallet, msg, transactionId, true);
 }
 
+/**
+ * A transaction of a program other than the escrow (the submission deposit
+ * program): the finalized bytes must be the reviewed message signed by the
+ * wallet, with only the admitted wallet guards around it. The caller has
+ * built `msg` from its own reviewed tables.
+ */
+export async function checkSolanaMessageTransaction(
+  config: { rpcUrl: string },
+  wallet: string,
+  msg: Uint8Array,
+  transactionId: string,
+) {
+  return checkTransaction(config, wallet, msg, transactionId, true);
+}
+
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
 const LIGHTHOUSE = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95";
 const SYSTEM = "11111111111111111111111111111111";
