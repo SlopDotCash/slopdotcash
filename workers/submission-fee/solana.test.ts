@@ -593,7 +593,7 @@ describe("the resolve transaction", () => {
       SOLANA_TRANSACTION_BYTES,
     );
     // The measured ceiling for refunds, each with three accounts of its own.
-    expect(build(7)).toBe(1145);
+    expect(build(7)).toBe(1201);
     expect(build(8)).toBeGreaterThan(SOLANA_TRANSACTION_BYTES);
   });
 

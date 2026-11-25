@@ -10836,7 +10836,7 @@
     },
     {
       "path": "workers/submission-fee/solana.ts",
-      "sha256": "d86a1e658aaeb94a66bf7e9ca42f75e2c3ad9879cff2ea90262f052acc6ee6d8",
+      "sha256": "0866794ee02aae6e33565901837e712df1a19ff176aaaa6c5052c4d3d52b0375",
       "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
       "candidateLines": [
         5, 75, 82, 86, 94, 106, 118, 126, 130, 200, 213, 247, 314, 416, 565,

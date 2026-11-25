@@ -146,7 +146,7 @@ export const SOLANA_TRANSACTION_BYTES = 1232;
  * Deposits one resolve transaction carries. Each `resolve` adds up to three
  * accounts the others do not share (the record, the payer, the payer's
  * token account), and a legacy transaction holds 1,232 bytes: seven refunds
- * to seven payers measure 1,145 bytes and eight do not fit
+ * to seven payers measure 1,201 bytes and eight do not fit
  * (`solana.test.ts`). Five leaves room for compute budget instructions and
  * keeps the transaction's compute well inside the default allowance of
  * 200,000 units an instruction.

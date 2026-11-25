@@ -16351,7 +16351,7 @@
 {"name":"<ArrowFunction@142>","kind":"ArrowFunction","line":142,"sha256":"76a5be626d144683eca3eef098a9ce6808e19623b97dbfd09106d7c7ffd96918","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"runSolanaLedger","kind":"FunctionDeclaration","line":172,"sha256":"744869f7cc33645bb4f5552cfe856c1d02d2ee1532636fed3ecf02b176d2b141","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
-{"path":"workers/submission-fee/solana.ts","sha256":"d86a1e658aaeb94a66bf7e9ca42f75e2c3ad9879cff2ea90262f052acc6ee6d8","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/submission-fee/solana.ts","sha256":"0866794ee02aae6e33565901837e712df1a19ff176aaaa6c5052c4d3d52b0375","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"<Constructor@128>","kind":"Constructor","line":128,"sha256":"626c8a51db0dafde179b494ea4d03f107426bcdb2391f924c843a99307fa0a58","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"object","kind":"ArrowFunction","line":157,"sha256":"49d0a109812c0fc2bcdd27eca6d3e0b938aea146c3d69ee297cf62bd483268f3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"list","kind":"ArrowFunction","line":162,"sha256":"7a7d8e391f1aa5b8129da7a3a226b5f45cb61b432ad49ebf5e21dbf44362f7b5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
