@@ -1,13 +1,6 @@
 # Frontend
 
-The browser presents the state owned by the application machines. It obtains
-authority from the authenticated backend and payment facts from reconciled
-evidence. The existing product routes and controls are the design baseline.
-These requirements specify the eventual React shell on the generated Machine
-service. They introduce no new screens or visual design. Owner decision
-frontend-ui:OD2 (port or redesign) is pending; the default is a port: every
-route, control, label and deep-link id is kept, restyled only through the
-design tokens of the shared component library.
+The browser presents the state owned by the application machines. It obtains authority from the authenticated backend and payment facts from reconciled evidence. The existing product routes and controls are the design baseline. These requirements specify the eventual React shell on the generated Machine service. They introduce no new screens or visual design. Owner decision frontend-ui:OD2 (port or redesign) is pending; the default is a port: every route, control, label and deep-link id is kept, restyled only through the design tokens of the shared component library.
 
 - [Navigation and session ownership](./navigation.md)
 - [Asynchronous reads and recovery](./requests.md)
@@ -27,6 +20,7 @@ design tokens of the shared component library.
 - [Owner vault setup and transfers](./ownerVault.md)
 - [Owner monthly pages](./ownerMonthly.md)
 - [Public payment history assembly](./paymentHistory.md)
+- [Public record pages](./recordPages.md)
 - [Cross-machine account ownership](./composition.md)
 - [Project registry freshness](./registry.md)
 - [Fragments and document heads](./routes.md)
@@ -42,6 +36,4 @@ design tokens of the shared component library.
 - [Refundable deposit pay pages](./feePages.md)
 - [Requested repos page](./requestedRepos.md)
 
-Source requirements are PRD sections 2–4 and 6–10. The retained UI models under
-`reference/slop-main/formal/models/ui/` provide the individual legacy races and
-named scenarios to replay through the eventual shell.
+Source requirements are PRD sections 2–4 and 6–10. The retained UI models under `reference/slop-main/formal/models/ui/` provide the individual legacy races and named scenarios to replay through the eventual shell.
