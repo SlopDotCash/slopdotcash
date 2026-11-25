@@ -174,7 +174,11 @@ export async function scanSolana(
     listing.open.get(row.account) !== row.depositId;
   const settle = async (
     row: TrackedSolanaDeposit,
-    settled: { state: "refunded" | "kept" | "reclaimed"; txHash: string; at: string },
+    settled: {
+      state: "refunded" | "kept" | "reclaimed";
+      txHash: string;
+      at: string;
+    },
   ) => {
     // Each outcome is its own write, so one that fails takes no other with
     // it. The cursor stays where it is.

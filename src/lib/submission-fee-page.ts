@@ -134,6 +134,11 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
 const HASH = /^0x[0-9a-fA-F]{64}$/u;
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
 const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/u;
+const SOLANA_SIGNATURE_OR_ADDRESS =
+  /^(?:[1-9A-HJ-NP-Za-km-z]{32,44}|[1-9A-HJ-NP-Za-km-z]{64,88})$/u;
+/** Whether a Solana payment's `transaction` is its record's address. */
+export const isSolanaRecordAddress = (value: string) =>
+  SOLANA_ADDRESS.test(value);
 const AMOUNT = /^[1-9][0-9]{0,38}$/u;
 const UINT128_MAX = (1n << 128n) - 1n;
 const OUTCOMES: readonly string[] = [
@@ -562,7 +567,9 @@ export function readFeeSettlement(
       typeof payment.finalized !== "boolean"
     )
       throw new FeeRecordError();
-    // A Solana payment names a mint and a signature, both base58.
+    // A Solana payment names a mint and a signature, both base58. Where
+    // Slop did not read the creating transaction, the record's own address
+    // stands in its place.
     const solana = isSolanaFeeNetwork(network);
     const token = text(payment.token, solana ? SOLANA_ADDRESS : ADDRESS);
     paid = {
@@ -572,7 +579,10 @@ export function readFeeSettlement(
       token,
       ...tokenFacts(network, token, tables),
       amount: text(payment.amount, AMOUNT),
-      transaction: text(payment.transaction, solana ? SOLANA_SIGNATURE : HASH),
+      transaction: text(
+        payment.transaction,
+        solana ? SOLANA_SIGNATURE_OR_ADDRESS : HASH,
+      ),
       finalized: payment.finalized,
     };
   }

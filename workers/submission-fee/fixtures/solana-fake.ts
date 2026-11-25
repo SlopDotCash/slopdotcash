@@ -363,7 +363,11 @@ export class FakeSolana {
             message: {
               accountKeys: keys,
               instructions: [
-                { programIdIndex: 2, accounts: [1], data: encodeBase58Bytes(Uint8Array.of(1)) },
+                {
+                  programIdIndex: 2,
+                  accounts: [1],
+                  data: encodeBase58Bytes(Uint8Array.of(1)),
+                },
               ],
             },
           },
@@ -660,60 +664,64 @@ export class FakeSolana {
         return { context, value: this.info(params[0] as string) };
       case "getProgramAccounts": {
         const options = params[1] as {
-          minContextSlot: number;
+          minContextSlot?: number;
+          withContext?: boolean;
           dataSlice?: { offset: number; length: number };
           filters: {
             dataSize?: number;
             memcmp?: { offset: number; bytes: string };
           }[];
         };
-        if (options.minContextSlot > this.slot) throw new Error("behind");
+        if ((options.minContextSlot ?? 0) > this.slot)
+          throw new Error("behind");
         if (options.filters.length > 4) throw new Error("too many filters");
         const slice = options.dataSlice;
-        return {
-          context,
-          value: [...this.accounts]
-            .filter(
-              ([, account]) =>
-                account.owner === params[0] &&
-                options.filters.every((filter) =>
-                  filter.memcmp
-                    ? decodeBase58Bytes(filter.memcmp.bytes).every(
-                        (byte, index) =>
-                          account.data[
-                            (filter.memcmp?.offset ?? 0) + index
-                          ] === byte,
-                      )
-                    : account.data.length === filter.dataSize,
-                ),
-            )
-            .map(([pubkey, account]) => ({
-              pubkey,
-              account: slice
-                ? {
-                    owner: account.owner,
-                    data: [
-                      solanaBase64(
-                        account.data.slice(
-                          slice.offset,
-                          slice.offset + slice.length,
-                        ),
+        const value = [...this.accounts]
+          .filter(
+            ([, account]) =>
+              account.owner === params[0] &&
+              options.filters.every((filter) =>
+                filter.memcmp
+                  ? decodeBase58Bytes(filter.memcmp.bytes).every(
+                      (byte, index) =>
+                        account.data[(filter.memcmp?.offset ?? 0) + index] ===
+                        byte,
+                    )
+                  : account.data.length === filter.dataSize,
+              ),
+          )
+          .map(([pubkey, account]) => ({
+            pubkey,
+            account: slice
+              ? {
+                  owner: account.owner,
+                  data: [
+                    solanaBase64(
+                      account.data.slice(
+                        slice.offset,
+                        slice.offset + slice.length,
                       ),
-                      "base64",
-                    ],
-                    lamports: 1,
-                    executable: false,
-                  }
-                : this.info(pubkey),
-            })),
-        };
+                    ),
+                    "base64",
+                  ],
+                  lamports: 1,
+                  executable: false,
+                }
+              : this.info(pubkey),
+          }));
+        // Without `withContext` the endpoint answers the bare list.
+        return options.withContext ? { context, value } : value;
       }
       case "getMultipleAccounts": {
         const addresses = params[0] as string[];
         const options = params[1] as { minContextSlot?: number };
         if (addresses.length > 100) throw new Error("too many accounts");
-        if ((options.minContextSlot ?? 0) > this.slot) throw new Error("behind");
-        return { context, value: addresses.map((address) => this.info(address)) };
+        if ((options.minContextSlot ?? 0) > this.slot)
+          throw new Error("behind");
+        return {
+          context,
+          value: addresses.map((address) => this.info(address)),
+        };
       }
       case "getSignaturesForAddress": {
         const options = params[1] as { before?: string; limit?: number };
@@ -722,14 +730,14 @@ export class FakeSolana {
           options.before === undefined ? 0 : all.indexOf(options.before) + 1;
         if (options.before !== undefined && from === 0)
           throw new Error("unknown signature");
-        return all.slice(from, from + (options.limit ?? 1000)).map(
-          (signature) => ({
+        return all
+          .slice(from, from + (options.limit ?? 1000))
+          .map((signature) => ({
             signature,
             slot: this.landed.get(signature)?.slot,
             blockTime: this.landed.get(signature)?.blockTime,
             err: this.landed.get(signature)?.failed ? { failed: true } : null,
-          }),
-        );
+          }));
       }
       case "getTransaction": {
         const sent = this.wallet.get(params[0] as string);

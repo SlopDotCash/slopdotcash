@@ -17,6 +17,15 @@
  * payer's own `reclaim` of a deposit the program still holds after its
  * delay; `reclaim-check` reads its outcome. The route answers 404 while the
  * program id is not published or Solana is not switched on.
+ *
+ * A reclaim does not depend on anything Slop recorded: the wallet's open
+ * deposits for the pull request are found on chain, by the payer and item
+ * stored in each record.
+ *
+ * Nobody signs in here, and every request reads the shared payment
+ * endpoint, so requests are counted before anything is read: 20 a minute
+ * from one address, 30 a minute for one pull request and 120 a minute in
+ * all. A request makes at most six reads (`SOLANA_PAY_READS`).
  */
 
 import {
@@ -31,9 +40,13 @@ import {
   decodeSubmissionDeposit,
   depositInstruction,
   reclaimInstruction,
+  type SubmissionDeposit,
   type SubmissionDepositsIdl,
   submissionConfigAddress,
   submissionDepositAddress,
+  submissionDepositDiscriminator,
+  submissionDepositOffset,
+  submissionDepositSize,
 } from "../../contracts/solana/submission-deposits";
 import { CLASSIC_TOKEN_PROGRAM } from "../../contracts/solana/token";
 import { message } from "../../contracts/solana/transactions";
@@ -42,11 +55,13 @@ import {
   prepareSolanaWalletTransaction,
   SolanaWalletActionError,
 } from "../../contracts/solana/wallet-transactions";
+import { decodeBase58Bytes, encodeBase58Bytes } from "../../src/lib/base58";
 import {
   SUBMISSION_FEE_SOLANA_RENT_LAMPORTS,
   validStableFee,
 } from "../../src/lib/submission-fee.mjs";
 import { isWalletAddress } from "../../src/lib/wallets";
+import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1Database, D1QueryStatement } from "../d1";
 import { json, readJsonObject } from "../http";
 
@@ -65,6 +80,7 @@ export interface SolanaFeeDeployment {
 
 const ID = /^[1-9][0-9]{0,15}$/u;
 const NONCE = /^(0|[1-9][0-9]{0,19})$/u;
+const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
 const U64_MAX = (1n << 64n) - 1n;
 const refuse = (message: string, error = "fee_action_rejected") =>
   json(422, { error, message }, { cacheControl: "no-store" });
@@ -77,44 +93,56 @@ const object = (value: unknown): Obj => {
   return value as Obj;
 };
 
-/** An account's bytes at finalized commitment, or null when it is absent. */
-async function accountBytes(
+/**
+ * The most reads of the payment endpoint one request makes: the open
+ * deposits of a wallet, the accounts it needs in one read, and the four of
+ * preparing a wallet transaction (blockhash, fee, balance, simulation).
+ */
+export const SOLANA_PAY_READS = 6;
+/** Requests a minute: from one address, for one pull request, in all. */
+export const SOLANA_PAY_LIMITS = { address: 20, item: 30, all: 120 } as const;
+/** A wallet's open deposits for one pull request looked at for a reclaim. */
+const RECLAIM_CANDIDATES = 20;
+
+/**
+ * Accounts read together at finalized commitment: for each address its
+ * bytes when it exists and `owner` owns it, else null.
+ */
+async function accountsBytes(
   deployment: SolanaFeeDeployment,
-  address: string,
-  owner: string,
-): Promise<Uint8Array | null> {
-  const value = object(
-    await solanaRpc(deployment, "getAccountInfo", [
-      address,
+  wanted: readonly { address: string; owner: string }[],
+): Promise<(Uint8Array | null)[]> {
+  const values = object(
+    await solanaRpc(deployment, "getMultipleAccounts", [
+      wanted.map((entry) => entry.address),
       { commitment: "finalized", encoding: "base64" },
     ]),
   ).value;
-  if (value === null || value === undefined) return null;
-  const info = object(value);
-  if (
-    info.owner !== owner ||
-    !Array.isArray(info.data) ||
-    info.data[1] !== "base64" ||
-    typeof info.data[0] !== "string"
-  )
-    return null;
-  return solanaBase64Bytes(info.data[0]);
+  if (!Array.isArray(values) || values.length !== wanted.length)
+    throw new SolanaRpcUnavailable("Invalid chain response");
+  return values.map((value, at) => {
+    if (value === null || value === undefined) return null;
+    const info = object(value);
+    if (
+      info.owner !== wanted[at].owner ||
+      !Array.isArray(info.data) ||
+      info.data[1] !== "base64" ||
+      typeof info.data[0] !== "string"
+    )
+      return null;
+    return solanaBase64Bytes(info.data[0]);
+  });
 }
 
 /**
  * A wallet's associated token account of the mint: its balance in base
  * units when it exists, belongs to the wallet and is not frozen; else null.
  */
-async function tokenBalance(
-  deployment: SolanaFeeDeployment,
+function tokenBalance(
+  bytes: Uint8Array | null,
   mint: string,
   wallet: string,
-): Promise<bigint | null> {
-  const bytes = await accountBytes(
-    deployment,
-    solanaAssociatedTokenAddress(mint, wallet),
-    CLASSIC_TOKEN_PROGRAM,
-  );
+): bigint | null {
   if (
     bytes === null ||
     bytes.length !== 165 ||
@@ -124,6 +152,79 @@ async function tokenBalance(
   )
     return null;
   return new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(64, true);
+}
+
+/**
+ * The open deposit records this wallet paid for this item, oldest first,
+ * found on chain: the endpoint filters by the record's size, first eight
+ * bytes, payer and item. At most twenty are looked at.
+ */
+async function openDepositsOf(
+  deployment: SolanaFeeDeployment,
+  wallet: string,
+  item: string,
+): Promise<(SubmissionDeposit & { account: string })[]> {
+  const idl = deployment.idl;
+  const itemBytes = Uint8Array.from(item.slice(2).match(/../gu) ?? [], (pair) =>
+    Number.parseInt(pair, 16),
+  );
+  const found = await solanaRpc(deployment, "getProgramAccounts", [
+    deployment.programId,
+    {
+      commitment: "finalized",
+      encoding: "base64",
+      filters: [
+        { dataSize: submissionDepositSize(idl) },
+        {
+          memcmp: {
+            offset: 0,
+            bytes: encodeBase58Bytes(submissionDepositDiscriminator(idl)),
+          },
+        },
+        {
+          memcmp: {
+            offset: submissionDepositOffset("payer", idl),
+            bytes: wallet,
+          },
+        },
+        {
+          memcmp: {
+            offset: submissionDepositOffset("item", idl),
+            bytes: encodeBase58Bytes(itemBytes),
+          },
+        },
+      ],
+    },
+  ]);
+  if (!Array.isArray(found))
+    throw new SolanaRpcUnavailable("Invalid chain response");
+  const records: (SubmissionDeposit & { account: string })[] = [];
+  for (const entry of found.map(object)) {
+    const info = object(entry.account);
+    if (
+      typeof entry.pubkey !== "string" ||
+      info.owner !== deployment.programId ||
+      !Array.isArray(info.data) ||
+      typeof info.data[0] !== "string"
+    )
+      throw new SolanaRpcUnavailable("Invalid chain response");
+    const record = decodeSubmissionDeposit(
+      solanaBase64Bytes(info.data[0]),
+      idl,
+    );
+    // The record's own facts, whatever the endpoint filtered by.
+    if (
+      record.payer !== wallet ||
+      record.item.toLowerCase() !== item.toLowerCase() ||
+      entry.pubkey !==
+        submissionDepositAddress(deployment.programId, wallet, record.nonce)
+    )
+      continue;
+    records.push({ ...record, account: entry.pubkey });
+  }
+  return records
+    .sort((left, right) => left.id - right.id)
+    .slice(0, RECLAIM_CANDIDATES);
 }
 
 function depositMessage(
@@ -206,6 +307,8 @@ export async function handleSolanaFeePay(
     now: () => Date;
     /** Null while Solana is not offered: every request is then not found. */
     deployment: () => SolanaFeeDeployment | null;
+    /** The secret the request counters are keyed with (32 or more chars). */
+    rateLimitSecret?: string;
   },
 ): Promise<Response> {
   const notFound = () =>
@@ -245,6 +348,53 @@ export async function handleSolanaFeePay(
       body.transactionId.length > 100)
   )
     return json(400, { error: "invalid_fee_action" });
+  if (
+    step === "reclaim-check" &&
+    (typeof body.deposit !== "string" ||
+      !ADDRESS.test(body.deposit) ||
+      decodeBase58Bytes(body.deposit).length !== 32)
+  )
+    return json(400, { error: "invalid_fee_action" });
+  // Counted before anything is read, here or on the chain. Without the
+  // secret the counters cannot be kept, and nothing is read at all.
+  const secret = deps.rateLimitSecret ?? "";
+  if (secret.length < 32)
+    return json(
+      503,
+      { error: "temporarily_unavailable" },
+      { cacheControl: "no-store" },
+    );
+  const counted: [string, string, number][] = [
+    [
+      "address",
+      request.headers.get("cf-connecting-ip") ?? "unattributed",
+      SOLANA_PAY_LIMITS.address,
+    ],
+    ["item", `${body.repositoryId}:${body.pullNumber}`, SOLANA_PAY_LIMITS.item],
+    ["all", "all", SOLANA_PAY_LIMITS.all],
+  ];
+  for (const [scope, principal, limit] of counted) {
+    const admission = await consumeExactRateLimit({
+      db: deps.db as unknown as Parameters<
+        typeof consumeExactRateLimit
+      >[0]["db"],
+      limit,
+      nowEpochSeconds: Math.floor(deps.now().getTime() / 1000),
+      principal,
+      scope: `submission-fee-solana-${scope}`,
+      secret,
+      windowSeconds: 60,
+    });
+    if (!admission.allowed) {
+      const response = json(
+        429,
+        { error: "rate_limited" },
+        { cacheControl: "no-store" },
+      );
+      response.headers.set("retry-after", String(admission.retryAfterSeconds));
+      return response;
+    }
+  }
   const row = await itemRow(
     deps.db,
     Number(body.repositoryId),
@@ -280,10 +430,33 @@ export async function handleSolanaFeePay(
           "This pull request is already recorded as paid. Nothing was prepared.",
           "fee_already_paid",
         );
-      const config = await accountBytes(
-        deployment,
-        submissionConfigAddress(deployment.programId),
+      const deposit = submissionDepositAddress(
         deployment.programId,
+        wallet,
+        nonce,
+      );
+      // The program's Config, the fee wallet's and the payer's USDC
+      // accounts and the record address, in one read.
+      const [config, feeAccount, payerAccount, used] = await accountsBytes(
+        deployment,
+        [
+          {
+            address: submissionConfigAddress(deployment.programId),
+            owner: deployment.programId,
+          },
+          {
+            address: solanaAssociatedTokenAddress(
+              deployment.mint,
+              deployment.feeWallet,
+            ),
+            owner: CLASSIC_TOKEN_PROGRAM,
+          },
+          {
+            address: solanaAssociatedTokenAddress(deployment.mint, wallet),
+            owner: CLASSIC_TOKEN_PROGRAM,
+          },
+          { address: deposit, owner: deployment.programId },
+        ],
       );
       if (config === null)
         return refuse("Solana deposits are not available right now.");
@@ -293,29 +466,18 @@ export async function handleSolanaFeePay(
         );
       // A kept fee must have somewhere to go before any deposit is taken.
       if (
-        (await tokenBalance(
-          deployment,
-          deployment.mint,
-          deployment.feeWallet,
-        )) === null
+        tokenBalance(feeAccount, deployment.mint, deployment.feeWallet) === null
       )
         return refuse("Solana deposits are not available right now.");
-      const balance = await tokenBalance(deployment, deployment.mint, wallet);
+      const balance = tokenBalance(payerAccount, deployment.mint, wallet);
       if (balance === null)
         return refuse(
           "This wallet has no USDC account on Solana. A refund goes to that account, so it must exist before you pay.",
         );
       if (balance < BigInt(row.stable_minor))
         return refuse("This wallet does not hold enough USDC on Solana.");
-      const deposit = submissionDepositAddress(
-        deployment.programId,
-        wallet,
-        nonce,
-      );
       // This payer already used this nonce: the page picks another.
-      if (
-        (await accountBytes(deployment, deposit, deployment.programId)) !== null
-      )
+      if (used !== null)
         return json(409, { error: "nonce_used" }, { cacheControl: "no-store" });
       const instruction = depositInstruction(
         {
@@ -342,88 +504,75 @@ export async function handleSolanaFeePay(
         },
       });
     }
-    // Reclaim: the payer's own open deposit for this pull request, oldest
-    // first, as the Worker recorded it with its record's address.
-    const recorded = await deps.db
-      .prepare(
-        `SELECT deposit_id, deposit_account, token FROM submission_fee_deposits
-          WHERE network = ? AND item = ? AND payer = ?
-            AND deposit_account IS NOT NULL
-            AND (? = 1 OR state IN ('open', 'refund_due', 'kept_due'))
-          ORDER BY deposit_id LIMIT 20`,
-      )
-      .bind(deployment.network, row.item, wallet, checking ? 1 : 0)
-      .all<{ deposit_id: number; deposit_account: string; token: string }>();
-    if (step === "reclaim-check") {
-      const named = recorded.results.find(
-        (entry) => entry.deposit_account === body.deposit,
-      );
-      if (!named) return json(400, { error: "invalid_fee_action" });
+    // Reclaim. The outcome of one the payer sent: the same message, built
+    // from the wallet, the record address and the table's mint.
+    if (step === "reclaim-check")
       return ok({
         status: (
           await checkSolanaMessageTransaction(
             deployment,
             wallet,
             message(wallet, body.blockhash as string, [
-              reclaimIx(deployment, wallet, named.deposit_account, named.token),
+              reclaimIx(
+                deployment,
+                wallet,
+                body.deposit as string,
+                deployment.mint,
+              ),
             ]),
             body.transactionId as string,
           )
         ).status,
       });
-    }
-    const config = await accountBytes(
-      deployment,
-      submissionConfigAddress(deployment.programId),
-      deployment.programId,
+    // The wallet's own open deposits for this pull request, found on chain,
+    // oldest first. Nothing Slop recorded is needed for it.
+    const open = (await openDepositsOf(deployment, wallet, row.item)).filter(
+      (record) => record.mint === deployment.mint,
     );
+    if (open.length === 0)
+      return refuse(
+        "No deposit from this wallet for this pull request is still held by the deposit program.",
+        "no_open_deposit",
+      );
+    const [config, payerAccount] = await accountsBytes(deployment, [
+      {
+        address: submissionConfigAddress(deployment.programId),
+        owner: deployment.programId,
+      },
+      {
+        address: solanaAssociatedTokenAddress(deployment.mint, wallet),
+        owner: CLASSIC_TOKEN_PROGRAM,
+      },
+    ]);
     if (config === null)
       return refuse("Solana deposits are not available right now.");
     const delay = decodeSubmissionConfig(config, deployment.idl).reclaimDelay;
     let earliest: number | null = null;
-    for (const entry of recorded.results) {
-      const bytes = await accountBytes(
-        deployment,
-        entry.deposit_account,
-        deployment.programId,
-      );
-      // Already settled: its record is closed.
-      if (bytes === null) continue;
-      const record = decodeSubmissionDeposit(bytes, deployment.idl);
-      // The address may hold a later deposit of the same payer and nonce;
-      // only the recorded deposit itself is offered.
-      if (
-        record.id !== entry.deposit_id ||
-        record.payer !== wallet ||
-        record.mint !== entry.token
-      )
-        continue;
+    for (const record of open) {
       const from = record.depositedAt + delay;
       if (from * 1000 > deps.now().getTime()) {
         earliest = earliest === null ? from : Math.min(earliest, from);
         continue;
       }
-      if ((await tokenBalance(deployment, record.mint, wallet)) === null)
+      if (tokenBalance(payerAccount, deployment.mint, wallet) === null)
         return refuse(
           "This wallet has no USDC account on Solana to take the deposit back into. Create it in your wallet, then try again.",
         );
       return ok({
         plan: {
           ...(await prepareSolanaWalletTransaction(deployment, wallet, [
-            reclaimIx(deployment, wallet, entry.deposit_account, record.mint),
+            reclaimIx(deployment, wallet, record.account, record.mint),
           ])),
           wallet,
-          deposit: entry.deposit_account,
+          deposit: record.account,
           mint: record.mint,
           amount: record.amount,
         },
       });
     }
     return refuse(
-      earliest === null
-        ? "No deposit from this wallet for this pull request is still held by the deposit program."
-        : `This wallet's deposit can be taken back from ${new Date(earliest * 1000).toISOString()}.`,
-      earliest === null ? "no_open_deposit" : "reclaim_too_early",
+      `This wallet's deposit can be taken back from ${new Date((earliest ?? 0) * 1000).toISOString()}.`,
+      "reclaim_too_early",
     );
   } catch (error) {
     if (error instanceof SolanaWalletActionError) return refuse(error.message);

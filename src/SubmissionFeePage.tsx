@@ -24,6 +24,7 @@ import {
   feeItemPath,
   feeRepository,
   feeRoute,
+  isSolanaRecordAddress,
   publishedSolanaWay,
   readFeeItem,
   readFeeRates,
@@ -185,11 +186,18 @@ export function PaidRecord({
           : `Its block is not final yet. ${networkLabel(paid.network)} can still replace it, and the record follows the chain.`}
       </p>
       <p>
-        <TransactionLink
-          network={paid.network}
-          hash={paid.transaction}
-          label="Deposit transaction"
-        />
+        {isSolanaFeeNetwork(paid.network) &&
+        isSolanaRecordAddress(paid.transaction) ? (
+          <>
+            Deposit record <code>{paid.transaction}</code>
+          </>
+        ) : (
+          <TransactionLink
+            network={paid.network}
+            hash={paid.transaction}
+            label="Deposit transaction"
+          />
+        )}
       </p>
       <p>{outcomeText(item, held)}</p>
       {item.resolveTransaction ? (
@@ -291,6 +299,7 @@ function Due({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(() => hasSavedRequest(item.item));
+  const [takeBack, setTakeBack] = useState(false);
   const [{ deployed: standing }] = useState(standingDepositSetup);
   const confirmDue = useCallback(
     async (way: FeeWay) => {
@@ -337,16 +346,20 @@ function Due({
       );
     }
   }, [item.repositoryId, item.pullNumber, item.solana, tables, onChanged]);
-  // A recorded Solana deposit that nothing has settled after the program's
-  // delay can be taken back by the wallet that paid it.
+  // A Solana deposit that nothing has settled after the program's delay can
+  // be taken back by the wallet that paid it. The wallet's deposits are
+  // found on chain, so this needs no record of Slop's: it is offered at once
+  // for a recorded deposit past the delay, and on request otherwise.
+  const published = publishedSolanaWay(item.stableMinor, tables);
   const reclaim =
-    item.paid &&
-    isSolanaFeeNetwork(item.paid.network) &&
-    item.outcome !== "refunded" &&
-    item.outcome !== "kept" &&
-    Date.now() - Date.parse(item.paid.at) >=
-      SUBMISSION_FEE_RECLAIM_DAYS * 86_400_000
-      ? publishedSolanaWay(item.stableMinor, tables)
+    takeBack ||
+    (item.paid &&
+      isSolanaFeeNetwork(item.paid.network) &&
+      item.outcome !== "refunded" &&
+      item.outcome !== "kept" &&
+      Date.now() - Date.parse(item.paid.at) >=
+        SUBMISSION_FEE_RECLAIM_DAYS * 86_400_000)
+      ? published
       : null;
   const anyDue = item.due.length > 0 || item.solana !== null;
   return (
@@ -406,10 +419,10 @@ function Due({
               onDeposit={onChanged}
             />
           ) : null}
-          {publishedSolanaWay(item.stableMinor, tables) ? (
+          {published ? (
             <SubmissionFeePaySolana
               subject={subject}
-              way={open ? item.solana : null}
+              way={open && !takeBack ? item.solana : null}
               reclaim={reclaim}
               confirmDue={confirmSolanaDue}
               onDeposit={onChanged}
@@ -425,6 +438,17 @@ function Due({
             onClick={() => setOpen(true)}
           >
             Pay from a wallet
+          </button>
+        </p>
+      ) : null}
+      {published && !reclaim ? (
+        <p>
+          <button
+            type="button"
+            className="button secondary-button"
+            onClick={() => setTakeBack(true)}
+          >
+            Take back a Solana deposit
           </button>
         </p>
       ) : null}

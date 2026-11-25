@@ -25,8 +25,8 @@ import {
 } from "../../src/lib/submission-fee.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseSolanaConfig, type SolanaFeeConfig } from "./config";
-import { FakeSolana, fakeAddress } from "./fixtures/solana-fake";
 import { PayoutFailedError } from "./core";
+import { FakeSolana, fakeAddress } from "./fixtures/solana-fake";
 import { type Env, runDeposits } from "./index";
 import {
   createSolanaFeeChain,
@@ -950,9 +950,9 @@ describe("transactions that merely name a record address", () => {
     expect(await t.ledger()).toMatchObject({ recorded: 1, paid: 1 });
     expect(t.deposit(1)).toMatchObject({ tx_hash: made.account });
     // Two transactions were read for it, not ten.
-    expect(t.chain.calls.filter((call) => call === "getTransaction")).toHaveLength(
-      2,
-    );
+    expect(
+      t.chain.calls.filter((call) => call === "getTransaction"),
+    ).toHaveLength(2);
   });
 
   test("the Worker's own refund is recorded from its own transaction whatever names the address", async () => {
@@ -1105,9 +1105,9 @@ describe("deposits the Worker never resolves", () => {
       const last = t.sends().at(-1);
       if (last?.state === "submitted") t.chain.land(last.tx_id as string);
     }
-    expect(
-      t.count("accepted = 0 AND reject_reason = 'unknown_item'"),
-    ).toBe(600);
+    expect(t.count("accepted = 0 AND reject_reason = 'unknown_item'")).toBe(
+      600,
+    );
     expect(t.sends()).toHaveLength(4);
     expect(t.count("state = 'refunded'")).toBe(16);
     expect(t.logs).toContainEqual({

@@ -153,6 +153,8 @@ export async function handleSubmissionFeeApi(
      * Solana is not offered. Absent means not offered.
      */
     solana?: () => SolanaFeeDeployment | null;
+    /** Keys the Solana pay action's request counters. */
+    rateLimitSecret?: string;
   },
 ): Promise<Response | null> {
   const { pathname } = new URL(request.url);
@@ -163,12 +165,18 @@ export async function handleSubmissionFeeApi(
     return null;
   const respond = (status: number, body: unknown) =>
     json(status, body, { cacheControl: CACHE_CONTROL });
-  if (pathname.replace(/\/$/u, "") === `${SUBMISSION_FEE_PATH}/solana`) {
+  // Only a POST is the Solana pay action. Any other method on this path is
+  // answered as it was before the action existed.
+  if (
+    request.method === "POST" &&
+    pathname.replace(/\/$/u, "") === `${SUBMISSION_FEE_PATH}/solana`
+  ) {
     try {
       return await handleSolanaFeePay(request, {
         db: deps.db,
         now: deps.now ?? (() => new Date()),
         deployment: deps.solana ?? (() => null),
+        rateLimitSecret: deps.rateLimitSecret,
       });
     } catch (caught) {
       return apiErrorResponse(caught, { label: "submission fee API failure" });

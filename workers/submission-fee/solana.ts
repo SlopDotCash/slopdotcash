@@ -763,9 +763,7 @@ export function createSolanaFeeChain(
             if (tx === null) return paused();
             // Newest first, so a later match here is an older settlement:
             // the first one after the record was last seen open.
-            if (
-              submissionSettlement(tx, programId, row.account, idl) !== null
-            )
+            if (submissionSettlement(tx, programId, row.account, idl) !== null)
               candidate = entry.signature;
           }
           before = entry.signature;
@@ -889,9 +887,7 @@ export function createSolanaFeeChain(
       // The finalized slot and its block height, from one answer. If the
       // finalized chain is already past the transaction's last valid
       // height, every block that could hold it is finalized too.
-      const epoch = object(
-        await rpc("getEpochInfo", [{ commitment: FINAL }]),
-      );
+      const epoch = object(await rpc("getEpochInfo", [{ commitment: FINAL }]));
       const finalizedSlot = integer(epoch.absoluteSlot);
       const height = integer(epoch.blockHeight);
       const statuses = object(

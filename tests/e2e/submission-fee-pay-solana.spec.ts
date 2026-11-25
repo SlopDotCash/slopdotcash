@@ -72,6 +72,15 @@ async function serveSolana(page: Page, options: { tamper?: boolean } = {}) {
     state.requests.push(body);
     if (body.step === "check")
       return route.fulfill({ json: { status: state.status } });
+    if (body.step === "reclaim-review")
+      return route.fulfill({
+        status: 422,
+        json: {
+          error: "no_open_deposit",
+          message:
+            "No deposit from this wallet for this pull request is still held by the deposit program.",
+        },
+      });
     const item = feeRecord(REPOSITORY, 7).item;
     const message = solanaFeeMessage(
       options.tamper ? { ...way, keptTo: WALLET } : way,
@@ -272,5 +281,39 @@ test("a prepared transaction that is not the page's own message is never handed 
   await expect(
     form.getByRole("button", { name: "Confirm deposit in wallet" }),
   ).toHaveCount(0);
+  expect(solana.signed).toHaveLength(0);
+});
+
+test("a wallet can ask to take a Solana deposit back whatever Slop recorded", async ({
+  page,
+}) => {
+  await switchFeeOn(page, TABLES);
+  const solana = await serveSolana(page);
+  await serveFeeRecord(page, REPOSITORY, 7, () =>
+    feeRecord(REPOSITORY, 7, TABLES),
+  );
+  await page.goto(PAGE, { waitUntil: "networkidle" });
+  // Nothing is recorded as paid: the reclaim is still one press away.
+  await page
+    .getByRole("button", { name: "Take back a Solana deposit" })
+    .click();
+  const form = page.getByRole("region", { name: "Pay the fee on Solana" });
+  await expect(
+    form.getByRole("heading", { name: "Take a Solana deposit back" }),
+  ).toBeVisible();
+  await form.getByRole("button", { name: /Fixture Solana wallet/u }).click();
+  await expect(form).toContainText("30 days after it was made");
+  await expectAccessibleReflow(page, "fee-solana-reclaim");
+  await form
+    .getByRole("button", { name: "Review taking the deposit back" })
+    .click();
+  // The wallet's deposits are looked for on chain, by the wallet alone.
+  await expect(form.getByRole("alert")).toContainText(
+    "No deposit from this wallet for this pull request is still held",
+  );
+  const asked = solana.requests.find(
+    (entry) => entry.step === "reclaim-review",
+  );
+  expect(asked?.wallet).toBe(WALLET);
   expect(solana.signed).toHaveLength(0);
 });

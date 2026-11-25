@@ -1319,7 +1319,14 @@ export class D1SolanaFeeStore extends D1FeeStore {
          VALUES (?, ?, ?, ?, 0, ?, ?)
          ON CONFLICT(network, deposit_id) DO NOTHING`,
       )
-      .bind(network, depositId, afterSlot, Math.max(afterSlot, untilSlot), at, at)
+      .bind(
+        network,
+        depositId,
+        afterSlot,
+        Math.max(afterSlot, untilSlot),
+        at,
+        at,
+      )
       .run();
   }
 

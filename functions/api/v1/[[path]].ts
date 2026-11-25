@@ -560,6 +560,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const submissionFee = await handleSubmissionFeeApi(request, {
     db,
     now,
+    rateLimitSecret: env.TRACE_AUTH_SECRET,
     // Offered only once the program id is published and Solana is switched
     // on; the endpoint is the private payment one and never leaves here.
     solana: () => {

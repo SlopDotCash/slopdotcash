@@ -24,6 +24,7 @@ import {
 import {
   FeeRecordError,
   type FeeTables,
+  isSolanaRecordAddress,
   PUBLISHED_FEE_TABLES,
   publishedSolanaWay,
   readFeeItem,
@@ -40,6 +41,7 @@ import {
   fakeAddress,
 } from "../../workers/submission-fee/fixtures/solana-fake";
 import { handleSubmissionFeeApi } from "./handler";
+import { SOLANA_PAY_LIMITS, SOLANA_PAY_READS } from "./solana-pay";
 
 const NOW = "2026-12-05T12:00:00.000Z";
 const REPOSITORY = "4242";
@@ -70,11 +72,15 @@ function harness() {
     solanaOn: true,
   };
   const offered = { on: true };
+  const caller = { address: "203.0.113.7", secret: "s".repeat(32) };
   const post = async (body: Record<string, unknown>) => {
     const response = await handleSubmissionFeeApi(
       new Request("https://slop.cash/api/v1/submission-fee/solana", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": caller.address,
+        },
         body: JSON.stringify({
           repositoryId: REPOSITORY,
           pullNumber: PULL,
@@ -85,6 +91,7 @@ function harness() {
       {
         db: db as never,
         now: () => new Date(clock.now),
+        rateLimitSecret: caller.secret,
         solana: () =>
           offered.on
             ? {
@@ -100,6 +107,7 @@ function harness() {
     );
     return {
       status: response?.status,
+      retryAfter: response?.headers.get("retry-after") ?? null,
       body: (await response?.json()) as Record<string, unknown>,
     };
   };
@@ -115,7 +123,7 @@ function harness() {
   ).setBigUint64(64, 5_000_000n, true);
   const way = publishedSolanaWay("2000000", tables);
   if (!way) throw new Error("no way");
-  return { sqlite, chain, clock, tables, offered, post, way };
+  return { db, sqlite, chain, clock, tables, offered, caller, post, way };
 }
 
 test("Solana is listed only once the program is published and switched on, and the page checks it exactly", () => {
@@ -227,6 +235,29 @@ test("a recorded Solana payment is read with its base58 mint and signatures", ()
     decimals: 6,
     transaction: signature,
   });
+  // Where Slop did not read the creating transaction, the record's own
+  // address stands in its place; the settlement is always a signature.
+  const record = fakeAddress(77);
+  expect(
+    readFeeItem(
+      { ...body, paid: { ...body.paid, transaction: record } },
+      REPOSITORY,
+      PULL,
+      tables,
+      null,
+    ).paid?.transaction,
+  ).toBe(record);
+  expect(isSolanaRecordAddress(record)).toBe(true);
+  expect(isSolanaRecordAddress(signature)).toBe(false);
+  expect(() =>
+    readFeeItem(
+      { ...body, resolveTransaction: record },
+      REPOSITORY,
+      PULL,
+      tables,
+      null,
+    ),
+  ).toThrow(FeeRecordError);
   expect(() =>
     readFeeItem(
       { ...body, paid: { ...body.paid, token: fakeAddress(1) } },
@@ -386,27 +417,13 @@ test("check reads only the finalized transaction that is the reviewed message", 
   ).toEqual({ status: "failed" });
 });
 
-test("a payer takes back a recorded deposit only after the program's delay, into their own account", async () => {
+test("a payer takes back a deposit found on chain, with no row of Slop's, only after the program's delay", async () => {
   const t = harness();
-  const made = t.chain.pay({ payer: WALLET, item: ITEM });
-  t.sqlite
-    .query(
-      `INSERT INTO submission_fee_deposits
-         (network, deposit_id, item, payer, token, amount, kept_to, tx_hash,
-          block_number, block_time, finalized_at, accepted, state, deposit_account)
-       VALUES (?, 1, ?, ?, ?, '2000000', ?, ?, 5, ?, ?, 1, 'open', ?)`,
-    )
-    .run(
-      NETWORK,
-      ITEM,
-      WALLET,
-      t.chain.mint,
-      t.chain.feeWallet,
-      made.signature,
-      NOW,
-      NOW,
-      made.account,
-    );
+  // Nothing is recorded in Slop's tables for this deposit.
+  const made = t.chain.pay({ payer: WALLET, item: ITEM, amount: 1n });
+  // Another mint's deposit and another pull request's are not offered here.
+  t.chain.pay({ payer: WALLET, item: ITEM, mint: fakeAddress(99) });
+  t.chain.pay({ payer: WALLET, item: submissionFeeItem(REPOSITORY, 8) });
   const early = await t.post({ step: "reclaim-review" });
   expect(early.status).toBe(422);
   expect(early.body.error).toBe("reclaim_too_early");
@@ -414,14 +431,20 @@ test("a payer takes back a recorded deposit only after the program's delay, into
   t.clock.now = new Date(
     (t.chain.time + 30 * 86_400 + 60) * 1000,
   ).toISOString();
+  const before = t.chain.calls.length;
   const { status, body } = await t.post({ step: "reclaim-review" });
   expect(status).toBe(200);
+  expect(t.chain.calls.length - before).toBeLessThanOrEqual(SOLANA_PAY_READS);
+  expect(t.chain.calls.slice(before, before + 2)).toEqual([
+    "getProgramAccounts",
+    "getMultipleAccounts",
+  ]);
   const plan = body.plan as Record<string, string>;
   expect(plan).toMatchObject({
     wallet: WALLET,
     deposit: made.account,
     mint: t.chain.mint,
-    amount: "2000000",
+    amount: "1",
   });
   const expected = solanaReclaimMessage(
     t.way,
@@ -449,6 +472,7 @@ test("a payer takes back a recorded deposit only after the program's delay, into
       })
     ).body,
   ).toEqual({ status: "finalized" });
+  // The same signature is not the reclaim of another record.
   expect(
     (
       await t.post({
@@ -458,7 +482,89 @@ test("a payer takes back a recorded deposit only after the program's delay, into
         transactionId: solanaBase58(signature),
       })
     ).status,
+  ).toBe(422);
+  expect(
+    (
+      await t.post({
+        step: "reclaim-check",
+        deposit: "0xabc",
+        blockhash: plan.blockhash,
+        transactionId: solanaBase58(signature),
+      })
+    ).status,
   ).toBe(400);
+});
+
+test("requests are counted before anything is read: by address, by pull request and in all", async () => {
+  const t = harness();
+  const review = (nonce: number) =>
+    t.post({ step: "review", nonce: String(nonce) });
+  // One review reads the endpoint five times, never more than six.
+  expect((await review(1)).status).toBe(200);
+  expect(t.chain.calls).toEqual([
+    "getMultipleAccounts",
+    "getLatestBlockhash",
+    "getFeeForMessage",
+    "getBalance",
+    "simulateTransaction",
+  ]);
+  expect(t.chain.calls.length).toBeLessThanOrEqual(SOLANA_PAY_READS);
+  for (let sent = 1; sent < SOLANA_PAY_LIMITS.address; sent += 1)
+    expect((await review(sent + 1)).status).toBe(200);
+  const reads = t.chain.calls.length;
+  // The request after the last from one address is refused and reads nothing.
+  const refused = await review(99);
+  expect(refused).toMatchObject({
+    status: 429,
+    body: { error: "rate_limited" },
+  });
+  expect(Number(refused.retryAfter)).toBeGreaterThan(0);
+  expect(t.chain.calls.length).toBe(reads);
+  // Other addresses share the pull request's own count.
+  for (
+    let sent = SOLANA_PAY_LIMITS.address;
+    sent < SOLANA_PAY_LIMITS.item;
+    sent += 1
+  ) {
+    t.caller.address = `198.51.100.${sent}`;
+    expect((await review(sent + 1)).status).toBe(200);
+  }
+  t.caller.address = "198.51.100.250";
+  expect((await review(100)).status).toBe(429);
+  // A minute later the counts start again.
+  t.clock.now = new Date(Date.parse(NOW) + 61_000).toISOString();
+  expect((await review(101)).status).toBe(200);
+});
+
+test("without the counters' secret nothing is read", async () => {
+  const t = harness();
+  t.caller.secret = "";
+  expect(await t.post({ step: "review", nonce: "1" })).toMatchObject({
+    status: 503,
+    body: { error: "temporarily_unavailable" },
+  });
+  expect(t.chain.calls).toEqual([]);
+});
+
+test("only a POST is the pay action; a GET is answered as before it existed", async () => {
+  const t = harness();
+  const get = (deps: Parameters<typeof handleSubmissionFeeApi>[1]) =>
+    handleSubmissionFeeApi(
+      new Request("https://slop.cash/api/v1/submission-fee/solana"),
+      deps,
+    );
+  const offered = await get({
+    db: t.db as never,
+    rateLimitSecret: t.caller.secret,
+    solana: () => {
+      throw new Error("The pay action must not be asked for a GET");
+    },
+  });
+  const without = await get({ db: t.db as never });
+  expect(offered?.status).toBe(404);
+  expect(offered?.status).toBe(without?.status);
+  expect(await offered?.json()).toEqual(await without?.json());
+  expect(t.chain.calls).toEqual([]);
 });
 
 test("Slopbot's comment names Solana only once the pay page takes it", () => {
