@@ -8,7 +8,9 @@
 //   4. the change is under the size cap;
 //   5. it touches no protected path.
 // The label comes off on any new push or as soon as a condition stops
-// holding. Slopbot never merges; a human does. Points are not affected.
+// holding. Slopbot never merges; a person does, or on Slop's own repository
+// the repository's ready-auto-merge workflow (pilot, operator decision of
+// 25 November 2026, scripts/ready-auto-merge.ts). Points are not affected.
 import {
   type ReadyLabelSettings,
   readyLabelSettings,
