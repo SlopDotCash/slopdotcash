@@ -22,7 +22,7 @@ Three signed-in routes, declared in `apps/contributor/src/client/licensing.vibe`
 
 - `GET /api/v1/traces/me` lists the account's finalized traces with id, state, terms version and current licence, and the setting.
 - `PUT /api/v1/traces/licensing` flips the setting and confirms the provider terms. It answers with the setting and the number of licences withdrawn. A flip refused inside the batch answers `setting_changed` when the setting moved under the caller.
-- `POST /api/v1/traces/licences` opts traces in, either a chosen list of run ids or every eligible trace with an expected count. It answers with the number licensed. A bulk opt-in whose count moved answers `count_changed`. The opt-in payload is a discriminated union: a chosen list (`kind: "chosen"`, `runIds`, `expectedCount`) or the whole account (`kind: "all"`); the handler must reject a chosen opt-in with more than MAX_RUN_IDS runIds.
+- `POST /api/v1/traces/licences` opts traces in, either a chosen list of run ids or every eligible trace with an expected count. It answers with the number licensed. A bulk opt-in whose count moved answers `count_changed`. The opt-in payload is a discriminated union: a chosen list (`kind: "chosen"`, `runIds`) or the whole account (`kind: "all"`, `expectedCount`); the handler must reject a chosen opt-in with more than MAX_RUN_IDS runIds.
 
 The issue writes the setting route as `/api/v1/trace-licensing`; the shipped path on main is `/api/v1/traces/licensing`, and this port uses the shipped path.
 
