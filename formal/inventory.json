@@ -7474,13 +7474,13 @@
     },
     {
       "path": "src/lib/monthly-commitment-actions.ts",
-      "sha256": "91efe5605a98db36188b3867294616b875bde0c0af3053251a2ba1dc2bd1a8c5",
+      "sha256": "4753d101876602c40c6313e23c75ebae29bdb37a9104f85a836e8c9ccedd08ce",
       "models": [
         "formal/models/contracts/solana_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt"
       ],
       "candidateLines": [
-        45, 75, 78, 184, 185, 186, 201, 272, 274, 286, 379, 380, 381, 383, 384
+        45, 93, 96, 217, 218, 219, 234, 305, 307, 319, 412, 413, 414, 416, 417
       ],
       "review": "mapped-abstraction"
     },
