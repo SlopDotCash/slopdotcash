@@ -12,6 +12,7 @@ import {
   CollectionMemoSession,
   openCollectionMemo,
   parseCollectionMemo,
+  watchAttribution,
 } from "./collection-memo";
 import { OutcomeCommitLineLoader } from "./generate-leaderboard";
 import { loadValueInputs } from "./value-ingestion";
@@ -628,4 +629,63 @@ test("commit statistics come from the memo only for the same commit object", asy
     "C_moved",
     "C_new",
   ]);
+});
+
+test("a slow attribution is named with its minutes and how it was answered", async () => {
+  const lines: string[] = [];
+  const log = { thresholdMs: 0, write: (line: string) => lines.push(line) };
+  const first = firstSession();
+  await loadValueInputs(
+    github(world()).client,
+    [],
+    transport,
+    undefined,
+    [outcome(world())],
+    undefined,
+    { session: first, cutoffAt: cutoff, log },
+  );
+  expect(lines).toContain(
+    `[slop.cash] slow attribution: ${repo}#2 took 0.0 minutes, computed live\n`,
+  );
+  lines.length = 0;
+  const second = reopen(first);
+  await loadValueInputs(
+    github(world()).client,
+    [],
+    transport,
+    undefined,
+    [outcome(world())],
+    undefined,
+    { session: second, cutoffAt: cutoff, log },
+  );
+  expect(lines).toContain(
+    `[slop.cash] slow attribution: ${repo}#2 took 0.0 minutes, reused from the memo\n`,
+  );
+  // The reuse counts are reported when the attribution phase ends, so a run
+  // that fails afterwards has still printed them.
+  expect(lines.at(-1)).toBe(
+    `[slop.cash] collection memo: commit statistics 0 reused, 0 read; attributions 1 reused, 0 computed live, 0 past their refresh age, 0 audited (1 in ${ATTRIBUTION_AUDIT_ONE_IN}), 0 audit mismatches, 0 changed since the last collection\n`,
+  );
+});
+
+test("an attribution still running past the threshold is named before it ends", async () => {
+  const lines: string[] = [];
+  const done = watchAttribution("o/r#7", {
+    thresholdMs: 10,
+    write: (line) => lines.push(line),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(lines).toEqual([
+    "[slop.cash] slow attribution still running: o/r#7, over 0.0 minutes\n",
+  ]);
+  done("computed live, hold");
+  expect(lines[1]).toMatch(
+    /^\[slop\.cash\] slow attribution: o\/r#7 took 0\.0 minutes, computed live, hold\n$/u,
+  );
+  const quiet: string[] = [];
+  watchAttribution("o/r#8", {
+    thresholdMs: 60_000,
+    write: (line) => quiet.push(line),
+  })("computed live");
+  expect(quiet).toEqual([]);
 });
