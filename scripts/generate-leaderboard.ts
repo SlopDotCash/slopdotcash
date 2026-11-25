@@ -20,6 +20,7 @@ import {
   attributionCodeDigest,
   type CollectionMemoSession,
   type CommitLineMemo,
+  collectionMemoStatsLines,
   openCollectionMemo,
   parseCollectionMemo,
 } from "./collection-memo";
@@ -6530,20 +6531,7 @@ if (import.meta.main) {
   }
   if (collectionMemo) {
     const { session, output } = collectionMemo;
-    const lines = session.commitLines;
-    process.stderr.write(
-      `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${session.stats.reused} reused, ${session.stats.live} computed live, ${session.expired} past their refresh age, ${session.stats.audited} audited (1 in ${session.auditOneIn}), ${session.stats.auditMismatches} audit mismatches, ${session.stats.fenceMisses} changed since the last collection\n`,
-    );
-    if (session.notReusable.size)
-      process.stderr.write(
-        `[slop.cash] attributions not recorded for reuse: ${[
-          ...session.notReusable,
-        ]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 20)
-          .map(([reason, count]) => `${count} x ${reason}`)
-          .join("; ")}\n`,
-      );
+    process.stderr.write(collectionMemoStatsLines(session));
     if (output) {
       // Written only after the snapshot itself was written successfully. The
       // memo only saves reads, so failing to keep it never fails the release.

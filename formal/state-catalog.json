@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1de744933081adf0bfbaf175c2f33c1984dfd7d697ed1d10de86402e3fe60092",
+  "inventorySha256": "6cf2c33d760233177b5bfb3f984eeddd5308b887ff8eac3a54f0160d6abefab2",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2433,7 +2433,7 @@
     },
     {
       "path": "scripts/collection-memo.ts",
-      "line": 576,
+      "line": 638,
       "name": "CollectionMode",
       "kind": "string-union",
       "values": ["full", "incremental"],
@@ -2540,7 +2540,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 285,
+      "line": 286,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2562,7 +2562,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 535,
+      "line": 536,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2600,7 +2600,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4081,
+      "line": 4082,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2622,7 +2622,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4685,
+      "line": 4686,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2944,7 +2944,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 544,
+      "line": 547,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2968,7 +2968,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 553,
+      "line": 556,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
