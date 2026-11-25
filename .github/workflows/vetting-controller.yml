@@ -79,14 +79,12 @@ jobs:
           fi
           for ref in $refs; do
             head="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
+            released_sha=""
             if [ "$TRIGGER_EVENT" = workflow_run ]; then
-              if [ "$head" != "$RELEASE_SHA" ]; then
-                echo "::notice title=Scanner waits for release::$ref advanced after this release; its new head must deploy before scanning."
-                continue
-              fi
               released="$RELEASE_RUN_ID"
+              released_sha="$RELEASE_SHA"
             else
-              released="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // empty')"
+              released="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // empty')"
             fi
             if [ -z "$released" ]; then
               echo "::notice title=Scanner waits for release::$ref head $head has no successful release yet. Its isolated runner is not deployed, so no scan is dispatched."
@@ -100,6 +98,16 @@ jobs:
             if [ "$deployed" -eq 0 ]; then
               echo "::notice title=Scanner waits for release::$ref did not complete its deployment job."
               continue
+            fi
+            if [ -z "$released_sha" ]; then
+              released_sha="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/head_sha" --jq .sha)"
+            fi
+            if [ "$released_sha" != "$head" ]; then
+              changed="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/compare/$released_sha...$head" --jq 'if .status == "ahead" and (.files | length) < 300 then [.files[] | .filename, (.previous_filename // empty)] | map(select(test("^(apps/security/|spec/security/|[.]github/workflows/vetting-controller[.]yml$|package[.]json$|pnpm-lock[.]yaml$|scripts/scanner-inputs[.]mjs$)") and (test("^spec/security/") or (test("[.]md$") | not)) and (test("[.]proof[.]dfy$") | not) and (test("(^|/)test/") | not) and (test("[.]test[.]" ) | not))) | length else "out-of-order" end' 2>/dev/null || echo unreadable)"
+              if [ "$changed" != "0" ]; then
+                echo "::notice title=Scanner waits for release::$ref serves $released_sha; up to $head the scanner changed or the commits are not in order ($changed), so its release must deploy before scanning."
+                continue
+              fi
             fi
             active="$(gh_retry gh run list --repo "$GITHUB_REPOSITORY" --workflow vetting-controller.yml --branch "$ref" --event workflow_dispatch --json status --jq '[.[] | select(.status != "completed")] | length')"
             if [ "$active" -eq 0 ]; then
