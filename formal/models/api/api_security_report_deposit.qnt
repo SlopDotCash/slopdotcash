@@ -24,10 +24,12 @@
 // reportDepositOutcome; the Worker then records refunded or kept.
 // startReleasedWork, older-style link: a claim GitHub has not confirmed yet
 // whose row was paid or released gets one try at its owner's notice;
-// claim_notice_at records the try whether or not anyone could be told, so the
-// claim never takes the sweep's slots again. A GitHub outage records no try;
-// claim_retry_at orders such a claim behind claims not tried yet (ordering is
-// covered by the unit tests, not modelled).
+// claim_notice_at records a try that ended, whether or not anyone could be
+// told, so the claim never takes the sweep's slots again. A try that failed,
+// on a GitHub outage or on any other error, records no try, though notice
+// rows written before the error stay; claim_retry_at orders such a claim
+// behind claims not tried yet (ordering is covered by the unit tests, not
+// modelled).
 // reportDepositOutcome: not live or project off sends back; a first response
 // that is not a keeping close sends back; 14 silent days send back; a
 // duplicate, an out-of-scope close or a person's rejection marked spam keeps
@@ -137,9 +139,11 @@ module api_security_report_deposit {
     ((s.row == "asked" and s.paid) or (s.row == "recorded" and s.released))
   action sweepClaimNotice(reachable: bool): bool = all { claimReady,
     s' = touch(s.with("claimTried", true).with("notified", s.notified or reachable)) }
-  // A permission-provider outage during the try records nothing: the claim
-  // stays ready for the next sweep.
-  action sweepClaimOutage = all { claimReady, s' = s }
+  // A try that failed (a permission-provider outage, or any other error of
+  // the notice) is not recorded: the claim stays ready for a later sweep.
+  // `partly` is whether some notice rows were written before the error.
+  action sweepClaimFailed(partly: bool): bool = all { claimReady,
+    s' = touch(s.with("notified", s.notified or partly)) }
   // reportDepositOutcome, on a paid row with no outcome.
   val stood = s.appeal != "open" and s.closedAt >= 0 and s.now >= s.closedAt + STOOD
   val decision: str =
@@ -169,7 +173,7 @@ module api_security_report_deposit {
     { nondet e = Set(true, false).oneOf() nondet r = Set(true, false).oneOf() accept(e, r) },
     { nondet e = Set(true, false).oneOf() nondet r = Set(true, false).oneOf() acceptClaim(e, r) },
     { nondet reach = Set(true, false).oneOf() sweepClaimNotice(reach) },
-    sweepClaimOutage,
+    { nondet partly = Set(true, false).oneOf() sweepClaimFailed(partly) },
     { nondet o = Set("triaging", "duplicate", "out-of-scope", "rejected", "needs-information").oneOf() routine(o) },
     { nondet o = Set("confirmed", "duplicate", "out-of-scope", "rejected").oneOf()
       nondet sp = Set(true, false).oneOf() decide(o, sp) },
@@ -281,9 +285,12 @@ module api_security_report_deposit {
     .then(pay).then(sweepClaimNotice(false))
     .expect(not(s.notified) and s.claimTried and invariant)
     .then(sweepClaimNotice(true).fail())
-  run outageClaimIsTriedAgainTest = init.then(setMode("live")).then(acceptClaim(false, true))
-    .then(pay).then(sweepClaimOutage).expect(not(s.claimTried) and not(s.notified) and invariant)
+  run failedClaimIsTriedAgainTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .then(pay).then(sweepClaimFailed(false)).expect(not(s.claimTried) and not(s.notified) and invariant)
+    .then(sweepClaimFailed(true)).expect(not(s.claimTried) and s.notified and invariant)
     .then(sweepClaimNotice(true)).expect(s.notified and s.claimTried and invariant)
+  run heldClaimFailsNoTryTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .expect(held and invariant).then(sweepClaimFailed(true).fail())
   run turnedOffClaimIsToldTest = init.then(setMode("live")).then(acceptClaim(false, true))
     .then(ownerSets(false)).then(sweepRelease).then(sweepClaimNotice(true))
     .expect(s.notified and not(held) and invariant)

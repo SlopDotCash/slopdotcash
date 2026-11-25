@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "6e9c1645d4b16a2450d28d12afec74480aa115bcfa4e2723b8c7e3f8da31b7ba",
+  "inventorySha256": "e501a8ae751f7a24085f0ebd6326ac16c14bbc2fa7d0b7e7a2d68506edf87c30",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -504,7 +504,7 @@
     },
     {
       "path": "backend/security/report-deposit.ts",
-      "line": 54,
+      "line": 55,
       "name": "ReportDepositMode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -514,7 +514,7 @@
     },
     {
       "path": "backend/security/report-deposit.ts",
-      "line": 214,
+      "line": 215,
       "name": "ReportDepositReason",
       "kind": "string-union",
       "values": [
@@ -531,7 +531,7 @@
     },
     {
       "path": "backend/security/report-deposit.ts",
-      "line": 263,
+      "line": 264,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],
@@ -541,7 +541,7 @@
     },
     {
       "path": "backend/security/report-deposit.ts",
-      "line": 593,
+      "line": 653,
       "name": "state",
       "kind": "string-union",
       "values": [

@@ -498,11 +498,12 @@ async function startReleasedWork(
     .all<{ id: string; project_id: string; reporter_github_id: string }>();
   // An older-style link that GitHub has not confirmed yet has no analysis to
   // start, but its owner's notice of the claim waited too. It is tried once:
-  // `claim_notice_at` is set after the try even when no notice row could be
-  // written, so a claim nobody can be told about never takes these slots
-  // again. A claim whose try met a GitHub outage keeps waiting, but behind
-  // every claim not tried yet and behind claims retried longer ago
-  // (`claim_retry_at`), so an outage that lasts cannot hold the slots.
+  // `claim_notice_at` is set after a try that wrote the notice or found
+  // nobody to tell (no recipient, or a retired project), so a claim nobody
+  // can be told about never takes these slots again. A claim whose try
+  // failed, on a GitHub outage or on any other error, keeps waiting, but
+  // behind every claim not tried yet and behind claims retried longer ago
+  // (`claim_retry_at`), so a failure that lasts cannot hold the slots.
   const claimed = await deps.db
     .prepare(
       `SELECT c.id, c.project_id FROM security_report_deposits d
@@ -525,13 +526,20 @@ async function startReleasedWork(
     started++;
   }
   for (const row of claimed.results) {
-    // A permission-provider outage is retryable, never a denial: leave the
-    // claim for the next sweep instead of recording the try.
-    let unavailable = false;
-    await ownerNotice(deps, row.id, row.project_id).catch((error) => {
-      unavailable = reportingAuthorityUnavailable(error);
+    // Only a try that ended is recorded. A failed one leaves the claim for a
+    // later sweep; an error that is not a permission-provider outage is
+    // logged by name, and never stops the claims after it.
+    let failed = false;
+    await ownerNotice(deps, row.id, row.project_id).catch((error: unknown) => {
+      if (projectRetired(error)) return;
+      failed = true;
+      if (!reportingAuthorityUnavailable(error))
+        console.error(
+          "security report deposit claim notice failed",
+          error instanceof Error ? error.name : "unknown",
+        );
     });
-    if (unavailable) {
+    if (failed) {
       await deps.db
         .prepare(
           "UPDATE security_report_deposits SET claim_retry_at = ?1 WHERE case_id = ?2 AND claim_notice_at IS NULL",
@@ -549,6 +557,15 @@ async function startReleasedWork(
     started++;
   }
   return started;
+}
+
+/** `reportingContext` refuses a retired or unknown project: nobody to tell. */
+function projectRetired(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "project_not_found"
+  );
 }
 
 /**

@@ -1249,10 +1249,10 @@
     },
     {
       "path": "backend/security/report-deposit.ts",
-      "sha256": "ee55d453a4dc51b4ef349c1e921781b1bcdb566262144457f645d1e722450fdd",
+      "sha256": "9c26a2586ea6c77305e7a46a121145c7adba4ee8f2099f494ecad8e0e97a3cc4",
       "models": ["formal/models/api/api_security_report_deposit.qnt"],
       "candidateLines": [
-        15, 28, 148, 195, 359, 403, 440, 549, 593, 607, 617, 623
+        15, 28, 149, 196, 360, 404, 441, 545, 553, 609, 653, 667, 677, 683
       ],
       "review": "mapped-abstraction"
     },
@@ -3902,6 +3902,13 @@
       "sha256": "a8f34d2c22532ee8c14f94302fd562261cb2bb716d4505f33a0bc09e18124fcb",
       "models": ["formal/models/referrals/repo_request.qnt"],
       "candidateLines": [7, 33, 34, 40, 41],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0148_security_report_deposit_claim_notice.sql",
+      "sha256": "8cea67a5cd46bdff26e1cdba39b1c4ecc194c9456e15979b72f22c248b2ec9bb",
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -12208,24 +12215,29 @@
     },
     {
       "path": "formal/models/api/api_security_report_deposit.qnt",
-      "sha256": "14cb4ce717a39f15f64d1be4fcf63c885c5585bf4e6a497442349cfe8a1582ca",
+      "sha256": "2d081cdfc85a95b7f2286b98d7be2f3f8c2c5e128ceca16a9de4b7edb74c0408",
       "sources": [
         "backend/security/report-deposit-hold.ts",
         "backend/security/report-deposit.ts",
         "backend/submission-fee/handler.ts",
         "migrations/0145_security_report_deposits.sql",
+        "migrations/0148_security_report_deposit_claim_notice.sql",
         "src/lib/security-report-deposit.mjs"
       ],
       "scenarios": [
         "acknowledgedIsSentBackTest",
         "appealStopsTheClockTest",
         "decidedDepositKeepsItsPaymentTest",
+        "dryRunClaimIsNotSweptTest",
         "dryRunRecordsAndHoldsNothingTest",
         "duplicateIsKeptAfterItStoodTest",
         "duplicateWaitsSevenDaysTest",
         "exemptIsNotAskedTest",
         "existingReportIsNeverAskedTest",
+        "failedClaimIsTriedAgainTest",
         "finalDecisionAfterAppealDecidesTest",
+        "heldClaimFailsNoTryTest",
+        "heldClaimIsNotToldTest",
         "heldIsNotDecidedByAPersonTest",
         "heldIsNotDecidedTest",
         "heldIsNotForwardedTest",
@@ -12238,6 +12250,7 @@
         "noRateAsksNobodyTest",
         "openAppealWaitsTest",
         "ownerOffReleasesTest",
+        "paidClaimIsToldOnceTest",
         "paidIsScreenedTest",
         "paidThenOffIsSentBackTest",
         "plainRejectionIsSentBackTest",
@@ -12247,6 +12260,8 @@
         "silentIsSentBackAfterTheClockTest",
         "silentIsSentBackTest",
         "spamByAPersonIsKeptTest",
+        "turnedOffClaimIsToldTest",
+        "unreachableClaimIsTriedOnceTest",
         "upheldAppealRestartsTheClockTest"
       ]
     },

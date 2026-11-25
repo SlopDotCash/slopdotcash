@@ -448,12 +448,14 @@ the work that waited, three reports per sweep: the screening of a saved
 report still `queued`, or the owner's notice and the analysis of a linked
 GitHub report that has neither, or the owner's notice of an older-style link
 GitHub has not confirmed yet. That claim notice is tried once: the sweep sets
-`claim_notice_at` after the try even when no notice row could be written (no
-technical approver with current GitHub authority, or a retired project), so
-such a claim never takes the sweep's slots again. A try that meets a GitHub
-outage is not recorded there; the sweep sets `claim_retry_at` instead and
-orders retried claims behind claims not tried yet, oldest retry first, so a
-lasting outage on some projects cannot keep a later claim from its notice.
+`claim_notice_at` after a try that wrote the notice or found nobody to tell
+(no technical approver with current GitHub authority, or a retired project),
+so such a claim never takes the sweep's slots again. A try that fails, on a
+GitHub outage or on any other error, is not recorded there; the sweep sets
+`claim_retry_at` instead, logs an error that is not an outage by name, goes
+on to the next claim, and orders retried claims behind claims not tried yet,
+oldest retry first, so a lasting failure on some claims cannot keep a later
+claim from its notice.
 Only a paid ask and a
 released ask are looked at; a row that record-only mode wrote is never
 touched. Each start is safe to repeat.

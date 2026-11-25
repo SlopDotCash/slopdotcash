@@ -3844,6 +3844,103 @@ describe("the report deposit on a report that lives on GitHub", () => {
     expect(await sweep(t)).toMatchObject({ started: 0 });
   });
 
+  test("an older-style link whose notice fails to be written is not recorded as tried and is told on a later sweep", async () => {
+    const t = setup({ reportDeposit: "live" });
+    const claim = async () => {
+      const created = await t.call(REPORTER, "POST", "security-cases", {
+        mode: "claim",
+        projectId: PROJECT,
+        advisory: seed(t).ghsa_id,
+        idempotencyKey: t.key(),
+      });
+      expect(created.status).toBe(201);
+      const caseId = (created.body.case as { id: string }).id;
+      expect(pay(t, caseId)).toBe(1);
+      return caseId;
+    };
+    const tries = (caseId: string) =>
+      t.sqlite
+        .query(
+          "SELECT claim_notice_at, claim_retry_at FROM security_report_deposits WHERE case_id = ?",
+        )
+        .get(caseId) as {
+        claim_notice_at: string | null;
+        claim_retry_at: string | null;
+      };
+    const failing = await claim();
+    const other = await claim();
+    // The database refuses the notice rows of the first claim only. This is
+    // not a GitHub outage: the owners' authority is read without trouble.
+    t.sqlite.run(
+      `CREATE TRIGGER claim_notice_refused BEFORE INSERT ON notifications
+        WHEN NEW.subject = '${failing}'
+       BEGIN SELECT RAISE(ABORT, 'synthetic notice write failure'); END`,
+    );
+    // The failed try is not counted and not recorded, and the pass still
+    // reaches the other claim.
+    expect(await sweep(t)).toMatchObject({ started: 1 });
+    expect(ownerNotices(t)).toBe(2);
+    expect(tries(failing).claim_notice_at).toBeNull();
+    expect(tries(failing).claim_retry_at).not.toBeNull();
+    expect(tries(other).claim_notice_at).not.toBeNull();
+    // Once the write works again the waiting claim is told, exactly once.
+    t.sqlite.run("DROP TRIGGER claim_notice_refused");
+    expect(await sweep(t)).toMatchObject({ started: 1 });
+    expect(ownerNotices(t)).toBe(4);
+    expect(tries(failing).claim_notice_at).not.toBeNull();
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+    expect(ownerNotices(t)).toBe(4);
+  });
+
+  test("an older-style link on a project retired since is recorded as tried once", async () => {
+    const t = setup({ reportDeposit: "live" });
+    const claimed = await t.call(REPORTER, "POST", "security-cases", {
+      mode: "claim",
+      projectId: PROJECT,
+      advisory: seed(t).ghsa_id,
+      idempotencyKey: t.key(),
+    });
+    expect(claimed.status).toBe(201);
+    const caseId = (claimed.body.case as { id: string }).id;
+    expect(pay(t, caseId)).toBe(1);
+    const row = t.sqlite
+      .query("SELECT manifest FROM projects WHERE id = ?")
+      .get(PROJECT) as { manifest: string };
+    const next = JSON.stringify({
+      ...JSON.parse(row.manifest),
+      listingTier: "retired",
+    });
+    const digest = createHash("sha256").update(next).digest("hex");
+    t.sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at, actor_github_id, actor_github_login) VALUES (?, 2, ?, ?, 'test', ?, ?, ?)",
+      )
+      .run(
+        PROJECT,
+        next,
+        digest,
+        START,
+        MAINTAINER.githubId,
+        MAINTAINER.githubLogin,
+      );
+    t.sqlite
+      .query(
+        "UPDATE projects SET manifest = ?, manifest_sha256 = ?, revision = 2 WHERE id = ?",
+      )
+      .run(next, digest, PROJECT);
+    // The retired project has nobody to tell: that ends the try.
+    expect(await sweep(t)).toMatchObject({ started: 1 });
+    expect(ownerNotices(t)).toBe(0);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT claim_notice_at IS NOT NULL AS tried, claim_retry_at FROM security_report_deposits WHERE case_id = ?",
+        )
+        .get(caseId),
+    ).toEqual({ tried: 1, claim_retry_at: null });
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+  });
+
   test("an older-style link released because the owner turned the deposit off tells the owners once", async () => {
     const t = setup({ reportDeposit: "live" });
     const advisory = seed(t);
