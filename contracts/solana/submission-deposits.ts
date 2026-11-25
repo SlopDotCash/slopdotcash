@@ -456,7 +456,11 @@ const text = (value: unknown): string => {
   return value;
 };
 const index = (value: unknown, length: number): number => {
-  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) >= length)
+  if (
+    !Number.isSafeInteger(value) ||
+    Number(value) < 0 ||
+    Number(value) >= length
+  )
     throw new Error("Invalid transaction record");
   return Number(value);
 };

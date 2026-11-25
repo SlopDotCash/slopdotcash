@@ -7,8 +7,6 @@
  */
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
-import type { SolanaLedgerConfig } from "./solana";
-import { SOLANA_MAX_BATCH } from "./solana";
 import {
   STANDING_DEPOSIT_CONTRACT,
   STANDING_DEPOSIT_LEDGER,
@@ -27,6 +25,8 @@ import {
   SUBMISSION_FEE_TOKENS,
   type SubmissionFeeTerms,
 } from "../../src/lib/submission-fee.mjs";
+import type { SolanaLedgerConfig } from "./solana";
+import { SOLANA_MAX_BATCH } from "./solana";
 
 export type Mode = "off" | "dry_run" | "live";
 
@@ -269,7 +269,9 @@ export function parseSolanaConfig(
   const lamports = (value: string | undefined, name: string) => {
     const text = (value ?? "").trim();
     if (!/^[1-9][0-9]{0,15}$/u.test(text))
-      throw new TypeError(`${name} must be a positive whole number of lamports`);
+      throw new TypeError(
+        `${name} must be a positive whole number of lamports`,
+      );
     return text;
   };
   const gas: GasLimits = {

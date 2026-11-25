@@ -28,11 +28,11 @@ import {
 } from "../../src/lib/standing-deposit.mjs";
 import {
   SUBMISSION_FEE_CONTRACTS,
-  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
   SUBMISSION_FEE_DEFAULT_MINOR,
   SUBMISSION_FEE_KEEP_LABEL,
   SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
   SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
   type SubmissionFeeNetwork,
   type SubmissionFeeRate,
   submissionFeeItem,

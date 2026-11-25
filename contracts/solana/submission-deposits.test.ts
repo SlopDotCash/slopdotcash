@@ -2,7 +2,7 @@
 // the IDL, and a deposit's record is addressed by its payer and nonce.
 import { expect, test } from "bun:test";
 import { bytesToHex } from "../../src/lib/byte-encoding";
-import { fakeAddress } from "../../workers/submission-fee/solana-fake";
+import { fakeAddress } from "../../workers/submission-fee/fixtures/solana-fake";
 import { solanaAssociatedTokenAddress, solanaBase58 } from "./adapter";
 import {
   decodeSubmissionConfig,
@@ -68,7 +68,10 @@ test("deposit carries the item, the exact amount, the kept wallet and the nonce,
   expect(solanaBase58(built.data.slice(48, 80))).toBe(KEPT);
   expect(bytesToHex(built.data.slice(80))).toBe(bytesToHex(u64(nonce)));
   const named = Object.fromEntries(
-    (spec?.accounts ?? []).map((meta, index) => [meta.name, built.accounts[index]]),
+    (spec?.accounts ?? []).map((meta, index) => [
+      meta.name,
+      built.accounts[index],
+    ]),
   );
   expect(named.payer).toEqual({ key: PAYER, write: true });
   expect(named.config.key).toBe(submissionConfigAddress(PROGRAM));
@@ -140,7 +143,7 @@ test("an account of another size or kind is refused", () => {
       (total, field) =>
         total +
         (typeof field.type === "string"
-          ? { pubkey: 32, u64: 8, i64: 8, bool: 1, u8: 1 }[field.type] ?? 0
+          ? ({ pubkey: 32, u64: 8, i64: 8, bool: 1, u8: 1 }[field.type] ?? 0)
           : field.type.array[1]),
       0,
     );

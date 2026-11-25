@@ -14,7 +14,7 @@ import {
   solanaBase64,
   solanaBase64Bytes,
   solanaPublicKeyBytes,
-} from "../../contracts/solana/adapter";
+} from "../../../contracts/solana/adapter";
 import {
   decodeSubmissionDeposit,
   SUBMISSION_DEPOSITS_IDL,
@@ -22,9 +22,9 @@ import {
   submissionConfigAddress,
   submissionDepositAddress,
   submissionVaultAddress,
-} from "../../contracts/solana/submission-deposits";
-import { CLASSIC_TOKEN_PROGRAM } from "../../contracts/solana/token";
-import { decodeBase58Bytes, encodeBase58Bytes } from "../../src/lib/base58";
+} from "../../../contracts/solana/submission-deposits";
+import { CLASSIC_TOKEN_PROGRAM } from "../../../contracts/solana/token";
+import { decodeBase58Bytes, encodeBase58Bytes } from "../../../src/lib/base58";
 
 const u64 = (value: bigint) => {
   const bytes = new Uint8Array(8);
@@ -126,7 +126,9 @@ export class FakeSolana {
 
   /** A blockhash that changes with the block height, as a real one does. */
   blockhash() {
-    return solanaBase58(join(new Uint8Array(24).fill(77), u64(BigInt(this.height))));
+    return solanaBase58(
+      join(new Uint8Array(24).fill(77), u64(BigInt(this.height))),
+    );
   }
 
   private discriminator(kind: "accounts" | "instructions", name: string) {
@@ -170,7 +172,12 @@ export class FakeSolana {
     });
   }
 
-  private tokenData(mint: string, owner: string, amount: bigint, state: number) {
+  private tokenData(
+    mint: string,
+    owner: string,
+    amount: bigint,
+    state: number,
+  ) {
     const data = new Uint8Array(165);
     data.set(solanaPublicKeyBytes(mint), 0);
     data.set(solanaPublicKeyBytes(owner), 32);
@@ -244,9 +251,16 @@ export class FakeSolana {
     const id = this.count;
     this.nonce += 1n;
     const nonce = input.nonce ?? this.nonce;
-    const account = submissionDepositAddress(this.programId, input.payer, nonce);
+    const account = submissionDepositAddress(
+      this.programId,
+      input.payer,
+      nonce,
+    );
     if (this.accounts.has(account)) throw new Error("account already in use");
-    if (input.tokenAccount !== false && !this.accounts.has(solanaAssociatedTokenAddress(mint, input.payer)))
+    if (
+      input.tokenAccount !== false &&
+      !this.accounts.has(solanaAssociatedTokenAddress(mint, input.payer))
+    )
       this.tokenAccount(input.payer, mint);
     this.accounts.set(account, {
       owner: this.programId,
@@ -261,7 +275,9 @@ export class FakeSolana {
         deposited_at: u64(BigInt(this.time)),
       }),
     });
-    const spec = this.idl.instructions.find((entry) => entry.name === "deposit");
+    const spec = this.idl.instructions.find(
+      (entry) => entry.name === "deposit",
+    );
     if (!spec) throw new Error("no deposit");
     const named: Record<string, string> = {
       payer: input.payer,
@@ -353,7 +369,11 @@ export class FakeSolana {
       )
         return index;
       const wallet =
-        record === null ? "" : call.data[8] === 1 ? record.payer : record.keptTo;
+        record === null
+          ? ""
+          : call.data[8] === 1
+            ? record.payer
+            : record.keptTo;
       const token = this.accounts.get(destination);
       if (
         resolver !== feePayer ||
@@ -391,7 +411,8 @@ export class FakeSolana {
         const [, , deposit, , mint, vault, destination] = call.accounts;
         const record = this.depositOf(deposit);
         if (!record) throw new Error("unreachable");
-        if (!pre.has(destination)) pre.set(destination, this.balance(destination));
+        if (!pre.has(destination))
+          pre.set(destination, this.balance(destination));
         this.credit(destination, record.amount);
         this.accounts.delete(deposit);
         touched.add(deposit);
@@ -403,8 +424,8 @@ export class FakeSolana {
           instructions: [
             {
               programIdIndex: keys.indexOf(CLASSIC_TOKEN_PROGRAM),
-              accounts: [vault, mint, destination, call.accounts[3]].map((key) =>
-                keys.indexOf(key),
+              accounts: [vault, mint, destination, call.accounts[3]].map(
+                (key) => keys.indexOf(key),
               ),
               data: encodeBase58Bytes(
                 join(Uint8Array.of(12), u64(record.amount), Uint8Array.of(6)),
@@ -418,7 +439,9 @@ export class FakeSolana {
     const balances = (read: (address: string) => bigint) =>
       [...pre.keys()].map((address) => ({
         accountIndex: keys.indexOf(address),
-        mint: solanaBase58(this.accounts.get(address)?.data.slice(0, 32) as Uint8Array),
+        mint: solanaBase58(
+          this.accounts.get(address)?.data.slice(0, 32) as Uint8Array,
+        ),
         owner: solanaBase58(
           this.accounts.get(address)?.data.slice(32, 64) as Uint8Array,
         ),
@@ -443,7 +466,8 @@ export class FakeSolana {
           },
         },
         meta: {
-          err: refused === null ? null : { InstructionError: [refused, "Custom"] },
+          err:
+            refused === null ? null : { InstructionError: [refused, "Custom"] },
           innerInstructions: inner,
           preTokenBalances: balances((address) => pre.get(address) as bigint),
           postTokenBalances: balances((address) => this.balance(address)),
@@ -464,7 +488,9 @@ export class FakeSolana {
     this.time += 1;
     const destination = solanaAssociatedTokenAddress(record.mint, record.payer);
     const vault = submissionVaultAddress(this.programId, record.mint);
-    const spec = this.idl.instructions.find((entry) => entry.name === "reclaim");
+    const spec = this.idl.instructions.find(
+      (entry) => entry.name === "reclaim",
+    );
     if (!spec) throw new Error("no reclaim");
     const named: Record<string, string> = {
       payer: record.payer,
@@ -526,7 +552,11 @@ export class FakeSolana {
                     (key) => keys.indexOf(key),
                   ),
                   data: encodeBase58Bytes(
-                    join(Uint8Array.of(12), u64(record.amount), Uint8Array.of(6)),
+                    join(
+                      Uint8Array.of(12),
+                      u64(record.amount),
+                      Uint8Array.of(6),
+                    ),
                   ),
                   stackHeight: 2,
                 },
@@ -665,7 +695,11 @@ export class FakeSolana {
         const signature = wire.slice(1, 65);
         const { keys } = this.compiled(wire.slice(65));
         if (
-          !ed25519.verify(signature, wire.slice(65), solanaPublicKeyBytes(keys[0]))
+          !ed25519.verify(
+            signature,
+            wire.slice(65),
+            solanaPublicKeyBytes(keys[0]),
+          )
         )
           throw new Error("bad signature");
         const id = solanaBase58(signature);

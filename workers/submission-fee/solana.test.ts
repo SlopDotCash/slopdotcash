@@ -24,13 +24,13 @@ import {
 } from "../../src/lib/submission-fee.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseSolanaConfig, type SolanaFeeConfig } from "./config";
+import { FakeSolana, fakeAddress } from "./fixtures/solana-fake";
 import { type Env, runDeposits } from "./index";
 import {
   createSolanaFeeChain,
   SOLANA_MAX_BATCH,
   SOLANA_TRANSACTION_BYTES,
 } from "./solana";
-import { FakeSolana, fakeAddress } from "./solana-fake";
 import type { SubmissionFeeD1Database } from "./store";
 
 const ITEMS = `CREATE TABLE IF NOT EXISTS submission_fee_items (
@@ -127,7 +127,10 @@ function setup(mode: "dry_run" | "live" = "live") {
     sqlite
       .query("SELECT * FROM submission_fee_solana_sends ORDER BY rowid")
       .all() as Record<string, unknown>[];
-  const pay = (pull: number, overrides: Parameters<FakeSolana["pay"]>[0] | object = {}) =>
+  const pay = (
+    pull: number,
+    overrides: Parameters<FakeSolana["pay"]>[0] | object = {},
+  ) =>
     chain.pay({
       payer: PAYER,
       item: submissionFeeItem(REPOSITORY, pull),
@@ -318,9 +321,7 @@ describe("reading deposits", () => {
     t.pay(7);
     t.chain.failMethod = "getProgramAccounts";
     const failed = await t.ledger();
-    expect(failed.reason).toBe(
-      "chain.snapshot/SolanaFeeRpcError:status-503",
-    );
+    expect(failed.reason).toBe("chain.snapshot/SolanaFeeRpcError:status-503");
     expect(t.deposit(1)).toBeNull();
     t.chain.failMethod = null;
     expect(await t.ledger()).toMatchObject({ recorded: 1, paid: 1 });
@@ -418,7 +419,9 @@ describe("settling deposits", () => {
     t.chain.land(signature);
     // The receipt now claims the fee wallet's account did not rise.
     const meta = (
-      t.chain.landed.get(signature)?.json as { meta: Record<string, unknown> }
+      (t.chain.landed.get(signature) as { json: unknown }).json as {
+        meta: Record<string, unknown>;
+      }
     ).meta;
     meta.postTokenBalances = meta.preTokenBalances;
     const result = await t.ledger();
@@ -519,7 +522,10 @@ describe("settling deposits", () => {
     t.chain.height = (first.last_valid_block_height as number) + 1;
     expect(await t.ledger()).toMatchObject({ send: "sent" });
     expect(t.sends()).toMatchObject([
-      { state: "failed", reason: "blockhash expired before the transaction landed" },
+      {
+        state: "failed",
+        reason: "blockhash expired before the transaction landed",
+      },
       { state: "submitted" },
     ]);
     expect(t.sends()[1].tx_id).not.toBe(first.tx_id);
@@ -665,7 +671,10 @@ describe("a record address used again", () => {
     expect(third.account).toBe(first.account);
     await t.ledger();
     expect(t.deposit(2)).toMatchObject({ state: "kept", resolve_tx: kept });
-    expect(t.deposit(1)).toMatchObject({ state: "refunded", resolve_tx: refund });
+    expect(t.deposit(1)).toMatchObject({
+      state: "refunded",
+      resolve_tx: refund,
+    });
     expect(t.deposit(3)).toMatchObject({
       state: "open",
       tx_hash: third.signature,
@@ -777,7 +786,10 @@ describe("a record address that changes hands between the read and the signature
       idl: expectingId,
     });
     client.track(1, made.account);
-    const prepared = await client.prepare([{ id: 1, refund: true }], async () => {});
+    const prepared = await client.prepare(
+      [{ id: 1, refund: true }],
+      async () => {},
+    );
     const data = solanaBase64Bytes(prepared.rawTx);
     // The last eight bytes of the one instruction are the expected id, 1.
     expect(

@@ -293,8 +293,11 @@ export async function handleSolanaFeePay(
         );
       // A kept fee must have somewhere to go before any deposit is taken.
       if (
-        (await tokenBalance(deployment, deployment.mint, deployment.feeWallet)) ===
-        null
+        (await tokenBalance(
+          deployment,
+          deployment.mint,
+          deployment.feeWallet,
+        )) === null
       )
         return refuse("Solana deposits are not available right now.");
       const balance = await tokenBalance(deployment, deployment.mint, wallet);
@@ -313,11 +316,7 @@ export async function handleSolanaFeePay(
       if (
         (await accountBytes(deployment, deposit, deployment.programId)) !== null
       )
-        return json(
-          409,
-          { error: "nonce_used" },
-          { cacheControl: "no-store" },
-        );
+        return json(409, { error: "nonce_used" }, { cacheControl: "no-store" });
       const instruction = depositInstruction(
         {
           programId: deployment.programId,
@@ -427,8 +426,7 @@ export async function handleSolanaFeePay(
       earliest === null ? "no_open_deposit" : "reclaim_too_early",
     );
   } catch (error) {
-    if (error instanceof SolanaWalletActionError)
-      return refuse(error.message);
+    if (error instanceof SolanaWalletActionError) return refuse(error.message);
     if (error instanceof SolanaRpcUnavailable)
       return json(
         503,

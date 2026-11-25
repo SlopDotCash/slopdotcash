@@ -357,6 +357,85 @@ The hourly readings are spot prices. One reading can be moved by a large
 trade in that block; the averages limit what one reading can do, and the fee
 is refundable and worth about one dollar.
 
+## Solana
+
+Operator decision, 25 November 2026 (PRD section 6, "Submission fee
+deposits", "Solana, off chain"). The fee can also be paid in USDC on Solana,
+into the `slop-submission-deposits` program
+(`contracts/solana/README.md`, "Submission deposits"). The program is not
+deployed: its id and start slot in `src/lib/submission-fee.mjs` are null,
+and while they are null nothing here reads or signs on Solana in any mode.
+
+The Solana ledger is `solana-mainnet`. It has its own switch,
+`SUBMISSION_FEE_SOLANA_MODE` (`off`, `dry_run`, `live`), with the meanings of
+the table under "Modes", independent of `SUBMISSION_FEE_MODE`. It ships
+`off`. `live` changes only together with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`
+in `src/lib/submission-fee.mjs`, which is what makes the pay page, Slopbot's
+comment and the public reads list Solana; the release refuses one without
+the other.
+
+What differs from the EVM ledgers (`solana-core.ts`, `solana.ts`,
+`contracts/solana/submission-deposits.ts`):
+
+- **Reads.** There is no event log. An open deposit is an account of the
+  program, closed on its outcome. Each run reads the program's `Config` and
+  then every `Deposit` account (`getProgramAccounts`, filtered by size and
+  discriminator, at a slot not before the `Config` read), all at `finalized`
+  commitment. A pull request is marked paid only by a finalized deposit;
+  there is no earlier confirmed step. The cluster is authenticated by its
+  genesis hash first.
+- **Keys.** A deposit is keyed by the id the program stored in its record.
+  The record's address follows from the payer and a nonce the payer picked,
+  and the same payer and nonce can be used again after a settlement, so an
+  address is never a key. The address is kept beside the row
+  (`deposit_account`, migration 0155). The cursor row holds the next deposit
+  id, not a block.
+- **Settlement.** A recorded deposit whose account is gone, or now holds
+  another id, is settled. Its outcome is the first `resolve` or `reclaim` on
+  that address after the transaction that created it, read from the executed
+  instructions of that finalized transaction, never from its logs. A refund
+  or kept fee is recorded only when the transaction shows the program's own
+  transfer of the exact amount of the deposit's mint into an account the
+  right wallet owns, which rose by at least that amount. A deposit made and
+  settled before the Worker ever recorded it is logged
+  (`submission_fee_solana_settled_unseen`) and not recorded.
+- **Addresses** are base58 and compared exactly. USDC is the only accepted
+  mint. A deposit of another mint is recorded, refused
+  (`token_not_accepted`) and never resolved.
+- **Sending.** One transaction carries up to five `resolve` instructions,
+  each naming the id the Worker recorded, and is all or nothing. Right before
+  it builds an instruction the Worker reads the record again at finalized
+  commitment and builds from that record; it builds nothing when the record
+  is gone or holds another id. Before a refund it checks that the payer's
+  associated USDC account exists, is of that mint, is still the payer's and
+  is not frozen (the same for the fee wallet's before a kept fee); otherwise
+  the deposit is parked as under "A payout the token refuses" and looked at
+  again a day later. The Worker never creates a token account.
+- **The journal.** Sends are in `submission_fee_solana_sends`. The signed
+  bytes are recorded before the broadcast and resent unchanged while their
+  blockhash can still land. A send is failed only once the finalized chain
+  is past its last valid block height without it; its deposits are then sent
+  again in a new transaction.
+- **Limits and secrets.** `SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX` and
+  `SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY` bound the network fee. The
+  secrets are `RPC_URL_SUBMISSION_FEE_SOLANA`, a keyed https endpoint that
+  serves finalized reads, `getProgramAccounts`, `getSignaturesForAddress`
+  and `getTransaction` (there is no public default), and for `live`
+  `SUBMISSION_FEE_SOLANA_RESOLVER_SEED`, the resolver's 32-byte ed25519 seed
+  as 64 hex digits. The resolver key pays only the network fee; a deposit's
+  rent returns to its payer. A key that is not the program's resolver signs
+  nothing (`submission_fee_solana_resolver_differs`).
+- **Kept fees** are fee income of the Solana fee wallet under the same rule
+  as below, by exact address.
+
+Switching Solana on, each step the operator's and each its own reviewed
+change: deploy and initialize the program and open its USDC vault
+(`docs/submission-deposits-solana-deploy-runbook.md`); put the program id
+and the slot of `initialize` in the tables; install the endpoint secret and
+set the mode to `dry_run`; create the resolver key, fund it with a little
+SOL, name it with `set_resolver` and install its seed; then set the mode to
+`live` together with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`.
+
 ## Modes
 
 `SUBMISSION_FEE_MODE` in `wrangler.toml`:
@@ -407,9 +486,14 @@ fee wallet and is never income.
 
 ```sh
 bun test ./src/lib/submission-fee.test.ts ./workers/submission-fee \
-  ./backend/submission-fee ./workers/fee-converter/submission-fee-income.test.ts
+  ./backend/submission-fee ./workers/fee-converter/submission-fee-income.test.ts \
+  ./contracts/solana/submission-deposits.test.ts
 bun run test:submission-fee:anvil
 ```
+
+The Solana ledger's tests (`solana.test.ts`) run the real reader, resolver
+and store against `fixtures/solana-fake.ts`, a small cluster that behaves like the
+deposit program over JSON-RPC.
 
 The second command deploys the compiled contract and a test token to a local
 Anvil chain and runs the Worker against it. On Robinhood Chain (the local

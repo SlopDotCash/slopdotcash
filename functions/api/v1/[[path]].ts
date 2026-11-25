@@ -82,12 +82,6 @@ import { handleHistoricalValueImport } from "../../../backend/slopbot/value-impo
 import { handleStandingDeposit } from "../../../backend/standing-deposit/handler";
 import { handleSubmissionFeeApi } from "../../../backend/submission-fee/handler";
 import {
-  SUBMISSION_FEE_CONTRACTS,
-  SUBMISSION_FEE_KEPT_TO,
-  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
-  SUBMISSION_FEE_TOKENS,
-} from "../../../src/lib/submission-fee.mjs";
-import {
   CloudflareTracePersistence,
   privateIntakeStatus,
 } from "../../../backend/trace/cloudflare-persistence";
@@ -120,6 +114,12 @@ import {
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { GithubActor } from "../../../src/lib/project-contracts";
+import {
+  SUBMISSION_FEE_CONTRACTS,
+  SUBMISSION_FEE_KEPT_TO,
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
+  SUBMISSION_FEE_TOKENS,
+} from "../../../src/lib/submission-fee.mjs";
 import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
 import {
   loadRegistryPaymentDeployments,

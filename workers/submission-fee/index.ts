@@ -218,10 +218,7 @@ export async function runDeposits(
               [ledger.network]: ledger.feeWallet,
             },
           },
-          store: labelled(
-            new D1SolanaFeeStore(env.SUBMISSION_FEE_DB),
-            "store",
-          ),
+          store: labelled(new D1SolanaFeeStore(env.SUBMISSION_FEE_DB), "store"),
           chain: labelled(
             overrides.solanaChain
               ? overrides.solanaChain(ledger, seed)

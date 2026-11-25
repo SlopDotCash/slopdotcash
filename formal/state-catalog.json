@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "0167a0c6d5016b060ba40e8a77bfee48235fced37ee55e40d132fd8a65c98e7c",
+  "inventorySha256": "88003d3e368b0068bf6fff698ca040611643bf009260a72ed205656ad811867b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2421,6 +2421,32 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0155_submission_fee_solana.sql",
+      "line": 31,
+      "name": "mode",
+      "kind": "sql-check",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0155_submission_fee_solana.sql",
+      "line": 41,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["failed", "finalized", "recorded", "submitted", "unknown"],
+      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
+      "lexicallyUnmentionedValues": [
+        "failed",
+        "finalized",
+        "recorded",
+        "submitted",
+        "unknown"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -4402,6 +4428,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/lib/solana-fee-deposit.ts",
+      "line": 64,
+      "name": "SolanaFeeStatus",
+      "kind": "string-union",
+      "values": ["failed", "finalized", "pending"],
+      "models": ["formal/models/ui/ui_submission_fee_solana_pay.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/standing-deposit-page.ts",
       "line": 56,
       "name": "outcomeReason",
@@ -4413,11 +4449,14 @@
     },
     {
       "path": "src/lib/submission-fee-page.ts",
-      "line": 51,
+      "line": 73,
       "name": "FeeOutcome",
       "kind": "string-union",
       "values": ["kept", "kept_due", "refund_due", "refunded"],
-      "models": ["formal/models/ui/ui_submission_fee_pay.qnt"],
+      "models": [
+        "formal/models/ui/ui_submission_fee_pay.qnt",
+        "formal/models/ui/ui_submission_fee_solana_pay.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "kept",
         "kept_due",
@@ -5186,7 +5225,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 64,
+      "line": 65,
       "name": "FeeMode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -5199,7 +5238,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 195,
+      "line": 210,
       "name": "FeeOutcomeWhy",
       "kind": "string-union",
       "values": ["closed", "marked", "merged", "undecided", "wanted"],
@@ -5212,7 +5251,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 343,
+      "line": 367,
       "name": "GateState",
       "kind": "string-union",
       "values": ["asked", "asking", "paid", "recorded", "released"],
@@ -5225,7 +5264,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 1131,
+      "line": 1155,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],
@@ -5332,17 +5371,20 @@
     },
     {
       "path": "workers/submission-fee/config.ts",
-      "line": 28,
+      "line": 31,
       "name": "Mode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
-      "models": ["formal/models/fees/submission_fee_send.qnt"],
+      "models": [
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_deposit.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 138,
+      "line": 139,
       "name": "SendState",
       "kind": "string-union",
       "values": ["failed", "finalized", "recorded", "submitted", "unknown"],
@@ -5356,7 +5398,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 152,
+      "line": 153,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -5370,7 +5412,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 184,
+      "line": 191,
       "name": "ParkReason",
       "kind": "string-union",
       "values": ["payout_failed", "reverted_alone"],
@@ -5384,7 +5426,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 187,
+      "line": 194,
       "name": "ProbeResult",
       "kind": "string-union",
       "values": ["ok", "payout_failed", "reverted"],
@@ -5398,7 +5440,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 247,
+      "line": 254,
       "name": "state",
       "kind": "string-union",
       "values": ["kept", "reclaimed", "refunded"],
@@ -5412,7 +5454,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 322,
+      "line": 329,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],
@@ -5426,7 +5468,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 499,
+      "line": 515,
       "name": "status",
       "kind": "string-union",
       "values": ["chain_mismatch", "ran"],
@@ -5440,20 +5482,45 @@
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 63,
+      "line": 87,
       "name": "mode",
       "kind": "string-union",
-      "values": ["dry_run", "live"],
+      "values": ["dry_run", "live", "off"],
       "models": [
         "formal/models/fees/submission_fee_rate.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_deposit.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
+      "path": "workers/submission-fee/index.ts",
+      "line": 89,
+      "name": "solanaMode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": [
+        "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_deposit.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/submission-fee/solana.ts",
+      "line": 118,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["kept", "reclaimed", "refunded"],
+      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "workers/submission-fee/store.ts",
-      "line": 177,
+      "line": 184,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -5461,14 +5528,15 @@
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_deposit.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 793,
+      "line": 807,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],
@@ -5476,7 +5544,24 @@
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_deposit.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/submission-fee/store.ts",
+      "line": 1055,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": [
+        "formal/models/fees/submission_fee_deposit.qnt",
+        "formal/models/fees/submission_fee_rate.qnt",
+        "formal/models/fees/submission_fee_report_deposit.qnt",
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_deposit.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"

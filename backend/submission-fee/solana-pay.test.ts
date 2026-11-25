@@ -32,7 +32,7 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   FakeSolana,
   fakeAddress,
-} from "../../workers/submission-fee/solana-fake";
+} from "../../workers/submission-fee/fixtures/solana-fake";
 import { handleSubmissionFeeApi } from "./handler";
 
 const NOW = "2026-12-05T12:00:00.000Z";
@@ -55,7 +55,10 @@ function harness() {
   const clock = { now: NOW };
   const tables: FeeTables = {
     ...PUBLISHED_FEE_TABLES,
-    contracts: { ...PUBLISHED_FEE_TABLES.contracts, [NETWORK]: chain.programId },
+    contracts: {
+      ...PUBLISHED_FEE_TABLES.contracts,
+      [NETWORK]: chain.programId,
+    },
     tokens: { ...PUBLISHED_FEE_TABLES.tokens, [NETWORK]: { usdc: chain.mint } },
     keptTo: { ...PUBLISHED_FEE_TABLES.keptTo, [NETWORK]: chain.feeWallet },
     solanaOn: true,
@@ -172,7 +175,7 @@ test("Solana is listed only once the program is published and switched on, and t
     { contract: fakeAddress(1) },
     { token: fakeAddress(1) },
     { keptTo: fakeAddress(1) },
-    { keptTo: (solana?.keptTo as string).toLowerCase() },
+    { keptTo: String(solana?.keptTo).toLowerCase() },
     { amount: "1000000" },
     { minimumAccepted: "1" },
     { chainId: 1 },
@@ -286,9 +289,9 @@ test("review prepares exactly the deposit the page builds from the tables", asyn
     { amount: "1" },
   ]) {
     const again = await t.post({ step: "review", nonce: "41", ...extra });
-    expect(
-      (again.body.plan as Record<string, unknown>).transaction,
-    ).toBe(plan.transaction);
+    expect((again.body.plan as Record<string, unknown>).transaction).toBe(
+      plan.transaction,
+    );
   }
 });
 
@@ -321,7 +324,9 @@ test("review refuses before the wallet is asked", async () => {
   });
   expect((await t.post({ step: "review", nonce: "10" })).status).toBe(200);
   t.sqlite
-    .query("UPDATE submission_fee_items SET paid_at = ?, paid_network = 'base-mainnet', paid_deposit_id = 1")
+    .query(
+      "UPDATE submission_fee_items SET paid_at = ?, paid_network = 'base-mainnet', paid_deposit_id = 1",
+    )
     .run(NOW);
   expect((await refused("11")).error).toBe("fee_already_paid");
   expect(
@@ -400,7 +405,9 @@ test("a payer takes back a recorded deposit only after the program's delay, into
   expect(early.status).toBe(422);
   expect(early.body.error).toBe("reclaim_too_early");
   // Thirty days and a minute after the deposit's own time on chain.
-  t.clock.now = new Date((t.chain.time + 30 * 86_400 + 60) * 1000).toISOString();
+  t.clock.now = new Date(
+    (t.chain.time + 30 * 86_400 + 60) * 1000,
+  ).toISOString();
   const { status, body } = await t.post({ step: "reclaim-review" });
   expect(status).toBe(200);
   const plan = body.plan as Record<string, string>;

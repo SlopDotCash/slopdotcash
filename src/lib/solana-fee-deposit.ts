@@ -320,7 +320,11 @@ export async function reviewSolanaReclaim(
     life.transaction,
     solanaReclaimMessage(
       way,
-      { wallet: wallet.address, deposit: plan.deposit, blockhash: life.blockhash },
+      {
+        wallet: wallet.address,
+        deposit: plan.deposit,
+        blockhash: life.blockhash,
+      },
       idl,
     ),
     "The prepared transaction differs from the reviewed reclaim.",
@@ -349,7 +353,11 @@ export async function sendSolanaReclaim(
     plan.transaction,
     solanaReclaimMessage(
       way,
-      { wallet: wallet.address, deposit: plan.deposit, blockhash: plan.blockhash },
+      {
+        wallet: wallet.address,
+        deposit: plan.deposit,
+        blockhash: plan.blockhash,
+      },
       idl,
     ),
     beforeSend,

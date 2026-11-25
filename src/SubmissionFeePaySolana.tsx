@@ -269,7 +269,9 @@ export function SubmissionFeePaySolana({
             hashSource: "recovery",
           };
           if (!recordRecoveryHash(captured, candidate))
-            setNotice(`Not saved on this device. Keep this signature: ${hash}.`);
+            setNotice(
+              `Not saved on this device. Keep this signature: ${hash}.`,
+            );
         }
         setNotice("Waiting for Solana to finalize the transaction.");
         return;
@@ -293,9 +295,7 @@ export function SubmissionFeePaySolana({
         }
         setNotice(`Deposit verified on the finalized Solana chain. ${hash}`);
       } else
-        setNotice(
-          `The deposit was taken back to your USDC account. ${hash}`,
-        );
+        setNotice(`The deposit was taken back to your USDC account. ${hash}`);
       onDeposit();
     } finally {
       checking.current = false;
@@ -335,7 +335,11 @@ export function SubmissionFeePaySolana({
       className="admin-card vault-actions"
       aria-label="Pay the fee on Solana"
     >
-      <h2>{way || pending?.kind === "deposit" ? "Pay with USDC on Solana" : "Take a Solana deposit back"}</h2>
+      <h2>
+        {way || pending?.kind === "deposit"
+          ? "Pay with USDC on Solana"
+          : "Take a Solana deposit back"}
+      </h2>
       {error && (
         <p role="alert" className="form-error">
           {error}
@@ -368,7 +372,10 @@ export function SubmissionFeePaySolana({
       ) : null}
       {pending ? (
         <PendingWalletCheck
-          link={transactionUrl(shown?.network ?? "solana-mainnet", pending.hash)}
+          link={transactionUrl(
+            shown?.network ?? "solana-mainnet",
+            pending.hash,
+          )}
           hashSource={pending.hashSource}
           solana
           recoveryHash={recoveryHash}
@@ -481,8 +488,8 @@ export function SubmissionFeePaySolana({
         <>
           <p>
             A deposit that nothing has settled {SUBMISSION_FEE_RECLAIM_DAYS}{" "}
-            days after it was made can be taken back by the wallet that paid
-            it, into that wallet's USDC account.
+            days after it was made can be taken back by the wallet that paid it,
+            into that wallet's USDC account.
           </p>
           <button
             type="button"
@@ -497,9 +504,7 @@ export function SubmissionFeePaySolana({
               <dl className="vault-addresses">
                 <div>
                   <dt>Amount</dt>
-                  <dd>
-                    {feeAmountText({ ...reclaim, amount: back.amount })}
-                  </dd>
+                  <dd>{feeAmountText({ ...reclaim, amount: back.amount })}</dd>
                 </div>
                 <div>
                   <dt>Deposit record</dt>

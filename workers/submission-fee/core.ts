@@ -494,9 +494,7 @@ export type ResolverChain = Pick<
   "deposit" | "address" | "probe" | "prepare" | "broadcast" | "status"
 >;
 
-export interface NetworkDependencies<
-  Chain extends ResolverChain = FeeChain,
-> {
+export interface NetworkDependencies<Chain extends ResolverChain = FeeChain> {
   mode: Exclude<Mode, "off">;
   network: NetworkConfig;
   terms: SubmissionFeeTerms;

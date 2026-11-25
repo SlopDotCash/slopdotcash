@@ -481,7 +481,9 @@ export function readFeeItem(
     throw new FeeRecordError();
   const stableMinor = body.stableMinor;
   const onSolana = (entry: unknown) =>
-    isSolanaFeeNetwork(String((entry as { network?: unknown } | null)?.network));
+    isSolanaFeeNetwork(
+      String((entry as { network?: unknown } | null)?.network),
+    );
   const solanaListed = body.due.filter(onSolana);
   if (solanaListed.length > 1) throw new FeeRecordError();
   const solana =

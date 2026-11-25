@@ -123,8 +123,8 @@ test("a kept Solana USDC fee is income of the Solana fee wallet, by exact addres
   deposit({ ...row, kept_to: wallet.toLowerCase() });
   deposit({ ...row, token: mint.toLowerCase() });
   expect(await store.feeIncome("solana", mint, wallet, SINCE)).toBe(2_000_000n);
-  expect(await store.feeIncome("solana", mint.toLowerCase(), wallet, SINCE)).toBe(
-    2_000_000n,
-  );
+  expect(
+    await store.feeIncome("solana", mint.toLowerCase(), wallet, SINCE),
+  ).toBe(2_000_000n);
   expect(await store.feeIncome("base", USDC, WALLET, SINCE)).toBe(0n);
 });

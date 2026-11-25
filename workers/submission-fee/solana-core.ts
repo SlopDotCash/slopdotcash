@@ -65,9 +65,7 @@ export type SolanaResult = Omit<NetworkResult, "send"> & {
 };
 
 /** Step 1. */
-export async function scanSolana(
-  deps: SolanaDependencies,
-): Promise<{
+export async function scanSolana(deps: SolanaDependencies): Promise<{
   finalizedThrough: number;
   recorded: number;
   resolved: number;

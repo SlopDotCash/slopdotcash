@@ -235,7 +235,11 @@ export function createSolanaFeeChain(
   const accountBytes = (value: unknown, owner: string): Uint8Array => {
     const info = object(value);
     const data = list(info.data);
-    if (info.owner !== owner || data[1] !== "base64" || typeof data[0] !== "string")
+    if (
+      info.owner !== owner ||
+      data[1] !== "base64" ||
+      typeof data[0] !== "string"
+    )
       throw new Error("Unexpected Solana account");
     return solanaBase64Bytes(data[0]);
   };
@@ -263,7 +267,10 @@ export function createSolanaFeeChain(
     if (!address) throw new Error("A Solana deposit's record is not known");
     const { value } = await account(address);
     if (value === null) return { address, deposit: null };
-    const deposit = decodeSubmissionDeposit(accountBytes(value, programId), idl);
+    const deposit = decodeSubmissionDeposit(
+      accountBytes(value, programId),
+      idl,
+    );
     // The payer used the address again: this deposit's own record is closed.
     if (deposit.id !== depositId) return { address, deposit: null };
     return { address, deposit };
@@ -423,7 +430,11 @@ export function createSolanaFeeChain(
   const transaction = async (signature: string) => {
     const result = await rpc("getTransaction", [
       signature,
-      { commitment: FINAL, encoding: "json", maxSupportedTransactionVersion: 0 },
+      {
+        commitment: FINAL,
+        encoding: "json",
+        maxSupportedTransactionVersion: 0,
+      },
     ]);
     return result === null ? null : object(result);
   };
@@ -439,7 +450,10 @@ export function createSolanaFeeChain(
       const configAddress = submissionConfigAddress(programId);
       const { slot, value } = await account(configAddress);
       if (value === null) throw new Error("The deposit program has no Config");
-      const config = decodeSubmissionConfig(accountBytes(value, programId), idl);
+      const config = decodeSubmissionConfig(
+        accountBytes(value, programId),
+        idl,
+      );
       // Every Deposit account, read at a slot not before the Config's, so no
       // deposit numbered at or below `depositCount` can be missing from it
       // unless it is already settled.
@@ -517,7 +531,9 @@ export function createSolanaFeeChain(
         (entry) => entry.signature === row.txHash,
       );
       if (createdAt < 0)
-        throw new Error("A deposit's creating transaction is not in its history");
+        throw new Error(
+          "A deposit's creating transaction is not in its history",
+        );
       // Oldest first, from the transaction right after the creation: the
       // first settlement on the address after it is this deposit's. A later
       // one belongs to a deposit that used the address again.
