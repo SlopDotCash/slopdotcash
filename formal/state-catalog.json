@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "df9221ef7171ecf2d8e07ea2507a67c4d2af17e1f98a87a73f3ac5cbffe7037c",
+  "inventorySha256": "706573c61d139bea05e3ad71567812ecda8b050dd5404719e2f1b254de3897f9",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -474,21 +474,27 @@
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 167,
+      "line": 172,
       "name": "AttemptState",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
-      "models": ["formal/models/api/api_security_queue.qnt"],
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 175,
+      "line": 180,
       "name": "reason",
       "kind": "string-union",
       "values": ["daily-limit", "none-eligible", "not-started"],
-      "models": ["formal/models/api/api_security_queue.qnt"],
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "daily-limit",
         "none-eligible",
@@ -3897,7 +3903,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 203,
+      "line": 235,
       "name": "stateReason",
       "kind": "string-union",
       "values": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
@@ -3907,7 +3913,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 351,
+      "line": 383,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -3917,7 +3923,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 502,
+      "line": 534,
       "name": "status",
       "kind": "string-union",
       "values": ["claimed", "unclaimed"],
@@ -3927,7 +3933,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 510,
+      "line": 542,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "missing", "partial"],
@@ -3937,7 +3943,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 557,
+      "line": 589,
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
@@ -3947,7 +3953,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 666,
+      "line": 698,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -3957,7 +3963,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 805,
+      "line": 843,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
@@ -3971,7 +3977,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 3024,
+      "line": 3028,
       "name": "LeaderboardScoringMode",
       "kind": "string-union",
       "values": ["historical", "rolling"],
@@ -3993,7 +3999,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 5213,
+      "line": 5239,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
