@@ -1376,8 +1376,8 @@ function intakeCounts(answer: "Counts" | "Fail", capped: ReadonlyArray<CappedCou
   return {
     answer,
     counts: [
-      { projectId: "alpha", openOutside: 450, observedAt: observedHoursAgo(1) },
-      ...capped.map(({ openOutside, hoursAgo }) => ({ projectId: "capped-project", openOutside, observedAt: observedHoursAgo(hoursAgo) })),
+      { projectId: "alpha", openOutside: 450, observedAt: observedHoursAgo(1), waitingOutside: 0, lastMergedAt: null },
+      ...capped.map(({ openOutside, hoursAgo }) => ({ projectId: "capped-project", openOutside, observedAt: observedHoursAgo(hoursAgo), waitingOutside: 0, lastMergedAt: null })),
     ],
   }
 }
