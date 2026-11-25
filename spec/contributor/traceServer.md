@@ -409,3 +409,8 @@ pure val weight_observeOtherRunKey = 2
 pure val weight_finalize = 6
 pure val weight_appendEvent = 8
 ```
+
+
+## Trace terms v3
+
+A run records the terms version its uploading client showed, or none when no version was shown. Version `private-trace-v3` adds session export and the rule that repository file contents are kept only for openly licensed repositories. A licensing setting confirmed under `private-trace-v2` does not cover a trace uploaded under `private-trace-v3`: upload licence and opt-in refuse with `confirm_again` until the contributor confirms again under version 3, and a banned account cannot confirm under version 3. Migration `0151_trace_terms_v3.sql` stores the version on the run. The cleaner rule and its Quint are `keeps` and `termsVersionCovers` in [Session export under trace terms v3](./sessionExport.md).
