@@ -1,5 +1,5 @@
 // spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/backlogRule.md, "The owner sets slopbot.catchUpUntil in project settings as an immutable owner revision, not a material term; a date at most fourteen days ahead"
-import { catchUpCanMove, catchUpCanStart, catchUpRefused } from "../../../gen/backend__backlogRule.ts";
+import { catchUpCanMove, catchUpCanStart } from "../../../gen/backend__backlogRule.ts";
 import { maxCap, minCap } from "../../../gen/backend__intakeCap.ts";
 import { honorSystemValid, maxShareBasisPoints } from "../../../gen/backend__projects.ts";
 import { githubUserIdFromNodeId } from "../nodeId.ts";
@@ -884,10 +884,6 @@ function ownSections(value: unknown): Trusted {
 /** @throws {never} */
 export function definitionProblem(value: unknown, trusted: Trusted): string | undefined {
     return problemOf(() => {
-    const slopbot = isRecord(value) && isRecord(value.slopbot)? value.slopbot: undefined;
-    const until = typeof slopbot?.catchUpUntil === "string"? Math.floor(Date.parse(slopbot.catchUpUntil) / hourMs): 0;
-    const history = (Array.isArray(slopbot?.catchUpHistory)? slopbot.catchUpHistory: []).map((entry) => (isRecord(entry) && typeof entry.startedAt === "string"? Math.floor(Date.parse(entry.startedAt) / hourMs): 0));
-    if (catchUpRefused(until, history)) fail("catch_up_refused");
     validateProjectDefinition(value, { trusted, historical: false});
 });
 }
