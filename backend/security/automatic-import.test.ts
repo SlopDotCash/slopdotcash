@@ -133,6 +133,39 @@ function fixture() {
 }
 
 describe("automatic import of GitHub private reports", () => {
+  test("each listed report's GitHub state is kept and follows GitHub", async () => {
+    const t = fixture();
+    const repository = t.project("alpha");
+    const first = report("GHSA-2c3f-4g5h-239m", "2026-11-20T08:00:00.000Z");
+    const second = report("GHSA-3c4f-5g6h-34pq", "2026-11-21T08:00:00.000Z");
+    t.github.set(repository, [first, second]);
+    await t.run();
+    const states = () =>
+      t.sqlite
+        .query(
+          "SELECT repository, ghsa, state FROM security_advisory_states ORDER BY ghsa",
+        )
+        .all();
+    expect(states()).toEqual([
+      { repository, ghsa: first.ghsa, state: "triage" },
+      { repository, ghsa: second.ghsa, state: "triage" },
+    ]);
+    // A maintainer closes one on GitHub; an unknown state is never kept.
+    t.github.set(repository, [
+      { ...first, state: "closed" },
+      { ...second, state: "something-new" },
+    ]);
+    await t.run();
+    expect(states()).toEqual([
+      { repository, ghsa: first.ghsa, state: "closed" },
+      { repository, ghsa: second.ghsa, state: "triage" },
+    ]);
+    // An unreadable list changes nothing.
+    t.github.set(repository, "unavailable");
+    await t.run();
+    expect(states()).toHaveLength(2);
+  });
+
   test("a program's unrecorded reports become verified cases, once, with no deposit asked", async () => {
     const t = fixture();
     const repository = t.project("alpha");
