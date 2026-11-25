@@ -97,8 +97,10 @@ entry `apps/security/src/programs/main.vibe` and the sandbox supervisor
 `apps/security/sandbox/supervise.py`; every non-test, non-Markdown file under
 `apps/security/`; every file under `spec/security/` except Dafny proofs
 (`*.proof.dfy`), because the scanner is generated from the security spec;
-and `.github/workflows/vetting-controller.yml`, `package.json`, and
-`pnpm-lock.yaml`. An import the closure cannot resolve refuses the list:
+and `.github/workflows/vetting-controller.yml`, `package.json`,
+`pnpm-lock.yaml`, and the list script `scripts/scanner-inputs.mjs` itself,
+because a change to the list definition changes the published list. An import
+the closure cannot resolve refuses the list:
 `scripts/scanner-inputs.mjs` fails naming the unresolvable import, so the
 deploy step fails and the release publishes no list.
 
