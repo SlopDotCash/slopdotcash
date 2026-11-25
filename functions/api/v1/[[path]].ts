@@ -58,7 +58,10 @@ import {
   githubAppReportingReader,
   githubInstallationCheck,
 } from "../../../backend/security/github-advisories";
-import { handleSecurityApi } from "../../../backend/security/handler";
+import {
+  handleSecurityApi,
+  importGithubReports,
+} from "../../../backend/security/handler";
 import {
   githubIntakeOAuth,
   type IntakeConfig,
@@ -560,6 +563,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const securityQueue = await handleSecurityQueue(request, {
     token: env.OPERATOR_FEED_TOKEN,
     analysis: analysisDependencies(securityDependencies),
+    importReports: () => importGithubReports(securityDependencies),
   });
   if (securityQueue !== null) return securityQueue;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
