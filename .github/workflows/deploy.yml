@@ -678,7 +678,7 @@ jobs:
           done
 
       - name: Publish the global skills, discovery index and sitemap
-        run: node apps/contributor/dist/programs/main.js site --out "$BUNDLE/site" --registry "$BUNDLE/registry/snapshot.json"
+        run: node apps/contributor/dist/programs/main.js site --out "$BUNDLE/site" --registry "$BUNDLE/registry/snapshot.json" && node scripts/scanner-inputs.mjs --out "$BUNDLE/site/scanner-inputs.json" --commit "$GITHUB_SHA"
 
       - name: Bind the release manifest
         id: manifest
