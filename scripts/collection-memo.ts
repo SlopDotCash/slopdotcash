@@ -577,6 +577,68 @@ export function attributionRefreshAge(outcomeId: string): number {
   return Math.floor((ATTRIBUTION_REFRESH_MS * (1 + fraction)) / 2);
 }
 
+/** An attribution that takes at least this long is named in the log. */
+export const SLOW_ATTRIBUTION_MS = 3 * 60 * 1000;
+
+/** Where slow-attribution and reuse-count lines go. Diagnostic only. */
+export interface AttributionLog {
+  thresholdMs?: number;
+  write?: (line: string) => void;
+}
+
+/**
+ * Time one pull request's attribution. `pull` is its public `owner/repo#N`.
+ * A line is written if it is still running at the threshold, so a run that
+ * dies inside it has named it, and another when it ends at or past the
+ * threshold, with the minutes taken and how it was answered. Nothing else is
+ * logged and no result depends on it.
+ */
+export function watchAttribution(
+  pull: string,
+  log: AttributionLog = {},
+): (how: string) => void {
+  const thresholdMs = log.thresholdMs ?? SLOW_ATTRIBUTION_MS;
+  const write =
+    log.write ?? ((line: string) => void process.stderr.write(line));
+  const minutes = (ms: number) => (ms / 60_000).toFixed(1);
+  const startedAt = Date.now();
+  const timer =
+    thresholdMs > 0
+      ? setTimeout(
+          () =>
+            write(
+              `[slop.cash] slow attribution still running: ${pull}, over ${minutes(thresholdMs)} minutes\n`,
+            ),
+          thresholdMs,
+        )
+      : null;
+  timer?.unref();
+  return (how) => {
+    if (timer) clearTimeout(timer);
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= thresholdMs)
+      write(
+        `[slop.cash] slow attribution: ${pull} took ${minutes(elapsed)} minutes, ${how}\n`,
+      );
+  };
+}
+
+/** The reuse counts of one pass, and why live answers were not recorded. */
+export function collectionMemoStatsLines(
+  session: CollectionMemoSession,
+): string {
+  const lines = session.commitLines;
+  const counts = `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${session.stats.reused} reused, ${session.stats.live} computed live, ${session.expired} past their refresh age, ${session.stats.audited} audited (1 in ${session.auditOneIn}), ${session.stats.auditMismatches} audit mismatches, ${session.stats.fenceMisses} changed since the last collection\n`;
+  if (!session.notReusable.size) return counts;
+  return `${counts}[slop.cash] attributions not recorded for reuse: ${[
+    ...session.notReusable,
+  ]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([reason, count]) => `${count} x ${reason}`)
+    .join("; ")}\n`;
+}
+
 /** Immutable commit line statistics, read from and written to the memo. */
 export class CommitLineMemo {
   private readonly known = new Map<string, CommitLineRow>();
