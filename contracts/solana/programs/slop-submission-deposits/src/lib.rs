@@ -165,8 +165,13 @@ pub mod slop_submission_deposits {
     /// token account, otherwise to the associated token account of its `kept_to`. The resolver
     /// has no other choice of destination. The Deposit account is closed and its rent returns
     /// to the payer. Works while deposits are paused.
-    pub fn resolve(ctx: Context<Resolve>, refund: bool) -> Result<()> {
+    ///
+    /// `expected_id` is the id of the deposit the resolver means to settle. An address is
+    /// free again once its record is closed, so the same payer and nonce can later hold a
+    /// newer deposit; a resolve built for the earlier one is refused instead of settling it.
+    pub fn resolve(ctx: Context<Resolve>, refund: bool, expected_id: u64) -> Result<()> {
         let deposit = &ctx.accounts.deposit;
+        require!(deposit.id == expected_id, DepositsError::WrongDeposit);
         let wallet = if refund {
             deposit.payer
         } else {
@@ -574,6 +579,8 @@ pub enum DepositsError {
     VaultShort,
     #[msg("Arithmetic overflow")]
     Arithmetic,
+    #[msg("The account holds a different deposit than the one named")]
+    WrongDeposit,
 }
 
 #[cfg(test)]

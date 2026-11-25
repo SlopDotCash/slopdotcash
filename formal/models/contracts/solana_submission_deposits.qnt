@@ -21,7 +21,8 @@
 // stores the id; no address depends on the count, so a deposit built at one count
 // still lands at any later one. A (payer, nonce) whose record is open is refused;
 // once that record is closed the address is free again and a new deposit there
-// gets a new id.
+// gets a new id. For that reason a resolve names the record's address and the id it
+// means to settle, and is refused when the address holds another id.
 // Not modeled: several mints and their ledgers, amounts other than one, tokens sent
 // to a vault without a deposit, and the Token program's own rules.
 module solana_submission_deposits {
@@ -61,15 +62,30 @@ module solana_submission_deposits {
         dest: "", rentTo: 0 })) }
   action deposit(caller: int, keptTo: int, nonce: int): bool = depositAt(caller, keptTo, nonce, caller, nonce)
 
-  // resolve(refund) with the destination the transaction names. Only the associated
-  // account of the right wallet is accepted, and only while it is usable.
-  action resolve(caller: int, id: int, refund: bool, destination: str): bool = all {
-    s.config, caller == s.resolver, s.d.get(id).state == "open",
-    destination == (if (refund) "payer-associated" else "kept-associated"),
-    (if (refund) s.payerAccount else s.keptAccount) == "ok",
-    s' = s.with("held", s.held - 1)
-      .with("d", s.d.set(id, s.d.get(id).with("state", if (refund) "refunded" else "kept")
-        .with("dest", destination).with("rentTo", s.d.get(id).payer))) }
+  // The id of the open record at the address of (payer, nonce), or 0 when it is free.
+  def at(payer: int, nonce: int): int =
+    if (s.d.get(1).state == "open" and s.d.get(1).payer == payer and s.d.get(1).nonce == nonce) 1
+    else if (s.d.get(2).state == "open" and s.d.get(2).payer == payer and s.d.get(2).nonce == nonce) 2
+    else 0
+  // resolve(refund, expected_id) on the record at the address of (atPayer, atNonce), with
+  // the destination the transaction names. The record there must be open and must be the
+  // one the resolver named. Only the associated account of the right wallet is accepted,
+  // and only while it is usable.
+  action resolveAt(caller: int, atPayer: int, atNonce: int, expectedId: int, refund: bool,
+      destination: str): bool = {
+    val id = at(atPayer, atNonce)
+    all {
+      s.config, caller == s.resolver, id > 0, id == expectedId,
+      destination == (if (refund) "payer-associated" else "kept-associated"),
+      (if (refund) s.payerAccount else s.keptAccount) == "ok",
+      s' = s.with("held", s.held - 1)
+        .with("d", s.d.set(id, s.d.get(id).with("state", if (refund) "refunded" else "kept")
+          .with("dest", destination).with("rentTo", s.d.get(id).payer))) }
+  }
+  // A resolve built for deposit `id`: it names that deposit's address and its id, whatever
+  // the address holds by the time it lands.
+  action resolve(caller: int, id: int, refund: bool, destination: str): bool =
+    resolveAt(caller, s.d.get(id).payer, s.d.get(id).nonce, id, refund, destination)
 
   // reclaim(): the payer, after the delay, to any token account the payer owns.
   action reclaim(caller: int, id: int, destination: str): bool = all {
@@ -120,10 +136,12 @@ module solana_submission_deposits {
   }
   action stepResolve = {
     nondet caller = oneOf(Callers)
-    nondet id = oneOf(Ids)
+    nondet atPayer = oneOf(Callers)
+    nondet atNonce = oneOf(Nonces)
+    nondet expectedId = oneOf(Ids)
     nondet refund = oneOf(Flags)
     nondet destination = oneOf(Destinations)
-    resolve(caller, id, refund, destination)
+    resolveAt(caller, atPayer, atNonce, expectedId, refund, destination)
   }
   action stepReclaim = {
     nondet caller = oneOf(Callers)
@@ -217,6 +235,19 @@ module solana_submission_deposits {
     .expect(s.d.get(2).payer == 1 and s.d.get(2).nonce == 1 and invariant)
   run nonceIsFreeAgainOnceSettledTest = oneOpen.then(resolve(2, 1, true, "payer-associated")).then(deposit(3, 4, 1))
     .expect(s.d.get(1).state == "refunded" and s.d.get(2).state == "open" and s.d.get(2).nonce == 1 and invariant)
+  // A resolve built for deposit 1 never settles a later deposit at the same address,
+  // whichever way it points. Here deposit 1 ended by a refund; the bounds (deposits at
+  // ticks 0..1, reclaim from tick 2) do not reach a reuse after a reclaim, which the
+  // lifecycle suite covers on the real program.
+  run reused = oneOpen.then(resolve(2, 1, true, "payer-associated")).then(deposit(3, 4, 1))
+  run staleKeptResolveIsRefusedTest = reused.then(resolve(2, 1, false, "kept-associated").fail())
+  run staleRefundResolveIsRefusedTest = reused.then(resolve(2, 1, true, "payer-associated").fail())
+  run staleResolveByAddressIsRefusedTest = reused.then(resolveAt(2, 3, 1, 1, false, "kept-associated").fail())
+  run newerDepositSettlesUnderItsOwnIdTest = reused.then(resolveAt(2, 3, 1, 2, false, "kept-associated"))
+    .expect(s.d.get(1).state == "refunded" and s.d.get(2).state == "kept" and s.held == 0 and invariant)
+  run wrongIdAtAnOpenAddressIsRefusedTest = oneOpen.then(deposit(1, 4, 1))
+    .then(resolveAt(2, 3, 1, 2, true, "payer-associated").fail())
+  run freeAddressCannotBeResolvedTest = ready.then(resolveAt(2, 3, 1, 1, true, "payer-associated").fail())
   // Nobody creates a record at an address derived from another payer's key or nonce.
   run anotherPayersAddressRefusedTest = ready.then(depositAt(1, 4, 1, 3, 1).fail())
   run anotherNoncesAddressRefusedTest = ready.then(depositAt(3, 4, 1, 3, 2).fail())

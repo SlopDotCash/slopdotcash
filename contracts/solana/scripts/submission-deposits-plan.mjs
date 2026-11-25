@@ -10,16 +10,27 @@
  *     Builds the unsigned `open_vault` transaction for `mint`, paid by `payer`.
  *   node scripts/submission-deposits-plan.mjs status reviewed-input.json
  *     Reads back the program's upgrade authority, its Config and the vault of `mint`.
+ *   node scripts/submission-deposits-plan.mjs smoke-deposit reviewed-input.json
+ *     Builds the unsigned `deposit` of the runbook's smoke test: one base unit of `mint`
+ *     from `payer`, kept wallet `keptTo`, at the address of (`payer`, `smokeNonce`).
+ *   node scripts/submission-deposits-plan.mjs smoke-resolve reviewed-input.json
+ *     Builds the unsigned `resolve` that refunds that deposit, for the Config's resolver. It
+ *     names the id stored in the record and refuses any deposit that is not one base unit.
  *
  * The input file holds `programId`, `upgradeAuthority` (null once removed), `codeSha256`,
- * `owner`, `resolver`, and for the vault `mint` and `payer`. RPC URL, expected genesis and a
+ * `owner`, `resolver`, for the vault `mint` and `payer`, and for the smoke test `keptTo` and
+ * `smokeNonce` (a decimal string). RPC URL, expected genesis and a
  * fresh blockhash come from SLOP_SOLANA_RPC_URL, SLOP_SOLANA_GENESIS and
  * SLOP_SOLANA_RECENT_BLOCKHASH. The output omits the RPC URL.
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import anchor from "@coral-xyz/anchor";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+  getAssociatedTokenAddressSync,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
 import {
   Connection,
   PublicKey,
@@ -34,6 +45,12 @@ const UPGRADEABLE_LOADER = new PublicKey(
   "BPFLoaderUpgradeab1e11111111111111111111111",
 );
 const FORMAT = "solana-unsigned-legacy-transaction-v1";
+/** The smoke test moves one base unit and nothing else can be planned here. */
+export const SMOKE_AMOUNT = 1n;
+/** A fixed item no pull request hashes to, so a reader never takes it for a fee. */
+export const SMOKE_ITEM = createHash("sha256")
+  .update("slop-submission-deposits:deployment-smoke-test")
+  .digest();
 
 async function connect(input, runtime) {
   const connection = new Connection(runtime.rpcUrl, "finalized");
@@ -60,6 +77,11 @@ async function connect(input, runtime) {
     config: address(Buffer.from("config")),
     ledger: (mint) => address(Buffer.from("ledger"), mint.toBuffer()),
     vault: (mint) => address(Buffer.from("vault"), mint.toBuffer()),
+    deposit: (payer, nonce) => {
+      const bytes = Buffer.alloc(8);
+      bytes.writeBigUInt64LE(nonce);
+      return address(Buffer.from("deposit"), payer.toBuffer(), bytes);
+    },
   };
 }
 
@@ -155,6 +177,135 @@ export async function vaultPlan(input, runtime) {
   };
 }
 
+function smokeInput(input) {
+  if (
+    typeof input.smokeNonce !== "string" ||
+    !/^\d{1,20}$/.test(input.smokeNonce)
+  )
+    throw new Error("smokeNonce must be a decimal string");
+  const nonce = BigInt(input.smokeNonce);
+  if (nonce > 0xffff_ffff_ffff_ffffn)
+    throw new Error("smokeNonce does not fit in 64 bits");
+  return {
+    nonce,
+    mint: new PublicKey(input.mint),
+    payer: new PublicKey(input.payer),
+  };
+}
+
+/** The unsigned one-base-unit `deposit` of the smoke test, signed by `payer`. */
+export async function smokeDepositPlan(input, runtime) {
+  const { connection, program, config, ledger, vault, deposit } = await connect(
+    input,
+    runtime,
+  );
+  await verifyProgram(connection, program.programId, input);
+  const { nonce, mint, payer } = smokeInput(input);
+  const keptTo = new PublicKey(input.keptTo);
+  const stored = await program.account.config.fetchNullable(
+    config,
+    "finalized",
+  );
+  if (!stored) throw new Error("No Config: initialize has not landed");
+  if (stored.depositsPaused) throw new Error("Deposits are paused");
+  if (!(await connection.getAccountInfo(ledger(mint), "finalized")))
+    throw new Error("This mint's vault is not open");
+  const address = deposit(payer, nonce);
+  if (await connection.getAccountInfo(address, "finalized"))
+    throw new Error("A deposit is already open at this payer and nonce");
+  const instruction = await program.methods
+    .deposit(
+      [...SMOKE_ITEM],
+      new anchor.BN(SMOKE_AMOUNT.toString()),
+      keptTo,
+      new anchor.BN(nonce.toString()),
+    )
+    .accountsStrict({
+      payer,
+      config,
+      ledger: ledger(mint),
+      mint,
+      source: getAssociatedTokenAddressSync(mint, payer),
+      vault: vault(mint),
+      deposit: address,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+  const blockhash = new PublicKey(runtime.recentBlockhash).toBase58();
+  return {
+    format: FORMAT,
+    programId: input.programId,
+    operation: "smoke-deposit",
+    mint: mint.toBase58(),
+    amount: SMOKE_AMOUNT.toString(),
+    keptTo: keptTo.toBase58(),
+    nonce: nonce.toString(),
+    deposit: address.toBase58(),
+    depositCountBefore: stored.depositCount.toString(),
+    requiredSigner: payer.toBase58(),
+    recentBlockhash: blockhash,
+    transactionBase64: unsigned(payer, blockhash, instruction),
+  };
+}
+
+/** The unsigned `resolve` that refunds the smoke deposit, signed by the Config's resolver,
+ * which also pays the transaction fee. */
+export async function smokeResolvePlan(input, runtime) {
+  const { connection, program, config, ledger, vault, deposit } = await connect(
+    input,
+    runtime,
+  );
+  await verifyProgram(connection, program.programId, input);
+  const { nonce, mint, payer } = smokeInput(input);
+  const stored = await program.account.config.fetchNullable(
+    config,
+    "finalized",
+  );
+  if (!stored) throw new Error("No Config: initialize has not landed");
+  if (stored.resolver.toBase58() !== input.resolver)
+    throw new Error("The Config's resolver is not the reviewed resolver");
+  const address = deposit(payer, nonce);
+  const record = await program.account.deposit.fetchNullable(
+    address,
+    "finalized",
+  );
+  if (!record) throw new Error("No open deposit at this payer and nonce");
+  if (
+    record.amount.toString() !== SMOKE_AMOUNT.toString() ||
+    !record.mint.equals(mint) ||
+    !Buffer.from(record.item).equals(SMOKE_ITEM)
+  )
+    throw new Error("The deposit at this address is not the smoke deposit");
+  const instruction = await program.methods
+    .resolve(true, record.id)
+    .accountsStrict({
+      resolver: stored.resolver,
+      config,
+      deposit: address,
+      ledger: ledger(mint),
+      mint,
+      vault: vault(mint),
+      destination: getAssociatedTokenAddressSync(mint, payer),
+      payer,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .instruction();
+  const blockhash = new PublicKey(runtime.recentBlockhash).toBase58();
+  return {
+    format: FORMAT,
+    programId: input.programId,
+    operation: "smoke-resolve",
+    deposit: address.toBase58(),
+    depositId: record.id.toString(),
+    refund: true,
+    refundTo: getAssociatedTokenAddressSync(mint, payer).toBase58(),
+    requiredSigner: stored.resolver.toBase58(),
+    recentBlockhash: blockhash,
+    transactionBase64: unsigned(stored.resolver, blockhash, instruction),
+  };
+}
+
 /** What is on chain now: the code, who can still replace it, the Config and one vault. */
 export async function status(input, runtime) {
   const { connection, program, config, ledger, vault } = await connect(
@@ -209,9 +360,16 @@ export async function status(input, runtime) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [mode, file] = process.argv.slice(2);
-  if (!["initialize", "vault", "status"].includes(mode) || !file)
+  const modes = {
+    initialize: initializePlan,
+    vault: vaultPlan,
+    status,
+    "smoke-deposit": smokeDepositPlan,
+    "smoke-resolve": smokeResolvePlan,
+  };
+  if (!Object.hasOwn(modes, mode) || !file)
     throw new Error(
-      "Usage: node submission-deposits-plan.mjs initialize|vault|status reviewed-input.json",
+      "Usage: node submission-deposits-plan.mjs initialize|vault|status|smoke-deposit|smoke-resolve reviewed-input.json",
     );
   const input = JSON.parse(readFileSync(file, "utf8"));
   const runtime = {
@@ -219,15 +377,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     expectedGenesis: process.env.SLOP_SOLANA_GENESIS,
     recentBlockhash: process.env.SLOP_SOLANA_RECENT_BLOCKHASH,
   };
-  console.log(
-    JSON.stringify(
-      mode === "initialize"
-        ? await initializePlan(input, runtime)
-        : mode === "vault"
-          ? await vaultPlan(input, runtime)
-          : await status(input, runtime),
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify(await modes[mode](input, runtime), null, 2));
 }

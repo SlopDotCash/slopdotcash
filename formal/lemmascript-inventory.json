@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 928,
-    "functions": 14922,
+    "functions": 14926,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 14734,
+    "unprovedFunctions": 14738,
     "nonTypeScriptFiles": 73
   },
   "limits": [
@@ -2536,7 +2536,7 @@
 {"path":"contracts/solana/programs/slop-escrow/src/token_policy.rs","sha256":"3ef54af0a483a0e463f8763bc554781c4daa1dfee90b42fe9387741f9bd1d79d","language":"rust","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/solana/programs/slop-submission-deposits/src/lib.rs","sha256":"ee1344b40f32c190e8d09dd5594400d8e464a8427a9f25d54492ca5f5818ef5d","language":"rust","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/solana/programs/slop-submission-deposits/src/lib.rs","sha256":"42828469a7456d53a46177e7cba1f8c1e74b2154ff20d81a4cc43d9954080365","language":"rust","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/solana/scripts/acceptance-extended.ts","sha256":"85d9ed32a3b9618b2429d8993d1cbb97597a0a4343a63714e5f80ff2152907db","language":"typescript","disposition":"callables-inventoried","functions":[
@@ -2785,15 +2785,19 @@
 {"path":"contracts/solana/scripts/run-test-stage.sh","sha256":"adaade297256078ebeea26ac1f3f094b02885bcfced64175e2b09bae7d82c8f5","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/solana/scripts/submission-deposits-plan.mjs","sha256":"65a734ae1533bb4eb87555933bb896962a1b4a86550a25bb2cff9087c79c23ef","language":"javascript","disposition":"callables-inventoried","functions":[
-{"name":"connect","kind":"FunctionDeclaration","line":38,"sha256":"ca02a6b77249f0b09d7ff36a51d8cfd3123078ece962e0bfda7627ede3387251","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"address","kind":"ArrowFunction","line":55,"sha256":"35fb1aaf675c8e57a3d0af541941dabb20138d6404ae3b4c7ec93449a52202ea","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"ledger","kind":"ArrowFunction","line":61,"sha256":"6a3378fe8aaba65d9a54b0b01e5fd1e34ddc6dc5eee63a0c8ba6efc7c1ad3c67","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"vault","kind":"ArrowFunction","line":62,"sha256":"5d7d354e4d70e4d85ebb2ab52e299d15188d0635869bcfdb5d288533e98e4fc9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"unsigned","kind":"ArrowFunction","line":66,"sha256":"4a3ea977f428852f48a3efafbfe74f8aa730645bfb64af84405dc2cd997fcea7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"initializePlan","kind":"FunctionDeclaration","line":73,"sha256":"ce888cdad114fcb04400d0737bb0281973c9b95b9a233b23d24558a9b5b88669","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"vaultPlan","kind":"FunctionDeclaration","line":118,"sha256":"0282b9d325d2ac206cf8ead61f073b5ae24a09e2625158b8e2b76c2a1b6990d2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"status","kind":"FunctionDeclaration","line":159,"sha256":"f36b27ef74f90998181feded8d2d58dc05deb9b4209747afed009e8c15ba0627","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+{"path":"contracts/solana/scripts/submission-deposits-plan.mjs","sha256":"acfcb4c50fb7a19bf783898e97aa3747cfd7196edbe01c992d40c85cf4505501","language":"javascript","disposition":"callables-inventoried","functions":[
+{"name":"connect","kind":"FunctionDeclaration","line":55,"sha256":"d2f35d3c2a713c85227ddae7ffaafd9fb1c893ae3df4732beb97a5aece32b466","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"address","kind":"ArrowFunction","line":72,"sha256":"35fb1aaf675c8e57a3d0af541941dabb20138d6404ae3b4c7ec93449a52202ea","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"ledger","kind":"ArrowFunction","line":78,"sha256":"6a3378fe8aaba65d9a54b0b01e5fd1e34ddc6dc5eee63a0c8ba6efc7c1ad3c67","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"vault","kind":"ArrowFunction","line":79,"sha256":"5d7d354e4d70e4d85ebb2ab52e299d15188d0635869bcfdb5d288533e98e4fc9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"deposit","kind":"ArrowFunction","line":80,"sha256":"d50ab8286b92e28b1f4a718df24c8306ed30ddd67e6858c20d559b79b45057ff","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"unsigned","kind":"ArrowFunction","line":88,"sha256":"4a3ea977f428852f48a3efafbfe74f8aa730645bfb64af84405dc2cd997fcea7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"initializePlan","kind":"FunctionDeclaration","line":95,"sha256":"ce888cdad114fcb04400d0737bb0281973c9b95b9a233b23d24558a9b5b88669","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"vaultPlan","kind":"FunctionDeclaration","line":140,"sha256":"0282b9d325d2ac206cf8ead61f073b5ae24a09e2625158b8e2b76c2a1b6990d2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"smokeInput","kind":"FunctionDeclaration","line":180,"sha256":"c7a200b1d7374ef07f2e5799e89750ffb937f2524311528260b29bf958d6f240","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"smokeDepositPlan","kind":"FunctionDeclaration","line":197,"sha256":"74db60d58a87a34372a5e5d07b0693c80659d9e81b9ca3a661ea23017a4cd684","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"smokeResolvePlan","kind":"FunctionDeclaration","line":254,"sha256":"6fb6f5aaea754b4e3ed0bebebe25b7b1feb28b9a3e1e9d201216bc0ff306c3f2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"status","kind":"FunctionDeclaration","line":310,"sha256":"f36b27ef74f90998181feded8d2d58dc05deb9b4209747afed009e8c15ba0627","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
 {"path":"contracts/solana/scripts/test-e2e.sh","sha256":"fdf95f07ef9ef96466df92760931b0269bbea634ba7afb891d88780a941f1d1c","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 

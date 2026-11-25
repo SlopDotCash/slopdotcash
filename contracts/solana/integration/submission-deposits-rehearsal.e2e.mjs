@@ -19,6 +19,9 @@ import { submissionFeeItem } from "../../../src/lib/submission-fee.mjs";
 import {
   initializePlan,
   RECLAIM_DELAY_SECONDS,
+  SMOKE_ITEM,
+  smokeDepositPlan,
+  smokeResolvePlan,
   status,
   vaultPlan,
 } from "../scripts/submission-deposits-plan.mjs";
@@ -455,6 +458,8 @@ test("the Worker's reads: open deposits by a filtered scan, and the outcome of a
     discriminator("global", "resolve"),
   );
   assert.equal(settledData[8], 1); // refunded
+  assert.equal(settledData.readBigUInt64LE(9), closed.id); // the id it named
+  assert.equal(settledData.length, 17);
   note(`finalized scan, count ${count}: open ${present.join(", ")}`);
 
   // 5. The runbook's read-back of the same finalized state.
@@ -472,6 +477,96 @@ test("the Worker's reads: open deposits by a filtered scan, and the outcome of a
   assert.equal(read.vault.address, addresses.vault(USDC_MINT).toBase58());
   assert.equal(read.vault.openTotal, (2n * FEE).toString());
   assert.equal(read.vault.balance, read.vault.openTotal);
+});
+
+test("the runbook's smoke test: one base unit in and back, twice at the same nonce, through the plans", async () => {
+  const smoke = {
+    ...reviewed,
+    payer: contributor.publicKey.toBase58(),
+    keptTo: FEE_WALLET.toBase58(),
+    smokeNonce: "20261125",
+  };
+  const account = ata(contributor.publicKey, USDC_MINT);
+  const held = await balance(account);
+  const vaulted = await balance(addresses.vault(USDC_MINT));
+  const kept = await balance(ata(FEE_WALLET, USDC_MINT));
+  const address = addresses.deposit(contributor.publicKey, 20261125n);
+  // Nothing to refund before the deposit, and a malformed nonce is refused.
+  await assert.rejects(
+    smokeResolvePlan(smoke, await runtime()),
+    /No open deposit at this payer and nonce/,
+  );
+  await assert.rejects(
+    smokeDepositPlan({ ...smoke, smokeNonce: "-1" }, await runtime()),
+    /smokeNonce must be a decimal string/,
+  );
+  await assert.rejects(
+    smokeResolvePlan(
+      { ...smoke, resolver: owner.publicKey.toBase58() },
+      await runtime(),
+    ),
+    /not the reviewed resolver/,
+  );
+  const ids = [];
+  for (const round of [1, 2]) {
+    const count = BigInt((await readConfig()).depositCount.toString());
+    const plan = await smokeDepositPlan(smoke, await runtime());
+    assert.equal(plan.operation, "smoke-deposit");
+    assert.equal(plan.amount, "1");
+    assert.equal(plan.deposit, address.toBase58());
+    assert.equal(plan.depositCountBefore, count.toString());
+    await signAndSend(plan, contributor);
+    assert.equal(await balance(account), held - 1n);
+    assert.equal(await balance(addresses.vault(USDC_MINT)), vaulted + 1n);
+    // A second deposit is not planned while this one is open.
+    await assert.rejects(
+      smokeDepositPlan(smoke, await runtime()),
+      /already open at this payer and nonce/,
+    );
+    const refund = await smokeResolvePlan(smoke, await runtime());
+    assert.equal(refund.operation, "smoke-resolve");
+    assert.equal(refund.depositId, (count + 1n).toString());
+    assert.equal(refund.refundTo, account.toBase58());
+    ids.push(BigInt(refund.depositId));
+    const record = await context.program.account.deposit.fetch(
+      address,
+      "finalized",
+    );
+    assert.deepEqual(Buffer.from(record.item), SMOKE_ITEM);
+    await signAndSend(refund, resolver);
+    assert.equal(
+      await connection.getAccountInfo(address, "finalized"),
+      null,
+      `round ${round}`,
+    );
+    assert.equal(await balance(account), held);
+    assert.equal(await balance(addresses.vault(USDC_MINT)), vaulted);
+  }
+  // The same address held two deposits, one after the other, with two ids.
+  assert.equal(ids[1], ids[0] + 1n);
+  assert.equal(await balance(ata(FEE_WALLET, USDC_MINT)), kept);
+  // The plan refuses to refund anything but the one-unit smoke deposit.
+  await deposit({
+    from: contributor,
+    mint: USDC_MINT,
+    amount: FEE,
+    keptTo: FEE_WALLET,
+    nonce: 20261125n,
+  });
+  const latest = await connection.getLatestBlockhash();
+  await connection.confirmTransaction(
+    {
+      signature: (await connection.getSignaturesForAddress(address))[0]
+        .signature,
+      ...latest,
+    },
+    "finalized",
+  );
+  await assert.rejects(
+    smokeResolvePlan(smoke, await runtime()),
+    /not the smoke deposit/,
+  );
+  note(`smoke test: deposits ${ids.join(" and ")} at ${address.toBase58()}`);
 });
 
 test("with the upgrade authority removed the program keeps working and cannot be initialized again", async () => {

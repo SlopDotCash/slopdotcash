@@ -715,10 +715,12 @@ Accounts, all program-derived:
   nonce, in the record. The same payer and nonce while that record is open is
   refused, because its account already exists. The program keeps no list of
   accepted mints, amounts or kept wallets; that check is off chain.
-- The resolver calls `resolve(refund)` once per open deposit: `true` sends the
-  amount to the payer's associated token account, `false` to the associated
-  token account of `kept_to`. No other destination is accepted, and the account
-  must still be owned by that wallet. Several `resolve` instructions in one
+- The resolver calls `resolve(refund, expected_id)` once per open deposit:
+  `true` sends the amount to the payer's associated token account, `false` to
+  the associated token account of `kept_to`. No other destination is accepted,
+  and the account must still be owned by that wallet. `expected_id` is the id
+  of the deposit the resolver means; if the record at the address stores another
+  id the instruction is refused (`WrongDeposit`) and nothing moves. Several `resolve` instructions in one
   transaction are the batch; a Solana transaction is all or nothing.
 - If a deposit is still open `reclaim_delay` after it was made, its payer calls
   `reclaim` and takes it back, to any token account of that mint the payer owns.
@@ -751,6 +753,10 @@ Where it differs from the EVM contract, and why:
   again once its record is closed, so a payer who reuses a nonce later gets a
   new deposit with a new id at the old address: a reader identifies a deposit
   by its stored id and its creating transaction, never by its address alone.
+  For the same reason a `resolve` names the id it settles: one built for the
+  earlier deposit cannot keep or refund the later one at that address. `reclaim`
+  names no id, because only the payer signs it and it always returns the record
+  at that address to that payer.
 - **Wallets, and token accounts of those wallets.** The record names wallets.
   A refund and a kept fee go to the wallet's associated token account, the one
   address that follows from the wallet and the mint, so the resolver chooses
@@ -814,12 +820,17 @@ delay is fixed once per deployment:
   five minutes past thirty days (reclaimed) and one an hour short (refused);
   the finalized reads a Worker will make (the filtered account scan and the
   transactions on a record's address), decoded by hand; and removal of the
-  upgrade authority, after which deposits and refunds still work.
+  upgrade authority, after which deposits and refunds still work; and the
+  runbook's smoke test through the planner, one base unit in and back twice at
+  one nonce.
 - `integration/submission-deposits.e2e.mjs`, with a six-second delay: every
   instruction and every refusal, including each wrong destination a resolver
   could name, two payers who sign against the same state and both land, a
   signed deposit that still lands after a third party's deposits, a reused
-  nonce, a record address derived from somebody else's key, the rent recipient, single settlement, frozen, closed and
+  nonce, the same nonce twice in one transaction, a reclaim and a new deposit
+  at the same address in one transaction, a resolve built for the earlier
+  deposit refused at the later one, a record address derived from somebody
+  else's key, the rent recipient, single settlement, frozen, closed and
   handed-over token accounts, a batch that is all or nothing, reclaim timing,
   pausing, the roles, stray tokens, and mints of zero and nine decimals.
 - `integration/submission-deposits-invariant.e2e.mjs`: a seeded random campaign
@@ -843,4 +854,7 @@ it is not an audit. The state models are
 `scripts/submission-deposits-plan.mjs` is the deployment's read-only planner:
 it builds the unsigned `initialize` and `open_vault` transactions and reads the
 result back, after checking the cluster, the deployed bytes and the upgrade
-authority. It signs and sends nothing.
+authority. For the runbook's smoke test it also builds a one-base-unit
+`deposit` (`smoke-deposit`) and the `resolve` that refunds it
+(`smoke-resolve`, which names the id stored in the record and refuses any
+deposit that is not that one-unit smoke deposit). It signs and sends nothing.
