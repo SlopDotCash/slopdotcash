@@ -2373,7 +2373,7 @@
     },
     {
       "path": "contracts/solana/submission-deposits.ts",
-      "sha256": "8783ce72dfb9986bbb86a9ff3f55f98f6e91da835997c2bb732ad049182ad29c",
+      "sha256": "8c092d653b7012cfcc4fcdbf4d3654533431987a94a9ed743c8e42f06e09aff3",
       "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -3989,9 +3989,9 @@
     },
     {
       "path": "package.json",
-      "sha256": "fe7c9db0cf8ca0696d25ec560bfe8f67080386e96953c0edc0d0e317c03c84cc",
+      "sha256": "0aa2f1a9112efea4b1688c6362f10e744124e799050cc2739e1763048e84fd15",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [81, 85, 87, 88],
+      "candidateLines": [82, 86, 88, 89],
       "review": "mapped-abstraction"
     },
     {

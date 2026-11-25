@@ -27,7 +27,9 @@ import {
   solanaProgramAddress,
   solanaPublicKeyBytes,
 } from "./adapter";
-import committedIdl from "./idl/slop_submission_deposits.json";
+import committedIdl from "./idl/slop_submission_deposits.json" with {
+  type: "json",
+};
 import { CLASSIC_TOKEN_PROGRAM } from "./token";
 import type { Instruction } from "./transactions";
 

@@ -27,7 +27,9 @@ import {
   solanaProgramAddress,
   solanaPublicKeyBytes,
 } from "../../contracts/solana/adapter";
-import idl from "../../contracts/solana/idl/slop_submission_deposits.json";
+import idl from "../../contracts/solana/idl/slop_submission_deposits.json" with {
+  type: "json",
+};
 import {
   depositInstruction,
   reclaimInstruction,
