@@ -271,3 +271,8 @@ export function projectCycles(cycles: ReadonlyArray<CycleIndexEntry>, projectId:
 export function awardMonths(cycles: ReadonlyArray<CycleIndexEntry>, projectId: string): ReadonlyArray<string> {
   return cycles.filter((cycle) => cycle.projectId === projectId && cycle.kind === "monthly-pool" && cycle.contributors.length > 0).map((cycle) => cycle.cycleId);
 }
+
+/** Whether the project is held from agent discovery: at its intake cap, or out of rotation under the backlog rule. @throws {RangeError} */
+export function projectHeldOrOutOfRotation(project: Pick<ShownProject, "id" | "status" | "record" | "reward" | "securityBounty">, merge: Shown<MergeIndex>, nowMs: number): boolean {
+  return projectHeld(project, merge, nowMs) || projectOutOfRotation(project, merge, nowMs);
+}
