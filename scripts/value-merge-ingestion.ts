@@ -39,6 +39,7 @@ export interface PublicMergeRepository {
 
 const run = promisify(execFile);
 
+// implementation-memo-rules: begin public-git
 /** The same isolated Git boundary is used for acquisition and object reads. */
 export function publicGitProcess(directory: string, args: string[]) {
   return {
@@ -77,6 +78,7 @@ export function publicGitProcess(directory: string, args: string[]) {
     },
   };
 }
+// implementation-memo-rules: end public-git
 
 /** Repeat only an interrupted local traversal of immutable Git objects. */
 export async function runPublicGit(

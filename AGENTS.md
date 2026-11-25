@@ -829,7 +829,8 @@ decision, 19 November 2026). Saved commit attributions in the collection memo su
 code changes; a change that could make a saved answer come out differently
 must raise `ATTRIBUTION_RULES_VERSION` in `scripts/collection-memo.ts`, and a
 test pins the rule sources (PRD section 11, operator decision, 24 November
-2026). GitHub fires scheduled and after-release jobs
+2026). The accepted implementation memo follows the same rule with
+`IMPLEMENTATION_MEMO_RULES_VERSION` (operator decision, 25 November 2026). GitHub fires scheduled and after-release jobs
 only from the default branch, so while the default branch is not main an
 outside scheduler starts main's scheduled workflows by hand with a token that
 can only start workflows here (operator decision, 21 November 2026). A source GitHub cannot resolve still forces one
