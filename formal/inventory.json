@@ -148,6 +148,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/ready-auto-merge.yml",
+      "sha256": "f14e656afdb63c9fdb24b18f1dc22d3ab61de77ebe92a0415530120e15965d09",
+      "models": ["formal/models/slopbot/bot_ready_auto_merge.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/referral-root-watch.yml",
       "sha256": "7e0a960bfdba031a70af7c3061e730782eab95805108cea92556764d1caa7c0f",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -5361,6 +5368,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/ready-auto-merge.ts",
+      "sha256": "81a3688a05b458fe4ead5d74d9596570d24a72fe40559a3904d69418229befd2",
+      "models": ["formal/models/slopbot/bot_ready_auto_merge.qnt"],
+      "candidateLines": [
+        47, 60, 106, 107, 146, 150, 164, 179, 282, 309, 314, 321, 327, 335, 337,
+        435, 438, 448, 450, 491, 573
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/reconcile-payment-events.ts",
       "sha256": "fa65a4a17addaea184ebd8131ef653572e7c2e2401c237cc135c4302bf100755",
       "models": ["formal/models/payments/chain_evidence.qnt"],
@@ -9989,16 +10006,16 @@
     },
     {
       "path": "workers/slopbot/ready-label.ts",
-      "sha256": "2d420bd06d561da7823c8bef8f4a93ae814e7f0b06c0c05242e7ad962358a2e9",
+      "sha256": "08cadde603584989051b3107780aebbfa7900a984bab837579277da09f4a6835",
       "models": [
         "formal/models/slopbot/bot_ready_label.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
       "candidateLines": [
-        26, 30, 306, 318, 326, 364, 373, 376, 428, 468, 482, 496, 503, 504, 520,
-        538, 543, 555, 557, 602, 620, 652, 655, 663, 674, 683, 685, 687, 698,
-        723, 728, 735, 738, 740, 792, 794, 795, 808, 811, 812, 833, 852, 862,
-        872, 879, 903, 917, 937, 944, 991
+        28, 32, 308, 320, 328, 366, 375, 378, 430, 470, 484, 498, 505, 506, 522,
+        540, 545, 557, 559, 604, 622, 654, 657, 665, 676, 685, 687, 689, 700,
+        725, 730, 737, 740, 742, 794, 796, 797, 810, 813, 814, 835, 854, 864,
+        874, 881, 905, 919, 939, 946, 993
       ],
       "review": "mapped-abstraction"
     },
@@ -18400,8 +18417,30 @@
       ]
     },
     {
+      "path": "formal/models/slopbot/bot_ready_auto_merge.qnt",
+      "sha256": "ef817f563fca0477a0948d4a579a56c1ddb588547f97cbc9f96d5afabde2e63f",
+      "sources": [
+        ".github/workflows/ready-auto-merge.yml",
+        "scripts/ready-auto-merge.ts"
+      ],
+      "scenarios": [
+        "changeRequestBlocksTest",
+        "defaultBranchIsNeverMergedTest",
+        "mainIsNeverMergedTest",
+        "personCanStillMergeTest",
+        "personLabelNeverCountsTest",
+        "pushAfterVerificationRefusesMergeTest",
+        "readOnlyApprovalNeverCountsTest",
+        "runLimitStopsFurtherMergesTest",
+        "staleLabelAfterPushNeverCountsTest",
+        "switchOffNeverMergesTest",
+        "unreadableAnswerSkipsTest",
+        "verifiedPullRequestMergesTest"
+      ]
+    },
+    {
       "path": "formal/models/slopbot/bot_ready_label.qnt",
-      "sha256": "77c12fb1b424ce1d84dfbb8e34c0fed5e5203c2b2e920831dffa9ec7e9bd1b4e",
+      "sha256": "07a2c8229cd93821a7148c51263c8e8fe875f1a994be55e9ddc697699c3ec3d0",
       "sources": [
         "migrations/0130_slopbot_ready_labels.sql",
         "src/lib/slopbot-ready.mjs",

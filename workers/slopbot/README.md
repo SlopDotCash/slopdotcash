@@ -199,8 +199,17 @@ here, so a pending result is checked again every 10 minutes for up to 14 days
 per head commit, and a labelled pull request every hour
 (`slopbot_ready_labels`, `dispatchReadyChecks`). A closed or merged pull request
 keeps its last label. Every write re-reads the head commit first. Slopbot never
-merges: a human does. Labels and comments are already within Issues and Pull
+merges: a person does. Labels and comments are already within Issues and Pull
 requests write, and Points and scoring are unchanged.
+
+Pilot, Slop's own repository only (operator decision, 25 November 2026; PRD
+section 5): while the repository variable `SLOPBOT_AUTO_MERGE` equals `on`, the
+repository's own workflow `.github/workflows/ready-auto-merge.yml`
+(`scripts/ready-auto-merge.ts`) merges a labelled pull request into the
+registered integration branch after re-checking it against GitHub. It accepts
+the label only when its newest event was made by this App's bot account
+(`slopdotcash[bot]`), so a label added by a person never counts. The merge uses
+the workflow's own token. This Worker has no part in it and no Contents write.
 
 ## Free reviews, budget blocks, spend
 
