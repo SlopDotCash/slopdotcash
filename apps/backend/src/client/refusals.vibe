@@ -126,6 +126,7 @@ const withOriginForbidden = {
   ...withOriginForbiddenAndUnauthorized,
   ...withNotFoundProjectNotFound,
   invalidRequestReasonMustBe1: { status: 400, error: "invalid_request", message: "reason must be 1 to 500 characters", headers: jsonNoStoreSlopProjectApiContract },
+  catchUpRefusedANewProjectIs: { status: 422, error: "catch_up_refused", message: "A new project is not catching up on reviews; start it from the project's settings once it is listed", headers: jsonNoStoreSlopProjectApiContract },
   invalidManifestProjectManifestIsInvalid: { status: 422, error: "invalid_manifest", message: "Project manifest is invalid", headers: jsonNoStoreSlopProjectApiContract },
   staleRevisionNoStore: { status: 409, error: "stale_revision", messageFrom: "stored ? \"The project changed after this update was saved; make the change again in the project's settings\" : \"The project changed since you loaded it\"", headers: jsonNoStoreSlopProjectApiContract },
   projectRestrictedS409: { status: 409, error: "project_restricted", messageFrom: "`The project is ${restriction.state}; request reinstatement before changing it`", headers: jsonNoStoreSlopProjectApiContract },
