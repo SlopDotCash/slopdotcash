@@ -152,9 +152,9 @@ the server's read fails. While a catch-up pause runs, the page says the
 maintainers are catching up until the date in `slopbot.catchUpUntil`.
 
 ```quint
-pure val overLimitNotice = "This project is not taking new work right now because more than 50 pull requests are waiting for review."
-pure val dormantNotice = "This project is not taking new work right now because its maintainers have not merged work in more than two weeks."
-pure val catchUpNotice = "This project's maintainers are catching up on reviews."
+pure val overLimitNotice = "This project is not taking new work right now because at least 50 pull requests are waiting for review."
+pure val dormantNotice = "This project is not taking new work right now because its maintainers have not merged work in at least two weeks."
+pure def catchUpNotice(until: str): str = "This project's maintainers are catching up on reviews until " + until + "."
 pure def canBrowserRead(s: Backlog, ok: bool, by: str): bool = by == browserReader
 pure def browserRead(s: Backlog, ok: bool, by: str): Backlog = { ...s, browser: if (ok) ListReady else ListFailed }
 pure def canServerRead(s: Backlog, ok: bool, by: str): bool = by == discoveryServer
