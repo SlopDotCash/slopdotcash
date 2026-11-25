@@ -304,8 +304,12 @@ export function createSolanaFeeChain(
       );
     const built: Instruction[] = [];
     for (const entry of entries) {
+      // Read again at finalized commitment right before building: the
+      // instruction is built from this record and names its id, never from
+      // an address alone.
       const { address, deposit } = await record(entry.id);
-      // Settled since it was planned: nothing to send for it.
+      // Settled since it was planned, or the address now holds a later
+      // deposit: nothing is built or signed for it.
       if (deposit === null)
         throw new SendRevertedError("A deposit of the batch is settled");
       // Never an instruction for a mint outside the reviewed table.

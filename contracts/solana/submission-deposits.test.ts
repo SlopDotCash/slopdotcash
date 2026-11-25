@@ -85,7 +85,7 @@ test("deposit carries the item, the exact amount, the kept wallet and the nonce,
 });
 
 test("resolve never takes a destination: a refund goes to the payer's associated account, a kept fee to the kept wallet's", () => {
-  const record = { payer: PAYER, mint: MINT, keptTo: KEPT };
+  const record = { id: 9, payer: PAYER, mint: MINT, keptTo: KEPT };
   const deposit = submissionDepositAddress(PROGRAM, PAYER, 5n);
   const spec = idl.instructions.find((entry) => entry.name === "resolve");
   const at = (name: string) =>
@@ -95,8 +95,17 @@ test("resolve never takes a destination: a refund goes to the payer's associated
       { programId: PROGRAM, resolver: KEPT, deposit, record, refund },
       idl,
     );
-    expect(built.data.length).toBe(9);
     expect(built.data[8]).toBe(refund ? 1 : 0);
+    // Where the program takes the expected id, it is the record's own.
+    if (spec?.args.some((argument) => argument.name === "expected_id")) {
+      expect(built.data.length).toBe(17);
+      expect(
+        new DataView(built.data.buffer, built.data.byteOffset).getBigUint64(
+          9,
+          true,
+        ),
+      ).toBe(9n);
+    } else expect(built.data.length).toBe(9);
     expect(built.accounts[at("deposit")].key).toBe(deposit);
     expect(built.accounts[at("destination")].key).toBe(
       solanaAssociatedTokenAddress(MINT, refund ? PAYER : KEPT),

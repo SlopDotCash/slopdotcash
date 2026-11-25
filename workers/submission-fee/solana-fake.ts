@@ -105,6 +105,8 @@ export class FakeSolana {
   /** Makes account reads lag the Config read by refusing `minContextSlot`. */
   calls: string[] = [];
   failMethod: string | null = null;
+  /** Runs before each request is answered; a test changes the chain here. */
+  onCall: ((method: string, params: unknown[]) => void) | null = null;
   readonly accounts = new Map<string, Account>();
   readonly landed = new Map<string, Landed>();
   readonly history = new Map<string, string[]>();
@@ -324,6 +326,7 @@ export class FakeSolana {
     if (!account || account.owner !== this.programId) return null;
     const record = decodeSubmissionDeposit(account.data, this.idl);
     return {
+      id: record.id,
       payer: record.payer,
       mint: record.mint,
       keptTo: record.keptTo,
@@ -338,6 +341,17 @@ export class FakeSolana {
       if (call.program !== this.programId) return index;
       const [resolver, , deposit, , mint, , destination, payer] = call.accounts;
       const record = closed.has(deposit) ? null : this.depositOf(deposit);
+      const spec = this.idl.instructions.find((e) => e.name === "resolve");
+      const expects = spec?.args.some((arg) => arg.name === "expected_id");
+      if (
+        expects &&
+        record !== null &&
+        new DataView(call.data.buffer, call.data.byteOffset).getBigUint64(
+          9,
+          true,
+        ) !== BigInt(record.id)
+      )
+        return index;
       const wallet =
         record === null ? "" : call.data[8] === 1 ? record.payer : record.keptTo;
       const token = this.accounts.get(destination);
@@ -688,6 +702,7 @@ export class FakeSolana {
       params: unknown[];
     };
     this.calls.push(request.method);
+    this.onCall?.(request.method, request.params);
     if (this.failMethod === request.method)
       return new Response("", { status: 503 });
     let body: Record<string, unknown>;

@@ -576,7 +576,7 @@ describe("the resolve transaction", () => {
               programId,
               resolver: RESOLVER,
               deposit: submissionDepositAddress(programId, payer, 1n),
-              record: { payer, mint, keptTo: fakeAddress(202) },
+              record: { id: index + 1, payer, mint, keptTo: fakeAddress(202) },
               refund: true,
             },
             idl,
@@ -606,6 +606,7 @@ describe("the resolve transaction", () => {
           resolver: RESOLVER,
           deposit: made.account,
           record: {
+            id: 1,
             payer: PAYER,
             mint: t.chain.mint,
             keptTo: t.chain.feeWallet,
@@ -696,5 +697,107 @@ describe("a record address used again", () => {
     });
     expect(t.deposit(2)).toMatchObject({ state: "open" });
     expect(t.sends()).toEqual([]);
+  });
+});
+
+describe("a record address that changes hands between the read and the signature", () => {
+  /** The interface with `expected_id` on `resolve`, whichever the committed one is. */
+  const expectingId = (() => {
+    const copy = structuredClone(SUBMISSION_DEPOSITS_IDL);
+    const resolve = copy.instructions.find((entry) => entry.name === "resolve");
+    if (resolve && !resolve.args.some((arg) => arg.name === "expected_id"))
+      resolve.args.push({ name: "expected_id", type: "u64" });
+    return copy;
+  })();
+
+  test("the record is read again before signing; a newer deposit there is never resolved in the old one's place", async () => {
+    const t = setup();
+    t.ask(7);
+    t.ask(8);
+    const first = t.pay(7, { nonce: 5n });
+    await t.ledger();
+    t.decide(7, "refund_due");
+    // After the run's scan and the send step's own read, and right before
+    // the record is read again for signing, the payer reclaims deposit 1 and
+    // deposits again with the same nonce: the address now holds deposit 2.
+    let reads = 0;
+    t.chain.onCall = (method, params) => {
+      if (method !== "getAccountInfo" || params[0] !== first.account) return;
+      reads += 1;
+      if (reads !== 2) return;
+      t.chain.reclaim(first.account);
+      t.pay(8, { nonce: 5n });
+    };
+    const result = await t.ledger();
+    expect(reads).toBeGreaterThanOrEqual(2);
+    expect(result).toMatchObject({ parked: 0 });
+    expect(result.send).not.toBe("sent");
+    // Nothing was built, signed or sent for either deposit.
+    expect(t.sends()).toEqual([]);
+    expect(t.chain.calls).not.toContain("sendTransaction");
+    expect(t.chain.calls).not.toContain("simulateTransaction");
+    t.chain.onCall = null;
+    // The next run records what happened to each, by id.
+    await t.ledger();
+    expect(t.deposit(1)).toMatchObject({ state: "reclaimed" });
+    expect(t.deposit(2)).toMatchObject({ state: "open", accepted: 1 });
+    expect(t.item(8)).toMatchObject({ paid_deposit_id: 2, outcome: null });
+    expect(t.sends()).toEqual([]);
+  });
+
+  test("a resolve names the id the Worker recorded, and the program refuses it for any other deposit", async () => {
+    const chain = new FakeSolana(expectingId);
+    chain.resolver = RESOLVER;
+    const made = chain.pay({
+      payer: PAYER,
+      item: submissionFeeItem(REPOSITORY, 7),
+      nonce: 5n,
+    });
+    const network = parseSolanaConfig(
+      {
+        SUBMISSION_FEE_SOLANA_MODE: "live",
+        SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX: "10000",
+        SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY: "12000",
+        RPC_URL_SUBMISSION_FEE_SOLANA: "https://solana.invalid/key",
+      },
+      {
+        network: NETWORK,
+        programId: chain.programId,
+        startSlot: 1000,
+        mint: chain.mint,
+        feeWallet: chain.feeWallet,
+        genesisHash: chain.genesis,
+      },
+    ).ledger;
+    if (!network) throw new Error("no ledger");
+    const client = createSolanaFeeChain({
+      network,
+      seed: SEED,
+      fetch: chain.fetch,
+      idl: expectingId,
+    });
+    client.track(1, made.account);
+    const prepared = await client.prepare([{ id: 1, refund: true }], async () => {});
+    const data = solanaBase64Bytes(prepared.rawTx);
+    // The last eight bytes of the one instruction are the expected id, 1.
+    expect(
+      new DataView(data.buffer, data.byteOffset).getBigUint64(
+        data.length - 8,
+        true,
+      ),
+    ).toBe(1n);
+    // The signed bytes land after the address changed hands: the program
+    // refuses them, and deposit 2 stays open.
+    chain.reclaim(made.account);
+    chain.pay({
+      payer: PAYER,
+      item: submissionFeeItem(REPOSITORY, 8),
+      nonce: 5n,
+    });
+    await client.broadcast(prepared.rawTx);
+    chain.land(prepared.txId);
+    expect(chain.landed.get(prepared.txId)?.failed).toBe(true);
+    expect(chain.accounts.has(made.account)).toBe(true);
+    expect(await client.deposit(1)).toMatchObject({ closed: true });
   });
 });

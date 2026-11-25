@@ -370,13 +370,18 @@ export function depositInstruction(
  * The resolver's `resolve` of one open deposit. The destination is never a
  * caller's choice: the payer's associated token account for a refund, the
  * kept wallet's for a kept deposit, as the program itself requires.
+ *
+ * `record` is the deposit's record as just read from `deposit`, with its
+ * id. A record address can hold a later deposit of the same payer and nonce,
+ * so the instruction names the id it means (`expected_id`, where the program
+ * takes it) and the program refuses any other.
  */
 export function resolveInstruction(
   input: {
     programId: string;
     resolver: string;
     deposit: string;
-    record: Pick<SubmissionDeposit, "payer" | "mint" | "keptTo">;
+    record: Pick<SubmissionDeposit, "id" | "payer" | "mint" | "keptTo">;
     refund: boolean;
   },
   idl: SubmissionDepositsIdl = SUBMISSION_DEPOSITS_IDL,
@@ -400,7 +405,7 @@ export function resolveInstruction(
       payer: record.payer,
       token_program: CLASSIC_TOKEN_PROGRAM,
     },
-    { refund: input.refund },
+    { refund: input.refund, expected_id: BigInt(record.id) },
   );
 }
 
@@ -576,7 +581,14 @@ export function submissionSettlement(
       continue;
     let kind: SubmissionSettlement["kind"] = "reclaimed";
     if (name === "resolve") {
-      if (call.data.length !== 9 || call.data[8] > 1)
+      // `refund` is the first argument; a later one (the expected id) follows.
+      const spec = instruction(idl, "resolve");
+      const size = spec.args.reduce((n, arg) => n + sizeOf(arg.type), 8);
+      if (
+        spec.args[0]?.name !== "refund" ||
+        call.data.length !== size ||
+        call.data[8] > 1
+      )
         throw new Error("Malformed resolve instruction");
       kind = call.data[8] === 1 ? "refunded" : "kept";
     }
