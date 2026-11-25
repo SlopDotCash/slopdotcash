@@ -24,6 +24,7 @@ import {
   chunked,
   exactKeys,
   fail,
+  failureShape,
   isSameOriginJsonWrite,
   PROJECT_ID,
   pathParts,
@@ -3646,6 +3647,7 @@ export async function handleSecurityApi(
     return apiErrorResponse(caught, {
       label: "security case API failure",
       respond: json,
+      detail: () => failureShape(caught),
     });
   }
 }

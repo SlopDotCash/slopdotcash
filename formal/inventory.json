@@ -269,7 +269,7 @@
     },
     {
       "path": "backend/http.ts",
-      "sha256": "167aeab425cfdddde1db8b73fab69b05d9e3cc8985493fde00f1f72a387def33",
+      "sha256": "5ba0313a8d8cd813d2ee6d3efd281833789f527d7b3f24bf9a3361d1c7bb2c4f",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -291,8 +291,8 @@
         "formal/models/vetting/vetting_evidence_inventory.qnt"
       ],
       "candidateLines": [
-        6, 7, 9, 44, 49, 118, 121, 126, 130, 141, 142, 143, 144, 145, 147, 148,
-        151, 158
+        6, 7, 9, 44, 49, 118, 121, 126, 145, 158, 159, 160, 161, 162, 164, 165,
+        168, 173, 180
       ],
       "review": "mapped-abstraction"
     },
@@ -1121,7 +1121,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "ab1da36a6eb01434b52fcd6a7d8136d86857b51e8818935e9043b875ede36a0f",
+      "sha256": "68ec1f7f588d2464051b63d3603d56381a48878055407ca7425abf37b21c8a6f",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -1139,13 +1139,13 @@
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
-        315, 316, 367, 369, 376, 438, 446, 448, 521, 592, 660, 672, 694, 696,
-        704, 708, 724, 790, 943, 985, 1130, 1150, 1183, 1206, 1222, 1355, 1397,
-        1398, 1400, 1402, 1422, 1524, 1554, 1573, 1672, 1673, 1688, 1703, 1728,
-        1799, 1803, 1848, 1873, 2056, 2099, 2224, 2592, 2618, 2643, 2697, 2864,
-        2867, 2868, 2907, 2916, 2936, 2982, 3033, 3034, 3036, 3079, 3141, 3170,
-        3176, 3182, 3212, 3249, 3260, 3278, 3284, 3368, 3376, 3378, 3393, 3489,
-        3498, 3504, 3516, 3519, 3520, 3548, 3552, 3555, 3592
+        316, 317, 368, 370, 377, 439, 447, 449, 522, 593, 661, 673, 695, 697,
+        705, 709, 725, 791, 944, 986, 1131, 1151, 1184, 1207, 1223, 1356, 1398,
+        1399, 1401, 1403, 1423, 1525, 1555, 1574, 1673, 1674, 1689, 1704, 1729,
+        1800, 1804, 1849, 1874, 2057, 2100, 2225, 2593, 2619, 2644, 2698, 2865,
+        2868, 2869, 2908, 2917, 2937, 2983, 3034, 3035, 3037, 3080, 3142, 3171,
+        3177, 3183, 3213, 3250, 3261, 3279, 3285, 3369, 3377, 3379, 3394, 3490,
+        3499, 3505, 3517, 3520, 3521, 3549, 3553, 3556, 3593
       ],
       "review": "mapped-abstraction"
     },
@@ -6154,7 +6154,7 @@
     },
     {
       "path": "src/Inbox.tsx",
-      "sha256": "1552530cc37429a10d77f9e52f07d35e811cc1c8ae86ec5011d640539df3da88",
+      "sha256": "0abbcf542a6b95e8cfa75b415feab34bbc38982bc82eef4b66de1b7a9551a1fa",
       "models": [
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -6164,11 +6164,11 @@
         "formal/models/ui/ui_points_disputes.qnt"
       ],
       "candidateLines": [
-        21, 23, 62, 63, 64, 65, 73, 78, 92, 100, 107, 127, 151, 158, 159, 160,
-        168, 171, 179, 194, 195, 205, 207, 209, 210, 226, 238, 241, 247, 262,
-        270, 276, 277, 301, 306, 309, 316, 322, 332, 345, 356, 380, 382, 388,
-        401, 402, 404, 408, 410, 416, 421, 422, 423, 428, 456, 459, 471, 472,
-        491, 496, 504, 601
+        21, 23, 66, 67, 68, 69, 77, 82, 96, 104, 111, 131, 155, 162, 163, 164,
+        172, 175, 183, 198, 199, 209, 211, 213, 214, 230, 242, 245, 251, 266,
+        274, 280, 281, 305, 310, 313, 320, 326, 336, 349, 360, 384, 386, 392,
+        405, 406, 408, 412, 414, 420, 425, 426, 427, 432, 460, 463, 475, 476,
+        495, 500, 508, 605
       ],
       "review": "mapped-abstraction"
     },
@@ -7024,13 +7024,14 @@
     },
     {
       "path": "src/lib/browser-json.ts",
-      "sha256": "d44178ff3b6bf5e9ca8bf443ab1a8ba52d7662924fdce7e4079b701883612619",
+      "sha256": "f9c58f8ff1bcfa25fcb59d540489a16e503be2837d4807d7d43ec6e7bd7cdd99",
       "models": [
         "formal/models/ui/ui_points_disputes.qnt",
+        "formal/models/ui/ui_read_retry.qnt",
         "formal/models/ui/ui_transport.qnt",
         "formal/models/ui/ui_vetting_reader.qnt"
       ],
-      "candidateLines": [8, 110],
+      "candidateLines": [8, 39, 49, 152],
       "review": "mapped-abstraction"
     },
     {
@@ -7703,7 +7704,7 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "bd8c143a7056afe8ae5d43a8e1f866b20f9701513f979235ada3d2b0435c5ef3",
+      "sha256": "94b87de67f68dc0359c72c6c415f863c318c2ac7ea6f65789a498a397b6cc709",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -7720,6 +7721,7 @@
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_read_retry.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_session.qnt",
@@ -7729,10 +7731,10 @@
         "formal/models/ui/ui_vetting_reader.qnt"
       ],
       "candidateLines": [
-        6, 25, 111, 121, 125, 149, 163, 168, 233, 255, 271, 307, 308, 309, 310,
-        326, 332, 340, 342, 343, 344, 347, 352, 359, 362, 366, 368, 390, 391,
-        394, 396, 403, 436, 440, 441, 446, 450, 451, 457, 459, 461, 482, 495,
-        504, 510, 522, 528
+        6, 25, 78, 118, 128, 132, 156, 170, 175, 240, 262, 278, 314, 315, 316,
+        317, 333, 339, 347, 349, 350, 351, 354, 359, 366, 369, 373, 375, 397,
+        398, 401, 403, 410, 443, 447, 448, 453, 457, 458, 464, 466, 468, 489,
+        502, 511, 517, 529, 535
       ],
       "review": "mapped-abstraction"
     },
@@ -21255,6 +21257,17 @@
         "publicLinkReadyTest",
         "unavailableReadTest",
         "viewerChangeDoesNotRefreshPublicLinkTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_read_retry.qnt",
+      "sha256": "9c73aefc94e36af3d4410bee422d4142bd3ead0d4ab5a7270862a0107a9ebdf8",
+      "sources": ["src/lib/browser-json.ts", "src/lib/project-api.ts"],
+      "scenarios": [
+        "cancelledWaitSendsNothingTest",
+        "failedReadIsAskedOnceMoreTest",
+        "refusalIsNotRepeatedTest",
+        "secondFailureIsFinalTest"
       ]
     },
     {
