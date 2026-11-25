@@ -42,11 +42,19 @@ export schema TraceLicensingChanged {
   readonly withdrawn: number
 }
 
-export schema TraceLicencesOptIn {
-  readonly kind: "chosen" | "all"
-  readonly runIds?: ReadonlyArray<string>
-  readonly expectedCount?: number
+export schema TraceLicencesOptInChosen {
+  readonly kind: "chosen"
+  readonly runIds: ReadonlyArray<string>
+  readonly expectedCount: number
 }
+
+export schema TraceLicencesOptInAll {
+  readonly kind: "all"
+}
+// The handler enforces the discriminated union: a chosen opt-in with
+// more than MAX_RUN_IDS runIds is rejected. The cap lives in the
+// handler, not in this schema.
+export type TraceLicencesOptIn = TraceLicencesOptInChosen | TraceLicencesOptInAll
 
 export schema TraceLicencesOptedIn {
   readonly licensed: number
@@ -54,6 +62,6 @@ export schema TraceLicencesOptedIn {
 
 export const tracesMeRoute = route({ method: "GET", path: "/api/v1/traces/me", access: "bearer", limitKib: 1, request: undefined, answer: TracesMe, rejected: "account_closed", cache: "no-store" })
 export const traceLicensingRoute = route({ method: "PUT", path: "/api/v1/traces/licensing", access: "bearer", limitKib: 80, request: TraceLicensingChange, answer: TraceLicensingChanged, rejected: "setting_changed", cache: "no-store" })
-export const traceLicencesRoute = route({ method: "POST", path: "/api/v1/trace-licences", access: "bearer", limitKib: 80, request: TraceLicencesOptIn, answer: TraceLicencesOptedIn, rejected: "count_changed", cache: "no-store" })
+export const traceLicencesRoute = route({ method: "POST", path: "/api/v1/traces/licences", access: "bearer", limitKib: 80, request: TraceLicencesOptIn, answer: TraceLicencesOptedIn, rejected: "count_changed", cache: "no-store" })
 
 export const licensingApi: ReadonlyArray<AnyRoute> = [tracesMeRoute, traceLicensingRoute, traceLicencesRoute]
