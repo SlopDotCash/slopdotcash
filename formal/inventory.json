@@ -275,7 +275,7 @@
     },
     {
       "path": "backend/http.ts",
-      "sha256": "ab846697775eaf69941e71185ff1ecb1b80ba5e07d37719940e0c6fccb3cfe5f",
+      "sha256": "5ba0313a8d8cd813d2ee6d3efd281833789f527d7b3f24bf9a3361d1c7bb2c4f",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -297,8 +297,8 @@
         "formal/models/vetting/vetting_evidence_inventory.qnt"
       ],
       "candidateLines": [
-        6, 7, 9, 44, 49, 118, 121, 126, 130, 141, 142, 143, 144, 145, 147, 148,
-        151, 158
+        6, 7, 9, 44, 49, 118, 121, 126, 145, 158, 159, 160, 161, 162, 164, 165,
+        168, 173, 180
       ],
       "review": "mapped-abstraction"
     },
@@ -6171,7 +6171,7 @@
     },
     {
       "path": "src/Inbox.tsx",
-      "sha256": "1552530cc37429a10d77f9e52f07d35e811cc1c8ae86ec5011d640539df3da88",
+      "sha256": "0abbcf542a6b95e8cfa75b415feab34bbc38982bc82eef4b66de1b7a9551a1fa",
       "models": [
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -6181,11 +6181,11 @@
         "formal/models/ui/ui_points_disputes.qnt"
       ],
       "candidateLines": [
-        21, 23, 62, 63, 64, 65, 73, 78, 92, 100, 107, 127, 151, 158, 159, 160,
-        168, 171, 179, 194, 195, 205, 207, 209, 210, 226, 238, 241, 247, 262,
-        270, 276, 277, 301, 306, 309, 316, 322, 332, 345, 356, 380, 382, 388,
-        401, 402, 404, 408, 410, 416, 421, 422, 423, 428, 456, 459, 471, 472,
-        491, 496, 504, 601
+        21, 23, 66, 67, 68, 69, 77, 82, 96, 104, 111, 131, 155, 162, 163, 164,
+        172, 175, 183, 198, 199, 209, 211, 213, 214, 230, 242, 245, 251, 266,
+        274, 280, 281, 305, 310, 313, 320, 326, 336, 349, 360, 384, 386, 392,
+        405, 406, 408, 412, 414, 420, 425, 426, 427, 432, 460, 463, 475, 476,
+        495, 500, 508, 605
       ],
       "review": "mapped-abstraction"
     },
@@ -7041,13 +7041,14 @@
     },
     {
       "path": "src/lib/browser-json.ts",
-      "sha256": "d44178ff3b6bf5e9ca8bf443ab1a8ba52d7662924fdce7e4079b701883612619",
+      "sha256": "f9c58f8ff1bcfa25fcb59d540489a16e503be2837d4807d7d43ec6e7bd7cdd99",
       "models": [
         "formal/models/ui/ui_points_disputes.qnt",
+        "formal/models/ui/ui_read_retry.qnt",
         "formal/models/ui/ui_transport.qnt",
         "formal/models/ui/ui_vetting_reader.qnt"
       ],
-      "candidateLines": [8, 110],
+      "candidateLines": [8, 39, 49, 152],
       "review": "mapped-abstraction"
     },
     {
@@ -7720,7 +7721,7 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "bd8c143a7056afe8ae5d43a8e1f866b20f9701513f979235ada3d2b0435c5ef3",
+      "sha256": "94b87de67f68dc0359c72c6c415f863c318c2ac7ea6f65789a498a397b6cc709",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -7737,6 +7738,7 @@
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_read_retry.qnt",
         "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_session.qnt",
@@ -7746,10 +7748,10 @@
         "formal/models/ui/ui_vetting_reader.qnt"
       ],
       "candidateLines": [
-        6, 25, 111, 121, 125, 149, 163, 168, 233, 255, 271, 307, 308, 309, 310,
-        326, 332, 340, 342, 343, 344, 347, 352, 359, 362, 366, 368, 390, 391,
-        394, 396, 403, 436, 440, 441, 446, 450, 451, 457, 459, 461, 482, 495,
-        504, 510, 522, 528
+        6, 25, 78, 118, 128, 132, 156, 170, 175, 240, 262, 278, 314, 315, 316,
+        317, 333, 339, 347, 349, 350, 351, 354, 359, 366, 369, 373, 375, 397,
+        398, 401, 403, 410, 443, 447, 448, 453, 457, 458, 464, 466, 468, 489,
+        502, 511, 517, 529, 535
       ],
       "review": "mapped-abstraction"
     },
@@ -21268,6 +21270,17 @@
         "publicLinkReadyTest",
         "unavailableReadTest",
         "viewerChangeDoesNotRefreshPublicLinkTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_read_retry.qnt",
+      "sha256": "9c73aefc94e36af3d4410bee422d4142bd3ead0d4ab5a7270862a0107a9ebdf8",
+      "sources": ["src/lib/browser-json.ts", "src/lib/project-api.ts"],
+      "scenarios": [
+        "cancelledWaitSendsNothingTest",
+        "failedReadIsAskedOnceMoreTest",
+        "refusalIsNotRepeatedTest",
+        "secondFailureIsFinalTest"
       ]
     },
     {
