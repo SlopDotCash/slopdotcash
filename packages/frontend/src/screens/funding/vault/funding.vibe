@@ -12,7 +12,7 @@ import { zero } from "../../../../gen/settlement__money.ts"
 import { type VaultLocks, pageGuardApplies } from "../../../../gen/frontend__vaultLocks.ts"
 import { type ChainResult, Machine as MonthlyMachine } from "../../../../gen/frontend__ownerMonthly.effect.vibe"
 import { Machine as ReadMachine } from "../../../../gen/frontend__requests.effect.vibe"
-import { formatAssetAmount, formatRewardMinor, knownAsset, networkLabel } from ".../kernels/assetText.ts"
+import { formatAssetAmount, formatRewardMinor, knownAsset, networkLabel } from "../../../kernels/assetText.ts"
 import type { PayoutPolicy } from "../../../kernels/payout.ts"
 import { unreadLocks } from "../../../kernels/poolFunding.ts"
 import { untilTime } from "../../../platform/clock.vibe"
@@ -320,8 +320,8 @@ effect function promiseRefusal(reward: FundingReward, pool: PoolFacts) {
   const owed = fromAmount(owedNow(pool))
   const asset = reward.asset ?? undefined
   const payment = asset === undefined ? undefined : { network: asset.network, assetAddress: asset.address, assetDecimals: asset.decimals }
-    const known = payment === undefined ? undefined : knownAsset(payment)
-  const shown = try orDie(Effect.try(() => payment === undefined ? formatRewardMinor(owed) : known !== undefined && known.kind === "stablecoin" ? formatRewardMinor(owed, { kind: "stablecoin",symbol: known.symbol, decimals: payment.assetDecimals }) : formatAssetAmount(owed, payment)))
+  const known = payment === undefined ? undefined : knownAsset(payment)
+  const shown = try orDie(Effect.try(() => payment === undefined ? formatRewardMinor(owed) : known === undefined ? formatAssetAmount(owed, payment) : formatRewardMinor(owed, { ...known, decimals: payment.assetDecimals })))
   return `This would leave the vault below the ${shown} contributors were shown for ${monthName(pool.period)}. Withdraw only funds above that amount.`
 }
 
