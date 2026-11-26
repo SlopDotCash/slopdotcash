@@ -304,7 +304,7 @@ describe('Collect publishes a verified window (spec/points/window.md, "Publicati
         unexpected: world.unexpected.map((request) => request.url),
       }, {
         first: "completed",
-        contributors: ["grace"],
+        contributors: ["grace", "linus"],
         memoKept: true,
         second: "completed",
         repeated: [],

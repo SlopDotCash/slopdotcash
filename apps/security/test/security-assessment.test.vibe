@@ -138,8 +138,8 @@ effect function outcome<A, E, R>(program: A!E!R) {
   }
 }
 
-effect function submit(world: World, key: string, report: Readonly<Record<string, unknown>>) {
-  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+effect function submit(world: World, key: string, report: Readonly<Record<string, unknown>>, as = reporter) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
   if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
   return caseOf(answer)
 }
@@ -370,7 +370,8 @@ effect function unpaidScopeKept(world: World) {
 effect function receiptScopeKept(assessed: Assessed.Shape) {
   const { world, fake } = assessed
   try scoped(world, 3, ownerLine, new Date(Date.now() - 1000).toISOString())
-  const f = try submit(world, "assessment-case-f-01", reportF)
+  const scopeReporter = "41050"
+  const f = try submit(world, "assessment-case-f-01", reportF, scopeReporter)
   try scoped(world, 4, laterLine, new Date().toISOString())
   try qualify(world, f.id)
   fake.reply(about(reportF.summary), { failure: "unavailable" })
@@ -381,7 +382,7 @@ effect function receiptScopeKept(assessed: Assessed.Shape) {
   const ownerRun = fake.calls.at(-1)
   try promise(() => rows(world, "UPDATE security_submission_intake SET review_decision='request-information', review_reason='Attach the failing test.', reviewed_at=?, reviewed_by=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), maintainer, f.id))
   const [intakeF] = try promise(() => rows(world, "SELECT revision FROM security_submission_intake WHERE submission_id=?", f.id))
-  const revised = try promise(() => request(world, `/api/v1/security-submissions/${f.id}/report`, { as: reporter, json: { expectedRevision: intakeF?.revision, report: revisedF } }))
+  const revised = try promise(() => request(world, `/api/v1/security-submissions/${f.id}/report`, { as: scopeReporter, json: { expectedRevision: intakeF?.revision, report: revisedF } }))
   try qualify(world, f.id)
   fake.reply(about(revisedF.summary), { text: proposal("Paused vaults keep settling queued withdrawals.", []) })
   try assessQualified({ caseId: f.caseId, version: 2 })
@@ -401,7 +402,7 @@ effect function receiptScopeKept(assessed: Assessed.Shape) {
     revised: 200,
     revisedRun: receiptScope,
     exclusions: { defaults: 10, owner: [ownerLine.length] },
-    rows: [[1, 1, "failed", "slop-security-case-analysis-2"], [2, 1, "complete", "slop-security-case-analysis-2"], [3, 2, "complete", "slop-security-case-analysis-2"]],
+    rows: [[1, 1, "failed", "slop-security-case-analysis-3"], [2, 1, "complete", "slop-security-case-analysis-3"], [3, 2, "complete", "slop-security-case-analysis-3"]],
   })
 }
 

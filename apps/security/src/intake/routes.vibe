@@ -187,7 +187,7 @@ effect function create(actor: Actor) {
     if ((try (try Restrictions).account(actor.githubId)).banned) throw refused(createRows.participationBannedThisAccountCannotSubmit)
     throw refused(createRows.intakeUnavailable)
   }
-  try scheduleScreening(attempt.submissionId, true)
+  if ((try IntakeSettings).automatic) try scheduleScreening(attempt.submissionId, true)
   return answer({ submission: try shown(saved) }, 201)
 }
 
@@ -242,7 +242,7 @@ effect function revise(actor: Actor, id: string) {
     if (error instanceof ScreeningRejected || error instanceof ReplacementLost || error._tag === "Conflict") throw refused(reviseRows.staleRevisionTheReportChangedReload)
     throw error
   }
-  try scheduleScreening(id, true)
+  if ((try IntakeSettings).automatic) try scheduleScreening(id, true)
   return answer({ submission: try shown(row) })
 }
 

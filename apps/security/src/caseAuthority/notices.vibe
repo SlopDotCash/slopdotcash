@@ -16,7 +16,7 @@ effect function forCase(read: { readonly caseId: string; readonly githubId: stri
   const viewer = githubNumber(read.githubId)
   if (record === undefined || viewer === 0) return denied
   const program = try (try ReportingPrograms).current(record.project_id)
-  const scope = { caseId: record.id, projectId: record.project_id, reporterGithubId: record.reporter_github_id, viewerGithubId: read.githubId, program: program?.approvers }
+  const scope = { caseId: record.id, projectId: record.project_id, reporterGithubId: record.reporter_github_id, viewerGithubId: read.githubId, program: program?.approvers, disputeActive: record.appeal_state === "open" || record.related_party_review === "pending" }
   const roles = caseAuthority(scope, 1) catch effect (error) => match (error) {
     when AuthorityUnavailable: throw new NoticeAuthorityUnavailable({ projectId: error.projectId });
     default: throw error;

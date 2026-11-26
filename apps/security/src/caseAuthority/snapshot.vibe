@@ -17,6 +17,7 @@ export interface CaseScope {
   readonly reporterGithubId: string
   readonly viewerGithubId: string
   readonly program: ProgramApprovers | undefined
+  readonly disputeActive?: boolean
 }
 
 export interface CaseAuthority {
@@ -62,7 +63,7 @@ export effect function caseAuthority(scope: CaseScope, epoch: number) {
   const roles = try Roles
   const moderators = numbers(try roles.snapshot("moderator"))
   const viewerNumber = githubNumber(viewer)
-  const holdsRole = viewerNumber.some((id) => triagers.includes(id) || moderators.includes(id))
+  const holdsRole = viewerNumber.some((id) => triagers.includes(id) || (scope.disputeActive !== false && moderators.includes(id)))
   let technical: ReadonlyArray<string> = []
   if (viewer !== scope.reporterGithubId) {
     if (scope.program !== undefined) technical = scope.program.technical.filter((id) => id === viewer)

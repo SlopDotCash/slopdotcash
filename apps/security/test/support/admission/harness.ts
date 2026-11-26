@@ -74,8 +74,8 @@ async function boot(keys: string): Promise<World> {
     r2: ["VETTING_EVIDENCE"],
     vars: {
       VETTING_RESULT_PUBLIC_KEYS: keys,
-      ADMIN_GITHUB_IDS: "801",
-      PROJECT_MODERATOR_GITHUB_IDS: "801",
+      ADMIN_GITHUB_IDS: "801,802",
+      PROJECT_MODERATOR_GITHUB_IDS: "801,802",
     },
     services: {
       SANDBOX: async (request) => {
@@ -104,7 +104,7 @@ export async function started(keys: string = configuredKeys): Promise<World> {
   const { db } = world;
   const at = new Date(Date.now() - 3_600_000).toISOString();
   await db.batch([
-    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)").bind(project, manifest, "a".repeat(64), "Admission fixture", at),
+    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,1,?,?,?,'900','steward',?)").bind(project, manifest, "a".repeat(64), "Admission fixture", at),
     db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'paused',1,?,?,?,?)").bind(project, manifest, "a".repeat(64), at, at),
     db.prepare(`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state,repository_id,flag_ids)
       VALUES(?,?,1,?,?,?,?,'900','steward',?,'Automatic scan of new project content','pending','slop-test/admission','[]')`).bind(pending, project, "a".repeat(64), "b".repeat(64), commit, template, at),
@@ -244,7 +244,7 @@ export async function flagged(world: World, fixture: FlagProject): Promise<Reado
   const evidence = "Install script posts the wallet seed phrase to a remote host";
   for (const listed of fixture.repositories) world.heads.set(listed.path, commit);
   await db.batch([
-    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)").bind(fixture.id, text, "a".repeat(64), "Flag fixture", at(0)),
+    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,1,?,?,?,'900','steward',?)").bind(fixture.id, text, "a".repeat(64), "Flag fixture", at(0)),
     db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(fixture.id, text, "a".repeat(64), at(0), at(0)),
     ...flagIds.map((id, index) => db.prepare("INSERT INTO project_flags(id,project_id,reporter_github_id,reporter_github_login,revision,manifest_sha256,category,evidence,evidence_url,created_at) VALUES(?,?,?,?,1,?,'wallet-drainer',?,NULL,?)")
       .bind(id, fixture.id, String(501 + index), `flagger-${501 + index}`, "a".repeat(64), evidence, at((index + 1) * 10 * minute))),

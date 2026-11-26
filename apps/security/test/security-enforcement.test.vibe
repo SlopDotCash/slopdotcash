@@ -52,7 +52,7 @@ function maliciousResult() {
 function fixtures(world: World) {
   const { db } = world
   const listed = (id: string) => [
-    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)").bind(id, manifestOf(id), "a".repeat(64), "Enforcement fixture", at(0)),
+    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,1,?,?,?,'900','steward',?)").bind(id, manifestOf(id), "a".repeat(64), "Enforcement fixture", at(0)),
     db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(id, manifestOf(id), "a".repeat(64), at(0), at(0)),
   ]
   const queued = (id: string, assessment: string, templateSha256: string, requested: number, flagIds: ReadonlyArray<string>) =>
