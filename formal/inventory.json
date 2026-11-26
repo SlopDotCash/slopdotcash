@@ -49,7 +49,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "887e6eeac08c40a915c007eafe737c113ab3e75c2142ae19d750925240f9df22",
+      "sha256": "fe580091c558de8e15e070f766e192cf4a174f136967f7e5d14c2242be590572",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -5744,7 +5744,7 @@
     },
     {
       "path": "scripts/test-payout-browser.mjs",
-      "sha256": "70edbd360af4c1aad03876e9672181f146638889f1de92dbecba2ec82f5bb4b5",
+      "sha256": "62b6a7fd26db3aee54a68a518beeeb4dd761ae94b6a623ed7ce5ed71e612a3c9",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
         3, 37, 78, 88, 95, 101, 140, 149, 161, 166, 180, 183, 220, 222, 261
