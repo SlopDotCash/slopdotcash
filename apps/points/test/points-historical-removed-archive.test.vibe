@@ -1,0 +1,122 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { github } from "@repo/platform/github"
+import { historicalEvidence } from "../src/corrections/reviewed/replay/bindings.vibe"
+import type { HistoricalAssessmentHeads } from "../src/corrections/reviewed/audit/catalog.vibe"
+import type { Journal, Revision } from "../src/kernels/records/canonical.ts"
+import { batchDigest, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { jsonReply } from "./support/catchup3-e2/replies.ts"
+
+const project = "slopdotcash"
+const repository = "SlopDotCash/slopdotcash"
+const repositoryNodeId = "R_kgDOTqq9PQ"
+const pull = "PR_kwDOTqq9Pc8AAAABKp6FBQ"
+const number = 1272
+const occurredAt = "2026-10-26T01:43:29.000Z"
+const head = "94131b89eeb10b498c0122eb3c0b5e38a2da79eb"
+const merge = "a3bc49a6fde6b185f2fe304feab88ab0762bcdad"
+const archive = "499988b9a13e363c4f77d1c52f47b6a71e32bc44"
+const current = "2".repeat(40)
+
+interface Scenario {
+  readonly project?: string
+  readonly repository?: string
+  readonly repositoryNodeId?: string
+  readonly branch?: string
+  readonly pullStatus?: number
+  readonly branchStatus?: number
+  readonly archiveSha?: string
+  readonly parentSha?: string
+  readonly absentGraphQL?: boolean
+  readonly behindBy?: number
+}
+
+effect function priorAward(projectId: string, name: string) {
+  const award = {
+    key: try pointKey({ projectId, actorId: "U_author", category: "merged-pull-request", sourceId: pull }),
+    actor: { id: "U_author", login: "author" }, projectId, category: "merged-pull-request" as const, amount: 30, occurredAt,
+    sourceId: pull, sourceUrl: `https://github.com/${name}/pull/${number}`, workUnitId: "wu_retained_merge", provisional: true,
+  }
+  const body = { previous: null, recordedAt: occurredAt, sourceDigest: "1".repeat(64), sourceRule: "slop-score-v2", award }
+  const revision = { id: try pointRevisionId(body), ...body } satisfies Revision
+  return { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: occurredAt, coverage: [], revisions: [revision] } satisfies Journal
+}
+
+function githubFixture(seen: string[], scenario: Scenario, name: string, nodeId: string, branch: string) {
+  const root = `/repos/${name}`
+  const client = HttpClient.make((request) => {
+    const url = new URL(request.url)
+    const path = `${url.pathname}${url.search}`
+    seen.push(path)
+    const reply = (status: number, body: unknown) => succeed(HttpClientResponse.fromWeb(request, jsonReply(body, { status, headers: { "content-type": "application/json" } })))
+    if (path === `${root}/pulls/${number}`) return reply(scenario.pullStatus ?? 404, {})
+    if (path === "/graphql") {
+      if (scenario.pullStatus === 200) return reply(200, { data: { nodes: [null] } })
+      const absence = scenario.absentGraphQL !== false
+      return reply(200, {
+        data: { repository: { id: nodeId, isPrivate: false, nameWithOwner: name, issueOrPullRequest: absence ? null : { id: pull } } },
+        errors: absence ? [{ type: "NOT_FOUND", path: ["repository", "issueOrPullRequest"], message: "Not Found" }] : [],
+      })
+    }
+    if (path === `${root}/git/commits/${merge}`) return reply(200, { sha: merge, parents: [{ sha: "3".repeat(40) }, { sha: scenario.parentSha ?? head }] })
+    if (path === `${root}/git/ref/heads/${branch}`) return reply(scenario.branchStatus ?? 404, { ref: `refs/heads/${branch}`, object: { type: "commit", sha: current } })
+    if (path === `${root}/git/ref/heads/develop-old`) return reply(200, { ref: "refs/heads/develop-old", object: { type: "commit", sha: scenario.archiveSha ?? archive } })
+    const tip = scenario.branchStatus === 200 ? current : archive
+    if (path === `${root}/compare/${merge}...${tip}?per_page=1`) return reply(200, { status: "ahead", behind_by: scenario.behindBy ?? 0, base_commit: { sha: merge }, merge_base_commit: { sha: merge } })
+    return reply(404, { message: "Unexpected request" })
+  })
+  return Layer.provide(github({ token: Redacted.make("t"), userAgent: "slopbot" }), Layer.succeed(HttpClient.HttpClient, client))
+}
+
+effect function observed(scenario: Scenario = {}) {
+  const projectId = scenario.project ?? project
+  const name = scenario.repository ?? repository
+  const nodeId = scenario.repositoryNodeId ?? repositoryNodeId
+  const branch = scenario.branch ?? "development"
+  const baseline = try priorAward(projectId, name)
+  const heads = {
+    jointThrough: 406, legacyThrough: 0, jointScopedCount: 1, legacyRepoCount: 0, d1PointsCount: 1,
+    d1PointsDigest: try batchDigest(baseline), enforcementGeneration: 0, registryRevision: 9, registryManifestSha256: "4".repeat(64),
+  } satisfies HistoricalAssessmentHeads
+  const source = { repository: name, repositoryNodeId: nodeId, pullRequestNumber: number, pullRequestNodeId: pull, occurredAt, mergeSha: merge, headSha: head }
+  const seen: string[] = []
+  const result = Effect.provide(historicalEvidence({ baseline, integrationBranch: branch }, projectId)([{ source, standalone: false }], [], heads), githubFixture(seen, scenario, name, nodeId, branch)) catch (error) => error._tag
+  return { result: typeof result === "string" ? result : [...result.removed], seen }
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true })((it) => {
+  it.effect('The exact missing Slop pull reaches the pinned archived tip, and a live registered tip retains ordinary proof (spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
+    const recorded = try observed()
+    const root = `/repos/${repository}`
+    try Effect.try(() => assert.deepStrictEqual(recorded, { result: [pull], seen: [
+      `${root}/pulls/${number}`, "/graphql", `${root}/git/commits/${merge}`, `${root}/git/ref/heads/development`,
+      `${root}/git/ref/heads/develop-old`, `${root}/compare/${merge}...${archive}?per_page=1`,
+    ] }))
+    const live = try observed({ branchStatus: 200 })
+    try Effect.try(() => assert.deepStrictEqual(live.result, [pull]))
+    try Effect.try(() => assert.isFalse(live.seen.some((path) => path.includes("develop-old"))))
+  })
+
+  it.effect('Archive proof refuses the wrong scope, non-absence and mismatched native acceptance (spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
+    const noArchive = [
+      [{ project: "other" }, "NotFound"], [{ repository: "example/slopdotcash" }, "NotFound"],
+      [{ repositoryNodeId: "R_other" }, "NotFound"], [{ branch: "develop" }, "NotFound"],
+      [{ branchStatus: 403 }, "GitHubRefused"], [{ branchStatus: 503 }, "GitHubUnavailable"],
+      [{ pullStatus: 403 }, "GitHubRefused"], [{ absentGraphQL: false }, "InvalidAssessmentJournal"],
+      [{ parentSha: "5".repeat(40) }, "InvalidAssessmentJournal"],
+    ] as const satisfies ReadonlyArray<readonly [Scenario, string]>
+    for (const [input, expected] of noArchive) {
+      const result = try observed(input)
+      try Effect.try(() => assert.strictEqual(result.result, expected))
+      try Effect.try(() => assert.isFalse(result.seen.some((path) => path.includes("develop-old"))))
+    }
+    const present = try observed({ pullStatus: 200 })
+    try Effect.try(() => assert.deepStrictEqual(present.result, []))
+    try Effect.try(() => assert.isFalse(present.seen.some((path) => path.includes("develop-old"))))
+    for (const input of [{ archiveSha: "6".repeat(40) }, { behindBy: 1 }]) {
+      const result = try observed(input)
+      try Effect.try(() => assert.strictEqual(result.result, "InvalidAssessmentJournal"))
+    }
+  })
+})
