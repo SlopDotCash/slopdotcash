@@ -30,6 +30,34 @@ const outcome = (number: number, repository = route) => ({
 // census; every other pull request has no value history at all.
 const JOINT = [2, 13];
 const GONE = { id: "PR_gone", number: 99 };
+const jointRecordJson = (
+  members: readonly { id: string; number: number }[],
+  supersedes: readonly string[] = [],
+) =>
+  JSON.stringify({
+    schemaVersion: "slop-work-unit-record:v1",
+    projectId: registered.projectId,
+    sourceDigest: (supersedes.length ? "e" : "d").repeat(64),
+    producerRevision: "a".repeat(40),
+    assessedAt: at,
+    sources: members.map((pull) => ({
+      repository: registered.id,
+      repositoryNodeId: nodeId,
+      repositoryDatabaseId: 123,
+      pullRequestNodeId: pull.id,
+      pullRequestNumber: pull.number,
+      headSha: "c".repeat(40),
+      mergeSha: null,
+      policySha: "a".repeat(40),
+      sourceDigest: "b".repeat(64),
+      occurredAt: at,
+    })),
+    claims: [],
+    units: [],
+    supersedes,
+    legacyPredecessors: [],
+    revisionReason: supersedes.length ? "reassessed" : null,
+  });
 const recordJson = JSON.stringify({
   schemaVersion: "slop-work-unit-record:v1",
   projectId: registered.projectId,
@@ -72,9 +100,24 @@ const SEQUENTIAL = NUMBERS.flatMap((number) =>
 );
 
 type Fault = { url: string; status: number; times: number };
+/**
+ * The hosted feed changes the history of one pull request once the loop has
+ * finished `at` outcomes. `before` and `after` answer that pull request's
+ * first page of the named history; null means the ordinary answer.
+ */
+type Change = {
+  at: number;
+  pull: number;
+  history: "joint" | "single";
+  before: object | null;
+  after: object;
+};
+/** Outcomes the loop had finished, as last reported by its progress. */
+let loopCompleted = -1;
 
-function feed(fault?: Fault) {
+function feed(fault?: Fault, change?: Change) {
   const requests: string[] = [];
+  const firstReads: { pull: number; history: string; completed: number }[] = [];
   let active = 0;
   let mostActive = 0;
   let remaining = fault?.times ?? 0;
@@ -97,6 +140,15 @@ function feed(fault?: Fault) {
         repositoryNodeId: url.searchParams.get("repositoryNodeId"),
         pullRequestNumber: pull,
       };
+      const history =
+        url.pathname === "/v1/value-assessments" ? "single" : "joint";
+      if (url.searchParams.get("after") === "0")
+        firstReads.push({ pull, history, completed: loopCompleted });
+      if (change && pull === change.pull && history === change.history) {
+        const answer =
+          loopCompleted >= change.at ? change.after : change.before;
+        if (answer) return Response.json({ ...identity, ...answer });
+      }
       if (url.pathname === "/v1/value-assessments")
         return Response.json({
           ...identity,
@@ -131,6 +183,7 @@ function feed(fault?: Fault) {
   };
   return {
     requests,
+    firstReads,
     mostActive: () => mostActive,
     transport: Object.assign(read, { preconnect: fetch.preconnect }),
   };
@@ -163,9 +216,13 @@ async function collect(
     fault?: Fault;
     sources?: Parameters<typeof loadValueInputs>[1];
     failFirstRepositoryRead?: boolean;
+    change?: Change;
+    /** Holds the loop at each joint record, as a slow source read would. */
+    slowLoopMs?: number;
   } = {},
 ) {
-  const hosted = feed(options.fault);
+  loopCompleted = -1;
+  const hosted = feed(options.fault, options.change);
   const source = github(options.failFirstRepositoryRead);
   const progress: ValueInputProgress[] = [];
   const probes: (readonly string[])[] = [];
@@ -178,10 +235,17 @@ async function collect(
       hosted.transport,
       async (ids) => {
         probes.push(ids);
-        return [GONE.id];
+        if (options.slowLoopMs)
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.slowLoopMs),
+          );
+        return ids.filter((id) => id.startsWith(GONE.id));
       },
       [],
-      (entry) => progress.push(entry),
+      (entry) => {
+        progress.push(entry);
+        if (entry.phase === "value-histories") loopCompleted = entry.completed;
+      },
       undefined,
       concurrency,
     );
@@ -254,15 +318,25 @@ test("six reads at a time return what one read at a time returns", async () => {
   // The member outside the census is probed once for the shared record.
   expect(six.probes).toEqual([[GONE.id]]);
 
-  // Every page is read exactly once: a warmed first page is never read again
+  // An empty first page read ahead is never read again. A first page with
+  // records (pull requests 2 and 13) is read again in the loop's own turn,
   // and the second joint page is never read ahead.
-  expect([...six.requests].sort()).toEqual([...SEQUENTIAL].sort());
-  expect(six.requests.slice(-1)).toEqual([jointUrl(13, 1, 1)]);
+  expect([...six.requests].sort()).toEqual(
+    [...SEQUENTIAL, ...JOINT.map((pull) => jointUrl(pull))].sort(),
+  );
+  // The read-ahead now runs beside the loop, so it may still read the first
+  // page of pull request 14 after the loop's own second page of 13.
+  for (const pull of JOINT)
+    expect(six.requests.indexOf(jointUrl(pull, 1, 1))).toBeGreaterThan(
+      six.requests.indexOf(jointUrl(pull)),
+    );
   expect(warmedLines()).toEqual([
     {
       event: "value_history_first_pages_warmed",
       concurrency: 6,
+      window: 12,
       outcomes: NUMBERS.length,
+      unresolved: 0,
       pages: NUMBERS.length * 2 - JOINT.length,
     },
   ]);
@@ -317,13 +391,21 @@ for (const [kind, url] of [
     expect(run.progress).toEqual(clean.progress);
     // The failed read and the loop's own read of the same page.
     expect(run.requests.filter((request) => request === url)).toHaveLength(2);
-    // No page that was read ahead successfully is read twice.
+    // No empty page that was read ahead successfully is read twice; a first
+    // page with records is read again by the loop at most once.
     for (const request of new Set(run.requests))
       if (request !== url)
-        expect(run.requests.filter((other) => other === request)).toHaveLength(
-          1,
+        expect(
+          run.requests.filter((other) => other === request).length,
+        ).toBeLessThanOrEqual(
+          JOINT.some((pull) => request === jointUrl(pull)) ? 2 : 1,
         );
     expect(new Set(run.requests)).toEqual(new Set(SEQUENTIAL));
+    // The dropped read is logged, not silently swallowed.
+    expect(warmedLines().at(-1)?.dropped).toEqual({
+      outcome: Number(new URL(url, "https://x").searchParams.get("pull")) - 1,
+      error: "ValueFeedUnavailableError",
+    });
   });
 
 for (const [kind, url, status, message] of [
@@ -393,4 +475,131 @@ test("a repository the read-ahead cannot resolve is left to the loop", async () 
   expect([...six.requests].sort()).toEqual(
     [...one.requests, jointUrl(6), singleUrl(6)].sort(),
   );
+});
+
+// The hosted feed keeps changing while a collection runs. A first page read
+// ahead must not be older than the window in front of the loop, or a record
+// published or replaced after the read-ahead is missed for the whole loop.
+const LONG = Array.from({ length: 40 }, (_, index) => outcome(index + 1));
+// The change lands 20 outcomes before LATE: outside the read-ahead window of
+// concurrency 2 (4 outcomes) and 6 (12, the release setting), and inside the
+// window of 16 (32), where only a replaced record is decided as without
+// read-ahead, because a page with records is always read again by the loop.
+const LATE = 40;
+const CHANGE_AT = 19;
+const jointRow = (sequence: number, json: string) => ({
+  sequence,
+  record_digest: sha256(json),
+  record_json: json,
+  recorded_at: at,
+});
+const lateMembers = [
+  { id: `PR_${LATE}`, number: LATE },
+  { id: `${GONE.id}_late`, number: 98 },
+];
+const lateA = jointRecordJson(lateMembers);
+const lateB = jointRecordJson(lateMembers, [sha256(lateA)]);
+const jointPage = (rows: ReturnType<typeof jointRow>[]) => ({
+  schemaVersion: "slop-work-unit-history:v1",
+  throughSequence: rows.at(-1)?.sequence ?? 0,
+  totalRecords: rows.length,
+  nextAfter: null,
+  records: rows,
+});
+const singlePage = (digest: string) => ({
+  schemaVersion: "slop-value-history:v1",
+  nextAfter: null,
+  records: [
+    { sequence: 7, record_digest: digest, record_json: "{}", recorded_at: at },
+  ],
+});
+
+for (const [kind, change, digest] of [
+  [
+    "published",
+    { before: null, after: jointPage([jointRow(5, lateA)]) },
+    sha256(lateA),
+  ],
+  [
+    "replaced",
+    {
+      before: jointPage([jointRow(5, lateA)]),
+      after: jointPage([jointRow(5, lateA), jointRow(6, lateB)]),
+    },
+    sha256(lateB),
+  ],
+] as const)
+  test(`a joint record ${kind} after the read-ahead started is read as the loop finds it`, async () => {
+    const options = {
+      sources: LONG,
+      slowLoopMs: 60,
+      change: {
+        at: CHANGE_AT,
+        pull: LATE,
+        history: "joint" as const,
+        ...change,
+      },
+    };
+    const one = await collect(1, options);
+    expect(one.error).toBeNull();
+    expect(one.result?.jointValueDecisions.get(`PR_${LATE}`)).toMatchObject({
+      status: "unresolved",
+      sourceUnavailable: true,
+      latestDigest: digest,
+    });
+    for (const concurrency of kind === "replaced" ? [2, 6, 16] : [2, 6]) {
+      const run = await collect(concurrency, options);
+      expect(run.error).toBeNull();
+      expect(run.result).toEqual(one.result);
+      expect(run.probes).toEqual(one.probes);
+      expect(run.result?.valueDecisions.has(`PR_${LATE}`)).toBe(false);
+    }
+  });
+
+for (const [kind, before] of [
+  ["published", null],
+  ["replaced", singlePage("e".repeat(64))],
+] as const)
+  test(`a single record ${kind} after the read-ahead started is read as the loop finds it`, async () => {
+    const options = {
+      sources: LONG,
+      slowLoopMs: 60,
+      change: {
+        at: CHANGE_AT,
+        pull: LATE,
+        history: "single" as const,
+        before,
+        after: singlePage("f".repeat(64)),
+      },
+    };
+    const one = await collect(1, options);
+    // A current record makes the loop collect its source, which this
+    // fixture refuses: the read that found the record is what is compared.
+    expect((one.error as Error).message).toBe(
+      "The history fixture needs no other GitHub read",
+    );
+    for (const concurrency of kind === "replaced" ? [2, 6, 16] : [2, 6]) {
+      const run = await collect(concurrency, options);
+      expect(run.error).toEqual(one.error);
+      expect(run.github).toEqual(one.github);
+      expect(run.progress).toEqual(one.progress);
+      const late = run.firstReads.filter(
+        (read) => read.pull === LATE && read.history === "single",
+      );
+      // The loop decides from its last read of that page.
+      expect(late.at(-1)?.completed).toBeGreaterThanOrEqual(CHANGE_AT);
+    }
+  });
+
+test("no first page is read more than twice the concurrency ahead of the loop", async () => {
+  for (const concurrency of [2, 6, 16]) {
+    const run = await collect(concurrency, { sources: LONG, slowLoopMs: 60 });
+    expect(run.error).toBeNull();
+    expect(run.firstReads.length).toBeGreaterThan(LONG.length);
+    for (const read of run.firstReads)
+      expect(read.completed).toBeGreaterThanOrEqual(
+        read.pull - 1 - 2 * concurrency,
+      );
+    expect(run.mostActive()).toBe(concurrency);
+  }
 });
