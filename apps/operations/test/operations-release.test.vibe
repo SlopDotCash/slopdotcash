@@ -495,9 +495,10 @@ mkdir -p "$BUNDLE/github"
     const packet = "a".repeat(64)
     const audit = { operation: "audit-assessments", audit_project: "slop", audit_source_sha256: "b".repeat(64), audit_baseline_sha256: "c".repeat(64) }
     const replay = { ...audit, operation: "replay-assessments" }
+    const catalogReplay = { ...replay, require_no_active_assessments: true }
     const publication = { reviewed_packet_sha256: packet }
     const dispatched = (inputs: Readonly<Record<string, unknown>>) => contextOf({ event: "workflow_dispatch", inputs: {
-      operation: "publish-reviewed", audit_project: "", audit_source_sha256: "", audit_baseline_sha256: "", stage_review_handoff: false, reviewed_packet_sha256: "", apply: false, ...inputs,
+      operation: "publish-reviewed", audit_project: "", audit_source_sha256: "", audit_baseline_sha256: "", stage_review_handoff: false, require_no_active_assessments: false, reviewed_packet_sha256: "", apply: false, ...inputs,
     } })
     const accepts = (inputs: Readonly<Record<string, unknown>>) => {
       const context = dispatched(inputs)
@@ -514,6 +515,10 @@ mkdir -p "$BUNDLE/github"
       validation: {
         audit: accepts(audit),
         replay: accepts(replay),
+        catalogReplay: accepts(catalogReplay),
+        catalogApplying: accepts({ ...catalogReplay, apply: true }),
+        catalogAudit: accepts({ ...audit, require_no_active_assessments: true }),
+        catalogPublication: accepts({ ...publication, require_no_active_assessments: true }),
         stagedReplay: accepts({ ...replay, stage_review_handoff: true }),
         preview: accepts(publication),
         applied: accepts({ ...publication, apply: true }),
@@ -529,12 +534,14 @@ mkdir -p "$BUNDLE/github"
       },
       lanes: {
         replay: { group: evaluated(reviewed.concurrency?.group, dispatched(replay)), timeout: evaluated(publish["timeout-minutes"], dispatched(replay)) },
+        catalogReplay: { group: evaluated(reviewed.concurrency?.group, dispatched(catalogReplay)), timeout: evaluated(publish["timeout-minutes"], dispatched(catalogReplay)) },
         audit: { group: evaluated(reviewed.concurrency?.group, dispatched(audit)), timeout: evaluated(publish["timeout-minutes"], dispatched(audit)) },
         publication: { group: evaluated(reviewed.concurrency?.group, dispatched(publication)), timeout: evaluated(publish["timeout-minutes"], dispatched(publication)) },
         freshCollection: evaluated(jobOf(deploy, "prepare").concurrency?.group, contextOf({ ref: "main", event: "push" })),
       },
       steps: { audit: steps(audit), replay: steps(replay), publication: steps(publication) },
-      receipts: { audit: receipt(audit), replay: receipt(replay) },
+      receipts: { audit: receipt(audit), replay: receipt(replay), catalogReplay: receipt(catalogReplay) },
+      catalogInput: evaluated(catalog.env?.HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE, dispatched(catalogReplay)),
       commands: {
         registry: recorded(stepOf(publish, "Snapshot the current project registry for verification"), {}),
         audit: recorded(catalog, { OPERATION: "audit-assessments" }),
@@ -1220,6 +1227,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const audited = "Reject known production dependency vulnerabilities"
     const snapshot = "Snapshot the current project registry for verification"
     const gitBuild = ["Install canonical Git build dependencies", "Install canonical merge Git"]
+    const collector = "Mint the read-only collector token for assessment source reads"
     const catalog = "Read and verify the complete historical assessment catalog"
     const receipt = "Preserve the assessment audit receipt"
     const publication = `apps/points/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
@@ -1228,6 +1236,10 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       validation: {
         audit: true,
         replay: true,
+        catalogReplay: true,
+        catalogApplying: false,
+        catalogAudit: false,
+        catalogPublication: false,
         stagedReplay: true,
         preview: true,
         applied: true,
@@ -1243,16 +1255,18 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       },
       lanes: {
         replay: { group: "slop-quality-refs/heads/main-collect", timeout: "360" },
+        catalogReplay: { group: "slop-historical-catalog-replay", timeout: "90" },
         audit: { group: "slop-production", timeout: "90" },
         publication: { group: "slop-production", timeout: "90" },
         freshCollection: "slop-quality-refs/heads/main-collect",
       },
       steps: {
-        audit: [checked, audited, snapshot, catalog, receipt],
-        replay: [checked, audited, snapshot, ...gitBuild, "Mint the read-only collector token for replay", catalog, receipt],
+        audit: [checked, audited, snapshot, collector, catalog, receipt],
+        replay: [checked, audited, snapshot, ...gitBuild, collector, catalog, receipt],
         publication: [checked, audited, snapshot, ...gitBuild, "Rebuild and verify owner-reviewed historical Points"],
       },
-      receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2" },
+      receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2", catalogReplay: "historical-assessment-replay-2" },
+      catalogInput: "true",
       commands: {
         registry: [
           "apps/operations/dist/programs/main.js release registry production /runner/slop-release",
