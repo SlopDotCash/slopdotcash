@@ -14,6 +14,7 @@ export type Role =
   | "link"
   | "main"
   | "menuitem"
+  | "navigation"
   | "region"
   | "status"
   | "switch"

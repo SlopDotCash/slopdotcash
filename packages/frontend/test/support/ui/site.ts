@@ -592,7 +592,7 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
     }
     case "repository": {
       const { id, owner, name, fork, archived, license, files } = op.setup;
-      backend().github.world.addRepo({ id, owner, name, fork, archived, license: { spdx: license }, files });
+      backend().github.world.addRepo({ id, owner, name, fork, archived, description: `${name} open-source repository on GitHub.`, license: { spdx: license }, files });
       return null;
     }
     case "permission":
@@ -634,7 +634,10 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return null;
     case "open": {
       const opened = await tab(op.tab ?? current().current);
-      const loaded = await opened.goto(`${site}${op.path}`, { waitUntil: "load" });
+      const destination = `${site}${op.path}`;
+      const loaded = opened.url() === destination
+        ? await opened.reload({ waitUntil: "load" })
+        : await opened.goto(destination, { waitUntil: "load" });
       return { status: loaded?.status() ?? 0, headers: loaded?.headers() ?? {} };
     }
     case "tab":
@@ -729,10 +732,12 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return backend().rows(op.text, op.params);
     case "popups":
       return current().context.pages().filter((opened) => ![...current().tabs.values()].includes(opened)).length;
-    case "view":
-      await page().setViewportSize({ width: op.width, height: op.height });
-      await page().emulateMedia({ reducedMotion: op.reducedMotion ? "reduce" : "no-preference" });
+    case "view": {
+      const opened = await tab(current().current);
+      await opened.setViewportSize({ width: op.width, height: op.height });
+      await opened.emulateMedia({ reducedMotion: op.reducedMotion ? "reduce" : "no-preference" });
       return null;
+    }
     case "enlarge":
       await current().restore?.();
       current().restore = await enlargeText(locate(page(), op.target).first());

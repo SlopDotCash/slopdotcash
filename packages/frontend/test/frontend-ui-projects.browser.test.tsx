@@ -181,7 +181,7 @@ describe("Complete project setup with explicit independent", () => {
 
     const checks = () => site.sent().then((sent) => sent.filter((each) => each.method === "POST" && each.path === `/api/v1/project-setup/${id}/check`).length);
     const before = await checks();
-    await site.click(named("button", "Rescan"));
+    await site.click(named("button", "Check again"));
     await expect.poll(checks, { timeout: 30_000 }).toBe(before + 1);
     await manage(id);
     await shown(named("button", "Check again")).toMatchObject({ visible: true });
@@ -312,6 +312,7 @@ describe("Maintain a live project with current GitHub authority", () => {
     await signOut(users.sam.login);
     await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=settings`);
     await site.fill(field("Project name"), "Consent, renamed");
+    await site.fill({ label: "Reason", exact: false }, "Rename for browser journey.");
     await site.click(named("button", "Save revision 4"));
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(4);
     await signOut(users.root.login);
@@ -533,6 +534,7 @@ describe("Administrators handle exceptions and restrictions", () => {
     await shown(field("Project name")).toMatchObject({ value: "Governed" });
 
     await site.fill(field("Project name"), "Governed by admins");
+    await site.fill({ label: "Reason", exact: false }, "Admin rename for browser journey.");
     await site.click(named("button", "Save revision 2"));
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
     expect(await lastRevision(id)).toMatchObject({ actor_github_login: users.root.login });

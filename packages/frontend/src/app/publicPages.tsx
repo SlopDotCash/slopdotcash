@@ -122,7 +122,7 @@ function liveOf(work: Settled<Effect.Success<ReturnType<typeof loadWork>>>): Sho
   const { mergedPullRequests, mergedPullRequestsWithModel } = summarizeModelOutcomes(snapshot).totals;
   return {
     status: work.value.stale ? "Stale" : "Current",
-    value: { contributors: footprint.contributors, windowDays: footprint.windowDays, scoredEvents: footprint.scoredEvents, mergedPullRequests, mergedPullRequestsWithModel },
+    value: { generatedAt: snapshot.generatedAt, contributors: footprint.contributors, windowDays: footprint.windowDays, scoredEvents: footprint.scoredEvents, mergedPullRequests, mergedPullRequestsWithModel },
   };
 }
 

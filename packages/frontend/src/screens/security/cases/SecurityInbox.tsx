@@ -131,10 +131,11 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
   const [filter, setFilter] = useState<ReportFilter>("all");
   const [selected, setSelected] = useState<string | null>(initialCase);
   const [note, setNote] = useState<string | null>(null);
-  const pendingScrollRef = useRef<string | null>(null);
+  const pendingScrollRef = useRef<string | null>(selected);
   const scrollDetailRef = (node: HTMLDivElement | null) => {
     if (node === null || pendingScrollRef.current === null || pendingScrollRef.current !== selected) return;
     pendingScrollRef.current = null;
+    node.focus({ preventScroll: true });
     node.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const reload = () => void run(section, loadCases(owner));
@@ -193,7 +194,7 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
           note={note}
           refreshError={list.refreshError}
           onReload={reload}
-          detail={selected ? <div id="security-case-detail" ref={scrollDetailRef}><CaseDetail key={selected} runtime={section} owner={owner} caseId={selected} payment={payment} /></div> : null}
+          detail={selected ? <div id="security-case-detail" tabIndex={-1} ref={scrollDetailRef}><CaseDetail key={selected} runtime={section} owner={owner} caseId={selected} payment={payment} /></div> : null}
           reports={(cases) => (
             <SecurityReports
               runtime={runtime}
