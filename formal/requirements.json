@@ -770,6 +770,20 @@
           "rules": [
             "Story: Recover a lost optional trace response without replacing accepted bytes"
           ]
+        },
+        {
+          "spec": "spec/contributor/sessionCleaner.md",
+          "rules": [
+            "Story: Keep only openly licensed in-repo content and redact everything else / Only an openly licensed in-repo tracked read or name-only listing is kept"
+          ]
+        },
+        {
+          "spec": "spec/contributor/traceLicensing.md",
+          "rules": [
+            "Story: Record account licensing consent and trace licences across contract versions / Upload licences follow the active setting, ban status and confirmed terms version",
+            "Story: Record account licensing consent and trace licences across contract versions / Enabling, v3 re-confirmation, disabling, closure and bans enforce consent boundaries",
+            "Story: Record account licensing consent and trace licences across contract versions / Explicit opt-in requires active licensing, matching bulk count and v3 confirmation for v3 traces"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -2270,6 +2284,12 @@
           "spec": "spec/backend/backlogRule.md",
           "rules": [
             "Story: Keep the lists to projects whose maintainers are keeping up"
+          ]
+        },
+        {
+          "spec": "spec/operations/recordPublication.md",
+          "rules": [
+            "Story: Rebuild /data/record.json on every release while preserving prior records and receipts / Every release rebuilds /data/record.json without failing the release and never drops a published receipt"
           ]
         }
       ],
