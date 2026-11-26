@@ -1,5 +1,5 @@
 // spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account or a moderator files one open project appeal"; spec/security/enforcement.md, "Account entries share the project journal without changing its restriction"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project's open request"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
-import { type Actor, Refused, admission, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { type Actor, Refused, admission, handleRawJsonWrite, json, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { Conflict } from "@repo/platform/stored"
 import { type DecisionRole, EnforcementRecord, EnforcementRows, type RecordDetails, type ReinstatementRead } from "@repo/ports/security"
@@ -373,7 +373,6 @@ effect function decided(request: Request, preview: boolean) {
 }
 
 effect function moderatorDecision(actor: Actor, projectId: string, preview: boolean) {
-  if (!(try sameOriginWrite())) throw refused(decisionRows.originForbidden)
   try requireModerator(actor)
   if (!projectIdPattern.test(projectId)) throw refused(decisionRows.notFoundProjectNotFound)
   const body = try strictBody(EnforcementRequest, bodyBytes)
@@ -388,7 +387,6 @@ effect function moderatorDecision(actor: Actor, projectId: string, preview: bool
 
 effect function fileAppeal(actor: Actor) {
   const rows = postProjectAppeals
-  if (!(try sameOriginWrite())) throw refused(rows.originForbidden)
   const body = try strictBody(AppealRequest, bodyBytes)
   if (body.appealScope !== undefined && body.appealScope !== "account") throw refused(rows.invalidRequestUnsupportedAppealScope)
   const projectId = body.projectId
@@ -398,9 +396,9 @@ effect function fileAppeal(actor: Actor) {
 }
 
 export const EnforcementRoutes = Layer.mergeAll(
-  handleRaw(enforcementPreview, (input) => moderatorDecision(input.actor, input.params.id ?? "", true)),
-  handleRaw(enforcementDecision, (input) => moderatorDecision(input.actor, input.params.id ?? "", false)),
-  handleRaw(projectAppeals, (input) => fileAppeal(input.actor)),
+  handleRawJsonWrite(enforcementPreview, (input) => moderatorDecision(input.actor, input.params.id ?? "", true), projectContract),
+  handleRawJsonWrite(enforcementDecision, (input) => moderatorDecision(input.actor, input.params.id ?? "", false), projectContract),
+  handleRawJsonWrite(projectAppeals, (input) => fileAppeal(input.actor), projectContract),
   AccessRoutes,
   AdminRoutes,
 )

@@ -2,7 +2,7 @@
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
-import { type Actor, Refused, admission, handleRaw, json, refuse, strictBody } from "@repo/platform/http"
+import { type Actor, Refused, admission, handleRaw, handleRawJsonWrite, json, refuse, strictBody } from "@repo/platform/http"
 import { GitHub } from "@repo/platform/github"
 import { Roles } from "@repo/platform/roles"
 import { Conflict } from "@repo/platform/stored"
@@ -388,8 +388,8 @@ effect function revoke(actor: Actor, id: string) {
 
 export const enforcementRoutes = Layer.mergeAll(
   handleRaw(projectFlag, (input) => mine(input.actor, input.params.id ?? "")),
-  handleRaw(fileFlag, (input) => file(input.actor, input.params.id ?? "")),
-  handleRaw(withdrawFlag, (input) => withdraw(input.actor, input.params.id ?? "")),
-  handleRaw(grantExemption, (input) => grant(input.actor)),
-  handleRaw(revokeExemption, (input) => revoke(input.actor, input.params.id ?? "")),
+  handleRawJsonWrite(fileFlag, (input) => file(input.actor, input.params.id ?? "")),
+  handleRawJsonWrite(withdrawFlag, (input) => withdraw(input.actor, input.params.id ?? "")),
+  handleRawJsonWrite(grantExemption, (input) => grant(input.actor)),
+  handleRawJsonWrite(revokeExemption, (input) => revoke(input.actor, input.params.id ?? "")),
 )
