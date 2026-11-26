@@ -1,7 +1,7 @@
 // spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
 import { Effect } from "effect";
 import { utf8, webCrypto } from "@repo/platform/crypto";
-import { type EncodedSnapshot, type LeaderboardSnapshot, type RepositoryRegistry, assembleProjection, decodeSnapshot, encodeParts, maxFileBytes, readParts, shardPath, validateSnapshot } from "../../src/client/index.vibe";
+import { type EncodedSnapshot, type LeaderboardSnapshot, type RepositoryRegistry, assembleProjection, decodeSnapshot, encodeParts, maxFileBytes, readParts, shardPath, validateSnapshot } from "@repo/points/client";
 import { journalFile } from "../../src/kernels/records/ids.vibe";
 import { projectionFiles } from "../../src/publication/projections.vibe";
 import { historyText, snapshotFile } from "./u9/fixtures.ts";
