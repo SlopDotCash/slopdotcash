@@ -73,6 +73,9 @@ catalog:
 
 overrides:
   "@effect/platform-node-shared": 4.1.1
+  "@ts-morph/common@0.26.1>minimatch": 11.0.1
+  "miniflare@5.20260907.0-alpha>sharp": 0.35.5
+  "miniflare@5.20260907.0-alpha>undici": 7.30.1
 
 # madge 8 declares TypeScript 5 as an optional peer; it reads TypeScript 6
 # projects through --ts-config all the same.
