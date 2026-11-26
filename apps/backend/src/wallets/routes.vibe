@@ -2,7 +2,7 @@
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { ConstraintViolation } from "@repo/platform/d1"
-import { type Actor, type Bearer, Refused, body, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { type Actor, type Bearer, Refused, body, handleRaw, json, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { cacheControl } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
@@ -36,7 +36,6 @@ function traced(answer: unknown, status: number, cache: string) {
 const traceBodyBytes = 65536
 
 effect function paymentBody<S extends Schema.Constraint>(schema: S, invalid: Refused) {
-  if (!(try sameOriginWrite())) throw refused(postPaymentsWalletsRegister.originForbiddenPrivateNoStore)
   return body(schema, 4) catch effect () => { throw invalid }
 }
 
@@ -445,10 +444,10 @@ effect function createOperatorClaim(bearer: Bearer) {
 }
 
 export const WalletRoutes = Layer.mergeAll(
-  handleRaw(registerWallet, (input) => registerForPayments(input.actor)),
+  paymentWalletWrite(registerWallet, registerForPayments),
   paymentWalletWrite(walletChallenge, challengeForPayments),
   paymentWalletWrite(authorizeWallet, authorizeForPayments),
-  paymentWalletWrongMethods([walletChallenge, authorizeWallet]),
+  paymentWalletWrongMethods([registerWallet, walletChallenge, authorizeWallet]),
   handleRaw(currentWalletClaim, (input) => currentForBearer(input.actor, input.query)),
   handleRaw(actorWalletClaim, (input) => currentForActor(input.params.githubId ?? "", input.query)),
   handleRaw(walletClaim, (input) => publicClaim(input.params.id ?? "")),

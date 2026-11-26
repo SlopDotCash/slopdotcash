@@ -1,7 +1,7 @@
 // spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"
 import { randomId } from "@repo/platform/crypto"
 import { type D1, type D1Error, type RowMismatch, sql } from "@repo/platform/d1"
-import { type Actor, Refused, body, handleRaw, json, sameOriginWrite } from "@repo/platform/http"
+import { type Actor, Refused, body, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
 import { type Binding, type ChallengeOutcome, type Deployment, type Event, type EvmConsentSignature, Rejected, canSolanaAdmitAttempt, challengeOutcome, consentLifetime, deploymentFor, enabled, expirySlack, nowSeconds, offeredExpiry, settlementService, solanaAdmitAttempt, solanaDeploymentReady, solanaReady, submissionWindow } from "../../gen/backend__bindingConsent.effect.vibe"
 import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
@@ -22,7 +22,6 @@ interface Row {
 }
 
 interface BodyRows {
-  readonly originForbiddenPrivateNoStore: Row
   readonly invalidRequestS400: Row
   readonly paymentsUnavailable: Row
 }
@@ -67,7 +66,6 @@ function paid(answer: unknown) {
 }
 
 effect function fieldsOf<S extends Schema.Constraint>(schema: S, rows: BodyRows) {
-  if (!(try sameOriginWrite())) throw refused(rows.originForbiddenPrivateNoStore)
   return body(schema, 4) catch effect () => { throw refused(rows.invalidRequestS400) }
 }
 
@@ -294,7 +292,7 @@ effect function solanaBind(actor: Actor, step: SolanaStep) {
 export const BindingRoutes = Layer.mergeAll(
   paymentWalletWrite(bindChallenge, challenge),
   paymentWalletWrite(bindAuthorize, authorize),
-  paymentWalletWrongMethods([bindChallenge, bindAuthorize]),
-  handleRaw(solanaBindPrepare, (input) => solanaBind(input.actor, "prepare")),
-  handleRaw(solanaBindComplete, (input) => solanaBind(input.actor, "complete")),
+  paymentWalletWrite(solanaBindPrepare, (actor) => solanaBind(actor, "prepare")),
+  paymentWalletWrite(solanaBindComplete, (actor) => solanaBind(actor, "complete")),
+  paymentWalletWrongMethods([bindChallenge, bindAuthorize, solanaBindPrepare, solanaBindComplete]),
 )
