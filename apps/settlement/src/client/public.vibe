@@ -183,8 +183,8 @@ export schema PoolFunding {
   readonly projects: ReadonlyArray<ProjectFunding>
 }
 
-function row(entry: { readonly status: number; readonly error: string; readonly message?: string }): Refusal {
-  return { status: entry.status, code: entry.error, message: entry.message ?? "" }
+function row(entry: { readonly status: number; readonly error: string; readonly message?: string; readonly headers: Readonly<Record<string, string>> }): Refusal {
+  return { status: entry.status, code: entry.error, message: entry.message ?? "", headers: entry.headers }
 }
 
 const session = getPaymentsMe

@@ -44,6 +44,7 @@ const presentations: Readonly<Record<NotificationKind, (n: Notice) => NoticePres
   payment_paid: (n) => present(`${n.subject} payment paid`, "Open payouts"),
   payout_held: (n) => present(`${n.subject} payout held`, "Open payouts"),
   wallet_changed: (n) => present(`${n.subject} wallet added`, "Review wallets"),
+  trace_licensing_available: () => present("Trace licensing is available", "Review trace licensing"),
   project_quarantined: restricted("quarantined"),
   project_banned: restricted("banned"),
   reinstatement_requested: (n) => present(`${n.subject} reinstatement in review`, "Open project"),

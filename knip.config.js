@@ -1,4 +1,4 @@
-// Knip reads .vibe files through VibeLang's own compiler, which gives it a module's imports and exports without bodies.
+// VibeLang supplies Knip's module surface and the lexical reads needed for ignoreExportsUsedInFile.
 // Each exception below names something Knip cannot follow:
 //   ignore vibestack/examples/**            standalone projects with their own install, outside the workspace
 //   ignore **/test/fixtures/**              inputs the tools' tests read as text, never imported
@@ -21,9 +21,40 @@
 //   ignoreIssues fees dln exports           the buyback leg's order checks, kept for the fee Worker entry (fees:U14)
 import { readFileSync } from "node:fs"
 import { URL } from "node:url"
-import vibelang from "vibelang/knip"
+import { parseForESLint } from "vibelang/eslint"
+import compileSurface from "vibelang/knip"
 
 const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
+
+function compileVibe(text, filePath) {
+  const surface = compileSurface(text, filePath)
+  const { ast, scopeManager } = parseForESLint(text, { filePath })
+  const declarations = new Set()
+  const forwardedBindings = new Set()
+  const exportReferences = new Set()
+  for (const node of ast.body) {
+    if (node.type === "ExportNamedDeclaration" && node.declaration) declarations.add(node.declaration)
+    if (node.type === "ExportNamedDeclaration" && !node.source) {
+      for (const { local } of node.specifiers) {
+        forwardedBindings.add(local.name)
+        exportReferences.add(local.range[0])
+      }
+    }
+    if (node.type === "ExportDefaultDeclaration" && node.declaration.type === "Identifier") {
+      exportReferences.add(node.declaration.range[0])
+    }
+  }
+
+  const reads = []
+  for (const { name, defs, references } of scopeManager.acquire(ast, true).variables) {
+    if (defs.some(({ type }) => type === "ImportBinding")) continue
+    if (!forwardedBindings.has(name) && !defs.some(({ node, parent }) => declarations.has(node) || declarations.has(parent))) continue
+    const localReads = references.filter((reference) => reference.isRead() && !exportReferences.has(reference.identifier.range[0]))
+    if (localReads.some((reference) => reference.isValueReference)) reads.push(`void ${name};`)
+    if (localReads.some((reference) => reference.isTypeReference)) reads.push(`void (0 as unknown as ${name});`)
+  }
+  return surface + reads.join("\n")
+}
 
 const app = {
   "entry": [
@@ -57,7 +88,7 @@ const app = {
 }
 
 export default {
-  compilers: { vibe: vibelang, vibex: vibelang },
+  compilers: { vibe: compileVibe, vibex: compileVibe },
   "ignore": [
     "vibestack/examples/**",
     "**/test/fixtures/**",

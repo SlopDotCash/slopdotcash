@@ -6,7 +6,7 @@ export schema NotificationKind = "application_approved" | "application_rejected"
   | "project_installation_lost" | "project_revision" | "award_reserved" | "payment_paid" | "payout_held" | "wallet_changed"
   | "project_quarantined" | "project_banned" | "reinstatement_requested" | "project_reinstated" | "reinstatement_denied"
   | "reinstatement_review" | "payout_exception" | "security_case" | "security_report_received" | "slopbot_appeal_review"
-  | "slopbot_appeal_resolved" | "slopbot_scam_review"
+  | "slopbot_appeal_resolved" | "slopbot_scam_review" | "trace_licensing_available"
 
 export schema EmailDelivery = "queued" | "sent" | "delivered" | "failed" | "uncertain"
 
@@ -20,6 +20,7 @@ export schema InboxNotice {
   readonly createdAt: string
   readonly readAt: string | null
   readonly acknowledgedAt?: string | null
+  readonly pointsDisputeReceipt?: boolean
   readonly emailDelivery?: EmailDelivery
 }
 

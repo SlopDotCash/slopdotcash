@@ -1,5 +1,5 @@
 // spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"
-import { GitHub, decoded } from "@repo/platform/github"
+import { type GitHub, decoded } from "@repo/platform/github"
 import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AttributionPullDependency, type AttributionReferenceDependency, Graphql, canonicalJson } from "@repo/points/collect"
 import { referenceTimelineRequest, valueReferenceQuery } from "../evidence/references.vibe"
 

@@ -1,7 +1,7 @@
 // spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import type { Census } from "../../gen/points__census.effect.vibe"
-import { type ActorKind, type Event, type EventKind, type LedgerEvent, Machine, type Window, decodeState, enabled, initial, machineOver, windowDays } from "../../gen/points__window.effect.vibe"
+import { type ActorKind, type Event, type EventKind, type LedgerEvent, type Machine, type Window, decodeState, enabled, initial, machineOver, windowDays } from "../../gen/points__window.effect.vibe"
 import type { Identities } from "../census/collect.vibe"
 import { dayMs } from "./days.ts"
 

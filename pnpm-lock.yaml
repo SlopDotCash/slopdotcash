@@ -197,6 +197,12 @@ overrides:
   miniflare@5.20260907.0-alpha>undici: 7.30.1
 
 patchedDependencies:
+  '@typescript-eslint/eslint-plugin@8.72.2':
+    hash: 5a39ebf1395bc1b27b34e76b87818b2dbbc3f7139717958595399f5e883a893d
+    path: patches/@typescript-eslint__eslint-plugin@8.72.2.patch
+  '@vitest/browser@5.1.0':
+    hash: 1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352
+    path: patches/@vitest__browser@5.1.0.patch
   picomatch@2.3.2:
     hash: 64d05ffe43f43b7455e84fe2edac708d0077fc3fd735ae5e440657a29b0cbf59
     path: patches/picomatch@2.3.2.patch
@@ -250,7 +256,7 @@ importers:
         version: 26.6.6
       '@vitest/browser':
         specifier: 'catalog:'
-        version: 5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
+        version: 5.1.0(patch_hash=1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
       '@vitest/browser-playwright':
         specifier: 'catalog:'
         version: 5.1.0(playwright@1.65.0)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
@@ -987,7 +993,7 @@ importers:
         version: 10.6.7(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))
       '@storybook/addon-vitest':
         specifier: 'catalog:'
-        version: 10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)
+        version: 10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(patch_hash=1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)
       '@storybook/react-vite':
         specifier: 'catalog:'
         version: 10.6.7(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(typescript@6.0.3)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
@@ -1182,7 +1188,7 @@ importers:
         version: 10.6.7(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))
       '@storybook/addon-vitest':
         specifier: 'catalog:'
-        version: 10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)
+        version: 10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(patch_hash=1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)
       '@storybook/react-vite':
         specifier: 'catalog:'
         version: 10.6.7(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(typescript@6.0.3)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
@@ -8776,13 +8782,13 @@ snapshots:
       axe-core: 4.14.0
       storybook: 10.6.7(@types/react@19.3.0)(react@19.3.1)
 
-  '@storybook/addon-vitest@10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)':
+  '@storybook/addon-vitest@10.6.7(@vitest/browser-playwright@5.1.0)(@vitest/browser@5.1.0(patch_hash=1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0))(react@19.3.1)(storybook@10.6.7(@types/react@19.3.0)(react@19.3.1))(vitest@5.1.0)':
     dependencies:
       '@storybook/global': 5.0.0
       '@storybook/icons': 2.2.0(react@19.3.1)
       storybook: 10.6.7(@types/react@19.3.0)(react@19.3.1)
     optionalDependencies:
-      '@vitest/browser': 5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
+      '@vitest/browser': 5.1.0(patch_hash=1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
       '@vitest/browser-playwright': 5.1.0(playwright@1.65.0)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
       vitest: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(happy-dom@21.0.4)(jsdom@31.0.1(@noble/hashes@2.4.0))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
     transitivePeerDependencies:
@@ -9062,7 +9068,7 @@ snapshots:
     dependencies:
       '@types/node': 26.6.6
 
-  '@typescript-eslint/eslint-plugin@8.72.2(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)':
+  '@typescript-eslint/eslint-plugin@8.72.2(patch_hash=5a39ebf1395bc1b27b34e76b87818b2dbbc3f7139717958595399f5e883a893d)(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)':
     dependencies:
       '@eslint-community/regexpp': 4.12.3
       '@typescript-eslint/parser': 8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
@@ -9192,7 +9198,7 @@ snapshots:
 
   '@vitest/browser-playwright@5.1.0(playwright@1.65.0)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)':
     dependencies:
-      '@vitest/browser': 5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
+      '@vitest/browser': 5.1.0(patch_hash=1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
       '@vitest/mocker': 5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
       playwright: 1.65.0
       tinyrainbow: 3.2.0
@@ -9203,7 +9209,7 @@ snapshots:
       - utf-8-validate
       - vite
 
-  '@vitest/browser@5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)':
+  '@vitest/browser@5.1.0(patch_hash=1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)':
     dependencies:
       '@blazediff/core': 1.10.0
       '@vitest/mocker': 5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
@@ -11392,7 +11398,7 @@ snapshots:
 
   typescript-eslint@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3):
     dependencies:
-      '@typescript-eslint/eslint-plugin': 8.72.2(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
+      '@typescript-eslint/eslint-plugin': 8.72.2(patch_hash=5a39ebf1395bc1b27b34e76b87818b2dbbc3f7139717958595399f5e883a893d)(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
       '@typescript-eslint/parser': 8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
       '@typescript-eslint/typescript-estree': 8.72.2(typescript@6.0.3)
       '@typescript-eslint/utils': 8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)

@@ -1,6 +1,6 @@
 // spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"
 import type { SqlTx } from "@repo/platform/journal"
-import { type Caller, type Configuration, type Event, type Journal, type Lifecycle, NotAnEvent, Rejected, type RunResult, type SendAttempt, apply, decodeEvent, decodeState, initial, machineOver, noAttempt, requestRow, runResult } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { type Caller, type Configuration, type Event, type Journal, type Lifecycle, type NotAnEvent, type Rejected, type RunResult, type SendAttempt, apply, decodeEvent, decodeState, initial, machineOver, noAttempt, requestRow, runResult } from "../../gen/settlement__keeperLifecycle.effect.vibe"
 import { RecordInvalid, inTransaction, keep, record } from "./store.vibe"
 
 export interface SendJournal {

@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { gitBytes, systemGit, withPublicGitObjects } from "@repo/platform/git"
+import { gitBytes, systemGit, type withPublicGitObjects } from "@repo/platform/git"
 import { lossyText, parsedJson, sha256Of } from "@repo/platform/git/bytes"
 import { webCrypto } from "@repo/platform/crypto"
 import { github } from "@repo/platform/github"

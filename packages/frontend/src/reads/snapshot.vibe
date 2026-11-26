@@ -2,7 +2,7 @@
 import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type LeaderboardSnapshot, type ModelAttribution, type RepositoryRegistry, type ScoreEvent, PartsInvalid, SnapshotTooLarge, maxPartBytes, maxSnapshotBytes, readParts, validateScoreAndPayment } from "@repo/points/client"
-import { type Change, type EventKind, type LedgerRow, type Marker, type PaymentBasis, type Snapshot, Machine, initial, machineOver, noBasis, noMarker } from "../../gen/frontend__rankedSnapshot.effect.vibe"
+import { type Change, type EventKind, type LedgerRow, type Marker, type PaymentBasis, type Snapshot, type Machine, initial, machineOver, noBasis, noMarker } from "../../gen/frontend__rankedSnapshot.effect.vibe"
 import { fetchBoundedBytes } from "../platform/bounded.vibe"
 import { Deployment } from "../platform/config.vibe"
 import { Unreadable } from "./resource.vibe"

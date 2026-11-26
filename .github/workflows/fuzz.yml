@@ -18,7 +18,7 @@ jobs:
       pull-requests: write
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_CACHE: local:rw,remote:r
+      TURBO_CACHE: ${{ secrets.TURBO_TOKEN != '' && 'local:rw,remote:r' || 'local:rw' }}
     steps:
       - uses: actions/checkout@v7
         with:

@@ -1,8 +1,8 @@
 // spec/slopbot/routing.md, "Live claims, recent completions and unresolved closes occupy the author's three slots"
 import { isoAt, millisOf } from "@repo/platform/clock"
-import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load } from "@repo/platform/stored"
-import { type AuthorSlots, type CloseMark, type MergeHistory, NotAState, Rejected, type Slot, type SlotStatus, apply, day, decodeState } from "../../gen/slopbot__routing.effect.vibe"
+import { type AuthorSlots, type CloseMark, type MergeHistory, type NotAState, type Rejected, type Slot, type SlotStatus, apply, day, decodeState } from "../../gen/slopbot__routing.effect.vibe"
 import { ownSlot } from "../../gen/slopbot__reviewLease.effect.vibe"
 
 export schema SlotRow {

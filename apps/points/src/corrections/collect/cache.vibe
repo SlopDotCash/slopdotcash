@@ -7,7 +7,7 @@ import { Graphql, GraphqlUpstream, type JsonRecord, type Variables, commitStatis
 import { historicalDiscussionHasRateLimit, historicalDiscussionQuery } from "../../ingestion/historicalDiscussion.vibe"
 import { outcomeCommitLinesQuery } from "../../collect/merged/wire.vibe"
 import { replayed } from "../../ingestion/replayed.ts"
-import { QuotaRun, beginRead, failAttempt, hintOf, interrupted, observeReply, reuseRetained } from "../../quotaRecovery/run.vibe"
+import { type QuotaRun, beginRead, failAttempt, hintOf, interrupted, observeReply, reuseRetained } from "../../quotaRecovery/run.vibe"
 import { digestOf, encoded } from "./inventory.vibe"
 
 export const githubApiOrigin = "https://api.github.com"

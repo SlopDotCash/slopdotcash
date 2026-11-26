@@ -1,0 +1,123 @@
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/contributor/traceLicensing.md, "Enabling, v3 re-confirmation, disabling, closure and bans enforce consent boundaries"
+import { type Statement, sql } from "@repo/platform/d1"
+
+export const traceLicensingEventKey = "trace-licensing:available-2026-11"
+export const traceLicensingNotice = "You can now choose to license your Slop traces for pay. You get 50% of each sale. Nothing is licensed unless you turn it on."
+
+const validGithubId = "typeof(run.github_user_id) = 'text' AND length(run.github_user_id) BETWEEN 1 AND 20 AND run.github_user_id GLOB '[1-9]*' AND run.github_user_id NOT GLOB '*[^0-9]*'"
+
+export const traceLicensingBanQuery = "SELECT 1 FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id = run.github_user_id AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) LIMIT 1"
+
+const traceLicensingAudienceSql = `SELECT DISTINCT run.github_user_id AS recipient
+  FROM trace_runs run
+ WHERE run.state = 'finalized'
+   AND ${validGithubId}
+   AND NOT EXISTS (SELECT 1 FROM points_members closed
+                    WHERE closed.github_id = run.github_user_id
+                      AND closed.closed_at IS NOT NULL)
+   AND NOT EXISTS (${traceLicensingBanQuery})`
+
+export const traceLicensingAvailableSql = `INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
+  SELECT '${traceLicensingEventKey}', audience.recipient,
+         'trace_licensing_available', 'trace-licensing',
+         '${traceLicensingNotice}', '/account#trace-licensing', ?1, ?1
+    FROM (${traceLicensingAudienceSql}) audience
+   WHERE true
+  ON CONFLICT (event_key, recipient_github_id) DO NOTHING`
+
+export const traceLicensingRecipientsSql = `SELECT COUNT(*) AS recipients
+  FROM (${traceLicensingAudienceSql}) audience
+ WHERE NOT EXISTS (SELECT 1 FROM notifications n
+                    WHERE n.event_key = '${traceLicensingEventKey}'
+                      AND n.recipient_github_id = audience.recipient)`
+
+export function notifyTraceLicensingAvailable(at: string): Statement {
+  return sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
+    SELECT ${traceLicensingEventKey}, audience.recipient,
+           'trace_licensing_available', 'trace-licensing',
+           ${traceLicensingNotice}, '/account#trace-licensing', ${at}, ${at}
+      FROM (SELECT DISTINCT run.github_user_id AS recipient
+              FROM trace_runs run
+             WHERE run.state = 'finalized'
+               AND typeof(run.github_user_id) = 'text'
+               AND length(run.github_user_id) BETWEEN 1 AND 20
+               AND run.github_user_id GLOB '[1-9]*'
+               AND run.github_user_id NOT GLOB '*[^0-9]*'
+               AND NOT EXISTS (SELECT 1 FROM points_members closed
+                                WHERE closed.github_id = run.github_user_id
+                                  AND closed.closed_at IS NOT NULL)
+               AND NOT EXISTS (SELECT 1 FROM project_maintainer_bans b
+                                JOIN project_enforcements e ON e.id = b.enforcement_id
+                               WHERE b.github_id = run.github_user_id
+                                 AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released
+                                                  WHERE released.ban_enforcement_id = b.enforcement_id
+                                                    AND released.github_id = b.github_id)
+                               LIMIT 1)) audience
+     WHERE true
+    ON CONFLICT (event_key, recipient_github_id) DO NOTHING`
+}
+
+export function traceLicensingRecipientCountQuery(): Statement {
+  return sql`SELECT COUNT(*) AS recipients
+    FROM (SELECT DISTINCT run.github_user_id AS recipient
+            FROM trace_runs run
+           WHERE run.state = 'finalized'
+             AND typeof(run.github_user_id) = 'text'
+             AND length(run.github_user_id) BETWEEN 1 AND 20
+             AND run.github_user_id GLOB '[1-9]*'
+             AND run.github_user_id NOT GLOB '*[^0-9]*'
+             AND NOT EXISTS (SELECT 1 FROM points_members closed
+                              WHERE closed.github_id = run.github_user_id
+                                AND closed.closed_at IS NOT NULL)
+             AND NOT EXISTS (SELECT 1 FROM project_maintainer_bans b
+                              JOIN project_enforcements e ON e.id = b.enforcement_id
+                             WHERE b.github_id = run.github_user_id
+                               AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released
+                                                WHERE released.ban_enforcement_id = b.enforcement_id
+                                                  AND released.github_id = b.github_id)
+                             LIMIT 1)) audience
+   WHERE NOT EXISTS (SELECT 1 FROM notifications n
+                      WHERE n.event_key = ${traceLicensingEventKey}
+                        AND n.recipient_github_id = audience.recipient)`
+}
+
+export function withNoticeTime(statement: string, at: Date): string {
+  return statement.replaceAll("?1", `'${at.toISOString()}'`)
+}
+
+const WranglerResults = Schema.Array(
+  Schema.Struct({
+    results: Schema.optional(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
+    meta: Schema.optional(Schema.Struct({ changes: Schema.optional(Schema.Unknown) })),
+  }),
+)
+
+export error WranglerOutputInvalid { message: string }
+
+export effect function recipientCount(stdout: string) {
+  const parsed = Effect.try(() => JSON.parse(stdout) as unknown) catch effect () => {
+    throw new WranglerOutputInvalid({ message: "could not read the recipient count" })
+  }
+  const rows = Schema.decodeUnknownEffect(WranglerResults)(parsed) catch effect () => {
+    throw new WranglerOutputInvalid({ message: "could not read the recipient count" })
+  }
+  const recipients = rows[0]?.results?.[0]?.recipients
+  if (typeof recipients !== "number" || !Number.isSafeInteger(recipients) || recipients < 0) {
+    throw new WranglerOutputInvalid({ message: "could not read the recipient count" })
+  }
+  return recipients
+}
+
+export effect function rowsWritten(stdout: string) {
+  const parsed = Effect.try(() => JSON.parse(stdout) as unknown) catch effect () => {
+    throw new WranglerOutputInvalid({ message: "could not read the rows written" })
+  }
+  const rows = Schema.decodeUnknownEffect(WranglerResults)(parsed) catch effect () => {
+    throw new WranglerOutputInvalid({ message: "could not read the rows written" })
+  }
+  const changes = rows[0]?.meta?.changes
+  if (typeof changes !== "number" || !Number.isSafeInteger(changes) || changes < 0) {
+    throw new WranglerOutputInvalid({ message: "could not read the rows written" })
+  }
+  return changes
+}

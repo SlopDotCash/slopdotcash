@@ -27,12 +27,12 @@ export effect function later<E, R>(program: void!E!R) {
   keepRunning(context, services, program)
 }
 
-export interface Job<R = any> {
+export interface Job<R = unknown> {
   readonly name: string
   readonly run: (controller: ScheduledController) => void!unknown!R
 }
 
-export type CronJobs<R = any> = Readonly<Record<string, ReadonlyArray<Job<R>>>>
+export type CronJobs<R = unknown> = Readonly<Record<string, ReadonlyArray<Job<R>>>>
 
 export error CronUnknown { cron: string }
 export error JobsFailed { cron: string; failed: ReadonlyArray<string> }
@@ -68,12 +68,20 @@ export function area<P, R, J = unknown>(a: Area<P, R, J>) {
   return a
 }
 
-export const unmatchedApi = area({
-  name: "unmatchedApi",
-  api: [],
-  routes: HttpRouter.add("*", "/api/v1/*", Effect.succeed(json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }))),
-  provides: Layer.empty,
-})
+const apiNotFound = json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" })
+
+export function unmatchedApiWith<R>(refusal: (HttpServerResponse.HttpServerResponse | undefined)!!R) {
+  return area({
+    name: "unmatchedApi",
+    api: [],
+    routes: HttpRouter.add("*", "/api/v1/*", effect {
+      return (try refusal) ?? apiNotFound
+    }),
+    provides: Layer.empty,
+  })
+}
+
+export const unmatchedApi = unmatchedApiWith(Effect.succeed(undefined))
 
 type Handler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
 

@@ -1,7 +1,7 @@
 // spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"
 import { isoNow } from "@repo/platform/clock"
 import { rows, sql } from "@repo/platform/d1"
-import { type Actor, Refused, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { type Actor, Refused, handleRaw, handleRawJsonWrite, json, strictBody } from "@repo/platform/http"
 import type { Exception, RepositoryStart } from "../../../gen/backend__projects.ts"
 import { type Event, type Registry, type RegistryRead, Rejected, clearanceOf, withExceptionAppends } from "../../../gen/backend__projectComposition.effect.vibe"
 import { projectContract } from "../../access/routes.vibe"
@@ -140,7 +140,6 @@ function exceptionRefusal(rejected: Rejected) {
 }
 
 effect function revise(actor: Actor, projectId: string) {
-  if (!(try sameOriginWrite())) throw refused(manifestRows.originForbidden)
   try requireAdmin(actor, manifestRows.forbidden)
   if (!projectIdPattern.test(projectId)) throw refused(manifestRows.notFoundProjectNotFound)
   const body = try strictBody(AdminRevisionRequest, bodyBytes)
@@ -178,5 +177,5 @@ effect function revise(actor: Actor, projectId: string) {
 
 export const AdminRoutes = Layer.mergeAll(
   handleRaw(adminProjects, (input) => listProjects(input.actor)),
-  handleRaw(adminManifest, (input) => revise(input.actor, input.params.id ?? "")),
+  handleRawJsonWrite(adminManifest, (input) => revise(input.actor, input.params.id ?? ""), projectContract),
 )

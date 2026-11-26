@@ -29,9 +29,9 @@ export function reservedWei(gasLimit: bigint, maxFeePerGas: bigint): bigint {
 }
 
 /** @throws {never} */
-export function actualWei(gasUsed: bigint, effectiveGasPrice: bigint, gasLimit: bigint, maxFeePerGas: bigint): bigint {
-  //@ requires gasUsed >= 0 && effectiveGasPrice >= 0 && gasLimit >= 0 && maxFeePerGas >= 0
-  //@ ensures gasUsed <= gasLimit && effectiveGasPrice <= maxFeePerGas ==> \result <= gasLimit * maxFeePerGas
+export function actualWei(gasUsed: bigint, effectiveGasPrice: bigint, _gasLimit: bigint, _maxFeePerGas: bigint): bigint {
+  //@ requires gasUsed >= 0 && effectiveGasPrice >= 0 && _gasLimit >= 0 && _maxFeePerGas >= 0
+  //@ ensures gasUsed <= _gasLimit && effectiveGasPrice <= _maxFeePerGas ==> \result <= _gasLimit * _maxFeePerGas
   //@ ensures \result === gasUsed * effectiveGasPrice
   return gasUsed * effectiveGasPrice;
 }

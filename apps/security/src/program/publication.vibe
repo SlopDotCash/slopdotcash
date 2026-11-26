@@ -1,7 +1,7 @@
 // spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Administrators approve a split exception for one exact future revision"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
 import type { D1 } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
-import { type ProgramChange, ProgramRefused, SecurityProgramFunds, SecurityProgramPublication } from "@repo/ports/security"
+import { type ProgramChange, ProgramRefused, type SecurityProgramFunds, SecurityProgramPublication } from "@repo/ports/security"
 import type { Event, Offer, Program } from "../../gen/security__program.ts"
 import { Rejected, apply, fundedEnough, fundingObserver, offerShapeValid } from "../../gen/security__program.effect.vibe"
 import { githubNumber } from "../privacy/reads.vibe"

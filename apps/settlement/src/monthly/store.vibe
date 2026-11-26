@@ -7,7 +7,7 @@ import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import type { Exclusion, Relationship } from "../../gen/settlement__payoutExclusions.ts"
 import type { Share } from "../../gen/settlement__allocation.ts"
 import type { Amount } from "../../gen/settlement__money.ts"
-import { type BanExclusion, type Change, type Cut, type CutNotice, type Eligibility, type Event, type Monthly, type MonthlyPhase, type Obligation, type ObligationState, type RevisionFact, NotAState, apply, canCloseProposalWindow, canObservePledge, canObserveSettings, closeProposalWindow, observePledge, observeSettings, decodeState, initial, noEligibility, noRevision, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
+import { type BanExclusion, type Change, type Cut, type CutNotice, type Eligibility, type Event, type Monthly, type MonthlyPhase, type Obligation, type ObligationState, type RevisionFact, type NotAState, apply, canCloseProposalWindow, canObservePledge, canObserveSettings, closeProposalWindow, observePledge, observeSettings, decodeState, initial, noEligibility, noRevision, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
 import { MAX_BASE_UNITS, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { type Period, formatPeriod, parsePeriod, periodStartSeconds } from "../kernels/calendar.ts"
 import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
@@ -534,11 +534,45 @@ export effect function readMonth(key: MonthKey) {
   return { rows, state: try stateOf(key, rows, facts, now), facts } satisfies Loaded
 }
 
+const MAX_SHARE_PART_BYTES = 50_000
+
+function quotedByteLength(character: string): number {
+  if (character === "'") return 2
+  const code = character.codePointAt(0) ?? 0
+  if (code <= 0x7f) return 1
+  if (code <= 0x7ff) return 2
+  if (code <= 0xffff) return 3
+  return 4
+}
+
+export function recordParts(text: string): string[] {
+  const parts: string[] = []
+  let part = ""
+  let bytes = 0
+  for (const character of text) {
+    const size = quotedByteLength(character)
+    if (bytes + size > MAX_SHARE_PART_BYTES) {
+      parts.push(part)
+      part = ""
+      bytes = 0
+    }
+    part += character
+    bytes += size
+  }
+  parts.push(part)
+  return parts
+}
+
 function shareWrites(key: MonthKey, proposal: Statement, share: StoredShare, created: string): Statement[] {
   const period = formatPeriod(key.period)
+  const parts = recordParts(share.text)
+  const shareScope = sql`project_id = ${key.projectId} AND period = ${period}`
   return [
-    sql`INSERT INTO monthly_maintainer_shares (project_id, period, basis_points, pool_base, decisions, decisions_sha256, created_at) SELECT ${key.projectId}, ${period}, ${share.basisPoints}, ${fromAmount(share.pool).toString()}, ${share.text}, ${share.sha256}, ${created} WHERE EXISTS (SELECT 1 FROM monthly_reward_bases WHERE ${proposal}) ON CONFLICT (project_id, period) DO NOTHING`,
-    ...share.rows.map((row) => sql`INSERT INTO monthly_maintainer_share_rows (project_id, period, github_user_id, github_login, decisions, gross_base) SELECT ${key.projectId}, ${period}, ${String(row.actor)}, ${row.login}, ${row.decisions}, ${fromAmount(row.amount).toString()} WHERE EXISTS (SELECT 1 FROM monthly_maintainer_shares WHERE project_id = ${key.projectId} AND period = ${period} AND decisions_sha256 = ${share.sha256}) ON CONFLICT (project_id, period, github_user_id) DO NOTHING`),
+    sql`DELETE FROM monthly_maintainer_share_parts WHERE ${shareScope}`,
+    ...parts.map((part, sequence) => sql`INSERT INTO monthly_maintainer_share_parts (project_id, period, sequence, part) VALUES (${key.projectId}, ${period}, ${sequence}, ${part})`),
+    sql`INSERT INTO monthly_maintainer_shares (project_id, period, basis_points, pool_base, decisions, decisions_sha256, created_at) SELECT ${key.projectId}, ${period}, ${share.basisPoints}, ${fromAmount(share.pool).toString()}, (SELECT CASE WHEN COUNT(*) = ${parts.length} THEN group_concat(part, '' ORDER BY sequence) END FROM monthly_maintainer_share_parts WHERE ${shareScope}), ${share.sha256}, ${created} WHERE EXISTS (SELECT 1 FROM monthly_reward_bases WHERE ${proposal}) ON CONFLICT (project_id, period) DO NOTHING`,
+    sql`DELETE FROM monthly_maintainer_share_parts WHERE ${shareScope}`,
+    ...share.rows.map((row) => sql`INSERT INTO monthly_maintainer_share_rows (project_id, period, github_user_id, github_login, decisions, gross_base) SELECT ${key.projectId}, ${period}, ${String(row.actor)}, ${row.login}, ${row.decisions}, ${fromAmount(row.amount).toString()} WHERE EXISTS (SELECT 1 FROM monthly_maintainer_shares WHERE ${shareScope} AND decisions_sha256 = ${share.sha256}) ON CONFLICT (project_id, period, github_user_id) DO NOTHING`),
   ]
 }
 

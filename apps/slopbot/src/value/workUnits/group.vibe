@@ -1,6 +1,6 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/workUnits.md, "A referenced pull request that can never join the group is left out instead of holding it"; spec/slopbot/valueEvidence.md, "Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow"
 import { parsedJson as parsedText } from "@repo/platform/git/bytes"
-import { GitHub } from "@repo/platform/github"
+import { type GitHub } from "@repo/platform/github"
 import { type Discovery, joins } from "../../../gen/slopbot__workUnits.effect.vibe"
 import type { AcceptanceFailure } from "../evidence/acceptance.vibe"
 import { collectEvidence } from "../evidence/collect.vibe"

@@ -118,6 +118,8 @@ it("plays a disabled or loading story to check that a click, Enter or Space call
     "const refuses = async ({ args, canvasElement }) => {",
     // A spy another story of the file called is not this story's doing.
     "  for (const value of Object.values(args)) if (isMockFunction(value)) value.mockClear();",
+    "  const target = canvasElement.querySelector(args.disabled === true",
+    '    ? `a, ${controls}` : `a[aria-disabled=true], :is(${controls}):not(a[href])`);',
     // A play of its own runs first.
     'export const Loading = { args: { ...base, loading: true, onClick: fn() }, play: async (context) => { await given.play["Loading"](context); await refuses(context); } };',
   ])

@@ -1,6 +1,6 @@
-// spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"
+// spec/slopbot/historyReadAhead.md, "First history pages may be read ahead beside the loop within a bounded window and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each empty warmed page once and reads every other page itself"
 import { type HistoryPage, type HistorySource, type JointPage, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
-import { canBegin, canTakeWarmed, initial, machineOver, validConcurrency, workerFree } from "../../../gen/slopbot__historyReadAhead.effect.vibe"
+import { canBegin, initial, machineOver, readAheadWindow, readsAhead, validConcurrency } from "../../../gen/slopbot__historyReadAhead.effect.vibe"
 
 export const invalidConcurrency = "SLOP_VALUE_FEED_CONCURRENCY is invalid"
 
@@ -10,6 +10,11 @@ export interface WarmTarget {
   readonly history: HistorySource
   readonly pull: number
   readonly repositoryNodeId: string
+}
+
+export interface WarmedPages {
+  readonly joint: Deferred.Deferred<JointPage | undefined>
+  readonly single: Deferred.Deferred<HistoryPage | undefined>
 }
 
 export effect function valueFeedConcurrency() {
@@ -28,83 +33,124 @@ function keyOf(position: number, target: WarmTarget) {
   return JSON.stringify([position, target.history.repository, target.pull, target.repositoryNodeId])
 }
 
-function emptyJoint(page: JointPage) {
+export function emptyJointPage(page: JointPage) {
   return page.records.length === 0 && page.nextAfter === null && page.totalRecords === 0
+}
+
+export function emptySinglePage(page: HistoryPage) {
+  return page.records.length === 0 && page.nextAfter === null
+}
+
+function errorLabel(error: unknown): string {
+  if (typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string") return error._tag
+  return error instanceof Error ? error.name : typeof error
 }
 
 export effect function readAhead(concurrency: number, outcomeCount: number) {
   if (!canBegin(initial, concurrency, outcomeCount)) throw new FeedConcurrencyInvalid({ message: invalidConcurrency })
-  const machine = try readAheadRun()
-  try machine.send({ type: "begin", concurrency, outcomeCount })
-  const lock = try Semaphore.make(1)
-  const joint = new Map<string, JointPage>()
-  const single = new Map<string, HistoryPage>()
+  const windowSize = readAheadWindow(concurrency)
+  const feedLimit = try Semaphore.make(concurrency)
+  const warmed = new Map<string, WarmedPages>()
+  let loopIndex = -1
+  let open = true
+  let waiters: Array<Deferred.Deferred<void>> = []
+  let background: Fiber.Fiber<void> | undefined = undefined
 
-  effect function claim(targets: ReadonlyArray<WarmTarget | undefined>) {
-    while (true) {
-      const state = try machine.get()
-      if (!workerFree(state)) return undefined
-      const position = state.nextStart
-      if (targets[position - 1] === undefined) {
-        try machine.send({ type: "skipRead" })
-        continue
-      }
-      try machine.send({ type: "startRead" })
-      return position
-    }
+  effect function wakeWaiters() {
+    const waiting = waiters
+    waiters = []
+    for (const waiter of waiting) try Deferred.succeed(waiter, undefined)
   }
 
-  effect function firstPages(position: number, target: WarmTarget) {
-    const key = keyOf(position, target)
-    const page = try workUnitHistoryPage(target.history, target.pull, 0, null, target.repositoryNodeId)
-    joint.set(key, page)
-    if ((try machine.get()).dropped.length > 0 || !emptyJoint(page)) return
-    single.set(key, try valueHistoryPage(target.history, target.pull, 0, target.repositoryNodeId))
+  effect function waitForWindow() {
+    const waiter = try Deferred.make<void>()
+    waiters.push(waiter)
+    try Deferred.await(waiter)
   }
 
-  effect function worker(targets: ReadonlyArray<WarmTarget | undefined>) {
-    while (true) {
-      const position = try Semaphore.withPermit(lock, claim(targets))
-      if (position === undefined) return
-      const target = targets[position - 1]
-      if (target === undefined) return
-      const read = effect {
-        try firstPages(position, target)
-        return true
-      }
-      const succeeded = read catch () => false
-      try machine.send(succeeded ? { type: "finishRead", position } : { type: "dropRead", position })
+  effect function feedRead<A, E, R>(read: A!E!R) {
+    if (concurrency <= 1) return try read
+    return try Semaphore.withPermit(feedLimit, read)
+  }
+
+  effect function runBackground(targets: ReadonlyArray<WarmTarget | undefined>) {
+    let next = 0
+    let pages = 0
+    let dropped: { readonly outcome: number; readonly error: string } | undefined = undefined
+
+    effect function drop(index: number, error: unknown) {
+      open = false
+      if (dropped === undefined) dropped = { outcome: index, error: errorLabel(error) }
+      try wakeWaiters()
     }
+
+    effect function worker() {
+      while (open && next < targets.length) {
+        if (next > loopIndex + windowSize) {
+          try waitForWindow()
+          continue
+        }
+        const index = next
+        next += 1
+        const target = targets[index]
+        if (target === undefined || index <= loopIndex) continue
+        const jointDeferred = try Deferred.make<JointPage | undefined>()
+        const singleDeferred = try Deferred.make<HistoryPage | undefined>()
+        warmed.set(keyOf(index + 1, target), { joint: jointDeferred, single: singleDeferred })
+        const joint = feedRead(workUnitHistoryPage(target.history, target.pull, 0, null, target.repositoryNodeId)) catch effect (error) => {
+          try drop(index, error)
+          return undefined
+        }
+        if (joint !== undefined) pages += 1
+        try Deferred.succeed(jointDeferred, joint)
+        if (open && joint !== undefined && emptyJointPage(joint)) {
+          const single = feedRead(valueHistoryPage(target.history, target.pull, 0, target.repositoryNodeId)) catch effect (error) => {
+            try drop(index, error)
+            return undefined
+          }
+          if (single !== undefined) pages += 1
+          try Deferred.succeed(singleDeferred, single)
+        } else {
+          try Deferred.succeed(singleDeferred, undefined)
+        }
+      }
+    }
+
+    const workers = Array.from({ length: Math.min(concurrency, targets.length) }, (_, index) => index)
+    try Effect.forEach(workers, () => worker(), { concurrency: "unbounded", discard: true })
+    try Console.error(JSON.stringify({
+      event: "value_history_first_pages_warmed",
+      concurrency,
+      window: windowSize,
+      outcomes: outcomeCount,
+      unresolved: targets.filter((target) => target === undefined).length,
+      pages,
+      ...(dropped === undefined ? {} : { dropped }),
+    }))
   }
 
   return {
-    effect warm(targets: ReadonlyArray<WarmTarget | undefined>) {
-      const workers = Array.from({ length: Math.min(concurrency, outcomeCount) }, (_, index) => index)
-      try Effect.forEach(workers, () => worker(targets), { concurrency: "unbounded", discard: true })
-      try machine.send({ type: "endReadAhead" })
-      try Console.error(JSON.stringify({ event: "value_history_first_pages_warmed", concurrency, outcomes: outcomeCount, pages: joint.size + single.size }))
+    feedRead,
+    effect start(targets: ReadonlyArray<WarmTarget | undefined>) {
+      if (!readsAhead(concurrency, outcomeCount)) return
+      background = try Effect.forkChild(runBackground(targets), { startImmediately: true })
     },
-    takeJoint(position: number, target: WarmTarget) {
+    effect advance(index: number) {
+      loopIndex = index
+      try wakeWaiters()
+    },
+    take(position: number, target: WarmTarget) {
       const key = keyOf(position, target)
-      const page = joint.get(key)
-      joint.delete(key)
-      return page
+      const entry = warmed.get(key)
+      warmed.delete(key)
+      return entry
     },
-    takeSingle(position: number, target: WarmTarget) {
-      const key = keyOf(position, target)
-      const page = single.get(key)
-      single.delete(key)
-      return page
-    },
-    effect decided() {
-      const state = try machine.get()
-      try machine.send(canTakeWarmed(state) ? { type: "takeWarmed" } : { type: "readLive" })
-    },
-    effect failed() {
-      try machine.send({ type: "failRead" })
-    },
-    effect finished() {
-      try machine.send({ type: "finishAll" })
+    effect stop() {
+      open = false
+      try wakeWaiters()
+      const active = background
+      background = undefined
+      if (active !== undefined) try Fiber.await(active)
     },
   }
 }

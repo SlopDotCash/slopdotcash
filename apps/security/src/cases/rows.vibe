@@ -1,6 +1,6 @@
 // spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"
 import { millisOf } from "@repo/platform/clock"
-import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { type RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load } from "@repo/platform/stored"
 import type { AppealRecord, AppealState, Award, Commitment, PrivateCase, Receipt, ReceiptSource, Related, RelatedReview, RoutineMark, Submission, Triage, TriageState } from "../../gen/security__cases.ts"
 import { type NotAState, decodeState, initial, noTriage, parseState, routineService } from "../../gen/security__cases.effect.vibe"

@@ -17,4 +17,5 @@ PRD sections 6 and 11 govern fee-only services and SLOP buyback. No fee operatio
 - [Submission fee deposits of security reports](./submissionFeeReportDeposits.md)
 - [Submission fee resolver sends](./submissionFeeSends.md)
 - [Submission fee SLOP rate](./submissionFeeRate.md)
+- [Standing submission fee deposits](./submissionFeeStandingDeposits.md)
 - [Settlement and signer boundaries](../settlement/)

@@ -1,7 +1,7 @@
 // spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
 import type { PageRuntime } from "../../app/runtime.vibe"
 import { Deployment } from "../../platform/config.vibe"
-import { SessionStore } from "../../platform/storage.vibe"
+import { type SessionStore } from "../../platform/storage.vibe"
 import { currentAddress } from "../../session/address.ts"
 import { BrowserSession } from "../../session/browserSession.vibe"
 import { resumeLocalSignIn, signIn } from "../../session/identity.vibe"

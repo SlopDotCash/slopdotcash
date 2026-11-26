@@ -1,7 +1,7 @@
 // spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
 import { base58Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
 import { randomId } from "@repo/platform/crypto"
-import { type Event, type HistoryResult, type Keyed, Machine, Rejected, type Result, type SolanaPrompt, adapter, canCheckHistory, canEnterCandidate, canHistoryReply, canObserveHeight, canReceivePlan, canSend, canSignIn, canSignOut, canVerify, canVerifyReply, heightReader, initial, machineOver, server, visible } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
+import { type Event, type HistoryResult, type Keyed, type Rejected, type Result, type SolanaPrompt, adapter, canCheckHistory, canEnterCandidate, canHistoryReply, canObserveHeight, canReceivePlan, canSend, canSignIn, canSignOut, canVerify, canVerifyReply, heightReader, initial, machineOver, server, visible } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { modelNumber } from "../../flows/security/private.vibe"
 import { storageKeys } from "../../platform/storage.vibe"
@@ -9,7 +9,7 @@ import { actorNumber } from "../../session/session.vibe"
 import { WalletFailed } from "../core/discovery.vibe"
 import { type SolanaConnection, connectSolana, solanaSignAndSend } from "../core/solana.vibe"
 import { readSlotText, slotWritable, writeSlotText } from "../core/slots.ts"
-import { type Authority, BountyRefused, type PaymentCase, type SolanaPlanView, expiryEstablished, paidWith, paymentMessages, refused, sameActor, sessionActor, solanaPaymentAuthority } from "./paymentCase.vibe"
+import { type Authority, type BountyRefused, type PaymentCase, type SolanaPlanView, expiryEstablished, paidWith, paymentMessages, refused, sameActor, sessionActor, solanaPaymentAuthority } from "./paymentCase.vibe"
 import { type ListedStorage, type SolanaRead, attemptSolanaRecord, isSolanaSignature, keysWithPrefix, payerMessage, readSolanaRecord, sameAttempt, solanaAttempt } from "./records.ts"
 
 export const solanaChain = "solana:mainnet"
@@ -39,7 +39,7 @@ interface KnownMessage {
 }
 
 export interface SolanaJournal {
-  readonly machine: Machine.Shape
+  readonly machine: Effect.Success<ReturnType<typeof machineOver>>
   know(message: number, messageId: string, transaction: string): void!!
   written(event: Event, by: number): (SolanaPrompt | undefined)!Rejected
   readAt(message: number, account: number): SolanaRead!!

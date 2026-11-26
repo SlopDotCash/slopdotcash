@@ -6,9 +6,10 @@ import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { ValueFeedUnavailable, type ValueCensus, ValueInputs } from "@repo/ports/points"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
+import { maxOpenPullRequestFiles } from "../src/collect/merged/hydrate.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
 import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
-import { type Seeded, seeded, start } from "./support/u5/github.ts"
+import { type Seeded, repository, requestsMatching, seeded, start } from "./support/u5/github.ts"
 import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
 import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 
@@ -112,6 +113,40 @@ it.live('Collect merged work end to end through the ValueInputs port (spec/point
       censuses: [{ phase: "ReadyForPublication", totalCount: 0, items: 0 }, { phase: "ReadyForPublication", totalCount: 0, items: 0 }],
       counts: { unavailableSources: 0, unavailableMergedPullRequests: 0, heldWorkUnits: 0, mergedPullRequests: 3, detailedMergedPullRequests: 3, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
       repositories: [{ id: "ada/widgets", repositoryId: world.repositoryNodeId }],
+    })
+    const oversizedCount = maxOpenPullRequestFiles + 1
+    const oversizedNumber = try Effect.try(() => world.fake.world.addPull({
+      repo: repository,
+      author: "grace",
+      title: "Oversized open pull request",
+      state: "open",
+      commits: [world.commits.grace],
+      headSha: world.commits.grace,
+      headRef: "oversized-open",
+      files: Array.from({ length: oversizedCount }, (_, index) => ({ path: `src/big-${index}.ts`, additions: 1, deletions: 0, status: "added" as const })),
+    }))
+    const oversizedId = try Effect.try(() => world.fake.world.pull(repository, oversizedNumber).nodeId)
+    const beforeMoreFiles = requestsMatching(world, "LeaderboardMoreFiles")
+    const oversized = try collectOnce(world, directory, { name: "oversized" }, asked)
+    const oversizedSnapshot = asked.assembled.at(-1) as {
+      readonly source: { readonly counts: { readonly openPullRequests: number } }
+      readonly workQueue: { readonly pullRequests: ReadonlyArray<{ readonly id: string; readonly filesAvailable?: boolean }> }
+      readonly opportunities: ReadonlyArray<{ readonly kind: string; readonly source: { readonly id: string } }>
+    }
+    try same({
+      outcome: oversized.outcome,
+      written: oversized.written,
+      moreFilesRequests: requestsMatching(world, "LeaderboardMoreFiles") - beforeMoreFiles,
+      openCount: oversizedSnapshot.source.counts.openPullRequests,
+      queued: oversizedSnapshot.workQueue.pullRequests.map((item) => ({ id: item.id, filesAvailable: item.filesAvailable })),
+      opportunities: oversizedSnapshot.opportunities.filter((item) => item.source.id === oversizedId).map((item) => item.kind),
+    }, {
+      outcome: "Published",
+      written: true,
+      moreFilesRequests: 0,
+      openCount: 1,
+      queued: [{ id: oversizedId, filesAvailable: false }],
+      opportunities: ["missing-evidence"],
     })
   })
   }

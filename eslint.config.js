@@ -1,11 +1,12 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { relative, sep } from "node:path"
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import js from "@eslint/js"
 import react from "@eslint-react/eslint-plugin"
 import tailwind from "eslint-plugin-better-tailwindcss"
 import boundaries from "eslint-plugin-boundaries"
 import reactHooks from "eslint-plugin-react-hooks"
 import { defineConfig, globalIgnores } from "eslint/config"
+import ts from "typescript"
 import tseslint from "typescript-eslint"
 import vibelang from "vibelang/eslint"
 import { designSystem } from "./vibestack/design/eslint.ts"
@@ -16,11 +17,10 @@ const monorepo = 'CONTRIBUTING.md, "The monorepo"'
 const banned = ["redux", "react-redux", "zustand", "mobx", "jotai", "recoil", "valtio", "xstate", "vue", "svelte", "jest"]
 const scopes = ["reduxjs", "angular", "xstate", "vue", "sveltejs", "jest"]
 // Each workspace package's `exports` beyond its root: "@repo/design-system/theme.css", "@repo/backend/live". A directory
-// without a package.json is no workspace package (pnpm-workspace.yaml). A subpath pattern such as "./kernels/*" names
-// one file per match: its `*` stands for one path segment.
+// without a package.json is no workspace package (pnpm-workspace.yaml). Node export wildcards also match nested subpaths.
 const exported = ["apps", "packages"].flatMap((parent) => readdirSync(parent).filter((dir) => existsSync(`${parent}/${dir}/package.json`)).flatMap((dir) => {
   const { name, exports = {} } = JSON.parse(readFileSync(`${parent}/${dir}/package.json`, "utf8"))
-  return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+"))
+  return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+(?:/[^/]+)*"))
 }))
 // Files copied byte for byte from development and pinned by SHA-256 in frozen.json: records, never linted or rewritten.
 const frozen = JSON.parse(readFileSync(`${import.meta.dirname}/frozen.json`, "utf8")).ignore
@@ -46,7 +46,7 @@ const imports = {
 }
 const noReact = { patterns: [...imports.patterns, { regex: "^react(?:-dom)?(?:/|$)", message: `Tool and domain code does not import React: ${monorepo}.` }] }
 // What no tsconfig.json includes, so the type-aware rules cannot see it.
-const untyped = ["*.{js,ts}", "**/.storybook/**", "packages/design-system/**", "vibestack/design/test/**", "vibestack/stories/test/**"]
+const untyped = ["*.{js,ts}", "**/*.mjs", "**/.storybook/**", "packages/design-system/**", "vibestack/design/test/**", "vibestack/stories/test/**"]
 // Every React interface: Studio's page is built on the same theme (vibestack/studio/vite.config.ts).
 const tsx = ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}", "vibestack/studio/src/page/**/*.{ts,tsx}"]
 const design = "packages/design-system"
@@ -58,12 +58,104 @@ const suppression = new RegExp(String.raw`^ eslint-disable(?:-next-line|-line)? 
 const configs = [suppression, /^ eslint-enable\b/]
 const throwsType = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*`
 const throwsDirective = new RegExp(String.raw`^\*(?:[\s*]*@throws \{[ \t]*${throwsType}(?:[ \t]*\|[ \t]*${throwsType})*[ \t]*\})+[\s*]*$`)
+const proofDirective = /^@ (?:backend|requires|ensures|invariant|decreases|assert|pure|type|ghost)(?: |$)/
 const directives = {
-  Line: [cited, suppression, /^@ (?:backend|requires|ensures|invariant|decreases|assert|pure|type|ghost)(?: |$)/, /^\/ <reference /, /^ @vitest-environment [\w-]+$/],
+  Line: [cited, suppression, proofDirective, /^\/ <reference /, /^ @vitest-environment [\w-]+$/],
   Block: [cited, ...configs, /^\*(?:[\s*]*@(?:model|design) \S+)+[\s*]*$/, throwsDirective],
   Shebang: [/^/],
 }
 const inline = /^\s*(?:eslint(?:-[a-z]+)*|exported|globals?)(?:\s|$)/
+function removeSyntheticLoopBindings(node, visitorKeys) {
+  if (node.type === "SwitchStatement" && node.discriminant.synthesized === true) {
+    const block = node.cases[0]?.consequent[0]
+    if (block?.type === "BlockStatement") {
+      const [head, loop, exit, ...bindings] = block.body
+      if (loop?.type === "ForOfStatement" && loop.right.synthesized === true && exit?.type === "BreakStatement") {
+        block.body = [head, loop, exit, ...bindings.filter((statement) => statement.type !== "VariableDeclaration" ||
+          !statement.declarations.every(({ id, init }) => id.synthesized === true && init === null))]
+      }
+    }
+  }
+  for (const key of visitorKeys[node.type] ?? []) {
+    const child = node[key]
+    if (Array.isArray(child)) {
+      for (const item of child) if (item) removeSyntheticLoopBindings(item, visitorKeys)
+    } else if (child) removeSyntheticLoopBindings(child, visitorKeys)
+  }
+}
+
+const vibeParser = {
+  ...vibelang,
+  parseForESLint(text, options) {
+    const parsed = vibelang.parseForESLint(text, options)
+    // The parser has already analyzed the synthetic for-try bindings past the break.
+    removeSyntheticLoopBindings(parsed.ast, parsed.visitorKeys)
+    return parsed
+  },
+}
+
+const root = realpathSync(import.meta.dirname)
+const programs = new Map()
+const sidecarDirectories = new Map()
+const declarationPaths = new Map()
+
+function physicalDeclaration(file) {
+  if (!/\.d\.vibex?\.ts$|\.vibex?\.[^/\\]+\.d\.ts$/u.test(file) || existsSync(file)) return undefined
+  const directory = dirname(file)
+  if (!existsSync(directory)) return undefined
+  const original = join(realpathSync(directory), basename(file))
+  const [parent, workspace] = relative(root, original).split(sep)
+  if ((parent !== "apps" && parent !== "packages") || workspace === undefined) return undefined
+  const owner = join(root, parent, workspace)
+  if (!sidecarDirectories.has(owner)) {
+    const options = ts.readConfigFile(join(owner, "tsconfig.json"), ts.sys.readFile).config?.vibe
+    sidecarDirectories.set(owner, typeof options?.sidecarDir === "string" ? resolve(owner, options.sidecarDir) : undefined)
+  }
+  const sidecars = sidecarDirectories.get(owner)
+  if (sidecars === undefined) return undefined
+  const declaration = join(sidecars, relative(owner, original))
+  return existsSync(declaration) ? declaration : undefined
+}
+
+function declarationOf(file) {
+  if (!declarationPaths.has(file)) declarationPaths.set(file, physicalDeclaration(file))
+  return declarationPaths.get(file)
+}
+
+function workspaceProgram(config) {
+  const parsed = ts.getParsedCommandLineOfConfigFile(config, {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic(diagnostic) {
+      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
+    },
+  })
+  const host = ts.createCompilerHost(parsed.options, true)
+  const { fileExists, readFile, getSourceFile } = host
+  // Checkouts keep each package's generated Vibe declarations outside its source tree.
+  // Present the declaration beside its source so cross-package relative imports resolve in TypeScript.
+  host.fileExists = (file) => fileExists.call(host, file) || declarationOf(file) !== undefined
+  host.readFile = (file) => readFile.call(host, declarationOf(file) ?? file)
+  host.getSourceFile = (file, language, onError, shouldCreate) => {
+    const declaration = declarationOf(file)
+    if (declaration === undefined) return getSourceFile.call(host, file, language, onError, shouldCreate)
+    return ts.createSourceFile(file, readFileSync(declaration, "utf8"), language, true)
+  }
+  return ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, host, projectReferences: parsed.projectReferences })
+}
+
+const workspaceParser = {
+  ...tseslint.parser,
+  parseForESLint(text, options) {
+    if (!options.projectService || typeof options.filePath !== "string") return tseslint.parser.parseForESLint(text, options)
+    const [parent, workspace] = relative(root, options.filePath).split(sep)
+    if ((parent !== "apps" && parent !== "packages") || workspace === undefined) return tseslint.parser.parseForESLint(text, options)
+    const config = join(root, parent, workspace, "tsconfig.json")
+    if (!existsSync(config)) return tseslint.parser.parseForESLint(text, options)
+    if (!programs.has(config)) programs.set(config, workspaceProgram(config))
+    return tseslint.parser.parseForESLint(text, { ...options, projectService: false, programs: [programs.get(config)] })
+  },
+}
+
 const guarded = (parser) => ({
   meta: { name: `${parser.meta.name} with code/inline`, version: parser.meta.version },
   parseForESLint: (text, options) => {
@@ -103,7 +195,44 @@ const effects = {
     return { ...Object.fromEntries(Object.entries(scheduling).map(([selector, message]) => [selector, (node) => found.push({ node, message })])), "Program:exit": (node) => excess(context, node, found, "scheduled") }
   },
 }
-const code = { rules: { comments, effects } }
+const redeclarations = {
+  meta: { schema: [] },
+  create(context) {
+    return {
+      "Program:exit"() {
+        for (const scope of context.sourceCode.scopeManager.scopes) {
+          for (const variable of scope.variables) {
+            let type = false
+            let value = variable.eslintImplicitGlobalSetting === "readonly" || variable.eslintImplicitGlobalSetting === "writable"
+            for (const definition of variable.defs) {
+              if ((definition.isTypeDefinition && type) || (definition.isVariableDefinition && value)) {
+                context.report({ node: definition.name, message: "'{{name}}' is already defined in this namespace.", data: { name: variable.name } })
+              }
+              type ||= definition.isTypeDefinition
+              value ||= definition.isVariableDefinition
+            }
+          }
+        }
+      },
+    }
+  },
+}
+const warnings = {
+  meta: { schema: [] },
+  create(context) {
+    return {
+      Program() {
+        for (const comment of context.sourceCode.getAllComments()) {
+          const marker = /\b(?:todo|fixme|legacy|deprecated)\b/iu.exec(comment.value)?.[0]
+          if (marker !== undefined && !cited.test(comment.value) && !(comment.type === "Line" && proofDirective.test(comment.value))) {
+            context.report({ loc: comment.loc, message: "Unexpected '{{marker}}' comment.", data: { marker } })
+          }
+        }
+      },
+    }
+  },
+}
+const code = { rules: { comments, effects, redeclarations, warnings } }
 const own = ["apps/**", "packages/**"]
 const commented = {
   "apps/app/src/App.tsx": 4,
@@ -118,7 +247,6 @@ const commented = {
   "apps/backend/test/backend-session.test.vibe": 3,
   "apps/backend/test/backend-setup.test.vibe": 6,
   "apps/backend/test/backend-wallets.test.vibe": 3,
-  "apps/points/test/points-U12.test.vibe": 2,
   "apps/points/test/points.test.vibe": 2,
   "apps/points/test/support/catchup3-e1/world.ts": 1,
   "apps/points/test/support/u16/github.ts": 3,
@@ -332,7 +460,6 @@ const commented = {
   "packages/ui/src/components/AccountMenu.tsx": 1,
   "packages/ui/src/components/Address.meta.tsx": 4,
   "packages/ui/src/components/Address.tsx": 1,
-  "packages/ui/src/components/AgentMark.meta.tsx": 1,
   "packages/ui/src/components/Alert.meta.tsx": 1,
   "packages/ui/src/components/Avatar.meta.tsx": 1,
   "packages/ui/src/components/BarChart.meta.tsx": 1,
@@ -394,13 +521,13 @@ const loose = Object.fromEntries(["no-explicit-any", "no-unsafe-argument", "no-u
 
 export default defineConfig(
   // Generated or disposable, and .claude/worktrees holds other checkouts of this repository.
-  globalIgnores(["**/gen/", "!vibestack/gen/", "**/.vibe/", "**/dist/", "**/.cache/", "**/.spec-cache/", "**/generated/", "**/storybook-static/", "**/test/fixtures/", "vibestack/examples/", "vibestack/fixtures/", ".claude/", ".lemmascript/", ".studio/", ".turbo/", "_apalache-out/", ...frozen]),
+  globalIgnores(["**/gen/", "!vibestack/gen/", "**/.build/", "**/.vibe/", "**/dist/", "**/.cache/", "**/.spec-cache/", "**/generated/", "**/storybook-static/", "**/test/fixtures/", "vibestack/examples/", "vibestack/fixtures/", ".claude/", ".lemmascript/", ".studio/", ".turbo/", "_apalache-out/", ...frozen]),
   { linterOptions: { reportUnusedDisableDirectives: "error", reportUnusedInlineConfigs: "error" } },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
-    plugins: { boundaries },
+    plugins: { boundaries, code },
     settings: {
       "boundaries/elements": [
         { type: "package", pattern: ["packages/*", "apps/*"], capture: ["name"] },
@@ -432,7 +559,7 @@ export default defineConfig(
       // Regular expressions here match the tools' column-aligned output, where literal spaces read as the output does.
       "no-regex-spaces": "off",
       // AGENTS.md, "Writing code": one path, so nothing is left for later or kept beside its replacement.
-      "no-warning-comments": ["error", { terms: ["todo", "fixme", "legacy", "deprecated"], location: "anywhere" }],
+      "code/warnings": "error",
     },
   },
   { files: untyped, extends: [tseslint.configs.disableTypeChecked] },
@@ -458,7 +585,7 @@ export default defineConfig(
     },
   },
   // VibeLang's parser gives .vibe files typescript-eslint's tree without a program, so the rules that need types stay off: `vibelang --noEmit` checks them.
-  { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibelang, parserOptions: { projectService: false } }, rules: { "no-undef": "off" } },
+  { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibeParser, parserOptions: { projectService: false } }, rules: { "no-undef": "off" } },
   // React belongs to interfaces: the tools apart from Studio's page, and schemas, contracts, drivers and the shell everywhere, do without it.
   // @repo/ui's drivers are the exception: they mount its React components to check them against their specs.
   {
@@ -491,9 +618,13 @@ export default defineConfig(
       "no-restricted-syntax": ["error", { selector: "JSXOpeningElement[name.name=/^(input|textarea)$/]", message: "Use Input, Textarea or Checkbox from @repo/ui." }],
     },
   },
-  { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(tseslint.parser) } },
-  { files: ["{apps,packages}/**/*.{vibe,vibex}"], languageOptions: { parser: guarded(vibelang) } },
-  { files: own, plugins: { code }, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
+  { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(workspaceParser) } },
+  {
+    files: ["{apps,packages}/**/*.{vibe,vibex}"],
+    languageOptions: { parser: guarded(vibeParser) },
+    rules: { "no-redeclare": "off", "code/redeclarations": "error" },
+  },
+  { files: own, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
   { files: ["packages/ui/src/components/**"], ignores: ["**/*.meta.tsx"], rules: { "code/comments": ["error", { jsdoc: true, left: commented }] } },
 )
 

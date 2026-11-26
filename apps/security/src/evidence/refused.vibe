@@ -16,10 +16,11 @@ export interface Row {
   readonly status: number
   readonly error: string
   readonly message: string
+  readonly headers?: Readonly<Record<string, string>>
 }
 
 export function refused(row: Row) {
-  return refuse(row.status, row.error, row.message)
+  return refuse(row.status, row.error, row.message, row.headers)
 }
 
 export const rows = {

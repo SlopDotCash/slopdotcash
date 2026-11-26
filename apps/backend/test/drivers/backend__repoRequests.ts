@@ -1,5 +1,5 @@
 // spec/backend/repoRequests.md, "A flag counts for 90 days, renews in place and is withdrawn without being deleted"; spec/backend/repoRequests.md, "Only a member with merged work flags a public, original, unarchived repository that is not theirs and not on Slop"
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { type Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
@@ -87,14 +87,16 @@ const observed = async (): Promise<RepoRequests> => {
   return ordered({ now: clock.now() - BASE, flags });
 };
 
+const actorText = (by: unknown) => (typeof by === "string" || typeof by === "number" ? String(by) : "");
+
 export const driver: Driver & AsyncDisposable = {
   reset: () => {
     accounts.clear();
     repos.clear();
     clock.set(BASE);
   },
-  dispatch: (_key, event: Event, by) => sent(snapshot(event), (translatedEvent) => send(translatedEvent as Event, accountOf(String(by ?? "")))),
-  receive: (_key, raw, by) => sent(snapshot(raw), (translatedEvent) => receive(translatedEvent, accountOf(String(by ?? "")))),
+  dispatch: (_key, event: Event, by) => sent(snapshot(event), (translatedEvent) => send(translatedEvent as Event, accountOf(actorText(by)))),
+  receive: (_key, raw, by) => sent(snapshot(raw), (translatedEvent) => receive(translatedEvent, accountOf(actorText(by)))),
   observe: () => observed(),
   [Symbol.asyncDispose]: async () => {
     await runtime.dispose();

@@ -9,7 +9,7 @@ import { leaderboardMethodology } from "../src/client/snapshot/methodology.vibe"
 import { type RegisteredRepository, type RepositoryRegistry, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, ruleVersion, schemaVersion, scoreWindowDays, verificationWindowDays } from "../src/client/snapshot/schema.vibe"
 import { accountBanFeedUrl, participationBans } from "../src/collect/feeds/bans.vibe"
 import { type ConfirmationWait, probeUnavailableSources } from "../src/collect/merged/collection.vibe"
-import { Graphql, type UnavailableSource, graphqlClient } from "../src/ingestion/graphql.vibe"
+import { type Graphql, type UnavailableSource, graphqlClient } from "../src/ingestion/graphql.vibe"
 import { journalText } from "../src/kernels/records/canonical.ts"
 import { journalFile } from "../src/kernels/records/ids.vibe"
 import { projectionFiles } from "../src/publication/projections.vibe"
@@ -111,7 +111,7 @@ const repository: RegisteredRepository = {
   displayName: "member-41/widgets",
   githubUrl: "https://github.com/member-41/widgets",
   description: "Research tooling repository.",
-  integrationBranch: "vibestack",
+  integrationBranch: "develop",
   projectId: "widgets",
   nodeId: "R_9001",
   aliases: [],
@@ -284,9 +284,9 @@ describe('Read the published projection without mistaking a reset for a refusal 
 describe('Publish one complete window with exact counts (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => {
   it.live("the pull-request ledger adopts only an integration branch move that registry history proves", () => effect {
     provide webCrypto {
-      const history = [try revision("main", 1, cutoffMs - 1_000), try revision("vibestack", 2, cutoffMs + 1_000)]
+      const history = [try revision("main", 1, cutoffMs - 1_000), try revision("develop", 2, cutoffMs + 1_000)]
       const [collected, latest] = history
-      const beforeCutoff = [try revision("main", 1, cutoffMs - 2_000), try revision("vibestack", 2, cutoffMs - 1_000)]
+      const beforeCutoff = [try revision("main", 1, cutoffMs - 2_000), try revision("develop", 2, cutoffMs - 1_000)]
       const brokenDigest = collected === undefined || latest === undefined ? [] : [{ ...collected, manifestSha256: "0".repeat(64) }, latest]
       const outcomes = {
         proven: try prepared(deployedLedger("main", "R_9001"), history),
@@ -298,7 +298,7 @@ describe('Publish one complete window with exact counts (spec/points/window.md, 
         description: try prepared(deployedLedger("main", "R_9001", "Another repository."), history),
       }
       try same(outcomes, {
-        proven: "branch:vibestack",
+        proven: "branch:develop",
         arbitrary: "unverified",
         wrongNode: "unverified",
         newerCutoff: "unverified",

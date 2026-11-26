@@ -11,7 +11,7 @@ import { type Plan, type Story, plan } from "./variants.ts";
 export type { Prop, Story };
 
 /** Part of every hash: raise it when the same inputs would be written differently. */
-const VERSION = 9;
+const VERSION = 10;
 
 export interface Component {
   id: string;
@@ -98,7 +98,9 @@ function story(c: Found, p: Plan, from: (file: string) => string): string {
           "const refuses = async ({ args, canvasElement }) => {",
           "  // Spies in `base` are shared by every story of the file: count only what this one does.",
           "  for (const value of Object.values(args)) if (isMockFunction(value)) value.mockClear();",
-          '  const target = canvasElement.querySelector("a, button, input, select, textarea, [role=button], [role=checkbox], [role=switch], [tabindex]");',
+          '  const controls = "button, input, select, textarea, [role=button], [role=checkbox], [role=switch], [tabindex]";',
+          "  const target = canvasElement.querySelector(args.disabled === true",
+          '    ? `a, ${controls}` : `a[aria-disabled=true], :is(${controls}):not(a[href])`);',
           "  if (target) {",
           "    await userEvent.click(target, { pointerEventsCheck: 0 });",
           "    target.focus();",

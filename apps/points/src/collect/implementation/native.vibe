@@ -1,7 +1,7 @@
 // spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
-import { ChildProcessSpawner } from "effect/process"
+import { type ChildProcessSpawner } from "effect/process"
 import { sha256Hex } from "@repo/platform/crypto"
-import { Git, gitBytes, publicGitArguments, runGit } from "@repo/platform/git"
+import { type Git, gitBytes, publicGitArguments, runGit } from "@repo/platform/git"
 import { lossyText } from "@repo/platform/git/bytes"
 import type { AcceptedImplementationSource } from "./sources.vibe"
 

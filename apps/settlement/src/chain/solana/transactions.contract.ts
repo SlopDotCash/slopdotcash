@@ -1,15 +1,15 @@
 // spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project's network"
-import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Address, type Blockhash, type Message, addressOf, decodeMessage } from "@repo/platform/chain/solanaWire";
 import { Arbitrary, Schema } from "effect";
 import { contract } from "vibestack/testing";
+import { seededTestWallet, signTestMessage } from "../../../test/support/solana/testWallet.ts";
 import { sameBytes, u32le } from "./bytes.ts";
 import { type Compiled, type Instruction, completesPrepared, compileLegacy, missingSigners, requiredSigners, resolveInstruction, unsignedTransaction, withSignature } from "./transactions.ts";
 
 const seeds: ReadonlyArray<Uint8Array> = Array.from({ length: 7 }, (_, at) => sha256(u32le(at)));
-const pool: ReadonlyArray<Address> = seeds.map((seed) => addressOf(ed25519.getPublicKey(seed)) as Address);
-const badMessageSignature = ed25519.sign(sha256(Uint8Array.of(0)), seeds[0]);
+const pool: ReadonlyArray<Address> = seeds.map((seed) => seededTestWallet(seed));
+const badMessageSignature = signTestMessage(sha256(Uint8Array.of(0)), seeds[0]);
 const blockhash = addressOf(sha256(Uint8Array.of(255))) as string as Blockhash;
 const key = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: pool.length - 1 }));
 const signingKey = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 2 }));
@@ -61,7 +61,7 @@ const signsSlotBySlot = (_: ReadonlyArray<Instruction>, compiled: Compiled) => {
   const empty = unsignedTransaction(compiled.message);
   if (empty === undefined) return false;
   const seedOf = (signer: Address) => seeds[pool.indexOf(signer)];
-  const signatures = signers.map((signer) => ed25519.sign(compiled.bytes, seedOf(signer)));
+  const signatures = signers.map((signer) => signTestMessage(compiled.bytes, seedOf(signer)));
   let wire = empty;
   for (const [at, signer] of signers.entries()) {
     const wrongKey = signers.length > 1 ? [signatures[(at + 1) % signers.length]] : [];

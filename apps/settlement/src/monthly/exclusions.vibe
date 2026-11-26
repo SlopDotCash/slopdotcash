@@ -1,10 +1,10 @@
 // spec/settlement/payoutExclusions.md, "A project's exclusion list starts empty and is revised only for later months"; spec/settlement/payoutExclusions.md, "Who is excluded in the open month or earlier never changes"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately"
 import { nowSeconds } from "@repo/platform/clock"
-import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load } from "@repo/platform/stored"
-import { type Event, type Exclusion, type ExclusionRegistry, NotAState, apply, decodeState, initial } from "../../gen/settlement__payoutExclusions.effect.vibe"
+import { type Event, type Exclusion, type ExclusionRegistry, type NotAState, apply, decodeState, initial } from "../../gen/settlement__payoutExclusions.effect.vibe"
 import { periodContaining } from "../kernels/calendar.ts"
-import { ManifestInvalid, exclusionsOf, manifestOf } from "./store.vibe"
+import { type ManifestInvalid, exclusionsOf, manifestOf } from "./store.vibe"
 
 schema RevisionRow { readonly revision: number; readonly manifest: string }
 

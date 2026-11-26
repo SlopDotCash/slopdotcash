@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, ManagedRuntime } from "effect";
+import { Cause, type Effect, Exit, ManagedRuntime } from "effect";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
 import { migrationsDir } from "@repo/platform/testing/paths";

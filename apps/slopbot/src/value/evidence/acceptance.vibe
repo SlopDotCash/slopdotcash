@@ -1,5 +1,5 @@
 // spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
-import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { type GitHub, type GitHubFailure } from "@repo/platform/github"
 import type { FileChange } from "../proofs/changes.vibe"
 import type {
   AcceptedRange,

@@ -18,7 +18,7 @@ import { internet, type Internet } from "@repo/platform/testing/internet"
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
 import { ClosedMonth, type ProjectMonth, type ValueCensus, ValueFeedUnavailable, ValueInputs } from "@repo/ports/points"
 import type { PublicVaultPayment } from "@repo/ports/settlement"
-import { Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
+import { type Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
 import { decide } from "../gen/points__census.effect.vibe"
 import { retirementZeroDigest, retirementZeroRule } from "../gen/points__evaluations.effect.vibe"
 import { periodOf as periodOfPointsperiodsEffect } from "../gen/points__periods.effect.vibe"
@@ -190,7 +190,7 @@ module availability {
 import { stillUnavailable } from availability
 
 module fakes {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
   import type { Handler } from "@repo/platform/testing"
 
@@ -1564,7 +1564,7 @@ import { seededGithub, slopbotFake } from fakes
   const rev2 = actor("rev2")
   const substantive = "The retry loop now bounds every attempt and reports the last failure."
 
-  it.effect('Merge deduplication: two PRs grouped into one work unit, and the same merge seen twice, are credited once and every unit keeps at least 10 Points (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration")', () => effect {
+  it.effect('Merge deduplication: two PRs grouped into one work unit, and the same merge seen twice, are credited once and every unit keeps at least 10 Points (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "A joint assessment credits a retained copy to its original author, a verified repair to its accepted author, and holds an unverified repair"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration")', () => effect {
     const first = pull(101, "2026-11-03T10:00:00Z", alice, [commit("a1", alice, 30, 10)])
     const stacked = pull(102, "2026-11-05T10:00:00Z", bob, [commit("a1", alice, 30, 10), commit("b1", bob, 15, 5)])
     const unassessed = pull(103, "2026-11-07T10:00:00Z", carol, [commit("c1", carol, 5, 0)])
@@ -1604,6 +1604,40 @@ import { seededGithub, slopbotFake } from fakes
     const renamedUnit = { ...stackedUnit, claims: [...stackedUnit.claims, claim(first, "a1", "a1.old.ts")] }
     const renamed = try credited(facts([first, stacked], { joint: [decision("b", [first, stacked], [renamedUnit])] }))
     try Effect.try(() => assert.deepStrictEqual(renamed, [["PR_102:joint:wu_slop_joint_stacked:merged:U_alice", 6], ["PR_102:joint:wu_slop_joint_stacked:merged:U_bob", 3]]))
+
+    const original = closed(106, "2026-11-02T10:00:00Z", alice, [commit("original", alice, 900, 100)])
+    const copiedCommit = { ...commit("copy", bob, 15, 5), attributions: [{ limited: false, files: [changed("original", 15, 5)] }] }
+    const copiedCarrier = pull(107, "2026-11-05T10:00:00Z", bob, [copiedCommit, commit("own", bob, 8, 2)])
+    const copiedClaim = {
+      ...claim(original, "original"),
+      carriers: [original.id, copiedCarrier.id],
+      copy: { sourceId: copiedCarrier.id, commitOid: copiedCommit.oid, kind: "OrdinaryCopy" as const },
+    }
+    const copiedUnit = {
+      ...unit("wu_slop_joint_copied", "medium", [copiedCarrier], ["own"], "Retained copy and distinct work."),
+      claims: [copiedClaim, claim(copiedCarrier, "own")],
+      carriers: copiedClaim.carriers,
+      retainedOriginal: original.id,
+    }
+    const copies = new Map([[alice.id, alice], [bob.id, bob]])
+    const copied = try credited(facts([copiedCarrier], { contexts: [original], valueActors: copies, joint: [decision("a", [original, copiedCarrier], [copiedUnit])] }))
+    const repaired = { ...copiedUnit, claims: [{ ...copiedClaim, copy: { ...copiedClaim.copy, kind: "VerifiedRepair" as const } }, claim(copiedCarrier, "own")] }
+    const repairs = try credited(facts([copiedCarrier], { contexts: [original], valueActors: copies, joint: [decision("a", [original, copiedCarrier], [repaired])] }))
+    const unverified = { ...copiedUnit, claims: [{ ...copiedClaim, copy: { ...copiedClaim.copy, kind: "UnverifiedRepair" as const } }, claim(copiedCarrier, "own")] }
+    const refusedCopy = try scoreSnapshot(facts([copiedCarrier], { contexts: [original], valueActors: copies, joint: [decision("a", [original, copiedCarrier], [unverified])] }))
+    try Effect.try(() => assert.deepStrictEqual({ copied, repairs, held: refusedCopy.held, creditedWhileHeld: refusedCopy.ledger.length }, {
+      copied: [["PR_107:joint:wu_slop_joint_copied:merged:U_alice", 6], ["PR_107:joint:wu_slop_joint_copied:merged:U_bob", 3]],
+      repairs: [["PR_107:joint:wu_slop_joint_copied:merged:U_bob", 9]],
+      held: [original, copiedCarrier].map((pull) => ({ sourceId: pull.id, reason: "incomplete-lines" })),
+      creditedWhileHeld: 0,
+    }))
+
+    const mergedCopy = merge("merged-copy", bob, 30, 10, [[changed("elsewhere", 3, 1)]])
+    const mergeCarrier = pull(108, "2026-11-05T10:00:00Z", bob, [mergedCopy])
+    const mergeCopyClaim = { ...copiedClaim, carriers: [original.id, mergeCarrier.id], copy: { sourceId: mergeCarrier.id, commitOid: mergedCopy.oid, kind: "OrdinaryCopy" as const } }
+    const mergeCopyUnit = { ...unit("wu_slop_joint_merge_copy", "medium", [mergeCarrier], [], "Retained copy through a merge."), claims: [mergeCopyClaim], carriers: mergeCopyClaim.carriers, retainedOriginal: original.id }
+    const mergeCopied = try credited(facts([mergeCarrier], { contexts: [original], valueActors: copies, joint: [decision("a", [original, mergeCarrier], [mergeCopyUnit])] }))
+    try Effect.try(() => assert.deepStrictEqual(mergeCopied, [["PR_108:joint:wu_slop_joint_merge_copy:merged:U_alice", 9]]))
 
     const ratified = pull(301, "2026-11-03T10:00:00Z", alice, [commit("x1", alice, 10, 0)], { ratification: ratification(mia, "head-301") })
     const carrier = pull(302, "2026-11-04T10:00:00Z", bob, [commit("y1", bob, 10, 0), commit("y2", bob, 10, 0)])

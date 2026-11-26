@@ -11,9 +11,10 @@ import { area, pages } from "@repo/platform/worker"
 import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
 import { AuthorityUnavailable, SecurityNoticeAccess } from "@repo/ports/security"
 import { AssessmentQueue } from "@repo/ports/slopbot"
-import { inboxApi } from "../src/client/inbox.vibe"
+import { inboxApi, isNotificationEventKey } from "../src/client/inbox.vibe"
 import { inboxRoutes } from "../src/inbox/routes.vibe"
 import { noticePorts } from "../src/notifications/statements.vibe"
+import { notifyTraceLicensingAvailable, recipientCount, rowsWritten, traceLicensingAvailableSql, traceLicensingBanQuery, traceLicensingEventKey, traceLicensingNotice, traceLicensingRecipientCountQuery, withNoticeTime } from "../src/notifications/traceLicensing.vibe"
 import { signedUp } from "@repo/platform/testing/members"
 
 interface Env {
@@ -213,19 +214,19 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     const besideLegacy = try read(["project-revision:inbox:delivered"])
 
     try same({
-      signedOut: [signedOut.status, signedOut.body],
+      signedOut: [signedOut.status, signedOut.body, signedOut.cache],
       cache: listedAnswer.cache,
       private: [digest, providerReference, version, "member@slop.test", "attempts"].filter((secret) => listedAnswer.text.includes(secret)),
       listed: { ...listed, notifications: withoutCreatedAt(listed.notifications) },
       paging: [firstPage.notifications.length, secondPage.notifications.length, secondPage.nextCursor, firstPage.unread, new Set([...firstPage.notifications, ...secondPage.notifications].map((item) => item.eventKey)).size],
-      invalidCursor: [invalidCursor.status, invalidCursor.body],
+      invalidCursor: [invalidCursor.status, invalidCursor.body, invalidCursor.cache],
       marks: [firstMark.body, replayMark.body, hiddenMark.body, caseRead.body],
       readAt: [(try readAt("project-revision:inbox:sent", member)) !== null, try readAt("wallet-claim:inbox-other", other), try readAt("wallet-claim:inbox-1", other)],
       refusals,
       readIsNotAcknowledgment: [afterReading?.readAt !== null, afterReading?.acknowledgedAt],
       besideLegacy: [besideLegacy.status, besideLegacy.body],
     }, {
-      signedOut: [401, { error: "not_signed_in" }],
+      signedOut: [401, { error: "not_signed_in" }, "private, no-store"],
       cache: "private, no-store",
       private: [],
       listed: {
@@ -249,7 +250,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
         ],
       },
       paging: [100, 13, null, 113, 113],
-      invalidCursor: [400, { error: "invalid_cursor" }],
+      invalidCursor: [400, { error: "invalid_cursor" }, "private, no-store"],
       marks: [{ marked: 1 }, { marked: 0 }, { marked: 0 }, { marked: 1 }],
       readAt: [true, null, null],
       refusals: [
@@ -335,8 +336,12 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       sql`INSERT INTO points_disputes (appeal_key, revision_id, item_node_id, appellant_github_id, statement, opened_at, due_at, escalated_at, escalation, resolved_at, resolution, resolved_by, resolution_reason, resolver_github_id)
         VALUES ('points-dispute:inbox-1', 'rev-inbox-dispute-1', 'rev-inbox-dispute-1', ${other}, 'Review award.', ${seededAt}, '2030-01-08T00:00:00.000Z', ${seededAt}, 'moderator', ${at(42)}, 'upheld', 'moderator', 'Keep recorded award.', ${moderator})`,
     ])
-    const appellantDispute = kinds((try inbox(other)).notifications).filter(([key]) => String(key).startsWith("slopbot-points-dispute:inbox-1"))
-    const moderatorDispute = kinds((try inbox(moderator)).notifications).filter(([key]) => String(key).startsWith("slopbot-points-dispute:inbox-1"))
+    const disputeItems = (items: ReadonlyArray<Record<string, unknown>>) =>
+      items
+        .filter((item) => String(item.eventKey).startsWith("slopbot-points-dispute:inbox-1"))
+        .map((item) => [item.eventKey, item.kind, item.pointsDisputeReceipt])
+    const appellantDispute = disputeItems((try inbox(other)).notifications)
+    const moderatorDispute = disputeItems((try inbox(moderator)).notifications)
     try same({
       listedBefore,
       notAdministrator: [notAdministrator.notifications, notAdministrator.unread, notAdministrator.incompleteAssessments],
@@ -363,10 +368,10 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       reversed: [404, { error: "not_found" }],
       listedAfter: [[["slopbot-appeal-inbox-1", "slopbot_appeal_resolved"]], 1],
       appellantDispute: [
-        ["slopbot-points-dispute:inbox-1:resolved", "slopbot_appeal_resolved"],
-        ["slopbot-points-dispute:inbox-1", "slopbot_appeal_review"],
+        ["slopbot-points-dispute:inbox-1:resolved", "slopbot_appeal_resolved", undefined],
+        ["slopbot-points-dispute:inbox-1", "slopbot_appeal_review", true],
       ],
-      moderatorDispute: [["slopbot-points-dispute:inbox-1", "slopbot_appeal_resolved"]],
+      moderatorDispute: [["slopbot-points-dispute:inbox-1", "slopbot_appeal_resolved", undefined]],
     })
   })
 
@@ -434,6 +439,80 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       oneReleased: [[accountKey(kept)], 1],
       releasedRead: null,
       keptRead: true,
+    })
+  })
+
+  it.effect('Notify each eligible finalized-trace uploader once about trace licensing, skip closed and banned accounts, and deliver it to Inbox (spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/contributor/traceLicensing.md, "Enabling, v3 re-confirmation, disabling, closure and bans enforce consent boundaries")', () => effect {
+    const db = try D1
+    const eligibleA = "9400000111"
+    const eligibleB = "9400000112"
+    const closedAccount = "9400000113"
+    const bannedAccount = "9400000114"
+    const unfinalized = "9400000115"
+    const memberless = "9400000121"
+    try signedUp([eligibleA, eligibleB, closedAccount, bannedAccount, unfinalized], { joinedAt: seededAt, tokenOf })
+    const banIssuer = JSON.stringify({ kind: "vetting-service", keySha256: "b".repeat(64), assessmentId: "assessment-trace-ban", policyVersion: "journey-policy", rule: "confirmed-malicious" })
+    try db.batch([
+      sql`UPDATE points_members SET closed_at = ${seededAt}, public = 0 WHERE github_id = ${closedAccount}`,
+      ...project("trace-announce-ban", "b".repeat(64)),
+      sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys,
+          actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+        VALUES ('enf_trace_signed_ban', 'trace-announce-ban', 1, 'ban', 'banned', 'none', 'journey ban', 'evidence', '9401', '["github:9401"]',
+          NULL, NULL, ${banIssuer}, 'vetting-service', 'standing-rule', 1, ${"b".repeat(64)}, NULL, NULL, 'no_revision_needed', ${seededAt})`,
+      sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys,
+          actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+        VALUES ('enf_trace_ban', 'trace-announce-ban', 2, 'ban', 'banned', 'none', 'journey ban', 'evidence', '9401', '["github:9401"]',
+          ${moderator}, 'mod', NULL, 'project-moderator', 'admin-panel', 1, ${"b".repeat(64)}, NULL, NULL, 'no_revision_needed', ${seededAt})`,
+      sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES ('enf_trace_ban', ${bannedAccount}, 'banned')`,
+    ])
+    let seq = 0
+    const addRun = (githubId: string, state = "finalized") => {
+      seq += 1
+      const id = `run-announce-${githubId}-${seq}`
+      return sql`INSERT INTO trace_runs (id, client_run_id, github_user_id, github_login, project_id, repository, project_policy_revision, provider, model, client, client_version, state, trace_sha256, created_at, finalized_at, create_idempotency_key, terms_version)
+        VALUES (${id}, ${`client-${id}`}, ${githubId}, 'login', 'slopdotcash', 'SlopDotCash/slopdotcash', 'rev-1', 'anthropic', 'claude-opus-5-5', 'claude-code', '1.0.0', ${state}, ${seq.toString(16).padStart(8, "0").repeat(8)}, ${seededAt}, ${state === "finalized" ? seededAt : null}, ${`create-${id}`}, 'private-trace-v2')`
+    }
+    try db.batch([addRun(eligibleA), addRun(eligibleA), addRun(eligibleB), addRun(closedAccount), addRun(bannedAccount), addRun(unfinalized, "awaiting_trace"), addRun(memberless)])
+    const pendingBefore = (try db.all(traceLicensingRecipientCountQuery()))[0]?.recipients
+    try db.run(notifyTraceLicensingAvailable(at(55)))
+    try db.run(notifyTraceLicensingAvailable(at(55)))
+    const pendingAfter = (try db.all(traceLicensingRecipientCountQuery()))[0]?.recipients
+    const saved = (try db.all(sql`SELECT recipient_github_id, kind, detail, action_path FROM notifications WHERE event_key = ${traceLicensingEventKey} ORDER BY recipient_github_id`))
+    const received = (try inbox(eligibleA)).notifications.find((item) => item.eventKey === traceLicensingEventKey)
+    const marked = try ask("/api/v1/notifications/read", { as: eligibleA, json: { eventKeys: [traceLicensingEventKey] } })
+    const literalSql = withNoticeTime(traceLicensingAvailableSql, new Date(seededAt))
+    const parsedCount = try recipientCount(JSON.stringify([{ results: [{ recipients: 54 }] }]))
+    const parsedWritten = try rowsWritten(JSON.stringify([{ results: [], meta: { changes: 54 } }]))
+    const badCount = recipientCount("[]") catch (error) => error._tag
+    const badWritten = rowsWritten(JSON.stringify([{ results: [] }])) catch (error) => error._tag
+    try same({
+      eventKeyValid: isNotificationEventKey(traceLicensingEventKey),
+      noSingleQuotes: !traceLicensingEventKey.includes("'") && !traceLicensingNotice.includes("'"),
+      banQuerySafe: traceLicensingBanQuery.includes("b.github_id = run.github_user_id") && !traceLicensingBanQuery.includes("?"),
+      literalHasNoBindings: !literalSql.includes("?"),
+      pendingBefore,
+      pendingAfter,
+      recipients: saved.map((row) => [row.recipient_github_id, row.kind, row.detail, row.action_path]),
+      receivedKind: received?.kind,
+      receivedActionPath: received?.actionPath,
+      marked: [marked.status, marked.body],
+      wranglerParsing: [parsedCount, parsedWritten, badCount, badWritten],
+    }, {
+      eventKeyValid: true,
+      noSingleQuotes: true,
+      banQuerySafe: true,
+      literalHasNoBindings: true,
+      pendingBefore: 3,
+      pendingAfter: 0,
+      recipients: [
+        [eligibleA, "trace_licensing_available", traceLicensingNotice, "/account#trace-licensing"],
+        [eligibleB, "trace_licensing_available", traceLicensingNotice, "/account#trace-licensing"],
+        [memberless, "trace_licensing_available", traceLicensingNotice, "/account#trace-licensing"],
+      ],
+      receivedKind: "trace_licensing_available",
+      receivedActionPath: "/account#trace-licensing",
+      marked: [200, { marked: 1 }],
+      wranglerParsing: [54, 54, "WranglerOutputInvalid", "WranglerOutputInvalid"],
     })
   })
 })

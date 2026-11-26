@@ -255,8 +255,33 @@ export interface ScanAsk {
 
 export type ScanQueued = "queued" | "already_queued" | "unavailable"
 
+export schema ScanClearanceBadge {
+  readonly tone: "success" | "warning" | "danger" | "info" | "neutral"
+  readonly icon: "pass" | "fail" | "skip" | "partial" | "held" | "note" | "review"
+  readonly label: string
+}
+
+export schema ScanClearanceView {
+  readonly checks: ReadonlyArray<ScanClearanceBadge>
+  readonly coverage: ReadonlyArray<ScanClearanceBadge>
+  readonly review: ReadonlyArray<ScanClearanceBadge>
+}
+
+export interface IncompleteScanPin {
+  readonly projectId: string
+  readonly assessment: number
+  readonly repository: number
+}
+
+export interface IncompleteScanRead {
+  readonly message: string
+  readonly guidance?: string
+  readonly clearance: ScanClearanceView | null
+}
+
 export service ScanRequests {
   queue(ask: ScanAsk): ScanQueued!ReadFailure
+  incomplete(read: IncompleteScanPin): (IncompleteScanRead | undefined)!ReadFailure
 }
 
 export service VettingBans {

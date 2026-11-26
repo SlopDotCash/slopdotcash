@@ -144,9 +144,7 @@ function unencodable() {
 effect function admitted(scope: ReleaseScope, capture: Capture, observed: FinalizedMonth, pin: DeploymentPin, revision: number) {
   const height = Number(observed.height)
   let state = try release(scope)
-  const invalidated = (state.phase === "Checked" || state.phase === "Approved") && height > state.observedHeight
   state = try step(scope, state, { type: "observe", height }, "attester", canObserve(state, height))
-  if (invalidated) return { kind: "held", reason: "evidence-stale" } as const
   state = try step(scope, state, { type: "pinImplementation", pin }, "attester", canPinImplementation(state, pin))
   const qualification = { implementation: observed.implementation, height }
   state = try step(scope, state, { type: "qualifyUpgrade", qualification }, "attester", canQualifyUpgrade(state, qualification))

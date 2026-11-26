@@ -1,5 +1,5 @@
 // spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"
-import { isNetworkKey, NETWORKS } from "@repo/settlement/kernels/networks";
+import { EVM_NATIVE_ASSET, isNetworkKey, NETWORKS, SOLANA_NATIVE_ASSET } from "@repo/settlement/kernels/networks";
 import { projectNetworks, type VaultNetwork } from "../../gen/frontend__projectLinks.ts";
 import { CHAIN_NAMES } from "./assetText.ts";
 
@@ -7,7 +7,7 @@ export type LinkInput = { readonly ok: true; readonly value: string | null } | {
 
 export interface VaultDeployment {
   readonly network: string;
-  readonly asset: string;
+  readonly asset?: string;
 }
 
 export interface ChainProject {
@@ -85,15 +85,22 @@ export function withOwnerLinks(links: Readonly<Record<string, string>>, website:
   return Object.fromEntries<string>([...rest, ...(website ? ([["website", website]] as const) : []), ...(x ? ([["x", x]] as const) : [])]);
 }
 
+function sameAddress(family: "evm" | "solana", left: string, right: string): boolean {
+  return family === "evm" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
 /** @throws {never} */
 function vaultNetwork(project: ChainProject, deployment: VaultDeployment): VaultNetwork[] {
   if (!isNetworkKey(deployment.network)) return [];
   const network = NETWORKS[deployment.network];
-  const asset = deployment.asset.toLowerCase();
+  const asset = deployment.asset ?? "";
   const own = project.rewardAsset;
-  const symbol =
-    network.assets.find((entry) => entry.address.toLowerCase() === asset)?.symbol ??
-    (own !== undefined && own.network === network.chain && own.address.toLowerCase() === asset ? own.symbol : "");
+  const native = network.family === "solana" ? { address: SOLANA_NATIVE_ASSET, symbol: "SOL" } : { address: EVM_NATIVE_ASSET, symbol: "ETH" };
+  const symbol = asset === ""
+    ? ""
+    : ((sameAddress(network.family, asset, native.address) ? native.symbol : undefined) ??
+      network.assets.find((entry) => sameAddress(network.family, entry.address, asset))?.symbol ??
+      (own !== undefined && own.network === network.chain && sameAddress(network.family, own.address, asset) ? own.symbol : ""));
   return [{ network: network.testnet ? `${CHAIN_NAMES[network.chain]} testnet` : CHAIN_NAMES[network.chain], symbol }];
 }
 

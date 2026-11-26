@@ -1,5 +1,5 @@
 // spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"
-import type { InboxNotice, NotificationsPage } from "@repo/operations/client";
+import type { InboxNotice } from "@repo/operations/client";
 import type { DisputeDetail, DisputedAwards } from "@repo/points/client";
 import type { IncompleteAssessments } from "@repo/slopbot/client";
 
@@ -54,15 +54,6 @@ export const notices = {
     acknowledgedAt: "2026-11-15T09:00:00.000Z",
   },
 } satisfies Record<string, InboxNotice>;
-
-export const inboxPage: NotificationsPage = {
-  recipientGithubId: "7",
-  nextCursor: null,
-  notifications: [notices.caseNotice, notices.appeal, notices.payment, notices.acknowledged],
-  unread: 2,
-};
-
-export const emptyInbox: NotificationsPage = { recipientGithubId: "7", nextCursor: null, notifications: [], unread: 0 };
 
 export const queueReadAt = Date.parse(at);
 

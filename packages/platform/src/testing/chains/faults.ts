@@ -87,7 +87,7 @@ export async function mapResults(
   return new Response(JSON.stringify(mapped), { status: response.status, headers: json });
 }
 
-export async function rpc(url: string, method: string, params: ReadonlyArray<unknown> = [], timeoutMs = 15_000): Promise<unknown> {
+export async function rpc(url: string, method: string, params: ReadonlyArray<unknown> = [], timeoutMs = 60_000): Promise<unknown> {
   const response = await fetch(url, {
     method: "POST",
     headers: json,

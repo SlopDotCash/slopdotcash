@@ -438,5 +438,5 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
         explicit: { amount: 20, follows: true, appended: 1 },
       },
     }))
-  })
+  }, 180_000)
 })

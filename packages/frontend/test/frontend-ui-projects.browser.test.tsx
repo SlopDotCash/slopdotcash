@@ -1,3 +1,4 @@
+// spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
 import type { Target } from "./support/ui/protocol.ts";
@@ -64,13 +65,15 @@ async function createProject(owner: User, fullName: string, name: string, links:
   await site.click(named("link", "Manage project"));
   await expect.poll(async () => new URL(await site.where()).pathname, { timeout: 30_000 }).toMatch(/^\/projects\/[^/]+\/manage$/u);
   const id = decodeURIComponent(new URL(await site.where()).pathname.split("/")[2] ?? "");
-  await shown(settings).toMatchObject({ visible: true });
+  await shown(publish).toMatchObject({ visible: true });
+  await shown(text("Check details", true)).toMatchObject({ visible: true });
   return id;
 }
 
 async function manage(id: string, tab?: string) {
   await site.open(`/projects/${encodeURIComponent(id)}/manage`, tab);
-  await shown(settings).toMatchObject({ visible: true });
+  await shown(publish).toMatchObject({ visible: true });
+  await shown(text("Check details", true)).toMatchObject({ visible: true });
 }
 
 const shareField = field("Maintainer share (%, 0 to 30, optional)");
@@ -106,11 +109,40 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function incompleteAssessment(projectId: string, id: string) {
+const privateScanFinding = "Private fixture finding text";
+const privateScanGap = "Private fixture coverage note";
+const privateScanPath = "slop-skill-template/private-fixture.md";
+
+async function incompleteAssessment(projectId: string, id: string, repository?: string) {
   const commit = "c".repeat(40);
   const template = "d".repeat(64);
-  const result = JSON.stringify({ schemaVersion: "slop-vetting-result-v2", assessmentId: id, disposition: "incomplete", assessed: { commitSha: commit, templateSha256: template } });
   const at = new Date().toISOString();
+  const [current] = await site.sql("SELECT revision, manifest_sha256 FROM projects WHERE id = ?", projectId);
+  const assessed = { commitSha: commit, templateSha256: template };
+  const result = JSON.stringify({
+    schemaVersion: "slop-vetting-result-v2",
+    assessmentId: id,
+    disposition: "incomplete",
+    assessed,
+    ...(repository === undefined ? {} : {
+      projectId,
+      revision: current?.revision,
+      manifestSha256: current?.manifest_sha256,
+      policyVersion: "fixture",
+      assessed: { ...assessed, repository, inputManifestSha256: "a".repeat(64), dependencyLocks: [] },
+      scan: { runId: "scan-1", startedAt: new Date(Date.now() - 1000).toISOString(), completedAt: at, reportSha256: "b".repeat(64) },
+      coverage: Object.fromEntries(["source", "manifests", "dependencies", "installScripts", "downloads", "agentInstructions"].map((surface) => [surface, { state: "complete", items: 1 }])),
+      checks: Object.fromEntries(["wallet-drainer", "credential-theft", "secret-exfiltration", "unsafe-execution", "prompt-injection"].map((check) => [check, "passed"])),
+      visibilityGaps: [privateScanGap],
+      execution: null,
+      reusedAssessmentId: null,
+      primaryReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-policy", inputManifestSha256: "a".repeat(64), runId: "primary", status: "completed", verdict: "findings", risk: "ambiguous", findingCount: 1 },
+      specialistReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-policy", inputManifestSha256: "a".repeat(64), runId: "specialist", status: "completed", verdict: "findings", risk: "ambiguous", findingCount: 1 },
+      artifacts: [],
+      findings: [{ severity: "medium", category: "other", summary: privateScanFinding, evidence: privateScanPath }],
+      confirmation: null,
+    }),
+  });
   await site.sql(
     "INSERT INTO vetting_assessments(id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at) SELECT ?, id, revision, manifest_sha256, ?, ?, ?, '9001', 'octo-root', ?, 'Browser journey fixture', 'incomplete', 'fixture', ?, ?, ?, ? FROM projects WHERE id = ?",
     id, "b".repeat(64), commit, template, at, result, await sha256(result), "e".repeat(64), at, projectId,
@@ -197,8 +229,8 @@ describe('Complete project setup with explicit independent readiness (spec/front
 });
 
 describe('Maintain a live project with current GitHub authority (spec/backend/projects.md, "Story: Maintain a live project with current GitHub authority")', () => {
-  it('owners publish and clear the website and X account against the expected revision, and Publish with no change answers "Nothing changed." (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
-    await site.allow(refusedLoads);
+  it("owners publish and clear website and X links", async () => {
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404", "^failed GET /\\S+ net::ERR_ABORTED$");
     const fullName = await repository(users.eli, "eliza");
     const id = await createProject(users.eli, fullName, "Eliza", { x: "@elizaOS" });
     await openGroup("Project listing");
@@ -217,16 +249,29 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
 
     await site.fill(field("Website (optional)"), "elizaos.example");
     await site.fill(field("X account (optional)"), "https://twitter.com/elizaOS_ai");
+    const changes = named("region", "Changes");
+    await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ count: 2 });
+    await shown({ text: "Rescan", within: changes }).toMatchObject({ count: 0 });
     await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
-    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
+    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
+    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
+
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(named("link", "elizaos.example")).toMatchObject({ visible: true, href: "https://elizaos.example" });
+    await shown(named("link", "@elizaOS_ai")).toMatchObject({ visible: true, href: "https://x.com/elizaOS_ai" });
 
     await manage(id);
     await openGroup("Project listing");
     await site.fill(field("X account (optional)"), "");
     await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
-    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example" });
+    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
+    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example" });
+
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(named("link", "elizaos.example")).toMatchObject({ visible: true, href: "https://elizaos.example" });
+    await shown(named("link", "@elizaOS_ai")).toMatchObject({ count: 0 });
   });
 
   it('the ready label starts off at 1/400/20, refuses 11 approvals, publishes 2 approvals, and turning it off keeps the saved numbers (spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner\'s numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths")', async () => {
@@ -547,7 +592,30 @@ describe('Exempt only by the frozen set or an audited owner-approved grant (spec
     const fullName = await repository(users.eli, "exempt");
     const id = await createProject(users.eli, fullName, "Exempt");
     const assessment = `vet_${"7".repeat(32)}`;
-    await incompleteAssessment(id, assessment);
+    await incompleteAssessment(id, assessment, fullName.toUpperCase());
+    await manage(id);
+    const reasons = named("region", "Why the scan did not clear");
+    await shown(reasons).toMatchObject({ visible: true, text: expect.stringContaining("Specialist: ambiguous") });
+    await shown(text("The last scan finished, but it did not establish clearance. Findings in Slop's skill template were recorded.", true)).toMatchObject({ visible: true });
+    await shown(named("button", "Rescan")).toMatchObject({ visible: true });
+    const checkPath = `/api/v1/project-setup/${encodeURIComponent(id)}/check`;
+    const ownerSetup = await site.fetch("POST", checkPath, {});
+    expect(ownerSetup.status).toBe(200);
+    expect(JSON.stringify(ownerSetup)).not.toMatch(/Private fixture|private-fixture/iu);
+    const privateReason = /Slop's skill template|Specialist: ambiguous|Private fixture|private-fixture/iu;
+    const publicProject = await site.fetch("GET", `/api/v1/projects/${encodeURIComponent(id)}`);
+    expect(JSON.stringify(publicProject)).not.toMatch(privateReason);
+    await signOut(users.eli.login);
+    await signIn(users.pia.login, "/");
+    const strangerSetup = await site.fetch("POST", checkPath, {});
+    expect(JSON.stringify(strangerSetup)).not.toMatch(privateReason);
+    await signOut(users.pia.login);
+
+    await signIn(users.eli.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await incompleteAssessment(id, `vet_${"9".repeat(32)}`, "other/repository");
+    const inconsistent = await site.fetch("POST", checkPath, {});
+    expect(JSON.stringify(inconsistent)).toContain("The last scan did not clear the project.");
+    expect(JSON.stringify(inconsistent)).not.toMatch(privateReason);
     await signOut(users.eli.login);
 
     await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=security`);

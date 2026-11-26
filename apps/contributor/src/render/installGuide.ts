@@ -1,9 +1,22 @@
 // spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"
 import { productionAuthority, createInstallCommand } from "./installerProgram.ts";
 
-export const installClients = ["codex", "claude-code", "manual"] as const;
+export const installClients = ["codex", "claude-code", "cursor", "hermes", "manual"] as const;
 
 export type InstallClient = (typeof installClients)[number];
+
+interface ClientConfig {
+  readonly skillsRoot: string;
+  readonly clientName: string;
+}
+
+const clientConfig = {
+  "claude-code": { skillsRoot: `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills`, clientName: "Claude Code" },
+  codex: { skillsRoot: `\${HOME}/.agents/skills`, clientName: "Codex" },
+  cursor: { skillsRoot: `\${HOME}/.cursor/skills`, clientName: "Cursor" },
+  hermes: { skillsRoot: `\${HERMES_HOME:-\${HOME}/.hermes}/skills`, clientName: "Hermes Agent" },
+  manual: { skillsRoot: `\${HOME}/.agents/skills`, clientName: "any agent" },
+} as const satisfies Record<InstallClient, ClientConfig>;
 
 export interface GuideRequest {
   readonly artifactOrigin: string;
@@ -25,14 +38,12 @@ export function isInstallClient(value: string): value is InstallClient {
 
 /** @throws {never} */
 export function renderInstallGuide({ artifactOrigin, client, skillName, skillRepositoryPath }: GuideRequest): InstallGuide {
-  if (!isInstallClient(client)) return { kind: "refused", message: "client must be codex, claude-code, or manual" };
+  if (!isInstallClient(client)) return { kind: "refused", message: "client must be codex, claude-code, cursor, hermes, or manual" };
   if (!skillPattern.test(skillName)) return { kind: "refused", message: "skill name is invalid" };
   if (skillRepositoryPath !== `skills/${skillName}` && !templateSourcePattern.test(skillRepositoryPath))
     return { kind: "refused", message: "skill source path must match its name" };
   if (!originPattern.test(artifactOrigin)) return { kind: "refused", message: "artifact origin must be a canonical slop.cash project URL" };
-  const isClaude = client === "claude-code";
-  const skillsRoot = isClaude ? `\${CLAUDE_CONFIG_DIR:-\${HOME}/.claude}/skills` : `\${HOME}/.agents/skills`;
-  const clientName = isClaude ? "Claude Code" : client === "codex" ? "Codex" : "any agent";
+  const { skillsRoot, clientName } = clientConfig[client];
   const command = createInstallCommand({ artifactOrigin, skillsRoot, skillName, skillRepositoryPath, authority: productionAuthority });
   if (command.kind === "refused") return command;
   return {

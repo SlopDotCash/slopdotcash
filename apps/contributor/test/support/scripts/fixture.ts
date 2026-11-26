@@ -10,7 +10,7 @@ import { repoRoot } from "@repo/platform/testing/paths";
 import { usageAdapters } from "../../../src/render/fields.ts";
 
 export const templateScripts = join(repoRoot, "skills", "project-contributor-template", "scripts");
-export const fetchRedirect = pathToFileURL(join(import.meta.dirname, "..", "traces", "fetchRedirect.mjs")).href;
+export const fetchRedirect = pathToFileURL(join(import.meta.dirname, "..", "traces", "fetchRedirect.ts")).href;
 export const posix = process.platform !== "win32";
 export const identity = "{id:42,login:'fixture',host:'github.com'}";
 

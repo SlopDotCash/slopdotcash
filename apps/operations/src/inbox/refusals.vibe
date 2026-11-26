@@ -7,10 +7,11 @@ interface Row {
   readonly status: number
   readonly error: string
   readonly message?: string
+  readonly headers: Readonly<Record<string, string>>
 }
 
 function parity(row: Row): Refusal {
-  return { status: row.status, code: row.error, message: row.message ?? "" }
+  return { status: row.status, code: row.error, message: row.message ?? "", headers: row.headers }
 }
 
 export const inboxRefusals = {

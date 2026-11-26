@@ -1,7 +1,7 @@
 // spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomToken, sha256Hex } from "@repo/platform/crypto"
-import { ConstraintViolation, first, rows, sql } from "@repo/platform/d1"
+import { ConstraintViolation, DatabaseFailure, databaseTemporarilyUnavailable, first, rows, sql } from "@repo/platform/d1"
 import { type Actor, ActorChanged, Caller, Refused, Unauthenticated, bytesBody, handleRaw, json, methodNotAllowed, sameOriginWrite } from "@repo/platform/http"
 import { Conflict } from "@repo/platform/stored"
 import { Rejected, mailService, otherAccountsRecent, senderMember } from "../../gen/backend__accounts.effect.vibe"
@@ -55,15 +55,9 @@ effect function signedIn() {
   }
 }
 
-const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
-
-function isBusyD1(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
-}
-
 effect function emailAnswer<E, R>(program: HttpServerResponse.HttpServerResponse!E!R) {
   return program catch effect (error) => {
-    if (isBusyD1(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "private, no-store" })
+    if (error instanceof DatabaseFailure && databaseTemporarilyUnavailable(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "private, no-store" })
     try Effect.logError("notifications API failure")
     return privateBare(getNotificationsEmail.internalErrorPrivateNoStore)
   }

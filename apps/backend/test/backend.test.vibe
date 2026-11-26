@@ -15,13 +15,14 @@ import { migrationCount, migrationsDir } from "@repo/platform/testing/paths"
 import { IntakeCounts, IntakePause, ProjectParticipation, type SlopRate, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
 import { Request, Response } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
-import { submissionFeeOptions } from "../src/client/submissionFee.vibe"
+import { submissionFeeOptions, submissionFeeSettingOf } from "../src/client/submissionFee.vibe"
 import { IntakePauseLive, SubmissionFeeSettingLive } from "../src/projects/feeGateReads.vibe"
 import { IntakeCountsLive } from "../src/projects/mergeActivity/intakeCounts.vibe"
 import { refreshMergeActivity } from "../src/projects/mergeActivity/job.vibe"
 import { mergeActivityAnswer } from "../src/projects/mergeActivity/routes.vibe"
 import { ProjectParticipationLive } from "../src/projects/participation.vibe"
 import { SubmissionFeeRatesLive } from "../src/submissionFee/rates.vibe"
+import { type AccessScript, type Listed, manifest, repositoryAnswer, rpcAnswer, stewardId } from "./support/ownerFixture.vibe"
 module fakes {
   /** @throws {never} */
   export function foreignIssues(response: globalThis.Response): Promise<globalThis.Response> {
@@ -165,39 +166,16 @@ layer(Layer.merge(ApiStarted, webCrypto), { excludeTestServices: true, timeout: 
   })
 })
 
-const stewardId = 41
 const primaryId = 9001
 const appendedId = 9002
 const otherId = 9003
 const rpcUrl = "https://rpc.base.test"
-
-interface AccessScript {
-  permission: string
-  missing: ReadonlyArray<number>
-}
 
 service World {
   readonly github: GitHubFake
   readonly net: Internet
   readonly access: AccessScript
   readonly slopbot: (request: Request) => Response
-}
-
-function owner() {
-  return { id: stewardId, node_id: `U_${stewardId}`, login: `member-${stewardId}`, type: "User" }
-}
-
-function repositoryAnswer(url: URL, access: AccessScript) {
-  const id = Number(url.searchParams.get("repositoryId"))
-  if (access.missing.includes(id)) return { installation: "missing" }
-  const path = url.searchParams.get("repository") ?? ""
-  return { installation: "installed", installationId: 77, permission: url.searchParams.get("login") === `member-${stewardId}` ? access.permission : "read", roleName: null, repository: { id, node_id: `R_${id}`, full_name: path, private: false, owner: owner() } }
-}
-
-function rpcAnswer(body: { readonly id: number; readonly method: string; readonly params: ReadonlyArray<{ readonly data?: string }> }) {
-  const data = body.params[0]?.data
-  const result = body.method === "eth_chainId" ? "0x2105" : body.method === "eth_getCode" ? "0x6080" : data === "0x313ce567" ? `0x${"12".padStart(64, "0")}` : `0x${"20".padStart(64, "0")}${"4".padStart(64, "0")}${"534c4f50".padEnd(64, "0")}`
-  return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), { headers: { "content-type": "application/json" } })
 }
 
 const Built = Layer.effect(World, effect {
@@ -216,15 +194,15 @@ const Built = Layer.effect(World, effect {
 })
 
 const localOrigin = "http://localhost:8787"
+let backendRoutesScript: Promise<string> | undefined
 
 function backendAt(site: { readonly origin?: string; readonly vars?: Readonly<Record<string, string>> }) {
   return Layer.provideMerge(Layer.unwrap(effect {
     const world = try World
     const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
+    const script = try promise(() => backendRoutesScript ??= bundle(new URL("../../points", import.meta.url).pathname, { config: "test/support/backendRoutes/vite.config.ts", entry: "backendRoutes" }))
     return areaLayer({
-      root: new URL("../../points", import.meta.url).pathname,
-      config: "test/support/backendRoutes/vite.config.ts",
-      entry: "backendRoutes",
+      script,
       ...site.origin === undefined ? {} : { origin: site.origin },
       d1: { SLOP_DB: "slop-private" },
       vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl, ...site.vars },
@@ -255,71 +233,10 @@ effect function member(githubId: number) {
   return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
 }
 
-const contribution = {
-  approvedScope: "Bug fixes and documented features in the toolkit.",
-  contributionGuide: "Branch from main and keep one change per pull request.",
-  supportedTasks: "Reproduced bugs with a failing test.",
-  requiredTests: "Run the test suite and attach the output.",
-  reviewExpectations: "The failing test fails on the base and passes on the head.",
-  securityContact: "security@example.org",
-  closurePolicy: "Maintainers close duplicates.",
-  maintainerNotes: "",
-}
-
-const usdc = { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" }
-
-interface Listed {
-  readonly id: string
-  readonly name: string
-  readonly githubId: number
-  readonly commitSha: string
-  readonly fileSha256: string
-}
-
 effect function listed(id: string, name: string, githubId: number) {
   const world = try World
   const commitSha = (try orDie(Effect.try(() => world.github.world.repo(`member-${stewardId}/${name}`).branches.get("main")))) ?? ""
   return { id, name, githubId, commitSha, fileSha256: try sha256Hex("MIT license\n") } satisfies Listed
-}
-
-function manifest(project: Listed, extra: Readonly<Record<string, unknown>> = {}) {
-  const { id } = project
-  const repository = `member-${stewardId}/${project.name}`
-  return {
-    schemaVersion: "1",
-    id,
-    slug: id,
-    name: `Project ${id}`,
-    eyebrow: "Open-source project",
-    headline: "Reproducible research tooling for everyone.",
-    description: "Build and maintain reproducible research tooling.",
-    listingTier: "community",
-    status: "paused",
-    steward: { displayName: `member-${stewardId}`, kind: "individual", github: { actorId: String(stewardId), nodeId: `U_${stewardId}`, login: `member-${stewardId}`, type: "User", profileUrl: `https://github.com/member-${stewardId}` }, website: null },
-    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(project.githubId), repositoryNodeId: `R_${project.githubId}`, proof: null },
-    terms: {
-      revision: "draft-1",
-      effectiveAt: "2026-11-01T00:00:00.000Z",
-      paymentTransfersIp: false,
-      retroactive: false,
-      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
-      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
-      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${project.commitSha}/LICENSE`, commitSha: project.commitSha, fileSha256: project.fileSha256 },
-      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
-      assignment: null,
-      externalPrize: null,
-    },
-    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
-    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
-    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
-    rewardAsset: usdc,
-    contribution,
-    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
-    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
-    modelPolicy: { mode: "open-declared", disclosureRequired: true },
-    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
-    ...extra,
-  }
 }
 
 effect function revise(as: Session, id: string, json: unknown) {
@@ -420,7 +337,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const afterWanted = try stored(id)
     const feeHigh = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "20000000" } }), expectedRevision: 3 })
     const feeShape = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amount: "2000000" } }), expectedRevision: 3 })
-    const fee = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "2500000" } }), expectedRevision: 3 })
+    const feeStandingBad = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, standingDeposits: "false" } }), expectedRevision: 3 })
+    const fee = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "2500000", standingDeposits: false } }), expectedRevision: 3 })
     const after = try stored(id)
     const slopbot = (field(after.manifest, "slopbot") ?? {}) as Record<string, unknown>
     const changes = { presentation: ["slopbot"], executable: [], financial: [] }
@@ -435,7 +353,13 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       wanted: [wanted.status, field(wanted.body, "changes"), afterWanted.revision],
       feeHigh: refusedNaming(feeHigh, "submissionFee"),
       feeShape: refusedNaming(feeShape, "submissionFee"),
+      feeStandingBad: refusedNaming(feeStandingBad, "submissionFee"),
       fee: [fee.status, field(fee.body, "changes"), after.revision],
+      feeParsed: [
+        submissionFeeSettingOf({ enabled: true, amountMinor: "2500000", standingDeposits: false }),
+        submissionFeeSettingOf({ enabled: true, standingDeposits: true }),
+        submissionFeeSettingOf({ enabled: false, standingDeposits: false }),
+      ],
       slopbot: [slopbot.intakeCap, slopbot.wantedIssues, slopbot.submissionFee, typeof slopbot.automaticClosure],
       unexpected: world.net.unexpected,
       outboundErrors: area.outboundErrors,
@@ -450,8 +374,10 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       wanted: [200, changes, 3],
       feeHigh: [422, "invalid_manifest", true],
       feeShape: [422, "invalid_manifest", true],
+      feeStandingBad: [422, "invalid_manifest", true],
       fee: [200, changes, 4],
-      slopbot: [25, true, { enabled: true, amountMinor: "2500000" }, "undefined"],
+      feeParsed: [{ amountMinor: "2500000" }, { amountMinor: "2000000" }, null],
+      slopbot: [25, true, { enabled: true, amountMinor: "2500000", standingDeposits: false }, "undefined"],
       unexpected: [],
       outboundErrors: [],
     })

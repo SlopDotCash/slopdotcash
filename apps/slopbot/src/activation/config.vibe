@@ -2,7 +2,7 @@
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
 import type { Category } from "../../gen/slopbot__categories.effect.vibe"
 import type { ActivationView } from "../../gen/slopbot__closure.effect.vibe"
-import { type Activation, type Event, type OwnerDecision, type QualificationReview, type QualityTrust, type ReleaseEvidence, type VerifierReview, Machine, canActivate, canActivateEvidence, canDeactivate, canDeactivateEvidence, initial, machineOver, qualified } from "../../gen/slopbot__closureActivation.effect.vibe"
+import { type Activation, type Event, type OwnerDecision, type QualificationReview, type QualityTrust, type ReleaseEvidence, type VerifierReview, type Machine, canActivate, canActivateEvidence, canDeactivate, canDeactivateEvidence, initial, machineOver, qualified } from "../../gen/slopbot__closureActivation.effect.vibe"
 
 export interface ActivationVars {
   readonly SLOPBOT_CLOSURE_ENABLED?: string

@@ -2,7 +2,7 @@
 import { EdgeCache, cacheKey } from "@repo/platform/cache"
 import { isoNow } from "@repo/platform/clock"
 import { ConstraintViolation } from "@repo/platform/d1"
-import { type Actor, Refused, admission, body, handleRaw, json, jsonBody } from "@repo/platform/http"
+import { type Actor, Refused, admission, body, handleRaw, handleRawJsonWrite, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { AccountStanding, Event, Registry, RegistryRead } from "../../../gen/backend__projectComposition.effect.vibe"
 import { clearanceOf, exclusionsMayBecome, unbanned } from "../../../gen/backend__projectComposition.effect.vibe"
@@ -703,8 +703,8 @@ effect function repository(owner: string, name: string) {
 }
 
 export const OwnerProjectRoutes = Layer.mergeAll(
-  handleRaw(createProject, (input) => create(input.actor)),
-  handleRaw(reviseProject, (input) => effect {
+  handleRawJsonWrite(createProject, (input) => create(input.actor), contract),
+  handleRawJsonWrite(reviseProject, (input) => effect {
     const raw = try jsonBody(128)
     if (typeof raw === "object" && raw !== null && Object.hasOwn(raw, "integrationBranch")) {
       const request = Schema.decodeUnknownEffect(BranchRequest)(raw, { onExcessProperty: "error" }) catch effect () => { throw new Refused(admission.unexpectedFields) }
@@ -712,18 +712,18 @@ export const OwnerProjectRoutes = Layer.mergeAll(
     }
     const request = Schema.decodeUnknownEffect(ReviseRequest)(raw, { onExcessProperty: "error" }) catch effect () => { throw new Refused(admission.unexpectedFields) }
     return answer(try revise(input.params.id ?? "", input.actor, request, undefined))
-  }),
-  handleRaw(removeProject, (input) => remove(input.params.id ?? "", input.actor)),
+  }, contract),
+  handleRawJsonWrite(removeProject, (input) => remove(input.params.id ?? "", input.actor), contract),
   handleRaw(listSetup, (input) => setupList(input.actor)),
   handleRaw(setupViewer, (input) => viewer(input.params.id ?? "", input.actor)),
-  handleRaw(checkSetup, (input) => check(input.params.id ?? "", input.actor)),
+  handleRawJsonWrite(checkSetup, (input) => check(input.params.id ?? "", input.actor), contract),
   handleRaw(myApplications, (input) => effect {
     const applications = []
     for (const application of try applicantApplications(input.actor.githubId)) applications.push(try publicApplication(application))
     return answer({ applications })
   }),
-  handleRaw(publishApplication, (input) => publish(input.params.id ?? "", input.actor)),
-  handleRaw(cancelApplication, (input) => cancel(input.params.id ?? "", input.actor)),
+  handleRawJsonWrite(publishApplication, (input) => publish(input.params.id ?? "", input.actor), contract),
+  handleRawJsonWrite(cancelApplication, (input) => cancel(input.params.id ?? "", input.actor), contract),
   handleRaw(ownedRepositories, (input) => owned(input.actor)),
   handleRaw(repositoryFacts, (input) => repository(input.params.owner ?? "", input.params.name ?? "")),
 )
