@@ -6,6 +6,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { type Hex, decodeFunctionData, encodeAbiParameters, pad, parseAbi, toEventSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { overLimitNotice } from "../gen/backend__backlogRule.ts";
 import { pausedNotice } from "../gen/backend__intakeCap.ts";
 import { wantedLabelName } from "../gen/backend__mergeActivity.ts";
 import { promiseNoticeText } from "../gen/frontend__projections.ts";
@@ -708,18 +709,21 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
 
 const capped = pool("j4-capped", 1442, "300000000", "$300", { slopbot: { intakeCap: 2, wantedIssues: true } });
 const belowCap = pool("j4-below-cap", 1443, "300000000", "$300", { slopbot: { intakeCap: 5 } });
+const backlog = pool("j4-backlog", 1446, "300000000", "$300");
+const activeNoCap = pool("j4-active-no-cap", 1447, "300000000", "$300");
 const wantedIssue = { number: 7, title: "Fix the build cache", url: `https://github.com/${steward.login}/${capped.id}/issues/7`, openPullRequests: 0 };
 
-async function observed(project: Listed, openOutside: number, wanted: ReadonlyArray<typeof wantedIssue> | null) {
-  const now = new Date().toISOString();
+async function observed(project: Listed, openOutside: number, wanted: ReadonlyArray<typeof wantedIssue> | null, waitingOutside = 0, at: string | null = null) {
+  const now = at ?? new Date().toISOString();
   const label = wanted === null ? null : wantedLabelName;
   await site.sql(
-    "INSERT OR REPLACE INTO repository_merge_activity(project_id,repository,observed_at,attempted_at,failure,last_merged_at,waiting_outside,waiting_capped,merged_outside_30d,median_merge_hours,open_outside,open_outside_capped,wanted_label,wanted_issues,wanted_label_ready) VALUES(?,?,?,?,NULL,?,0,0,1,30,?,0,?,?,?)",
+    "INSERT OR REPLACE INTO repository_merge_activity(project_id,repository,observed_at,attempted_at,failure,last_merged_at,waiting_outside,waiting_capped,merged_outside_30d,median_merge_hours,open_outside,open_outside_capped,wanted_label,wanted_issues,wanted_label_ready) VALUES(?,?,?,?,NULL,?,?,0,1,30,?,0,?,?,?)",
     project.id,
     `${steward.login}/${project.id}`,
     now,
     now,
     now,
+    waitingOutside,
     openOutside,
     label,
     wanted === null ? null : JSON.stringify(wanted),
@@ -748,6 +752,28 @@ describe('Pause new contributors while the review queue is full (spec/backend/in
     await shown(named("link", `Wanted. Issue #${wantedIssue.number}: ${wantedIssue.title}`, { within: work })).toMatchObject({ visible: true, href: wantedIssue.url });
   });
 });
+
+describe('Backlog rule on Home and /sponsors (spec/backend/backlogRule.md, "Story: Keep the lists to projects whose maintainers are keeping up")', () => {
+  it('hides an over-limit project on Home and /sponsors even with no intake cap (spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why")', async () => {
+    for (const project of [backlog, activeNoCap]) await list(project);
+    await site.clock("2026-12-02T00:00:00.000Z");
+    await observed(backlog, 0, null, 50, "2026-12-02T00:00:00.000Z");
+    await observed(activeNoCap, 2, null, 0, "2026-12-02T00:00:00.000Z");
+
+    expect((await site.open("/")).status).toBe(200);
+    const listedCard = (project: Listed) => named("link", nameOf(project), { exact: false, within: projects });
+    await shown(listedCard(activeNoCap)).toMatchObject({ count: 1, visible: true });
+    await shown(listedCard(backlog)).toMatchObject({ count: 0 });
+
+    await opened("/sponsors", "Fund a project");
+    await shown(named("link", nameOf(activeNoCap), { exact: false })).toMatchObject({ visible: true, href: `/projects/${activeNoCap.id}/funding` });
+    await shown(named("link", nameOf(backlog), { exact: false })).toMatchObject({ count: 0 });
+
+    expect((await site.open(`/projects/${backlog.id}`)).status).toBe(200);
+    await shown({ text: overLimitNotice, exact: true }).toMatchObject({ visible: true });
+  });
+});
+
 
 describe('Keep browsing on the last published registry when the live read fails (spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails")', () => {
   it('/sponsors whose live registry read times out with no published copy keeps the header and footer and offers Try again, which opens the page once the read answers (spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {

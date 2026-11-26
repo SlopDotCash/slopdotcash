@@ -245,6 +245,8 @@ export service ReferralAttributions {
 export schema IntakeCount {
   readonly openOutside: number
   readonly observedAt: string
+    readonly waitingOutside: number
+  readonly lastMergedAt: string | null
 }
 
 export service IntakeCounts {

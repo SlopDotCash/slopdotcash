@@ -32,7 +32,7 @@ import { ProjectWork, type WorkShown } from "./ProjectWork.tsx";
 import type { ShownProject } from "./project.schema.ts";
 import { loadProject, loadWork, type ProjectRuntime, projectName, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "./reads.vibe";
 import { RewardSummary } from "./RewardSummary.tsx";
-import { awardMonths, projectCycles, projectFunding, projectHeld, projectListing, projectPromiseOf, type ShownWanted, suggestedWork, wantedReadOf } from "./summary.ts";
+import { awardMonths, projectCycles, projectFunding, projectHeldOrOutOfRotation, projectListing, projectPromiseOf, type ShownWanted, suggestedWork, wantedReadOf } from "./summary.ts";
 
 export type ProjectPageProps = PageProps & {
   /** Whether payments run on a network: only vaults on paying networks hold a pool's monthly amount. */
@@ -124,7 +124,7 @@ function Install({ runtime, project, reads, networkPays }: Pick<Found, "runtime"
       project={project}
       clearance={clearanceOf(discovery, project.id)}
       listing={projectListing({ project, networkPays, nowMs })}
-      held={projectHeld(project, merge, nowMs)}
+      held={projectHeldOrOutOfRotation(project, merge, nowMs)}
       origin={pageOrigin()}
       onCopy={(text) => runtime.runPromise(copyText(text))}
     />

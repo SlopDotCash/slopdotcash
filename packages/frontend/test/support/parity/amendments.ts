@@ -95,9 +95,19 @@ const operatorRefusals = (at: string): ReadonlyArray<AmendedRefusal> => [
   { key: "methodNotAllowedOperator", status: 405, error: "method_not_allowed", cacheControl: "no-store", like: "internalError", at },
 ];
 
+const catchUpNewProjectRefusal: AmendedRefusal = {
+  key: "catchUpRefusedANewProjectIs",
+  status: 422,
+  error: "catch_up_refused",
+  message: "A new project is not catching up on reviews; start it from the project's settings once it is listed",
+  like: "originForbidden",
+  at: "backend/projects/handler.ts:440",
+};
+
 export const amendments: ReadonlyArray<Amendment> = [
+  { route: "POST /api/v1/projects", refusals: [catchUpNewProjectRefusal] },
   { route: "PUT /api/v1/projects/:id", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage] },
-  { route: "POST /api/v1/project-applications/:id/publish", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage] },
+  { route: "POST /api/v1/project-applications/:id/publish", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage, catchUpNewProjectRefusal] },
   { route: "POST /api/v1/admin/projects/:id/enforcement-preview", refusals: enforcementCodes },
   { route: "POST /api/v1/admin/projects/:id/enforcement", refusals: enforcementCodes },
   { route: "POST /api/v1/project-appeals", refusals: enforcementCodes },
