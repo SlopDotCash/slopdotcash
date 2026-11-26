@@ -76,6 +76,35 @@ answers HTTP 410 for a restricted project.
 
 Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private trace API.
 
+In Settings, open **Repositories**, choose **Change integration branch**, and select a live GitHub branch. Review and publish the change. The same revision can include edits to the contribution rules.
+
+For the underlying request, commit an updated
+`.github/slop-project.json` to that branch. The declaration must name the
+registered project, repository, steward, terms revision, and new branch.
+Send a same-origin JSON `PUT /api/v1/projects/:id` from the signed-in GitHub
+repository administrator's Slop.cash session. Use the current registry
+revision and the exact GitHub branch head.
+
+```json
+{
+  "expectedRevision": 8,
+  "integrationBranch": {
+    "name": "vibestack",
+    "commitSha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "reason": "The maintainers moved integration to vibestack."
+}
+```
+
+An optional `contribution` object updates the full contribution instructions
+in the same revision. Slop verifies the administrator and repository through
+the current Slopbot installation, reads the declaration at the exact commit,
+and checks that commit still heads the requested branch. Reload after a
+conflict. An active project must still clear the existing admission check
+at publication. The revision preserves project status, repository identity,
+terms, funding, and previous revisions. Verify the public project and both
+generated skill manifests after publication.
+
 Removal checks the current GitHub authority against the stored repository,
 including on retries. It uses the ordinary revision and enforcement fences,
 changes only status and listing tier, and never invokes setup activation.
@@ -117,6 +146,16 @@ that is over its owner's intake cap (`intakePaused` in
 `src/lib/intake-cap.mjs`; PRD section 5, operator decision of 17 November
 2026). A count that cannot be read, was never read or is older than three
 days pauses nothing.
+
+From 1 December 2026 discovery also leaves out an active monthly-pool project
+the backlog rule takes out of rotation (`backlogOutOfRotation` in
+`src/lib/backlog-rule.mjs`; PRD section 5, operator decision of 23 November
+2026): 50 or more outside pull requests waiting a week for a maintainer, or
+work waiting and no merge in 14 days, unless the owner marked it as catching
+up on reviews. `readIntakeCounts` carries the waiting count and last merge for
+it. The same rows decide nothing when none is recent. The scheduled Slopbot
+run sends the rule's owner notices (`backlog-notices.ts`) right after it
+refreshes merge activity.
 
 ## Self-service setup
 
@@ -192,7 +231,8 @@ the monthly amount, 1 to 3000, or omitted for none (PRD section 6, operator
 decision of 18 November 2026). It changes through the same owner revision as
 the monthly amount and starts with the next UTC month: the server appends the
 previous share to `reward.maintainerShareHistory` as the share of every month
-through the open one. An owner revision that edits the history is refused.
+through the open one. An owner revision that edits the history is refused,
+and so is a new project that submits one.
 
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub

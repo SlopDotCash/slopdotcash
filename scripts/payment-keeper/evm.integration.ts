@@ -357,7 +357,9 @@ try {
     signatureHex: (await attester.sign({ hash: digest as Hex })).slice(2),
   };
   sqlite
-    .query("INSERT INTO monthly_reward_bases VALUES(?,?,?,?,?,?,?,?)")
+    .query(
+      "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES(?,?,?,?,?,?,?,?)",
+    )
     .run(
       projectId,
       "2026-11",

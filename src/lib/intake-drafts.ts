@@ -14,6 +14,10 @@ export type ReportDraft = {
   severity: string;
   cvss: string;
   cwe: string;
+  /** The proof-of-concept file name, or "" for none. */
+  proofName: string;
+  /** The proof-of-concept file text, or "" for none. */
+  proofText: string;
 };
 
 export const EMPTY_DRAFT: ReportDraft = {
@@ -22,6 +26,8 @@ export const EMPTY_DRAFT: ReportDraft = {
   severity: "",
   cvss: "",
   cwe: "",
+  proofName: "",
+  proofText: "",
 };
 
 const PREFIX = "slop-intake-draft:";

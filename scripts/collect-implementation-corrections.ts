@@ -4116,10 +4116,28 @@ async function ordinaryRetainedProof(
   if (!originals.length) return { sources: [plain] };
   const sources: WorkUnitSource[] = [];
   for (const expected of [references.pull, ...originals]) {
+    const acceptedDirectly = expected === references.pull;
+    if (acceptedDirectly)
+      requireThat(
+        expected.merge_commit_sha && expected.merged_at,
+        "Historical allocation lacks direct acceptance",
+      );
     const evidence = await collectValueEvidence(
       github,
       plain.repository,
       expected.number,
+      undefined,
+      acceptedDirectly && expected.merge_commit_sha && expected.merged_at
+        ? {
+            repositoryNodeId: plain.repositoryNodeId,
+            pullRequestNodeId: plain.sourceId,
+            headSha: plain.headSha,
+            acceptedSha: expected.merge_commit_sha,
+            mergedAt: expected.merged_at,
+            baseSha: expected.base.sha,
+            baseRef: expected.base.ref,
+          }
+        : undefined,
     );
     requireThat(
       evidence.pull.node_id === expected.node_id &&
@@ -4699,6 +4717,9 @@ async function collectWithEvidenceCache(
       github,
     );
     loaders.set(plan.repository.id, loader);
+    // The loader spans every month of this repository, so a month's raw
+    // statistics requests depend on the months reconstructed before it.
+    let earlierMonthMissing = false;
     for (const interval of plan.months) {
       const partPath = resolve(
         directory,
@@ -4712,6 +4733,10 @@ async function collectWithEvidenceCache(
         options.month === interval.month ||
         (!options.month && !options.sampleSourceIds)
       ) {
+        requireThat(
+          part || !earlierMonthMissing,
+          "Collect earlier census months first; later months reuse their commit statistics",
+        );
         cache.allowRequests = part === null;
         let references: Awaited<ReturnType<typeof collectSearchReferences>>;
         try {
@@ -4758,6 +4783,7 @@ async function collectWithEvidenceCache(
         }
       }
       if (!part) {
+        earlierMonthMissing = true;
         missingMonths.push(`${plan.repository.id}:${interval.month}`);
         continue;
       }

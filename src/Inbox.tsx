@@ -25,7 +25,11 @@ import {
 import { InboxEmailAction } from "./InboxEmail";
 
 import "./private-report-design.css";
-import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import {
+  fetchReadWithRetry,
+  fetchWithDeadline,
+  readBoundedJson,
+} from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { clearAllDrafts } from "./lib/intake-drafts";
 import {
@@ -76,7 +80,7 @@ async function loadInbox(
   const session = await currentProjectSession().catch(() => undefined);
   signal.throwIfAborted();
   if (session === null) return { status: "signed-out" };
-  const response = await fetchWithDeadline(
+  const response = await fetchReadWithRetry(
     `/api/v1/notifications${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`,
     {
       credentials: "same-origin",
@@ -215,43 +219,50 @@ export default function InboxPage() {
     },
     [cursor, acceptRecipient],
   );
-  const load = useCallback(() => {
-    const current = ++generation.current;
-    loadController.current?.abort();
-    const controller = new AbortController();
-    loadController.current = controller;
-    setState({ status: "loading" });
-    loadInbox(controller.signal, cursor).then(
-      (next) => {
-        if (generation.current === current) receive(next);
-      },
-      async () => {
-        if (generation.current !== current) return;
-        // Revalidate the account before retaining private metadata during an outage.
-        try {
-          const session = await currentProjectSession();
+  const load = useCallback(
+    (onReturn = false) => {
+      const current = ++generation.current;
+      loadController.current?.abort();
+      const controller = new AbortController();
+      loadController.current = controller;
+      // A tab return refreshes behind the shown list instead of blanking it.
+      setState((shown) =>
+        onReturn && shown.status === "ready" ? shown : { status: "loading" },
+      );
+      loadInbox(controller.signal, cursor).then(
+        (next) => {
+          if (generation.current === current) receive(next);
+        },
+        async () => {
           if (generation.current !== current) return;
-          if (session === null) receive({ status: "signed-out" });
-          else {
-            acceptRecipient(session.githubId);
-            setState({ status: "error", message: UNAVAILABLE });
+          // Revalidate the account before retaining private metadata during an outage.
+          try {
+            const session = await currentProjectSession();
+            if (generation.current !== current) return;
+            if (session === null) receive({ status: "signed-out" });
+            else {
+              acceptRecipient(session.githubId);
+              setState({ status: "error", message: UNAVAILABLE });
+            }
+          } catch {
+            if (generation.current === current) {
+              setRecipient(null);
+              setState({
+                status: "error",
+                message: "Inbox unavailable",
+              });
+            }
           }
-        } catch {
-          if (generation.current === current) {
-            setRecipient(null);
-            setState({
-              status: "error",
-              message: "Inbox unavailable",
-            });
-          }
-        }
-      },
-    );
-    return () => {
-      controller.abort();
-      if (loadController.current === controller) loadController.current = null;
-    };
-  }, [cursor, receive, acceptRecipient]);
+        },
+      );
+      return () => {
+        controller.abort();
+        if (loadController.current === controller)
+          loadController.current = null;
+      };
+    },
+    [cursor, receive, acceptRecipient],
+  );
   useEffect(
     () =>
       subscribeProjectSessionChange(() => {
@@ -270,7 +281,7 @@ export default function InboxPage() {
   useEffect(() => {
     const refresh = () => {
       // The active action rechecks this account and reloads after its write.
-      if (!actionActive.current) load();
+      if (!actionActive.current) load(true);
     };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
@@ -404,7 +415,7 @@ export default function InboxPage() {
           <button
             className="button secondary-button"
             type="button"
-            onClick={load}
+            onClick={() => load()}
           >
             Retry
           </button>
@@ -419,7 +430,7 @@ export default function InboxPage() {
                 key={`incomplete:${recipient}`}
                 actorId={recipient}
                 initial={state.value.incompleteAssessments}
-                onChange={load}
+                onChange={() => load()}
                 onIdentityChange={reportsIdentityChanged}
               />
             </Suspense>
@@ -430,7 +441,7 @@ export default function InboxPage() {
               <PointsDisputes
                 key={`${recipient}:${window.location.search}`}
                 actorId={recipient}
-                onChange={load}
+                onChange={() => load()}
                 onIdentityChange={reportsIdentityChanged}
               />
             </Suspense>

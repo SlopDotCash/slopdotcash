@@ -20,7 +20,9 @@ import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
 import {
+  AcquisitionReadError,
   acquireQueuedAssessment,
+  failureLabel,
   type QueueConnection,
   readPendingAssessments,
 } from "../workers/vetting/queue";
@@ -523,6 +525,64 @@ test("a repository GitHub redirects is refused as moved, not retried", async () 
     "Repository moved on GitHub",
   );
   expect(await readdir(root)).toEqual(before);
+});
+
+test("a refused GitHub identity read stays retryable and names only the read and its status", async () => {
+  mode = "normal";
+  const limited: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      if (new URL(String(input)).pathname === "/repos/example/fixture")
+        return new Response("API rate limit exceeded for installation", {
+          status: 403,
+        });
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  const failure = await acquireQueuedAssessment(
+    limited,
+    assessmentId,
+    root,
+  ).catch((error: unknown) => error);
+  // Not a refusal: a spent quota or an outage must be retried, never
+  // published as an incomplete result.
+  expect(failure).toBeInstanceOf(AcquisitionReadError);
+  expect(failureLabel(failure)).toBe("github-identity-http-403");
+  expect(await readdir(root)).toEqual(before);
+});
+
+test("a failed GitHub identity request names only the error class", async () => {
+  mode = "normal";
+  const offline: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      if (new URL(String(input)).pathname === "/repos/example/fixture")
+        throw new TypeError(
+          "connect ECONNREFUSED 10.0.0.1:443 example/fixture",
+        );
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const failure = await acquireQueuedAssessment(
+    offline,
+    assessmentId,
+    root,
+  ).catch((error: unknown) => error);
+  expect(failureLabel(failure)).toBe("github-identity-request-TypeError");
+});
+
+test("a failure label never carries text the scanner did not write", () => {
+  expect(failureLabel(new Error("Template input digest mismatch"))).toBe(
+    "template-input-digest-mismatch",
+  );
+  expect(
+    failureLabel(new Error("fatal: could not read from example/secret")),
+  ).toBe("Error");
+  expect(failureLabel(new TypeError("token ghp_example leaked"))).toBe(
+    "TypeError",
+  );
+  expect(failureLabel("not an error")).toBe("unknown");
 });
 
 test("an appended repository is acquired by its own path and checked against its own identity", async () => {

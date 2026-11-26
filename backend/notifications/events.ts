@@ -16,6 +16,7 @@
  */
 
 import { githubUserIdFromNodeIdSql } from "../github-node-sql";
+import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 
 type Preparer<S> = {
   prepare(query: string): { bind(...values: unknown[]): S };
@@ -410,6 +411,37 @@ export function notifyMonthlyUnderfunded<S>(
 }
 
 /**
+ * A backlog rule notice for a project's owners (operator decision,
+ * 23 November 2026; PRD section 5): a preview before the rule starts, a
+ * warning when dormancy is near, and the day a project leaves rotation. It
+ * reuses the `project_revision` kind with an event key under
+ * `backlog-rule:`; the caller's key makes each notice once. The audience is
+ * the user steward, or an Organization steward's lister. `detail` names no
+ * contributor and no amount.
+ */
+export function notifyBacklogRule<S>(
+  db: Preparer<S>,
+  projectId: string,
+  eventKey: string,
+  detail: string,
+  at: string,
+): S {
+  return db
+    .prepare(
+      `${INSERT}
+       SELECT ?1, recipient, 'project_revision', p.id, ?3,
+              '/projects/' || p.id || '/manage', ?4, ?4
+         FROM projects p
+         JOIN ${PAYOUT_EXCEPTION_RECIPIENTS("?2")}
+        WHERE p.id = ?2
+          AND substr(?1, 1, length('backlog-rule:' || ?2 || ':')) = 'backlog-rule:' || ?2 || ':'
+          AND ${GITHUB_ID("recipient")}
+       ${ONCE}`,
+    )
+    .bind(eventKey, projectId, detail, at);
+}
+
+/**
  * An owner cut a contributor's monthly amount below the proposal (PRD
  * section 6, operator decision of 15 November 2026). The contributor gets one
  * notice per cut change, keyed by its sequence. The statement reads the
@@ -502,6 +534,59 @@ export function notifyVettingBanAudience<S>(
     )
     .bind(recordId, JSON.stringify(operatorGithubIds));
 }
+
+/**
+ * SQL predicate over an event key: the reinstatement request a
+ * `reinstatement-review:` key names is still undecided, so its review
+ * notice still asks something. This mirrors the appeal fold in
+ * backend/projects/verified-enforcement.ts. A project request
+ * (selectProjectAppeals, kept) is closed by the first later quarantine,
+ * reinstatement or denial, or by a later ban whose appeal state moved
+ * (a signed ban that keeps the appeal for the moderator decision does
+ * not close it). An account request (findAccountBoundary) is closed
+ * only by a decision on that exact account: a ban that names it, a
+ * release of it, or a denial recorded while no project request was
+ * open. Enforcement records are append-only, so readers fold them;
+ * nothing is written back to the request row.
+ */
+export const REINSTATEMENT_REQUEST_OPEN = (eventKey: string) => `EXISTS (
+  SELECT 1 FROM project_enforcements req
+   WHERE req.id = substr(${eventKey}, length('reinstatement-review:') + 1)
+     AND NOT EXISTS (
+       SELECT 1 FROM project_enforcements d
+        WHERE d.project_id = req.project_id AND d.sequence > req.sequence
+          AND (
+            (req.actor_role <> 'banned-account' AND (
+              d.action IN ('quarantine', 'reinstate', 'deny_reinstatement')
+              OR (d.action = 'ban' AND d.appeal_after <> 'requested')
+            ))
+            OR (req.actor_role = 'banned-account' AND (
+              (d.action = 'ban' AND EXISTS (
+                SELECT 1 FROM project_maintainer_bans b
+                 WHERE b.enforcement_id = d.id
+                   AND b.github_id = req.actor_github_id))
+              OR (d.action = 'reinstate_accounts' AND EXISTS (
+                SELECT 1 FROM project_account_reinstatements rel
+                 WHERE rel.enforcement_id = d.id
+                   AND rel.github_id = req.actor_github_id))
+              OR (d.action = 'deny_reinstatement' AND NOT EXISTS (
+                SELECT 1 FROM project_enforcements r2
+                 WHERE r2.project_id = req.project_id
+                   AND r2.action = 'request_reinstatement'
+                   AND r2.actor_role <> 'banned-account'
+                   AND r2.sequence < d.sequence
+                   AND r2.sequence > COALESCE((
+                     SELECT MAX(d2.sequence) FROM project_enforcements d2
+                      WHERE d2.project_id = req.project_id
+                        AND d2.sequence < d.sequence
+                        AND (d2.action IN ('quarantine', 'reinstate', 'deny_reinstatement')
+                             OR (d2.action = 'ban' AND (d2.actor_role = 'vetting-service' OR d2.appeal_after <> 'requested')))
+                   ), 0)
+              ))
+            ))
+          )
+     )
+)`;
 
 /**
  * A reinstatement request reaches the moderators who may decide it: the
@@ -729,4 +814,52 @@ export function notifySlopbotScamReview<S>(
       path,
       input.at,
     );
+}
+
+export const TRACE_LICENSING_EVENT_KEY = "trace-licensing:available-2026-11";
+export const TRACE_LICENSING_NOTICE =
+  "You can now choose to license your Slop traces for pay. You get 50% of each sale. Nothing is licensed unless you turn it on.";
+
+/** The participation-ban check for the uploader of `run`, not a bound id. */
+export const TRACE_LICENSING_BAN_QUERY = PARTICIPATION_BAN_QUERY.replace(
+  "b.github_id = ?",
+  "b.github_id = run.github_user_id",
+);
+
+// Uploaders through the CLI skill may have no points_members row; the Inbox
+// shows the notice to whoever later signs in with that GitHub id.
+const TRACE_LICENSING_AUDIENCE = `SELECT DISTINCT run.github_user_id AS recipient
+      FROM trace_runs run
+     WHERE run.state = 'finalized'
+       AND ${GITHUB_ID("run.github_user_id")}
+       AND NOT EXISTS (SELECT 1 FROM points_members closed
+                        WHERE closed.github_id = run.github_user_id
+                          AND closed.closed_at IS NOT NULL)
+       AND NOT EXISTS (${TRACE_LICENSING_BAN_QUERY})`;
+
+/**
+ * The one-time notice that licensing traces is available: every account with
+ * at least one finalized trace that is not participation-banned and not
+ * closed. Binds only the notice time (?1) so the same text can be run by hand.
+ */
+export const TRACE_LICENSING_AVAILABLE_SQL = `${INSERT}
+    SELECT '${TRACE_LICENSING_EVENT_KEY}', audience.recipient,
+           'trace_licensing_available', 'trace-licensing',
+           '${TRACE_LICENSING_NOTICE}', '/account#trace-licensing', ?1, ?1
+      FROM (${TRACE_LICENSING_AUDIENCE}) audience
+     WHERE true
+    ${ONCE}`;
+
+/** Counts the accounts the notice would reach that have not got it yet. */
+export const TRACE_LICENSING_RECIPIENTS_SQL = `SELECT COUNT(*) AS recipients
+      FROM (${TRACE_LICENSING_AUDIENCE}) audience
+     WHERE NOT EXISTS (SELECT 1 FROM notifications n
+                        WHERE n.event_key = '${TRACE_LICENSING_EVENT_KEY}'
+                          AND n.recipient_github_id = audience.recipient)`;
+
+export function notifyTraceLicensingAvailable<S>(
+  db: Preparer<S>,
+  at: string,
+): S {
+  return db.prepare(TRACE_LICENSING_AVAILABLE_SQL).bind(at);
 }

@@ -22,7 +22,7 @@ Create a private JSON configuration with these fields:
 | `projectIds` | The project IDs this operator serves. Deployments come only from D1. |
 | `signer` | The dedicated operator gas wallet's public address. |
 | `rpcUrl` | That network's RPC URL. |
-| `perRun` | Maximum funded-award checks per vault and examined EVM monthly leaves per period in one run. |
+| `perRun` | Maximum funded-award checks per vault, and examined EVM monthly leaves or Solana monthly transactions per period, in one run. |
 | `gas.perTransaction` | Operator-approved native reservation per transaction. |
 | `gas.perDay` | Operator-approved native base units per UTC day, including unknown sends. |
 | `gas.additionalFeeReserve` | Base L1-data and operator-fee allowance per transaction; zero on other supported rails. |

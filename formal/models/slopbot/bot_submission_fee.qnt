@@ -5,6 +5,7 @@
 // @source workers/slopbot/index.ts
 // @source src/lib/submission-fee.mjs
 // @source src/lib/submission-fee-setting.mjs
+// @source src/lib/wanted-label.mjs
 // @source migrations/0141_submission_fee_items.sql
 // @source migrations/0142_slopbot_fee_gates.sql
 // @evidence workers/slopbot/submission-fee.test.ts
@@ -21,9 +22,18 @@
 // REFUND_AFTER and KEPT_AFTER abstract 14 and 7 days. A switch that is live
 // with no published deposit contract behaves as "off" and is modelled so.
 // The first ask is two writes (GitHub, then D1) under a lease, so a job can
-// die between them; `holder` is a job that holds the lease. The Worker may
+// die between them; `holder` is a job that holds the lease. A job whose
+// GitHub write fails gives the lease back, so `holderDies` is also that
+// failure and the queue's retry is the next review delivery. The Worker may
 // withdraw a payment whose deposit a chain reorganisation removed, while no
-// outcome is set; the next check then asks again.
+// outcome is set; the next check then asks again. Taking an unpaid ask back
+// removes its row, so a deposit sent afterwards pays for nothing.
+// Wanted work (operator decision, 22 November 2026): `wanted` is a pull
+// request that closes an issue labelled `slop-wanted` before it was opened,
+// fixed at opening. Closed without a merge it is refund_due after KEPT_AFTER
+// unless a maintainer's `slop-keep-fee` label is on it then; the label may be
+// added or removed until the outcome is set. `wantedReadable` false is a
+// GitHub read that failed: nothing is decided.
 module bot_submission_fee {
   pure val REFUND_AFTER = 2
   pure val KEPT_AFTER = 2
@@ -42,7 +52,8 @@ module bot_submission_fee {
     label: str,         // none, needed, paid
     comments: int,
     paidDays: int, closedDays: int,
-    everMerged: bool, openAtRefundAge: bool, closedAtKeptAge: bool
+    everMerged: bool, openAtRefundAge: bool, closedAtKeptAge: bool,
+    wanted: bool, keepMark: bool, decidedWithMark: bool
   }
   action init = s' = {
     mode: "off", leftLive: false, everLive: false,
@@ -51,14 +62,15 @@ module bot_submission_fee {
     gate: "none", holder: false, row: false, paid: false, everPaid: false,
     outcome: "none",
     label: "none", comments: 0, paidDays: 0, closedDays: 0,
-    everMerged: false, openAtRefundAge: false, closedAtKeptAge: false
+    everMerged: false, openAtRefundAge: false, closedAtKeptAge: false,
+    wanted: false, keepMark: false, decidedWithMark: false
   }
   val applies = all { s.settingOn, s.outsider, s.openedAfter }
   val unpaidAsk = (s.gate == "asking" or s.gate == "asked") and not(s.paid)
   // An ask that can be taken back: finished, or left by a job that died.
   val askStands = s.gate == "asked" or (s.gate == "asking" and not(s.holder))
   def released(state) = state.with("gate", "released").with("label", "none")
-    .with("comments", 1)
+    .with("comments", 1).with("row", false)
 
   // --- The owner, the operator, the contributor and maintainers.
   action setMode(wanted: str): bool = all { wanted != s.mode,
@@ -72,13 +84,20 @@ module bot_submission_fee {
   action ownerTurnsOn = all { not(s.settingOn),
     s' = s.with("settingOn", true).with("openedAfter", false) }
   action ownerTurnsOff = all { s.settingOn, s' = s.with("settingOn", false) }
-  action opens(outside: bool): bool = all { not(s.opened),
+  action opensFor(outside: bool, invited: bool): bool = all { not(s.opened),
     s' = s.with("opened", true).with("outsider", outside)
-      .with("openedAfter", s.settingOn) }
+      .with("openedAfter", s.settingOn).with("wanted", invited) }
+  action opens(outside: bool): bool = opensFor(outside, false)
   action contributorOpens = {
     nondet outside = Set(true, false).oneOf()
-    opens(outside)
+    nondet invited = Set(true, false).oneOf()
+    opensFor(outside, invited)
   }
+  // Only a maintainer can label a pull request on GitHub.
+  action maintainerMarksKeep = all { s.opened, s.outcome == "none",
+    s' = s.with("keepMark", true) }
+  action maintainerUnmarksKeep = all { s.keepMark, s.outcome == "none",
+    s' = s.with("keepMark", false) }
   action authorGainsAccess = all { s.opened, s.outsider,
     s' = s.with("outsider", false) }
   action push = all { s.opened, s.pr == "open", s.pushes < MAX_PUSHES,
@@ -114,14 +133,17 @@ module bot_submission_fee {
 
   // --- Slopbot. One review delivery for an open pull request that has no
   // completed review at its head. `monthOpen` is the monthly cap peek.
-  val recordedOnly = (if (applies and not(s.row))
-      s.with("row", true).with("gate", if (s.gate == "none") "recorded" else s.gate)
+  // Record-only writes Slopbot's own gate and no row: nobody was asked, so
+  // the Worker has nothing to mark paid.
+  val recordedOnly = (if (applies and not(s.row) and s.gate == "none")
+      s.with("gate", "recorded")
     else s).with("reviewed", true)
   action review(monthOpen: bool): bool = all { s.opened, s.pr == "open",
     not(s.reviewed),
     if (s.mode == "off") s' = s.with("reviewed", true)
-    // Record what would be asked; the review runs as today.
-    else if (s.mode == "dry") s' = recordedOnly
+    // Record what would be asked; the review runs as today. A review the
+    // monthly cap refuses is not asked live, so nothing is recorded for it.
+    else if (s.mode == "dry") s' = (if (monthOpen) recordedOnly else s)
     else if (s.paid) s' = s.with("reviewed", true)
     // Exempt: an earlier ask is taken back; the author is not reviewed.
     else if (not(s.outsider)) s' = (if (askStands) released(s) else s)
@@ -150,10 +172,12 @@ module bot_submission_fee {
   // The scheduled or event-driven check of an asked pull request.
   val dueOutcome = if (s.outcome != "none") s.outcome
     else if (s.pr == "merged") "refund_due"
-    else if (s.pr == "closed" and s.closedDays >= KEPT_AFTER) "kept_due"
+    else if (s.pr == "closed" and s.closedDays >= KEPT_AFTER)
+      (if (s.wanted and not(s.keepMark)) "refund_due" else "kept_due")
     else if (s.pr == "open" and s.paidDays >= REFUND_AFTER) "refund_due"
     else "none"
-  action feeCheck = all { s.mode == "live", s.row, s.gate != "none",
+  // A closed wanted pull request whose link GitHub could not answer waits.
+  action check(readable: bool): bool = all { s.mode == "live", s.row, s.gate != "none",
     not(s.gate == "asking" and s.holder),
     if (not(s.paid))
       s' = (if (askStands and not(s.settingOn)) released(s)
@@ -162,8 +186,13 @@ module bot_submission_fee {
           if (s.pr == "open") "needed" else "none")
         else s)
     else s' = s.with("gate", "paid").with("label", "paid").with("comments", 1)
-      .with("outcome", dueOutcome)
+      .with("outcome", if (not(readable) and s.pr == "closed" and s.outcome == "none")
+        "none" else dueOutcome)
+      .with("decidedWithMark", if (s.outcome == "none") s.keepMark
+        else s.decidedWithMark)
   }
+  action feeCheck = check(true)
+  action feeCheckUnreadable = check(false)
   // The ready label needs a completed review of the head and never goes on a
   // pull request whose fee is asked and unpaid.
   action readyCheck = all { s.opened, s.pr == "open",
@@ -172,7 +201,8 @@ module bot_submission_fee {
   action step = any { operatorSetsMode, ownerTurnsOn, ownerTurnsOff,
     contributorOpens, authorGainsAccess, push, maintainerMerges, closes,
     reopens, workerMarksPaid, workerWithdrawsPayment, dayPasses, reviewDelivery, askPosts, askRecords,
-    holderDies, feeCheck, readyCheck, s' = s }
+    holderDies, feeCheck, feeCheckUnreadable, readyCheck, maintainerMarksKeep,
+    maintainerUnmarksKeep, s' = s }
 
   val invariant = all {
     // One comment at most, whatever crashes or retries.
@@ -184,11 +214,20 @@ module bot_submission_fee {
     // Slopbot only sets an outcome on a paid row, and only when it is due.
     s.outcome != "none" implies (s.paid and s.gate == "paid"),
     s.outcome == "kept_due" implies s.closedAtKeptAge,
-    s.outcome == "refund_due" implies (s.everMerged or s.openAtRefundAge),
+    // Invited work is kept only on a maintainer's mark.
+    (s.outcome == "kept_due" and s.wanted) implies s.decidedWithMark,
+    s.outcome == "refund_due" implies (s.everMerged or s.openAtRefundAge
+      or (s.wanted and s.closedAtKeptAge and not(s.decidedWithMark))),
     // Off and record-only write nothing to GitHub and decide nothing.
     not(s.everLive) implies all { s.label == "none", s.comments == 0,
       s.gate == "none" or s.gate == "recorded", s.outcome == "none" },
-    s.gate == "recorded" implies s.row,
+    // A pull request that was only recorded has no row for the Worker to
+    // mark paid.
+    s.gate == "recorded" implies not(s.row),
+    // While the switch stays live, an ask taken back leaves no row for the
+    // Worker to mark paid.
+    (s.mode == "live" and not(s.leftLive) and s.gate == "released")
+      implies not(s.row),
     // While the switch stays live, an asked pull request that was never paid
     // has no review of its head and no ready label.
     (s.mode == "live" and not(s.leftLive) and unpaidAsk and not(s.everPaid))
@@ -223,6 +262,21 @@ module bot_submission_fee {
     .then(workerMarksPaid).then(feeCheck).then(closes).then(dayPasses)
     .then(dayPasses).then(feeCheck)
     .expect(s.outcome == "kept_due" and s.pr == "closed")
+  run wantedClosedIsSentBackTest = init.then(ownerTurnsOn).then(setMode("live"))
+    .then(opensFor(true, true)).then(review(true)).then(askPosts).then(askRecords)
+    .then(workerMarksPaid).then(feeCheck).then(closes).then(dayPasses)
+    .then(dayPasses).then(feeCheck)
+    .expect(s.outcome == "refund_due" and s.pr == "closed")
+  run wantedMarkedIsKeptTest = init.then(ownerTurnsOn).then(setMode("live"))
+    .then(opensFor(true, true)).then(review(true)).then(askPosts).then(askRecords)
+    .then(workerMarksPaid).then(feeCheck).then(closes).then(maintainerMarksKeep)
+    .then(dayPasses).then(dayPasses).then(feeCheck)
+    .expect(s.outcome == "kept_due" and s.decidedWithMark)
+  run wantedUnreadableWaitsTest = init.then(ownerTurnsOn).then(setMode("live"))
+    .then(opensFor(true, true)).then(review(true)).then(askPosts).then(askRecords)
+    .then(workerMarksPaid).then(feeCheck).then(closes).then(dayPasses)
+    .then(dayPasses).then(feeCheckUnreadable)
+    .expect(s.outcome == "none" and s.pr == "closed")
   run reopenedIsNotKeptTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
     .then(workerMarksPaid).then(feeCheck).then(closes).then(dayPasses)
@@ -246,22 +300,27 @@ module bot_submission_fee {
     .expect(s.reviewed and s.gate == "none" and not(s.row) and s.label == "none")
   run dryRunRecordsAndReviewsTest = init.then(ownerTurnsOn).then(setMode("dry"))
     .then(opens(true)).then(review(true))
-    .expect(s.gate == "recorded" and s.row and s.reviewed and s.label == "none"
+    .expect(s.gate == "recorded" and not(s.row) and s.reviewed and s.label == "none"
       and s.comments == 0)
   run settingTurnedOffReleasesTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
     .then(ownerTurnsOff).then(feeCheck).then(review(true))
-    .expect(s.gate == "released" and s.label == "none" and s.reviewed)
+    .expect(s.gate == "released" and s.label == "none" and s.reviewed
+      and not(s.row))
   run authorGainingAccessReleasesTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)
     .then(authorGainsAccess).then(review(true))
-    .expect(s.gate == "released" and s.label == "none" and not(s.reviewed))
+    .expect(s.gate == "released" and s.label == "none" and not(s.reviewed)
+      and not(s.row))
   run crashDoesNotDuplicateTheCommentTest = init.then(ownerTurnsOn)
     .then(setMode("live")).then(opens(true)).then(review(true)).then(askPosts)
     .then(holderDies).then(review(true)).then(askPosts).then(askRecords)
     .expect(s.comments == 1 and s.gate == "asked")
   run fullMonthIsNotAskedTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(false))
+    .expect(s.gate == "none" and not(s.row) and s.comments == 0)
+  run fullMonthIsNotRecordedInDryRunTest = init.then(ownerTurnsOn)
+    .then(setMode("dry")).then(opens(true)).then(review(false))
     .expect(s.gate == "none" and not(s.row) and s.comments == 0)
   run withdrawnPaymentAsksAgainTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opens(true)).then(review(true)).then(askPosts).then(askRecords)

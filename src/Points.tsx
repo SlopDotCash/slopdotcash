@@ -34,6 +34,7 @@ import {
 } from "./lib/browser-deployment";
 import {
   fetchWithDeadline,
+  PUBLISHED_DATA_DEADLINE_MS,
   readBoundedJson,
   readBoundedText,
 } from "./lib/browser-json";
@@ -82,6 +83,8 @@ import "./account-design.css";
 import { ContributionPointTiers } from "./PointsRules";
 import { ProfileActivity, useProfiles } from "./Profiles";
 import { ReferralCode } from "./ReferralCode";
+import { SecurityReadKey } from "./SecurityReadKey";
+import { TraceLicensing } from "./TraceLicensing";
 
 const EarningsPage = lazy(() =>
   import("./Earnings").then((module) => ({ default: module.EarningsPage })),
@@ -98,6 +101,18 @@ function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
       Admin
     </Link>
   );
+}
+
+/**
+ * Projects this account stewards, so an owner can reach a project's settings
+ * from the account menu instead of finding the project page first.
+ */
+function ownedProjects(actor: ActorRef) {
+  return PROJECTS.filter(
+    (project) =>
+      project.steward.github.nodeId === actor.id ||
+      project.steward.github.actorId === actor.id,
+  ).sort((left, right) => left.name.localeCompare(right.name));
 }
 
 interface Membership {
@@ -150,6 +165,10 @@ class PointsRequestError extends Error {
  * one-minute rate limit, and anything else means the service is unavailable.
  */
 function identityFailure(status: number, code?: unknown): string {
+  // A sign-in is bound to the browser that started it by a cookie on the
+  // identity service; without that cookie the poll is refused.
+  if (status === 403 && code === "browser_mismatch")
+    return "Sign-in could not be confirmed in this browser. Allow cookies for slop.cash, then start again.";
   if (status === 410 && code === "callback_failed")
     return "Sign-in failed. Please start again.";
   if (status === 410) return "Sign-in expired. Please start again.";
@@ -157,11 +176,16 @@ function identityFailure(status: number, code?: unknown): string {
     return "Too many sign-in attempts. Wait one minute, then try again.";
   return "Sign-in is temporarily unavailable. Try again in a few minutes.";
 }
-async function requestJson(url: string, init: RequestInit = {}) {
-  const response = await fetchWithDeadline(url, {
-    ...init,
-    cache: "no-store",
-  });
+async function requestJson(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs?: number,
+) {
+  const response = await fetchWithDeadline(
+    url,
+    { ...init, cache: "no-store" },
+    timeoutMs,
+  );
   if (!response.ok) {
     let code: string | null = null;
     try {
@@ -176,16 +200,22 @@ async function requestJson(url: string, init: RequestInit = {}) {
   return readBoundedJson(response, 24 * 1024 * 1024, "points");
 }
 async function loadPoints(signal: AbortSignal) {
-  const index = (await requestJson("/data/points.json", {
-    signal,
-  })) as PointsIndex;
+  const index = (await requestJson(
+    "/data/points.json",
+    { signal },
+    PUBLISHED_DATA_DEADLINE_MS,
+  )) as PointsIndex;
   if (!Array.isArray(index.shards) || index.shards.length !== 16)
     throw new Error("Invalid points index");
   const parts = await Promise.all(
     index.shards.map(async (s, i) => {
       if (s.path !== `/data/points/${i.toString(16)}.json`)
         throw new Error("Invalid points path");
-      const r = await fetchWithDeadline(s.path, { signal, cache: "no-store" });
+      const r = await fetchWithDeadline(
+        s.path,
+        { signal, cache: "no-store" },
+        PUBLISHED_DATA_DEADLINE_MS,
+      );
       if (!r.ok) throw new Error("Points shard unavailable");
       return readBoundedText(r, 8 * 1024 * 1024, "points history");
     }),
@@ -488,6 +518,15 @@ export function PointsNav() {
           <a href="/account" onClick={navigate}>
             Settings
           </a>
+          {ownedProjects(me.actor).map((project) => (
+            <a
+              key={project.id}
+              href={`/projects/${encodeURIComponent(project.slug)}/manage`}
+              onClick={navigate}
+            >
+              {project.name} settings
+            </a>
+          ))}
           <AdminAccountLink onNavigate={navigate} />
           <button type="button" onClick={signout} disabled={busy}>
             {busy ? "Signing out…" : "Sign out"}
@@ -777,7 +816,9 @@ function JoinPoints({
           const response = await fetchWithDeadline(url, {
             ...init,
             signal: c.signal,
-            credentials: "omit",
+            // Start sets, and poll presents, the cookie that binds the sign-in
+            // to this browser on the identity service.
+            credentials: "include",
             redirect: "error",
             cache: "no-store",
             referrerPolicy: "no-referrer",
@@ -796,7 +837,7 @@ function JoinPoints({
               );
             }
             const refusal =
-              response.status === 410
+              response.status === 410 || response.status === 403
                 ? ((await readBoundedJson(response, 16384, "sign-in").catch(
                     () => null,
                   )) as { error?: unknown } | null)
@@ -1060,6 +1101,30 @@ export function AccountPage() {
             code={me.referralCode ?? null}
             onSaved={(referralCode) => setMe({ ...me, referralCode })}
           />
+          <p>
+            <Link href="/requested">Requested repos</Link> lists repos Slop
+            contributors want to work on, with a pitch that carries your link.
+          </p>
+        </section>
+      ) : null}
+      {me !== null ? (
+        <section
+          id="trace-licensing"
+          className="points-panel"
+          aria-labelledby="trace-licensing-heading"
+        >
+          <h2 id="trace-licensing-heading">Trace licensing</h2>
+          <TraceLicensing key={me.actor.id} githubId={pointsActor} />
+        </section>
+      ) : null}
+      {me !== null ? (
+        <section
+          id="security-read-key"
+          className="points-panel"
+          aria-labelledby="security-read-key-heading"
+        >
+          <h2 id="security-read-key-heading">Security read key</h2>
+          <SecurityReadKey key={me.actor.id} githubId={pointsActor} />
         </section>
       ) : null}
     </main>

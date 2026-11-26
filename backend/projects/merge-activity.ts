@@ -18,11 +18,21 @@
  * not, for a maintainer's intake cap (operator decision, 17 November 2026;
  * `src/lib/intake-cap.mjs`). A project with an intake cap is read at every
  * hourly run instead of once a day, so its pause follows the queue.
+ *
+ * For a project with a wanted label (operator decision, 21 November 2026;
+ * `src/lib/wanted-label.mjs`) the read also lists the open issues that carry
+ * the label, and Slopbot creates the label on the repository once if it is
+ * missing. That label creation is the only GitHub write here. Such a project
+ * is read every six hours so its list follows the maintainers' labelling.
  */
 
 import { type IntakeCount, intakeCap } from "../../src/lib/intake-cap.mjs";
 import { validRepositoryPath } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import {
+  WANTED_ISSUES_SHOWN,
+  wantedLabel,
+} from "../../src/lib/wanted-label.mjs";
 import type { D1Database, D1QueryStatement } from "../d1";
 import { apiErrorResponse, json } from "../http";
 
@@ -38,6 +48,10 @@ const REFRESH_AFTER_MS = 20 * 60 * 60 * 1000;
 const RETRY_AFTER_MS = 60 * 60 * 1000;
 /** A project with an intake cap is read again at the next hourly run. */
 const INTAKE_REFRESH_AFTER_MS = 45 * 60 * 1000;
+/** A project with a wanted label is read again after six hours. */
+const WANTED_REFRESH_AFTER_MS = 6 * 60 * 60 * 1000;
+/** Wanted issues stored per repository, oldest first. */
+const WANTED_PAGE = 20;
 /** Repositories read per scheduled run, so one run stays short. */
 export const REPOSITORIES_PER_RUN = 15;
 const OPEN_PAGE = 50;
@@ -71,7 +85,20 @@ export type MergeActivity = {
   openOutside: number;
   /** More open pull requests exist than one read counts; the count is a floor. */
   openOutsideCapped: boolean;
+  /** Open issues carrying the project's wanted label; null when it has none. */
+  wanted: WantedIssues | null;
 };
+
+/** One open issue that carries the wanted label. */
+export type WantedIssue = {
+  number: number;
+  title: string;
+  url: string;
+  /** Open pull requests GitHub links as closing this issue. */
+  openPullRequests: number;
+};
+
+export type WantedIssues = { label: string; issues: WantedIssue[] };
 
 export function median(values: readonly number[]): number | null {
   if (values.length === 0) return null;
@@ -91,7 +118,7 @@ export function summarizeMergeActivity(
   now: Date,
   /** Open outside pull requests counted beyond `open`, and whether more remain. */
   counted: { more: number; capped: boolean } = { more: 0, capped: false },
-): MergeActivity {
+): Omit<MergeActivity, "wanted"> {
   const waitingBefore = now.getTime() - WAITING_DAYS * DAY_MS;
   const windowStart = now.getTime() - MEDIAN_WINDOW_DAYS * DAY_MS;
   const waitingOutside = open.filter(
@@ -165,6 +192,15 @@ const COUNT_QUERY = `query($owner:String!,$name:String!,$after:String){
   }
 }`;
 
+const WANTED_QUERY = `query($owner:String!,$name:String!,$label:String!){
+  repository(owner:$owner,name:$name){
+    issues(states:OPEN,labels:[$label],first:${WANTED_PAGE},orderBy:{field:CREATED_AT,direction:ASC}){
+      nodes{number title url
+        closedByPullRequestsReferences(first:1,includeClosedPrs:false){totalCount}}
+    }
+  }
+}`;
+
 const MERGED_QUERY = `query($q:String!,$after:String){
   search(query:$q,type:ISSUE,first:${MERGED_PAGE},after:$after){
     pageInfo{hasNextPage endCursor}
@@ -207,6 +243,7 @@ export async function readMergeActivity(
   token: string,
   repository: string,
   now: Date,
+  label: string | null = null,
 ): Promise<MergeActivity> {
   const [owner, name] = repository.split("/");
   const waitingBefore = now.getTime() - WAITING_DAYS * DAY_MS;
@@ -330,14 +367,68 @@ export async function readMergeActivity(
     if (!data.search.pageInfo.hasNextPage) break;
     after = data.search.pageInfo.endCursor;
   }
-  return summarizeMergeActivity(
-    open,
-    openCapped,
-    merged,
-    latestMergedAt,
-    now,
-    counted,
-  );
+  return {
+    ...summarizeMergeActivity(
+      open,
+      openCapped,
+      merged,
+      latestMergedAt,
+      now,
+      counted,
+    ),
+    wanted:
+      label === null
+        ? null
+        : await readWantedIssues(fetcher, token, owner, name, label),
+  };
+}
+
+/** The open issues of one repository that carry the wanted label, oldest first. */
+async function readWantedIssues(
+  fetcher: Fetch,
+  token: string,
+  owner: string,
+  name: string,
+  label: string,
+): Promise<WantedIssues> {
+  type WantedData = {
+    repository: {
+      issues: {
+        nodes: Array<{
+          number: number;
+          title: string;
+          url: string;
+          closedByPullRequestsReferences: { totalCount: number } | null;
+        }>;
+      };
+    } | null;
+  };
+  const data = await graphql<WantedData>(fetcher, token, WANTED_QUERY, {
+    owner,
+    name,
+    label,
+  });
+  if (!data.repository) throw new Error("github-repository-missing");
+  const issues = data.repository.issues.nodes.map((node) => {
+    if (
+      !Number.isSafeInteger(node.number) ||
+      typeof node.title !== "string" ||
+      typeof node.url !== "string" ||
+      node.url.toLowerCase() !==
+        `https://github.com/${owner}/${name}/issues/${node.number}`.toLowerCase()
+    )
+      throw new Error("github-wanted-issue-invalid");
+    return {
+      number: node.number,
+      title: node.title.slice(0, 200),
+      url: node.url,
+      openPullRequests: Math.max(
+        0,
+        node.closedByPullRequestsReferences?.totalCount ?? 0,
+      ),
+    };
+  });
+  return { label, issues: issues.slice(0, WANTED_ISSUES_SHOWN * 2) };
 }
 
 /** Repository paths a project lists now, in registry order. */
@@ -371,17 +462,25 @@ type StoredRow = {
   median_merge_hours: number | null;
   open_outside: number | null;
   open_outside_capped: number | null;
+  wanted_label: string | null;
+  wanted_issues: string | null;
+  wanted_label_ready: string | null;
 };
 
 /**
  * True when the repository is due: never read, stale, or a failure an hour
  * old. `intake` is true for a project with an intake cap, which is read at
- * every hourly run.
+ * every hourly run. `wanted` is the project's wanted label: a project with
+ * one is read every six hours, and at once after the label changes.
  */
 export function due(
-  row: Pick<StoredRow, "attempted_at" | "failure"> | undefined,
+  row:
+    | (Pick<StoredRow, "attempted_at" | "failure"> &
+        Partial<Pick<StoredRow, "wanted_label">>)
+    | undefined,
   now: Date,
   intake = false,
+  wanted: string | null = null,
 ): boolean {
   if (!row) return true;
   const attempted = Date.parse(row.attempted_at);
@@ -390,10 +489,13 @@ export function due(
       now.getTime() - attempted >=
       (intake ? INTAKE_REFRESH_AFTER_MS : RETRY_AFTER_MS)
     );
-  return (
-    now.getTime() - attempted >=
-    (intake ? INTAKE_REFRESH_AFTER_MS : REFRESH_AFTER_MS)
-  );
+  if (wanted !== null && (row.wanted_label ?? null) !== wanted) return true;
+  const refresh = intake
+    ? INTAKE_REFRESH_AFTER_MS
+    : wanted !== null
+      ? WANTED_REFRESH_AFTER_MS
+      : REFRESH_AFTER_MS;
+  return now.getTime() - attempted >= refresh;
 }
 
 /**
@@ -408,10 +510,11 @@ export async function refreshMergeActivity(
   tokenFor: (repository: string) => Promise<string | null>,
   fetcher: Fetch,
   now: Date,
+  ensureLabel?: (repository: string, label: string) => Promise<boolean>,
 ): Promise<{ read: number; failed: number }> {
   const { results } = await db
     .prepare(
-      "SELECT project_id, repository, observed_at, attempted_at, failure FROM repository_merge_activity",
+      "SELECT project_id, repository, observed_at, attempted_at, failure, wanted_label, wanted_label_ready FROM repository_merge_activity",
     )
     .all<StoredRow>();
   const stored = new Map(
@@ -430,18 +533,27 @@ export async function refreshMergeActivity(
         )
         .bind(row.project_id, row.repository)
         .run();
-  const queue: Array<{ projectId: string; repository: string; since: number }> =
-    [];
-  for (const project of projects)
+  const queue: Array<{
+    projectId: string;
+    repository: string;
+    since: number;
+    label: string | null;
+    ready: string | null;
+  }> = [];
+  for (const project of projects) {
+    const label = wantedLabel(project);
     for (const repository of measuredRepositories(project)) {
       const row = stored.get(`${project.id}\n${repository}`);
-      if (due(row, now, intakeCap(project) !== null))
+      if (due(row, now, intakeCap(project) !== null, label))
         queue.push({
           projectId: project.id,
           repository,
           since: row ? Date.parse(row.attempted_at) : 0,
+          label,
+          ready: row?.wanted_label_ready ?? null,
         });
     }
+  }
   queue.sort((a, b) => a.since - b.since);
   let read = 0;
   let failed = 0;
@@ -455,15 +567,27 @@ export async function refreshMergeActivity(
         token,
         item.repository,
         now,
+        item.label,
       );
+      // Creating a missing label is best effort: a failure leaves the list
+      // as read and is retried at the next read.
+      let ready = item.ready;
+      if (item.label !== null && ready !== item.label && ensureLabel)
+        try {
+          if (await ensureLabel(item.repository, item.label))
+            ready = item.label;
+        } catch {
+          // retried at the next read
+        }
       await db
         .prepare(
           `INSERT INTO repository_merge_activity
              (project_id, repository, observed_at, attempted_at, failure,
               last_merged_at, waiting_outside, waiting_capped,
               merged_outside_30d, median_merge_hours,
-              open_outside, open_outside_capped)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+              open_outside, open_outside_capped,
+              wanted_label, wanted_issues, wanted_label_ready)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id, repository) DO UPDATE SET
              observed_at = excluded.observed_at,
              attempted_at = excluded.attempted_at,
@@ -474,7 +598,10 @@ export async function refreshMergeActivity(
              merged_outside_30d = excluded.merged_outside_30d,
              median_merge_hours = excluded.median_merge_hours,
              open_outside = excluded.open_outside,
-             open_outside_capped = excluded.open_outside_capped`,
+             open_outside_capped = excluded.open_outside_capped,
+             wanted_label = excluded.wanted_label,
+             wanted_issues = excluded.wanted_issues,
+             wanted_label_ready = excluded.wanted_label_ready`,
         )
         .bind(
           item.projectId,
@@ -488,6 +615,9 @@ export async function refreshMergeActivity(
           activity.medianMergeHours,
           activity.openOutside,
           activity.openOutsideCapped ? 1 : 0,
+          activity.wanted?.label ?? null,
+          activity.wanted ? JSON.stringify(activity.wanted.issues) : null,
+          item.label === null ? null : ready,
         )
         .run();
       read += 1;
@@ -514,23 +644,41 @@ export async function refreshMergeActivity(
 }
 
 /**
- * The stored open counts by project for the intake cap (`intakePaused` in
- * src/lib/intake-cap.mjs). Throws when D1 cannot be read; callers fail open.
+ * The stored counts by project for the intake cap (`intakePaused` in
+ * src/lib/intake-cap.mjs) and the backlog rule (`backlogOutOfRotation` in
+ * src/lib/backlog-rule.mjs): open and waiting outside pull requests and the
+ * last merge of every repository read at least once. Throws when D1 cannot be
+ * read; callers fail open.
  */
 export async function readIntakeCounts(
   db: Database,
 ): Promise<Map<string, IntakeCount[]>> {
   const { results } = await db
     .prepare(
-      `SELECT project_id, observed_at, open_outside
+      `SELECT project_id, observed_at, open_outside, waiting_outside,
+              last_merged_at
          FROM repository_merge_activity
-        WHERE observed_at IS NOT NULL AND open_outside IS NOT NULL`,
+        WHERE observed_at IS NOT NULL`,
     )
-    .all<Pick<StoredRow, "project_id" | "observed_at" | "open_outside">>();
+    .all<
+      Pick<
+        StoredRow,
+        | "project_id"
+        | "observed_at"
+        | "open_outside"
+        | "waiting_outside"
+        | "last_merged_at"
+      >
+    >();
   const index = new Map<string, IntakeCount[]>();
   for (const row of results ?? []) {
     const list = index.get(row.project_id) ?? [];
-    list.push({ openOutside: row.open_outside, observedAt: row.observed_at });
+    list.push({
+      openOutside: row.open_outside,
+      waitingOutside: row.waiting_outside,
+      lastMergedAt: row.last_merged_at,
+      observedAt: row.observed_at,
+    });
     index.set(row.project_id, list);
   }
   return index;
@@ -559,7 +707,8 @@ export async function handleMergeActivityApi(
         `SELECT project_id, repository, observed_at, attempted_at, failure,
                 last_merged_at, waiting_outside, waiting_capped,
                 merged_outside_30d, median_merge_hours,
-                open_outside, open_outside_capped
+                open_outside, open_outside_capped,
+                wanted_label, wanted_issues
            FROM repository_merge_activity
           WHERE observed_at IS NOT NULL
           ORDER BY project_id, repository`,
@@ -579,6 +728,12 @@ export async function handleMergeActivityApi(
         medianHoursToMerge: row.median_merge_hours,
         openOutside: row.open_outside,
         openOutsideCapped: row.open_outside_capped === 1,
+        ...(row.wanted_label !== null && row.wanted_issues !== null
+          ? {
+              wantedLabel: row.wanted_label,
+              wantedIssues: JSON.parse(row.wanted_issues) as WantedIssue[],
+            }
+          : {}),
       });
       projects.set(row.project_id, list);
     }

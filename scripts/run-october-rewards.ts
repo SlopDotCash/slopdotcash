@@ -69,7 +69,7 @@ export function octoberQueryRows(stdout: string): Record<string, unknown>[] {
 }
 
 /** Expose only the canonical persistence reader's SELECT operations. */
-function readOnlyDatabase(query: Query): ProjectD1Database {
+export function readOnlyDatabase(query: Query): ProjectD1Database {
   const prepare = (sql: string, values: unknown[] = []): D1QueryStatement => {
     const read = () => {
       if (!/^\s*SELECT\b/iu.test(sql))
@@ -244,7 +244,7 @@ export async function verifyOctoberReadback(
   }
 }
 
-async function privateD1(args: string[]): Promise<string> {
+export async function privateD1(args: string[]): Promise<string> {
   const { stdout } = await execute(
     resolve("node_modules/.bin/wrangler"),
     [

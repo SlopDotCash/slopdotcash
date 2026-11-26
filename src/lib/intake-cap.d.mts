@@ -3,6 +3,10 @@
 export type IntakeCount = {
   /** Null or absent: the open count was not read for this repository yet. */
   readonly openOutside?: number | null;
+  /** Outside pull requests waiting 7+ days, for the backlog rule. */
+  readonly waitingOutside?: number | null;
+  /** The last merge of the repository, for the backlog rule. */
+  readonly lastMergedAt?: string | null;
   readonly observedAt: string | null;
 };
 

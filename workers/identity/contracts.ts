@@ -35,6 +35,8 @@ export type OAuthFlow = {
   githubActorId: string | null;
   githubLogin: string | null;
   githubNodeId?: string | null;
+  /** SHA-256 of the starting browser's binding secret; website flows only. */
+  browserBindingHash?: string | null;
   createdAt: string;
   expiresAt: string;
   callbackCompletedAt: string | null;

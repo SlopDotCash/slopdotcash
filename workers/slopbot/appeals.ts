@@ -132,6 +132,43 @@ export async function latestAppealFor(
     .first<Appeal>();
 }
 
+/** Why another finding appeal for this item keeps this one from being
+ * self-decided, or null. A penalty is recorded once per item, so a repeat
+ * appeal (a new head or an edited body opens a new revision key) must not
+ * let the appellant accept a fresh draft while an earlier appeal of the same
+ * debit was denied, has a deny draft nobody answered, or awaits a moderator.
+ * Each case sends the repeat appeal to a moderator. Checked at triage and
+ * again before the appellant accepts an uphold draft, since a sibling can be
+ * denied or escalated in between. Value disputes are not findings and are
+ * left out.
+ */
+export async function siblingAppealHold(
+  db: D1Database,
+  itemNodeId: string,
+  appealKey: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT
+         MAX(resolution = 'denied') AS denied,
+         MAX(escalated_at IS NOT NULL AND resolution IS NULL) AS escalated,
+         MAX(resolution IS NULL AND draft = 'deny') AS deny_draft
+       FROM slopbot_appeals WHERE item_node_id = ?
+         AND appeal_key <> ? AND appeal_key NOT LIKE 'value-appeal:%'`,
+    )
+    .bind(itemNodeId, appealKey)
+    .first<{
+      denied: number | null;
+      escalated: number | null;
+      deny_draft: number | null;
+    }>();
+  if (row?.denied) return "an earlier appeal of this item was denied";
+  if (row?.escalated)
+    return "an earlier appeal of this item awaits a moderator";
+  if (row?.deny_draft) return "an earlier appeal of this item has a deny draft";
+  return null;
+}
+
 /** Stores the first draft only; a retry keeps it. */
 export async function recordDraft(
   db: D1Database,

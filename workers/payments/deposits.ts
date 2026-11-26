@@ -246,8 +246,10 @@ export function solanaDeposits(
     const tag = bytesToHex(data.slice(0, 8));
     if (tag !== DEPOSIT && tag !== DEPOSIT_NATIVE) return;
     const accounts = instruction.accounts;
+    // Anchor reads the u64 after the tag and ignores any later bytes, so
+    // longer data is still a deposit of exactly that amount.
     if (
-      data.length !== 16 ||
+      data.length < 16 ||
       !Array.isArray(accounts) ||
       typeof accounts[0] !== "string" ||
       typeof accounts[1] !== "string"

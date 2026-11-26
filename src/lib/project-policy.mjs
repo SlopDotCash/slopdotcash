@@ -115,7 +115,11 @@ function assertCommitmentTransition(previous, next) {
   }
 }
 
-function assertRepositoryTransition(previousRepositories, nextRepositories) {
+function assertRepositoryTransition(
+  previousRepositories,
+  nextRepositories,
+  branchChange,
+) {
   if (nextRepositories.length < previousRepositories.length) {
     throw new TypeError("repository inventory cannot change");
   }
@@ -150,9 +154,13 @@ function assertRepositoryTransition(previousRepositories, nextRepositories) {
     }
     const previousAliases = previous.aliases ?? [];
     const nextAliases = next.aliases ?? [];
+    const branchMoved =
+      branchChange?.repositoryId === previous.id &&
+      branchChange.from === previous.integrationBranch &&
+      branchChange.to === next.integrationBranch;
     if (
       previous.id !== next.id ||
-      previous.integrationBranch !== next.integrationBranch ||
+      (!branchMoved && previous.integrationBranch !== next.integrationBranch) ||
       previous.description !== next.description
     ) {
       throw new TypeError(
@@ -172,7 +180,10 @@ function assertRepositoryTransition(previousRepositories, nextRepositories) {
       );
     }
     if (nextAliases.length === previousAliases.length) {
-      if (canonical(previous) !== canonical(next)) {
+      const comparable = branchMoved
+        ? { ...next, integrationBranch: previous.integrationBranch }
+        : next;
+      if (canonical(previous) !== canonical(comparable)) {
         throw new TypeError(
           "repository metadata may change only with an appended transfer alias",
         );
@@ -199,7 +210,11 @@ function assertRepositoryTransition(previousRepositories, nextRepositories) {
  * remain valid because callers receive a new revision rather than mutating an
  * old acknowledgement.
  */
-export function assertProjectPolicyTransition(previousValue, nextValue) {
+export function assertProjectPolicyTransition(
+  previousValue,
+  nextValue,
+  branchChange,
+) {
   const previous = assertHistoricalProjectDefinition(previousValue);
   const next = assertProjectDefinition(nextValue);
   if (previous.id !== next.id) throw new TypeError("project id cannot change");
@@ -231,7 +246,11 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
       "repository transfer, rename, or integration-branch drift requires a new project review",
     );
   }
-  assertRepositoryTransition(previous.repositories, next.repositories);
+  assertRepositoryTransition(
+    previous.repositories,
+    next.repositories,
+    branchChange,
+  );
   const previousReceiptPolicy = previous.terms.receiptPolicy;
   const nextReceiptPolicy = next.terms.receiptPolicy;
   const initialReceiptActivation =

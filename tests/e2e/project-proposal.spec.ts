@@ -619,6 +619,17 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(page.locator("#submission-fee-hint")).toContainText(
     "A merge sends the fee back",
   );
+  // The report deposit starts on for every project (PRD section 8) and stays
+  // the owner's choice.
+  const reportDeposit = page.getByRole("checkbox", {
+    name: "Ask reporters for a refundable SLOP deposit",
+    exact: true,
+  });
+  await expect(reportDeposit).toBeChecked();
+  await expect(page.locator("#report-deposit-hint")).toContainText(
+    "about 5 US dollars of SLOP on Robinhood Chain",
+  );
+  await reportDeposit.uncheck();
   await submissionFee.uncheck();
   await closure.uncheck();
   // Reload observes committed bytes, not the visible Saving state of the
@@ -626,11 +637,14 @@ test("drafts a project through the setup steps and creates it without an admin",
   expect(await readProposalDraft(page)).toMatchObject({
     automaticClosure: "false",
     submissionFee: "false",
+    reportDeposit: "false",
   });
   await page.reload();
   await expect(closure).not.toBeChecked();
   await expect(submissionFee).not.toBeChecked();
+  await expect(reportDeposit).not.toBeChecked();
   await submissionFee.check();
+  await reportDeposit.check();
   await expect(branch).toHaveValue("development");
   const avatar = page.locator(".project-image-upload img");
   await expect(avatar).toHaveAttribute(
@@ -891,8 +905,11 @@ test("drafts a project through the setup steps and creates it without an admin",
   expect(posted?.slopbot).toEqual({
     automaticClosure: false,
     submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   expect(posted?.image).toBeUndefined();
+  // The report deposit stayed on, which records no setting.
+  expect(posted).not.toHaveProperty("security");
 
   // A completed setup offers the next action instead of the old wizard.
   await page.getByRole("button", { name: "Add another", exact: true }).click();
@@ -1092,6 +1109,7 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({
   expect((manifest as { slopbot?: unknown } | null)?.slopbot).toEqual({
     automaticClosure: true,
     submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   // USDG remains the default Robinhood Chain asset.
   expect(manifest).toMatchObject({
@@ -1274,6 +1292,13 @@ test("a saved native reward with an unknown network stays editable until correct
       exact: true,
     }),
   ).toHaveCount(0);
+  // It still takes private reports, so the report deposit stays offered.
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Ask reporters for a refundable SLOP deposit",
+      exact: true,
+    }),
+  ).toBeChecked();
   await page
     .getByRole("navigation", { name: "Setup steps" })
     .getByRole("button", { name: "Review", exact: true })

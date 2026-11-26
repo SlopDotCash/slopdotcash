@@ -4,6 +4,7 @@
 
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
 import { hasParticipationBan } from "../../backend/projects/account-bans";
+import { validIsoTimestamp } from "../../backend/trace/validation";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { POINTS_PER_THIRD } from "../../src/lib/points";
 import { publishAppealComment } from "./appeal-publication";
@@ -19,6 +20,7 @@ import {
   openAppeal,
   recordDraft,
   resolveAppeal,
+  siblingAppealHold,
 } from "./appeals";
 import { activeBudgetBlock, recordBudgetBlock } from "./budget-blocks";
 import {
@@ -108,6 +110,7 @@ import {
   monthlyReviewOpen,
 } from "./review-cap";
 import { route } from "./routing";
+import { missingSubmissionEvidence } from "./submission-evidence";
 import {
   gateSubmissionFee,
   releaseExemptFee,
@@ -134,6 +137,7 @@ export type ReviewEnv = ModelEnv &
     SLOPBOT_APP_USER_ID: string;
     // Global switch, off until the owner approves Slopbot v2 closures.
     SLOPBOT_CLOSURE_ENABLED?: string;
+    SLOPBOT_EVIDENCE_CLOSURE_ENABLED?: string;
     // The submission fee switch: off, dry_run or live. Absent means off.
     SUBMISSION_FEE_MODE?: string;
     // Slop moderators (immutable GitHub IDs) who decide escalated appeals.
@@ -177,6 +181,7 @@ type Issue = {
 type Pull = {
   draft: boolean;
   merged: boolean;
+  merged_at?: string | null;
   created_at?: string | null;
   head: { sha: string };
   base: { sha: string; ref: string; repo: { id: number } };
@@ -198,7 +203,7 @@ Categories:
 - duplicate: substantially repeats another open item by the same author.
 - out_of_scope: contradicts scope rules the repository publishes.
 - busywork: preference-only or unnecessary work the repository's guidance says it does not want.
-- missing_evidence: a required template, test result or evidence the guidance demands is absent.
+- missing_evidence: a required template, test result or evidence the guidance demands is absent. Match the declared change types to the diff and scope. A generic success phrase or a link without an accessible relevant result does not demonstrate the outcome. Check whether the original problem and reachable path are shown, and whether the test output, logs, video, benchmark or physical-device result actually covers the change.
 - gaming: farming rewards, split or near-identical submissions, forged attribution, self-dealing.
 - low_quality: weak work, or one of the supplied verified objective defects. Weak work alone is label-only.
 
@@ -407,7 +412,7 @@ async function loadContext(
     `/repos/${job.owner}/${job.repo}/branches/${encodeURIComponent(repo.default_branch)}`,
   );
   if (branch === null) return null;
-  const baseSha = branch.commit.sha;
+  const defaultBranchSha = branch.commit.sha;
   const pull =
     job.itemKind === "pull_request"
       ? await github.get<Pull>(
@@ -419,7 +424,7 @@ async function loadContext(
     job.owner,
     job.repo,
     CONFIG_PATH,
-    baseSha,
+    defaultBranchSha,
     16 * 1024,
   );
   const config = projectRepositoryConfig(
@@ -427,9 +432,6 @@ async function loadContext(
     // A truncated existing file is invalid, never permission to use defaults.
     configFile === null ? null : configFile.truncated ? "" : configFile.text,
   );
-  // Policy is always read from the default branch at a recorded SHA; a pull
-  // request's own policy edits are content under review (BOT-04).
-  const policy = await loadPolicy(github, job.owner, job.repo, baseSha);
   const comparison =
     pull === null
       ? {
@@ -437,17 +439,27 @@ async function loadContext(
           truncated: false,
           limitations: [] as string[],
           changedFiles: 0,
-          baseSha,
-          mergeBaseSha: baseSha,
+          baseSha: defaultBranchSha,
+          mergeBaseSha: defaultBranchSha,
           targetRef: repo.default_branch,
         }
       : await pullDiff(github, job.owner, job.repo, repo.id, pull);
+  const policy = await loadPolicy(
+    github,
+    job.owner,
+    job.repo,
+    comparison.baseSha,
+  );
   const itemText = reviewedItemText(issue, pull, comparison);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
   const policyDigest = await sha256Hex(
     JSON.stringify({
-      baseSha,
+      baseSha: defaultBranchSha,
+      // Keep the existing digest for reviews whose two sources share a commit.
+      ...(comparison.baseSha === defaultBranchSha
+        ? {}
+        : { targetSha: comparison.baseSha }),
       config: config.config,
       files: policy.map((f) => [f.path, f.text]),
     }),
@@ -456,8 +468,8 @@ async function loadContext(
     pull === null ||
     comparison.truncated ||
     pull.base.sha !== comparison.baseSha ||
-    comparison.baseSha !== baseSha ||
-    comparison.mergeBaseSha !== baseSha
+    comparison.baseSha !== defaultBranchSha ||
+    comparison.mergeBaseSha !== defaultBranchSha
       ? []
       : await loadQualityEvidence(
           github,
@@ -731,6 +743,33 @@ async function sameReviewEvidence(
   return JSON.stringify(current) === JSON.stringify(related);
 }
 
+function evidenceVerdict(
+  context: Pick<
+    Context,
+    "pull" | "issue" | "policy" | "registration" | "limitations"
+  >,
+): Verdict | null {
+  if (
+    context.pull === null ||
+    context.registration.scope !== "contributor" ||
+    context.limitations.length > 0
+  )
+    return null;
+  const finding = missingSubmissionEvidence(
+    context.issue.body ?? "",
+    context.policy,
+  );
+  if (finding === null) return null;
+  return {
+    category: "missing_evidence",
+    confidence: 1,
+    rule_refs: [{ source: finding.source, quote: finding.quote }],
+    evidence: [],
+    summary: `The Evidence section is missing or incomplete. Supply these required fields with checkable results: ${finding.fields.join(", ")}.`,
+    limitations: [],
+  };
+}
+
 function prefilter(context: Pick<Context, "pull" | "issue">): Verdict | null {
   if (context.pull !== null && context.pull.changed_files === 0) {
     return {
@@ -804,9 +843,14 @@ async function closureState(
   job: Job,
   context: Context,
   mayClose: boolean,
+  category: Category,
 ) {
   const db = env.SLOPBOT_DB;
-  if (env.SLOPBOT_CLOSURE_ENABLED !== "true")
+  const enabled =
+    category === "missing_evidence"
+      ? env.SLOPBOT_EVIDENCE_CLOSURE_ENABLED
+      : env.SLOPBOT_CLOSURE_ENABLED;
+  if (enabled !== "true")
     return {
       allowed: false,
       why: "closure is disabled for Slopbot (pending production activation)",
@@ -1167,6 +1211,12 @@ export async function reviewItem(
       await sha256Hex(context.itemText),
       env.SLOPBOT_QUALITY_VERIFIER_KEY ?? "",
       ...context.quality.map((q) => q.id).sort(),
+      ...(evidenceVerdict(context) === null
+        ? []
+        : [
+            "submission-evidence-v1",
+            env.SLOPBOT_EVIDENCE_CLOSURE_ENABLED ?? "",
+          ]),
       // A security-only review is distinct; contributor keys stay unchanged.
       ...(registration.scope === "security" ? ["security-review"] : []),
     ].join("|"),
@@ -1501,6 +1551,7 @@ async function runReview(
         github: context.github,
         projectId: context.registration.projectId,
         exemption,
+        author: { id: issue.user.id, login: issue.user.login },
         openedAt: context.pull?.created_at,
         mayAsk: await monthlyReviewOpen(
           db,
@@ -1533,7 +1584,10 @@ async function runReview(
     return MONTHLY_REVIEW_CAP_REASON;
   }
 
-  let verdict = context.limitations.length ? null : prefilter(context);
+  const evidenceFinding = evidenceVerdict(context);
+  let verdict = context.limitations.length
+    ? null
+    : (evidenceFinding ?? prefilter(context));
   if (verdict === null && context.limitations.length === 0) {
     const duplicate = await duplicateOf(env, job, context, contentDigest);
     if (duplicate) {
@@ -1549,11 +1603,13 @@ async function runReview(
   const reviewPrefilterForClosure =
     verdict !== null &&
     verdict.category !== "none" &&
+    verdict.category !== "missing_evidence" &&
     scope === "contributor" &&
     config.config.categories[verdict.category] === "close" &&
     !NEVER_CLOSE.has(verdict.category) &&
     penaltyFor(verdict.category)?.action === "close" &&
-    (await closureState(env, job, context, routing.mayClose)).allowed;
+    (await closureState(env, job, context, routing.mayClose, verdict.category))
+      .allowed;
   if (verdict === null || reviewPrefilterForClosure) {
     await store.assertReviewClaim(db, claim);
     await requireScope(db, job, scope);
@@ -1595,7 +1651,14 @@ async function runReview(
     });
     return `no action (${category}; security review only)`;
   }
-  const mode = category === "none" ? "off" : config.config.categories[category];
+  const configuredMode =
+    category === "none" ? "off" : config.config.categories[category];
+  const mode =
+    category === "missing_evidence" &&
+    evidenceFinding === null &&
+    configuredMode === "close"
+      ? "label"
+      : configuredMode;
   if (
     (category === "none" && scope === "contributor") ||
     context.limitations.length > 0
@@ -1685,7 +1748,13 @@ async function runReview(
     // The published penalty table makes some categories label-only (D7).
     penaltyFor(category)?.action === "close"
   ) {
-    const state = await closureState(env, job, context, routing.mayClose);
+    const state = await closureState(
+      env,
+      job,
+      context,
+      routing.mayClose,
+      category,
+    );
     if (initialUncertainty !== null) blockedClose = initialUncertainty;
     else if (category === "duplicate" && !context.relatedOpenItem) {
       blockedClose = "no verified matching open item by the same author";
@@ -1694,7 +1763,9 @@ async function runReview(
       blockedClose = "no trusted verification of the cited objective defect";
     else if (!state.allowed && category !== "low_quality")
       blockedClose = state.why;
-    else if (deterministic || triage === null) {
+    else if (category === "missing_evidence" && evidenceFinding !== null) {
+      close = true;
+    } else if (deterministic || triage === null) {
       // A closure guard can change after the initial advisory-only decision.
       // Never promote a prefilter to a close without its model triage.
       blockedClose = "two independent model reviews were not performed";
@@ -1838,6 +1909,7 @@ async function runReview(
       job,
       fresh,
       eligibility.eligible && reopened === 0,
+      category,
     );
     if (!currentClosure.allowed) {
       close = false;
@@ -2189,7 +2261,13 @@ async function stillMayClose(
     )
       return false;
   }
-  return !forClosure || (await closureState(env, job, fresh, true)).allowed
+  if (
+    verdict.category === "missing_evidence" &&
+    evidenceVerdict(fresh) === null
+  )
+    return false;
+  return !forClosure ||
+    (await closureState(env, job, fresh, true, verdict.category)).allowed
     ? fresh
     : false;
 }
@@ -2228,6 +2306,7 @@ type AppealSession = {
   github: GitHubClient;
   repo: Repo;
   issue: Issue;
+  pull: Pull | null;
   revision: string;
   registration: Context["registration"];
   /** A retired project: no review, so no model call or GitHub write. Only
@@ -2269,11 +2348,12 @@ async function appealSession(
     `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
   );
   if (issue === null) return "ignored";
-  const { revision } = await itemRevision(github, job, issue);
+  const { pull, revision } = await itemRevision(github, job, issue);
   return {
     github,
     repo,
     issue,
+    pull,
     revision,
     registration,
     reversalOnly: reviewable === null,
@@ -2505,11 +2585,17 @@ export async function recordHumanSignal(
     job.kind === "human_reopen" ? await reopenSource(db, job) : null;
   if (job.kind === "human_reopen") {
     if (!source) return "reopen source unavailable; no decision";
+    const mergedAfterReopen =
+      job.senderId !== issue.user.id &&
+      session.pull?.merged === true &&
+      validIsoTimestamp(session.pull.merged_at) &&
+      Date.parse(session.pull.merged_at) >= Date.parse(source.occurredAt);
     if (
       source.itemNodeId !== issue.node_id ||
       (issue.state !== "open" &&
         (issue.state !== "closed" ||
-          (issue.closed_by &&
+          (!mergedAfterReopen &&
+            issue.closed_by &&
             Number.isSafeInteger(issue.closed_by.id) &&
             issue.closed_by.id > 0 &&
             String(issue.closed_by.id) !== env.SLOPBOT_APP_USER_ID)))
@@ -2815,12 +2901,17 @@ async function triageAppeal(
   const penalty = await activePenalty(db, session.issue.node_id);
   const reason = (await hasParticipationBan(db, current.appellant_github_id))
     ? "the appellant has an active participation ban"
-    : escalationFor({
+    : ((await siblingAppealHold(
+        db,
+        session.issue.node_id,
+        appeal.appeal_key,
+      )) ??
+      escalationFor({
         category: finding,
         debitThirds: penalty?.debit_thirds ?? 0,
         moderatorReview: penalty?.moderator_review === 1,
         draftConfidence: current.draft_confidence,
-      });
+      }));
   if (reason !== null)
     await escalateAppeal(
       db,
@@ -2858,7 +2949,16 @@ async function draftResolution(
   };
   const context = await loadContext(env, reviewJob, session.registration);
   if (context === null) throw new Error("the appealed item is not readable");
+  if (
+    finding === "missing_evidence" &&
+    (await activePenalty(env.SLOPBOT_DB, session.issue.node_id))?.category ===
+      finding
+  )
+    return evidenceVerdict(context) === null
+      ? { draft: "uphold", confidence: 1 }
+      : { draft: "deny", confidence: 1 };
   const deterministic =
+    evidenceVerdict(context) ??
     prefilter(context) ??
     (
       await duplicateOf(
@@ -3187,6 +3287,27 @@ export async function applyAppealCommand(
       if (current === null) throw new Error("Appeal is missing");
       await publishAppealState(env, job, session, current, "escalation");
       return `appeal escalated: ${current.escalation}`;
+    }
+    // Another appeal of the same debit may have been denied, escalated or
+    // drafted deny after this one was triaged. The appellant then cannot
+    // uphold alone: a moderator decides.
+    if (by === "appellant" && appeal.draft === "uphold") {
+      const hold = await siblingAppealHold(
+        db,
+        session.issue.node_id,
+        appeal.appeal_key,
+      );
+      if (hold !== null) {
+        await escalateAppeal(
+          db,
+          appeal.appeal_key,
+          hold,
+          moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+        );
+        const current = (await appealByKey(db, appeal.appeal_key)) ?? appeal;
+        await publishAppealState(env, job, session, current, "escalation");
+        return "a Slop moderator decides this appeal";
+      }
     }
     return finishAppeal(
       env,

@@ -7,6 +7,11 @@ import { servicePublicationJournal } from "../workers/vetting/publication-journa
 import { runScanPass, serviceConfigFrom } from "../workers/vetting/run";
 import type { ScannerProfile } from "../workers/vetting/scanners";
 import { signedServiceHeaders } from "../workers/vetting/service";
+import {
+  type ComparedFile,
+  runnerEquivalence,
+  scannerInputs,
+} from "./vetting-runner-equivalence";
 
 /** Fixed step names only: the failure report never carries an error message. */
 let stage = "checkout";
@@ -108,22 +113,69 @@ async function main() {
       imageSha256?: string;
     };
     stage = "runner-revision";
-    if (health.revision !== env.GITHUB_SHA) {
-      // Commit IDs are public. Name both so the operator knows to wait for
-      // the release of this checkout, then dispatch again.
-      const deployed = /^[a-f0-9]{40}$/.test(health.revision ?? "")
-        ? health.revision
-        : "no valid revision";
-      console.error(
-        `The isolated runner reports ${deployed}; this checkout is ${env.GITHUB_SHA}. Dispatch again after the release of this checkout succeeds.`,
-      );
-    }
     if (
       health.ok !== true ||
-      health.revision !== env.GITHUB_SHA ||
+      !/^[a-f0-9]{40}$/.test(health.revision ?? "") ||
       !/^[a-f0-9]{64}$/.test(health.imageSha256 ?? "")
     )
+      throw new Error("The isolated runner is not deployed");
+    const deployed = health.revision as string;
+    const checkout = env.GITHUB_SHA as string;
+    // An earlier commit of this branch with no scanner input changed since
+    // runs the same scanner, so the scan need not wait for the release of
+    // every later merge (operator decision, 23 November 2026).
+    let compare: { status: string; files: ComparedFile[] } | undefined;
+    if (deployed !== checkout) {
+      // The scan's read token first, then the workflow's own token; a read
+      // that neither answers leaves the pass waiting for the release.
+      for (const token of [env.GITHUB_TOKEN, env.GITHUB_COMPARE_TOKEN]) {
+        if (!token || compare) continue;
+        const answer = await fetch(
+          `https://api.github.com/repos/${env.GITHUB_REPOSITORY}/compare/${deployed}...${checkout}`,
+          {
+            redirect: "error",
+            signal: AbortSignal.timeout(30_000),
+            headers: {
+              accept: "application/vnd.github+json",
+              authorization: `Bearer ${token}`,
+              "user-agent": "slop-vetting-controller",
+              "x-github-api-version": "2022-11-28",
+            },
+          },
+        ).catch(() => null);
+        if (!answer?.ok) continue;
+        const body = (await answer.json()) as {
+          status?: unknown;
+          files?: unknown;
+        };
+        if (typeof body.status === "string" && Array.isArray(body.files))
+          compare = {
+            status: body.status,
+            files: body.files.filter(
+              (file): file is ComparedFile =>
+                typeof file?.filename === "string",
+            ),
+          };
+      }
+    }
+    const decision = runnerEquivalence({
+      deployed,
+      checkout,
+      compare,
+      inputs: deployed === checkout ? new Set() : scannerInputs(process.cwd()),
+    });
+    if (decision.result === "equivalent")
+      console.log(
+        `The isolated runner reports ${deployed}, an earlier commit of this branch; no scanner input changed up to ${checkout}, so this pass runs.`,
+      );
+    if (decision.result === "refused") {
+      // Commit IDs and repository paths are public. Name them so the
+      // operator knows to wait for the release of this checkout.
+      console.error(
+        `The isolated runner reports ${deployed}; this checkout is ${checkout} (${decision.reason}${decision.touched ? `: ${decision.touched.slice(0, 10).join(", ")}` : ""}). Dispatch again after the release of this checkout succeeds.`,
+      );
       throw new Error("The matching isolated runner has not been deployed");
+    }
     stage = "scan";
     const report = await runScanPass(config);
     console.log(JSON.stringify(report));

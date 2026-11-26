@@ -11,7 +11,9 @@
  *    line and neither finds a plausible theft or permanent freeze of funds.
  * 3. Needs proof: no reproduction steps or runnable proof. The reporter is
  *    asked for it with a 14-day clock; the report closes only when the clock
- *    runs out with no new report version.
+ *    runs out with no new report version. A report version that carries a
+ *    proof-of-concept file always has proof present (operator decision,
+ *    20 November 2026), whatever the calls answer.
  * 4. Everything else: acknowledged and ranked for the program owner.
  *
  * It never closes a report when a call finds loss of funds plausible, when a
@@ -47,6 +49,7 @@ import {
   json,
   type SecurityApiDependencies,
 } from "./case-store";
+import { depositHeldSql } from "./report-deposit-hold";
 
 export type RoutineMode = "off" | "dry_run" | "live";
 
@@ -326,6 +329,7 @@ async function candidates(
           AND appeal_state = 'none'
           AND award_state NOT IN ('reserved', 'approved')
           AND related_party_review <> 'pending'
+          AND NOT ${depositHeldSql("security_cases.id")}
           AND NOT EXISTS (
             SELECT 1 FROM security_case_events e
              WHERE e.case_id = security_cases.id
@@ -400,6 +404,7 @@ async function earlierSameDigest(
       `SELECT c.id FROM security_cases c
         WHERE c.project_id = ?1 AND c.id <> ?2
           AND c.submission_state = 'verified'
+          AND NOT ${depositHeldSql("c.id")}
           AND (c.received_at < ?3 OR (c.received_at = ?3 AND c.rowid <
             (SELECT rowid FROM security_cases WHERE id = ?2)))
           AND (c.receipt_evidence_digest = ?4 OR EXISTS (
@@ -416,7 +421,13 @@ async function earlierSameDigest(
   return match?.id ?? null;
 }
 
-/** Slopbot's own summaries of earlier reports; never another report's text. */
+/**
+ * Slopbot's own summaries of earlier reports; never another report's text.
+ * Excludes earlier reports still waiting on the routine pass's own proof clock
+ * or closed by the routine pass as `no-proof-received`, so a refile with proof
+ * is not closed as a duplicate of a report that never had proof. Human
+ * decisions remain eligible duplicate targets.
+ */
 async function earlierReports(
   deps: RoutineDependencies,
   row: CaseRow,
@@ -431,11 +442,29 @@ async function earlierReports(
          FROM security_cases c
         WHERE c.project_id = ?1 AND c.id <> ?2
           AND c.submission_state = 'verified'
+          AND NOT (c.receipt_state = 'needs-information' AND c.next_action IS ?5)
+          AND NOT (
+            c.receipt_state = 'rejected'
+            AND c.technical_decider_github_id IS NULL
+            AND EXISTS (
+              SELECT 1 FROM security_routine_decisions d
+               WHERE d.case_id = c.id
+                 AND d.mode = 'live'
+                 AND d.outcome = 'no-proof-received'
+                 AND d.applied = 1
+            )
+          )
           AND (c.received_at < ?3 OR (c.received_at = ?3 AND c.rowid <
             (SELECT rowid FROM security_cases WHERE id = ?2)))
         ORDER BY c.received_at DESC, c.rowid DESC LIMIT ?4`,
     )
-    .bind(row.project_id, row.id, row.received_at, EARLIER_REPORT_LIMIT)
+    .bind(
+      row.project_id,
+      row.id,
+      row.received_at,
+      EARLIER_REPORT_LIMIT,
+      ROUTINE_PROOF_NEXT_ACTION,
+    )
     .all<{ id: string; summary: string | null }>();
   return (result.results ?? [])
     .filter((entry): entry is { id: string; summary: string } =>
@@ -644,10 +673,17 @@ async function evaluate(
     console.error("security routine decision call failed");
     return unavailable(calls);
   }
+  // A proof-of-concept file is proof present by rule, not by a reading.
+  const withFile = (
+    answer: SecurityRoutineProposal,
+  ): SecurityRoutineProposal =>
+    input.report.proofOfConcept
+      ? { ...answer, proof: "present", missing: [] }
+      : answer;
   return {
     decision: combineRoutineCalls(
-      first.value,
-      second.value,
+      withFile(first.value),
+      withFile(second.value),
       { now, askedForProofBefore: asked !== null },
       calls,
     ),
@@ -823,7 +859,7 @@ async function record(
             .map((column) => `${column} = ?`)
             .join(
               ", ",
-            )}, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND receipt_state = ? AND appeal_state = 'none' AND award_state NOT IN ('reserved', 'approved')`,
+            )}, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND receipt_state = ? AND appeal_state = 'none' AND award_state NOT IN ('reserved', 'approved') AND NOT ${depositHeldSql("security_cases.id")}`,
         )
         .bind(
           ...columns.map((column) => change.set[column]),
@@ -1053,7 +1089,7 @@ async function routineSummary(deps: Pick<SecurityApiDependencies, "db">) {
   ]);
   const waiting = await deps.db
     .prepare(
-      "SELECT COUNT(*) AS cases FROM security_cases WHERE submission_state = 'verified' AND receipt_state = 'received'",
+      `SELECT COUNT(*) AS cases FROM security_cases WHERE submission_state = 'verified' AND receipt_state = 'received' AND NOT ${depositHeldSql("security_cases.id")}`,
     )
     .first<{ cases: number }>();
   return {
