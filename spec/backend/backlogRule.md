@@ -274,15 +274,15 @@ pure def sometimesNoticeSent(s: Backlog): bool = s.sentKeys.size() > 0
 pure def noticeDue(s: Backlog): str =
   if (s.now < startsAtHours and wouldLeave(s)) "preview"
   else if (outOfRotation(s)) "out"
-  else if (dormantWarningDue(s.reads, s.now)) "warn"
+  else if (not(catchUpRunning(s)) and dormantWarningDue(s.reads, s.now)) "warn"
   else "none"
-pure def noticeReason(s: Backlog): str =
-  if (overLimitHeld(s.reads, s.now)) "50 or more outside pull requests are waiting for a maintainer"
-  else if (dormantHeld(s.reads, s.now)) "no merge in 14 days while outside pull requests wait"
+pure def noticeReason(s: Backlog, waiting: str): str =
+  if (overLimitHeld(s.reads, s.now)) waiting + " outside pull requests have waited a week or more for a maintainer"
+  else if (dormantHeld(s.reads, s.now)) "no pull request has been merged in 14 days while outside pull requests wait"
   else "the backlog rule"
-pure def previewDetail(reason: str): str =  "From 1 December 2026, a project with 50 or more outside pull requests waiting a week for a maintainer, or no merge in 14 days while outside pull requests wait, leaves the home page, /sponsors and agent discovery until that is fixed. Your project would leave today: " + reason + ". You can mark it as catching up on reviews for up to fourteen days from its settings."
-pure def warningDetail(daysSinceMerge: str): str =  "No pull request has been merged in " + daysSinceMerge + " days while outside pull requests wait. After 14 days the project leaves the home page, /sponsors and agent discovery until a maintainer merges. You can mark it as catching up on reviews for up to fourteen days from its settings."
-pure def outDetail(reason: str, returns: str): str =  "Your project left the home page, /sponsors and agent discovery: " + reason + ". It returns by itself once " + returns + ". You can mark it as catching up on reviews for up to fourteen days from its settings. Accepted work still records points."
+pure def previewDetail(reason: str): str =  "From 1 December 2026, a project with 50 or more outside pull requests waiting a week for a maintainer, or no merge in 14 days while outside pull requests wait, leaves the home page, /sponsors and agent discovery until that is fixed. Your project would leave today: " + reason + ". You can mark it as catching up on reviews for up to 14 days from its settings."
+pure def warningDetail(daysSinceMerge: str): str =  "No pull request has been merged in " + daysSinceMerge + " days while outside pull requests wait. After 14 days the project leaves the home page, /sponsors and agent discovery until a maintainer merges. You can mark it as catching up on reviews for up to 14 days from its settings."
+pure def outDetail(reason: str, returns: str): str =  "Your project left the home page, /sponsors and agent discovery: " + reason + ". It returns by itself once " + returns + ". You can mark it as catching up on reviews for up to 14 days from its settings. Accepted work still records points."
 pure val readsValues = Set(List(unreadRead, unreadRead),
   List({ read: true, waiting: 50, lastMergedAt: 498800, observedAt: 498911 }, unreadRead),
   List({ read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }, { read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }),
