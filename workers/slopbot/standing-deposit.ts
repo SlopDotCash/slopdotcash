@@ -18,6 +18,7 @@ import {
   STANDING_DEPOSIT_COVER_DAYS,
   STANDING_DEPOSIT_STRIKE_GRACE_HOURS,
   STANDING_DEPOSIT_STRIKE_WINDOW_DAYS,
+  STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS,
   standingCoverState,
   standingDepositDue,
 } from "../../src/lib/standing-deposit.mjs";
@@ -230,13 +231,44 @@ type DepositRow = {
 async function decideDeposits(env: StandingEnv, now: Date) {
   const db = env.SLOPBOT_DB;
   const at = now.toISOString();
+  // Select only deposits that can actually be decided now so healthy active
+  // deposits (which stay open up to 340+21 days) never fill the batch and
+  // starve newer withdrawals, expiries or strikes. A 1-second margin keeps
+  // SQLite's julianday() rounding from ever excluding an exact boundary;
+  // `standingDepositDue` below remains the exact millisecond authority.
+  const withdrawCutoff = new Date(
+    now.getTime() - STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS * DAY_MS + 1_000,
+  ).toISOString();
+  const expiredCutoff = new Date(
+    now.getTime() -
+      (STANDING_DEPOSIT_COVER_DAYS + STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS) *
+        DAY_MS +
+      1_000,
+  ).toISOString();
   const deposits = await db
     .prepare(
-      `SELECT id, paid_at, withdraw_requested_at, outcome FROM standing_deposits
-       WHERE paid_at IS NOT NULL AND outcome IS NULL AND cancelled_at IS NULL
-       ORDER BY paid_at LIMIT ?`,
+      `SELECT d.id, d.paid_at, d.withdraw_requested_at, d.outcome
+       FROM standing_deposits d
+       WHERE d.paid_at IS NOT NULL AND d.outcome IS NULL AND d.cancelled_at IS NULL
+         AND (
+           EXISTS (
+             SELECT 1 FROM standing_deposit_covers c
+             WHERE c.deposit_id = d.id AND c.state = 'strike'
+           )
+           OR (
+             (
+               (d.withdraw_requested_at IS NOT NULL AND julianday(d.withdraw_requested_at) <= julianday(?1))
+               OR julianday(d.paid_at) <= julianday(?2)
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM standing_deposit_covers c
+               WHERE c.deposit_id = d.id AND c.state <> 'clear'
+             )
+           )
+         )
+       ORDER BY d.paid_at, d.id LIMIT ?3`,
     )
-    .bind(STANDING_DEPOSIT_BATCH)
+    .bind(withdrawCutoff, expiredCutoff, STANDING_DEPOSIT_BATCH)
     .all<DepositRow>();
   let decided = 0;
   for (const deposit of deposits.results) {

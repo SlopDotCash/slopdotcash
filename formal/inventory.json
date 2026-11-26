@@ -49,7 +49,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "887e6eeac08c40a915c007eafe737c113ab3e75c2142ae19d750925240f9df22",
+      "sha256": "fe580091c558de8e15e070f766e192cf4a174f136967f7e5d14c2242be590572",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -269,7 +269,7 @@
     },
     {
       "path": "backend/http.ts",
-      "sha256": "5ba0313a8d8cd813d2ee6d3efd281833789f527d7b3f24bf9a3361d1c7bb2c4f",
+      "sha256": "763aae893d77bb376032dd91210eddec00b77509f6358cbf478f6f1d7504acc4",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -291,8 +291,8 @@
         "formal/models/vetting/vetting_evidence_inventory.qnt"
       ],
       "candidateLines": [
-        6, 7, 9, 44, 49, 118, 121, 126, 145, 158, 159, 160, 161, 162, 164, 165,
-        168, 173, 180
+        6, 7, 9, 44, 49, 118, 121, 126, 146, 159, 160, 161, 162, 163, 165, 166,
+        169, 174, 181
       ],
       "review": "mapped-abstraction"
     },
@@ -5744,7 +5744,7 @@
     },
     {
       "path": "scripts/test-payout-browser.mjs",
-      "sha256": "70edbd360af4c1aad03876e9672181f146638889f1de92dbecba2ec82f5bb4b5",
+      "sha256": "62b6a7fd26db3aee54a68a518beeeb4dd761ae94b6a623ed7ce5ed71e612a3c9",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
         3, 37, 78, 88, 95, 101, 140, 149, 161, 166, 180, 183, 220, 222, 261
@@ -10116,12 +10116,12 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "sha256": "a1415c1f3cddd6d5b74d99ae90c67cfde24045f9c76ad1d203b7dadae091d80c",
+      "sha256": "57402700f2fec6b5bd501d617d1d1d34723bf5da6bcda0eaeb5df12e4a3ae25d",
       "models": ["formal/models/fees/standing_deposit.qnt"],
       "candidateLines": [
-        14, 48, 54, 61, 66, 70, 77, 100, 102, 107, 117, 119, 123, 129, 131, 144,
-        148, 180, 183, 190, 194, 203, 204, 205, 208, 215, 245, 252, 261, 269,
-        280
+        14, 49, 55, 62, 67, 71, 78, 101, 103, 108, 118, 120, 124, 130, 132, 145,
+        149, 181, 184, 191, 195, 204, 205, 206, 209, 216, 256, 265, 277, 284,
+        293, 301, 312
       ],
       "review": "mapped-abstraction"
     },
