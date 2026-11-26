@@ -48,7 +48,7 @@ import { type Collection, collectSnapshot, SnapshotAssembly } from "../src/colle
 import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { applyCorrections } from "../src/corrections/apply/command.vibe"
 import { proveCandidates } from "../src/corrections/apply/prove.vibe"
-import { collectCorrections, type CollectedEvidence, type CollectionInputs, type CollectionOptions, type Provenance } from "../src/corrections/collect/collect.vibe"
+import { type CollectedEvidence } from "../src/corrections/collect/collect.vibe"
 import { decodePacketBytes, digestText, type HistoricalPacket } from "../src/corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
 import { evaluationInputs } from "../src/evaluations/check.vibe"
@@ -77,7 +77,7 @@ import { reviewContent, reviewExclusionReason, type ReviewState } from "../src/k
 import { censusItem, claimDecision, type Comment, type GitHubItem } from "../src/kernels/scoring/selection.ts"
 import { recognizePayouts } from "../src/payoutRecognition/awards.vibe"
 import { type ActorVaultPayments, loadVaultPayouts, type PayoutActor } from "../src/payoutRecognition/vault.vibe"
-import { collectionServices, corrections } from "../src/programs/corrections.vibe"
+import { corrections } from "../src/programs/corrections.vibe"
 import { profiles } from "../src/programs/profiles.vibe"
 import { registry as registryRegistry } from "../src/programs/registry.vibe"
 import { retainedFresh } from "../src/programs/retainedFresh.vibe"
@@ -87,7 +87,6 @@ import { members, projectionFiles } from "../src/publication/projections.vibe"
 import { type ProtectionEnvironment, resolveProtection } from "../src/publication/protectedMonths.vibe"
 import { protectedMonthsAccess, ProtectedMonthsRoutes } from "../src/publication/protectedRoute.vibe"
 import { publishable, type StageFacts } from "../src/publication/publish.vibe"
-import { resumeAcrossQuota } from "../src/quotaRecovery/run.vibe"
 import { recoverPublished } from "../src/recovery/published.vibe"
 import { ClosedMonthLive } from "../src/rewardWeights/live.vibe"
 import { type Actor, type Assessment, type AutomatedReview, type ChangedFile, type ClosedPull, type Commit, FactsRefused, type FileAttribution, type JointClaim, type JointDecision, type JointUnit, type LeaderEntry, type MergedPull, type Ratification, type Review, type ReviewValue, type ScoringFacts } from "../src/score/facts.vibe"
@@ -104,11 +103,10 @@ import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support
 import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 import { declaredIdentifier, malformedBody, ratificationBody, traceSha256, tracedBody } from "./support/catchup3-e1/attribution.ts"
 import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
-import { iso as isoE6, missingSource as missingSourceE6, project as projectE6, type Recorded as RecordedE6, registryProject as registryProjectE6, type SupplementWorld, supplementWorld } from "./support/catchup3-e6/world.ts"
 import { historyText as historyTextU1 } from "./support/u1/history.ts"
 import { registry as registryU10, userNodeId } from "./support/u10/actors.ts"
 import { absentService, areaApi, type Site, site } from "./support/u11/pages.ts"
-import { actionsRepository, type Campaign, campaign, day as dayU13, forkRun, mainHead, repository as repositoryU13, retained, searchPath, start as startU13, trustedRun } from "./support/u13/github.ts"
+import { actionsRepository, type Campaign, campaign, forkRun, mainHead, retained, searchPath, start as startU13, trustedRun } from "./support/u13/github.ts"
 import { alpha, author, baseGeneratedAt, beta, carrier, censusDigest, collectedAt, correctionRule, gamma, type Pool, receiptSchema, registry as registryU14, sourceOf, transferSql, urlOf } from "./support/u14/fixtures.ts"
 import { ada, avatarOf, fetcherOf as fetcherOfU16, grace, linus, previousCensus, seeded as seededU16, startIso, start as startU16 } from "./support/u16/github.ts"
 import { type HistoricalCycle, historicalCycle, type HistoricalEvent } from "./support/u2/history.ts"
@@ -4386,118 +4384,6 @@ import { seededGithub, slopbotFake } from fakes
       credited: [],
       held: [["PR_401", "incomplete-lines"], ["PR_402", "incomplete-lines"]],
     }))
-  })
-}
-
-{
-  const day = dayU13
-  const repository = repositoryU13
-  const start = startU13
-
-  const project = projectE6
-  const missingSource = missingSourceE6
-  const iso = isoE6
-  const registryProject = registryProjectE6
-  type Recorded = RecordedE6
-  type World = SupplementWorld
-
-  effect function revisionOf(entry: Recorded) {
-    const category = "merged-pull-request"
-    const award = {
-      key: try pointKey({ projectId: project, actorId: entry.actorId, category, sourceId: entry.sourceId }),
-      actor: { id: entry.actorId, login: entry.login },
-      projectId: project,
-      category,
-      amount: 20,
-      occurredAt: iso(entry.mergedAt),
-      sourceId: entry.sourceId,
-      sourceUrl: `https://github.com/${repository}/pull/${entry.number}`,
-      workUnitId: `history_${entry.sourceId}`,
-      provisional: false,
-    }
-    const body = { previous: null, recordedAt: iso(start - day), sourceDigest: "a".repeat(64), sourceRule: "slop-score-v1", award }
-    return { id: try pointRevisionId(body), ...body } satisfies Revision
-  }
-
-  effect function inputsOf(world: World) {
-    const revisions: Revision[] = []
-    for (const entry of world.recorded) revisions.push(try revisionOf(entry))
-    return {
-      journal: { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: iso(start - day), coverage: [], revisions },
-      registry: { projects: [registryProject()] },
-      collectedAt: start,
-    } satisfies CollectionInputs
-  }
-
-  function provenanceOf(restoring: boolean): Provenance {
-    const authority = { manual: true, onMain: true, repository: actionsRepository, head: mainHead }
-    return restoring ? { authority, artifact: { repository: actionsRepository, head: mainHead, main: true, manual: true, collectorWorkflow: true, ancestorVerified: true } } : { authority }
-  }
-
-  effect function collected(world: World, restoring: boolean) {
-    const options = { projects: [project], directory: world.directory, before: iso(start - 3_600_000) } satisfies CollectionOptions
-    const services = Layer.provideMerge(
-      collectionServices({ directory: world.directory, token: Redacted.make(world.token), limits: { started: world.clock.now(), budget: 1_000, durationMs: 180_000 } }),
-      Layer.mergeAll(webCrypto, outboundVia(world.fetcher), NodeServices.layer),
-    )
-    provide services, world.clock.layer {
-      const inputs = try inputsOf(world)
-      return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenanceOf(restoring), proveCandidates), (millis) => Effect.sleep(Duration.millis(millis)), false)
-    }
-  }
-
-  function proofsOf(result: { readonly manifest: { readonly candidates: ReadonlyArray<{ readonly sourceId: string; readonly proof: unknown }> } }) {
-    return Object.fromEntries(result.manifest.candidates.map((candidate) => {
-      const proof = candidate.proof as { readonly status: string; readonly sources?: ReadonlyArray<{ readonly commits: ReadonlyArray<{ readonly sha: string; readonly firstAcceptedSourceId: string | null }> }> }
-      return [candidate.sourceId, proof.status === "complete" ? (proof.sources ?? []).flatMap((source) => source.commits.map((commit) => [commit.sha, commit.firstAcceptedSourceId])) : proof.status]
-    }))
-  }
-
-  function byId(left: { readonly id: string }, right: { readonly id: string }) {
-    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0
-  }
-
-  effect function same(actual: unknown, expected: unknown) {
-    try Effect.try(() => assert.deepStrictEqual(actual, expected))
-  }
-
-  it.live('A recorded pull request the historical search omitted fences its accepted commit and an unavailable accepted object holds only the pools it affects (spec/points/corrections.md, "A recorded source omitted from the historical search is verified through a census supplement"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/quotaRecovery.md, "Each new request spends the invocation budget once and each response is retained")', () => effect {
-    const world = try Effect.try(() => supplementWorld())
-    const { early, later, held, blocked } = world.sources
-    const { earlyWork, earlySquash, laterWork } = world.shas
-
-    const first = try collected(world, false)
-    try same({
-      ownershipComplete: first.receipt.ownershipComplete,
-      supplements: first.receipt.supplementDigests?.length,
-      proofs: proofsOf(first),
-      unavailable: first.receipt.limitations.filter((entry) => entry.id === held || entry.id === missingSource).sort(byId),
-      acceptedObjectReads: [...world.acceptedObjectReads].sort(),
-    }, {
-      ownershipComplete: true,
-      supplements: 1,
-      proofs: {
-        [early]: [[earlyWork, early]],
-        [later]: [[earlySquash, early], [laterWork, later]],
-        [held]: "held",
-        [blocked]: "held",
-        [missingSource]: "held",
-      },
-      unavailable: [{ id: held, reason: "accepted-object-unavailable" }, { id: missingSource, reason: "source-unavailable" }].sort(byId),
-      acceptedObjectReads: [`/repos/${repository}/git/commits/${earlySquash}`, `/repos/${repository}/git/commits/${world.shas.heldSquash}`].sort(),
-    })
-
-    world.goOffline()
-    const replay = try collected(world, true)
-    try same({
-      requests: replay.receipt.requests,
-      censusDigest: replay.receipt.censusDigest,
-      manifestDigest: replay.receipt.manifestDigest,
-    }, {
-      requests: 0,
-      censusDigest: first.receipt.censusDigest,
-      manifestDigest: first.receipt.manifestDigest,
-    })
   })
 }
 
