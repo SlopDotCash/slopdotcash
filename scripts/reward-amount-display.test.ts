@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  formatAssetAmount,
+  knownAssetSymbol,
+} from "../src/lib/payments/contracts";
+import {
   formatMonthlyAmount,
   monthlyPoolValue,
 } from "../src/lib/project-proposal";
@@ -348,5 +352,30 @@ describe("monthlyPoolLabel", () => {
       "1,000.5 $CREDIT monthly · not funded",
     );
     expect(reward.monthlyCapDisplay).toBe("1,000.5 CREDIT");
+  });
+
+  test("names native vault amounts ETH and SOL, not an unnamed token", () => {
+    expect(
+      formatAssetAmount("1500000000000000000", {
+        network: "base-mainnet",
+        assetAddress: "0x0000000000000000000000000000000000000000",
+        assetDecimals: 18,
+      }),
+    ).toBe("1.5 ETH");
+    expect(
+      formatAssetAmount("2500000000", {
+        network: "solana-mainnet",
+        assetAddress: "11111111111111111111111111111111",
+        assetDecimals: 9,
+      }),
+    ).toBe("2.5 SOL");
+    // A native address at the wrong scale is not the native coin.
+    expect(
+      knownAssetSymbol(
+        "base-mainnet",
+        "0x0000000000000000000000000000000000000000",
+        6,
+      ),
+    ).toBeNull();
   });
 });

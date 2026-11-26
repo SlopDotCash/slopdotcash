@@ -4,6 +4,7 @@ import {
   type EscrowChain,
   isBaseUnits,
   isEscrowChain,
+  isNativeAssetAddress,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
 import {
@@ -262,9 +263,10 @@ export function isAssetDecimals(value: unknown): value is number {
 }
 /**
  * The display name of a vault asset. Only a reviewed reference token of the
- * network (escrow-policy `assets`) with the same decimals has a symbol. Any
- * other token shows its shortened address, because a token's own symbol()
- * text is not reviewed.
+ * network (escrow-policy `assets`) with the same decimals has a symbol, as
+ * does the network's native coin at its own decimals (PRD section 6: native
+ * ETH and SOL are used directly). Any other token shows its shortened
+ * address, because a token's own symbol() text is not reviewed.
  */
 /** The reviewed symbol of a registry asset, or null for an unlisted token. */
 export function knownAssetSymbol(
@@ -275,6 +277,14 @@ export function knownAssetSymbol(
   const policy = Object.hasOwn(ESCROW_NETWORKS, network)
     ? ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]
     : undefined;
+  if (policy && isNativeAssetAddress(policy.chain, assetAddress))
+    return policy.family === "solana"
+      ? assetDecimals === 9
+        ? "SOL"
+        : null
+      : assetDecimals === 18
+        ? "ETH"
+        : null;
   const reference = policy?.assets.find(
     (asset) =>
       asset.decimals === assetDecimals &&
