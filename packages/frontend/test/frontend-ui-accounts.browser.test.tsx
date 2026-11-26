@@ -262,9 +262,9 @@ describe('Replace a payout wallet without losing the current destination (spec/b
   });
 });
 
-// spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
-describe("Confirm a payout wallet", () => {
-  it('restores the stored authorization after reload (spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding")', { timeout: 150_000 }, async () => {
+// spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
+describe("Payout authorization", () => {
+  it('restores on reload (spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', { timeout: 150_000 }, async () => {
     await site.allow(
       "^console Applying inline style violates the following Content Security Policy directive 'style-src 'self''",
       "^failed GET /api/v1/project-session net::ERR_ABORTED$",
@@ -333,12 +333,16 @@ describe("Confirm a payout wallet", () => {
 
     await site.open("/account#wallets");
     await site.walletAccount(2);
+    const replacement = (await site.walletAddresses()).evm ?? "";
+    expect(replacement).toMatch(/^0x[0-9a-f]{40}$/iu);
     await site.click(named("button", "Change EVM wallet"));
     await site.click(named("button", "Connect Anvil Wallet", { within: named("dialog", "Connect an EVM wallet") }));
     await site.click(named("button", "Register"));
+    await shown(evmCard).toMatchObject({ text: expect.stringContaining(replacement) });
     await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
     await site.open("/earnings");
     await shown(authorize).toMatchObject({ visible: true });
+    expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 200, body: { wallets: expect.arrayContaining([expect.objectContaining({ chain: "base", address: replacement.toLowerCase(), authorized: true })]) } });
     await shown(finalized).toMatchObject({ count: 0 });
     expect(await signs()).toBe(1);
   });
