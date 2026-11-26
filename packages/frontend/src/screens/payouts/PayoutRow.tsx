@@ -61,7 +61,7 @@ export function PayoutRow({ chain, network, projectId, amount, note, status, sta
       actions={
         <>
           {statusHref !== undefined ? (
-            <a href={statusHref} aria-label={statusTitle} className={cn(focusRing, target, "rounded-sm hover:underline")}>
+            <a href={statusHref} aria-description={statusTitle} className={cn(focusRing, target, "rounded-sm hover:underline")}>
               {shown}
             </a>
           ) : explorerUrl !== undefined ? (
