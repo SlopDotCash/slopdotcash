@@ -147,6 +147,16 @@ that is over its owner's intake cap (`intakePaused` in
 2026). A count that cannot be read, was never read or is older than three
 days pauses nothing.
 
+From 1 December 2026 discovery also leaves out an active monthly-pool project
+the backlog rule takes out of rotation (`backlogOutOfRotation` in
+`src/lib/backlog-rule.mjs`; PRD section 5, operator decision of 23 November
+2026): 50 or more outside pull requests waiting a week for a maintainer, or
+work waiting and no merge in 14 days, unless the owner marked it as catching
+up on reviews. `readIntakeCounts` carries the waiting count and last merge for
+it. The same rows decide nothing when none is recent. The scheduled Slopbot
+run sends the rule's owner notices (`backlog-notices.ts`) right after it
+refreshes merge activity.
+
 ## Self-service setup
 
 A project starts without routine admin approval after complete setup,
@@ -221,7 +231,8 @@ the monthly amount, 1 to 3000, or omitted for none (PRD section 6, operator
 decision of 18 November 2026). It changes through the same owner revision as
 the monthly amount and starts with the next UTC month: the server appends the
 previous share to `reward.maintainerShareHistory` as the share of every month
-through the open one. An owner revision that edits the history is refused.
+through the open one. An owner revision that edits the history is refused,
+and so is a new project that submits one.
 
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub

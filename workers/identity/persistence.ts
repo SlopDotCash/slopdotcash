@@ -18,6 +18,7 @@ type FlowRow = {
   github_actor_id: string | null;
   github_login: string | null;
   github_node_id?: string | null;
+  browser_binding_hash?: string | null;
   created_at: string;
   expires_at: string;
   callback_completed_at: string | null;
@@ -47,6 +48,7 @@ function mapFlow(row: FlowRow): OAuthFlow {
     githubActorId: row.github_actor_id,
     githubLogin: row.github_login,
     ...(row.github_node_id ? { githubNodeId: row.github_node_id } : {}),
+    browserBindingHash: row.browser_binding_hash ?? null,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     callbackCompletedAt: row.callback_completed_at,
@@ -77,8 +79,9 @@ export class D1IdentityPersistence implements IdentityPersistence {
           `INSERT INTO identity_oauth_flows (
             id, state_hash, poll_capability_hash, encrypted_pkce_verifier,
             pkce_iv, audience, status, github_actor_id, github_login,
-            created_at, expires_at, callback_completed_at, assertion_issued_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL)`,
+            created_at, expires_at, callback_completed_at, assertion_issued_at,
+            browser_binding_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, ?)`,
         )
         .bind(
           flow.id,
@@ -90,6 +93,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
           flow.status,
           flow.createdAt,
           flow.expiresAt,
+          flow.browserBindingHash ?? null,
         )
         .run();
       return result.success && (result.meta?.changes ?? 0) === 1;

@@ -1,10 +1,13 @@
 // @source contracts/evm/script/DeploySubmissionDeposits.sol
 // @source contracts/evm/script/DeploySubmissionDepositsBase.s.sol
 // @source contracts/evm/script/DeploySubmissionDepositsRobinhood.s.sol
+// @source contracts/evm/script/DeployStandingDeposits.sol
 // @evidence contracts/evm/test/SubmissionDepositsDeploy.t.sol
 // Each chain script deploys the submission deposit contract only on its own
 // chain (Base 8453 or Robinhood Chain 4663), with a present owner and a present,
-// different resolver, and with the fixed 30-day reclaim delay. The script then
+// different resolver, and with the fixed 30-day reclaim delay (365 days for
+// the standing deposit script, Robinhood Chain only, operator decision of
+// 23 November 2026). The script then
 // reads the roles, the delay and the empty initial state back before it reports.
 // Deployment moves no tokens, records no token list and activates nothing:
 // recording the address for any Slop service is a separate later change that no

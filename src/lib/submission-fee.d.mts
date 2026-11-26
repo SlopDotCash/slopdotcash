@@ -64,6 +64,7 @@ export declare const SUBMISSION_FEE_MAX_MINOR: string;
 export declare const SUBMISSION_FEE_SLOP_SHARE_BPS: number;
 export declare const SUBMISSION_FEE_REFUND_UNDECIDED_DAYS: number;
 export declare const SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS: number;
+export declare const SUBMISSION_FEE_KEEP_LABEL: "slop-keep-fee";
 export declare const SUBMISSION_FEE_RECLAIM_DAYS: number;
 export declare const SUBMISSION_FEE_START_BLOCKS: Readonly<
   Record<SubmissionFeeNetwork, number | null>

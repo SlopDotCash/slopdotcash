@@ -11,6 +11,7 @@ import {
   BaseError,
   type Chain,
   createPublicClient,
+  createTransport,
   decodeFunctionData,
   decodeFunctionResult,
   defineChain,
@@ -18,6 +19,7 @@ import {
   erc20Abi,
   FeeCapTooLowError,
   type Hex,
+  type HttpTransport,
   http,
   keccak256,
   type PublicClient,
@@ -75,6 +77,7 @@ import type {
   SendReplacement,
   SendStatus,
 } from "./core";
+import { noteProviderFailure } from "./core";
 import {
   checkedDlnOrder,
   DLN_DESTINATION_ABI,
@@ -313,6 +316,42 @@ interface KyberRoute {
   routerAddress: string;
 }
 
+function observedRpcTransport(
+  url: string,
+  fetchFn: typeof fetch,
+): HttpTransport {
+  const ordinaryTransport = http(url, { fetchFn, retryCount: 1 });
+  return (options) => {
+    const { config, value } = ordinaryTransport(options);
+    const request = ((
+      ...[args, requestOptions]: Parameters<typeof config.request>
+    ) => {
+      let httpStatus: number | undefined;
+      // Viem keeps a JSON-RPC error but can drop its HTTP status. Scope the
+      // response hook to one attempt, inside viem's existing retry layer.
+      const attempt = http(url, {
+        fetchFn,
+        onFetchResponse(response) {
+          if (response.status === 401 || response.status === 403)
+            httpStatus = response.status;
+        },
+      })(options);
+      return attempt.config
+        .request(args, requestOptions)
+        .catch((error: unknown) => {
+          if (httpStatus === undefined) throw error;
+          throw noteProviderFailure(error, {
+            provider: "evm-rpc",
+            stage: "rpc-response",
+            method: args.method,
+            httpStatus,
+          });
+        });
+    }) as typeof config.request;
+    return createTransport({ ...config, request }, value);
+  };
+}
+
 export function createEvmClient(options: EvmClientOptions): ChainClient {
   const { config, limits } = options;
   const definition = config.definition;
@@ -345,7 +384,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
   });
   const client = createPublicClient({
     chain,
-    transport: http(config.rpcUrl, { fetchFn: doFetch, retryCount: 1 }),
+    transport: observedRpcTransport(config.rpcUrl, doFetch),
   }) as PublicClient;
   if (options.privateKey && (!options.nativeGas || !config.nativeBudget))
     throw new Error(
@@ -367,6 +406,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     : null;
 
   async function kyber<T>(path: string, init?: RequestInit): Promise<T> {
+    const method = path.split("?")[0];
     const response = await doFetch(
       `${KYBER_API}/${definition.kyberChain}/api/v1/${path}`,
       {
@@ -381,20 +421,35 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     const text = await response.text();
     if (text.length > 2_000_000)
       throw new Error("KyberSwap response too large");
+    const failure = {
+      provider: "kyberswap",
+      stage: "response-json",
+      method,
+      httpStatus: response.status,
+    } as const;
     let body: { code?: number; message?: string; data?: unknown };
     try {
-      body = JSON.parse(text);
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new TypeError("Invalid KyberSwap response object");
+      body = parsed;
     } catch {
-      throw new Error(`KyberSwap returned HTTP ${response.status}`);
+      throw noteProviderFailure(
+        new Error(`KyberSwap returned HTTP ${response.status}`),
+        failure,
+      );
     }
     if (!response.ok || body.code !== 0 || body.data === undefined) {
+      const authentication = response.status === 401 || response.status === 403;
       const error = new Error(
-        `KyberSwap ${path.split("?")[0]}: ${String(body.message ?? response.status).slice(0, 200)}`,
+        authentication
+          ? `KyberSwap returned HTTP ${response.status}`
+          : `KyberSwap ${method}: ${String(body.message ?? response.status).slice(0, 200)}`,
       );
       (error as Error & { status?: number; code?: number }).status =
         response.status;
       (error as Error & { code?: number }).code = body.code;
-      throw error;
+      throw authentication ? noteProviderFailure(error, failure) : error;
     }
     return body.data as T;
   }
@@ -963,8 +1018,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       route = await kyberRoute(token, amount, target);
     } catch (error) {
       const status = (error as { status?: number }).status;
-      // 4xx: no pool or an unsupported token. Anything else is a fault.
-      if (status !== undefined && status >= 400 && status < 500)
+      // Authentication is a provider fault, not evidence of a missing pool.
+      if (
+        status !== undefined &&
+        status >= 400 &&
+        status < 500 &&
+        status !== 401 &&
+        status !== 403
+      )
         return { noRoute: (error as Error).message };
       throw error;
     }

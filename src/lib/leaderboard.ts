@@ -1,7 +1,9 @@
+import type { WorkUnitRecord } from "../../workers/slopbot/value-work-unit-journal";
 import {
   implementationCreditActors,
   implementationLineWeights,
   isCreditEligibleCommitAuthor,
+  isUnprovedZeroLinePromotion,
 } from "./commit-credit";
 import {
   assertExternalSourceEvidence,
@@ -37,6 +39,7 @@ import type {
   MergedPullRequestOutcome,
   MergedPullRequestReviewRecord,
   ModelAttribution,
+  OmittedReviewCredit,
   PenaltyFeedRecord,
   PublishedPenalty,
   PullRequestFile,
@@ -44,6 +47,7 @@ import type {
   PullRequestReview,
   ReviewExclusion,
   ReviewExclusionReason,
+  ReviewedImplementationUnit,
   ScoreCategory,
   ScoreEvent,
   ScoreOpportunity,
@@ -80,6 +84,7 @@ import {
   VALUE_SCORING_APPROVED_HISTORY_FROM,
   type ValueScoringPolicy,
 } from "./scoring-policy";
+import { sha256Hex } from "./sha256";
 import { REVIEW_VALUE_THIRDS, VALUE_TIERS } from "./value-assessment";
 
 export type {
@@ -97,6 +102,9 @@ export type {
   MergedPullRequestOutcome,
   MergedPullRequestReviewRecord,
   ModelAttribution,
+  OmittedReviewCredit,
+  PenaltyFeedRecord,
+  PublishedPenalty,
   PullRequestFile,
   PullRequestRecord,
   PullRequestReview,
@@ -115,7 +123,6 @@ export type {
  */
 
 import {
-  LEADERBOARD_REPOSITORY,
   LEADERBOARD_SCHEMA_VERSION,
   REVIEW_EXCLUSION_REASONS,
   SCORE_RULE_VERSION,
@@ -123,18 +130,21 @@ import {
 import {
   isDeclaredModelIdentifier,
   isExactClientIdentifier,
+  isExactModelIdentifier,
   isExactProviderIdentifier,
   isExactProviderModelIdentifier,
   isUnavailableModelIdentifier,
   UNAVAILABLE_MODEL_IDENTIFIER,
 } from "./model-identity";
-import { findProject } from "./projects.mjs";
+import { repositoryIdentity } from "./project-repositories.mjs";
+import { findIngestedProjectByRepositoryId, findProject } from "./projects.mjs";
 import {
   findRegisteredRepository,
   findRegisteredRepositoryById,
   REGISTERED_REPOSITORIES,
   type RepositoryId,
   TARGET_REPOSITORIES,
+  type TargetRepository,
 } from "./repositories.mjs";
 import {
   assertReviewRecord,
@@ -838,6 +848,8 @@ function parseMarker(
       if (!project)
         throw new TypeError("run receipt project is not registered");
       assertRunReceiptPolicyJoin(run, project);
+      if (!isPublishableIdentity(run.provider, run.model))
+        throw new TypeError("run model must be an exact model identifier");
       return {
         provider: run.provider,
         model: run.model,
@@ -868,6 +880,11 @@ function parseMarker(
     };
   }
   const model = declaredModel(parsed.model);
+  if (!isPublishableIdentity(provider, model)) {
+    return {
+      error: `model must be an exact model identifier or ${UNAVAILABLE_MODEL_IDENTIFIER}`,
+    };
+  }
   const client = parsed.client;
   if (!isExactClientIdentifier(client)) {
     return { error: "client must name the exact client used" };
@@ -893,6 +910,25 @@ function parseMarker(
     skillRevision: skillRevision.trim(),
     run: null,
   };
+}
+
+/**
+ * exactIdentifier drops a provider repeated at the start of the model, so the
+ * rest must still be an exact model: `openai / openai/unknown` names none.
+ * The rest is checked whole, so `openai/n/a` is not split inside `n/a`, and
+ * a model that is only the provider (`openai / openai`) names none either.
+ */
+function isPublishableIdentity(provider: string, model: string): boolean {
+  const prefix = `${provider.toLowerCase()}/`;
+  const named = model.toLowerCase().startsWith(prefix)
+    ? model.slice(prefix.length)
+    : model;
+  return (
+    isUnavailableModelIdentifier(model) ||
+    (isExactModelIdentifier(named) &&
+      named.toLowerCase() !== provider.toLowerCase() &&
+      isExactProviderModelIdentifier(exactIdentifier(provider, model)))
+  );
 }
 
 /** Spells the unavailable declaration one way, whatever case it arrived in. */
@@ -1271,6 +1307,7 @@ function assessModelAttribution(
           continue;
         }
         const model = declaredModel(declaration.model);
+        if (!isPublishableIdentity(declaration.provider, model)) continue;
         const identifier = exactIdentifier(declaration.provider, model);
         validSourceIds.add(source.id);
         if (markerIdentifiers.has(identifier.toLowerCase())) {
@@ -2738,13 +2775,13 @@ function latestSourceUpdate(input: LeaderboardInput): string {
 }
 
 /**
- * Assigns each commit SHA to the earliest merged pull request that lists it,
- * whatever its base branch, so a later consolidation or promotion pull
- * request cannot score the same commits again. Every branch shares credit
- * with the implementation authors of the commits it owns (SCR-04).
+ * Assigns a commit SHA to its earliest listed or verified accepted source,
+ * regardless of the base branch. An accepted squash SHA identifies a
+ * later copy but never supplies new authors or changed lines (SCR-04).
  */
 export function commitCreditOwners(
   outcomes: readonly MergedPullRequestOutcome[],
+  includeAcceptedOrdinaryCommits = false,
 ): Map<string, string> {
   const owners = new Map<string, string>();
   const ordered = sortWithParsedTimes(
@@ -2754,10 +2791,20 @@ export function commitCreditOwners(
       leftTime - rightTime || compareCodeUnits(left.id, right.id),
   );
   for (const pullRequest of ordered) {
-    const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    const repositoryId = repositoryIdFromUrl(pullRequest.url).toLowerCase();
     if (pullRequest.commits === null) continue;
     for (const commit of pullRequest.commits) {
-      const key = `${repositoryId.toLowerCase()}\0${commit.oid}`;
+      const key = `${repositoryId}\0${commit.oid}`;
+      if (!owners.has(key)) owners.set(key, pullRequest.id);
+    }
+    const accepted = pullRequest.acceptedOrdinaryCommitOid;
+    if (
+      includeAcceptedOrdinaryCommits &&
+      accepted &&
+      pullRequest.commits.every((commit) => commit.parentCount !== undefined) &&
+      pullRequest.commits.some((commit) => commit.parentCount === 1)
+    ) {
+      const key = `${repositoryId}\0${accepted}`;
       if (!owners.has(key)) owners.set(key, pullRequest.id);
     }
   }
@@ -2874,9 +2921,122 @@ export function shareScoreThirds(
 export function createLeaderboardSnapshot(
   input: LeaderboardInput,
 ): LeaderboardSnapshot {
+  return scoreLeaderboardSnapshot(input, TARGET_REPOSITORIES, "rolling");
+}
+
+export interface HistoricalLeaderboardScope {
+  projectId: string;
+  repository: RepositoryId;
+  repositoryNodeId: string;
+  manifestSha256: string;
+}
+
+export function historicalLeaderboardRepository(
+  scope: HistoricalLeaderboardScope,
+): TargetRepository {
+  const project = findIngestedProjectByRepositoryId(scope.repository);
+  const repository = TARGET_REPOSITORIES.find(
+    (row) => row.id === scope.repository,
+  );
+  if (
+    !repository ||
+    !project ||
+    project.status !== "active" ||
+    project.id !== scope.projectId ||
+    repository.projectId !== scope.projectId ||
+    project.repositories.length !== 1 ||
+    repositoryIdentity(project, scope.repository)?.nodeId !==
+      scope.repositoryNodeId ||
+    sha256Hex(JSON.stringify(project)) !== scope.manifestSha256
+  )
+    throw new Error(
+      "Historical leaderboard requires the pinned active project and repository",
+    );
+  return { ...repository, role: "primary" };
+}
+
+/** Replay a verified single-repository scope inside the historical Points workflow. */
+export function createHistoricalLeaderboardSnapshot(
+  input: LeaderboardInput,
+  scope: HistoricalLeaderboardScope,
+): LeaderboardSnapshot {
+  const repository = historicalLeaderboardRepository(scope);
+  const { repositoryId, repositories } = input.source;
+  const sources = [
+    ...input.mergedPullRequestOutcomes,
+    ...input.mergedPullRequests,
+    ...(input.reviewedMergedPullRequests ?? []),
+    ...(input.valueContextPullRequests ?? []),
+    ...(input.closedUnmergedPullRequests ?? []),
+    ...input.resolvedIssues,
+    ...input.openIssues,
+    ...input.openPullRequests,
+  ];
+  if (
+    repositoryId !== scope.repositoryNodeId ||
+    repositories.length !== 1 ||
+    repositories[0].id !== repository.id ||
+    repositories[0].repositoryId !== scope.repositoryNodeId ||
+    sources.some(({ url }) => repositoryIdFromUrl(url) !== repository.id) ||
+    [
+      ...(input.evaluatedContributions ?? []),
+      ...(input.retainedReviewEvents ?? []),
+    ].some((event) => event.repository !== repository.id) ||
+    input.retainedReviewAttributions?.some(
+      ({ sourceUrl }) => repositoryIdFromUrl(sourceUrl) !== repository.id,
+    ) ||
+    input.penaltyHistory?.some(
+      (penalty) => penalty.projectId !== scope.projectId,
+    )
+  )
+    throw new Error(
+      "Historical leaderboard input is outside the pinned repository",
+    );
+  for (const decision of new Set(input.jointValueDecisions?.values())) {
+    if (
+      decision.status === "assessed" &&
+      decision.record.sources.some(
+        (source) =>
+          source.repositoryNodeId !== scope.repositoryNodeId ||
+          findRegisteredRepositoryById(source.repository)?.id !== repository.id,
+      )
+    )
+      throw new Error(
+        "Historical joint assessment is outside the pinned repository",
+      );
+  }
+  return scoreLeaderboardSnapshot(input, [repository], "historical");
+}
+
+/** Validate a retained historical replay without admitting it to site publication. */
+export function assertHistoricalLeaderboardSnapshot(
+  value: unknown,
+  scope: HistoricalLeaderboardScope,
+  now = Date.now(),
+): asserts value is LeaderboardSnapshot {
+  assertLeaderboardForRepositories(
+    value,
+    [historicalLeaderboardRepository(scope)],
+    now,
+  );
+  if (value.source.repositoryId !== scope.repositoryNodeId)
+    throw new Error(
+      "Historical leaderboard source differs from the pinned repository",
+    );
+}
+
+type LeaderboardScoringMode = "rolling" | "historical";
+
+function scoreLeaderboardSnapshot(
+  input: LeaderboardInput,
+  repositories: readonly TargetRepository[],
+  mode: LeaderboardScoringMode,
+): LeaderboardSnapshot {
   const snapshot = createSnapshotWithReviewCutoff(
     input,
     OUTCOME_FIRST_POLICY_AT,
+    repositories,
+    mode,
   );
   // Payment weights only diverge for reviews submitted before the SCR-05
   // production cutoff. Skip the second pass and the basis payload when the
@@ -2888,6 +3048,8 @@ export function createLeaderboardSnapshot(
       const payments = createSnapshotWithReviewCutoff(
         input,
         PAYMENT_REVIEW_POLICY_AT,
+        repositories,
+        mode,
       );
       snapshot.paymentReviewBasis = {
         policy: PAYMENT_REVIEW_POLICY,
@@ -2924,7 +3086,7 @@ export function createLeaderboardSnapshot(
       };
     }
   }
-  assertPublishableLeaderboardSnapshot(snapshot);
+  assertLeaderboardForRepositories(snapshot, repositories);
   return snapshot;
 }
 
@@ -2956,10 +3118,140 @@ function inputHasFormalReviewBefore(
   return false;
 }
 
+const jointRecordDigestPattern = /^[a-f0-9]{64}$/u;
+const reviewedWorkUnitIdPattern = /^wu_[a-f0-9]{64}$/u;
+
+function reviewedImplementationUnitsBySource(input: LeaderboardInput) {
+  const memberships = new Map<
+    string,
+    (Omit<ReviewedImplementationUnit, "groupId"> & { unitKey: string })[]
+  >();
+  const seenRecords = new Set<string>();
+  const parentUnits = new Map<string, string>();
+  const claimOwnerUnits = new Map<string, string>();
+  function findUnitGroup(unit: string) {
+    let root = unit;
+    for (;;) {
+      const parent = parentUnits.get(root);
+      if (parent === undefined || parent === root) break;
+      root = parent;
+    }
+    while (unit !== root) {
+      const parent = parentUnits.get(unit);
+      parentUnits.set(unit, root);
+      if (!parent) break;
+      unit = parent;
+    }
+    return root;
+  }
+  for (const decision of new Set(input.jointValueDecisions?.values())) {
+    for (const {
+      record_digest: recordDigest,
+      record_json: recordJson,
+    } of decision.history) {
+      // Only retained record bytes can establish membership.
+      if (typeof recordJson !== "string" || seenRecords.has(recordDigest))
+        continue;
+      if (
+        !jointRecordDigestPattern.test(recordDigest) ||
+        sha256Hex(recordJson) !== recordDigest
+      )
+        throw new Error("Reviewed implementation record digest does not match");
+      seenRecords.add(recordDigest);
+      const record = JSON.parse(recordJson) as WorkUnitRecord;
+      // The rolling scorer accepts joint decisions only when every unit was assessed.
+      if (record.units.some((unit) => unit.assessment?.status !== "assessed"))
+        continue;
+      const sources = new Map<string, string>();
+      for (const source of record.sources) {
+        const repository = findRegisteredRepositoryById(source.repository);
+        if (
+          !repository ||
+          repository.projectId !== record.projectId ||
+          (repository.expectedNodeId !== null &&
+            repository.expectedNodeId !== source.repositoryNodeId) ||
+          sources.has(source.pullRequestNodeId)
+        )
+          throw new Error("Reviewed implementation source binding is invalid");
+        sources.set(source.pullRequestNodeId, source.repositoryNodeId);
+      }
+      const claims = new Map(record.claims.map((claim) => [claim.id, claim]));
+      const units = new Set<string>();
+      const assignedClaims = new Set<string>();
+      for (const { workUnitId, claimIds } of record.units) {
+        if (!claimIds.length) continue;
+        if (
+          !reviewedWorkUnitIdPattern.test(workUnitId) ||
+          units.has(workUnitId)
+        )
+          throw new Error("Reviewed implementation unit identity is invalid");
+        units.add(workUnitId);
+        const unitKey = JSON.stringify([
+          record.projectId,
+          recordDigest,
+          workUnitId,
+        ]);
+        const memberIds = new Set<string>();
+        for (const claimId of claimIds) {
+          const claim = claims.get(claimId);
+          if (!claim || assignedClaims.has(claimId))
+            throw new Error("Reviewed implementation unit claim is invalid");
+          assignedClaims.add(claimId);
+          // A reviewed record can contain independent units. Only the same
+          // immutable implementation claim can connect different units.
+          const claimKey = JSON.stringify([record.projectId, claimId]);
+          const owner = claimOwnerUnits.get(claimKey);
+          if (owner !== undefined) {
+            const left = findUnitGroup(unitKey);
+            const right = findUnitGroup(owner);
+            if (left < right) parentUnits.set(right, left);
+            else if (right < left) parentUnits.set(left, right);
+          } else {
+            claimOwnerUnits.set(claimKey, unitKey);
+          }
+          for (const id of claim.carrierPullRequestIds) memberIds.add(id);
+          memberIds.add(claim.creditPullRequestId);
+          if (claim.retainedCopy)
+            memberIds.add(claim.retainedCopy.acceptancePullRequestId);
+        }
+        for (const id of memberIds) {
+          const repositoryNodeId = sources.get(id);
+          if (repositoryNodeId === undefined)
+            throw new Error("Reviewed implementation member is not a source");
+          const key = JSON.stringify([repositoryNodeId, id]);
+          const members = memberships.get(key) ?? [];
+          members.push({ recordDigest, workUnitId, unitKey });
+          memberships.set(key, members);
+        }
+      }
+    }
+  }
+  const groupIds = new Map<string, string>();
+  return new Map(
+    [...memberships].map(([source, members]) => [
+      source,
+      members
+        .sort(
+          (left, right) =>
+            compareCodeUnits(left.recordDigest, right.recordDigest) ||
+            compareCodeUnits(left.workUnitId, right.workUnitId),
+        )
+        .map(({ recordDigest, workUnitId, unitKey }) => {
+          const root = findUnitGroup(unitKey);
+          const groupId = groupIds.get(root) ?? sha256Hex(root);
+          groupIds.set(root, groupId);
+          return { recordDigest, workUnitId, groupId };
+        }),
+    ]),
+  );
+}
+
 /** Reuse the complete eligibility pipeline; only ordinary review timing differs. */
 function createSnapshotWithReviewCutoff(
   input: LeaderboardInput,
   reviewCutoff: string,
+  repositories: readonly TargetRepository[],
+  mode: LeaderboardScoringMode,
 ): LeaderboardSnapshot {
   const participationBans = input.participationBans ?? new Map();
   const attributionHeldSourceIds = new Set(
@@ -3127,6 +3419,7 @@ function createSnapshotWithReviewCutoff(
   const ledger: ScoreEvent[] = [];
   const mergedSources: MergedScoreSources = new Map();
   const reviewExclusions: ReviewExclusion[] = [];
+  const omittedReviewCredits: OmittedReviewCredit[] = [];
   const excludeReview = (
     pullRequest: MergedPullRequestReviewRecord,
     review: PullRequestReview,
@@ -3229,7 +3522,15 @@ function createSnapshotWithReviewCutoff(
     ...mergedPullRequests,
     ...valueContexts.filter((source) => source.mergedAt !== null),
   ];
-  const commitOwners = commitCreditOwners(mergedPullRequestOutcomes);
+  const commitOwners = commitCreditOwners(
+    mergedPullRequestOutcomes,
+    mode === "rolling",
+  );
+  const previousAcceptedOrdinaryOwners =
+    mode === "rolling" ? input.previousAcceptedOrdinaryOwners : undefined;
+  const fallbackCommitOwners = previousAcceptedOrdinaryOwners?.size
+    ? new Map([...commitOwners, ...previousAcceptedOrdinaryOwners])
+    : commitOwners;
   const outcomeById = new Map(
     mergedPullRequestOutcomes.map((pullRequest) => [
       pullRequest.id,
@@ -3240,13 +3541,14 @@ function createSnapshotWithReviewCutoff(
   // merge credit with (Score v2) or its author alone (Score v1 history).
   const mergeCreditActorsOf = (
     pullRequest: MergedPullRequestOutcome,
+    owners: ReadonlyMap<string, string> = commitOwners,
   ): GitHubActor[] => {
     if (
       parseIsoTime(pullRequest.mergedAt) >= parseIsoTime(SCORE_V2_EFFECTIVE_AT)
     ) {
       return mergeCreditActors(
         pullRequest,
-        commitOwners,
+        owners,
         input.retainedCommitAuthors?.get(pullRequest.id),
       );
     }
@@ -3477,6 +3779,35 @@ function createSnapshotWithReviewCutoff(
     jointDecisions.set(decision.latestDigest as string, decision);
   }
 
+  // A ratified carrier withholds its whole joint unit below. A member whose
+  // own claims that human decision does not cover would lose the unit and its
+  // merge event together, so it keeps the accepted-merge minimum (PRD
+  // section 7), never its superseded per-PR assessment.
+  const ratificationWithheldMemberIds = new Set<string>();
+  const jointScoredMemberIds = new Set<string>();
+  // Such a member can still lack attribution proof. Its hold keeps the Points
+  // it already has, and it has no claim in the group's other units, so it
+  // does not stop them.
+  const withheldMemberHoldIds = new Set<string>();
+  for (const decision of jointDecisions.values()) {
+    if (decision.status !== "assessed") continue;
+    const claims = new Map(
+      decision.evidence.claims.map((claim) => [claim.id, claim]),
+    );
+    for (const unit of decision.record.units) {
+      const scoped = unit.claimIds.flatMap((id) => claims.get(id) ?? []);
+      const ratified = scoped.map((claim) =>
+        claim.carrierPullRequestIds.some((id) => scoreRatifications.has(id)),
+      );
+      const withheld = ratified.includes(true);
+      for (const [index, claim] of scoped.entries()) {
+        if (!withheld) jointScoredMemberIds.add(claim.creditPullRequestId);
+        else if (!ratified[index])
+          ratificationWithheldMemberIds.add(claim.creditPullRequestId);
+      }
+    }
+  }
+
   // SCR-04 credit actors by pull request. A shared work unit can suppress a
   // pull request's merge events; its credit actors stay self-reviewers.
   const creditActorIds = new Map<string, ReadonlySet<string>>();
@@ -3488,7 +3819,21 @@ function createSnapshotWithReviewCutoff(
       actors: ReadonlyMap<string, GitHubActor>;
     }
   >();
-  for (const pullRequest of mergedPullRequestOutcomes) {
+  const implementationHoldSourceIds = new Set<string>();
+  const standaloneReviewSources = new Set<string>();
+  const scoredImplementationDigests = new Set(
+    input.previousImplementationDigests,
+  );
+  const implementationDigests = input.acceptedImplementationDigests;
+  const acceptanceOrder = implementationDigests?.size
+    ? sortWithParsedTimes(
+        mergedPullRequestOutcomes,
+        (pull) => pull.mergedAt,
+        (left, right, leftTime, rightTime) =>
+          leftTime - rightTime || compareCodeUnits(left.id, right.id),
+      )
+    : mergedPullRequestOutcomes;
+  for (const pullRequest of acceptanceOrder) {
     // A missing joint member withholds that assessment, not this separately
     // verified merge's existing minimum or a current human ratification.
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
@@ -3507,26 +3852,25 @@ function createSnapshotWithReviewCutoff(
       pullRequest.author && !isBotActor(pullRequest.author)
         ? pullRequest.author
         : null;
-    // Score v1 history credits the pull-request author only.
-    let actors = mergeCreditActorsOf(pullRequest);
-    const lineWeights = v2
-      ? mergeCreditLineWeights(
-          pullRequest,
-          commitOwners,
-          input.retainedCommitAuthors?.get(pullRequest.id),
-        )
-      : null;
+    // Review exclusions keep the full current credit actor census even when
+    // a previous acceptance withholds new provisional implementation credit.
+    const currentActors = mergeCreditActorsOf(pullRequest);
     creditActorIds.set(
       pullRequest.id,
-      new Set(actors.map((actor) => actor.id)),
+      new Set(currentActors.map((actor) => actor.id)),
     );
     if (attributionHeldSourceIds.has(pullRequest.id)) continue;
     // A joint member is scored by its unit, never by a superseded per-PR record.
     const joint = valuePolicyApplies
       ? input.jointValueDecisions?.get(pullRequest.id)
       : undefined;
+    const ratificationWithheld =
+      !ratification &&
+      ratificationWithheldMemberIds.has(pullRequest.id) &&
+      !jointScoredMemberIds.has(pullRequest.id);
     if (
       !ratification &&
+      !ratificationWithheld &&
       joint?.status === "assessed" &&
       !spansValuePolicyStart(joint)
     )
@@ -3537,6 +3881,7 @@ function createSnapshotWithReviewCutoff(
       pullRequest.commits?.length &&
       pullRequest.commits.every((commit) => (commit.parentCount ?? 0) > 1)
     ) {
+      if (ratificationWithheld) withheldMemberHoldIds.add(pullRequest.id);
       attributionHeldSourceIds.add(pullRequest.id);
       heldSourceIds.add(pullRequest.id);
       continue;
@@ -3549,6 +3894,51 @@ function createSnapshotWithReviewCutoff(
       !ratification && valueDecision?.status === "assessed"
         ? valueDecision.record
         : null;
+    const implementationOwners =
+      !ratification && !valueRecord && joint?.status !== "assessed"
+        ? fallbackCommitOwners
+        : commitOwners;
+    let actors =
+      implementationOwners === commitOwners
+        ? currentActors
+        : mergeCreditActorsOf(pullRequest, implementationOwners);
+    const lineWeights = v2
+      ? mergeCreditLineWeights(
+          pullRequest,
+          implementationOwners,
+          input.retainedCommitAuthors?.get(pullRequest.id),
+        )
+      : null;
+    const digest = implementationDigests?.get(pullRequest.id);
+    const acceptanceKey = digest
+      ? `${repositoryId.toLowerCase()}\0${digest}`
+      : null;
+    // Fresh unassessed rolling credit requires a nonempty commit census.
+    // An empty marker can belong to an indirect merge. Exact nonempty
+    // matches need earlier positive credit. Holds preserve existing awards.
+    if (
+      v2 &&
+      input.valueDecisions !== undefined &&
+      ((mode === "rolling" &&
+        valuePolicyApplies &&
+        !pullRequest.commits?.length) ||
+        pullRequest.emptyAcceptanceMarker ||
+        isUnprovedZeroLinePromotion(
+          pullRequest.commits ?? [],
+          (commit) =>
+            implementationOwners.get(
+              `${repositoryId.toLowerCase()}\0${commit.oid}`,
+            ) === pullRequest.id,
+        ) ||
+        input.unresolvedImplementationSources?.has(pullRequest.id) ||
+        (acceptanceKey !== null &&
+          scoredImplementationDigests.has(acceptanceKey))) &&
+      !ratification &&
+      !valueRecord
+    ) {
+      implementationHoldSourceIds.add(pullRequest.id);
+      continue;
+    }
     if (
       valueRecord &&
       (valueRecord.pullRequestNodeId !== pullRequest.id ||
@@ -3602,6 +3992,23 @@ function createSnapshotWithReviewCutoff(
         throw new Error(
           "Overlapping accepted commits require joint value assessment",
         );
+      // A standalone assessment does not resolve overlap with a previously
+      // rewarded source. Hold its implementation credit for joint review.
+      if (
+        previousAcceptedOrdinaryOwners?.size &&
+        pullRequest.commits?.some((commit) => {
+          const previousOwner = previousAcceptedOrdinaryOwners.get(
+            `${repositoryId.toLowerCase()}\0${commit.oid}`,
+          );
+          return (
+            previousOwner !== undefined && previousOwner !== pullRequest.id
+          );
+        })
+      ) {
+        implementationHoldSourceIds.add(pullRequest.id);
+        standaloneReviewSources.add(pullRequest.id);
+        continue;
+      }
     }
     if (actors.length === 0) continue;
     const totalThirds =
@@ -3623,6 +4030,7 @@ function createSnapshotWithReviewCutoff(
             (id) => !actors.some((actor) => actor.id === id),
           )
     ) {
+      if (ratificationWithheld) withheldMemberHoldIds.add(pullRequest.id);
       attributionHeldSourceIds.add(pullRequest.id);
       heldSourceIds.add(pullRequest.id);
       continue;
@@ -3667,9 +4075,11 @@ function createSnapshotWithReviewCutoff(
       ? `Maintainer-ratified ${ratification.record.tier} accepted outcome: ${ratification.record.reason}`
       : valueRecord
         ? `Provisional value assessment (${valueRecord.assessment.tier}): ${valueRecord.assessment.rationale}${valueRecord.assessment.tier === "none" ? " The accepted merge keeps the one-third minimum." : ""}`
-        : valuePolicyApplies
-          ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
-          : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
+        : ratificationWithheld
+          ? "A maintainer ratification of another pull request withheld this merge's joint value assessment; the accepted merge keeps the one-third minimum."
+          : valuePolicyApplies
+            ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
+            : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
     for (const [index, actor] of actors.entries()) {
       const isAuthor = actor.id === author?.id;
       const scoreThirds = shares[index] as number;
@@ -3741,21 +4151,43 @@ function createSnapshotWithReviewCutoff(
               : `${actorReason} Shared among ${actors.length} implementation authors ${zeroLineFallback ? "equally because all verified line counts are zero" : "in proportion to verified changed lines"}.`,
         },
       );
+      if (scored && acceptanceKey !== null)
+        scoredImplementationDigests.add(acceptanceKey);
       if (scored && isAuthor) {
         recordScoredSources([pullRequestBodySource(pullRequest)]);
       }
     }
   }
 
+  // Proven per-unit publication for every assessed joint decision,
+  // keyed by the decision digest. A unit publishes completely only when
+  // it survives every withholding gate below (human ratification,
+  // explicit prize acceptance, the rolling window, the value policy)
+  // and every one of its implementation actors is actually credited: a
+  // share dropped by addScore — above all a banned actor's share (PRD
+  // section 8) — is an omission, not a publication. Supersession
+  // retirement further below may only rely on units that published
+  // completely.
+  const jointUnitPublication = new Map<
+    string,
+    { coveredPullRequestIds: ReadonlySet<string>; complete: boolean }[]
+  >();
   for (const decision of jointDecisions.values()) {
     if (decision.status !== "assessed" || spansValuePolicyStart(decision))
       continue;
     if (
-      decision.record.sources.some((source) =>
-        attributionHeldSourceIds.has(source.pullRequestNodeId),
+      decision.record.sources.some(
+        (source) =>
+          attributionHeldSourceIds.has(source.pullRequestNodeId) &&
+          !withheldMemberHoldIds.has(source.pullRequestNodeId),
       )
     )
       continue;
+    const unitPublication: {
+      coveredPullRequestIds: ReadonlySet<string>;
+      complete: boolean;
+    }[] = [];
+    jointUnitPublication.set(decision.latestDigest as string, unitPublication);
     const claims = new Map(
       decision.evidence.claims.map((claim) => [claim.id, claim]),
     );
@@ -3818,6 +4250,15 @@ function createSnapshotWithReviewCutoff(
           throw new Error("Joint unit lost a verified implementation claim");
         return claim;
       });
+      // Withheld until the actor loop below credits every actor: any
+      // gate this unit hits from here on leaves it unpublished.
+      const publication = {
+        coveredPullRequestIds: new Set(
+          scoped.map((claim) => claim.creditPullRequestId),
+        ),
+        complete: false,
+      };
+      unitPublication.push(publication);
       // Human decisions reserve the affected work. An automatic group must not
       // add another award for that same implementation under a different PR.
       if (
@@ -3932,33 +4373,45 @@ function createSnapshotWithReviewCutoff(
         lineWeights !== null &&
         lineWeights !== undefined &&
         [...lineWeights.values()].every((weight) => weight === 0n);
+      // A zero line share takes no ledger event and does not block
+      // publication: the unit is complete when every actor with a
+      // positive share was actually credited.
+      let complete = true;
       for (const [index, actor] of actors.entries()) {
         const thirds = shares[index] as number;
         if (thirds === 0) continue;
-        addScore(entries, ledger, mergedSources, participationBans, {
-          id: `${completion.pull.node_id}:joint:${unit.workUnitId}:merged:${actor.id}`,
-          actor,
-          category: "merged-pull-request",
-          points: thirds / 3,
-          scoreThirds: thirds,
-          workUnitId: unit.workUnitId,
-          scoreDecisionSourceId: `value:${decision.latestDigest}`,
-          scoreDecisionAt: decision.history.at(-1)?.recorded_at,
-          ...(completion.indirectAcceptance
-            ? { acceptanceKind: "indirect-integration" as const }
-            : {}),
-          occurredAt: completedAt,
-          repository: repositoryIdFromUrl(completion.pull.html_url),
-          source: {
-            id: completion.pull.node_id,
-            kind: "pull-request",
-            number: completion.pull.number,
-            title: completion.pull.title,
-            url: completion.pull.html_url,
+        const credited = addScore(
+          entries,
+          ledger,
+          mergedSources,
+          participationBans,
+          {
+            id: `${completion.pull.node_id}:joint:${unit.workUnitId}:merged:${actor.id}`,
+            actor,
+            category: "merged-pull-request",
+            points: thirds / 3,
+            scoreThirds: thirds,
+            workUnitId: unit.workUnitId,
+            scoreDecisionSourceId: `value:${decision.latestDigest}`,
+            scoreDecisionAt: decision.history.at(-1)?.recorded_at,
+            ...(completion.indirectAcceptance
+              ? { acceptanceKind: "indirect-integration" as const }
+              : {}),
+            occurredAt: completedAt,
+            repository: repositoryIdFromUrl(completion.pull.html_url),
+            source: {
+              id: completion.pull.node_id,
+              kind: "pull-request",
+              number: completion.pull.number,
+              title: completion.pull.title,
+              url: completion.pull.html_url,
+            },
+            reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale}${actors.length > 1 ? ` Shared among ${actors.length} scoped implementation actors ${zeroLineFallback ? "equally because all verified line counts are zero" : "in proportion to verified changed lines"}.` : ""}`,
           },
-          reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale}${actors.length > 1 ? ` Shared among ${actors.length} scoped implementation actors ${zeroLineFallback ? "equally because all verified line counts are zero" : "in proportion to verified changed lines"}.` : ""}`,
-        });
+        );
+        if (!credited) complete = false;
       }
+      publication.complete = complete;
     }
   }
 
@@ -4007,7 +4460,7 @@ function createSnapshotWithReviewCutoff(
     assertLedgerValue(
       event,
       `evaluatedContributions[${index}]`,
-      TARGET_REPOSITORIES.map((repository) => repository.id),
+      repositories.map((repository) => repository.id),
     );
     if (event.category !== "evaluated-contribution") {
       throw new TypeError(
@@ -4367,8 +4820,29 @@ function createSnapshotWithReviewCutoff(
       }
       for (const reviewId of credited.repeatedReviewIds)
         exclude(reviewId, "already-awarded-reviewer");
+      const reason = `Provisional ${candidate.value.tier} review value; reviewer ${index + 1} of ${allocation.credited.length} credited, ${credited.shareThirds} of ${allocation.poolThirds} review-credit thirds: ${candidate.value.finding} ${candidate.value.outcome}`;
       if (parseIsoTime(candidate.submittedAt) < scoringFrom) {
         exclude(candidate.reviewId, "review-credit-outside-window");
+        // The allocation stands, but a value event outside the scoring
+        // window is not publishable in the ledger. Publish the allocated
+        // share itself so Points can materialize the award when no
+        // earlier run recorded one; the journal keeps an existing award
+        // untouched, exactly as it does for the exclusion alone today.
+        const scoreDecisionAt = candidate.decision.history.at(-1)?.recorded_at;
+        omittedReviewCredits.push({
+          id: `${pullRequest.id}:value-review:${candidate.reviewId}`,
+          reviewId: candidate.reviewId,
+          pullRequestId: pullRequest.id,
+          pullRequestNumber: pullRequest.number,
+          repository: repositoryId,
+          reviewer: candidate.actor,
+          scoreThirds: credited.shareThirds,
+          submittedAt: candidate.submittedAt,
+          url: candidate.review.url,
+          scoreDecisionSourceId: `value:${candidate.decision.latestDigest}`,
+          ...(scoreDecisionAt ? { scoreDecisionAt } : {}),
+          reason,
+        });
         continue;
       }
       addScore(entries, ledger, mergedSources, participationBans, {
@@ -4389,7 +4863,7 @@ function createSnapshotWithReviewCutoff(
           title: pullRequest.title,
           url: candidate.review.url,
         },
-        reason: `Provisional ${candidate.value.tier} review value; reviewer ${index + 1} of ${allocation.credited.length} credited, ${credited.shareThirds} of ${allocation.poolThirds} review-credit thirds: ${candidate.value.finding} ${candidate.value.outcome}`,
+        reason,
       });
     }
     return allocation.credited
@@ -4950,7 +5424,7 @@ function createSnapshotWithReviewCutoff(
   const retainedAttributionCandidates = new Map<string, ModelAttribution>();
   // History from a repository that is no longer collected cannot score.
   const collectedRepositoryIds = new Set(
-    TARGET_REPOSITORIES.map((repository) => repository.id),
+    repositories.map((repository) => repository.id),
   );
   for (const [index, event] of [...(input.retainedReviewEvents ?? [])]
     .filter(
@@ -4967,7 +5441,7 @@ function createSnapshotWithReviewCutoff(
     assertLedgerValue(
       event,
       `retainedReviewEvents[${index}]`,
-      TARGET_REPOSITORIES.map((repository) => repository.id),
+      repositories.map((repository) => repository.id),
     );
     if (
       event.category !== "substantive-review" ||
@@ -5199,10 +5673,254 @@ function createSnapshotWithReviewCutoff(
 
   assignLeaderboardRanks(leaders);
 
+  // Carry each assessed joint record's declared predecessors to Points.
+  // Only a successor that actually publishes a ledger decision in this
+  // snapshot can retire the credit it replaced: a group whose units were
+  // all withheld publishes no decision and retires nothing here.
+  const publishedDecisionDigests = new Set(
+    publishedLedger.flatMap((event) =>
+      event.category === "merged-pull-request" &&
+      event.scoreDecisionSourceId?.startsWith("value:")
+        ? [event.scoreDecisionSourceId.slice("value:".length)]
+        : [],
+    ),
+  );
+  // The digests a joint record declares are the current heads of their
+  // histories, but the recorded credit they replaced can sit on an
+  // earlier digest when an intervening reassessment was assessed yet
+  // never published by a snapshot. Those earlier digests join the
+  // relation only as the consumed history graph proves them: a member's
+  // verified solo history is a chain whose every record names the digest
+  // it supersedes, and ancestor joint records in the consumed graph
+  // declare legacy predecessors of their own. A digest is carried only
+  // when that chain links it under a declared predecessor — never from a
+  // source's absence, window position or context presence.
+  const soloChainDigests = (memberId: string): string[] | null => {
+    const solo = input.valueDecisions?.get(memberId);
+    if (!solo || !Array.isArray(solo.history) || solo.history.length === 0)
+      return null;
+    const digests: string[] = [];
+    let previous: string | null = null;
+    for (const row of solo.history) {
+      let record: { pullRequestNodeId?: unknown; supersedes?: unknown };
+      try {
+        record = JSON.parse(row.record_json) as typeof record;
+      } catch {
+        return null;
+      }
+      if (
+        !record ||
+        typeof record !== "object" ||
+        !/^[a-f0-9]{64}$/u.test(row.record_digest) ||
+        record.pullRequestNodeId !== memberId ||
+        record.supersedes !== previous
+      )
+        return null;
+      digests.push(row.record_digest);
+      previous = row.record_digest;
+    }
+    return solo.latestDigest === previous ? digests : null;
+  };
+  const supersessionRows = new Map<string, string>();
+  for (const decision of jointDecisions.values()) {
+    if (
+      decision.status !== "assessed" ||
+      decision.latestDigest === null ||
+      !publishedDecisionDigests.has(decision.latestDigest)
+    )
+      continue;
+    const successor = decision.latestDigest;
+    const addRow = (predecessorDigest: string) => {
+      if (predecessorDigest === successor) return;
+      const existing = supersessionRows.get(predecessorDigest);
+      if (existing !== undefined && existing !== successor)
+        throw new Error(
+          "Joint assessments disagree about a predecessor's successor",
+        );
+      supersessionRows.set(predecessorDigest, successor);
+    };
+    // Publication of the record as a whole is not enough to retire a
+    // predecessor: a joint record partitions its sources into units
+    // that are gated independently, so one unit can publish while the
+    // unit covering the predecessor's claims is withheld by the rolling
+    // window, a human ratification or prize acceptance, or loses an
+    // actor's share to a ban. A predecessor retires only when every
+    // unit covering its claims published completely. The members a
+    // predecessor belongs to are resolved from proven links only: a
+    // member's verified solo chain, or the sources an ancestor record
+    // in the consumed graph declares for itself. A digest no proven
+    // link resolves is gated on every unit of this record.
+    const units = jointUnitPublication.get(successor) ?? [];
+    const publishes = (memberIds: ReadonlySet<string> | null): boolean => {
+      const covering =
+        memberIds === null
+          ? units
+          : units.filter((unit) =>
+              [...unit.coveredPullRequestIds].some((id) => memberIds.has(id)),
+            );
+      return covering.length > 0 && covering.every((unit) => unit.complete);
+    };
+    const ancestors = new Map<
+      string,
+      { legacyPredecessors?: unknown; supersedes?: unknown; sources?: unknown }
+    >();
+    for (const row of decision.history ?? []) {
+      try {
+        ancestors.set(
+          row.record_digest,
+          JSON.parse(row.record_json) as {
+            legacyPredecessors?: unknown;
+            supersedes?: unknown;
+            sources?: unknown;
+          },
+        );
+      } catch {
+        // A row that does not parse proves nothing.
+      }
+    }
+    const ancestorMembers = (digest: string): Set<string> => {
+      const members = new Set<string>();
+      const record = ancestors.get(digest);
+      if (Array.isArray(record?.sources))
+        for (const source of record.sources)
+          if (
+            source &&
+            typeof source === "object" &&
+            typeof (source as { pullRequestNodeId?: unknown })
+              .pullRequestNodeId === "string"
+          )
+            members.add(
+              (source as { pullRequestNodeId: string }).pullRequestNodeId,
+            );
+      return members;
+    };
+    // Walk the consumed joint graph from this record: every ancestor it
+    // supersedes is replaced by it as well, and the solo predecessors
+    // those ancestors declared are proven against the members' chains.
+    const declaredSolo = new Set<string>(
+      decision.record.legacyPredecessors ?? [],
+    );
+    const ancestorDigests: string[] = [];
+    const pending = [...(decision.record.supersedes ?? [])];
+    const visited = new Set<string>();
+    while (pending.length) {
+      const digest = pending.pop() as string;
+      if (visited.has(digest)) continue;
+      visited.add(digest);
+      const ancestor = ancestors.get(digest);
+      if (!ancestor) continue;
+      ancestorDigests.push(digest);
+      if (Array.isArray(ancestor.legacyPredecessors))
+        for (const declared of ancestor.legacyPredecessors)
+          if (typeof declared === "string") declaredSolo.add(declared);
+      if (Array.isArray(ancestor.supersedes))
+        for (const parent of ancestor.supersedes)
+          if (typeof parent === "string") pending.push(parent);
+    }
+    const currentMembers = new Set(
+      decision.record.sources.map((source) => source.pullRequestNodeId),
+    );
+    // The solo chains are walked for the members of every record in the
+    // consumed graph, not only this record's own sources: an ancestor's
+    // declared predecessor stays linked even after its member leaves
+    // the current group.
+    const walkMembers = new Set(currentMembers);
+    for (const digest of ancestorDigests)
+      for (const member of ancestorMembers(digest)) walkMembers.add(member);
+    // The member set a chain digest is gated on: the member itself when
+    // it belongs to this record; for a member that left the group, the
+    // sources of the ancestor records that carried it into the graph —
+    // the part of the ancestor this record actually republishes.
+    const gateMembersFor = (member: string): ReadonlySet<string> => {
+      if (currentMembers.has(member)) return new Set([member]);
+      const members = new Set<string>();
+      for (const digest of ancestorDigests) {
+        const sources = ancestorMembers(digest);
+        if (sources.has(member))
+          for (const source of sources) members.add(source);
+      }
+      return members.size ? members : new Set([member]);
+    };
+    const chains = new Map<string, string[]>();
+    const chainOwners = new Map<string, string[]>();
+    for (const member of walkMembers) {
+      const chain = soloChainDigests(member);
+      if (!chain) continue;
+      chains.set(member, chain);
+      for (const digest of chain) {
+        const owners = chainOwners.get(digest) ?? [];
+        owners.push(member);
+        chainOwners.set(digest, owners);
+      }
+    }
+    const resolveMembers = (
+      predecessorDigest: string,
+    ): ReadonlySet<string> | null => {
+      const owners = chainOwners.get(predecessorDigest);
+      if (owners?.length) {
+        const members = new Set<string>();
+        for (const owner of owners)
+          for (const member of gateMembersFor(owner)) members.add(member);
+        return members;
+      }
+      if (ancestors.has(predecessorDigest))
+        return ancestorMembers(predecessorDigest);
+      for (const digest of ancestorDigests) {
+        const ancestor = ancestors.get(digest);
+        if (
+          Array.isArray(ancestor?.legacyPredecessors) &&
+          (ancestor.legacyPredecessors as unknown[]).includes(predecessorDigest)
+        )
+          return ancestorMembers(digest);
+      }
+      return null;
+    };
+    const addProvenRow = (predecessorDigest: string) => {
+      if (publishes(resolveMembers(predecessorDigest)))
+        addRow(predecessorDigest);
+    };
+    for (const predecessorDigest of [
+      ...(decision.record.legacyPredecessors ?? []),
+      ...(decision.record.supersedes ?? []),
+    ])
+      addProvenRow(predecessorDigest);
+    for (const digest of ancestorDigests) addProvenRow(digest);
+    // An ancestor's declared solo predecessors are carried directly,
+    // not only through a member's solo chain: the chain can be
+    // unavailable to this snapshot even though the consumed graph
+    // proves the declaration.
+    for (const digest of ancestorDigests) {
+      const ancestor = ancestors.get(digest);
+      if (Array.isArray(ancestor?.legacyPredecessors))
+        for (const declared of ancestor.legacyPredecessors)
+          if (typeof declared === "string") addProvenRow(declared);
+    }
+    if (declaredSolo.size)
+      for (const chain of chains.values()) {
+        let cutoff = -1;
+        for (const declared of declaredSolo) {
+          const index = chain.indexOf(declared);
+          if (index > cutoff) cutoff = index;
+        }
+        for (let index = 0; index <= cutoff; index++)
+          addProvenRow(chain[index]);
+      }
+  }
+  const valueAssessmentSupersessions = [...supersessionRows.entries()]
+    .map(([predecessorDigest, successorDigest]) => ({
+      predecessorDigest,
+      successorDigest,
+    }))
+    .sort(
+      (left, right) =>
+        left.predecessorDigest.localeCompare(right.predecessorDigest, "en") ||
+        left.successorDigest.localeCompare(right.successorDigest, "en"),
+    );
+
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
-    repository: LEADERBOARD_REPOSITORY,
-    repositories: TARGET_REPOSITORIES.map((repository) => ({
+    repository: repositories[0]?.id ?? null,
+    repositories: repositories.map((repository) => ({
       id: repository.id,
       owner: repository.owner,
       name: repository.name,
@@ -5273,7 +5991,8 @@ function createSnapshotWithReviewCutoff(
                 input.valueDecisions?.get(pull.id));
             const status = unavailableHeldSourceIds.has(pull.id)
               ? "unresolved"
-              : attributionHeldSourceIds.has(pull.id)
+              : attributionHeldSourceIds.has(pull.id) ||
+                  (!legacy && implementationHoldSourceIds.has(pull.id))
                 ? "incomplete"
                 : scoreRatifications.has(pull.id)
                   ? "human-ratified"
@@ -5298,14 +6017,15 @@ function createSnapshotWithReviewCutoff(
                 .every(
                   (commit) =>
                     isCreditEligibleCommitAuthor(commit.author) &&
-                    commitOwners.get(
+                    fallbackCommitOwners.get(
                       `${repository.toLowerCase()}\0${commit.oid}`,
                     ) === pull.id,
                 );
             const verifiedActors = completePrimaryAuthors
-              ? mergeCreditActorsOf(pull as MergedPullRequestOutcome).map(
-                  (actor) => actor.id,
-                )
+              ? mergeCreditActorsOf(
+                  pull as MergedPullRequestOutcome,
+                  fallbackCommitOwners,
+                ).map((actor) => actor.id)
               : [];
             const publishedActors = completePrimaryAuthors
               ? publishedLedger
@@ -5370,10 +6090,14 @@ function createSnapshotWithReviewCutoff(
               // Omitting its digest prevents the Points reconciler treating
               // this proof gap as an invalidation of that prior joint value.
               recordDigest:
-                attributionHeldSourceIds.has(pull.id) &&
+                (attributionHeldSourceIds.has(pull.id) ||
+                  implementationHoldSourceIds.has(pull.id)) &&
                 !unavailableHeldSourceIds.has(pull.id)
                   ? null
                   : (decision?.latestDigest ?? null),
+              ...(standaloneReviewSources.has(pull.id) && decision?.latestDigest
+                ? { reviewAssessmentDigest: decision.latestDigest }
+                : {}),
               ...(verifiedImplementationActorNodeIds
                 ? { verifiedImplementationActorNodeIds }
                 : {}),
@@ -5404,6 +6128,9 @@ function createSnapshotWithReviewCutoff(
             };
           }),
         }),
+    ...(valueAssessmentSupersessions.length
+      ? { valueAssessmentSupersessions }
+      : {}),
     ledger: publishedLedger.sort(
       (left, right) =>
         right.points - left.points ||
@@ -5411,6 +6138,13 @@ function createSnapshotWithReviewCutoff(
         left.id.localeCompare(right.id),
     ),
     reviewExclusions: reviewExclusions.sort(compareReviewExclusions),
+    ...(omittedReviewCredits.length
+      ? {
+          omittedReviewCredits: omittedReviewCredits.sort(
+            compareOmittedReviewCredits,
+          ),
+        }
+      : {}),
     penalties,
     ...(input.penaltyHistory ? { penaltyHistory: input.penaltyHistory } : {}),
     opportunities,
@@ -5428,7 +6162,21 @@ function createSnapshotWithReviewCutoff(
         .sort(compareWorkItems),
     },
   };
-  assertPublishableLeaderboardSnapshot(snapshot);
+  const reviewedUnitsBySource = reviewedImplementationUnitsBySource(input);
+  const nodeIdByRepository = new Map(
+    input.source.repositories.map(({ id, repositoryId }) => [id, repositoryId]),
+  );
+  const reviewedImplementationUnits = (
+    snapshot.valueAssessmentCoverage ?? []
+  ).flatMap(({ repository, pullRequestId }) => {
+    const units = reviewedUnitsBySource.get(
+      JSON.stringify([nodeIdByRepository.get(repository), pullRequestId]),
+    );
+    return units ? [{ repository, pullRequestId, units }] : [];
+  });
+  if (reviewedImplementationUnits.length)
+    snapshot.reviewedImplementationUnits = reviewedImplementationUnits;
+  assertLeaderboardForRepositories(snapshot, repositories);
   return snapshot;
 }
 
@@ -5790,6 +6538,76 @@ function compareReviewExclusions(
   return (
     left.pullRequestId.localeCompare(right.pullRequestId, "en") ||
     left.reviewId.localeCompare(right.reviewId, "en")
+  );
+}
+
+function compareOmittedReviewCredits(
+  left: OmittedReviewCredit,
+  right: OmittedReviewCredit,
+) {
+  return (
+    left.pullRequestId.localeCompare(right.pullRequestId, "en") ||
+    left.reviewId.localeCompare(right.reviewId, "en")
+  );
+}
+
+function assertOmittedReviewCreditValue(
+  value: unknown,
+  path: string,
+  repositoryIds: readonly string[],
+): void {
+  const credit = assertObject(value, path);
+  const expectedKeys = [
+    "id",
+    "pullRequestId",
+    "pullRequestNumber",
+    "reason",
+    "repository",
+    "reviewId",
+    "reviewer",
+    "scoreDecisionSourceId",
+    "scoreThirds",
+    "submittedAt",
+    "url",
+  ];
+  // `scoreDecisionAt` is additive; an assessment without a recorded
+  // decision time omits it, mirroring the ledger event it replaces.
+  const keys = Object.keys(credit)
+    .filter((key) => key !== "scoreDecisionAt")
+    .sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
+    throw new Error(
+      `${path} must contain exactly the omitted review credit fields`,
+    );
+  }
+  if ("scoreDecisionAt" in credit)
+    assertIsoTimestamp(credit.scoreDecisionAt, `${path}.scoreDecisionAt`);
+  assertString(credit.id, `${path}.id`);
+  assertString(credit.pullRequestId, `${path}.pullRequestId`);
+  assertPositiveInteger(credit.pullRequestNumber, `${path}.pullRequestNumber`);
+  assertString(credit.reviewId, `${path}.reviewId`);
+  if (credit.id !== `${credit.pullRequestId}:value-review:${credit.reviewId}`) {
+    throw new Error(`${path}.id must bind the pull request and review IDs`);
+  }
+  assertActorValue(credit.reviewer, `${path}.reviewer`);
+  assertPositiveInteger(credit.scoreThirds, `${path}.scoreThirds`);
+  assertIsoTimestamp(credit.submittedAt, `${path}.submittedAt`);
+  if (
+    typeof credit.scoreDecisionSourceId !== "string" ||
+    !/^value:[a-f0-9]{64}$/u.test(credit.scoreDecisionSourceId)
+  ) {
+    throw new Error(
+      `${path}.scoreDecisionSourceId must name a value assessment decision`,
+    );
+  }
+  assertString(credit.reason, `${path}.reason`);
+  assertEnum(credit.repository, repositoryIds, `${path}.repository`);
+  assertRepositoryUrl(
+    credit.url,
+    `${path}.url`,
+    "review",
+    credit.pullRequestNumber,
+    credit.repository as RepositoryId,
   );
 }
 
@@ -7106,6 +7924,57 @@ function assertAttributionValue(
 /** Validate immutable history using its collected order and known identities.
  * Use assertPublishableLeaderboardSnapshot for every fresh publication.
  */
+function assertReviewedImplementationUnits(
+  value: unknown,
+  coverage: ReadonlyMap<string, string>,
+) {
+  if (!Array.isArray(value) || !value.length)
+    throw new Error("Reviewed implementation membership must be nonempty");
+  const seenSources = new Set<string>();
+  const groupsByUnit = new Map<string, string>();
+  for (const entry of value) {
+    const source = assertObject(entry, "reviewed implementation source");
+    if (
+      Object.keys(source).sort().join(",") !==
+        "pullRequestId,repository,units" ||
+      typeof source.pullRequestId !== "string" ||
+      typeof source.repository !== "string" ||
+      coverage.get(source.pullRequestId) !== source.repository ||
+      seenSources.has(source.pullRequestId) ||
+      !Array.isArray(source.units) ||
+      !source.units.length
+    )
+      throw new Error("Reviewed implementation source binding is invalid");
+    seenSources.add(source.pullRequestId);
+    let previous = "";
+    for (const member of source.units) {
+      const unit = assertObject(member, "reviewed implementation unit");
+      if (
+        Object.keys(unit).sort().join(",") !==
+          "groupId,recordDigest,workUnitId" ||
+        typeof unit.groupId !== "string" ||
+        !jointRecordDigestPattern.test(unit.groupId) ||
+        typeof unit.recordDigest !== "string" ||
+        !jointRecordDigestPattern.test(unit.recordDigest) ||
+        typeof unit.workUnitId !== "string" ||
+        !reviewedWorkUnitIdPattern.test(unit.workUnitId)
+      )
+        throw new Error("Reviewed implementation unit binding is invalid");
+      const key = `${unit.recordDigest}:${unit.workUnitId}`;
+      const group = groupsByUnit.get(key);
+      if (
+        compareCodeUnits(previous, key) >= 0 ||
+        (group && group !== unit.groupId)
+      )
+        throw new Error(
+          "Reviewed implementation units must be unique and consistent",
+        );
+      previous = key;
+      groupsByUnit.set(key, unit.groupId);
+    }
+  }
+}
+
 export function assertLeaderboardSnapshot(
   value: unknown,
 ): asserts value is LeaderboardSnapshot {
@@ -7253,6 +8122,7 @@ export function assertLeaderboardSnapshot(
   }
 
   const reviewExclusions = snapshot.reviewExclusions;
+  let validatedReviewExclusions: ReviewExclusion[] = [];
   if (reviewExclusions === undefined) {
     // Schema 6 was deployed before this additive audit field existed. Newly
     // generated snapshots always publish it, while readers remain compatible
@@ -7260,16 +8130,14 @@ export function assertLeaderboardSnapshot(
   } else if (!Array.isArray(reviewExclusions)) {
     throw new Error("snapshot.reviewExclusions must be an array");
   } else {
-    const validatedReviewExclusions = reviewExclusions.map(
-      (exclusion, index) => {
-        assertReviewExclusionValue(
-          exclusion,
-          `snapshot.reviewExclusions[${index}]`,
-          repositoryIds,
-        );
-        return exclusion;
-      },
-    );
+    validatedReviewExclusions = reviewExclusions.map((exclusion, index) => {
+      assertReviewExclusionValue(
+        exclusion,
+        `snapshot.reviewExclusions[${index}]`,
+        repositoryIds,
+      );
+      return exclusion;
+    });
     if (
       new Set(validatedReviewExclusions.map((exclusion) => exclusion.id))
         .size !== validatedReviewExclusions.length
@@ -7308,6 +8176,116 @@ export function assertLeaderboardSnapshot(
       if (compareReviewExclusions(previous, current) > 0) {
         throw new Error(
           "snapshot.reviewExclusions must be ordered by pull request and review ID",
+        );
+      }
+    }
+  }
+
+  const omittedReviewCredits = snapshot.omittedReviewCredits;
+  if (omittedReviewCredits !== undefined) {
+    if (!Array.isArray(omittedReviewCredits)) {
+      throw new Error("snapshot.omittedReviewCredits must be an array");
+    }
+    const validatedOmittedReviewCredits = omittedReviewCredits.map(
+      (credit, index) => {
+        assertOmittedReviewCreditValue(
+          credit,
+          `snapshot.omittedReviewCredits[${index}]`,
+          repositoryIds,
+        );
+        return credit;
+      },
+    );
+    if (
+      new Set(validatedOmittedReviewCredits.map((credit) => credit.id)).size !==
+      validatedOmittedReviewCredits.length
+    ) {
+      throw new Error("snapshot.omittedReviewCredits must contain unique IDs");
+    }
+    for (
+      let index = 1;
+      index < validatedOmittedReviewCredits.length;
+      index += 1
+    ) {
+      const previous = validatedOmittedReviewCredits[index - 1];
+      const current = validatedOmittedReviewCredits[index];
+      if (compareOmittedReviewCredits(previous, current) > 0) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must be ordered by pull request and review ID",
+        );
+      }
+    }
+    // An omitted credit is the allocation half of a published exclusion:
+    // the same snapshot excludes the review as outside the window, no
+    // ledger event carries the allocation, and the submission sits before
+    // the scoring window it was omitted from. The credit must also agree
+    // with the exclusion's reviewer and sit on or after the value policy,
+    // exactly as a ledger value event does.
+    const outsideWindowExclusions = new Map(
+      validatedReviewExclusions
+        .filter(
+          (exclusion) => exclusion.reason === "review-credit-outside-window",
+        )
+        .map(
+          (exclusion) =>
+            [
+              `${exclusion.pullRequestId}\0${exclusion.reviewId}\0${exclusion.repository}\0${exclusion.url}`,
+              exclusion,
+            ] as const,
+        ),
+    );
+    const ledgerEventIds = new Set(validatedLedger.map((event) => event.id));
+    for (const credit of validatedOmittedReviewCredits) {
+      if (ledgerEventIds.has(credit.id)) {
+        throw new Error(
+          "snapshot.omittedReviewCredits cannot duplicate a score event",
+        );
+      }
+      const exclusion = outsideWindowExclusions.get(
+        `${credit.pullRequestId}\0${credit.reviewId}\0${credit.repository}\0${credit.url}`,
+      );
+      if (!exclusion) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must match a published outside-window exclusion",
+        );
+      }
+      if (
+        exclusion.reviewer !== undefined &&
+        credit.reviewer.id !== exclusion.reviewer.id
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must match its exclusion's reviewer",
+        );
+      }
+      if (
+        typeof snapshot.valuePolicyEffectiveAt === "string" &&
+        parseIsoTime(credit.submittedAt) <
+          parseIsoTime(snapshot.valuePolicyEffectiveAt)
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must not predate the value policy",
+        );
+      }
+      if (parseIsoTime(credit.submittedAt) >= parseIsoTime(windowFrom)) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must predate the scoring window",
+        );
+      }
+      // The exact allocation-window lower bound needs the pull request's
+      // merge time, which no published snapshot field carries: a
+      // value-assessed pull request has no merged-pull-request ledger
+      // event, and the assessment coverage row carries no merge time. The
+      // earliest a credited review can sit is one scoring-window length
+      // before the scoring window itself — the pull request merged inside
+      // the census window, so no earlier than window.from, and its
+      // allocation window reaches exactly one window length back from
+      // that merge. Reject only submissions before that outer bound.
+      if (
+        parseIsoTime(credit.submittedAt) <
+        parseIsoTime(windowFrom) - SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits predates the earliest possible allocation window",
         );
       }
     }
@@ -7861,6 +8839,9 @@ export function assertLeaderboardSnapshot(
     ...((reviewExclusions as ReviewExclusion[] | undefined)?.flatMap(
       (exclusion) => (exclusion.reviewer ? [exclusion.reviewer] : []),
     ) ?? []),
+    ...((
+      snapshot.omittedReviewCredits as OmittedReviewCredit[] | undefined
+    )?.map((credit) => credit.reviewer) ?? []),
     ...validatedAttributions.flatMap((attribution) =>
       attribution.actor ? [attribution.actor] : [],
     ),
@@ -7885,6 +8866,12 @@ export function assertLeaderboardSnapshot(
     )
   )
     throw new Error("Value score events require assessment coverage");
+  if (
+    snapshot.valueAssessmentCoverage === undefined &&
+    ((snapshot.omittedReviewCredits as OmittedReviewCredit[] | undefined)
+      ?.length ?? 0) > 0
+  )
+    throw new Error("Omitted review credits require assessment coverage");
   if (snapshot.valuePolicyEffectiveAt !== undefined) {
     assertIsoTimestamp(
       snapshot.valuePolicyEffectiveAt,
@@ -7909,6 +8896,13 @@ export function assertLeaderboardSnapshot(
     throw new Error(
       "Review policy omissions require the selected policy boundary",
     );
+  if (
+    snapshot.reviewedImplementationUnits !== undefined &&
+    snapshot.valueAssessmentCoverage === undefined
+  )
+    throw new Error(
+      "Reviewed implementation membership requires assessment coverage",
+    );
   if (snapshot.valueAssessmentCoverage !== undefined) {
     if (!Array.isArray(snapshot.valueAssessmentCoverage))
       throw new Error("snapshot.valueAssessmentCoverage must be an array");
@@ -7921,6 +8915,7 @@ export function assertLeaderboardSnapshot(
       if (
         ![
           "pullRequestId,pullRequestNumber,recordDigest,repository,status",
+          "pullRequestId,pullRequestNumber,recordDigest,repository,reviewAssessmentDigest,status",
           "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
@@ -7963,6 +8958,17 @@ export function assertLeaderboardSnapshot(
         throw new Error("Value coverage digest is invalid");
       if (row.status === "assessed" && row.recordDigest === null)
         throw new Error("Assessed coverage requires a journal digest");
+      if (row.reviewAssessmentDigest !== undefined) {
+        if (
+          row.status !== "incomplete" ||
+          row.recordDigest !== null ||
+          typeof row.reviewAssessmentDigest !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(row.reviewAssessmentDigest)
+        )
+          throw new Error(
+            "Review assessment coverage requires a held implementation source",
+          );
+      }
       if (row.implementationAllocation !== undefined) {
         const allocation = assertObject(
           row.implementationAllocation,
@@ -8100,6 +9106,11 @@ export function assertLeaderboardSnapshot(
         { row, index },
       ]),
     );
+    if (snapshot.reviewedImplementationUnits !== undefined)
+      assertReviewedImplementationUnits(
+        snapshot.reviewedImplementationUnits,
+        new Map([...coverageRows].map(([id, { row }]) => [id, row.repository])),
+      );
     const coverageFor = (eventId: string) => {
       let match: ReturnType<typeof coverageRows.get>;
       for (
@@ -8114,6 +9125,14 @@ export function assertLeaderboardSnapshot(
       return match?.row;
     };
     for (const event of validatedLedger) {
+      if (
+        event.category === "merged-pull-request" &&
+        coverageRows.get(event.source.id)?.row.reviewAssessmentDigest !==
+          undefined
+      )
+        throw new Error(
+          "Held implementation source cannot publish merge credit",
+        );
       if (!event.scoreDecisionSourceId?.startsWith("value:")) continue;
       if (
         snapshot.valuePolicyEffectiveAt !== undefined &&
@@ -8130,16 +9149,105 @@ export function assertLeaderboardSnapshot(
       const row = coverageFor(event.id);
       // A ratification corrects only the implementation score; the
       // ratified source's review value still binds its assessment digest.
+      const reviewEvent = event.category === "substantive-review";
+      const assessedDigest =
+        row?.status === "assessed" ||
+        (row?.status === "human-ratified" && reviewEvent)
+          ? row.recordDigest
+          : reviewEvent
+            ? row?.reviewAssessmentDigest
+            : undefined;
       if (
-        !(
-          row?.status === "assessed" ||
-          (row?.status === "human-ratified" &&
-            event.category === "substantive-review")
-        ) ||
-        `value:${row.recordDigest}` !== event.scoreDecisionSourceId
+        typeof assessedDigest !== "string" ||
+        `value:${assessedDigest}` !== event.scoreDecisionSourceId
       )
         throw new Error(
           "Value score event is not bound to its assessment coverage",
+        );
+    }
+    // An omitted credit binds to its assessment exactly as the ledger
+    // event it replaces would: the same coverage row and digest.
+    for (const credit of (snapshot.omittedReviewCredits as
+      | OmittedReviewCredit[]
+      | undefined) ?? []) {
+      const row = coverageFor(credit.id);
+      if (
+        !(row?.status === "assessed" || row?.status === "human-ratified") ||
+        `value:${row.recordDigest}` !== credit.scoreDecisionSourceId
+      )
+        throw new Error(
+          "Omitted review credit is not bound to its assessment coverage",
+        );
+    }
+  }
+  if (snapshot.valueAssessmentSupersessions !== undefined) {
+    if (!Array.isArray(snapshot.valueAssessmentSupersessions))
+      throw new Error("snapshot.valueAssessmentSupersessions must be an array");
+    const predecessors = new Set<string>();
+    let previousRow:
+      | { predecessorDigest: string; successorDigest: string }
+      | undefined;
+    for (const value of snapshot.valueAssessmentSupersessions) {
+      const row = assertObject(
+        value,
+        "snapshot.valueAssessmentSupersessions record",
+      );
+      if (
+        Object.keys(row).sort().join(",") !==
+        "predecessorDigest,successorDigest"
+      )
+        throw new Error("Value supersession has unexpected fields");
+      for (const key of ["predecessorDigest", "successorDigest"] as const) {
+        if (
+          typeof row[key] !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(row[key] as string)
+        )
+          throw new Error(`Value supersession ${key} is invalid`);
+      }
+      if (row.predecessorDigest === row.successorDigest)
+        throw new Error("Value supersession cannot replace itself");
+      if (predecessors.has(row.predecessorDigest as string))
+        throw new Error("Value supersession repeats a predecessor");
+      predecessors.add(row.predecessorDigest as string);
+      const current = {
+        predecessorDigest: row.predecessorDigest as string,
+        successorDigest: row.successorDigest as string,
+      };
+      if (
+        previousRow &&
+        (previousRow.predecessorDigest.localeCompare(
+          current.predecessorDigest,
+          "en",
+        ) > 0 ||
+          (previousRow.predecessorDigest === current.predecessorDigest &&
+            previousRow.successorDigest.localeCompare(
+              current.successorDigest,
+              "en",
+            ) > 0))
+      )
+        throw new Error(
+          "snapshot.valueAssessmentSupersessions must be ordered by predecessor and successor digest",
+        );
+      previousRow = current;
+      // The successor must be in force in this snapshot: an assessed
+      // coverage row or a published implementation decision names it.
+      const successor = current.successorDigest;
+      if (
+        !(
+          snapshot.valueAssessmentCoverage?.some(
+            (coverage) =>
+              coverage.status === "assessed" &&
+              coverage.recordDigest === successor,
+          ) ||
+          validatedLedger.some(
+            (event) =>
+              event.category === "merged-pull-request" &&
+              event.scoreDecisionSourceId === `value:${successor}`,
+          )
+        )
+      )
+        throw new Error(
+          "Value supersession successor is not a published assessment decision",
         );
     }
   }
@@ -8548,15 +9656,23 @@ export function assertPublishableLeaderboardSnapshot(
   value: unknown,
   now = Date.now(),
 ): asserts value is LeaderboardSnapshot {
+  assertLeaderboardForRepositories(value, TARGET_REPOSITORIES, now);
+}
+
+function assertLeaderboardForRepositories(
+  value: unknown,
+  repositories: readonly TargetRepository[],
+  now = Date.now(),
+): asserts value is LeaderboardSnapshot {
   assertLeaderboardSnapshot(value);
   assertLeaderboardOrdering(value.leaders, false);
   assertLeaderboardRanks(value.leaders, false);
   // Archived and deployed snapshots retain their collected inventory. A new
   // publication must collect every current active target; paused projects are not collected.
   if (
-    value.repositories.length !== TARGET_REPOSITORIES.length ||
+    value.repositories.length !== repositories.length ||
     value.repositories.some(
-      (repository, index) => repository.id !== TARGET_REPOSITORIES[index]?.id,
+      (repository, index) => repository.id !== repositories[index]?.id,
     )
   ) {
     throw new Error(
@@ -8564,7 +9680,7 @@ export function assertPublishableLeaderboardSnapshot(
     );
   }
   for (const [index, repository] of value.repositories.entries()) {
-    const current = TARGET_REPOSITORIES[index];
+    const current = repositories[index];
     for (const key of [
       "id",
       "owner",

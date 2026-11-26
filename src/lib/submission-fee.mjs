@@ -41,13 +41,20 @@ export const SUBMISSION_FEE_CONTRACTS = {
  * owner's settings page says the fee is not switched on while this is false.
  * A test holds the two together; change them in the same reviewed change.
  */
-export const SUBMISSION_FEE_SWITCHED_ON = false;
+export const SUBMISSION_FEE_SWITCHED_ON = true;
 export const SUBMISSION_FEE_DEFAULT_MINOR = "2000000"; // 2.00, six decimals
 export const SUBMISSION_FEE_MIN_MINOR = "1000000";
 export const SUBMISSION_FEE_MAX_MINOR = "10000000";
 export const SUBMISSION_FEE_SLOP_SHARE_BPS = 5000; // SLOP fee is half the stablecoin fee
 export const SUBMISSION_FEE_REFUND_UNDECIDED_DAYS = 14;
 export const SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS = 7;
+/**
+ * A pull request that closes an issue labelled `slop-wanted` (labelled before
+ * the pull request was opened) is invited work. Closed without a merge, its
+ * deposit goes back unless a maintainer adds this label before the kept wait
+ * ends (operator decision, 22 November 2026; PRD section 5).
+ */
+export const SUBMISSION_FEE_KEEP_LABEL = "slop-keep-fee";
 /**
  * The contracts' immutable reclaim delay (`RECLAIM_DELAY` in
  * `contracts/evm/script/DeploySubmissionDeposits.sol`): the payer can take an

@@ -12,6 +12,15 @@ import {
   toEventSelector,
 } from "viem";
 import {
+  REPORT_DEPOSIT_NETWORK,
+  reportDepositAmount,
+  reportDepositItem,
+} from "../../src/lib/security-report-deposit.mjs";
+import {
+  SUBMISSION_FEE_BURN,
+  SUBMISSION_FEE_CHAIN_IDS,
+  SUBMISSION_FEE_CONTRACTS,
+  SUBMISSION_FEE_TOKENS,
   type SubmissionFeeTerms,
   submissionFeeItem,
   submissionFeeOptions,
@@ -122,6 +131,101 @@ export async function switchFeeOn(page: Page, tables?: SubmissionFeeTerms) {
   );
 }
 
+/** The same seam, switched off: what a bundle built with the switch off shows. */
+export async function switchFeeOff(page: Page) {
+  await page.addInitScript(() => {
+    (
+      window as unknown as { __SLOP_FEE_FIXTURE__: unknown }
+    ).__SLOP_FEE_FIXTURE__ = { switchedOn: false };
+  });
+}
+
+export type ReportDepositRecord = ReturnType<typeof reportDepositRecord>;
+
+/**
+ * The body `GET /api/v1/submission-fee/reports/<caseId>` serves for a report
+ * whose deposit was asked and is not paid: 5 US dollars of SLOP at the rate in
+ * force when it was asked (78.908929 here, so 395 SLOP). It carries no
+ * project, reporter or report text.
+ */
+export function reportDepositRecord(
+  caseId: string,
+  terms: SubmissionFeeTerms = {},
+) {
+  const network = REPORT_DEPOSIT_NETWORK;
+  return {
+    schema: "slop-report-deposit-v1",
+    caseId,
+    item: reportDepositItem(caseId) as string,
+    askedAt: "2026-12-01T10:00:00.000Z",
+    due: [
+      {
+        network: network as string,
+        chainId: (terms.chainIds ?? SUBMISSION_FEE_CHAIN_IDS)[
+          network
+        ] as number,
+        token: (terms.tokens ?? SUBMISSION_FEE_TOKENS)[network].slop as string,
+        symbol: "SLOP",
+        decimals: 18,
+        amount: reportDepositAmount("78.908929") as string,
+        contract: (terms.contracts ?? SUBMISSION_FEE_CONTRACTS)[
+          network
+        ] as string,
+        keptTo: terms.burn ?? SUBMISSION_FEE_BURN,
+      },
+    ],
+    paid: null as null | {
+      at: string;
+      network: string;
+      depositId: number;
+      token: string;
+      amount: string;
+      transaction: string;
+      finalized: boolean;
+    },
+    outcome: null as string | null,
+    outcomeReason: null as string | null,
+    outcomeAt: null as string | null,
+    resolveTransaction: null as string | null,
+  };
+}
+
+/** Serves one report's deposit record; `current` is read on every request. */
+export async function serveReportDeposit(
+  page: Page,
+  caseId: string,
+  current: () => ReportDepositRecord | null,
+) {
+  let reads = 0;
+  await page.route(`**/api/v1/submission-fee/reports/${caseId}`, (route) => {
+    reads += 1;
+    const record = current();
+    return record
+      ? route.fulfill({ json: record })
+      : route.fulfill({ status: 404, json: { error: "not_found" } });
+  });
+  return () => reads;
+}
+
+/**
+ * Switches the report deposit's pages on or off in the browser-test build,
+ * through the same seam as the fee. No deployed bundle reads it.
+ */
+export async function switchReportDeposit(
+  page: Page,
+  on: boolean,
+  tables?: SubmissionFeeTerms,
+) {
+  await page.addInitScript(
+    (fixture) => {
+      (
+        window as unknown as { __SLOP_FEE_FIXTURE__: unknown }
+      ).__SLOP_FEE_FIXTURE__ = fixture;
+    },
+    { reportDeposit: on, tables },
+  );
+}
+
 /**
  * Installs `window.ethereum` and answers each request in the test process.
  * A returned `{ walletError: code }` is thrown in the page with that code.
@@ -166,7 +270,11 @@ const addressWord = (value: string) =>
 const blockHash = (number: number) =>
   `0x${number.toString(16).padStart(64, "b")}`;
 
-type Way = FeeRecord["due"][number];
+/** What a deposit call and its event carry; either page's record has these. */
+type Way = Pick<
+  FeeRecord["due"][number],
+  "contract" | "token" | "amount" | "keptTo"
+>;
 
 /**
  * A wallet on a chain the test advances by hand. It records every signing

@@ -236,10 +236,28 @@ export interface ProjectDefinition {
      */
     readonly intakeCap?: number;
     /**
+     * Catching up on reviews until this instant (PRD section 5, backlog
+     * rule); absent means not catching up.
+     */
+    readonly catchUpUntil?: string;
+    /** Each catch-up start, written only by the server. */
+    readonly catchUpHistory?: readonly { readonly startedAt: string }[];
+    /**
      * The refundable submission fee (PRD section 5); absent means off.
      */
     readonly submissionFee?: SubmissionFeeSetting;
+    /**
+     * Wanted issues: Slopbot creates the `slop-wanted` label and the project
+     * page lists the issues that carry it (PRD section 5); absent is off.
+     */
+    readonly wantedIssues?: boolean;
   };
+  /**
+   * Private report settings (PRD section 8). `reportDeposit` is the
+   * refundable SLOP deposit on a private report: absent or true is on, false
+   * is off.
+   */
+  readonly security?: { readonly reportDeposit?: boolean };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
   readonly repositories: readonly {

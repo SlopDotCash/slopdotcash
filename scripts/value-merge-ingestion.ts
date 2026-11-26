@@ -39,6 +39,7 @@ export interface PublicMergeRepository {
 
 const run = promisify(execFile);
 
+// implementation-memo-rules: begin public-git
 /** The same isolated Git boundary is used for acquisition and object reads. */
 export function publicGitProcess(directory: string, args: string[]) {
   return {
@@ -76,6 +77,33 @@ export function publicGitProcess(directory: string, args: string[]) {
       timeout: 120_000,
     },
   };
+}
+// implementation-memo-rules: end public-git
+
+/** Repeat only an interrupted local traversal of immutable Git objects. */
+export async function runPublicGit(
+  directory: string,
+  args: string[],
+  maxBuffer?: number,
+) {
+  const [operation] = args;
+  const command = publicGitProcess(directory, args);
+  const options =
+    maxBuffer === undefined
+      ? command.options
+      : { ...command.options, maxBuffer };
+  try {
+    return await run(command.file, command.args, options);
+  } catch (error) {
+    if (
+      operation !== "rev-list" ||
+      !(error instanceof Error) ||
+      !("signal" in error) ||
+      error.signal !== "SIGPIPE"
+    )
+      throw error;
+    return run(command.file, command.args, options);
+  }
 }
 
 export async function withPublicGitObjects<T>(

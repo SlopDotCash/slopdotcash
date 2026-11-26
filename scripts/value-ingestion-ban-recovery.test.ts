@@ -214,3 +214,48 @@ for (const feed of [
     }
   });
 }
+
+test("a temporary feed outage is retried when retry delays are set", async () => {
+  const previous = process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS;
+  process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS = "0,0";
+  let calls = 0;
+  const transport = Object.assign(
+    async () => {
+      calls += 1;
+      if (calls < 3) return new Response("", { status: 503 });
+      return new Response('{"schemaVersion":"slop-account-bans:v1","bans":[]}');
+    },
+    { preconnect: fetch.preconnect },
+  );
+  try {
+    expect((await loadParticipationBans(github, transport)).size).toBe(0);
+    expect(calls).toBe(3);
+  } finally {
+    if (previous === undefined)
+      delete process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS;
+    else process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS = previous;
+  }
+});
+
+test("a feed outage that outlasts the retry delays still reports unavailable", async () => {
+  const previous = process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS;
+  process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS = "0";
+  let calls = 0;
+  const transport = Object.assign(
+    async () => {
+      calls += 1;
+      return new Response("", { status: 503 });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  try {
+    await expect(
+      loadParticipationBans(github, transport),
+    ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
+    expect(calls).toBe(2);
+  } finally {
+    if (previous === undefined)
+      delete process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS;
+    else process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS = previous;
+  }
+});

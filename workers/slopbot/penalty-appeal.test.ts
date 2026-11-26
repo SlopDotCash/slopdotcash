@@ -121,6 +121,7 @@ type Run = {
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
   guidance: (value: string | null) => void;
+  targetGuidance: (sha: string, guide: string | null) => void;
   submissionBody: (value: string) => void;
   evidenceClosureEnabled: (value: boolean) => void;
   policyResponse: (status: number, body?: unknown) => void;
@@ -141,7 +142,7 @@ type Run = {
   beforePenaltyInsert: (callback: () => Promise<void>) => void;
   currentState: () => string;
   closerEvidence: (available: boolean) => void;
-  merged: (value: boolean) => void;
+  merged: (value: boolean, at?: string) => void;
   pauseNextFindingLabel: (loseResponse?: boolean) => {
     entered: Promise<void>;
     release: () => void;
@@ -303,6 +304,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let githubCloseTime: string | null | undefined;
   let closerEvidence = true;
   let merged = false;
+  let mergedAt: string | null = null;
   let pauseClose: (() => Promise<void>) | null = null;
   let closeOptions: {
     loseResponse?: boolean;
@@ -345,6 +347,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let hasValue = false;
   let config: string | null = null;
   let guidance: string | null = null;
+  let targetGuidance: { sha: string; guide: string | null } | null = null;
   let submissionBody = BODY;
   let configTruncated = false;
   let policyResponse: { status: number; body?: unknown } | null = null;
@@ -476,6 +479,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           owner: { login: owner, id: 77, type: "Organization" },
         });
       if (path.endsWith("/contents/.github/slopbot.json")) {
+        if (url.searchParams.get("ref") !== comparisonBase)
+          return new Response(null, { status: 404 });
         if (policyResponse !== null) {
           const { status, body } = policyResponse;
           return body === undefined || typeof body === "string"
@@ -492,13 +497,22 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           encoding: "base64",
         });
       }
-      if (path.endsWith("/contents/CONTRIBUTING.md") && guidance !== null)
+      if (path.endsWith("/contents/CONTRIBUTING.md")) {
+        const ref = url.searchParams.get("ref");
+        const guide =
+          ref === targetGuidance?.sha
+            ? targetGuidance.guide
+            : ref === comparisonBase
+              ? guidance
+              : null;
+        if (guide === null) return new Response(null, { status: 404 });
         return Response.json({
           type: "file",
-          size: Buffer.byteLength(guidance),
-          content: Buffer.from(guidance).toString("base64"),
+          size: Buffer.byteLength(guide),
+          content: Buffer.from(guide).toString("base64"),
           encoding: "base64",
         });
+      }
       if (hasValue && path.endsWith("/contents/README.md")) {
         const text =
           "Credit a reproduced bug fix as small; preserve existing awards.";
@@ -631,6 +645,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
               : 5,
           draft: false,
           merged,
+          merged_at: mergedAt,
           head: {
             sha:
               path.endsWith("/pulls/4") && duplicateChange === "head"
@@ -639,7 +654,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           },
           base: {
             sha: comparisonBase,
-            ref: "main",
+            ref: targetGuidance === null ? "main" : "release",
             repo: { id: repositoryId },
           },
           additions: 1,
@@ -649,13 +664,15 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: comparisonBase } });
+      if (path.endsWith("/branches/release") && targetGuidance !== null)
+        return Response.json({ commit: { sha: targetGuidance.sha } });
       if (path.includes("/compare/")) {
         const comparedHead = path.split("...").at(-1) ?? "";
         const comparedCommits =
           retainedCommitRanges.get(comparedHead) ?? commitRows();
         return Response.json({
-          base_commit: { sha: comparisonBase },
-          merge_base_commit: { sha: comparisonBase },
+          base_commit: { sha: targetGuidance?.sha ?? comparisonBase },
+          merge_base_commit: { sha: targetGuidance?.sha ?? comparisonBase },
           total_commits: comparedCommitCount ?? commitCount,
           commits: comparedCommits.slice(
             (Number(url.searchParams.get("page") ?? 1) - 1) * 100,
@@ -1048,8 +1065,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       closerEvidence: (available) => {
         closerEvidence = available;
       },
-      merged: (value) => {
+      merged: (value, at) => {
         merged = value;
+        mergedAt = at ?? null;
       },
       beforePenaltyInsert: (callback) => {
         beforePenaltyInsert = callback;
@@ -1325,6 +1343,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       guidance: (value) => {
         guidance = value;
+      },
+      targetGuidance: (sha, guide) => {
+        targetGuidance = { sha, guide };
       },
       submissionBody: (value) => {
         submissionBody = value;
@@ -1911,6 +1932,7 @@ for (const scenario of [
   "no-consent",
   "activation-off",
   "late-edit",
+  "change-types-period",
 ] as const) {
   test(`Slop evidence takes the correct action with ${scenario}`, async () => {
     await closedItem(async (run) => {
@@ -1921,12 +1943,17 @@ for (const scenario of [
       const submission =
         scenario === "complete"
           ? evidencedSubmission
-          : scenario === "invalid-video-link"
+          : scenario === "change-types-period"
             ? evidencedSubmission.replace(
-                /^- UI video:.*$/mu,
-                "- UI video: https://github.com",
+                "- Change types: ui, non-ui",
+                "- Change types: ui, non-ui.",
               )
-            : evidencedSubmission.replace(/^- UI video:.*$/mu, "");
+            : scenario === "invalid-video-link"
+              ? evidencedSubmission.replace(
+                  /^- UI video:.*$/mu,
+                  "- UI video: https://github.com",
+                )
+              : evidencedSubmission.replace(/^- UI video:.*$/mu, "");
       run.submissionBody(
         scenario === "unsigned"
           ? submission.replace(
@@ -1961,6 +1988,183 @@ for (const scenario of [
             debit_thirds: 1,
             moderator_review: 0,
             reversal: "maintainer_reopen",
+          },
+        ]);
+      } else {
+        expect(outcome).not.toStartWith("closed");
+        expect(run.currentState()).toBe("open");
+        expect(run.sql(PENALTY)).toEqual([]);
+      }
+    });
+  });
+}
+
+const screenshotsPolicy = evidencePolicy.replace(
+  "UI video:",
+  "- `UI screenshots:` Show the same screen and state before and after.\nUI video:",
+);
+
+test("a maintainer reopen reverses a missing-evidence debit after a later merge", async () => {
+  setSystemTime(new Date("2026-11-23T13:50:21Z"));
+  await closedItem(async (run) => {
+    run.guidance(evidencePolicy);
+    run.targetGuidance("d".repeat(40), screenshotsPolicy);
+    run.closureEnabled(false);
+    run.evidenceClosureEnabled(true);
+    run.model("none", 0.98);
+    run.submissionBody(evidencedSubmission);
+    expect(await run.review()).toBe("closed (missing_evidence)");
+
+    const reopened = await run.reopen(MAINTAINER, "2026-11-23T13:50:37Z");
+    const authorReopen = await run.reopen(AUTHOR, "2026-11-23T13:50:38Z");
+    run.closeByMaintainer();
+    setSystemTime(new Date("2026-11-23T13:51:00Z"));
+    const before = run.writes.length;
+    run.merged(true, "2026-11-23T13:50:36Z");
+    expect(await run.deliver(reopened)).toBe(
+      "reopen source changed; no decision",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    run.merged(true, "2026-11-23T13:50:45Z");
+    expect(await run.deliver(authorReopen)).toBe(
+      "reopen source changed; no decision",
+    );
+    run.maintainerPermission(false);
+    expect(await run.deliver(reopened)).toBe(
+      "reopen by a non-maintainer recorded as no decision",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    run.maintainerPermission(true);
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "missing_evidence", reversal: "maintainer_reopen" },
+    ]);
+    const reversed = run.sql("SELECT reversed_at FROM slopbot_penalties");
+    setSystemTime(new Date("2026-11-23T13:52:00Z"));
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    expect(run.sql("SELECT reversed_at FROM slopbot_penalties")).toEqual(
+      reversed,
+    );
+    expect(run.currentState()).toBe("closed");
+    expect(run.writes).toHaveLength(before);
+  });
+});
+
+test("Slop evidence closure and appeal follow the PR target guide", async () => {
+  await closedItem(async (run) => {
+    run.guidance(evidencePolicy);
+    run.targetGuidance("d".repeat(40), screenshotsPolicy);
+    run.closureEnabled(false);
+    run.evidenceClosureEnabled(true);
+    run.model("none", 0.98);
+    run.submissionBody(evidencedSubmission);
+
+    expect(await run.review()).toBe("closed (missing_evidence)");
+    expect(run.comments.join("\n")).toContain("results: UI screenshots.");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "missing_evidence",
+        debit_thirds: 1,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+  });
+});
+
+for (const scenario of [
+  "absent target guide",
+  "advanced target tip",
+] as const) {
+  test(`Slop evidence does not close with an ${scenario}`, async () => {
+    await closedItem(async (run) => {
+      run.guidance(screenshotsPolicy);
+      run.targetGuidance(
+        "d".repeat(40),
+        scenario === "absent target guide" ? null : screenshotsPolicy,
+      );
+      run.closureEnabled(false);
+      run.evidenceClosureEnabled(true);
+      run.model("none", 0.98);
+      run.submissionBody(evidencedSubmission);
+      if (scenario === "advanced target tip")
+        run.onReviewComment(() =>
+          run.targetGuidance("e".repeat(40), evidencePolicy),
+        );
+
+      expect(await run.review()).not.toStartWith("closed");
+      expect(run.currentState()).toBe("open");
+      expect(run.sql(PENALTY)).toEqual([]);
+    });
+  });
+}
+
+for (const { name, guidance, body, missing } of [
+  {
+    name: "UI video without required screenshots",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission,
+    missing: true,
+  },
+  {
+    name: "UI screenshots described without an artifact",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission.replace(
+      "- UI video:",
+      "- UI screenshots: Both screenshots were taken under the same conditions.\n- UI video:",
+    ),
+    missing: true,
+  },
+  {
+    name: "before and after screenshots linked",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission.replace(
+      "- UI video:",
+      "- UI screenshots: ![Before](https://github.com/user-attachments/assets/6c6bc67c-921a-4c12-87da-0ae4be2442f7) ![After](https://github.com/user-attachments/assets/07dae3da-f41e-4a82-a983-c2d2ae3b6f57)\n- UI video:",
+    ),
+    missing: false,
+  },
+  {
+    name: "non-UI change under a screenshots policy",
+    guidance: screenshotsPolicy,
+    body: evidencedSubmission
+      .replace("Change types: ui, non-ui", "Change types: non-ui")
+      .replace(/^- UI video:.*$/mu, ""),
+    missing: false,
+  },
+  {
+    name: "screenshots mentioned only in a guide example",
+    guidance: `${evidencePolicy}\n## Example\n\`\`\`markdown\n- UI screenshots: Before and after images.\n\`\`\``,
+    body: evidencedSubmission,
+    missing: false,
+  },
+]) {
+  test(`Slop screenshot evidence handles ${name}`, async () => {
+    await closedItem(async (run) => {
+      run.guidance(guidance);
+      run.closureEnabled(false);
+      run.evidenceClosureEnabled(true);
+      run.model("none", 0.98);
+      run.submissionBody(body);
+
+      const outcome = await run.review();
+      if (missing) {
+        expect(outcome).toBe("closed (missing_evidence)");
+        expect(run.comments.join("\n")).toContain("results: UI screenshots.");
+        await run.review();
+        expect(run.sql(PENALTY)).toEqual([
+          {
+            category: "missing_evidence",
+            debit_thirds: 1,
+            moderator_review: 0,
+            reversal: null,
           },
         ]);
       } else {
@@ -2595,6 +2799,252 @@ test("a scam close escalates to a moderator; only a moderator decides, and a den
         reversal: "maintainer_reopen",
       },
     ]);
+  });
+});
+
+test("a moderator-denied appeal cannot be overturned by pushing a new head and re-appealing", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // The first appeal escalates on low draft confidence; a moderator denies.
+    run.model("spam", 0.5);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: Slopbot confidence is below 0.9",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "deny", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The same revision cannot be appealed again.
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal already resolved",
+    );
+    // A new head opens a new revision key, but the penalty is the same one
+    // the moderator left in place: the repeat appeal goes to a moderator
+    // instead of letting the appellant accept a fresh uphold draft alone.
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item was denied",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The moderator can still uphold the repeat appeal, reversing once.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "uphold", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal upheld by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "appeal_upheld",
+      },
+    ]);
+  });
+});
+
+test("a repeat appeal after a maintainer-denied draft also goes to a moderator", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("spam", 0.97);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "accept",
+          senderId: MAINTAINER,
+        }),
+      ),
+    ).toBe("appeal denied by the maintainer");
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item was denied",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "deny", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+  });
+});
+
+const FIRST_APPEAL = `SELECT appeal_key FROM slopbot_appeals
+  WHERE appeal_key NOT LIKE 'value-appeal:%' ORDER BY opened_at, appeal_key LIMIT 1`;
+const SPAM_DEBIT_STANDS = [
+  { category: "spam", debit_thirds: 3, moderator_review: 0, reversal: null },
+];
+
+test("an appellant cannot accept a repeat appeal once an earlier appeal of the item is denied", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("spam", 0.97);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    const [{ appeal_key: first }] = run.sql(FIRST_APPEAL) as {
+      appeal_key: string;
+    }[];
+    // The earlier appeal is still open when the repeat appeal is triaged.
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item has a deny draft",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "accept",
+          senderId: MAINTAINER,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal denied by the maintainer");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
+  });
+});
+
+test("an earlier appeal denied after a repeat appeal was drafted sends the appellant's accept to a moderator", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // Both appeals draft uphold, so the repeat appeal is triaged with nothing
+    // denied, deny-drafted or escalated beside it.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    const [{ appeal_key: first }] = run.sql(FIRST_APPEAL) as {
+      appeal_key: string;
+    }[];
+    run.head("d".repeat(40));
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // Then the maintainer rejects the earlier draft and a moderator denies it.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "reject",
+          senderId: MAINTAINER,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal escalated: the maintainer rejected the draft");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "deny",
+          senderId: MODERATOR,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "uphold",
+        escalated: 1,
+        resolution: "denied",
+        resolved_by: "moderator",
+      },
+      { draft: "uphold", escalated: 1, resolution: null, resolved_by: null },
+    ]);
+  });
+});
+
+test("a repeat appeal goes to a moderator while an earlier appeal of the item awaits one", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("spam", 0.5);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: Slopbot confidence is below 0.9",
+    );
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item awaits a moderator",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
+  });
+});
+
+test("an earlier appeal escalated after a repeat appeal was drafted sends the appellant's accept to a moderator", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    const [{ appeal_key: first }] = run.sql(FIRST_APPEAL) as {
+      appeal_key: string;
+    }[];
+    run.head("d".repeat(40));
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // The maintainer rejects the earlier draft; no moderator has decided it.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "reject",
+          senderId: MAINTAINER,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal escalated: the maintainer rejected the draft");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
   });
 });
 
@@ -4139,6 +4589,8 @@ test("a delayed old-head reopen never reverses a later head's close and debit", 
     setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
     expect(await run.review()).toBe("closed (spam)");
     expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    run.closeByMaintainer();
+    run.merged(true, new Date(Date.parse(CLOSED_AT) + 120_000).toISOString());
     const before = run.writes.length;
     expect(await run.deliver(reopened)).toBe(
       "human_reopen; newer item state kept",

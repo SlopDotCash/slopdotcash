@@ -4,6 +4,7 @@
 
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
 import { hasParticipationBan } from "../../backend/projects/account-bans";
+import { validIsoTimestamp } from "../../backend/trace/validation";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { POINTS_PER_THIRD } from "../../src/lib/points";
 import { publishAppealComment } from "./appeal-publication";
@@ -19,6 +20,7 @@ import {
   openAppeal,
   recordDraft,
   resolveAppeal,
+  siblingAppealHold,
 } from "./appeals";
 import { activeBudgetBlock, recordBudgetBlock } from "./budget-blocks";
 import {
@@ -179,6 +181,7 @@ type Issue = {
 type Pull = {
   draft: boolean;
   merged: boolean;
+  merged_at?: string | null;
   created_at?: string | null;
   head: { sha: string };
   base: { sha: string; ref: string; repo: { id: number } };
@@ -409,7 +412,7 @@ async function loadContext(
     `/repos/${job.owner}/${job.repo}/branches/${encodeURIComponent(repo.default_branch)}`,
   );
   if (branch === null) return null;
-  const baseSha = branch.commit.sha;
+  const defaultBranchSha = branch.commit.sha;
   const pull =
     job.itemKind === "pull_request"
       ? await github.get<Pull>(
@@ -421,7 +424,7 @@ async function loadContext(
     job.owner,
     job.repo,
     CONFIG_PATH,
-    baseSha,
+    defaultBranchSha,
     16 * 1024,
   );
   const config = projectRepositoryConfig(
@@ -429,9 +432,6 @@ async function loadContext(
     // A truncated existing file is invalid, never permission to use defaults.
     configFile === null ? null : configFile.truncated ? "" : configFile.text,
   );
-  // Policy is always read from the default branch at a recorded SHA; a pull
-  // request's own policy edits are content under review (BOT-04).
-  const policy = await loadPolicy(github, job.owner, job.repo, baseSha);
   const comparison =
     pull === null
       ? {
@@ -439,17 +439,27 @@ async function loadContext(
           truncated: false,
           limitations: [] as string[],
           changedFiles: 0,
-          baseSha,
-          mergeBaseSha: baseSha,
+          baseSha: defaultBranchSha,
+          mergeBaseSha: defaultBranchSha,
           targetRef: repo.default_branch,
         }
       : await pullDiff(github, job.owner, job.repo, repo.id, pull);
+  const policy = await loadPolicy(
+    github,
+    job.owner,
+    job.repo,
+    comparison.baseSha,
+  );
   const itemText = reviewedItemText(issue, pull, comparison);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
   const policyDigest = await sha256Hex(
     JSON.stringify({
-      baseSha,
+      baseSha: defaultBranchSha,
+      // Keep the existing digest for reviews whose two sources share a commit.
+      ...(comparison.baseSha === defaultBranchSha
+        ? {}
+        : { targetSha: comparison.baseSha }),
       config: config.config,
       files: policy.map((f) => [f.path, f.text]),
     }),
@@ -458,8 +468,8 @@ async function loadContext(
     pull === null ||
     comparison.truncated ||
     pull.base.sha !== comparison.baseSha ||
-    comparison.baseSha !== baseSha ||
-    comparison.mergeBaseSha !== baseSha
+    comparison.baseSha !== defaultBranchSha ||
+    comparison.mergeBaseSha !== defaultBranchSha
       ? []
       : await loadQualityEvidence(
           github,
@@ -1541,6 +1551,7 @@ async function runReview(
         github: context.github,
         projectId: context.registration.projectId,
         exemption,
+        author: { id: issue.user.id, login: issue.user.login },
         openedAt: context.pull?.created_at,
         mayAsk: await monthlyReviewOpen(
           db,
@@ -2295,6 +2306,7 @@ type AppealSession = {
   github: GitHubClient;
   repo: Repo;
   issue: Issue;
+  pull: Pull | null;
   revision: string;
   registration: Context["registration"];
   /** A retired project: no review, so no model call or GitHub write. Only
@@ -2336,11 +2348,12 @@ async function appealSession(
     `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
   );
   if (issue === null) return "ignored";
-  const { revision } = await itemRevision(github, job, issue);
+  const { pull, revision } = await itemRevision(github, job, issue);
   return {
     github,
     repo,
     issue,
+    pull,
     revision,
     registration,
     reversalOnly: reviewable === null,
@@ -2572,11 +2585,17 @@ export async function recordHumanSignal(
     job.kind === "human_reopen" ? await reopenSource(db, job) : null;
   if (job.kind === "human_reopen") {
     if (!source) return "reopen source unavailable; no decision";
+    const mergedAfterReopen =
+      job.senderId !== issue.user.id &&
+      session.pull?.merged === true &&
+      validIsoTimestamp(session.pull.merged_at) &&
+      Date.parse(session.pull.merged_at) >= Date.parse(source.occurredAt);
     if (
       source.itemNodeId !== issue.node_id ||
       (issue.state !== "open" &&
         (issue.state !== "closed" ||
-          (issue.closed_by &&
+          (!mergedAfterReopen &&
+            issue.closed_by &&
             Number.isSafeInteger(issue.closed_by.id) &&
             issue.closed_by.id > 0 &&
             String(issue.closed_by.id) !== env.SLOPBOT_APP_USER_ID)))
@@ -2882,12 +2901,17 @@ async function triageAppeal(
   const penalty = await activePenalty(db, session.issue.node_id);
   const reason = (await hasParticipationBan(db, current.appellant_github_id))
     ? "the appellant has an active participation ban"
-    : escalationFor({
+    : ((await siblingAppealHold(
+        db,
+        session.issue.node_id,
+        appeal.appeal_key,
+      )) ??
+      escalationFor({
         category: finding,
         debitThirds: penalty?.debit_thirds ?? 0,
         moderatorReview: penalty?.moderator_review === 1,
         draftConfidence: current.draft_confidence,
-      });
+      }));
   if (reason !== null)
     await escalateAppeal(
       db,
@@ -3263,6 +3287,27 @@ export async function applyAppealCommand(
       if (current === null) throw new Error("Appeal is missing");
       await publishAppealState(env, job, session, current, "escalation");
       return `appeal escalated: ${current.escalation}`;
+    }
+    // Another appeal of the same debit may have been denied, escalated or
+    // drafted deny after this one was triaged. The appellant then cannot
+    // uphold alone: a moderator decides.
+    if (by === "appellant" && appeal.draft === "uphold") {
+      const hold = await siblingAppealHold(
+        db,
+        session.issue.node_id,
+        appeal.appeal_key,
+      );
+      if (hold !== null) {
+        await escalateAppeal(
+          db,
+          appeal.appeal_key,
+          hold,
+          moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+        );
+        const current = (await appealByKey(db, appeal.appeal_key)) ?? appeal;
+        await publishAppealState(env, job, session, current, "escalation");
+        return "a Slop moderator decides this appeal";
+      }
     }
     return finishAppeal(
       env,

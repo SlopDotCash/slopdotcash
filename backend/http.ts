@@ -127,8 +127,26 @@ type ApiErrorOptions = {
 };
 
 /**
+ * True when the database refused or lost a query for a reason that passes by
+ * itself: it was overloaded, locked, restarting, importing or unreachable. A
+ * failed statement, such as a constraint or a missing column, is never one of
+ * these. SQLite contention arrives as `database is locked: SQLITE_BUSY`.
+ */
+export function databaseTemporarilyUnavailable(caught: unknown): boolean {
+  return (
+    caught instanceof Error &&
+    /^D1_[A-Z_]+/u.test(caught.message) &&
+    /overloaded|queued for too long|network connection lost|exceeded timeout|to be reset|D1_RESET_DO|reset because its code was updated|transient issue|long-running import|currently importing|database is locked: SQLITE_BUSY/iu.test(
+      caught.message,
+    )
+  );
+}
+
+/**
  * Maps a refusal to its status and code. A server failure is logged under a
- * fixed label and returns "Internal error" unless its message is public.
+ * fixed label and returns "Internal error" unless its message is public. A
+ * database that is temporarily unavailable answers 503 so a client can tell
+ * "try again" from a defect.
  */
 export function apiErrorResponse(
   caught: unknown,
@@ -148,6 +166,11 @@ export function apiErrorResponse(
     if (detail) console.error(label, detail(status));
     else console.error(label);
   }
+  if (error.status === undefined && databaseTemporarilyUnavailable(caught))
+    return respond(503, {
+      error: "temporarily_unavailable",
+      message: "Temporarily unavailable. Try again.",
+    });
   return respond(status, {
     error:
       typeof error.code === "string" &&
@@ -160,6 +183,32 @@ export function apiErrorResponse(
         ? "Internal error"
         : error.message,
   });
+}
+
+/**
+ * A log-safe shape of a server failure: the error's class, a fixed code when
+ * the message starts with a known database or platform code, and the names of
+ * the first stack frames. Never the message text, which can carry data.
+ */
+export function failureShape(caught: unknown): string {
+  if (!(caught instanceof Error)) return `thrown:${typeof caught}`;
+  const code =
+    /^(D1_[A-Z_]+|SQLITE_[A-Z_]+)/u.exec(caught.message)?.[1] ??
+    (/network connection lost/iu.test(caught.message)
+      ? "network-connection-lost"
+      : /overloaded/iu.test(caught.message)
+        ? "overloaded"
+        : /timed? ?out/iu.test(caught.message)
+          ? "timeout"
+          : undefined);
+  const frames = (caught.stack ?? "")
+    .split("\n")
+    .slice(1, 6)
+    .map((line) => /at (?:async )?([\w$.<>]+) /u.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined);
+  return [caught.name, code, frames.join("<")]
+    .filter((part) => part !== undefined && part !== "")
+    .join(" ");
 }
 
 export function cookieValue(request: Request, name: string): string | null {
