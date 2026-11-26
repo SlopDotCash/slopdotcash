@@ -722,10 +722,19 @@ describe("the ways to pay", () => {
     expect(SUBMISSION_FEE_START_BLOCKS).toEqual({
       [BASE]: 59572869,
       [RC]: 118349901,
-      // The Solana program is not deployed: no id, no start slot.
-      "solana-mainnet": null,
+      // The slot of the Solana program's `initialize` transaction.
+      "solana-mainnet": 474211652,
     });
-    expect(SUBMISSION_FEE_CONTRACTS["solana-mainnet"]).toBeNull();
+    // The Solana program is deployed and published, and still not offered:
+    // the published tables list no Solana way while Solana is switched off.
+    expect(SUBMISSION_FEE_CONTRACTS["solana-mainnet"]).toBe(
+      "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+    );
+    expect(
+      submissionFeeOptions("2000000", [], AT).some(
+        (option) => option.network === "solana-mainnet",
+      ),
+    ).toBe(false);
     // A network without a contract is listed with none.
     expect(
       submissionFeeOptions("2000000", [], AT, {

@@ -18,8 +18,9 @@
  * The Solana ledger (operator decision, 25 November 2026) has its own switch,
  * `SUBMISSION_FEE_SOLANA_MODE`, with the same three values and its own key.
  * It reads the `slop-submission-deposits` program's accounts instead of an
- * event log (`solana-core.ts`) and nothing at all while the program id in
- * `src/lib/submission-fee.mjs` is null. The rate job is the EVM mode's.
+ * event log (`solana-core.ts`) and nothing at all while its mode is `off`
+ * or the program id in `src/lib/submission-fee.mjs` is null. The rate job
+ * is the EVM mode's.
  */
 
 import { createEvmFeeChain, readPoolRate } from "./chain";

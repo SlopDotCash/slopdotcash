@@ -37,10 +37,10 @@ SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI = "2000000000000000"
 
 # The Solana ledger's own switch (operator decision, 25 November 2026):
 # off | dry_run | live, independent of SUBMISSION_FEE_MODE above, which
-# governs Base and Robinhood Chain only. It ships off. While the program id
-# in src/lib/submission-fee.mjs is null nothing is read on Solana in any
-# mode. Change it to live only together with
-# SUBMISSION_FEE_SOLANA_SWITCHED_ON in that file.
+# governs Base and Robinhood Chain only. It ships off. The program id is
+# published in src/lib/submission-fee.mjs since 26 November 2026; while this
+# mode is off nothing is read or sent on Solana. Change it to live only
+# together with SUBMISSION_FEE_SOLANA_SWITCHED_ON in that file.
 SUBMISSION_FEE_SOLANA_MODE = "off"
 # Solana resolver fee ceilings in lamports: 0.00002 SOL for one transaction
 # (four times the base fee of one signature) and 0.002 SOL in one UTC day.

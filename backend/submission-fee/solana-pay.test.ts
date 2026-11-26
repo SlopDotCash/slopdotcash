@@ -130,7 +130,8 @@ test("Solana is listed only once the program is published and switched on, and t
   const { tables, chain } = harness();
   const options = (terms: Parameters<typeof submissionFeeOptions>[3]) =>
     submissionFeeOptions("2000000", [], NOW, terms);
-  // The published tables: no program, nothing offered.
+  // The published tables: the program is published, Solana is switched off,
+  // nothing offered.
   expect(options({}).some((entry) => entry.network === NETWORK)).toBe(false);
   expect(publishedSolanaWay("2000000")).toBeNull();
   // A program without the switch, and the switch without a program.
@@ -140,7 +141,10 @@ test("Solana is listed only once the program is published and switched on, and t
     ),
   ).toBe(false);
   expect(
-    options({ solanaOn: true }).some((entry) => entry.network === NETWORK),
+    options({
+      contracts: { ...tables.contracts, [NETWORK]: null },
+      solanaOn: true,
+    }).some((entry) => entry.network === NETWORK),
   ).toBe(false);
   const listed = options(tables);
   const solana = listed.find((entry) => entry.network === NETWORK);
@@ -577,7 +581,7 @@ test("Slopbot's comment names Solana only once the pay page takes it", () => {
     stableMinor: "2000000",
     ways: feeWays("2000000", [], NOW),
   };
-  // As deployed: no program id, Solana switched off.
+  // As deployed: the program id published, Solana switched off.
   expect(solanaFeeOffered()).toBe(false);
   expect(feeNeededComment(facts)).not.toContain("Solana");
   // A published program alone, or the switch alone, offers nothing.

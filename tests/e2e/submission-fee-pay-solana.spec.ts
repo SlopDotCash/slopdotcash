@@ -180,7 +180,10 @@ test("no deployed bundle offers Solana, and the page then says nothing of it", a
   page,
 }) => {
   // The deployed tables themselves; a change to them must change this test.
-  expect(SUBMISSION_FEE_CONTRACTS[NETWORK]).toBeNull();
+  // The program id is published and Solana is still switched off.
+  expect(SUBMISSION_FEE_CONTRACTS[NETWORK]).toBe(
+    "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+  );
   expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(false);
   await switchFeeOn(page);
   await serveFeeRecord(page, REPOSITORY, 7, () => feeRecord(REPOSITORY, 7));
