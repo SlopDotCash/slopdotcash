@@ -143,7 +143,7 @@ effect function visitSource(visit: Visit, startAt: number) {
   const identity = try answer(`/repos/${repository.id}`, RepositoryIdentity)
   if (identity === undefined || identity.private) return undefined
   if (!(try reads.authorize({ repository: repository.id, repositoryDatabaseId: identity.id, repositoryNodeId: identity.node_id }))) return undefined
-  let evidence = visit.seed?.evidence ?? try collectEvidence({ repository: repository.id, number: selected.number, policy: repository })
+  let evidence = visit.seed?.evidence ?? try collectEvidence({ repository: repository.id, number: selected.number, policy: repository, negotiatedDiff: true })
   if (
     evidence.pull.node_id !== selected.nodeId || evidence.repositoryDatabaseId !== identity.id ||
     evidence.repositoryNodeId !== identity.node_id || evidence.pull.state !== "closed"

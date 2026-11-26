@@ -26,6 +26,7 @@ import {
   recoverUnchangedValueRenames,
 } from "../proofs/comparisons.vibe"
 import { fetched } from "../proofs/reads.vibe"
+import { recoverNegotiatedDiff } from "../proofs/recoverDiff.vibe"
 import { Acceptance, type CollectedChanges, nativeMergeContext, noChangePromotionContext } from "./acceptance.vibe"
 import { collectBranchPolicy, matchesHistoricalIntegrationBranch } from "./branchPolicy.vibe"
 import { type ReferenceDiscussion, relatedPullRequests } from "./references.vibe"
@@ -114,6 +115,7 @@ export interface Collection {
   readonly policy: RegisteredRepository | null
   readonly recovered?: Recovered
   readonly historicalAcceptance?: HistoricalAcceptance
+  readonly negotiatedDiff?: boolean
 }
 
 export effect function read<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S, limitBytes = objectLimitBytes) {
@@ -151,6 +153,10 @@ function fileChange(file: RawFile, intern: (text: string) => string): FileChange
   }
 }
 
+function pinnedBlobs(files: ReadonlyArray<RawFile>) {
+  return new Map(files.flatMap((file) => file.sha === undefined || file.sha === null ? [] : [[file.filename, file.sha] as const]))
+}
+
 function changeBytes(files: ReadonlyArray<FileChange>) {
   return JSON.stringify(
     [...files]
@@ -175,10 +181,11 @@ function incomplete(name: string, listed: Listed<unknown>, reported: number) {
   return complete ? [] : [`Incomplete ${name}: ${listed.items.length}/${reported}`]
 }
 
-export effect function commitChanges(repository: string, sha: string, label: string, recovered: Recovered = unrecovered) {
+export effect function commitChanges(repository: string, sha: string, label: string, recovered: Recovered = unrecovered, negotiatedDiff = false) {
   const root = `/repos/${repository}`
   let header: Omit<CommitChanges, "files"> | undefined
   let files: FileChange[] = []
+  const rawFiles: RawFile[] = []
   const pageSizes: number[] = []
   const limitations: Limitation[] = []
   for (let page = 1; ; page += 1) {
@@ -192,6 +199,7 @@ export effect function commitChanges(repository: string, sha: string, label: str
       header = { sha: batch.sha, html_url: batch.html_url, parents: batch.parents.map((parent) => ({ sha: parent.sha })), stats: batch.stats }
     }
     files.push(...batch.files.map((file) => fileChange(file, recovered.intern)))
+    if (negotiatedDiff) rawFiles.push(...batch.files)
     pageSizes.push(batch.files.length)
     if (capReached({ pageSizes, unavailable: false, reported: files.length, itemCap: commitFileCap, repeatedKeys: false })) {
       limitations.push(`${label} file limit reached; Git evidence required`)
@@ -206,6 +214,7 @@ export effect function commitChanges(repository: string, sha: string, label: str
     files = [...try recoverAddedValueComparisons(repository, files, parent, header.sha, recovered)]
     files = [...try recoverRemovedValueComparisons(repository, files, parent, header.sha, recovered)]
     files = [...try recoverFullValueComparisons(repository, files, parent, header.sha, recovered)]
+    if (negotiatedDiff) files = [...try recoverNegotiatedDiff({ repository, baseSha: parent, headSha: header.sha, kind: "commit" }, files, pinnedBlobs(rawFiles), recovered.intern)]
   }
   files = [...try addedValuePatchRecovery(repository, recovered)(files, header.sha)]
   const additions = files.reduce((sum, file) => sum + valueAdditionCount(file), 0)
@@ -287,7 +296,7 @@ effect function withBinaries(recover: BinaryRecovery, files: ReadonlyArray<FileC
 }
 
 export effect function collectEvidence(collection: Collection) {
-  const { repository, number, policy, historicalAcceptance } = collection
+  const { repository, number, policy, historicalAcceptance, negotiatedDiff } = collection
   const recovered = collection.recovered ?? unrecovered
   const acceptance = try Acceptance
   if (!/^[\w.-]+\/[\w.-]+$/u.test(repository) || !Number.isSafeInteger(number) || number < 1) throw new EvidenceRefused({ reason: "Invalid PR identity" })
@@ -299,6 +308,7 @@ export effect function collectEvidence(collection: Collection) {
   const path = `${root}/pulls/${number}`
   const pull = try read(path, Pull)
   if (pull === undefined) throw new EvidenceRefused({ reason: "Pull request unavailable" })
+  const useNegotiatedDiff = negotiatedDiff === true && policy !== null && pull.merged_at !== null
   const [listedFiles, commits, listedReviews, listedComments, listedReviewComments] = try.all [
     pages(`${path}/files`, RawFile),
     pullCommits(root, path, pull),
@@ -326,6 +336,9 @@ export effect function collectEvidence(collection: Collection) {
       files = try recoverAddedValueComparisons(repository, files, base, pull.head.sha, recovered)
       files = try recoverRemovedValueComparisons(repository, files, base, pull.head.sha, recovered)
       files = try recoverFullValueComparisons(repository, files, base, pull.head.sha, recovered)
+      if (useNegotiatedDiff && base === pull.base.sha && incomplete("files", listedFiles, pull.changed_files).length === 0 &&
+        new Set(listedFiles.items.map((file) => file.filename)).size === pull.changed_files)
+        files = try recoverNegotiatedDiff({ repository, baseSha: base, headSha: pull.head.sha, kind: "compare" }, files, pinnedBlobs(listedFiles.items), recovered.intern)
       files = try recoverUnchangedValueRenames(repository, files, base, pull.head.sha, recovered)
       files = try recoverBinary(files, base, pull.head.sha)
     }
@@ -337,7 +350,7 @@ export effect function collectEvidence(collection: Collection) {
   if (pull.merged_at !== null) {
     if (pull.merge_commit_sha === null || pull.merge_commit_sha === "") limitations.push("Reported merge commit is unavailable")
     else {
-      const accepted = try commitChanges(repository, pull.merge_commit_sha, "Reported merge commit", recovered)
+      const accepted = try commitChanges(repository, pull.merge_commit_sha, "Reported merge commit", recovered, useNegotiatedDiff)
       limitations.push(...accepted.limitations)
       if (accepted.commit !== null) {
         let mergeFiles = try recoverAddedPatches(accepted.commit.files, pull.merge_commit_sha)

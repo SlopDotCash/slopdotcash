@@ -175,9 +175,12 @@ describe('Recover complete history at a fixed sequence boundary (spec/slopbot/va
       const world = try seeded()
       try Effect.try(() => world.fake.world.addPull({ repo: repository, number: 5, author: "grace", title: "Binary data", createdAt: "2026-11-04T00:00:00Z", headSha: world.head, commits: [world.head], mergedAt, mergeCommit: world.merge, files: [{ path: "data.bin", status: "modified", additions: 1, deletions: 1 }] }))
       const outcome = try outcomeOf(world, 5)
-      const result = try collected(world, { joint: new Map(), single: new Map([[5, [{ sequence: 1 }]]]) }, { value: [outcome], attribution: [] })
+      const record = JSON.stringify({ ...bindingOf(world, outcome.id, 5), schemaVersion: "slop-value-record:v1", projectId: policyOf(world).projectId, supersedes: null, revisionReason: null })
+      const row = { sequence: 1, record_json: record, record_digest: try sha256Hex(record), recorded_at: "2026-11-12T00:00:00.000Z" }
+      const result = try collected(world, { joint: new Map(), single: new Map([[5, [row]]]) }, { value: [outcome], attribution: [] })
       const message = "message" in result ? result.message : ""
-      try same({ kind: result.kind, acquisition: acquisitionRefusals.includes(message) }, { kind: "ValueEvidenceRefused", acquisition: true })
+      try same(result.kind, "ValueEvidenceRefused")
+      try Effect.try(() => assert.ok(acquisitionRefusals.includes(message), message))
     }
   })
 })

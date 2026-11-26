@@ -263,7 +263,7 @@ effect function gather(job: ValueRequest, claim: Claim) {
     if (pull.state !== "closed") return { gathered: { ...start, pull: "PullOpen" }, sources: [] } satisfies Gathering
     const occurred: Gathered = { ...start, occurredAt: seconds(pull.merged_at ?? pull.closed_at) }
     if (occurred.occurredAt <= 0 || occurred.occurredAt < occurred.valueStart) return { gathered: occurred, sources: [] } satisfies Gathering
-    const evidence = try collectEvidence({ repository: repository.id, number: job.number, policy: repository })
+    const evidence = try collectEvidence({ repository: repository.id, number: job.number, policy: repository, negotiatedDiff: true })
     if (evidence.limitations.length > 0 && !noChangePromotionDeferralOnly(evidence) && !nativeMergeDeferralOnly(evidence))
       return { gathered: { ...occurred, evidenceComplete: false }, sources: [] } satisfies Gathering
     const policy = try loadValuePolicy(evidence.repositoryDatabaseId, evidence.pull.base.sha)

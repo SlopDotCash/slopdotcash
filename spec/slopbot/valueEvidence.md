@@ -190,6 +190,19 @@ comparisons. Otherwise the file needs its full diff and the evidence is
 incomplete. Each commit's per-file additions and deletions must sum to
 its reported totals.
 
+For a registered merged pull request with a positive-count modification
+omitted from the JSON patch listing, the producer can recover the exact
+patch from a bounded GitHub diff response. It reads the immutable
+base-to-head comparison or the reported accepted commit against its first
+parent. The file path and mode must agree with hash-verified trees, the
+diff's blob IDs must match those trees, and the new blob must match the
+JSON file listing. Require a single complete section, valid ordered hunks
+and matching addition and deletion counts. Existing JSON patches and
+verified full comparisons retain precedence. The collector can use the
+recovered patch for an existing assessment only if the recomputed source
+digest matches that assessment. The regular file, binary and publication
+checks still apply.
+
 ```quint
 type LineSource = ExactPatch | AddedText | RemovedText | ComparedText | NoLineSource
 type FileLines = { lineSource: LineSource, patchAdded: int, patchRemoved: int, additions: int, deletions: int,
