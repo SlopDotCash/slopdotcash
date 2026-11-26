@@ -7605,13 +7605,13 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "sha256": "c481ede9ddb5d23039ebfe5463beed0849891d6613bf6ad12b360f54cb5b1f2a",
+      "sha256": "e224c62834d1d7d5e9ed6eeb5e3d97341a26677c372ef238e9d241a647cfe953",
       "models": [
         "formal/models/fees/ordinary_fee.qnt",
         "formal/models/rewards/escrow_balances.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt"
       ],
-      "candidateLines": [35, 55, 56, 57, 79, 96, 131, 139, 173, 303],
+      "candidateLines": [36, 56, 57, 58, 80, 97, 132, 140, 174, 313],
       "review": "mapped-abstraction"
     },
     {
