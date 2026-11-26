@@ -77,7 +77,20 @@ jobs:
             case "$RELEASE_REF" in main|development) refs="$RELEASE_REF" ;; *) exit 1 ;; esac
           fi
           for ref in $refs; do
-            head="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
+            matches="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/$ref")"
+            head="$(jq -r --arg ref "refs/heads/$ref" '
+              if type != "array" then error("Invalid protected scanner branch response") else . end |
+              map(select(.ref == $ref)) |
+              if length == 0 then ""
+              elif length == 1 and .[0].object.type == "commit" and (.[0].object.sha | type == "string" and test("^[0-9a-f]{40}$"))
+              then .[0].object.sha
+              else error("Invalid protected scanner branch response")
+              end
+            ' <<< "$matches")"
+            if [ -z "$head" ]; then
+              echo "::notice title=Scanner waits for branch::The protected $ref branch does not exist, so no scan is dispatched."
+              continue
+            fi
             # The site serves the scanner input list of the commit its release
             # deployed. A scan runs on that commit, or on a later commit of the
             # branch that changed no listed input and no path in a scanner
