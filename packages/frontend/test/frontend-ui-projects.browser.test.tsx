@@ -576,7 +576,7 @@ describe('Exempt only by the frozen set or an audited owner-approved grant (spec
     const fullName = await repository(users.eli, "exempt");
     const id = await createProject(users.eli, fullName, "Exempt");
     const assessment = `vet_${"7".repeat(32)}`;
-    await incompleteAssessment(id, assessment, fullName);
+    await incompleteAssessment(id, assessment, fullName.toUpperCase());
     await manage(id);
     const reasons = named("region", "Why the scan did not clear");
     await shown(reasons).toMatchObject({ visible: true, text: expect.stringContaining("Specialist: ambiguous") });

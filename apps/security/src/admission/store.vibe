@@ -96,8 +96,12 @@ export effect function incompleteScan(read: IncompleteScanPin) {
     WHERE a.project_id = ${read.projectId} AND a.rowid = ${read.assessment} AND a.state = 'incomplete'`)
   if (row === undefined || row.result === null || row.result_sha256 === null || (try sha256Hex(row.result)) !== row.result_sha256) return undefined
   const found = assessmentOf(row)
-  const listed = listedOf(try jsonOf(ManifestFacts, row.manifest, "assessment revision manifest"))
-  if (!listed.some((repo) => repo.githubId === read.repository && repo.path === found.repositoryId)) return undefined
+  const manifest = try jsonOf(ManifestFacts, row.manifest, "assessment revision manifest")
+  const path = found.repositoryId.toLowerCase()
+  const listed = listedOf(manifest)
+  const repositoryBound = listed.some((repo, index) => repo.githubId === read.repository
+    && [repo.path, ...(manifest.repositories[index]?.aliases ?? [])].some((alias) => alias.toLowerCase() === path))
+  if (!repositoryBound) return undefined
   const result = found.result
   if (result === undefined || found.completedAt === null || result.disposition !== "incomplete" || result.assessmentId !== found.id
     || result.projectId !== found.projectId || result.revision !== found.revision || result.manifestSha256 !== found.manifestSha256
