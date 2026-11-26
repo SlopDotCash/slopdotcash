@@ -16,25 +16,33 @@ const answerBytes = 64 * 1024
 
 schema PendingItems { readonly items: string }
 
-const Candidate = Schema.Struct({
-  plan: Schema.Struct({
-    family: Schema.Literals(["evm", "solana"]),
-    request: Schema.Struct({ projectId: Schema.String, period: Schema.String, network: Schema.String }),
-    deployment: Schema.Struct({ vault: Schema.String }),
-    evmReservation: Schema.optionalKey(Schema.Unknown),
-  }),
-})
+schema CandidateRequest {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+}
 
-type Candidate = typeof Candidate.Type
+schema CandidateDeployment {
+  readonly vault: string
+}
 
-const CommitAnswer = Schema.Struct({
-  transactionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  alreadyCommitted: Schema.optionalKey(Schema.Boolean),
-  notAdmitted: Schema.optionalKey(Schema.Boolean),
-  complete: Schema.optionalKey(Schema.Boolean),
-})
+schema CandidatePlan {
+  readonly family: "evm" | "solana"
+  readonly request: CandidateRequest
+  readonly deployment: CandidateDeployment
+  readonly evmReservation?: Schema.Unknown
+}
 
-type CommitAnswer = typeof CommitAnswer.Type
+schema Candidate {
+  readonly plan: CandidatePlan
+}
+
+schema CommitAnswer {
+  readonly transactionId?: string | null
+  readonly alreadyCommitted?: boolean
+  readonly notAdmitted?: boolean
+  readonly complete?: boolean
+}
 
 effect function activePeriod(nowSeconds: number) {
   return try orDie(Effect.try((): Period => {

@@ -2,7 +2,7 @@ import { expect, fn, screen, userEvent, waitFor } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
 import type { RemoveProjectProps } from "./RemoveProject.tsx";
 
-const remove = fn(async () => false);
+const remove = fn(() => Promise.resolve(false));
 
 export const meta: ComponentMeta<RemoveProjectProps> = {
   args: { name: "engine", disabled: false, remove, reason: "The project changed. Reload it before removing." },

@@ -2,7 +2,7 @@
 import type { RunView } from "@repo/security/client";
 import { Disclosure, Status } from "@repo/ui";
 import { Clock, Infinity as InfinityIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import type { EvidenceObjectView } from "./EvidenceItem.tsx";
 import { Chip, Fact, Facts, Identifier } from "./parts.tsx";
 import { evidenceStateLabel } from "./vetting.ts";
@@ -93,7 +93,9 @@ export function EvidenceRunCard({ run, retentionBoundary, policyVersion, selecte
           ))}
         </ul>
       )}
-      {run.objects.filter((object) => object.sha256 === selected).map(item)}
+      {run.objects.filter((object) => object.sha256 === selected).map((object) => (
+        <Fragment key={object.sha256}>{item(object)}</Fragment>
+      ))}
     </section>
   );
 }

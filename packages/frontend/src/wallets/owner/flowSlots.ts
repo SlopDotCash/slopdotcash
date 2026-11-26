@@ -51,7 +51,7 @@ function legacySlot(attemptId: unknown, bytesId: string, plan: OwnerPlan | undef
   return { account: 0, plan: planText(plan), attempt: { identity, bytesId, hash: recovered ? "" : hash, candidate: recovered ? hash : "" } };
 }
 
-/** A creation request development saved: its reviewed network, claim, owner, token and creation transaction. @throws {never} */
+/** @throws {never} */
 function legacyCreation(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
   const { input, review } = record;
   if (!isRecord(input) || !isRecord(review)) return undefined;
@@ -64,7 +64,7 @@ function legacyCreation(record: Readonly<Record<string, unknown>>): OwnedSlot | 
   return legacySlot(record.attemptId, "creation", plan, legacyHash(record.hash, solana), false);
 }
 
-/** An automatic-payment setting development saved for a Solana vault, with the blockhash its transaction was built on. @throws {never} */
+/** @throws {never} */
 function legacySolanaSetting(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
   const { cap, enabled, decimals, wallet, solanaBlockhash, hashSource } = record;
   if (typeof wallet !== "string" || typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36 || typeof cap !== "string" || typeof enabled !== "boolean" || (enabled && cap === "0") || typeof solanaBlockhash !== "string") return undefined;
@@ -73,7 +73,7 @@ function legacySolanaSetting(record: Readonly<Record<string, unknown>>): OwnedSl
   return legacySlot(record.attemptId, "prepared", plan, legacyHash(record.hash, true), hashSource === "recovery");
 }
 
-/** An automatic-payment setting development saved for an EVM vault: its wallet and target only, checked by the hash against the call the target makes. @throws {never} */
+/** @throws {never} */
 function legacyEvmSetting(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
   const { cap, enabled, decimals, wallet, hashSource } = record;
   if (typeof wallet !== "string" || !evmAddressPattern.test(wallet) || typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36 || typeof cap !== "string" || !settingCapPattern.test(cap) || typeof enabled !== "boolean" || (enabled && cap === "0")) return undefined;
@@ -82,7 +82,7 @@ function legacyEvmSetting(record: Readonly<Record<string, unknown>>): OwnedSlot 
   return legacySlot(record.attemptId, "prepared", plan, legacyHash(record.hash, false), hashSource !== "wallet");
 }
 
-/** A reserve release development saved: its plan id and the hash, checked by the plan id and hash alone. @throws {never} */
+/** @throws {never} */
 function legacyRelease(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
   if (!Object.keys(record).every((key) => releaseKeys.includes(key)) || typeof record.planId !== "string") return undefined;
   const plan = planOf(planText({ kind: "evmRelease", planId: record.planId }));
@@ -90,7 +90,7 @@ function legacyRelease(record: Readonly<Record<string, unknown>>): OwnedSlot | u
   return legacySlot(record.attemptId, "release", plan, hash, false);
 }
 
-/** The record development wrote in this slot before the cut-over, read into the same attempt and plan. @throws {never} */
+/** @throws {never} */
 function legacyOf(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
   if (!("version" in record)) return "planId" in record ? legacyRelease(record) : undefined;
   if (record.version !== 1) return undefined;

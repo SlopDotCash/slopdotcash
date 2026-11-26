@@ -20,57 +20,102 @@ export function decodeText(bytes: Uint8Array): string | null {
   }
 }
 
-/** @throws {never} */
-function gypIncludeSpecifiers(text: string): { paths: string[]; unresolved: boolean } {
-  const paths: string[] = [];
-  let unresolved = false;
-  const n = text.length;
-  let i = 0;
+function isQuote(char: string | undefined): char is "'" | '"' {
+  return char === "'" || char === '"';
+}
 
-  const isQuote = (char: string | undefined): char is "'" | '"' => char === "'" || char === '"';
+function isOperatorChar(char: string | undefined): boolean {
+  return char !== undefined && "+-*/%|&^<>=!~@".includes(char);
+}
 
-  const skipSpaceAndComments = () => {
-    while (i < n) {
-      const c = text[i];
+function startsAtom(char: string | undefined): boolean {
+  return char === "(" || char === "[" || char === "{" || isQuote(char) || (char !== undefined && /[A-Za-z0-9_]/u.test(char));
+}
+
+function collectGypEntry(item: GypLiteral, paths: string[]): boolean {
+  if (item.kind === "string") {
+    if (item.value) paths.push(item.value);
+    return false;
+  }
+  if (item.kind === "tuple") {
+    if (item.items.length === 0) return true;
+    let unresolved = false;
+    for (const member of item.items) {
+      if (collectGypEntry(member, paths)) unresolved = true;
+    }
+    return unresolved;
+  }
+  return true;
+}
+
+function collectGypValue(item: GypLiteral, paths: string[]): boolean {
+  if (item.kind === "list" || item.kind === "tuple") {
+    let unresolved = false;
+    for (const entry of item.items) {
+      if (collectGypEntry(entry, paths)) unresolved = true;
+    }
+    return unresolved;
+  }
+  if (item.kind === "string") {
+    if (item.value) {
+      paths.push(item.value);
+      return false;
+    }
+    return true;
+  }
+  return true;
+}
+
+class GypReader {
+  i = 0;
+  readonly n: number;
+
+  constructor(readonly text: string) {
+    this.n = text.length;
+  }
+
+  skipSpaceAndComments() {
+    while (this.i < this.n) {
+      const c = this.text[this.i];
       if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") {
-        i += 1;
+        this.i += 1;
         continue;
       }
-      if (c === "\\" && (text[i + 1] === "\n" || text[i + 1] === "\r")) {
-        i += 2;
-        if (text[i - 1] === "\r" && text[i] === "\n") i += 1;
+      if (c === "\\" && (this.text[this.i + 1] === "\n" || this.text[this.i + 1] === "\r")) {
+        this.i += 2;
+        if (this.text[this.i - 1] === "\r" && this.text[this.i] === "\n") this.i += 1;
         continue;
       }
       if (c === "#") {
-        while (i < n && text[i] !== "\n" && text[i] !== "\r") i += 1;
+        while (this.i < this.n && this.text[this.i] !== "\n" && this.text[this.i] !== "\r") this.i += 1;
         continue;
       }
       return;
     }
-  };
+  }
 
-  const rawPrefix = (at: number) => {
+  private rawPrefix(at: number) {
     let start = at;
-    while (start > 0 && /[rRuUbBfF]/u.test(text[start - 1] ?? "")) start -= 1;
+    while (start > 0 && /[rRuUbBfF]/u.test(this.text[start - 1] ?? "")) start -= 1;
     if (start === at) return false;
-    if (start > 0 && /[A-Za-z0-9_]/u.test(text[start - 1] ?? "")) return false;
-    return /r/iu.test(text.slice(start, at));
-  };
+    if (start > 0 && /[A-Za-z0-9_]/u.test(this.text[start - 1] ?? "")) return false;
+    return /r/iu.test(this.text.slice(start, at));
+  }
 
-  const decodeEscape = (raw: boolean) => {
-    if (i >= n) return "\\";
-    const next = text[i] ?? "";
-    i += 1;
+  private decodeEscape(raw: boolean) {
+    if (this.i >= this.n) return "\\";
+    const next = this.text[this.i] ?? "";
+    this.i += 1;
     if (raw) {
-      if (next === "\r" && text[i] === "\n") {
-        i += 1;
+      if (next === "\r" && this.text[this.i] === "\n") {
+        this.i += 1;
         return "\\\r\n";
       }
       return `\\${next}`;
     }
     if (next === "\n") return "";
     if (next === "\r") {
-      if (text[i] === "\n") i += 1;
+      if (this.text[this.i] === "\n") this.i += 1;
       return "";
     }
     if (next === "n") return "\n";
@@ -83,11 +128,11 @@ function gypIncludeSpecifiers(text: string): { paths: string[]; unresolved: bool
     if (next === "\\" || next === "'" || next === '"') return next;
     if (next === "x" || next === "u" || next === "U") {
       const width = next === "x" ? 2 : next === "u" ? 4 : 8;
-      const digits = text.slice(i, i + width);
+      const digits = this.text.slice(this.i, this.i + width);
       if (digits.length === width && /^[0-9a-fA-F]+$/u.test(digits)) {
         const code = Number.parseInt(digits, 16);
         if (code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)) {
-          i += width;
+          this.i += width;
           return String.fromCodePoint(code);
         }
       }
@@ -95,292 +140,261 @@ function gypIncludeSpecifiers(text: string): { paths: string[]; unresolved: bool
     }
     if (next >= "0" && next <= "7") {
       let digits = next;
-      while (digits.length < 3 && i < n && (text[i] ?? "") >= "0" && (text[i] ?? "") <= "7") {
-        digits += text[i];
-        i += 1;
+      while (digits.length < 3 && this.i < this.n && (this.text[this.i] ?? "") >= "0" && (this.text[this.i] ?? "") <= "7") {
+        digits += this.text[this.i];
+        this.i += 1;
       }
       return String.fromCharCode(Number.parseInt(digits, 8));
     }
     return `\\${next}`;
-  };
+  }
 
-  const readString = (): string | null => {
-    const quote = text[i];
+  private readString(): string | null {
+    const quote = this.text[this.i];
     if (!isQuote(quote)) return null;
-    const raw = rawPrefix(i);
-    const triple = text.startsWith(quote.repeat(3), i);
+    const raw = this.rawPrefix(this.i);
+    const triple = this.text.startsWith(quote.repeat(3), this.i);
     const delimiter = triple ? quote.repeat(3) : quote;
-    i += delimiter.length;
+    this.i += delimiter.length;
     let value = "";
-    while (i < n) {
-      const c = text[i] ?? "";
+    while (this.i < this.n) {
+      const c = this.text[this.i] ?? "";
       if (c === "\\") {
-        i += 1;
-        value += decodeEscape(raw);
+        this.i += 1;
+        value += this.decodeEscape(raw);
         continue;
       }
-      if (text.startsWith(delimiter, i)) {
-        i += delimiter.length;
+      if (this.text.startsWith(delimiter, this.i)) {
+        this.i += delimiter.length;
         return value;
       }
       if (!triple && (c === "\n" || c === "\r")) return null;
       value += c;
-      i += 1;
+      this.i += 1;
     }
     return null;
-  };
+  }
 
-  const readConcatenatedString = (): string | null => {
-    const first = readString();
+  readConcatenatedString(): string | null {
+    const first = this.readString();
     if (first === null) return null;
     let value = first;
-    while (i < n) {
-      const mark = i;
-      skipSpaceAndComments();
-      if (!isQuote(text[i])) {
-        i = mark;
+    while (this.i < this.n) {
+      const mark = this.i;
+      this.skipSpaceAndComments();
+      if (!isQuote(this.text[this.i])) {
+        this.i = mark;
         return value;
       }
-      const next = readString();
+      const next = this.readString();
       if (next === null) return value;
       value += next;
     }
     return value;
-  };
+  }
 
-  const skipOneValue = (): boolean => {
-    skipSpaceAndComments();
-    if (i >= n) return false;
-    const start = text[i];
+  private skipOneValue(): boolean {
+    this.skipSpaceAndComments();
+    if (this.i >= this.n) return false;
+    const start = this.text[this.i];
     if (start === "," || start === "]" || start === "}" || start === ")") return false;
     if (isQuote(start)) {
-      readConcatenatedString();
+      this.readConcatenatedString();
       return true;
     }
     if (start === "[" || start === "{" || start === "(") {
       const closing = start === "[" ? "]" : start === "{" ? "}" : ")";
-      i += 1;
-      while (i < n) {
-        skipSpaceAndComments();
-        if (i >= n) return false;
-        if (text[i] === closing) {
-          i += 1;
+      this.i += 1;
+      while (this.i < this.n) {
+        this.skipSpaceAndComments();
+        if (this.i >= this.n) return false;
+        if (this.text[this.i] === closing) {
+          this.i += 1;
           return true;
         }
-        if (text[i] === ",") {
-          i += 1;
+        if (this.text[this.i] === ",") {
+          this.i += 1;
           continue;
         }
-        if (!skipOneValue()) return false;
+        if (!this.skipOneValue()) return false;
       }
       return false;
     }
     if (/[A-Za-z0-9_]/u.test(start ?? "")) {
-      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      while (this.i < this.n && /[A-Za-z0-9_]/u.test(this.text[this.i] ?? "")) this.i += 1;
       return true;
     }
-    i += 1;
+    this.i += 1;
     return true;
-  };
+  }
 
-  const isOperatorChar = (char: string | undefined): boolean => char !== undefined && "+-*/%|&^<>=!~@".includes(char);
-
-  const stringAt = (at: number): number | null => {
+  private stringAt(at: number): number | null {
     let j = at;
-    if (j > 0 && /[A-Za-z0-9_]/u.test(text[j - 1] ?? "")) return null;
-    while (j < n && /[rRuUbBfF]/u.test(text[j] ?? "")) j += 1;
-    return isQuote(text[j]) ? j : null;
-  };
+    if (j > 0 && /[A-Za-z0-9_]/u.test(this.text[j - 1] ?? "")) return null;
+    while (j < this.n && /[rRuUbBfF]/u.test(this.text[j] ?? "")) j += 1;
+    return isQuote(this.text[j]) ? j : null;
+  }
 
-  const startsAtom = (char: string | undefined): boolean =>
-    char === "(" || char === "[" || char === "{" || isQuote(char) || (char !== undefined && /[A-Za-z0-9_]/u.test(char));
-
-  const readOneString = (): GypLiteral => {
-    const quote = stringAt(i);
+  private readOneString(): GypLiteral {
+    const quote = this.stringAt(this.i);
     if (quote === null) return unresolvedLiteral;
-    i = quote;
-    const value = readString();
+    this.i = quote;
+    const value = this.readString();
     return value === null ? unresolvedLiteral : { kind: "string", value };
-  };
+  }
 
-  const consumeOperator = () => {
-    while (i < n && isOperatorChar(text[i])) i += 1;
-  };
+  private consumeOperator() {
+    while (this.i < this.n && isOperatorChar(this.text[this.i])) this.i += 1;
+  }
 
-  const consumeTrailers = () => {
-    while (i < n) {
-      const mark = i;
-      skipSpaceAndComments();
-      if (text[i] === "(") {
-        readParen();
+  private consumeTrailers() {
+    while (this.i < this.n) {
+      const mark = this.i;
+      this.skipSpaceAndComments();
+      if (this.text[this.i] === "(") {
+        this.readDelimited(")", "tuple");
         continue;
       }
-      if (text[i] === "[") {
-        readBracket();
+      if (this.text[this.i] === "[") {
+        this.readDelimited("]", "list");
         continue;
       }
-      if (text[i] === ".") {
-        i += 1;
-        skipSpaceAndComments();
-        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      if (this.text[this.i] === ".") {
+        this.i += 1;
+        this.skipSpaceAndComments();
+        while (this.i < this.n && /[A-Za-z0-9_]/u.test(this.text[this.i] ?? "")) this.i += 1;
         continue;
       }
-      i = mark;
+      this.i = mark;
       return;
     }
-  };
+  }
 
-  const readAtom = (): GypLiteral => {
-    skipSpaceAndComments();
-    if (i >= n) return unresolvedLiteral;
-    if (stringAt(i) !== null) return readOneString();
-    if (text[i] === "(") return readParen();
-    if (text[i] === "[") return readBracket();
-    if (text[i] === "{") {
-      skipOneValue();
+  private readAtom(): GypLiteral {
+    this.skipSpaceAndComments();
+    if (this.i >= this.n) return unresolvedLiteral;
+    if (this.stringAt(this.i) !== null) return this.readOneString();
+    if (this.text[this.i] === "(") return this.readDelimited(")", "tuple");
+    if (this.text[this.i] === "[") return this.readDelimited("]", "list");
+    if (this.text[this.i] === "{") {
+      this.skipOneValue();
       return unresolvedLiteral;
     }
-    if (/[A-Za-z_]/u.test(text[i] ?? "")) {
-      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
-      consumeTrailers();
+    if (/[A-Za-z_]/u.test(this.text[this.i] ?? "")) {
+      while (this.i < this.n && /[A-Za-z0-9_]/u.test(this.text[this.i] ?? "")) this.i += 1;
+      this.consumeTrailers();
       return unresolvedLiteral;
     }
-    if (/[0-9]/u.test(text[i] ?? "")) {
-      while (i < n && /[0-9A-Za-z_.]/u.test(text[i] ?? "")) i += 1;
-      consumeTrailers();
+    if (/[0-9]/u.test(this.text[this.i] ?? "")) {
+      while (this.i < this.n && /[0-9A-Za-z_.]/u.test(this.text[this.i] ?? "")) this.i += 1;
+      this.consumeTrailers();
       return unresolvedLiteral;
     }
-    if (isOperatorChar(text[i])) {
-      consumeOperator();
-      readAtom();
+    if (isOperatorChar(this.text[this.i])) {
+      this.consumeOperator();
+      this.readAtom();
       return unresolvedLiteral;
     }
-    i += 1;
+    this.i += 1;
     return unresolvedLiteral;
-  };
+  }
 
-  const readExpr = (): GypLiteral => {
-    skipSpaceAndComments();
-    const start = i;
-    let value = readAtom();
-    if (i === start && i < n) i += 1;
-    while (i < n) {
-      const before = i;
-      skipSpaceAndComments();
-      if (i >= n) return value;
-      if (value.kind === "string" && stringAt(i) !== null) {
-        const next = readOneString();
+  readExpr(): GypLiteral {
+    this.skipSpaceAndComments();
+    const start = this.i;
+    let value = this.readAtom();
+    if (this.i === start && this.i < this.n) this.i += 1;
+    while (this.i < this.n) {
+      const before = this.i;
+      this.skipSpaceAndComments();
+      if (this.i >= this.n) return value;
+      if (value.kind === "string" && this.stringAt(this.i) !== null) {
+        const next = this.readOneString();
         value = next.kind === "string" && value.kind === "string" ? { kind: "string", value: value.value + next.value } : unresolvedLiteral;
         continue;
       }
-      const char = text[i];
+      const char = this.text[this.i];
       if (char === "(" || char === "[" || char === ".") {
         value = unresolvedLiteral;
-        if (char === "(") readParen();
-        else if (char === "[") readBracket();
-        else i += 1;
-        if (i === before) return unresolvedLiteral;
+        if (char === "(") this.readDelimited(")", "tuple");
+        else if (char === "[") this.readDelimited("]", "list");
+        else this.i += 1;
+        if (this.i === before) return unresolvedLiteral;
         continue;
       }
       if (isOperatorChar(char)) {
         value = unresolvedLiteral;
-        consumeOperator();
-        if (i === before) return unresolvedLiteral;
+        this.consumeOperator();
+        if (this.i === before) return unresolvedLiteral;
         continue;
       }
       if (value.kind !== "string" && startsAtom(char)) {
         value = unresolvedLiteral;
-        readAtom();
-        if (i === before) return unresolvedLiteral;
+        this.readAtom();
+        if (this.i === before) return unresolvedLiteral;
         continue;
       }
       if (char !== undefined && /[A-Za-z_]/u.test(char)) {
         value = unresolvedLiteral;
-        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
-        if (i === before) return unresolvedLiteral;
+        while (this.i < this.n && /[A-Za-z0-9_]/u.test(this.text[this.i] ?? "")) this.i += 1;
+        if (this.i === before) return unresolvedLiteral;
         continue;
       }
-      i = before;
+      this.i = before;
       return value;
     }
     return value;
-  };
+  }
 
-  const readDelimited = (closing: ")" | "]", kind: "tuple" | "list"): GypLiteral => {
-    i += 1;
+  private readDelimited(closing: ")" | "]", kind: "tuple" | "list"): GypLiteral {
+    this.i += 1;
     const items: GypLiteral[] = [];
     let comma = false;
-    while (i < n) {
-      skipSpaceAndComments();
-      if (i >= n) return unresolvedLiteral;
-      if (text[i] === closing) {
-        i += 1;
+    while (this.i < this.n) {
+      this.skipSpaceAndComments();
+      if (this.i >= this.n) return unresolvedLiteral;
+      if (this.text[this.i] === closing) {
+        this.i += 1;
         if (kind === "tuple" && !comma && items.length === 1) return items[0] ?? unresolvedLiteral;
         if (kind === "tuple" && !comma && items.length === 0) return { kind: "tuple", items: [] };
         if (comma && items.length === 0) return unresolvedLiteral;
         return { kind, items };
       }
-      if (text[i] === ",") {
+      if (this.text[this.i] === ",") {
         comma = true;
-        i += 1;
+        this.i += 1;
         continue;
       }
-      const before = i;
-      items.push(readExpr());
-      if (i === before) i += 1;
+      const before = this.i;
+      items.push(this.readExpr());
+      if (this.i === before) this.i += 1;
     }
     return unresolvedLiteral;
-  };
+  }
+}
 
-  const readParen = (): GypLiteral => readDelimited(")", "tuple");
-  const readBracket = (): GypLiteral => readDelimited("]", "list");
-
-  const collectEntry = (item: GypLiteral) => {
-    if (item.kind === "string") {
-      if (item.value) paths.push(item.value);
-      return;
-    }
-    if (item.kind === "tuple") {
-      if (item.items.length === 0) {
-        unresolved = true;
-        return;
-      }
-      for (const member of item.items) collectEntry(member);
-      return;
-    }
-    unresolved = true;
-  };
-
-  const collectValue = (item: GypLiteral) => {
-    if (item.kind === "list" || item.kind === "tuple") {
-      for (const entry of item.items) collectEntry(entry);
-      return;
-    }
-    if (item.kind === "string") {
-      if (item.value) paths.push(item.value);
-      else unresolved = true;
-      return;
-    }
-    unresolved = true;
-  };
-
-  while (i < n) {
-    skipSpaceAndComments();
-    if (i >= n) break;
-    if (!isQuote(text[i])) {
-      i += 1;
+/** @throws {never} */
+function gypIncludeSpecifiers(text: string): { paths: string[]; unresolved: boolean } {
+  const paths: string[] = [];
+  let unresolved = false;
+  const reader = new GypReader(text);
+  while (reader.i < reader.n) {
+    reader.skipSpaceAndComments();
+    if (reader.i >= reader.n) break;
+    if (!isQuote(reader.text[reader.i])) {
+      reader.i += 1;
       continue;
     }
-    const key = readConcatenatedString();
+    const key = reader.readConcatenatedString();
     if (key !== "includes") continue;
-    const afterKey = i;
-    skipSpaceAndComments();
-    if (text[i] !== ":") {
-      i = afterKey;
+    const afterKey = reader.i;
+    reader.skipSpaceAndComments();
+    if (reader.text[reader.i] !== ":") {
+      reader.i = afterKey;
       continue;
     }
-    i += 1;
-    collectValue(readExpr());
+    reader.i += 1;
+    if (collectGypValue(reader.readExpr(), paths)) unresolved = true;
   }
   return { paths, unresolved };
 }

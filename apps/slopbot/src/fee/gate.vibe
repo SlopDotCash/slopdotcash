@@ -37,6 +37,7 @@ export interface FeeAsk {
 schema FeePullLabel { readonly name: string }
 
 export schema FeePullRead {
+  readonly node_id?: string
   readonly number: number
   readonly state: string
   readonly draft?: boolean

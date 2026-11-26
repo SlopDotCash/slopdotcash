@@ -23,6 +23,7 @@ export interface ProjectReward {
   readonly kind: string;
   readonly chain: string;
   readonly monthlyCapMinor: string;
+  readonly cycleCaps?: ReadonlyArray<{ readonly cycleId: string; readonly monthlyCapMinor: string }>;
   readonly asset: { readonly network: string; readonly address: string; readonly decimals: number } | null;
 }
 
@@ -72,8 +73,23 @@ export function settingCall(target: MonthlySetting): string {
   return setMonthlyCommitmentCalldata(target.cap, target.enabled);
 }
 
+const MONTHLY_CUTOFF_DELAY_MS = 72 * 60 * 60 * 1000;
+const cycleIdPattern = /^(\d{4})-(0[1-9]|1[0-2])$/u;
+const canonicalUintPattern = /^(0|[1-9][0-9]*)$/u;
+
+function pinWindowClosesAt(cycleId: string): number | undefined {
+  const match = cycleIdPattern.exec(cycleId);
+  if (match === null) return undefined;
+  return Date.UTC(Number(match[1]), Number(match[2]), 1) + MONTHLY_CUTOFF_DELAY_MS;
+}
+
 /** @throws {never} */
-export function vaultMonthlyCap(reward: ProjectReward, deployment: { readonly network: string; readonly asset: string }, vaultDecimals: number): MonthlyCap {
+export function vaultMonthlyCap(
+  reward: ProjectReward,
+  deployment: { readonly network: string; readonly asset: string },
+  vaultDecimals: number,
+  nowMs: number = Date.now(),
+): MonthlyCap {
   if (reward.kind !== "monthly-pool") return { kind: "refused", message: monthlyCapMessages.noAmount };
   const network = isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined;
   if (network === undefined) return { kind: "refused", message: monthlyCapMessages.asset };
@@ -83,8 +99,17 @@ export function vaultMonthlyCap(reward: ProjectReward, deployment: { readonly ne
   if (network.chain !== reward.chain || (reward.asset !== null && reward.asset.network !== network.chain) || expected === undefined || canonical(deployment.asset) !== canonical(expected))
     return { kind: "refused", message: monthlyCapMessages.asset };
   if (vaultDecimals !== (reward.asset?.decimals ?? reference?.decimals)) return { kind: "refused", message: monthlyCapMessages.decimals };
-  if (!/^(0|[1-9][0-9]*)$/u.test(reward.monthlyCapMinor)) return { kind: "refused", message: monthlyCapMessages.invalid };
-  return { kind: "cap", cap: BigInt(reward.monthlyCapMinor) };
+  if (!canonicalUintPattern.test(reward.monthlyCapMinor)) return { kind: "refused", message: monthlyCapMessages.invalid };
+  let cap = BigInt(reward.monthlyCapMinor);
+  for (const entry of reward.cycleCaps ?? []) {
+    const closesAt = pinWindowClosesAt(entry.cycleId);
+    if (closesAt === undefined) return { kind: "refused", message: monthlyCapMessages.invalid };
+    if (nowMs >= closesAt) continue;
+    if (!canonicalUintPattern.test(entry.monthlyCapMinor)) return { kind: "refused", message: monthlyCapMessages.invalid };
+    const pinned = BigInt(entry.monthlyCapMinor);
+    if (pinned > cap) cap = pinned;
+  }
+  return { kind: "cap", cap };
 }
 
 /** @throws {never} */

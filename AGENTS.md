@@ -65,7 +65,7 @@ The spec format, naming rules and everything the tools accept are in
 ## Loading skills
 
 The canonical skill files are committed in `.agents/skills/`, including
-`sync`, `shell`, `prove`, `design`, `architect` and the [principles](#principles).
+`sync`, `shell`, `prove`, `design`, `architect`, `bug-review` and the [principles](#principles).
 Edit them there. `pnpm install` and `spec init` create project-relative skill
 links for Claude, Cursor, Muse, Grokbot and the other supported agents, and
 `CLAUDE.md` links to `AGENTS.md`. These generated paths are ignored by Git;
@@ -141,6 +141,7 @@ installed the tools has `README.md` in `node_modules/vibestack/`.
 | [`shell` skill](.agents/skills/shell/SKILL.md) | writing `src/` or a test: VibeLang, the Effect adapter, the React interface, building and running |
 | [`prove` skill](.agents/skills/prove/SKILL.md) | a `proof` stage `✗`, writing a `.proof.dfy`, or a `//@` file |
 | [`design` skill](.agents/skills/design/SKILL.md) | anything a person looks at: layout, components, stories and tokens |
+| [`bug-review` skill](.agents/skills/bug-review/SKILL.md) | finishing an app, feature or PR: parallel review for bugs, leaks, state/rendering issues, inefficiencies and smells past `pnpm check` |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | generated files, tests, caching and CI; adding a package or task, or changing the tools under `vibestack/` |
 | [README.md](README.md#commands) | the commands, Studio, and [using the tools from another package](vibestack/README.md#using-it-from-another-package) |
 
@@ -187,8 +188,15 @@ Check each point before you write, and again after.
 - **No code comments.** Use clear names and structure to make the code readable.
   Use comment syntax only for required tool directives that need it, such as
   `//@` contracts and Vitest environment directives.
-- **Scripts and tests.** Extend existing ones before adding; no new scripts.
-  Delete code that becomes unused. Tests follow "Tests" below.
+- **Scripts, project CLI and tests.** Put operational, verification, seeding,
+  inspection, validation, and migration levers in the project CLI
+  (`packages/cli`, run with `pnpm cli <command>`) as typed subcommands with
+  `--json` output rather than ad-hoc files under `scripts/` or extra
+  `package.json` scripts. `packages/cli` is a project tool (Node 26 TypeScript
+  by default for fast startup across all modes; subcommands that drive
+  VibeLang/Effect services can invoke or import them when needed). Extend
+  existing commands and tests before adding; delete code that becomes unused.
+  Tests follow "Tests" below.
 - **Speed.** Keep checks and CI fast: a small change reruns only what it
   touches; a full run is as quick as it can be.
 - **Passes.** The first version is a draft. Review it two or three times
@@ -225,8 +233,9 @@ its name.
   with no precedent. Build 2-3 competing prototypes and compare before
   committing.
 - **Build the Lever.** Any non-trivial work. Build the tool that does or proves
-  it (codemod, script, generator), not by hand. The tool is the artifact a
-  reviewer reruns.
+  it — as a subcommand in the project CLI (`pnpm cli <command>`, under
+  `packages/cli`) with `--json` output when it belongs to the project, not as a
+  scattered script. The tool is the artifact a reviewer reruns.
 - **Model the Domain.** Writing stateful logic, or code that branches a lot or
   repeats a shape assumption across files. Encode the domain in a structure
   (state machine, typed model, table or registry, reducer, boundary, the right
@@ -420,6 +429,12 @@ How `pnpm check` runs them, in its `tests` stage:
   [TypeScript conventions](#typescript-best-practices).
 - Remove dead and duplicate code, unnecessary files and temporary artifacts
   from the change. Review the diff against [Writing code](#writing-code).
+- Before declaring an application, feature or non-trivial change done, run
+  the [`bug-review` skill](.agents/skills/bug-review/SKILL.md) (full pass
+  when finishing an app, diff-scoped pass for incremental changes), resolve
+  all discovered `P0`/`P1` bugs and errors (and any `P2`s worth fixing),
+  and confirm `pnpm check`, `pnpm lint`, and `pnpm analyze` (where defined)
+  are green after the final fix.
 - In the vibestack repository, if you changed `vibestack/`, `pnpm selftest`
   passes, with a new case for each new kind of mistake the change catches,
   and each new kind of `✗` has its row in the sync skill.

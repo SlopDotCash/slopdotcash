@@ -498,7 +498,7 @@ line.
   (`machine()`), kept in a store (`stored(key)`) or kept by the shell
   (`machineOver(load, keep)`), of the Effect adapter
   `gen/<name>.effect.vibe`, which use `enabled` and `step`; a React component
-  goes through `useMachine` of `gen/<name>.react.ts`
+  goes through `useMachine` or `useMachineSelector` of `gen/<name>.react.ts`
   ([shell skill](.agents/skills/shell/SKILL.md)).
 - `gen/` is rebuilt by `pnpm gen` and `pnpm check`, and by
   `pnpm install` when every spec is valid.
@@ -511,9 +511,9 @@ spec, in the package whose code it is, with the events the simulator found.
 
 | | Is | Runs |
 |---|---|---|
-| `test/drivers/<name>.ts` | exports `driver` and, if it chooses, `options`, typed by `gen/<name>.conformance.ts`; imports `gen/` as types only | in a Node of its own that runs VibeLang: the saved counterexamples, a journey to each `sometimes` rule, malformed inputs, then random walks |
+| `test/drivers/<name>.ts` | exports `driver` and, if it chooses, `options`, typed by `gen/<name>.conformance.ts`; imports `gen/` as types only | in a Node of its own that runs VibeLang: the saved counterexamples, a journey to each `sometimes` rule, deterministic model-based paths covering reachable modes and accepted/refused transitions, malformed inputs, then random walks |
 | `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | compared line by line |
-| `driver:<name>` script | a program, in any language, that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | on the simulated traces |
+| `driver:<name>` script | a program, in any language, that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | on deterministic model-based paths and the simulated traces |
 
 `<name>` is the module's name in the root's `gen/`, and the paths are the
 package's own: an owner of `spec/app/cart.md` writes
@@ -531,9 +531,13 @@ unknown type, a field of `1.5` or `2^53`, or a field missing, each of which
 must be refused and change nothing; and with an extra field and fields that
 change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
-interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
+interleave), `walks` (at most this many; `0` for a slow driver, which still runs
+the journeys and deterministic model-based paths), `steps`, `paths` (`"transitions"`
+by default, `"shortest"`, `"simple"`, or `false` to skip generated model paths) and
+`stateKey` (an optional state abstraction for path planning).
 The walks use the fixed normal or nightly profile
-([budgets](CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](CONTRIBUTING.md#seeds-and-budgets)). The passing summary reports how
+many transitions the real application accepted and refused.
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every

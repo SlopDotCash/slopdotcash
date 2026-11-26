@@ -199,7 +199,7 @@ function Opened(props: SubmissionEntryProps & { headings: DetailHeadings; kept: 
   const deposit = reportDepositStatus(caseDeposit) ?? reportDepositStatus(submission.deposit);
   const [draft, setDraft] = useState(props.kept);
   const [acting, setActing] = useState(idle);
-  const [expanded, setExpanded] = useState(focused || reportNeedsAction(submission));
+  const [expanded, setExpanded] = useState(() => focused || reportNeedsAction(submission));
   const [wasFocused, setWasFocused] = useState(focused);
   if (focused !== wasFocused) {
     setWasFocused(focused);

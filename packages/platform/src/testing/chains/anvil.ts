@@ -132,7 +132,7 @@ export async function anvil(options: AnvilOptions): Promise<Anvil> {
   const port = await freePort();
   const upstreamUrl = `http://127.0.0.1:${port}`;
   const args = [
-    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--config-out", configOut,
+    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--hardfork", "cancun", "--prune-history", "128", "--config-out", configOut,
     ...(blockTime === undefined ? [] : ["--block-time", String(blockTime)]),
     ...(timestamp === undefined ? [] : ["--timestamp", String(timestamp)]),
   ];
@@ -189,7 +189,7 @@ export async function anvil(options: AnvilOptions): Promise<Anvil> {
       mine: async (blocks = 1) => {
         const from = await latest();
         const started = Date.now();
-        await call("anvil_mine", [hex(blocks)]).catch(async (error: unknown) => {
+        await rpc(url, "anvil_mine", [hex(blocks)], 180_000).catch(async (error: unknown) => {
           const reached = await latest().catch(() => undefined);
           throw new Error(`anvil_mine of ${blocks} blocks from block ${from} gave no answer after ${Date.now() - started} ms; anvil had reached block ${reached ?? "unknown"}`, { cause: error });
         });

@@ -143,13 +143,15 @@ const importCloseout = async (w: World, snapshotDigest: string, next: Monthly, d
 
 const reasonOf = (event: Event) => event.type === "cut" ? "c".repeat(Math.max(event.reasonLength, 0)) : undefined;
 
+const text = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
+
 const recordInLedger = async (w: World, event: Event & { readonly award: AwardFact }) => {
   const runRow = await w.db.prepare("SELECT network, vault, json_extract(snapshot, '$.asset') AS asset FROM monthly_payment_runs WHERE project_id = ? AND period = ?").bind(w.project, formatPeriod(w.period as Period)).all();
   const obligation = await w.db.prepare("SELECT source_digest FROM monthly_payment_obligations WHERE project_id = ? AND period = ? AND github_user_id = ?").bind(w.project, formatPeriod(w.period as Period), String(event.award.source.actor)).all();
-  const network = String(runRow.results[0]?.network ?? NETWORK);
-  const vault = String(runRow.results[0]?.vault ?? "");
-  const source = String(obligation.results[0]?.source_digest ?? "");
-  const asset = `0x${sha(`asset:${String(runRow.results[0]?.asset ?? "")}`).slice(0, 40)}`;
+  const network = text(runRow.results[0]?.network, NETWORK);
+  const vault = text(runRow.results[0]?.vault);
+  const source = text(obligation.results[0]?.source_digest);
+  const asset = `0x${sha(`asset:${text(runRow.results[0]?.asset)}`).slice(0, 40)}`;
   const gross = fromAmount(event.award.gross);
   if (event.type === "recordPaid") {
     await w.db.prepare("UPDATE payment_obligations SET state = 'paid', paid_transaction = ? WHERE network = ? AND vault = ? AND source_digest = ?").bind(`tx-${source}`, network, vault, source).run();

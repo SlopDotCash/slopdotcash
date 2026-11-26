@@ -1,7 +1,7 @@
 // spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"
 import type { Queue, R2Bucket } from "@repo/platform/bindings"
 import { sha256Hex } from "@repo/platform/crypto"
-import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { type RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { type RetentionR2Bucket, StorageFailure, bucket, partBytes, retentionBucket } from "@repo/platform/r2"
 import type { Aggregate } from "@repo/platform/stored"
 import { CycleRow, type Job, type Recorded, RestoreReceipt, encoded, parsed, sha256Pattern } from "./codec.vibe"

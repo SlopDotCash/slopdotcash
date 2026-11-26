@@ -72,10 +72,11 @@ pure val policyValues = Set(
 
 The project page, the home card and /sponsors show the project's
 [maintainer share](../settlement/maintainerShare.md) only for a monthly pool
-whose registry base monthly amount (not a month override) is positive, and
+whose resolved amount for this month (its cycle override when one is set, else
+its registry base monthly amount) is positive, and
 only while this month's share or the setting is above zero (development
 `src/lib/maintainer-share.mjs` `publishedMaintainerShare`,
-`maintainerShareNotice` and `maintainerShareCardLine` at `8660a6121`). This
+`maintainerShareNotice` and `maintainerShareCardLine` at `62b81f02f`). This
 month's share is the first history entry whose month is this month or later,
 else the setting (the [registry](../backend/projects.md)'s `monthShareOf`); a change the owner made this month takes
 effect next month. While the two are equal one share is shown ("Maintainer
@@ -90,8 +91,8 @@ import payoutExclusions as X from "../settlement/payoutExclusions"
 import projects as BP from "../backend/projects"
 type ShareShown = NoShare | SameShare({ basisPoints: int })
   | ChangingShare({ thisMonth: int, fromNext: int, fromPeriod: int })
-pure def shareShown(monthlyPool: bool, baseAmountPositive: bool, thisMonth: int, setting: int, period: int): ShareShown =
-  if (not(monthlyPool) or not(baseAmountPositive) or (thisMonth == 0 and setting == 0)) NoShare
+pure def shareShown(monthlyPool: bool, monthAmountPositive: bool, thisMonth: int, setting: int, period: int): ShareShown =
+  if (not(monthlyPool) or not(monthAmountPositive) or (thisMonth == 0 and setting == 0)) NoShare
   else if (thisMonth == setting) SameShare({ basisPoints: thisMonth })
   else ChangingShare({ thisMonth: thisMonth, fromNext: setting, fromPeriod: X::nextPeriod(period) })
 pure def shareHidden(shown: ShareShown): bool = match shown { | NoShare => true | _ => false }

@@ -1,6 +1,6 @@
 // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/views.md, "A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
 import type { CycleIndex, CycleIndexEntry } from "@repo/settlement/client";
-import { parsePeriod, type Period } from "@repo/settlement/kernels/calendar";
+import { formatPeriod, parsePeriod, type Period, periodContaining } from "@repo/settlement/kernels/calendar";
 import { Alert, DataState, Disclosure, EmptyState, NotFound, PageHeader, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
 import { CalendarDays, CircleAlert, History } from "lucide-react";
 import type { Effect } from "effect";
@@ -11,6 +11,7 @@ import type { PageProps } from "../../app/pages.ts";
 import { formatDateTime } from "../../app/format.ts";
 import { NotFoundHead } from "../../app/notFoundHead.ts";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
+import { networkPays as defaultNetworkPays } from "../../kernels/payingNetworks.ts";
 import { type ProjectCycleView, projectActivityCollected, projectCycleHasOpened, projectCycleView } from "../../projections/projectView.ts";
 import { cutsKey } from "../../reads/payments.vibe";
 import { findHistoricalProject, findProject, type RegistryBoot } from "../../reads/registry.vibe";
@@ -18,7 +19,8 @@ import type { Shown } from "../home/listing.ts";
 import { useShownRead } from "../projects/hooks.ts";
 import { formatDate, formatMonth, ProjectNotFound, ProjectsUnavailable, projectOf, type ShownProject } from "../projects/index.ts";
 import { type ProjectRuntime, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "../projects/reads.vibe";
-import { capOf } from "../projects/summary.ts";
+import { capOf, projectFunding } from "../projects/summary.ts";
+import type { NetworkPays } from "../public/funding.ts";
 import { contributorReads, contributorRuntime, registryBoot } from "../points/reads.vibe";
 import type { ProjectTermsOf } from "../profiles/profile.ts";
 import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
@@ -28,7 +30,7 @@ import { amountPhases, CycleAmountHistory, usdcText } from "./CycleAmountHistory
 import { contributorStateLabel, cycleLifecyclePresentation, percentText, pointsText } from "./labels.ts";
 import { OwnerCuts } from "./OwnerCuts.tsx";
 import { reminderLeadMs } from "../../../gen/frontend__views.ts";
-import { nextBoundary, staleFrom, useBoundary } from "./boundary.ts";
+import { staleFrom, useBoundaryTime } from "./boundary.ts";
 import { loadLiveCycle } from "./live.vibe";
 import { type CycleFacts, cycleTerminal, lifecycleOf, ownerCutoffMs, reminderShown, stagesOf, terminalMessage } from "./stages.ts";
 
@@ -37,6 +39,7 @@ export type CyclePageProps = PageProps & {
   repositoryRegistry: RepositoryRegistryOf;
   /** Every registered project's reward terms, from the project registry. */
   projectTerms: ProjectTermsOf;
+  networkPays?: NetworkPays;
 };
 
 type ProjectSection = Effect.Success<ReturnType<typeof projectReads>>;
@@ -150,17 +153,39 @@ function Cuts({ reads, project, cycleId }: { reads: ContributorSection; project:
   return <OwnerCuts cuts={cuts} asset={project.rewardAsset} />;
 }
 
+function OpenCycleAllocation({
+  sectionReads,
+  view,
+  snapshotAt,
+  project,
+  networkPays,
+  nowMs,
+}: {
+  sectionReads: ProjectSection;
+  view: ProjectCycleView;
+  snapshotAt: string;
+  project: ShownProject;
+  networkPays: NetworkPays;
+  nowMs: number;
+}) {
+  const pool = useShownRead(sectionReads.pool, "all");
+  const read = { status: pool.status, vaults: pool.value?.get(project.id) };
+  const funding = projectFunding({ project, read, networkPays, nowMs });
+  return <CycleAllocation view={view} updatedAt={snapshotAt} project={project} funding={funding} vaults={read.vaults} networkPays={networkPays} />;
+}
+
 function CycleView({ found, record, view, index, snapshotAt, freshness }: { found: Found; record: CycleIndexEntry | undefined; view: ProjectCycleView | undefined; index: CycleIndex | undefined; snapshotAt: string | undefined; freshness: ReactNode }) {
-  const { boot, project, period, reads, props, section } = found;
+  const { boot, project, period, reads, props, section, sectionReads } = found;
   const cycleId = props.route.cycleId;
   const listed = findProject(boot, project.id) !== undefined;
   const projectHref = listed ? `/projects/${project.slug}` : `/cycles?project=${encodeURIComponent(project.id)}`;
   const from = record?.contributionWindow.from ?? view?.cycle.from;
   const to = record?.contributionWindow.to ?? view?.cycle.endsAt;
-  const nowMs = Date.now();
   const reviewEndsMs = record?.state === "review" && record.reviewEndsAt ? Date.parse(record.reviewEndsAt) : undefined;
-  useBoundary(section, nextBoundary(nowMs, [reviewEndsMs, ownerCutoffMs(period), index ? staleFrom(index.generatedAt) : undefined, to ? Date.parse(to) - reminderLeadMs : undefined]));
+  const nowMs = useBoundaryTime(section, [reviewEndsMs, ownerCutoffMs(period), index ? staleFrom(index.generatedAt) : undefined, to ? Date.parse(to) - reminderLeadMs : undefined]);
   if (!from || !to) return <CycleUnavailable />;
+  const openMonthlyPool = record === undefined && view !== undefined && view.kind === "monthly-pool" && view.cycle.id === formatPeriod(periodContaining(Math.floor(nowMs / 1000)));
+  const networkPays = props.networkPays ?? defaultNetworkPays;
   const facts: CycleFacts = { record, view, period, capMinor: capOf(project, period), from, to, nowMs };
   const lifecycle = lifecycleOf(facts);
   const { stages, current } = stagesOf(facts);
@@ -226,7 +251,15 @@ function CycleView({ found, record, view, index, snapshotAt, freshness }: { foun
           <CycleAmountHistory amounts={record.reward} />
         </Disclosure>
       ) : null}
-      {record ? <ArchivedContributors cycle={record} /> : view && snapshotAt ? <CycleAllocation view={view} updatedAt={snapshotAt} project={project} /> : null}
+      {record ? (
+        <ArchivedContributors cycle={record} />
+      ) : view && snapshotAt ? (
+        openMonthlyPool ? (
+          <OpenCycleAllocation sectionReads={sectionReads} view={view} snapshotAt={snapshotAt} project={project} networkPays={networkPays} nowMs={nowMs} />
+        ) : (
+          <CycleAllocation view={view} updatedAt={snapshotAt} project={project} />
+        )
+      ) : null}
     </main>
   );
 }

@@ -1,4 +1,5 @@
 // spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"
+import { readFileSync } from "node:fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Account, type Address, type Blockhash, type FetchedTransaction, type Signature, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, decodeTokenAccount } from "@repo/platform/chain/solana";
@@ -11,6 +12,22 @@ import { type Purpose, type TokenProgram, PURPOSE_BYTE, awardAddress, awardId, b
 import { type Instruction, completesPrepared, missingSigners, resolveInstruction, unsignedTransaction, withSignature } from "../../../src/chain/solana/transactions.ts";
 import { type Period, cutoffAt, periodContaining, shiftPeriod } from "../../../src/kernels/calendar.ts";
 import { type EscrowChain, type Keypair, escrowChain, finalizedTime, keypair, signedTransaction, simulated, submit, submitWire } from "./program.ts";
+
+export interface EscrowIdlEntry {
+  readonly name: string;
+  readonly discriminator: ReadonlyArray<number>;
+  readonly accounts?: ReadonlyArray<{ readonly name: string; readonly writable?: boolean; readonly signer?: boolean }>;
+}
+
+export interface EscrowIdl {
+  readonly address: string;
+  readonly instructions: ReadonlyArray<EscrowIdlEntry>;
+  readonly accounts: ReadonlyArray<EscrowIdlEntry>;
+}
+
+export function escrowIdl(): EscrowIdl {
+  return JSON.parse(readFileSync(new URL("../../../../../packages/contracts/solana/idl/slop_escrow.json", import.meta.url), "utf8")) as EscrowIdl;
+}
 
 export interface Deployment extends AsyncDisposable {
   readonly chain: EscrowChain;
@@ -97,7 +114,7 @@ export async function escrowDeployment(): Promise<Deployment> {
     const [identity, feeRecipient, rotationAuthority] = [keypair(), keypair(), keypair()];
     await chain.validator.airdrop(identity.address, 2n * LAMPORTS);
     await submit(chain, chain.upgradeAuthority, [initializeConfig(chain.program, chain.upgradeAuthority.address, { identity: identity.address, fee: feeRecipient.address, rotation: rotationAuthority.address })]);
-    return { chain, identity, feeRecipient, rotationAuthority, network: hashed("slop-escrow:solana-localnet"), close: chain.close, [Symbol.asyncDispose]: chain.close };
+    return { chain, identity, feeRecipient, rotationAuthority, network: hashed("slop-escrow:solana-localnet"), close: () => chain.close(), [Symbol.asyncDispose]: () => chain.close() };
   } catch (error) {
     await chain.close();
     throw error;
@@ -192,7 +209,7 @@ export function transactionParity(program: Address, sent: ReadonlyArray<Sent>, f
       sameInstructions: found.transaction.message.instructions.length === one.instructions.length
         && found.transaction.message.instructions.every((compiled, index) => {
           const resolved = resolveInstruction(compiled, keys);
-          return resolved !== undefined && sameInstruction(resolved, one.instructions[index] as Instruction);
+          return resolved !== undefined && sameInstruction(resolved, one.instructions[index]);
         }),
       calls: invocations.kind === "decoded" ? invocations.value.map((invocation) => invocation.call) : `malformed: ${invocations.issue}`,
     };

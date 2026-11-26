@@ -138,8 +138,8 @@ effect function outcome<A, E, R>(program: A!E!R) {
   }
 }
 
-effect function submit(world: World, key: string, report: Readonly<Record<string, unknown>>) {
-  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+effect function submit(world: World, key: string, report: Readonly<Record<string, unknown>>, as = reporter) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
   if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
   return caseOf(answer)
 }
@@ -320,14 +320,15 @@ const pausedLine = "Fees charged while the program is paused and the vault is em
 
 effect function unpaidReceipts(assessed: Assessed.Shape) {
   const { world, fake } = assessed
+  const unpaidReporter = "41052"
   try paused(world, 5, pausedLine)
-  const g = try submit(world, "assessment-case-g-01", reportG)
+  const g = try submit(world, "assessment-case-g-01", reportG, unpaidReporter)
   try qualify(world, g.id)
   fake.reply(about(reportG.summary), { text: proposal("A paused vault charges an uncapped fee.", []) })
   try assessQualified({ caseId: g.caseId, version: 1 })
   const pausedRun = fake.calls.at(-1)
   try paused(world, 6, undefined)
-  const h = try submit(world, "assessment-case-h-01", reportH)
+  const h = try submit(world, "assessment-case-h-01", reportH, unpaidReporter)
   try qualify(world, h.id)
   fake.reply(about(reportH.summary), { text: proposal("Withdrawals round the share price up.", []) })
   try assessQualified({ caseId: h.caseId, version: 1 })
@@ -349,7 +350,7 @@ effect function unpaidReceipts(assessed: Assessed.Shape) {
 }
 
 effect function unpaidScopeKept(world: World) {
-  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-scoped", idempotencyKey: "assessment-case-u-01", origin: "slop", report: reportF } }))
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: "41051", json: { projectId: "intake-scoped", idempotencyKey: "assessment-case-u-01", origin: "slop", report: reportF } }))
   if (answer.status !== 201) return try die(new Error(`unpaid report not received: ${answer.status} ${JSON.stringify(answer.body)}`))
   const received = caseOf(answer)
   const record = try caseRecord(received.caseId)
@@ -370,7 +371,8 @@ effect function unpaidScopeKept(world: World) {
 effect function receiptScopeKept(assessed: Assessed.Shape) {
   const { world, fake } = assessed
   try scoped(world, 3, ownerLine, new Date(Date.now() - 1000).toISOString())
-  const f = try submit(world, "assessment-case-f-01", reportF)
+  const scopeReporter = "41050"
+  const f = try submit(world, "assessment-case-f-01", reportF, scopeReporter)
   try scoped(world, 4, laterLine, new Date().toISOString())
   try qualify(world, f.id)
   fake.reply(about(reportF.summary), { failure: "unavailable" })
@@ -381,7 +383,7 @@ effect function receiptScopeKept(assessed: Assessed.Shape) {
   const ownerRun = fake.calls.at(-1)
   try promise(() => rows(world, "UPDATE security_submission_intake SET review_decision='request-information', review_reason='Attach the failing test.', reviewed_at=?, reviewed_by=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), maintainer, f.id))
   const [intakeF] = try promise(() => rows(world, "SELECT revision FROM security_submission_intake WHERE submission_id=?", f.id))
-  const revised = try promise(() => request(world, `/api/v1/security-submissions/${f.id}/report`, { as: reporter, json: { expectedRevision: intakeF?.revision, report: revisedF } }))
+  const revised = try promise(() => request(world, `/api/v1/security-submissions/${f.id}/report`, { as: scopeReporter, json: { expectedRevision: intakeF?.revision, report: revisedF } }))
   try qualify(world, f.id)
   fake.reply(about(revisedF.summary), { text: proposal("Paused vaults keep settling queued withdrawals.", []) })
   try assessQualified({ caseId: f.caseId, version: 2 })

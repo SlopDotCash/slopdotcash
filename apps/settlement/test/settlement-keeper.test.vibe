@@ -9,7 +9,7 @@ import { type Address, SYSTEM_PROGRAM, addressOf, base58Encode, base64Decode, ba
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { decoded, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
-import { fileJournal } from "@repo/platform/journal"
+import { type Journal, fileJournal } from "@repo/platform/journal"
 import { type StartedWorker, bundle, scheduled, startWorker } from "@repo/platform/testing"
 import { type Account, anvil, forward, refuseMainnet, rpcFaults, serve } from "@repo/platform/testing/chains"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
@@ -192,7 +192,7 @@ effect function keeperRun(text: string, execute = true) {
   }
 }
 
-effect function journal<A>(read: A!unknown!any) {
+effect function journal<A>(read: A!unknown!Journal) {
   const { journalPath } = try Bench
   provide fileJournal(journalPath) {
     return try orDie(read)
@@ -446,7 +446,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       const handle = try spawnKeeper(main, try writtenConfig("stalled.json", try operatorConfig(stalled.url)))
       try timeout(promise(() => gate.reached), "120 seconds")
       try handle.kill({ killSignal: "SIGKILL" })
-      return Number(try handle.exitCode)
+      return Number(handle.exitCode catch () => 137)
     })
     const committed = try gasRows()
     const resumed = try scoped(effect {
@@ -564,6 +564,8 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
     const group = (try gasRows()).filter((row) => original !== undefined && row.id.startsWith(original.id))
     try promise(() => escrow.chain.rpc("evm_setAutomine", [true]))
     try promise(() => escrow.chain.setNextBaseFee(1_000_000n))
+    try settled()
+    try keeperRun(text)
     try settled()
     try same({
       first: outcomeOf(first, id)?.state,
@@ -894,7 +896,7 @@ effect function solanaRun(perRun: number) {
   }
 }
 
-effect function solanaJournal<A>(read: A!unknown!any) {
+effect function solanaJournal<A>(read: A!unknown!Journal) {
   const { journalPath } = try SolanaBench
   provide fileJournal(journalPath) {
     try orDie(openKeeperStore())

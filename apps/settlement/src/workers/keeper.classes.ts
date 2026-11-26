@@ -1,4 +1,3 @@
-/// <reference path="../../../../packages/platform/src/cloudflare.d.ts" />
 // spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"
 import { DurableObject } from "cloudflare:workers";
 import { Effect, ManagedRuntime } from "effect";
@@ -81,6 +80,6 @@ async function tickObject(env: KeeperEnv, name: string): Promise<TickAnswer> {
 }
 
 export const keeperEntry = {
-  fetch: async (): Promise<Response> => new Response("Not found", { status: 404 }),
+  fetch: (): Promise<Response> => Promise.resolve(new Response("Not found", { status: 404 })),
   scheduled: (_controller: ScheduledController, env: KeeperEnv): Promise<void> => Effect.runPromise(scheduledTick(env, tickObject)),
 };

@@ -10,7 +10,7 @@ export const historyText = () => readFile(new URL("data/points/history.json", ro
 export async function reviewHistory(): Promise<ReadonlyArray<unknown>> {
   const parsed: unknown = JSON.parse(await readFile(new URL("data/accepted-review-history.json", root), "utf8"));
   if (typeof parsed !== "object" || parsed === null || !("events" in parsed) || !Array.isArray(parsed.events)) throw new TypeError("accepted review history has no events");
-  return parsed.events;
+  return parsed.events as ReadonlyArray<unknown>;
 }
 
 export async function snapshotFile(): Promise<{ readonly text: string; readonly value: unknown }> {

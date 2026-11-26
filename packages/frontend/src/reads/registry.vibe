@@ -39,7 +39,11 @@ const LiveRegistry = Schema.Struct({
   restrictions: Schema.optional(Schema.NullOr(Schema.Array(Restriction))),
 })
 
-const PublishedRegistry = Schema.Struct({ schemaVersion: Schema.Literal("1"), syncedAt: Schema.String, projects: Schema.Array(Project) })
+const PublishedRegistry = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  syncedAt: Schema.String,
+  projects: Schema.Array(Project),
+})
 
 const unexpected = "The project registry returned an unexpected response."
 const unpublished = "The published project registry is not valid."

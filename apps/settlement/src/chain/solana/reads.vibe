@@ -1,0 +1,69 @@
+// spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"
+import { type Account, type Address, SolanaRpc, base64Decode, isSignature } from "@repo/platform/chain/solana"
+import { decodeProject } from "./accounts.ts"
+import type { VerifiedDeployment } from "../../owner/solanaDeployment.vibe"
+
+const ACCOUNTS_PER_READ = 100
+
+export error SolanaReadRefused { reason: string }
+
+export interface Slotted {
+  readonly values: ReadonlyArray<Account | undefined>
+  readonly slot: number
+}
+
+export interface SolanaStatus {
+  readonly failed: boolean
+  readonly finalized: boolean
+  readonly slot: number
+}
+
+export effect function finalizedAccount(at: Address) {
+  return try (try SolanaRpc).account(at, "finalized")
+}
+
+export effect function finalizedProject(verified: VerifiedDeployment) {
+  const decoded = decodeProject(try finalizedAccount(verified.project), verified.program)
+  if (decoded.kind !== "decoded") throw new SolanaReadRefused({ reason: "Project missing" })
+  return decoded.value
+}
+
+export effect function finalizedAccounts(addresses: ReadonlyArray<Address>) {
+  const rpc = try SolanaRpc
+  const values: Array<Account | undefined> = []
+  let slot = Number.POSITIVE_INFINITY
+  for (let index = 0; index < addresses.length; index += ACCOUNTS_PER_READ) {
+    const read = try rpc.accounts(addresses.slice(index, index + ACCOUNTS_PER_READ), "finalized")
+    slot = Math.min(slot, read.slot)
+    values.push(...read.value)
+  }
+  if (!Number.isSafeInteger(slot)) throw new SolanaReadRefused({ reason: "Invalid finalized account response" })
+  return { values, slot } satisfies Slotted
+}
+
+export effect function statusOf(signature: string) {
+  if (!isSignature(signature)) throw new SolanaReadRefused({ reason: "Invalid transaction signature" })
+  const [status] = try (try SolanaRpc).signatureStatuses([signature])
+  if (status === undefined) return undefined
+  return { failed: status.err, finalized: status.confirmationStatus === "finalized", slot: status.slot } satisfies SolanaStatus
+}
+
+effect function observed(signature: string) {
+  const status = try statusOf(signature)
+  if (status?.failed === true) throw new SolanaReadRefused({ reason: "Existing transaction failed; reconcile before retry" })
+  return status !== undefined
+}
+
+export effect function broadcastSolana<E, R>(attempt: { readonly transactionId: string; readonly raw: string }, beforeBroadcast: () => void!E!R) {
+  if (try observed(attempt.transactionId)) return attempt.transactionId
+  try beforeBroadcast()
+  const wire = base64Decode(attempt.raw)
+  if (wire === undefined) throw new SolanaReadRefused({ reason: "Journaled transaction is malformed" })
+  const sent = (try SolanaRpc).sendRaw(wire, { skipPreflight: false, maxRetries: 3 }) catch effect (error) => {
+    const landed = observed(attempt.transactionId) catch () => false
+    if (!landed) throw error
+    return attempt.transactionId
+  }
+  if (sent !== attempt.transactionId) throw new SolanaReadRefused({ reason: "Broadcast signature mismatch" })
+  return attempt.transactionId
+}

@@ -1,8 +1,8 @@
 // spec/backend/repoRequests.md, "A flag counts for 90 days, renews in place and is withdrawn without being deleted"; spec/backend/repoRequests.md, "The public board counts active flags per repository, never names who flagged, and leaves out a repository on Slop"
 import { isoAt, millisOf } from "@repo/platform/clock"
-import { RowMismatch, decoded, first, rows, sql } from "@repo/platform/d1"
+import { type RowMismatch, decoded, first, rows, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Event, NotAState, type RepoFlag, type RepoRequests, apply, boardLimit, decodeEvent, decodeState, flagOf, live } from "../../gen/backend__repoRequests.effect.vibe"
+import { type Event, type NotAState, type RepoFlag, type RepoRequests, apply, boardLimit, decodeEvent, decodeState, flagOf, live } from "../../gen/backend__repoRequests.effect.vibe"
 
 schema FlagRow { repo_id: string; github_id: string; full_name: string; created_at: string; flagged_at: string; expires_at: string; withdrawn_at: string | null }
 schema CountRow { n: number }

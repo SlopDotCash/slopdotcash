@@ -5,13 +5,34 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    "./backend": "./src/backend.vibe",
-    "./operations": "./src/operations.vibe",
-    "./security": "./src/security.vibe",
-    "./contributor": "./src/contributor.vibe",
-    "./points": "./src/points.vibe",
-    "./settlement": "./src/settlement.vibe",
-    "./slopbot": "./src/slopbot.vibe"
+    "./backend": {
+      "types": "./.vibe/declarations/src/backend.d.vibe.ts",
+      "default": "./src/backend.vibe"
+    },
+    "./operations": {
+      "types": "./.vibe/declarations/src/operations.d.vibe.ts",
+      "default": "./src/operations.vibe"
+    },
+    "./security": {
+      "types": "./.vibe/declarations/src/security.d.vibe.ts",
+      "default": "./src/security.vibe"
+    },
+    "./contributor": {
+      "types": "./.vibe/declarations/src/contributor.d.vibe.ts",
+      "default": "./src/contributor.vibe"
+    },
+    "./points": {
+      "types": "./.vibe/declarations/src/points.d.vibe.ts",
+      "default": "./src/points.vibe"
+    },
+    "./settlement": {
+      "types": "./.vibe/declarations/src/settlement.d.vibe.ts",
+      "default": "./src/settlement.vibe"
+    },
+    "./slopbot": {
+      "types": "./.vibe/declarations/src/slopbot.d.vibe.ts",
+      "default": "./src/slopbot.vibe"
+    }
   },
   "scripts": {
     "typecheck": "vibelang --noEmit -p ."

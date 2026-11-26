@@ -59,7 +59,7 @@ required owner review.
 | Path | Holds |
 |---|---|
 | `apps/` | deployable applications; `apps/app` is the hello world to replace |
-| `packages/` | what applications share: `@repo/ui` (components), `@repo/design-system` (tokens) |
+| `packages/` | what applications share: `@repo/cli` (project CLI), `@repo/ui` (components), `@repo/design-system` (tokens) |
 | `vibestack/` | the tools: the `spec` command, Studio, and what any project uses but does not own (`vibestack/testing`, `vibestack/design`, `vibestack/stories`) |
 | `vibestack/examples/` | standalone projects, each with its own install; never part of the workspace |
 
@@ -119,10 +119,10 @@ the UI stories and the design theme before analysis reads their outputs.
 | `vibestack/std/` | specs that ship with the tools, which any spec may import, each with its proof file |
 | `vibestack/conform.ts` | the `traces` stage: drivers, each in a Node of its own, `driver:` programs and recorded traces; saved counterexamples; the driver stub |
 | `vibestack/explore.ts` | the `explore` stage: serves a package's page with its app script, runs Bombadil on it, and replays and removes a saved run |
-| `vibestack/conformance.ts` | the comparing: journeys, malformed-input probes, walks, shrinking and replay; copied into `gen/` for a driver's types |
-| `vibestack/testing/` | what packages import: `project()` (the Vitest configuration), the property-test generator, `effectDriver` |
+| `vibestack/conformance.ts` | the comparing: journeys, deterministic model-based path planning (`planModel`), malformed-input probes, walks, shrinking and replay; copied into `gen/` for a driver's types |
+| `vibestack/testing/` | what packages import: `project()` (the Vitest configuration), the property-test generator, `effectDriver`, `planModel`, `runModel` |
 | `vibestack/stories/`, `vibestack/design/` | generated stories and their tests; design tokens and their lint rules. The design project module in [`vibestack/design/project.ts`](vibestack/design/project.ts) builds or checks several token directories in one process. |
-| `vibestack/eslint.ts` | `withWorkspaceBarrels`: ESLint rules enforcing barrel-only workspace `exports` and imports, with per-file ratchets |
+| `vibestack/eslint.ts` | `withWorkspaceBarrels` and `vibestackConfig`: ESLint rules enforcing barrel-only workspace `exports` and imports, with stale-ratchet enforcement |
 | `vibestack/gen.ts` | the translator: reads what a module imports and defines |
 | `vibestack/gen/types.ts` | everything decided by a type |
 | `vibestack/gen/print.ts` | expressions |
@@ -400,7 +400,7 @@ failing exploration found is saved and replayed instead
 | Kind | Checks | Source or example |
 |---|---|---|
 | Formal | Rules and laws for every state and input | `spec/app/`; `.proof.dfy` where Dafny needs help, such as `spec/app/echo.proof.dfy` and `src/greeting.proof.dfy` |
-| Model-based | Real shell against the spec: journeys, malformed input, walks and saved counterexamples | `test/drivers/app.ts` and the recorded `test/traces/app.jsonl`, run by `traces` |
+| Model-based | Real shell or UI against the spec: journeys, deterministic transition-covering paths (accepted and refused), malformed input, walks and saved counterexamples | `test/drivers/app.ts` and the recorded `test/traces/app.jsonl`, run by `traces`; `planModel` and `runModel` from `vibestack/testing` in Vitest Node and browser tests |
 | Journey/integration | A story through real services, including what a driver cannot see | `@effect/vitest` in `test/app.test.vibe`: reload from storage |
 | Component/browser | Story interactions and accessibility; browser-only behavior such as focus and storage | Component metadata `play`; `test/app.browser.test.tsx` in Chromium |
 | Exploratory/browser | The served page under random clicks, typing, scrolling and reloads: no uncaught error, console error or failed request, and the properties each rule gives the page, in every state reached | `test/bombadil.ts`, or nothing for Bombadil's defaults; `apps/app/test/bombadil.ts`, run by `explore` |

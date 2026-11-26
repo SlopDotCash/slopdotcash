@@ -45,7 +45,7 @@ export function acceptedWorkUnitCommits(evidence: Evidence) {
 }
 
 export effect function sourceDigestOf(evidence: Evidence, policy: Policy) {
-  const { collectedAt, ...sourceEvidence } = evidence
+  const { collectedAt: _collectedAt, ...sourceEvidence } = evidence
   return try orDie(Effect.try(() => jsonDigest({ policy: { sha: policy.sha, text: policy.text }, evidence: sourceEvidence })))
 }
 

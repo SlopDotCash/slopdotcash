@@ -1,7 +1,7 @@
 // spec/slopbot/routing.md, "Live claims, recent completions and unresolved closes occupy the author's three slots"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
-import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
+import { type Aggregate, type Rows, load } from "@repo/platform/stored"
 import { type AuthorSlots, type CloseMark, type MergeHistory, NotAState, Rejected, type Slot, type SlotStatus, apply, day, decodeState } from "../../gen/slopbot__routing.effect.vibe"
 import { ownSlot } from "../../gen/slopbot__reviewLease.effect.vibe"
 
@@ -64,7 +64,7 @@ export function slotsVersion(scope: AuthorScope): Statement {
   return sql`coalesce((SELECT group_concat(review_key || ':' || status || ':' || coalesce(claim_token, '-') || ':' || coalesce(lease_expires_at, '-') || ':' || coalesce(completed_at, '-') || ':' || coalesce(close_state, '-') || ':' || coalesce(closed_at, '-'), ',') FROM (${slotsRead(scope)})), '')`
 }
 
-function slotOfRow(row: typeof SlotRow.Type, key: number, now: number): Slot {
+function slotOfRow(row: typeof SlotRow.Type, key: number): Slot {
   const status = statuses[row.status] ?? "SlotSkipped"
   const close = row.close_state === null ? "NoClose" : closes[row.close_state] ?? "NoClose"
   return {
@@ -91,7 +91,7 @@ export effect function slotsOf(scope: AuthorScope, rows: Rows, now: number, hist
     repository: scope.repositoryId,
     author: scope.authorId,
     established: false,
-    slots: [...others.map((row, index) => slotOfRow(row, otherKey(index), now)), ...own.map((row) => slotOfRow(row, ownSlot, now))],
+    slots: [...others.map((row, index) => slotOfRow(row, otherKey(index))), ...own.map((row) => slotOfRow(row, ownSlot))],
   } satisfies AuthorSlots)
   return history === undefined ? loaded : try apply(loaded, { type: "observeMerges", history })
 }

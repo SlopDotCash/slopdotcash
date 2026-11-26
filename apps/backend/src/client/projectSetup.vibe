@@ -90,7 +90,7 @@ export schema CreateRequest { readonly manifest: Schema.Unknown; readonly referr
 export schema ReviseRequest { readonly manifest: Schema.Unknown; readonly expectedRevision: Schema.Unknown; readonly reason?: Schema.Unknown; readonly monthlyAmount?: string; readonly bountyAmount?: string }
 export schema RemoveRequest { readonly expectedRevision: Schema.Unknown }
 export schema CheckRequest { readonly requestScan?: Schema.Unknown }
-export schema EmptyRequest {}
+export const EmptyRequest = Schema.Struct({})
 
 export schema Created { readonly project: ProjectRecord; readonly setup: SetupStatus }
 export schema Revised { readonly project: ProjectRecord; readonly changes: RevisionChanges; readonly setup: SetupStatus }

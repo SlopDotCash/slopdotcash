@@ -6,7 +6,7 @@ const Digest = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))
 
 const ByteCount = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
 
-const Text = Schema.String.check(Schema.isBetweenLength(1, 1_000), Schema.isPattern(/^\S(?:[^\u0000-\u001f\u007f]*\S)?$/u))
+const Text = Schema.String.check(Schema.isBetweenLength(1, 1_000), Schema.isPattern(/^\S(?:[^\p{Cc}]*\S)?$/u))
 
 const ExactInstant = Schema.String.check(
   Schema.makeFilter((text: string) => Number.isFinite(Date.parse(text)) && new Date(text).toISOString() === text, { expected: "an exact ISO instant" }),

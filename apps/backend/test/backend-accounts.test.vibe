@@ -6,7 +6,7 @@ import { internet } from "@repo/platform/testing/internet"
 import { challengeOf } from "../src/identity/pkce.vibe"
 
 module fakes {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
   import type { Handler } from "@repo/platform/testing"
 

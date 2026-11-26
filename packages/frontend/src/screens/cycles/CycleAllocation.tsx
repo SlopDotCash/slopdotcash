@@ -1,6 +1,7 @@
 // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/frontend/presentation.md, "Amounts display exactly in their asset's decimals with grouped whole digits and no trailing fraction zeros"
 import { Avatar, EmptyState, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
-import { formatRewardCapDisplay, formatRewardMinor, monthlyPoolUnfunded } from "../../kernels/assetText.ts";
+import { formatRewardMinor } from "../../kernels/assetText.ts";
+import { cyclePoolFunding, type FundingVault, type PoolFunding } from "../../kernels/poolFunding.ts";
 import { capFor, type ExclusionRelationship, type PoolContributor, type PrizeContributor, type ProjectCycleView } from "../../projections/projectView.ts";
 import { reviewerStandings } from "../../projections/standings.ts";
 import type { ShownProject } from "../projects/project.schema.ts";
@@ -16,6 +17,9 @@ export type CycleAllocationProps = {
   project: ShownProject;
   /** The monthly pool's committed amount; an unknown amount counts as unfunded. */
   committedMinor?: bigint;
+  funding?: PoolFunding;
+  vaults?: ReadonlyArray<FundingVault>;
+  networkPays?: (network: string) => boolean;
 };
 
 const exclusionLabels: Readonly<Record<ExclusionRelationship, string>> = { owner: "owner", "funded-employee": "funded employee", "related-party": "related party" };
@@ -53,17 +57,12 @@ export function FundedMeter({ label, fundedMinor, capMinor, funded, cap }: Funde
 const linkClass = "flex items-center gap-3 text-foreground hover:underline";
 
 /** @throws {never} */
-function unfunded(view: ProjectCycleView, committedMinor: bigint | undefined): boolean {
-  return view.kind === "monthly-pool" && view.project.reward.kind === "monthly-pool" && monthlyPoolUnfunded({ fundingState: view.project.reward.fundingState, committedMinor: committedMinor ?? 0n });
-}
-
-/** @throws {never} */
 function weightShare(view: ProjectCycleView, weight: bigint): bigint {
   const total = view.leaders.reduce((sum, leader) => sum + leader.weight, 0n);
   return total > 0n ? (weight * 1_000_000n) / total : 0n;
 }
 
-function RewardValue({ view, leader, project, committedMinor }: { view: ProjectCycleView; leader: PoolContributor | PrizeContributor; project: ShownProject; committedMinor: bigint | undefined }) {
+function RewardValue({ view, leader, project, funded }: { view: ProjectCycleView; leader: PoolContributor | PrizeContributor; project: ShownProject; funded: boolean }) {
   if (leader.payoutExclusion) {
     const why = exclusionLabels[leader.payoutExclusion];
     return (
@@ -74,15 +73,28 @@ function RewardValue({ view, leader, project, committedMinor }: { view: ProjectC
     );
   }
   if ("projectedSharePartsPerMillion" in leader) return <>{percentText(leader.projectedSharePartsPerMillion)} share</>;
-  if (!unfunded(view, committedMinor)) return <>{formatRewardMinor(leader.simulatedMinor, project.rewardAsset)}</>;
+  if (funded) return <>{formatRewardMinor(leader.simulatedMinor, project.rewardAsset)}</>;
   return <>{percentText(weightShare(view, leader.weight))}</>;
 }
 
 /** The month's contributors ranked from the live snapshot with their projected share; a projection, never an award. */
-export function CycleAllocation({ view, updatedAt, project, committedMinor }: CycleAllocationProps) {
+export function CycleAllocation({ view, updatedAt, project, committedMinor, funding, vaults, networkPays }: CycleAllocationProps) {
   const reviewers = new Map(reviewerStandings(view.ledger).map((reviewer) => [reviewer.actor.id, reviewer]));
   const leaders: ReadonlyArray<PoolContributor | PrizeContributor> = [...view.leaders].sort((left, right) => left.rank - right.rank || left.actor.id.localeCompare(right.actor.id));
   const budget = project.reward.reviewBudget;
+  const monthlyPool = view.kind === "monthly-pool" && view.project.reward.kind === "monthly-pool";
+  const pool = monthlyPool
+    ? cyclePoolFunding({
+        cycleId: view.cycle.id,
+        fundingState: view.project.reward.fundingState,
+        committedMinor,
+        funding,
+        deployments: project.deployments,
+        vaults,
+        networkPays,
+      })
+    : { funded: true, fundedMinor: 0n };
+  const capMinor = monthlyPool ? capFor(view.project.reward, view.cycle.id) : 0n;
   return (
     <section aria-labelledby="allocation-heading" className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -95,17 +107,17 @@ export function CycleAllocation({ view, updatedAt, project, committedMinor }: Cy
             <FundedMeter label="Reviews" fundedMinor={budget.committedMinor} funded={formatRewardMinor(budget.committedMinor)} cap={budget.monthlyCapDisplay} />
           </p>
         ) : null}
-        {view.kind === "monthly-pool" && view.project.reward.kind === "monthly-pool" ? (
+        {monthlyPool ? (
           <p>
-            {unfunded(view, committedMinor) ? (
-              <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Not funded yet" }} />
-            ) : (
+            {pool.funded ? (
               <FundedMeter
-                fundedMinor={committedMinor ?? 0n}
-                capMinor={capFor(view.project.reward, view.cycle.id)}
-                funded={formatRewardMinor(committedMinor ?? 0n, project.rewardAsset)}
-                cap={formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)}
+                fundedMinor={pool.fundedMinor}
+                capMinor={capMinor}
+                funded={formatRewardMinor(pool.fundedMinor, project.rewardAsset)}
+                cap={formatRewardMinor(capMinor, project.rewardAsset)}
               />
+            ) : (
+              <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Not funded yet" }} />
             )}
           </p>
         ) : null}
@@ -120,7 +132,7 @@ export function CycleAllocation({ view, updatedAt, project, committedMinor }: Cy
               <TableHead>Rank</TableHead>
               <TableHead>Contributor</TableHead>
               <TableHead>Points</TableHead>
-              <TableHead>{unfunded(view, committedMinor) ? "Share" : "Projected share"}</TableHead>
+              <TableHead>{monthlyPool && !pool.funded ? "Share" : "Projected share"}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -155,7 +167,7 @@ export function CycleAllocation({ view, updatedAt, project, committedMinor }: Cy
                   </TableCell>
                   <TableCell>
                     <strong className="font-mono tabular-nums">
-                      <RewardValue view={view} leader={leader} project={project} committedMinor={committedMinor} />
+                      <RewardValue view={view} leader={leader} project={project} funded={pool.funded} />
                     </strong>
                   </TableCell>
                 </TableRow>

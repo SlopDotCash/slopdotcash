@@ -331,7 +331,7 @@ effect function grant(actor: Actor) {
   if (state.repositories.some((each) => latestOf(state, each).state === "AMalicious")) throw refused(rows.projectMalicious)
   const steward = manifest.steward.github
   const existing = try first(ExemptionRow, sql`${exemptionSelect} WHERE g.project_id = ${projectId} AND g.repository_id = ${identity.githubId} AND g.repository_node_id = ${identity.nodeId} AND g.steward_id = ${steward.actorId} AND g.steward_node_id = ${steward.nodeId} AND r.exemption_id IS NULL ORDER BY g.sequence DESC LIMIT 1`)
-  if (existing !== undefined) return json({ exemption: exemptionView(existing), replayed: true, clearance: try clearanceView(state) })
+  if (existing !== undefined) return json({ exemption: exemptionView(existing), replayed: true, setup: null, clearance: try clearanceView(state) })
   const repositoryNumber = idOf(identity.githubId)
   const request: GrantRequest = {
     id: state.grants.reduce((highest, each) => Math.max(highest, each.id), 0) + 1,

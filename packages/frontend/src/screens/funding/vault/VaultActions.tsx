@@ -42,29 +42,17 @@ import { PendingCheck } from "./PendingCheck.tsx";
 import type { FundingDeployment, FundingProject } from "./project.schema.ts";
 
 export type VaultActionsProps = {
-  /** The project whose vault this is. */
   project: FundingProject;
-  /** The registered vault on one network. */
   deployment: FundingDeployment;
-  /** The UTC month, `YYYY-MM`, whose saved owner requests belong to this page. */
   period: string;
-  /** The signed-in account's GitHub id as a number, or 0 when signed out. */
   account: number;
-  /** Where "Sign in with GitHub" goes, returning to this page; a signed-out viewer of an owner form without it sees nothing. */
   loginHref?: string;
-  /** The vault's purpose: a security bounty vault is reviewed against the bounty factory terms. */
   payoutPolicy?: PayoutPolicy;
-  /** Whether new deposits are open; without them only the vault owner's wallet connects, to withdraw free funds. */
   canDeposit?: boolean;
-  /** The pool's funding facts that a withdrawal must keep; a monthly pool without them offers deposits only. */
   pool?: PoolFacts;
-  /** Whether the cached pool-funding read shows month locks on this vault, so its contract guards locked funds. */
   pledgeSupport?: boolean;
-  /** The public project page: any connected wallet deposits here, and nothing is withdrawn. */
   depositOnly?: boolean;
-  /** Called with the wallet connected here, which the vault's month lock card shares. */
   onWallet?: (connection: Connection | undefined) => void;
-  /** Called once a deposit or withdrawal is verified on the finalized chain. */
   onFinalized: () => void;
 };
 
@@ -72,7 +60,6 @@ type Operation = "deposit" | "withdraw";
 
 export const resetNote = "Reset the existing token allowance to zero first.";
 
-/** What the wallet button says for the reviewed step. */
 export function signLabel(step: DepositStep, operation: Operation): string {
   if (step === "batch") return "Approve and deposit in wallet";
   if (step === "reset") return "Reset token allowance in wallet";
@@ -112,19 +99,16 @@ function followingOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>
   return entry;
 }
 
-/** The answer of `work`, run again on `runtime` each time a component starts showing `key`, so a key shown again after another runs afresh. */
 export function useFollowed<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string, work: () => Effect.Effect<A, E, R>): Settled<A> {
   const entry = followingOf(runtime, key, work);
   return useSyncExternalStore(entry.subscribe, () => entry.shown, () => entry.shown) as Settled<A>;
 }
 
-/** The network's mark beside its name, or its name alone where no mark exists. */
 export function NetworkName({ network }: { network: string }) {
   const label = networkLabel(network);
   return marks.has(label) ? <NetworkMark network={label as NetworkMarkProps["network"]} size="sm" /> : <span>{label}</span>;
 }
 
-/** Deposits and withdrawals on one registered vault, each sent by the person's own wallet after the request is saved. */
 export function VaultActions({ project, deployment, period, account, loginHref, payoutPolicy = "ordinary", canDeposit = true, pool, pledgeSupport = false, depositOnly = false, onWallet, onFinalized }: VaultActionsProps) {
   const runtime = vaultRuntime(project, deployment, period, payoutPolicy);
   useFollowed(runtime, `follow:${account}`, () => followVault(account));
@@ -141,7 +125,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const [cleared, setCleared] = useState(0);
   const unreadable = useSettled(runtime, `unreadable:${cleared}`, () => unreadableSaved());
   const [wallet, setWallet] = useState<Connection>();
-  const [chosen, setOperation] = useState<Operation>("deposit");
+  const [chosen, setChosen] = useState<Operation>("deposit");
   const [amount, setAmount] = useState("");
   const [review, setReview] = useState<ActionReview>();
   const family = familyOf(deployment);
@@ -177,7 +161,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
     if (outcome.answer !== "FinalRead") return;
     if (outcome.message !== fundingMessages.approval) return onFinalized();
     if (connection === undefined || amount.trim() === "" || !canDeposit) return;
-    setOperation("deposit");
+    setChosen("deposit");
     void run(runtime, reviewAction(connection, "deposit", amount, pool, pledgeSupport, depositOnly ? publicFunding(true, true, "NoSavedRequest") : undefined)).then((done) => {
       if (done.ok) setReview(done.value);
     });
@@ -198,7 +182,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
       setWallet(connection);
       onWallet?.(connection);
       setReview(undefined);
-      if (depositOnly || connection.address.toLowerCase() !== deployment.owner.toLowerCase()) setOperation("deposit");
+      if (depositOnly || connection.address.toLowerCase() !== deployment.owner.toLowerCase()) setChosen("deposit");
       watch(connection);
       if (pendingBatch) watchBatched(connection);
     });
@@ -291,7 +275,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
                   hint={funding !== undefined ? undefined : !isOwner ? "Only the vault owner's wallet can withdraw free funds." : promiseUnread ? fundingMessages.promiseUnread : undefined}
                   options={choices.map((choice) => ({ value: choice, label: choice === "deposit" ? "Deposit tokens" : "Withdraw free funds" }))}
                   onValueChange={(value) => {
-                    setOperation(value === "withdraw" ? "withdraw" : "deposit");
+                    setChosen(value === "withdraw" ? "withdraw" : "deposit");
                     setReview(undefined);
                   }}
                 />

@@ -1,5 +1,5 @@
 // spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"
-import { Arbitrary, Option, Schema } from "effect";
+import { Arbitrary, Equal, Hash, Option, Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { type Role, contributionFields, publicSiteOrigin, templatePaths } from "./fields.ts";
 import { type GuideRequest, type InstallGuide, installClients, renderInstallGuide } from "./installGuide.ts";
@@ -28,6 +28,9 @@ const groupOf = (role: Role): TemplateGroup => ({
 const fetched = new Map(roles.flatMap((role) => templateFiles.map(({ path, bytes }) => [`${templatePaths[role]}/${path}`, bytes] as const)));
 
 const rendererSources = rendererSourcePaths.map((path) => ({ path, sha256: sha256Hex(encoder.encode(path)) }));
+const contributorGroup = groupOf("contributor");
+const reviewerGroup = groupOf("reviewer");
+const fixedTemplateSha256 = templateSha256({ contributor: contributorGroup, reviewer: reviewerGroup, rendererSources, acceptedRevisions });
 
 const projectIdOf = (text: string) => {
   const core = text.toLowerCase().replace(/[^a-z0-9-]/gu, "").slice(0, 41);
@@ -50,16 +53,14 @@ const inputs = Arbitrary.schema(
 ).pipe(
   Arbitrary.map(({ id, text, revision, manifestSeed, commitSeed, revisionStatus, rendererStatus, generatedAt }): PublicationInput => {
     const projectId = projectIdOf(id);
-    const contributor = groupOf("contributor");
-    const reviewer = groupOf("reviewer");
     const index: TemplateIndex = {
       schemaVersion: "1",
       repository: sourceRepository,
       commit: sha256Hex(encoder.encode(commitSeed)).slice(0, 40),
-      templateSha256: templateSha256({ contributor, reviewer, rendererSources, acceptedRevisions }),
+      templateSha256: fixedTemplateSha256,
       revisionStatus,
-      contributor,
-      reviewer,
+      contributor: contributorGroup,
+      reviewer: reviewerGroup,
       renderer: { paths: [...rendererSourcePaths], sources: rendererSources, revisionStatus: rendererStatus },
       acceptedRevisions: [...acceptedRevisions],
     };
@@ -118,6 +119,35 @@ const publishedPaths = (projectId: string) =>
     ];
   });
 
+const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.byteLength === right.byteLength &&
+  Buffer.from(left.buffer, left.byteOffset, left.byteLength).equals(Buffer.from(right.buffer, right.byteOffset, right.byteLength));
+
+const sameFiles = (left: ReadonlyMap<string, Uint8Array>, right: ReadonlyMap<string, Uint8Array>): boolean => {
+  if (left.size !== right.size) return false;
+  const rightIter = right.entries();
+  for (const [key, bytes] of left.entries()) {
+    const next = rightIter.next();
+    if (next.done || next.value[0] !== key || !sameBytes(bytes, next.value[1])) return false;
+  }
+  return true;
+};
+
+const runPublication = (input: PublicationInput): Publication => {
+  const output = buildProjectPublication(input);
+  if (output.kind !== "published") return output;
+  return {
+    kind: "published",
+    files: output.files,
+    [Equal.symbol](that: unknown): boolean {
+      return typeof that === "object" && that !== null && "kind" in that && that.kind === "published" && "files" in that && that.files instanceof Map && sameFiles(output.files, that.files);
+    },
+    [Hash.symbol](): number {
+      return Hash.number(output.files.size);
+    },
+  } as Publication;
+};
+
 const bindsArtifacts = (input: PublicationInput, output: Publication) => {
   if (output.kind !== "published") return false;
   const { files } = output;
@@ -138,7 +168,7 @@ const bindsArtifacts = (input: PublicationInput, output: Publication) => {
         Option.isSome(manifest) &&
         textAt(`downloads/${name}.skill.sha256`) === `${archiveDigest}  ${name}.skill\n` &&
         manifest.value.archive.sha256 === archiveDigest &&
-        textAt(`${prefix}claude-code.md`) === textAt(`${prefix}claude.md`) &&
+        sameBytes(bytesAt(`${prefix}claude-code.md`), bytesAt(`${prefix}claude.md`)) &&
         guideFiles.every(([client, file]) => {
           const record = manifest.value.guides[client];
           return (
@@ -152,7 +182,7 @@ const bindsArtifacts = (input: PublicationInput, output: Publication) => {
   );
 };
 
-export const publicationBindsItsArtifacts = contract({ input: inputs, run: buildProjectPublication, deterministic: true, invariant: bindsArtifacts });
+export const publicationBindsItsArtifacts = contract({ input: inputs, run: runPublication, deterministic: true, invariant: bindsArtifacts });
 
 const guideRequests = Arbitrary.schema(Schema.Struct({ id: Schema.String, reviewer: Schema.Boolean, client: Schema.Literals(installClients) })).pipe(
   Arbitrary.map(({ id, reviewer, client }): GuideRequest => {

@@ -104,8 +104,8 @@ async function fixture(chain: Anvil, out: string, usdcAt: Address): Promise<Fixt
 }
 
 const Started = Layer.effect(Chains, effect {
-  const ethereum = try acquireRelease(promise(() => anvil({ chainId: 1 })), (chain) => promise(() => chain.close()))
-  const base = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (chain) => promise(() => chain.close()))
+  const ethereum = try acquireRelease(promise(() => anvil({ chainId: 1, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
+  const base = try acquireRelease(promise(() => anvil({ chainId: 8453, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
   const built = try acquireRelease(promise(() => forgeBuild(contracts, ["test/FeeConverterFixture.sol"])), (output) => promise(() => output.close()))
   const eth = try promise(() => fixture(ethereum, built.out, circleUsdc.ethereum as Address))
   const onBase = try promise(() => fixture(base, built.out, circleUsdc.base as Address))
@@ -160,7 +160,7 @@ function stepOf(error: unknown) {
 }
 
 effect function finalize(chain: Anvil) {
-  try promise(() => chain.mine(65))
+  try promise(() => chain.mine(2))
 }
 
 effect function walletOf(network: EvmNetwork) {

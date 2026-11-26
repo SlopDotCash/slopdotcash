@@ -8,8 +8,7 @@ import { expect } from "vitest";
 import { type Discovery, type Owned, type ScriptRoot, fakeGh, identity, node, onPath, preloading, removeRoot, scriptRoot, stopIdentity, stopProcess, until, writeModule } from "./fixture.ts";
 
 async function discoveryOf(f: ScriptRoot): Promise<Discovery> {
-  const loaded: Discovery = await import(f.url);
-  return loaded;
+  return (await import(f.url)) as Discovery;
 }
 
 function contenderOf(f: ScriptRoot): string {
@@ -85,7 +84,7 @@ export async function aLaunchedChildStaysLeasedThroughBookkeepingFailureAndParen
     const commands = join(lockDirectory(f.locks), "commands");
     const leases = () => readdirSync(commands).filter((name) => /^lease-[a-f0-9]{32}\.json$/u.test(name));
     expect(leases()).toHaveLength(1);
-    helper = JSON.parse(readFileSync(join(commands, leases()[0] ?? "missing"), "utf8")).helper;
+    helper = (JSON.parse(readFileSync(join(commands, leases()[0] ?? "missing"), "utf8")) as { readonly helper: Owned }).helper;
     await until(() => existsSync(terminate));
     owner.kill("SIGKILL");
     await ownerExited;
@@ -100,7 +99,7 @@ export async function aLaunchedChildStaysLeasedThroughBookkeepingFailureAndParen
     if (owner.exitCode === null && owner.signalCode === null) owner.kill("SIGKILL");
     await ownerExited;
     const descendants: Owned[] = [];
-    if (existsSync(started)) descendants.push(JSON.parse(readFileSync(started, "utf8")));
+    if (existsSync(started)) descendants.push(JSON.parse(readFileSync(started, "utf8")) as Owned);
     if (helper !== null) descendants.push(helper);
     if (existsSync(f.locks)) {
       for (const name of readdirSync(f.locks)) {
@@ -109,7 +108,7 @@ export async function aLaunchedChildStaysLeasedThroughBookkeepingFailureAndParen
         for (const entry of readdirSync(commands)) {
           if (!entry.startsWith("lease-")) continue;
           const text = existsSync(join(commands, entry)) ? readFileSync(join(commands, entry), "utf8") : undefined;
-          if (text !== undefined) descendants.push(JSON.parse(text).helper);
+          if (text !== undefined) descendants.push((JSON.parse(text) as { readonly helper: Owned }).helper);
         }
       }
     }
@@ -144,7 +143,7 @@ export function aFailedCommandRetainsItsOutputWhenCleanupFails(): void {
       `);
       const result = node([runner], { PATH: onPath(f.bin), NODE_OPTIONS: preloading(preload) });
       expect(result.status, result.stderr).toBe(0);
-      const command = JSON.parse(result.stdout);
+      const command = JSON.parse(result.stdout) as { readonly status: number | null; readonly stdout: string; readonly stderr: string };
       expect(command.status).toBe(7);
       expect(command.stdout).toContain("fixture output");
       expect(command.stderr).toContain("fixture failure");
@@ -185,9 +184,9 @@ export async function anUnpublishedChildStaysProtectedAfterHelperDeath(): Promis
   let helper: Owned | undefined;
   try {
     await until(() => existsSync(publishing));
-    const runningChild: Owned = JSON.parse(readFileSync(started, "utf8"));
+    const runningChild = JSON.parse(readFileSync(started, "utf8")) as Owned;
     child = runningChild;
-    const helperPid: number = JSON.parse(readFileSync(publishing, "utf8")).pid;
+    const helperPid = (JSON.parse(readFileSync(publishing, "utf8")) as { readonly pid: number }).pid;
     const helperIdentity = discovery.readLiveReportProcessIdentity(helperPid);
     expect(helperIdentity).not.toBeNull();
     helper = { pid: helperPid, processIdentity: helperIdentity ?? "" };
@@ -198,7 +197,7 @@ export async function anUnpublishedChildStaysProtectedAfterHelperDeath(): Promis
     await stopIdentity(discovery, helper);
     const commands = join(lockPath, "commands");
     const leasePath = join(commands, readdirSync(commands).find((name) => /^lease-.*\.json$/u.test(name)) ?? "missing");
-    const lease = JSON.parse(readFileSync(leasePath, "utf8"));
+    const lease = JSON.parse(readFileSync(leasePath, "utf8")) as { child: unknown; startedAtMs: number };
     expect(lease.child).toBeNull();
     lease.startedAtMs = Date.now() - 24 * 60 * 60 * 1_000;
     writeFileSync(leasePath, JSON.stringify(lease));
@@ -220,9 +219,9 @@ export async function anUnpublishedChildStaysProtectedAfterHelperDeath(): Promis
   } finally {
     writeFileSync(stop, "stop");
     await stopProcess(owner);
-    if (child === undefined && existsSync(started)) child = JSON.parse(readFileSync(started, "utf8"));
+    if (child === undefined && existsSync(started)) child = JSON.parse(readFileSync(started, "utf8")) as Owned;
     if (helper === undefined && existsSync(publishing)) {
-      const pid: number = JSON.parse(readFileSync(publishing, "utf8")).pid;
+      const pid = (JSON.parse(readFileSync(publishing, "utf8")) as { readonly pid: number }).pid;
       const found = discovery.readLiveReportProcessIdentity(pid);
       if (found !== null) helper = { pid, processIdentity: found };
     }
@@ -275,7 +274,7 @@ export async function aStaleHelperCannotLaunchWhileASuccessorScans(): Promise<vo
   let reclaimer: ReturnType<typeof spawn> | undefined;
   try {
     await until(() => existsSync(ready));
-    const saved = JSON.parse(readFileSync(ready, "utf8"));
+    const saved = JSON.parse(readFileSync(ready, "utf8")) as { readonly path: string; readonly token: string };
     await stopProcess(owner);
     reclaimer = spawn(process.execPath, [reclaimerScript], { stdio: "ignore" });
     const reclaimed = once(reclaimer, "exit");
@@ -285,7 +284,7 @@ export async function aStaleHelperCannotLaunchWhileASuccessorScans(): Promise<vo
     expect(helper.stderr).toContain("transition guard");
     expect(existsSync(launched)).toBe(false);
     writeFileSync(proceed, "go");
-    const [code] = await reclaimed;
+    const [code] = (await reclaimed) as [number | null, NodeJS.Signals | null];
     expect(code).toBe(0);
   } finally {
     writeFileSync(proceed, "go");
@@ -367,7 +366,7 @@ export function aMissingGhClosesStartupAndRetainsTheSpawnError(): void {
     `);
     const result = node([runner], { PATH: f.bin });
     expect(result.status, result.stderr).toBe(0);
-    const command = JSON.parse(result.stdout);
+    const command = JSON.parse(result.stdout) as { readonly status: number | null; readonly stderr: string };
     expect(command.status).not.toBe(0);
     expect(command.stderr).toMatch(/\bENOENT\b|Executable not found in \$PATH/u);
     expect(readdirSync(f.locks)).toEqual([]);

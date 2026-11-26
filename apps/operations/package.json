@@ -4,16 +4,43 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": "./src/client/index.vibe",
-    "./controlPlane": "./src/qualification/recovery/account.vibe",
-    "./evidence/records": "./src/release/evidence/records.schema.vibe",
-    "./live": "./src/live.vibe",
-    "./notify": "./src/workers/notify.vibe",
-    "./recoveryFixture": "./src/qualification/recovery/fixture.vibe",
-    "./recoveryPlan": "./src/qualification/recovery/plan.vibe",
+    "./client": {
+      "types": "./.vibe/declarations/src/client/index.d.vibe.ts",
+      "default": "./src/client/index.vibe"
+    },
+    "./controlPlane": {
+      "types": "./.vibe/declarations/src/qualification/recovery/account.d.vibe.ts",
+      "default": "./src/qualification/recovery/account.vibe"
+    },
+    "./evidence/records": {
+      "types": "./.vibe/declarations/src/release/evidence/records.schema.d.vibe.ts",
+      "default": "./src/release/evidence/records.schema.vibe"
+    },
+    "./live": {
+      "types": "./.vibe/declarations/src/live.d.vibe.ts",
+      "default": "./src/live.vibe"
+    },
+    "./notify": {
+      "types": "./.vibe/declarations/src/workers/notify.d.vibe.ts",
+      "default": "./src/workers/notify.vibe"
+    },
+    "./recoveryFixture": {
+      "types": "./.vibe/declarations/src/qualification/recovery/fixture.d.vibe.ts",
+      "default": "./src/qualification/recovery/fixture.vibe"
+    },
+    "./recoveryPlan": {
+      "types": "./.vibe/declarations/src/qualification/recovery/plan.d.vibe.ts",
+      "default": "./src/qualification/recovery/plan.vibe"
+    },
     "./retired": "./src/release/retired.ts",
-    "./rpc": "./src/release/rpc/command.vibe",
-    "./wrangler": "./src/release/wrangler/cloudflare.vibe"
+    "./rpc": {
+      "types": "./.vibe/declarations/src/release/rpc/command.d.vibe.ts",
+      "default": "./src/release/rpc/command.vibe"
+    },
+    "./wrangler": {
+      "types": "./.vibe/declarations/src/release/wrangler/cloudflare.d.vibe.ts",
+      "default": "./src/release/wrangler/cloudflare.vibe"
+    }
   },
   "scripts": {
     "build": "vite build",

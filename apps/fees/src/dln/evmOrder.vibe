@@ -4,7 +4,7 @@ import { definitions } from "../runtime/networks.vibe"
 import { chainIds, dln, robinhoodUsdg } from "../runtime/pins.ts"
 import { dlnOrderCalldata, fixedNativeFeeCalldata, wholeBig } from "../evm/abi.ts"
 import { FeeChain, readWord } from "../evm/client.vibe"
-import type { DlnOrderTerms } from "../signer/intents.ts"
+import type { DlnOrderTerms } from "../wallet/intents.ts"
 import { DlnRefused, proposeDlnOrder } from "./api.vibe"
 import { type CheckedDlnOrder, checkedDlnOrder } from "./evmCalldata.ts"
 

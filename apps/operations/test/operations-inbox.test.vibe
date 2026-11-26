@@ -326,12 +326,25 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     ])
     const reversed = try ask(scamPath, { as: moderator })
     const listedAfter = try inbox(moderator)
+    try save([
+      notice("slopbot-points-dispute:inbox-1", "SlopbotAppealReview", at(41), other, "Points dispute", "/inbox"),
+      notice("slopbot-points-dispute:inbox-1:resolved", "SlopbotAppealReview", at(42), other, "Points dispute", "/inbox"),
+      notice("slopbot-points-dispute:inbox-1", "SlopbotAppealReview", at(41), moderator, "Points dispute", "/inbox"),
+    ], [
+      sql`INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES ('rev-inbox-dispute-1', 'source-inbox-1', NULL, ${seededAt}, '{}')`,
+      sql`INSERT INTO points_disputes (appeal_key, revision_id, item_node_id, appellant_github_id, statement, opened_at, due_at, escalated_at, escalation, resolved_at, resolution, resolved_by, resolution_reason, resolver_github_id)
+        VALUES ('points-dispute:inbox-1', 'rev-inbox-dispute-1', 'rev-inbox-dispute-1', ${other}, 'Review award.', ${seededAt}, '2030-01-08T00:00:00.000Z', ${seededAt}, 'moderator', ${at(42)}, 'upheld', 'moderator', 'Keep recorded award.', ${moderator})`,
+    ])
+    const appellantDispute = kinds((try inbox(other)).notifications).filter(([key]) => String(key).startsWith("slopbot-points-dispute:inbox-1"))
+    const moderatorDispute = kinds((try inbox(moderator)).notifications).filter(([key]) => String(key).startsWith("slopbot-points-dispute:inbox-1"))
     try same({
       listedBefore,
       notAdministrator: [notAdministrator.notifications, notAdministrator.unread, notAdministrator.incompleteAssessments],
       opened,
       reversed: [reversed.status, reversed.body],
       listedAfter: [kinds(listedAfter.notifications), listedAfter.unread],
+      appellantDispute,
+      moderatorDispute,
     }, {
       listedBefore: [["slopbot-appeal-inbox-1", "slopbot_appeal_review"], ["slopbot-scam-review:PR_inbox_scam", "slopbot_scam_review"]],
       notAdministrator: [[], 0, null],
@@ -349,6 +362,11 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       ],
       reversed: [404, { error: "not_found" }],
       listedAfter: [[["slopbot-appeal-inbox-1", "slopbot_appeal_resolved"]], 1],
+      appellantDispute: [
+        ["slopbot-points-dispute:inbox-1:resolved", "slopbot_appeal_resolved"],
+        ["slopbot-points-dispute:inbox-1", "slopbot_appeal_review"],
+      ],
+      moderatorDispute: [["slopbot-points-dispute:inbox-1", "slopbot_appeal_resolved"]],
     })
   })
 

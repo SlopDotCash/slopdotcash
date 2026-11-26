@@ -181,7 +181,7 @@ export const retention = Layer.succeed(Retention, {
 })
 
 function withoutRepairMetadata(evidence: Evidence): Evidence {
-  const { repairBodyEdit, ...historical } = evidence
+  const { repairBodyEdit: _repairBodyEdit, ...historical } = evidence
   return historical
 }
 

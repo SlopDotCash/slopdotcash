@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "turbo run dev //#studio",
     "studio": "node vibestack/spec.ts studio",
+    "cli": "node packages/cli/src/main.ts",
     "check": "node vibestack/spec.ts check",
     "gen": "node vibestack/spec.ts gen",
     "accept": "node vibestack/spec.ts accept",

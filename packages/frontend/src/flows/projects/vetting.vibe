@@ -1,7 +1,7 @@
 // spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
 import { route } from "@repo/platform/route"
 import { sha256Hex } from "@repo/platform/crypto"
-import { evidenceOverview, grantEvidenceDownload, grantEvidenceRead, grantExemption, queueAssessment, revokeExemption, vettingOverview } from "@repo/security/client"
+import { AdmissionExemption, ProjectClearance, evidenceOverview, grantEvidenceDownload, grantEvidenceRead, grantExemption, queueAssessment, revokeExemption, vettingOverview } from "@repo/security/client"
 import { type CallFailure, call } from "../../platform/api.vibe"
 import { fetchBoundedBytes } from "../../platform/bounded.vibe"
 import { Session } from "../../session/session.vibe"
@@ -42,7 +42,9 @@ schema RevokeRequest { reason: string; decisionReference: string; confirmation: 
 
 const ScanRequest = Schema.Struct({ projectId: Schema.String, revision: Schema.Number, reason: Schema.String, repository: Schema.optionalKey(Schema.String) })
 
-const granting = route({ ...grantExemption, request: GrantRequest })
+const GrantedAnswer = Schema.Struct({ exemption: AdmissionExemption, replayed: Schema.optionalKey(Schema.Boolean), setup: Schema.optionalKey(Schema.Null), clearance: ProjectClearance })
+
+const granting = route({ ...grantExemption, request: GrantRequest, answer: GrantedAnswer })
 const revoking = route({ ...revokeExemption, request: RevokeRequest })
 const queueing = route({ ...queueAssessment, request: ScanRequest })
 

@@ -72,7 +72,7 @@ function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>, 
   };
 }
 
-function useMergeLine(merge: Shown<MergeIndex>, nowMs: number): MergeLine {
+function mergeLineOf(merge: Shown<MergeIndex>, nowMs: number): MergeLine {
   return (project) => (merge.status === "Current" || merge.status === "Stale" ? mergeActivityCardLine(merge.value?.get(project.id), nowMs) : null);
 }
 
@@ -132,7 +132,7 @@ function SponsorsListed({ runtime, section, reads, boot }: ListedProps & { secti
   const nowMs = useNow();
   const merge = useShownRead(reads.merge, "all");
   const { projects } = useListing(reads, boot, merge, nowMs);
-  const mergeLine = useMergeLine(merge, nowMs);
+  const mergeLine = mergeLineOf(merge, nowMs);
   const whoBuilds = useOnce(section, "who-builds", () => whoBuildsFigures());
   const work = useMounted(section, () => loadWork(boot, repositoryRegistryOf, false));
   return <SponsorsPage runtime={runtime} projects={projects} mergeLine={mergeLine} networkPays={networkPays} whoBuilds={whoBuilds.status === "done" ? whoBuilds.value : undefined} live={liveOf(work)} />;

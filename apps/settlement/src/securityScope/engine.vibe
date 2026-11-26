@@ -2,13 +2,13 @@
 import { isoNow } from "@repo/platform/clock"
 import { D1, type Statement, rows, sql } from "@repo/platform/d1"
 import { Wallets } from "@repo/ports/backend"
-import { servedVaults } from "../jobs/payments.vibe"
+import { servedVaults } from "../payments/served.vibe"
 import { isChain, type NetworkKey } from "../kernels/networks.ts"
 import { type ExecutorBindings, executors, runPaymentDispatch } from "../payments/dispatch.vibe"
 import { reconcileFailedAttempts, recoverUncertainAttempts } from "../payments/recovery.vibe"
 import { failureTag, networkOf } from "../payments/terms.vibe"
 import { PaymentIndexerLive } from "../scan/index.vibe"
-import { SECURITY_SCOPE } from "../signer/privateScope.vibe"
+import { SECURITY_SCOPE } from "../journal/scopes.vibe"
 import { syncRegistryVaults } from "../vault/sync.vibe"
 
 const privateLedger = /\b(payment_obligations|payment_events|payment_outbox|payment_attempts|payment_attempt_failures|payment_chain_cursors|payment_solana_scans|payment_solana_scan_pages|vault_snapshots)\b/gu

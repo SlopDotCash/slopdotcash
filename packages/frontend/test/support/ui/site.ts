@@ -1,4 +1,5 @@
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
+import type * as PointsTestingModule from "@repo/points/testing";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -71,7 +72,7 @@ type Canned =
   | { readonly kind: "json"; readonly status: number; readonly body: unknown }
   | { readonly kind: "bytes"; readonly status: number; readonly bytes: Uint8Array; readonly contentType: string };
 
-type PointsTesting = typeof import("@repo/points/testing");
+type PointsTesting = typeof PointsTestingModule;
 
 interface Session {
   readonly context: BrowserContext;

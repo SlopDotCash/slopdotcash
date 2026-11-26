@@ -336,6 +336,33 @@ describe.concurrent("Studio through its server, its files and a browser", () => 
     })
   }) } })
 
+  // spec/components.md, "Story: Inspect a component and its stories"
+  it.live("a model-bound preview follows the simulation in the split view", effect () => { provide services { try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const spawner = try ChildProcessSpawner
+    const catalog: ComponentIndex = { version: 1, components: [{
+      id: "DoorView", name: "DoorView", package: "fixture", title: "DoorView", description: "", source: { file: "src/DoorView.tsx", line: 1 },
+      props: [{ name: "door", kind: "object", required: true }], diagnostics: [],
+      model: { spec: "spec/door.md", module: "door", state: "Door", events: ["setAlarm", "move"] },
+      stories: [{ id: "DoorView-model", name: "Model", kind: "model", args: { door: { mode: "Closed", opened: 0, alarm: false } } }],
+    }] }
+    const root = try scratch({
+      "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`), "generated/stories/catalog.json": JSON.stringify(catalog),
+      "src/DoorView.tsx": 'export function DoorView({ door }: { door: { alarm: boolean } }) { return <output>{door.alarm ? "alarm on" : "alarm off"}</output>; }\n',
+    })
+    const generated = try spawner.exitCode(ChildProcess.make(NODE, [`${TOOLS}/spec.ts`, "gen"], { cwd: root, stdout: "ignore", stderr: "ignore" }))
+    // The simulation loads the project's generated module, which only Studio's own program can: `spec studio`, as a person starts it.
+    const child = try spawner.spawn(ChildProcess.make(NODE, [`${TOOLS}/spec.ts`, "studio", "--port", "0"], { cwd: root }))
+    const line = try Stream.runHead(Stream.filter(Stream.splitLines(Stream.decodeText(child.stdout)), (l) => l.startsWith("studio: ")))
+    const { page, on } = try browse(Option.getOrThrow(line).match(/studio: (http:\/\/localhost:\d+)/)![1].replace("localhost", "127.0.0.1"))
+    try on(() => page.getByRole("tab", { name: "Split", exact: true }).click())
+    const shown = () => page.frameLocator("iframe").getByRole("status")
+    const before = try on(() => shown().innerText())
+    try on(() => page.getByRole("button", { name: "▶ setAlarm", exact: true }).click())
+    try on(() => shown().filter({ hasText: "alarm on" }).waitFor({ timeout: 15_000 }))
+    try check(() => assert.deepStrictEqual({ generated, before }, { generated: 0, before: "alarm off" }))
+  }) } }, 120_000)
+
   // spec/index.md, "Story: Edit, then publish"
   it.live("new and nested specs are published, deleted specs leave their ledger for review, and paths stay inside spec/", effect () => { provide services { try scoped(effect {
     const fs = try FileSystem.FileSystem

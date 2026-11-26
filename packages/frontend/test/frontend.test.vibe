@@ -1,8 +1,9 @@
 import { assert, describe, it, layer } from "@effect/vitest"
 import { CallerLive } from "@repo/backend/caller"
 import { api as backendApi, emailVerification, emailVerify } from "@repo/backend/client"
-import { backend, backendServices } from "@repo/backend/live"
+import { backend, backendServices, slopbotAccess } from "@repo/backend/live"
 import { api as contributorApi } from "@repo/contributor/client"
+import { contributorAudience } from "@repo/points/live"
 import { api as feesApi } from "@repo/fees/client"
 import { api as operationsApi } from "@repo/operations/client"
 import { noticePorts, operations } from "@repo/operations/live"
@@ -22,14 +23,14 @@ import { asFetch, held } from "@repo/platform/testing/quotes"
 import { pages } from "@repo/platform/worker"
 import { encodeParts, leaderboardMethodology, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, pointRevisionId, api as pointsApi, type RepositoryRegistry, type RevisionBody, ruleVersion, schemaVersion, scoreWindowDays, validatePaymentSnapshot, verificationWindowDays } from "@repo/points/client"
 import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
-import { SecurityNoticeAccess } from "@repo/ports/security"
+import { PublicSecurity, SecurityNoticeAccess } from "@repo/ports/security"
 import { AssessmentQueue } from "@repo/ports/slopbot"
 import { api as securityApi } from "@repo/security/client"
-import { security, securityBindings } from "@repo/security/live"
+import { security, securityBindings, enforcementPorts, EnforcementRowsLive } from "@repo/security/live"
 import { api as settlementApi } from "@repo/settlement/client"
 import { toAmount } from "@repo/settlement/kernels/amounts"
 import { parsePeriod } from "@repo/settlement/kernels/calendar"
-import { settlement } from "@repo/settlement/live"
+import { paymentNetworks, reservedAwardFeedAccess, settlement } from "@repo/settlement/live"
 import { api as slopbotApi } from "@repo/slopbot/client"
 import { slopbot } from "@repo/slopbot/live"
 import { Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
@@ -290,7 +291,7 @@ module sessionWorld {
 import { type World as SessionWorld, identity as sessionIdentity, site as sessionSite, startWorld as sessionStartWorld } from sessionWorld
 
 module accountWorld {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import type { D1Database, Fetcher } from "@repo/platform/bindings"
   import { type Handler, type StartedWorker, bundle, database, migrate, startWorker } from "@repo/platform/testing"
   import { githubFake } from "@repo/platform/testing/github"
@@ -419,7 +420,7 @@ module accountWorld {
 import { type World as AccountWorld, assets as accountAssets, site as accountSite, startWorld as accountStartWorld } from accountWorld
 
 module projectsWorld {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
   import { type StartedWorker, database, migrate, startWorker, storage } from "@repo/platform/testing"
   import { githubFake } from "@repo/platform/testing/github"
@@ -537,7 +538,7 @@ module projectsWorld {
     }
   }
 }
-import { type World as ProjectsWorld, adminId as projectsAdminId, otherId as projectsOtherId, primaryId as projectsPrimaryId, site as projectsSite, startWorld as projectsStartWorld, stewardId as projectsStewardId } from projectsWorld
+import { type World as ProjectsWorld, adminId as projectsAdminId, otherId as projectsOtherId, primaryId as projectsPrimaryId, startWorld as projectsStartWorld, stewardId as projectsStewardId } from projectsWorld
 
 module securityWorld {
   import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
@@ -589,10 +590,11 @@ module securityWorld {
       const headers = new Headers(outgoing.headers)
       headers.set("cf-connecting-ip", address)
       if (jar !== "") headers.set("cookie", `__Host-slop_points=${jar}`)
-      if (outgoing.method !== "GET") headers.set("origin", site)
+      const localOrigin = "http://localhost:8788"
+      if (outgoing.method !== "GET") headers.set("origin", localOrigin)
       const body = outgoing.method === "GET" ? undefined : await outgoing.text()
       if (body !== undefined) bodies.push({ path: url.pathname, body })
-      const answer = await served(new Request(url.toString(), { method: outgoing.method, headers, ...body === undefined ? {} : { body } }))
+      const answer = await served(new Request(`${localOrigin}${url.pathname}${url.search}`, { method: outgoing.method, headers, ...body === undefined ? {} : { body } }))
       if (losing === url.pathname && outgoing.method === "POST") {
         losing = undefined
         throw new TypeError("Failed to fetch")
@@ -621,10 +623,10 @@ module securityWorld {
     }
   }
 }
-import { type World as SecurityWorld, maintainerId as securityMaintainerId, otherId as securityOtherId, reporterId as securityReporterId, site as securitySite, startWorld as securityStartWorld } from securityWorld
+import { type World as SecurityWorld, maintainerId as securityMaintainerId, otherId as securityOtherId, reporterId as securityReporterId, startWorld as securityStartWorld } from securityWorld
 
 module lateReadsWorld {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
   import { type StartedWorker, bundle, database, migrate, startWorker } from "@repo/platform/testing"
   import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
@@ -663,7 +665,7 @@ module lateReadsWorld {
       ? startWorker({
         script: await bundle(`${repoRoot}/apps/points`, { entry: "disputes", config: "test/support/u12/vite.config.ts" }),
         d1: { SLOP_DB: "slop-private" },
-        vars: { ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "18633264", SLOP_ENVIRONMENT: "local", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-late-reads-journey" },
+        vars: { PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788", ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "18633264", SLOP_ENVIRONMENT: "local", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-late-reads-journey" },
         services: { SLOPBOT: slopbot },
       })
       : startWorker({ d1: { SLOP_DB: "slop-private" } })
@@ -689,8 +691,13 @@ module lateReadsWorld {
       if (request.method !== "GET") headers.origin = site
       headers["cf-connecting-ip"] = "203.0.113.71"
       const body = request.method === "GET" ? undefined : await request.text()
-      if (points) return mf.dispatchFetch(url.toString(), { method: request.method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
-      if (url.pathname.startsWith("/data/") || served === undefined) return new WebResponse(files.get(url.pathname) ?? "not found", { status: files.has(url.pathname) ? 200 : 404, headers: { "content-type": "application/json" } })
+      if (url.pathname.startsWith("/data/")) return new WebResponse(files.get(url.pathname) ?? "not found", { status: files.has(url.pathname) ? 200 : 404, headers: { "content-type": "application/json" } })
+      if (points) {
+        const localOrigin = "http://localhost:8788"
+        if (request.method !== "GET") headers.origin = localOrigin
+        return mf.dispatchFetch(`${localOrigin}${url.pathname}${url.search}`, { method: request.method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
+      }
+      if (served === undefined) return new WebResponse("not found", { status: 404, headers: { "content-type": "application/json" } })
       const response = await served(new Request(url.toString(), { method: request.method, headers, ...body === undefined ? {} : { body } }), assets, context)
       return new WebResponse(await response.text(), { status: response.status, headers: Object.fromEntries(response.headers) })
     }
@@ -716,7 +723,7 @@ module lateReadsWorld {
     }
   }
 }
-import { type World as LateReadsWorld, site as lateReadsSite, startWorld as lateReadsStartWorld } from lateReadsWorld
+import { type World as LateReadsWorld, startWorld as lateReadsStartWorld } from lateReadsWorld
 
 module composedWorld {
   import { Request as WebRequest, Response as WebResponse } from "miniflare"
@@ -2261,9 +2268,23 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     }, FetchHttpClient.Fetch, asFetch(serve)))
     it.effect(`A visitor reads a project's maintainer share from the live registry: a share set this month starts next month, and no setting shows nothing (spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits")`, () => Effect.provide(Effect.provideService(effect {
       const boot = try bootedRegistry()
-      try same(try orDie(Effect.try(() => listedProjects(boot).map((project) => [project.id, publishedShare(project, new Date(generatedMs))]))), [
+      const projects = listedProjects(boot)
+      const now = new Date(generatedMs)
+      const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
+      const slop = projects[0]
+      const pinnedPositive = {
+        ...slop,
+        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), monthlyCapUsd: 0, cycleCaps: { [month]: 500 } } },
+      }
+      const pinnedZero = {
+        ...slop,
+        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), cycleCaps: { [month]: 0 } } },
+      }
+      try same(try orDie(Effect.try(() => [...projects.map((project) => [project.id, publishedShare(project, now)]), ["pinnedPositive", publishedShare(pinnedPositive, now)], ["pinnedZero", publishedShare(pinnedZero, now)]])), [
         ["slop", { tag: "ChangingShare", thisMonth: 0, fromNext: 2000, fromPeriod: 202612 }],
         ["quiet", { tag: "NoShare" }],
+        ["pinnedPositive", { tag: "ChangingShare", thisMonth: 0, fromNext: 2000, fromPeriod: 202612 }],
+        ["pinnedZero", { tag: "NoShare" }],
       ])
     }, FetchHttpClient.Fetch, asFetch(serve)), onSite))
   })
@@ -2326,7 +2347,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const token = `account-journey-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
       sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
-      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -2700,7 +2721,8 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       services: (bound: typeof env) => {
         const base = Layer.mergeAll(d1(bound.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(bound))
         const reads = Layer.provide(github({ token: Redacted.make(bound.SLOP_GITHUB_READ_TOKEN), userAgent: "slop-projects-journey" }), outbound)
-        return Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(bound), securityBindings(bound), reads), base)
+        const wired = Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(bound), securityBindings(bound), noticePorts, contributorAudience, reads), base)
+        return Layer.provideMerge(enforcementPorts, wired)
       },
       assets: "ASSETS",
     })
@@ -2730,7 +2752,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
   }
 
   function document(local: BrowserStore, session: BrowserStore) {
-    return Layer.provideMerge(projectDrafts, Layer.mergeAll(Layer.succeed(LocalStore, local), Layer.succeed(SessionStore, session), locks, webCrypto))
+    return Layer.provideMerge(Layer.fresh(projectDrafts), Layer.mergeAll(Layer.succeed(LocalStore, local), Layer.succeed(SessionStore, session), Layer.fresh(locks), webCrypto))
   }
 
   interface Tabs {
@@ -2812,7 +2834,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const token = `projects-journey-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
       sql`INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${String(githubId)}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
-      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -2876,7 +2898,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     try (try D1).batch([
       sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, 1, ${text}, ${digest}, 'Seeded', ${String(stewardId)}, ${`member-${stewardId}`}, ${seededAt})`,
       sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login) VALUES (${id}, 'paused', 1, ${text}, ${digest}, ${seededAt}, ${seededAt}, NULL, NULL, NULL)`,
-      sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${`member-${stewardId}/${name}`}, ${id})`,
+      sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${`member-${stewardId}/${name}`}, ${id}), (${`github:${githubId}`}, ${id})`,
     ])
     return text
   }
@@ -3087,6 +3109,8 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       VETTING_EVIDENCE: started.evidence,
       PRIVATE_TRACES: started.reports,
       SLOP_PRIVATE_INTAKE_MODE: "on",
+      PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788",
+      TRACE_AUTH_SECRET: "trace-auth-secret-for-the-security-journey",
       ADMIN_GITHUB_IDS: "",
       PROJECT_MODERATOR_GITHUB_IDS: "",
       SLOP_ENVIRONMENT: "local",
@@ -3095,7 +3119,8 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       areas: [backend, operations, slopbot, security],
       services: (bound: typeof env) => {
         const base = Layer.mergeAll(d1(bound.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(bound))
-        return Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(bound), securityBindings(bound)), base)
+        const wired = Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(bound), securityBindings(bound), noticePorts, contributorAudience), base)
+        return Layer.provideMerge(enforcementPorts, wired)
       },
       assets: "ASSETS",
     })
@@ -3132,7 +3157,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const token = `security-journey-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
       sql`INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${String(githubId)}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
-      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -3470,11 +3495,11 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
 
   const published = JSON.stringify({ schemaVersion: "1", syncedAt: "2026-11-16T09:30:00.000Z", projects: [manifestOf("alpha", "featured")] })
 
-  effect function member(githubId: string, login: string) {
+  effect function member(githubId: string, login: string, actorId = `actor-${githubId}`) {
     const token = `late-reads-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
-      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${login}, ${seededAt}, 1, 5)`,
-      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${actorId}, ${githubId}, ${login}, ${seededAt}, 1, 5)`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${actorId}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -3497,15 +3522,22 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const clock = settableClock(now)
     const composed = pages({
       areas: [backend, settlement],
-      services: (_env: object) => Layer.mergeAll(
-        d1(started.db),
-        webCrypto,
-        noEdgeCache,
-        clock.layer,
-        rolesFrom({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" }),
-        Layer.succeed(DeploymentTier, { tier: "production" }),
-        Layer.succeed(HttpClient.HttpClient, HttpClient.make(() => die(new Error("a public read must never reach a chain or GitHub")))),
-      ),
+      services: (_env: object) => {
+        const base = Layer.mergeAll(
+          d1(started.db),
+          webCrypto,
+          noEdgeCache,
+          clock.layer,
+          rolesFrom({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" }),
+          Layer.succeed(DeploymentTier, { tier: "production" }),
+          Layer.succeed(HttpClient.HttpClient, HttpClient.make(() => die(new Error("a public read must never reach a chain or GitHub")))),
+          paymentNetworks({}),
+          reservedAwardFeedAccess(undefined),
+          slopbotAccess(undefined),
+          Layer.succeed(PublicSecurity, { restrictions: () => Effect.succeed([]), vetting: () => Effect.succeed({ state: "cleared" }) }),
+        )
+        return Layer.provideMerge(Layer.provideMerge(EnforcementRowsLive, Layer.mergeAll(noticePorts, contributorAudience)), base)
+      },
       assets: "ASSETS",
     })
     started.serve((request, assets, context) => composed.fetch(request, { ASSETS: assets }, context))
@@ -3586,7 +3618,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
   layer(Layer.mergeAll(DisputesSite, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     it.effect('A recipient files a Points dispute from the Inbox, lists it, and loses the view when the account changes; the profile resolves the member (spec/points/disputes.md, "Story: A recipient disputes their own current Points record privately"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login")', () => effect {
       const { world } = try Browser
-      const recipientToken = try seeded(world, member("42", "recipient"))
+      const recipientToken = try seeded(world, member("42", "recipient", recipientNode))
       const bystanderToken = try seeded(world, member("43", "bystander"))
       const current = try seeded(world, retained("manual-award-1", 90, "2026-11-16T10:00:00.000Z"))
       try seeded(world, retained("manual-award-2", 40, "2026-09-01T10:00:00.000Z"))

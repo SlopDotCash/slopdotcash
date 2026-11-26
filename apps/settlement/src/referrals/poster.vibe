@@ -1,0 +1,29 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"
+import type { Hex } from "@repo/platform/chain/evm"
+import type { Publication } from "../../gen/settlement__referralPublication.ts"
+import type { Referral } from "../../gen/settlement__referrals.ts"
+import type { Deployment } from "./distributor.vibe"
+
+export const posterMarker = "slop-signer:referral-poster"
+
+export error PosterRefused { reason: string }
+
+export interface PostRoot {
+  readonly kind: "PostRoot"
+  readonly nonce: number
+  readonly gas: bigint
+  readonly maxFeePerGas: bigint
+  readonly maxPriorityFeePerGas: bigint
+  readonly previousTotal: bigint
+  readonly tokenUnit: bigint
+}
+
+export interface SignedRoot {
+  readonly raw: Hex
+  readonly txId: Hex
+  readonly poster: Hex
+}
+
+export service RootPoster {
+  sign(control: Referral, journaled: Publication, deployment: Deployment, intent: PostRoot): SignedRoot!PosterRefused
+}

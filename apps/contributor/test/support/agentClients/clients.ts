@@ -1,4 +1,4 @@
-// spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable"
+// spec/contributor/workflow.md, "Submission requires exact attribution and a fresh pre-submission read"
 import { spawnSync } from "node:child_process";
 
 export interface Declared {

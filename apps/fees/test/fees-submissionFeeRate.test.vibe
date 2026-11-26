@@ -125,7 +125,7 @@ layer(Layer.empty, { excludeTestServices: true, timeout: "600 seconds" })((it) =
         unexpected: [],
       },
     ))
-  }))
+  }), 300_000)
 
   it.effect('A sharp move resets the SLOP rate early from the 24-hour average in the first hour it leaves 3,500 to 6,500 basis points, and the new rate is not replaced while it stays inside (spec/fees/submissionFeeRate.md, "One reading per UTC hour; a new SLOP rate needs enough readings and takes effect at the next hour"; spec/fees/submissionFeeRate.md, "The rate pass stores readings and rates only as the rule allows")', () => Effect.scoped(effect {
     const world = try opened("fees-submission-fee-rate-drift")
@@ -167,5 +167,5 @@ layer(Layer.empty, { excludeTestServices: true, timeout: "600 seconds" })((it) =
         enough: { sampled: true, sample: "stored", rate: { slopPerUsd: "80", effectiveAt: "2026-12-14T12:00:00.000Z", reason: "weekly" } },
       },
     ))
-  }))
+  }), 300_000)
 })

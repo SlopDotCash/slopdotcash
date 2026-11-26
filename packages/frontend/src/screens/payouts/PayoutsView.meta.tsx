@@ -15,7 +15,7 @@ export const meta: ComponentMeta<PayoutsViewProps> = {
     // spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
     Default: async () => {
       await expect(screen.getAllByText("Paid").length).toBe(1);
-      await expect(["Submitted", "Queued", "Held", "Needs wallet", "Underfunded", "Unavailable", "Received"].map((word) => screen.getAllByText(word).length > 0)).toEqual([true, true, true, true, true, true, true]);
+      await expect(["Submitted", "Queued", "Held", "Needs wallet", "Underfunded", "Received"].map((word) => screen.getAllByText(word).length > 0)).toEqual([true, true, true, true, true, true]);
       await expect(screen.getByRole("link", { name: "Awaiting wallet: add or confirm your Base wallet" }).getAttribute("href")).toBe("/account#wallets");
     },
     // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"

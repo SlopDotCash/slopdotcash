@@ -13,7 +13,7 @@ import { blockIndex, expectedOf } from "./evmEvidence.ts"
 import { type EvmVault, type Evidence, type ReceiptState, type TransferReview, batchProgress, depositsBy, evmVaultMessages, plannedTransfer, readWalletTransaction, receiptState, reviewTransfer, sendBatch, sendTransfer, vaultCodeAt, verifyDeployment } from "./evmVault.vibe"
 import { type SlotRead, compareAndWrite, readText, slotOfText, textOfSlot } from "./flowSlots.ts"
 import { type EvmBatchPlan, type EvmCallPlan, type EvmDepositPlan, type OwnerPlan, planOf, planText } from "./ownerPlans.schema.ts"
-import { keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
+import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
 
 export type { Setup, VaultKind }
 
@@ -125,10 +125,63 @@ export effect function handOver(storage: SlotStorage | undefined, from: string, 
   return compareAndWrite(storage, from, text, null)
 }
 
+interface VaultTerms {
+  readonly vault: string
+  readonly asset: string
+  readonly native: boolean
+}
+
+function restoredSetup(state: Setup, saved: SavedRequest | undefined): Setup {
+  if (state.phase !== "NoDeposit" || state.slot.identity !== "" || saved === undefined) return state
+  const sent = sentAlready(saved)
+  if (!sent && state.form === "Hidden") return state
+  if (saved.approval) return { ...state, approval: sent ? "ApprovalSubmitted" : "ApprovalPrompt", slot: approvalAttempt(saved.reset) }
+  if (!sent) return { ...state, phase: "Prompt", view: "NoView", slot: depositAttempt, batched: saved.plan.kind === "evmBatch" }
+  return { ...state, phase: "Submitted", transaction: signedTransaction, view: "Waiting", slot: depositAttempt, batched: saved.plan.kind === "evmBatch" }
+}
+
+function senderOf(owner: string, connection: EvmConnection | undefined): string {
+  return connection !== undefined && connection.address.toLowerCase() === owner.toLowerCase() ? "owner" : "other"
+}
+
+effect function stopped(message: string) {
+  throw new DepositStopped({ message })
+}
+
+effect function createdHere(connection: EvmConnection, vault: EvmVault, read: ReceiptState | undefined) {
+  if (read === undefined || !read.canonical || !read.success) return "absent" as const
+  return Effect.as(verifyDeployment(connection, vault, hexQuantity(read.receipt.blockNumber)), "created" as const) catch (error) => error._tag === "VaultActionRefused" ? "absent" as const : "unavailable" as const
+}
+
+effect function batchMatches(terms: VaultTerms, chainId: bigint, plan: EvmBatchPlan, gross: bigint) {
+  const calls = Effect.try(() => batchCalls(terms, gross, { resetAllowance: plan.calls.length === 3, approvalNeeded: plan.calls.length > 1 })) catch () => undefined
+  if (calls === undefined || planText(batchPlan(plan.from, chainId, calls)) !== planText(unsentBatch(plan))) try stopped(provisionalMessages.unreadable)
+}
+
+effect function batchTransaction(connection: EvmConnection, vault: EvmVault, keeper: SlotKeeper<"deposit">, plan: EvmBatchPlan) {
+  if (plan.transaction !== "" || plan.reference === "") return plan.transaction
+  const report = batchProgress(connection, vault, plan.reference) catch effect (error) => { throw new DepositStopped({ message: error.message }) }
+  if (report.kind === "notSent") try stopped(provisionalMessages.notSent)
+  if (report.kind !== "landed" || report.hash === undefined) return ""
+  const transaction = report.hash.toLowerCase()
+  if (!keeper.annotate("deposit", depositAttempt.identity, planText({ ...plan, transaction }))) try stopped(provisionalMessages.changed)
+  return transaction
+}
+
+effect function depositReceipt(connection: EvmConnection, vault: EvmVault, terms: VaultTerms, keeper: SlotKeeper<"deposit">, saved: SavedRequest, gross: bigint) {
+  if (saved.plan.kind === "evmDeposit") {
+    const call = try plannedTransfer(vault, "deposit", "send", gross, saved.plan)
+    return { read: try receiptState(connection, vault, saved.hash, expectedOf(call)), from: call.from, hash: saved.hash }
+  }
+  try batchMatches(terms, vault.chainId, saved.plan, gross)
+  const hash = try batchTransaction(connection, vault, keeper, saved.plan)
+  return { read: hash === "" ? undefined : try receiptState(connection, vault, hash, undefined), from: saved.plan.from, hash }
+}
+
 export effect function provisionalVault(storage: SlotStorage | undefined, key: string, vault: EvmVault, owner: string, account: number) {
   const held = try Ref.make<Setup>(initial)
   const keeper = slotKeeper(storage, { deposit: key })
-  const terms = { vault: vault.vault, asset: vault.asset, native: vault.asset.toLowerCase() === EVM_NATIVE_ASSET }
+  const terms: VaultTerms = { vault: vault.vault, asset: vault.asset, native: vault.asset.toLowerCase() === EVM_NATIVE_ASSET }
   let atomicRefused = false
 
   function storedRequest(): SavedRequest | undefined {
@@ -136,15 +189,7 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
   }
 
   effect function load() {
-    const state = try Ref.get(held)
-    if (state.phase !== "NoDeposit" || state.slot.identity !== "") return state
-    const saved = storedRequest()
-    if (saved === undefined) return state
-    const sent = sentAlready(saved)
-    if (!sent && state.form === "Hidden") return state
-    if (saved.approval) return { ...state, approval: sent ? "ApprovalSubmitted" : "ApprovalPrompt", slot: approvalAttempt(saved.reset) } satisfies Setup
-    if (!sent) return { ...state, phase: "Prompt", view: "NoView", slot: depositAttempt, batched: saved.plan.kind === "evmBatch" } satisfies Setup
-    return { ...state, phase: "Submitted", transaction: signedTransaction, view: "Waiting", slot: depositAttempt, batched: saved.plan.kind === "evmBatch" } satisfies Setup
+    return restoredSetup(try Ref.get(held), storedRequest())
   }
 
   effect function keep(next: Setup) {
@@ -156,10 +201,6 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
 
   const machine = try machineOver(load, keep)
 
-  function sender(connection: EvmConnection | undefined): string {
-    return connection !== undefined && connection.address.toLowerCase() === owner.toLowerCase() ? "owner" : "other"
-  }
-
   effect function sent(event: Event, by: string) {
     return try keptOrChanged(Effect.ignore(machine.send(event, by)))
   }
@@ -167,15 +208,6 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
   effect function step(event: Event, allowed: boolean) {
     if (allowed) try sent(event, "")
     return try machine.get()
-  }
-
-  effect function stopped(message: string) {
-    throw new DepositStopped({ message })
-  }
-
-  effect function createdHere(connection: EvmConnection, read: ReceiptState | undefined) {
-    if (read === undefined || !read.canonical || !read.success) return "absent" as const
-    return Effect.as(verifyDeployment(connection, vault, hexQuantity(read.receipt.blockNumber)), "created" as const) catch (error) => error._tag === "VaultActionRefused" ? "absent" as const : "unavailable" as const
   }
 
   effect function annotate(identity: string, plan: OwnerPlan) {
@@ -274,35 +306,10 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
     return { step: "batch", hash: "", state: try machine.get() } satisfies SentRequest
   }
 
-  effect function batchMatches(plan: EvmBatchPlan, gross: bigint) {
-    const calls = Effect.try(() => batchCalls(terms, gross, { resetAllowance: plan.calls.length === 3, approvalNeeded: plan.calls.length > 1 })) catch () => undefined
-    if (calls === undefined || planText(batchPlan(plan.from, vault.chainId, calls)) !== planText(unsentBatch(plan))) try stopped(provisionalMessages.unreadable)
-  }
-
-  effect function batchTransaction(connection: EvmConnection, plan: EvmBatchPlan) {
-    if (plan.transaction !== "" || plan.reference === "") return plan.transaction
-    const report = batchProgress(connection, vault, plan.reference) catch effect (error) => { throw new DepositStopped({ message: error.message }) }
-    if (report.kind === "notSent") try stopped(provisionalMessages.notSent)
-    if (report.kind !== "landed" || report.hash === undefined) return ""
-    const transaction = report.hash.toLowerCase()
-    if (!(try annotate(depositAttempt.identity, { ...plan, transaction }))) try stopped(provisionalMessages.changed)
-    return transaction
-  }
-
-  effect function depositReceipt(connection: EvmConnection, saved: SavedRequest, gross: bigint) {
-    if (saved.plan.kind === "evmDeposit") {
-      const call = try plannedTransfer(vault, "deposit", "send", gross, saved.plan)
-      return { read: try receiptState(connection, vault, saved.hash, expectedOf(call)), from: call.from, hash: saved.hash }
-    }
-    try batchMatches(saved.plan, gross)
-    const hash = try batchTransaction(connection, saved.plan)
-    return { read: hash === "" ? undefined : try receiptState(connection, vault, hash, undefined), from: saved.plan.from, hash }
-  }
-
   effect function followDeposit(connection: EvmConnection, saved: SavedRequest, gross: bigint) {
     const state = try machine.get()
     if (state.transaction === 0) return { state, hash: saved.hash, approval: false } satisfies FollowedRequest
-    const { read, from, hash } = try depositReceipt(connection, saved, gross)
+    const { read, from, hash } = try depositReceipt(connection, vault, terms, keeper, saved, gross)
     if ((read === undefined || !read.canonical) && canReplaceDeposit(state)) try sent({ type: "replaceDeposit" }, "")
     if (read !== undefined && read.canonical) {
       const block = blockIndex(read.receipt.blockNumber)
@@ -341,7 +348,7 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
     followCreation: effect (connection: EvmConnection, hash: string) => {
       const state = try machine.get()
       const read = receiptState(connection, vault, hash, undefined) catch () => "unavailable" as const
-      const created = read === "unavailable" ? "unavailable" as const : try createdHere(connection, read)
+      const created = read === "unavailable" ? "unavailable" as const : try createdHere(connection, vault, read)
       if (read === "unavailable" || created === "unavailable") return try step({ type: "checkCreation", readOk: false }, canCheckCreation(state))
       const block = read === undefined ? 0 : blockIndex(read.receipt.blockNumber)
       if (created === "absent" && canReplaceCreation(state)) try sent({ type: "replaceCreation" }, "")
@@ -352,7 +359,7 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
     },
     review,
     deposit: effect (connection: EvmConnection, amount: string) => {
-      const by = sender(connection)
+      const by = senderOf(owner, connection)
       const state = try machine.get()
       if (by !== "owner" && state.form === "Provisional") try stopped(provisionalMessages.ownerOnly)
       const stored = keeper.read("deposit")
@@ -369,7 +376,7 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
     recoverHash: effect (connection: EvmConnection, transaction: string) => {
       const hash = transaction.trim().toLowerCase()
       if (!/^0x[0-9a-f]{64}$/u.test(hash)) try stopped(provisionalMessages.enterHash)
-      const by = sender(connection)
+      const by = senderOf(owner, connection)
       if (by !== "owner") try stopped(provisionalMessages.ownerOnly)
       const state = try machine.get()
       const saved = storedRequest()
@@ -385,7 +392,7 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
       const state = try machine.get()
       const saved = storedRequest()
       const event: Event | undefined = canDeclineApproval(state) ? { type: "declineApproval" } : canDecline(state) ? { type: "decline" } : undefined
-      if (saved === undefined || sentAlready(saved) || event === undefined || !(try sent(event, sender(connection)))) return try stopped(provisionalMessages.changed)
+      if (saved === undefined || sentAlready(saved) || event === undefined || !(try sent(event, senderOf(owner, connection)))) return try stopped(provisionalMessages.changed)
       return try machine.get()
     },
     followSaved: effect (connection: EvmConnection) => {

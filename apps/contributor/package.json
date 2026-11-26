@@ -4,8 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": "./src/client/index.vibe",
-    "./live": "./src/live.vibe",
+    "./client": {
+      "types": "./.vibe/declarations/src/client/index.d.vibe.ts",
+      "default": "./src/client/index.vibe"
+    },
+    "./live": {
+      "types": "./.vibe/declarations/src/live.d.vibe.ts",
+      "default": "./src/live.vibe"
+    },
     "./render/*": "./src/render/*.ts"
   },
   "scripts": {
@@ -20,7 +26,6 @@
     "@repo/operations": "workspace:*",
     "@repo/platform": "workspace:*",
     "@repo/ports": "workspace:*",
-    "@repo/security": "workspace:*",
     "effect": "4.1.1",
     "vibelang-runtime": "0.0.13"
   },

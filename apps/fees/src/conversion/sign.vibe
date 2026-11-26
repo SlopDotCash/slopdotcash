@@ -44,12 +44,14 @@ export effect function signIntent(session: Session, token: string, quote: QuoteF
   if (signed.rawTx.length > rawTxLimit) return try failed(session, "signed transaction exceeds the storage limit")
   const minimumOutput = quoteNumber(signed.minimumOutput)
   if (minimumOutput === undefined) return try failed(session, "sign: the signed minimum output is negative")
-  const approvedAmount = safeNumber(signed.approvedAmount)
-  const allowance = safeNumber(signed.allowance)
+  const currentIntent = pendingIntent(session.state, session.runId)
+  const scale = session.instance.tokens[currentIntent.token - 1]?.scale ?? 1n
+  const approvedAmount = safeNumber(signed.approvedAmount / scale)
+  const allowance = safeNumber(signed.allowance / scale)
   const pricedFeeMicro = safeNumber(signed.pricedFeeMicro)
   if (approvedAmount === undefined || allowance === undefined || pricedFeeMicro === undefined) return try failed(session, "sign: the approval, allowance or priced fee exceeds the journal's exact range")
   if (!(try renewed(session, true))) return recorded.Quoted
-  const id = pendingIntent(session.state, session.runId).id
+  const id = currentIntent.id
   const journaled = step(session, { type: "sign", runId: session.runId, send: sendOf(signed, reserved, session.names.number("tx", signed.txId), minimumOutput, { approvedAmount, allowance, pricedFeeMicro }) }, { txId: signed.txId, rawTx: signed.rawTx, expiresAt: signed.expiresAt }) catch effect (error) => {
     if (error._tag === "JournalRefused") return error.issue
     throw error

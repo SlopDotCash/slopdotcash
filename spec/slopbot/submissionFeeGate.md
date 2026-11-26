@@ -80,8 +80,8 @@ type FeeFacts = { mode: FeeMode, contractPublished: bool, feeSetting: S::StoredF
   exemption: FeeExemption, mayAsk: bool }
 type FeeItem = { present: bool, paid: bool, paidAt: int, amountMinor: int, settlement: Settlement }
 type WantedLink = LinkUnread | InvitedWork | NotInvited
-type PullFacts = { readable: bool, open: bool, merged: bool, draft: bool, closedAt: int, contributorScope: bool,
-  installationActive: bool, invited: WantedLink, keepMarked: bool }
+type PullFacts = { readable: bool, open: bool, merged: bool, draft: bool, closedAt: int, appealOpen: bool, appealUpheldAt: int,
+  contributorScope: bool, installationActive: bool, invited: WantedLink, keepMarked: bool, keepMarkedAt: int }
 type FeeGate = { now: int, gate: GateState, commentId: int, nextCheckAt: int, updatedAt: int, feeItem: FeeItem,
   labelNeeded: bool, labelPaid: bool, reviewsQueued: int }
 pure val askLeaseSeconds = 600
@@ -225,15 +225,27 @@ still asking for marks the gate paid: the first time it swaps
 to contributor work; the comment is written either way) and queues the held
 review when the pull request is open and not a draft. On a paid row with no
 outcome it then decides: merged, refund due; closed unmerged with a close
-time, nothing before seven days after the later of the close and the
-payment (wait until then), and after them: invited work is refund due
-unless the pull request carries the terms' keep label `slop-keep-fee` at
-that check, then kept due; any other pull request is kept due; and when
+time, nothing while an appeal of Slopbot's own close is undecided (wait a
+day); otherwise, with a close time later than fourteen days after the
+payment, refund due as undecided, whenever the check runs and whatever the
+keep label, the wanted link or an upheld appeal say, because no maintainer
+merged or closed it within the fourteen days (PRD section 5, "Submission
+fee"), and a late check must decide what a check on time would have; closed
+at or before that time, nothing before seven days after the latest of the
+close, the payment and any upheld close-appeal time (wait until then), and
+after them:
+invited work is refund due unless the pull request carries the terms' keep
+label `slop-keep-fee` added at or before that seven-day deadline (an
+unreadable addition time waits a day, and a keep label added after the
+deadline yields refund due); any other pull request is kept due; and when
 GitHub cannot say whether it is invited work, nothing is decided and it
 looks again in a day; closed without a close time, or no payment time,
 look again in a day; open, refund due fourteen days after the payment,
 else look again at the earlier of that time and a day later, so a merge or
-close whose webhook was lost is still seen. The outcome is written only on
+close whose webhook was lost is still seen. When an appeal of Slopbot's
+close is opened or upheld after `kept_due` was written and before any
+resolver send is recorded, Slopbot clears `kept_due` back to undecided and
+schedules an immediate recheck (#3193, #3368). The outcome is written only on
 a paid row whose outcome is still empty. A paid item checked while an ask is
 in flight looks again after the lease. Only a paid fee, or an ask the fee
 check took back, queues the held review. Refunded and kept are the
@@ -256,15 +268,24 @@ effort: that write never changes an outcome.
 
 ```quint
 type FeeDecision = { settlement: Settlement, nextCheckAt: int }
+pure def keptDeadline(paidAt: int, pull: PullFacts): int =
+  val closeOrPaid = if (pull.closedAt > paidAt) pull.closedAt else paidAt
+  val base = if (pull.appealUpheldAt > closeOrPaid) pull.appealUpheldAt else closeOrPaid
+  base + T::keptAfterClosedDays * daySeconds
+pure def closedUndecided(paidAt: int, pull: PullFacts): bool =
+  not(pull.open) and not(pull.merged) and paidAt > 0 and pull.closedAt > paidAt + T::refundUndecidedDays * daySeconds
 pure def settlementFor(paidAt: int, pull: PullFacts, now: int): FeeDecision =
-  val keptAt = (if (pull.closedAt > paidAt) pull.closedAt else paidAt) + T::keptAfterClosedDays * daySeconds
+  val keptAt = keptDeadline(paidAt, pull)
   val refundAt = paidAt + T::refundUndecidedDays * daySeconds
   if (pull.merged) { settlement: RefundDue, nextCheckAt: 0 }
   else if (not(pull.open))
-    (if (pull.closedAt <= 0 or paidAt <= 0) { settlement: NoSettlement, nextCheckAt: now + recheckSeconds }
+    (if (pull.closedAt <= 0 or paidAt <= 0 or pull.appealOpen) { settlement: NoSettlement, nextCheckAt: now + recheckSeconds }
+     else if (closedUndecided(paidAt, pull)) { settlement: RefundDue, nextCheckAt: 0 }
      else if (now < keptAt) { settlement: NoSettlement, nextCheckAt: keptAt }
      else if (pull.invited == LinkUnread) { settlement: NoSettlement, nextCheckAt: now + recheckSeconds }
      else if (pull.invited == InvitedWork and not(pull.keepMarked)) { settlement: RefundDue, nextCheckAt: 0 }
+     else if (pull.invited == InvitedWork and pull.keepMarkedAt <= 0) { settlement: NoSettlement, nextCheckAt: now + recheckSeconds }
+     else if (pull.invited == InvitedWork and pull.keepMarkedAt > keptAt) { settlement: RefundDue, nextCheckAt: 0 }
      else { settlement: KeptDue, nextCheckAt: 0 })
   else if (paidAt <= 0) { settlement: NoSettlement, nextCheckAt: now + recheckSeconds }
   else if (now >= refundAt) { settlement: RefundDue, nextCheckAt: 0 }
@@ -280,6 +301,8 @@ pure def refreshPaid(g: FeeGate, facts: FeeFacts, pull: PullFacts, commentId: in
     labelNeeded: if (swap) false else g.labelNeeded, labelPaid: if (swap) true else g.labelPaid,
     reviewsQueued: g.reviewsQueued + (if (first and pull.open and not(pull.draft)) 1 else 0),
     feeItem: { ...g.feeItem, settlement: decided.settlement } }
+pure def canReopenKept(g: FeeGate): bool = g.gate == Paid and g.feeItem.paid and g.feeItem.settlement == KeptDue
+pure def reopenKept(g: FeeGate): FeeGate = { ...g, nextCheckAt: g.now, feeItem: { ...g.feeItem, settlement: NoSettlement } }
 pure def canDeferCheck(g: FeeGate, facts: FeeFacts, pull: PullFacts): bool =
   checkable(g, facts, pull) and g.feeItem.paid and askInFlight(g)
 pure def deferCheck(g: FeeGate, facts: FeeFacts, pull: PullFacts): FeeGate = { ...g, nextCheckAt: g.now + askLeaseSeconds }
@@ -296,6 +319,7 @@ pure def stepSlopbotNeverPays(before: FeeGate, via: str, after: FeeGate): bool =
 pure def stepSlopbotSetsOnlyDueOutcomes(before: FeeGate, via: str, after: FeeGate): bool =
   after.feeItem.settlement != before.feeItem.settlement implies
     (via == "observeSettled" or
+      (via == "reopenKept" and before.feeItem.paid and before.feeItem.settlement == KeptDue and after.feeItem.settlement == NoSettlement) or
       (via == "refreshPaid" and before.feeItem.paid and before.feeItem.settlement == NoSettlement and
         (after.feeItem.settlement == RefundDue or after.feeItem.settlement == KeptDue)))
 pure def stepOnlyAPaidFeeQueuesTheReview(before: FeeGate, after: FeeGate): bool =
@@ -305,8 +329,13 @@ pure def lawMergedIsRefundDue(paidAt: int, pull: PullFacts, now: int): bool =
   pull.merged implies settlementFor(paidAt, pull, now).settlement == RefundDue
 pure def lawKeptOnlyAfterTheWait(paidAt: int, pull: PullFacts, now: int): bool =
   settlementFor(paidAt, pull, now).settlement == KeptDue implies
-    (not(pull.merged) and not(pull.open) and pull.closedAt > 0 and paidAt > 0 and
-      now >= pull.closedAt + T::keptAfterClosedDays * daySeconds and now >= paidAt + T::keptAfterClosedDays * daySeconds)
+    (not(pull.merged) and not(pull.open) and not(pull.appealOpen) and pull.closedAt > 0 and paidAt > 0 and
+      pull.closedAt <= paidAt + T::refundUndecidedDays * daySeconds and now >= keptDeadline(paidAt, pull))
+pure def lawClosedAfterTheRefundAgeIsRefundDue(paidAt: int, pull: PullFacts, now: int): bool =
+  (closedUndecided(paidAt, pull) and not(pull.appealOpen)) implies settlementFor(paidAt, pull, now).settlement == RefundDue
+pure def lawOpenAppealHoldsClosedFee(paidAt: int, pull: PullFacts, now: int): bool =
+  (not(pull.open) and not(pull.merged) and pull.appealOpen) implies
+    settlementFor(paidAt, pull, now).settlement == NoSettlement
 pure def lawOpenRefundOnlyAfterTheWait(paidAt: int, pull: PullFacts, now: int): bool =
   (pull.open and not(pull.merged) and settlementFor(paidAt, pull, now).settlement == RefundDue) implies
     (paidAt > 0 and now >= paidAt + T::refundUndecidedDays * daySeconds)
@@ -317,19 +346,26 @@ pure def labelOnAt(events: List[LabelEvent], opened: int): bool =
   events.foldl({ latest: -1, labelled: false }, (acc, ev) =>
     if (ev.label == M::wantedLabelName and ev.at >= 0 and ev.at <= opened and ev.at >= acc.latest)
       { latest: ev.at, labelled: ev.added } else acc).labelled
+pure def keepMarkAt(events: List[LabelEvent]): int =
+  val scan = events.foldl({ latest: -1, labelled: false }, (acc, ev) =>
+    if (ev.label == T::keepFeeLabel and ev.at > 0 and ev.at >= acc.latest)
+      { latest: ev.at, labelled: ev.added } else acc)
+  if (scan.labelled) scan.latest else 0
 pure def invitedOf(readable: bool, issues: List[ClosingIssue], opened: int): WantedLink =
   if (not(readable)) LinkUnread
   else if (issues.some(closing => closing.ownRepository and labelOnAt(closing.events, opened))) InvitedWork
   else NotInvited
 pure def keepMarkedOf(labels: List[str]): bool = labels.includes(T::keepFeeLabel)
 pure def lawInvitedWorkIsKeptOnlyOnTheMark(paidAt: int, pull: PullFacts, now: int): bool =
-  (settlementFor(paidAt, pull, now).settlement == KeptDue and pull.invited == InvitedWork) implies pull.keepMarked
+  (settlementFor(paidAt, pull, now).settlement == KeptDue and pull.invited == InvitedWork) implies
+    (pull.keepMarked and pull.keepMarkedAt > 0 and pull.keepMarkedAt <= keptDeadline(paidAt, pull))
 pure def lawClosedRefundOnlyForUnmarkedInvitedWork(paidAt: int, pull: PullFacts, now: int): bool =
-  (not(pull.open) and not(pull.merged) and settlementFor(paidAt, pull, now).settlement == RefundDue) implies
-    (pull.invited == InvitedWork and not(pull.keepMarked) and pull.closedAt > 0 and paidAt > 0 and
-      now >= pull.closedAt + T::keptAfterClosedDays * daySeconds and now >= paidAt + T::keptAfterClosedDays * daySeconds)
+  (not(pull.open) and not(pull.merged) and not(closedUndecided(paidAt, pull)) and
+    settlementFor(paidAt, pull, now).settlement == RefundDue) implies
+    (pull.invited == InvitedWork and (not(pull.keepMarked) or pull.keepMarkedAt > keptDeadline(paidAt, pull)) and
+      not(pull.appealOpen) and pull.closedAt > 0 and paidAt > 0 and now >= keptDeadline(paidAt, pull))
 pure def lawUnreadLinkDecidesNoClosedFee(paidAt: int, pull: PullFacts, now: int): bool =
-  (not(pull.open) and not(pull.merged) and pull.invited == LinkUnread) implies
+  (not(pull.open) and not(pull.merged) and pull.invited == LinkUnread and not(closedUndecided(paidAt, pull))) implies
     settlementFor(paidAt, pull, now).settlement == NoSettlement
 pure def lawLabelAfterOpeningDoesNotInvite(e: LabelEvent, opened: int): bool =
   e.at > opened implies not(labelOnAt(List(e), opened))
@@ -412,13 +448,23 @@ pure val factsValues = Set(liveFacts, { ...liveFacts, mode: FeeDryRun }, { ...li
   { ...liveFacts, contractPublished: false }, { ...liveFacts, feeSetting: S::feeSettingAbsent, settingSince: 0 },
   { ...liveFacts, exemption: Exempt }, { ...liveFacts, exemption: ExemptionUnknown }, { ...liveFacts, mayAsk: false },
   { ...liveFacts, openedAt: 1793300000 })
-pure val openPull: PullFacts = { readable: true, open: true, merged: false, draft: false, closedAt: 0,
-  contributorScope: true, installationActive: true, invited: NotInvited, keepMarked: false }
+pure val openPull: PullFacts = { readable: true, open: true, merged: false, draft: false, closedAt: 0, appealOpen: false,
+  appealUpheldAt: 0, contributorScope: true, installationActive: true, invited: NotInvited, keepMarked: false, keepMarkedAt: 0 }
 pure val pullValues = Set(openPull, { ...openPull, open: false, merged: true, closedAt: 1793491300 },
   { ...openPull, open: false, closedAt: 1793491300 }, { ...openPull, open: false, closedAt: 0 },
+  { ...openPull, open: false, closedAt: 1793491300, appealOpen: true },
+  { ...openPull, open: false, closedAt: 1793491300, appealUpheldAt: 1794600000 },
   { ...openPull, open: false, closedAt: 1793491300, invited: InvitedWork },
-  { ...openPull, open: false, closedAt: 1793491300, invited: InvitedWork, keepMarked: true },
+  { ...openPull, open: false, closedAt: 1793491300, invited: InvitedWork, keepMarked: true, keepMarkedAt: 1793491400 },
+  { ...openPull, open: false, closedAt: 1793491300, invited: InvitedWork, keepMarked: true, keepMarkedAt: 1794900000 },
+  { ...openPull, open: false, closedAt: 1793491300, invited: InvitedWork, keepMarked: true, keepMarkedAt: 0 },
   { ...openPull, open: false, closedAt: 1793491300, invited: LinkUnread },
+  { ...openPull, open: false, closedAt: 1794700800 }, { ...openPull, open: false, closedAt: 1794700801 },
+  { ...openPull, open: false, closedAt: 1794700801, appealOpen: true },
+  { ...openPull, open: false, closedAt: 1794700801, appealUpheldAt: 1794800000 },
+  { ...openPull, open: false, closedAt: 1794700801, invited: InvitedWork, keepMarked: true, keepMarkedAt: 1794700900 },
+  { ...openPull, open: false, closedAt: 1794700801, invited: InvitedWork, keepMarked: true, keepMarkedAt: 0 },
+  { ...openPull, open: false, closedAt: 1794700801, invited: LinkUnread },
   { ...openPull, draft: true }, { ...openPull, contributorScope: false }, { ...openPull, installationActive: false })
 pure val wantedAdded: LabelEvent = { label: M::wantedLabelName, added: true, at: 3 }
 pure val eValues = Set(wantedAdded, { ...wantedAdded, at: 5 }, { ...wantedAdded, at: 7 }, { ...wantedAdded, added: false },

@@ -25,8 +25,8 @@ export const driver: Driver = {
   reset: () => {
     months = new Map();
   },
-  dispatch: (key, event: Event, by) => outcome(monthOf(key).send(event, String(by ?? ""))),
-  receive: (key, raw, by) => outcome(monthOf(key).receive(raw, String(by ?? ""))),
+  dispatch: (key, event: Event, by) => outcome(monthOf(key).send(event, typeof by === "string" ? by : "")),
+  receive: (key, raw, by) => outcome(monthOf(key).receive(raw, typeof by === "string" ? by : "")),
   observe: (key) => Effect.runSync(monthOf(key).get()),
 };
 

@@ -1,4 +1,4 @@
-// spec/contributor/workflow.md, "Submission requires exact attribution and a fresh pre-submission read"; spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable"
+// spec/contributor/workflow.md, "Submission requires exact attribution and a fresh pre-submission read"
 import { Result, Schema } from "effect";
 import { ExactUtc, Sha1, Sha256 } from "../receipts/formats.schema.ts";
 

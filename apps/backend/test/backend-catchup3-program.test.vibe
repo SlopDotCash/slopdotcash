@@ -3,7 +3,7 @@ import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
-import { Request, Response } from "miniflare"
+import { type Request, Response } from "miniflare"
 
 const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
 

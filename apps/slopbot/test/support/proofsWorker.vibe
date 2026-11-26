@@ -149,15 +149,7 @@ export function recoveryOf(requests: ReadonlyArray<FileRequest>, contents: Reado
 }
 
 function fetcherOf(fake: GitHubFake): Fetcher {
-  return {
-    fetch: async (request) => {
-      try {
-        return await fake.fetch(request)
-      } catch (cause) {
-        throw cause
-      }
-    },
-  }
+  return { fetch: (request) => fake.fetch(request) }
 }
 
 export function gitHubOver(world: Seeded) {
@@ -170,12 +162,8 @@ export effect function failNext(fake: GitHubFake, match: string | RegExp, failur
 
 export effect function rewriteNext(fake: GitHubFake, match: string | RegExp, change: (body: Readonly<Record<string, unknown>>) => unknown) {
   const alter: Alter = async (response) => {
-    try {
-      const body = await response.json() as Readonly<Record<string, unknown>>
-      return new WorkerResponse(JSON.stringify(change(body)), { status: response.status, headers: { "content-type": "application/json; charset=utf-8" } }) as unknown as Answer
-    } catch (cause) {
-      throw cause
-    }
+    const body = await response.json() as Readonly<Record<string, unknown>>
+    return new WorkerResponse(JSON.stringify(change(body)), { status: response.status, headers: { "content-type": "application/json; charset=utf-8" } }) as unknown as Answer
   }
   try Effect.try(() => fake.alterNext(match, alter))
 }

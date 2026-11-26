@@ -384,7 +384,7 @@ function people(terms: unknown): ReadonlyArray<unknown> {
   const approvers = member(terms, "approvers");
   return ["technical", "financial", "dispute"].flatMap((role) => {
     const entries = member(approvers, role);
-    return Array.isArray(entries) ? entries : [];
+    return Array.isArray(entries) ? (entries as ReadonlyArray<unknown>) : [];
   });
 }
 

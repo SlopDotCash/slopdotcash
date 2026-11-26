@@ -21,13 +21,18 @@ async function bytesOf(request: IncomingMessage): Promise<Buffer> {
 
 /** @throws {Error} */
 export async function serveGitHub(): Promise<ServedGitHub> {
-  let fake: GitHubFake | undefined;
-  const server = createServer((request, response) => {
+  const server = createServer();
+  const port = await new Promise<number>((resolve) => server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    resolve(typeof address === "object" && address !== null ? address.port : 0);
+  }));
+  const origin = `http://127.0.0.1:${port}`;
+  const made = githubFake({ authority: origin });
+  server.on("request", (request, response) => {
     const answered = async () => {
-      if (fake === undefined) throw new Error("the GitHub fake is not ready");
       const body = await bytesOf(request);
       const headers = Object.entries(request.headers).flatMap(([name, value]): Array<[string, string]> => (typeof value === "string" ? [[name, value]] : []));
-      const reply = await fake.fetch(`${fake.authority}${request.url ?? "/"}`, { method: request.method ?? "GET", headers, ...(body.length === 0 ? {} : { body: new Uint8Array(body) }) });
+      const reply = await made.fetch(`${made.authority}${request.url ?? "/"}`, { method: request.method ?? "GET", headers, ...(body.length === 0 ? {} : { body: new Uint8Array(body) }) });
       response.statusCode = reply.status;
       for (const name of ["content-type", "link"]) {
         const value = reply.headers.get(name);
@@ -40,13 +45,6 @@ export async function serveGitHub(): Promise<ServedGitHub> {
       response.end(String(error));
     });
   });
-  const port = await new Promise<number>((resolve) => server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
-    resolve(typeof address === "object" && address !== null ? address.port : 0);
-  }));
-  const origin = `http://127.0.0.1:${port}`;
-  const made = githubFake({ authority: origin });
-  fake = made;
   return {
     fake: made,
     origin,

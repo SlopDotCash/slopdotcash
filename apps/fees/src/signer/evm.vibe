@@ -22,7 +22,10 @@ import { freeNonce, nonceAtLeast, readWord, simulated, tokenBalance } from "../e
 import { type BuybackSigning, type KyberSettings, builtSwap, nativeValue, swapMatches } from "../kyber/route.vibe"
 import { decodedSwap, returnAmountOf } from "../kyber/swap.ts"
 import type { EvmNetwork } from "../evm/abi.ts"
-import type { EvmIntent, EvmReplacement, FirstEvmIntent, PreparationAttempt } from "./intents.ts"
+import type { EvmIntent, EvmReplacement, FirstEvmIntent, PreparationAttempt } from "../wallet/intents.ts"
+import { SignRefused } from "../wallet/service.vibe"
+
+export { SignRefused }
 
 module verified {
   import { bridgeFeeWithin as within } from "../kernels/buybackShares.ts"
@@ -30,8 +33,6 @@ module verified {
   export function bridgeFeeWithin(input: bigint, arrival: bigint, maxFeeBps: bigint): boolean { return within(input, arrival, maxFeeBps) }
 }
 import { bridgeFeeWithin } from verified
-
-export error SignRefused { step: string; issue: string }
 
 export interface EvmCall {
   readonly to: Address

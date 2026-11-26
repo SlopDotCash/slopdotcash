@@ -6,7 +6,7 @@ import { type DeploymentPin, type Event, type RetainedAllocation, type ReserveRe
 import { type Bytes32, type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
 import { decodeMonthlyReserve, monthlyReleaseDigest, monthlyReserveCall, releaseMonthlyReserveCalldata } from "../chain/evm/monthlyRoot.ts"
 import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
-import { type Period, parsePeriod } from "../kernels/calendar.ts"
+import { parsePeriod } from "../kernels/calendar.ts"
 import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
 import type { EvmDeployment, SolanaDeployment } from "../vault/policy.vibe"
 import { type Capture, type FinalizedMonth, type ReleaseRequest, type Retained, EvidenceUnreadable, captureOf, finalizedMonth, matchesMonth, retainedAllocation, retainedAllocations } from "./evidence.vibe"
@@ -144,7 +144,9 @@ function unencodable() {
 effect function admitted(scope: ReleaseScope, capture: Capture, observed: FinalizedMonth, pin: DeploymentPin, revision: number) {
   const height = Number(observed.height)
   let state = try release(scope)
+  const invalidated = (state.phase === "Checked" || state.phase === "Approved") && height > state.observedHeight
   state = try step(scope, state, { type: "observe", height }, "attester", canObserve(state, height))
+  if (invalidated) return { kind: "held", reason: "evidence-stale" } as const
   state = try step(scope, state, { type: "pinImplementation", pin }, "attester", canPinImplementation(state, pin))
   const qualification = { implementation: observed.implementation, height }
   state = try step(scope, state, { type: "qualifyUpgrade", qualification }, "attester", canQualifyUpgrade(state, qualification))

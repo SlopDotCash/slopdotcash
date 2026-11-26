@@ -38,19 +38,39 @@ const RepoPath = Schema.String.check(Schema.isPattern(repoPath))
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const Instant = Schema.String.check(Schema.makeFilter((value: string) => Number.isFinite(Date.parse(value))))
 
-export const RepoRequestBody = Schema.Struct({ repo: Schema.Unknown, action: Schema.Unknown })
+const ProjectId = Schema.String.check(Schema.isPattern(projectId))
+const AnyField = Schema.Unknown
 
-export const RequestedRepo = Schema.Struct({ repo: RepoPath, count: Count, newestAt: Instant })
-export type RequestedRepo = typeof RequestedRepo.Type
+export schema RepoRequestBody {
+  readonly repo: AnyField
+  readonly action: AnyField
+}
 
-export const MyRepoRequest = Schema.Struct({ repo: RepoPath, expiresAt: Instant, listedAs: Schema.NullOr(Schema.String.check(Schema.isPattern(projectId))) })
-export type MyRepoRequest = typeof MyRepoRequest.Type
+export schema RequestedRepo {
+  readonly repo: RepoPath
+  readonly count: Count
+  readonly newestAt: Instant
+}
 
-export const RepoRequestBoard = Schema.Struct({ repos: Schema.Array(RequestedRepo).check(Schema.isMaxLength(boardLimit)), mine: Schema.NullOr(Schema.Array(MyRepoRequest)) })
-export type RepoRequestBoard = typeof RepoRequestBoard.Type
+export schema MyRepoRequest {
+  readonly repo: RepoPath
+  readonly expiresAt: Instant
+  readonly listedAs: ProjectId | null
+}
 
-export const RepoRequestAnswer = Schema.Struct({ repo: RepoPath, count: Count, flagged: Schema.Boolean, expiresAt: Schema.NullOr(Instant) })
-export type RepoRequestAnswer = typeof RepoRequestAnswer.Type
+const BoundedRepos = Schema.Array(RequestedRepo).check(Schema.isMaxLength(boardLimit))
+
+export schema RepoRequestBoard {
+  readonly repos: BoundedRepos
+  readonly mine: ReadonlyArray<MyRepoRequest> | null
+}
+
+export schema RepoRequestAnswer {
+  readonly repo: RepoPath
+  readonly count: Count
+  readonly flagged: boolean
+  readonly expiresAt: Instant | null
+}
 
 export const repoRequestBoard = route({ method: "GET", path: repoRequestsPath, access: "public", limitKib: 1, request: undefined, answer: RepoRequestBoard, rejected: "not_found", cache: { browserSeconds: 300 } })
 export const flagRepoRequest = route({ method: "POST", path: repoRequestsPath, access: "sessionWrite", limitKib: 1, request: RepoRequestBody, answer: RepoRequestAnswer, rejected: "request_limit", cache: "private" })

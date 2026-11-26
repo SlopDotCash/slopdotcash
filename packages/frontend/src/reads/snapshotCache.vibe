@@ -102,8 +102,9 @@ export effect function sharedSnapshot<K, T, E, R>(load: (key: K, attempt: number
 
   effect function flush(read: number) {
     const aborted = try locked(effect {
+      const transport = transports.get(read)
       if (!(try send({ type: "flushRelease", read }))) return undefined
-      return readEntry(try machine.get(), read).aborted ? transports.get(read) : undefined
+      return readEntry(try machine.get(), read).aborted ? transport : undefined
     })
     if (aborted === undefined) return
     if (aborted.fiber !== undefined) try Fiber.interrupt(aborted.fiber)

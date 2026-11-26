@@ -20,7 +20,9 @@ export effect function rosterOf() {
 effect function decodedEnforcement(rows: ReadonlyArray<Rows>, mirror: RegistryMirror, roster: Roster) {
   const history = try historyOf(rows)
   const today = Math.floor((try Clock.currentTimeMillis) / dayMillis)
-  const start = { projectRow: history.facts?.project_row ?? 0, mirror, steward: idOf(history.facts?.steward), creator: idOf(history.facts?.creator), roster }
+  const steward = idOf(history.facts?.steward)
+  const creator = idOf(history.facts?.creator) || steward
+  const start = { projectRow: history.facts?.project_row ?? 0, mirror, steward, creator, roster }
   const replayed = try replay(start, history, today)
   const state = decodeState(replayed) catch effect () => { throw new RowMismatch({ text: "enforcement state", issue: "the replayed history breaks an always rule of the enforcement model" }) }
   return { history, state }

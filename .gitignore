@@ -39,3 +39,4 @@ build/
 .vitest/
 .vibelang-sidecar-*
 apps/security/sandbox/.build/
+test/__traces__/

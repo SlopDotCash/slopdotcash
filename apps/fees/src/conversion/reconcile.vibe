@@ -6,7 +6,7 @@ import { type JournaledAttempt, journaledAttempts } from "../journal/queries.vib
 import { journal } from "../journal/store.vibe"
 import { expireUnlanded } from "../expiry/prove.vibe"
 import { observeBalance } from "../receipts/discover.vibe"
-import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber } from "./chain.vibe"
+import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber, tokenScale } from "./chain.vibe"
 import { type Session, renewed, step } from "./session.vibe"
 
 error ReceiptUnrepresentable { row: number; field: string }
@@ -33,6 +33,7 @@ effect function exact(value: bigint, row: number, field: string) {
 }
 
 effect function receiptOf(session: Session, row: Row, landed: Landed) {
+  const scale = session.instance.tokens[row.token - 1]?.scale ?? tokenScale(landed.allowance)
   return {
     tx: session.names.number("tx", landed.txId),
     succeeded: landed.succeeded,
@@ -40,7 +41,7 @@ effect function receiptOf(session: Session, row: Row, landed: Landed) {
     actualNative: try exact(try unitsOf(landed.actualWei, session.state.network, `fee send ${row.id} native fee`), row.id, "actualNative"),
     finalized: true,
     roleFree: landed.roleFree,
-    allowanceAtBlock: try exact(landed.allowance, row.id, "allowanceAtBlock"),
+    allowanceAtBlock: try exact(landed.allowance / scale, row.id, "allowanceAtBlock"),
   } satisfies SendReceipt
 }
 
@@ -176,7 +177,7 @@ export effect function reconcile(session: Session) {
   for (const row of session.state.rows.filter((row) => isOpen(row) || expiredAwaitingReceipt(session, row))) {
     const current = session.state.rows[row.id - 1] ?? row
     const done = settled(session, book, bytes, current) catch effect (error) => {
-      try Effect.logWarning("fee_conversion_reconcile_error", { network: session.state.network, row: row.id, error: error._tag })
+      try Effect.logWarning("fee_conversion_reconcile_error", { network: session.state.network, row: row.id, error: error._tag === "ChainUnavailable" ? `${error._tag}: ${error.detail}` : error._tag })
       return "open" satisfies Settling
     }
     if (done === "settled") reconciled += 1

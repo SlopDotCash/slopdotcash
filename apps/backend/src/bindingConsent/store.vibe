@@ -3,7 +3,7 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { type D1, type D1Error, type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { BindingAttempts } from "@repo/ports/settlement"
-import { type Binding, type CaseAccess, type Consent, type Deployment, type Event, type EvmConsentSignature, type PaymentEvidence, type SolanaGeneration, NotAState, apply, decodeState, solanaClaim } from "../../gen/backend__bindingConsent.effect.vibe"
+import { type Binding, type CaseAccess, type Consent, type Deployment, type Event, type EvmConsentSignature, type PaymentEvidence, type SolanaGeneration, type NotAState, apply, decodeState, solanaClaim } from "../../gen/backend__bindingConsent.effect.vibe"
 import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
 import { type Context, type Loaded as Partition, claimAt, loadPartition, positionOf } from "../wallets/store.vibe"
 

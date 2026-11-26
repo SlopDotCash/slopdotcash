@@ -6,33 +6,13 @@ import { bytes32, evmAddress } from "../chain/evm/abi.ts"
 import { type SignedType2, readSignedType2, signedType2, transactionId as idOf } from "../chain/evm/transactions.ts"
 import { type BindingRecord, type Step, advance, attemptOf, withAttempt } from "../journal/bindings.vibe"
 import { type Entries, type Scope, within } from "../journal/journal.vibe"
-import { STORED_BINDING, adoptedBinding, bindingArguments, observationKey, pendingKeys, removePending, retainedConsent } from "../journal/stored.vibe"
+import { type RecoveryInput, isRecoveryInput } from "../operator/reconcileBinding.vibe"
+import { STORED_BINDING, adoptedBinding, bindingArguments, observationKey, pendingKeys, removePending, retainedConsent } from "./stored.vibe"
 import { Attempt, AttemptHeld, type Deployment, frozenLimit, readAttempt, rpcUrlsOf, sameAttempt, signedWithin } from "./evm.vibe"
 import { CANCELLATION_GAS as cancellationGas } from "../kernels/attesterLimits.ts"
 import { worstCaseNativeCost } from "../kernels/budget.ts"
 
-export interface RecoveryInput {
-  readonly network: string
-  readonly vault: string
-  readonly originalTransactionId: string
-  readonly winnerTransactionId: string
-}
-
-const recoveryKeys = "network,originalTransactionId,vault,winnerTransactionId"
-const networkPattern = /^[a-z][a-z0-9-]{1,63}$/u
-const vaultPattern = /^0x[0-9a-fA-F]{40}$/u
-const hashPattern = /^0x[0-9a-fA-F]{64}$/u
-
-export function isRecoveryInput(value: unknown): value is RecoveryInput {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
-  const item = value as Record<string, unknown>
-  const { network, vault, originalTransactionId, winnerTransactionId } = item
-  return Object.keys(item).sort().join(",") === recoveryKeys
-    && typeof network === "string" && networkPattern.test(network)
-    && typeof vault === "string" && vaultPattern.test(vault)
-    && typeof originalTransactionId === "string" && hashPattern.test(originalTransactionId)
-    && typeof winnerTransactionId === "string" && hashPattern.test(winnerTransactionId)
-}
+export { type RecoveryInput, isRecoveryInput }
 
 export schema Proof {
   readonly transactionId: string

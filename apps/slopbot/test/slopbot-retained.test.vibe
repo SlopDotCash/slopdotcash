@@ -214,7 +214,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       ["head", (evidence) => evidence.repairBodyEdit === undefined ? evidence : { ...evidence, repairBodyEdit: { ...evidence.repairBodyEdit, headRefOid: "9".repeat(40) } }],
       ["body", (evidence) => evidence.repairBodyEdit === undefined ? evidence : { ...evidence, repairBodyEdit: { ...evidence.repairBodyEdit, body: "Changed" } }],
       ["post-merge", (evidence) => evidence.repairBodyEdit === undefined ? evidence : { ...evidence, repairBodyEdit: { ...evidence.repairBodyEdit, lastEditedAt: "2026-11-10T10:00:01Z" } }],
-      ["missing", (evidence) => { const { repairBodyEdit, ...rest } = evidence; return rest }],
+      ["missing", (evidence) => { const { repairBodyEdit: _repairBodyEdit, ...rest } = evidence; return rest }],
       ["author", (evidence) => evidence.pull.number !== 11 ? evidence : { ...evidence, commits: evidence.commits.map((commit) => commit.sha === kept.originalFollowUp ? { ...commit, author: kept.linus } : commit) }],
       ["cycle", (evidence) => evidence.pull.number !== 12 ? evidence : { ...evidence, commits: evidence.commits.map((commit) => commit.sha === kept.repair ? { ...commit, parents: [{ sha: kept.repair }] } : commit) }],
       ["copy-bytes", (evidence) => evidence.pull.number !== 12 ? evidence : { ...evidence, commitAttribution: evidence.commitAttribution.map((entry) => entry.sha === kept.repair ? { ...entry, files: (entry.files ?? []).map((file) => ({ ...file, patch: "@@ -0,0 +1 @@\n+export const format = 0;" })) } : entry) }],

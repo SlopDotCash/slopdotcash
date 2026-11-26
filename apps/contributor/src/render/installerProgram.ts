@@ -650,45 +650,7 @@ function skillPathMatches(skillName: string, skillRepositoryPath: string): boole
   return skillRepositoryPath === `skills/${skillName}`;
 }
 
-/** @throws {never} */
-export function createInstallCommand({ artifactOrigin: origin, skillsRoot, skillName, skillRepositoryPath, authority: requested }: InstallCommandInput): InstallerText {
-  const checkedOrigin = artifactOriginOf(origin);
-  if (checkedOrigin.kind === "refused") return checkedOrigin;
-  const artifactOrigin = checkedOrigin.value;
-  const checkedAuthority = originsOf(requested, artifactOrigin);
-  if (checkedAuthority.kind === "refused") return checkedAuthority;
-  const authority = checkedAuthority.value;
-  const checkedTimeout = requestTimeoutOf(requested);
-  if (checkedTimeout.kind === "refused") return checkedTimeout;
-  const requestTimeoutSeconds = checkedTimeout.value;
-  const requiresHttpsTrust = [artifactOrigin, authority.apiOrigin, authority.rawOrigin].some((value) => URL.parse(value)?.protocol === "https:");
-  const pythonProbe = pythonRuntimeProbe(requiresHttpsTrust);
-  const pythonRequirement = requiresHttpsTrust
-    ? "Python 3 with a usable HTTPS CA trust store is required for authenticated skill installation."
-    : "Python 3 is required for authenticated skill installation.";
-  if (!skillNamePattern.test(skillName)) return refused("[Slop] skill name must be canonical kebab-case");
-  if (!skillPathMatches(skillName, skillRepositoryPath)) return refused("[Slop] skill repository path must match the canonical skill name");
-  return {
-    kind: "text",
-    text: `(
-  set -eu
-  SKILLS_ROOT="${skillsRoot}"
-  OPERATION="\${SLOP_SKILL_OPERATION:-install}"
-  ROLLBACK_REVISION="\${SLOP_SKILL_REVISION:-}"
-  PYTHON_BIN=""
-  for CANDIDATE in python3 python; do
-    if command -v "$CANDIDATE" >/dev/null 2>&1 && "$CANDIDATE" -c ${shellQuote(pythonProbe)} >/dev/null 2>&1; then
-      PYTHON_BIN="$CANDIDATE"
-      break
-    fi
-  done
-  if [ -z "$PYTHON_BIN" ]; then
-    printf '%s\\n' ${shellQuote(pythonRequirement)} >&2
-    exit 1
-  fi
-  trap 'exit 1' HUP INT TERM
-  "$PYTHON_BIN" - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} ${shellQuote(String(requestTimeoutSeconds))} ${shellQuote(authority.registryOrigin)} <<'PY'
-import binascii
+const installerPythonProgram = `import binascii
 import ctypes
 import hashlib
 import io
@@ -1484,7 +1446,47 @@ except Exception as error:  # error-policy:J1 installer process boundary
             f"The operation failed: {error}. The committed activation was not reverted.",
             file=sys.stderr,
         )
-    sys.exit(1)
+    sys.exit(1)`;
+
+/** @throws {never} */
+export function createInstallCommand({ artifactOrigin: origin, skillsRoot, skillName, skillRepositoryPath, authority: requested }: InstallCommandInput): InstallerText {
+  const checkedOrigin = artifactOriginOf(origin);
+  if (checkedOrigin.kind === "refused") return checkedOrigin;
+  const artifactOrigin = checkedOrigin.value;
+  const checkedAuthority = originsOf(requested, artifactOrigin);
+  if (checkedAuthority.kind === "refused") return checkedAuthority;
+  const authority = checkedAuthority.value;
+  const checkedTimeout = requestTimeoutOf(requested);
+  if (checkedTimeout.kind === "refused") return checkedTimeout;
+  const requestTimeoutSeconds = checkedTimeout.value;
+  const requiresHttpsTrust = [artifactOrigin, authority.apiOrigin, authority.rawOrigin].some((value) => URL.parse(value)?.protocol === "https:");
+  const pythonProbe = pythonRuntimeProbe(requiresHttpsTrust);
+  const pythonRequirement = requiresHttpsTrust
+    ? "Python 3 with a usable HTTPS CA trust store is required for authenticated skill installation."
+    : "Python 3 is required for authenticated skill installation.";
+  if (!skillNamePattern.test(skillName)) return refused("[Slop] skill name must be canonical kebab-case");
+  if (!skillPathMatches(skillName, skillRepositoryPath)) return refused("[Slop] skill repository path must match the canonical skill name");
+  return {
+    kind: "text",
+    text: `(
+  set -eu
+  SKILLS_ROOT="${skillsRoot}"
+  OPERATION="\${SLOP_SKILL_OPERATION:-install}"
+  ROLLBACK_REVISION="\${SLOP_SKILL_REVISION:-}"
+  PYTHON_BIN=""
+  for CANDIDATE in python3 python; do
+    if command -v "$CANDIDATE" >/dev/null 2>&1 && "$CANDIDATE" -c ${shellQuote(pythonProbe)} >/dev/null 2>&1; then
+      PYTHON_BIN="$CANDIDATE"
+      break
+    fi
+  done
+  if [ -z "$PYTHON_BIN" ]; then
+    printf '%s\\n' ${shellQuote(pythonRequirement)} >&2
+    exit 1
+  fi
+  trap 'exit 1' HUP INT TERM
+  "$PYTHON_BIN" - ${shellQuote(artifactOrigin)} ${shellQuote(authority.apiOrigin)} ${shellQuote(authority.rawOrigin)} "$SKILLS_ROOT" "$OPERATION" "$ROLLBACK_REVISION" ${shellQuote(skillName)} ${shellQuote(skillRepositoryPath)} ${shellQuote(String(requestTimeoutSeconds))} ${shellQuote(authority.registryOrigin)} <<'PY'
+${installerPythonProgram}
 PY
 )`,
   };

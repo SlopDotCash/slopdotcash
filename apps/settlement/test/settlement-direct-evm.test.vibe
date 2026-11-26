@@ -60,7 +60,7 @@ const LedgerStarted = Layer.effect(Ledger, ledger())
 const baseOperatorFeeOracle = "0x420000000000000000000000000000000000000f"
 
 const ChainStarted = Layer.mergeAll(LedgerStarted, Layer.effect(Chain, effect {
-  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, finalityDepth: 2 })), (started) => promise(() => started.close()))
   try promise(() => chain.rpc("anvil_setCode", [baseOperatorFeeOracle, "0x60206000f3"]))
   return { chain }
 }))
@@ -186,7 +186,7 @@ layer(ChainStarted, { excludeTestServices: true, timeout: "300 seconds" })((it) 
       const before = { reporter: try balance(chain, reporterAccount.address), fee: try balance(chain, feeRecipient) }
       const feeLeg = try promise(() => chain.transact({ from: payerAccount.address, to: feeRecipient as Address, value: big(intent.feeBase) }))
       const researcherLeg = try promise(() => chain.transact({ from: payerAccount.address, to: reporterAccount.address, value: big(intent.netBase) }))
-      try promise(() => chain.mine(80))
+      try promise(() => chain.mine(2))
       const firstLeg = try verifyPayment(payer(5), { transactionIds: [feeLeg.transactionHash], confirmation: true }, nothing)
       const partial = try legsFor(caseId)
       const partlyPaid = try rowsOf(db, "SELECT case_id FROM security_direct_payment_receipts WHERE case_id = ?", caseId)

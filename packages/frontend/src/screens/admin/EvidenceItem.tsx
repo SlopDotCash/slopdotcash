@@ -50,30 +50,30 @@ export function EvidenceItem({ runtime, run, object, actorId }: EvidenceItemProp
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<ReadStatus>("");
   const [text, setText] = useState<string | null>(null);
-  const attempts = useRef(0);
+  const attemptsRef = useRef(0);
   const headingId = useId();
-  const verifiedCopy = useRef<string | null>(null);
+  const verifiedCopyRef = useRef<string | null>(null);
   const download = object.streamed || object.contentType === binaryType;
   const inspect = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
-    const attempt = ++attempts.current;
-    if (verifiedCopy.current) URL.revokeObjectURL(verifiedCopy.current);
-    verifiedCopy.current = null;
+    const attempt = ++attemptsRef.current;
+    if (verifiedCopyRef.current) URL.revokeObjectURL(verifiedCopyRef.current);
+    verifiedCopyRef.current = null;
     setText(null);
     setStatus("");
     setError(null);
     setBusy(true);
     const acted = await act(runtime, inspectEvidence(actorId, run, object, reason), () => false, "Evidence read failed");
-    if (attempt !== attempts.current) return;
+    if (attempt !== attemptsRef.current) return;
     setBusy(false);
     if (!acted.ok) return setError(acted.message);
     const read = acted.value;
     setStatus(readStatuses[read.kind]);
     if (read.kind === "text") return setText(read.text);
     if (read.kind === "download") return startDownload(read.href, `${object.sha256}.bin`);
-    verifiedCopy.current = URL.createObjectURL(new Blob([read.bytes.slice()], { type: binaryType }));
-    startDownload(verifiedCopy.current, `${object.sha256}.bin`);
+    verifiedCopyRef.current = URL.createObjectURL(new Blob([read.bytes.slice()], { type: binaryType }));
+    startDownload(verifiedCopyRef.current, `${object.sha256}.bin`);
   };
   return (
     <article aria-labelledby={headingId} className="flex flex-col gap-4 rounded-md border border-border p-4">

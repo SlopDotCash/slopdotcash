@@ -33,6 +33,13 @@ export function safeNumber(value: bigint): number | undefined {
   return isSafe(value) ? exactNumber(value) : undefined
 }
 
+export function tokenScale(value: bigint): bigint {
+  if (value <= 9_007_199_254_740_991n) return 1n
+  let scale = 1_000_000_000_000n
+  while (value / scale > 9_007_199_254_740_991n) scale *= 1_000_000n
+  return scale
+}
+
 export function quoteNumber(value: bigint): number | undefined {
   return value < 0n ? undefined : quoteValue(value)
 }

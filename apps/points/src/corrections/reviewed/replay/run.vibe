@@ -12,7 +12,7 @@ import { readRegistry } from "../../../snapshot/adaptPr.vibe"
 import { publishedRegistry } from "../../collect/published.vibe"
 import { type ReviewedRefused, digestText, refusal, require } from "../packet.vibe"
 import { exactMainHead, trustedMain } from "../transport.vibe"
-import { type AuditPhase, type AuditedScope, auditedScope, sealedReceipt } from "../audit/run.vibe"
+import { type AuditPhase, type AuditedScope, auditedScope, historicalReplayRequiresCollection, sealedReceipt } from "../audit/run.vibe"
 import { assertHistoricalAssessmentFreshness } from "../audit/catalog.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
 import { apply } from "../../../../gen/points__assessmentAudit.effect.vibe"
@@ -83,7 +83,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
   const { project, countsFrom } = try pinnedProject(audited)
   const context = contextOf(audited, registry, project, countsFrom, try Clock.currentTimeMillis)
   const { receipt } = audited.classified
-  if (receipt.status !== "requires-value-replay") {
+  if (!(try historicalReplayRequiresCollection(receipt.status, audited.inputs.requireNoActive))) {
     const qualificationSha256 = try verifyHistoricalValueReplay(packetOf(audited, null, []), audited.baseline, receipt, null, new Map(), context)
     return { summary: { snapshotSha256: null, valueCoverageCount: 0, closedUnmergedCoverageCount: 0, valueEventCount: 0, qualificationSha256 } satisfies ReplaySummary, valueSnapshot: null as unknown, valueKeys: [] as ReadonlyArray<string> }
   }

@@ -118,7 +118,7 @@ const accounts = new Map<string, FakeAccount>([
 ])
 
 const asked: string[] = []
-const fakeChain: { status: { readonly err: unknown; readonly confirmationStatus: string } | null; blockhash: string; lastValidBlockHeight: number } = { status: null, blockhash: genesis, lastValidBlockHeight: 500 }
+const fakeChain: { status: { readonly err: unknown; readonly confirmationStatus: string } | null; blockhash: string; lastValidBlockHeight: number; blockHeight: number; onBlockHeight?: () => void } = { status: null, blockhash: genesis, lastValidBlockHeight: 500, blockHeight: 10 }
 
 function accountAnswer(params: ReadonlyArray<unknown>) {
   const found = accounts.get(String(params[0]))
@@ -130,7 +130,12 @@ function chainAnswer(call: RpcCall): unknown {
     case "getGenesisHash": return genesis
     case "getAccountInfo": return accountAnswer(call.params)
     case "getLatestBlockhash": return { context: { slot: 10 }, value: { blockhash: fakeChain.blockhash, lastValidBlockHeight: fakeChain.lastValidBlockHeight } }
-    case "getBlockHeight": return 10
+    case "getBlockHeight": {
+      const hook = fakeChain.onBlockHeight
+      fakeChain.onBlockHeight = undefined
+      if (hook !== undefined) hook()
+      return fakeChain.blockHeight
+    }
     case "getSignatureStatuses": return { context: { slot: 10 }, value: (Array.isArray(call.params[0]) ? call.params[0] : []).map(() => fakeChain.status === null ? null : { slot: 40, confirmations: null, ...fakeChain.status }) }
     default: return null
   }
@@ -271,6 +276,33 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       kept: [failed, false],
       landed: ["Binding changed; finalized receipt reconciliation required", fresh, undefined],
       broadcast: [],
+    }))
+  })
+
+  it.effect('Refuse Solana attester re-sign when the award is paid between load and refresh (spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block")', () => effect {
+    const before = transactionOf(try journalled(attemptKey))
+    const awardKey = awardAddress(program, project, obligationId)
+    accounts.set(bindingAddress(program, project, u64(actor) as U64), { owner: program, executable: false, data: anchored("WalletBinding", 169, [
+      [8, digestBytes(formerDigest)], [40, keyBytes(identity.address)], [72, word(actor)], [80, domain()], [112, keyBytes(formerWallet.address)], [144, word(1n)],
+    ]) })
+    fakeChain.status = null
+    fakeChain.blockHeight = 700
+    fakeChain.blockhash = walletOf(0x43).address
+    fakeChain.lastValidBlockHeight = 800
+    fakeChain.onBlockHeight = () => {
+      const existing = accounts.get(awardKey)
+      if (existing === undefined) return
+      const paid = new Uint8Array(existing.data)
+      paid[136] = 1
+      accounts.set(awardKey, { ...existing, data: paid })
+    }
+    const answer = try refusal()
+    const after = transactionOf(try journalled(attemptKey))
+    const archived = try journalled(`${attemptKey}:expired:600`)
+    try Effect.try(() => assert.deepStrictEqual({ answer, unchanged: after === before, archived }, {
+      answer: "Paid outside known attempt; finalized receipt reconciliation required",
+      unchanged: true,
+      archived: undefined,
     }))
   })
 })

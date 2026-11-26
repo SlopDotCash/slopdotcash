@@ -1,5 +1,5 @@
 // spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"
-import { OAuthFailed, currentUser, exchangeCode } from "@repo/platform/github/oauth"
+import { type OAuthFailed, currentUser, exchangeCode } from "@repo/platform/github/oauth"
 import { IdentitySettings } from "./config.vibe"
 import type { ResolvedIdentity } from "./store.vibe"
 

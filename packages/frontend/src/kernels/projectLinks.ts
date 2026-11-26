@@ -82,7 +82,7 @@ export function xInputValue(url: string | undefined): string {
 /** `links` with the website and X account set or removed; every other named link stays as it was. @throws {never} */
 export function withOwnerLinks(links: Readonly<Record<string, string>>, website: string | null, x: string | null): Record<string, string> {
   const rest = Object.entries(links).filter(([name]) => name !== "website" && name !== "x");
-  return Object.fromEntries([...rest, ...(website ? [["website", website]] : []), ...(x ? [["x", x]] : [])]);
+  return Object.fromEntries<string>([...rest, ...(website ? ([["website", website]] as const) : []), ...(x ? ([["x", x]] as const) : [])]);
 }
 
 /** @throws {never} */

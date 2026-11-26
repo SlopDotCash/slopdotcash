@@ -6,11 +6,11 @@ import { networkNames } from "../journal/codec.vibe"
 import type { EnabledNetwork } from "../runtime/config.vibe"
 import type { Held } from "../runtime/config.vibe"
 import { type TokenFact, type VaultFact, holdingKind } from "../runtime/reviewed.vibe"
-import { ConversionChain, safeNumber } from "../conversion/chain.vibe"
+import { ConversionChain, safeNumber, tokenScale } from "../conversion/chain.vibe"
 import { type Session, step } from "../conversion/session.vibe"
 
-error ReceiptUnrepresentable { token: string; receipt: string }
-error BalanceUnrepresentable { token: string }
+export error ReceiptUnrepresentable { token: string; receipt: string }
+export error BalanceUnrepresentable { token: string }
 
 export interface Transfer { readonly receipt: string; readonly token: string; readonly amount: bigint }
 
@@ -81,8 +81,16 @@ export effect function observed(network: EnabledNetwork, held: Held, tokens: Rea
 export effect function observeBalance(session: Session, token: number, address: string) {
   if (holding(session.state, token).asset === "NativeAsset") return
   const read = try (try ConversionChain).balance(address)
-  const balance = safeNumber(read)
+  const previousScale = session.instance.tokens[token - 1]?.scale ?? 1n
+  const needed = tokenScale(read)
+  const scale = needed > previousScale ? needed : previousScale
+  if (read % scale !== 0n) throw new BalanceUnrepresentable({ token: address })
+  const balance = safeNumber(read / scale)
   if (balance === undefined) throw new BalanceUnrepresentable({ token: address })
+  session.instance = {
+    ...session.instance,
+    tokens: session.instance.tokens.map((entry, index) => index === token - 1 ? { ...entry, scale, rawBalance: read } : entry),
+  }
   if (balance !== holding(session.state, token).balance) try step(session, { type: "observeBalance", token, balance })
 }
 

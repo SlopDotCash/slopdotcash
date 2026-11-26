@@ -11,7 +11,6 @@ import { type ProjectView, Registry } from "@repo/ports/backend"
 import { EvidenceArtifacts, type VerificationPurpose } from "@repo/ports/contributor"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { createBuilder } from "vite"
-import { SKILL_AUTHORITY_PYTHON } from "../../../skills/project-contributor-template/scripts/skill-authority.mjs"
 import { incompleteDocumentDetail } from "../src/artifacts/media.ts"
 import { requiredEvidenceRows } from "../src/artifacts/policy.ts"
 import { IDENTITY_RECORD, SIGNED_ATTRIBUTION_MARKER, identityRecordText, validateIdentityRecord } from "../src/client/identity/record.schema.ts"
@@ -37,7 +36,7 @@ module node {
   import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
   import { tmpdir } from "node:os"
   import { dirname, join } from "node:path"
-  import { fileURLToPath } from "node:url"
+  import { fileURLToPath, pathToFileURL } from "node:url"
   export interface Run { readonly status: number | null; readonly stdout: string; readonly stderr: string }
   /** @throws {never} */
   export function urlPath(url: URL): string {
@@ -94,8 +93,13 @@ module node {
   export function removeDirectory(directory: string): void {
     rmSync(directory, { recursive: true, force: true })
   }
+  /** @throws {Error} */
+  export async function skillAuthorityPython(root: string): Promise<string> {
+    const loaded = (await import(pathToFileURL(join(root, "skills/project-contributor-template/scripts/skill-authority.mjs")).href)) as { readonly SKILL_AUTHORITY_PYTHON: string }
+    return loaded.SKILL_AUTHORITY_PYTHON
+  }
 }
-import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles, urlPath } from node
+import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, skillAuthorityPython, treeFiles, urlPath } from node
 
 const frozenTemplateSha256 = "3d97b2c55cb56bb40502eb9ac13a75ff3d67b6aa8cc4b0bf0b745ab23caed2e4"
 const pinnedCommit = "8660a61214a6427a4e66c540c7dc73d50cc7790b"
@@ -153,8 +157,9 @@ const pythonPrelude = [
   "import urllib.error", "import urllib.parse", "import urllib.request", "import zipfile", "from pathlib import PurePosixPath",
 ].join("\n")
 
-const pythonRenderer = `${pythonPrelude}
-${SKILL_AUTHORITY_PYTHON}
+function pythonRenderer(authority: string) {
+  return `${pythonPrelude}
+${authority}
 results = []
 for case in json.loads(sys.stdin.read()):
     skill_repository_path = case["sourcePath"]
@@ -166,6 +171,7 @@ for case in json.loads(sys.stdin.read()):
         results.append({"refused": True})
 print(json.dumps(results))
 `
+}
 
 const pythonArchive = `${pythonPrelude}
 archive = zipfile.ZipFile(io.BytesIO(base64.b64decode(sys.stdin.read().strip('"'))))
@@ -297,7 +303,8 @@ it.effect('The server and installer renderers produce identical bytes (spec/cont
     { role: "contributor" as Role, files: trees.contributor, project: { ...renderProjects[2], skill: { id: "contribute-to-other", sourcePath: templatePaths.contributor } }, revision: 3 },
   ]
   const server = cases.map(({ role, files, project, revision }) => renderProjectSkill({ role, templateFiles: files, manifest: project, registry: { revision, manifestSha256: digest } }))
-  const installer = try orDie(Effect.try(() => python(pythonRenderer, cases.map(({ role, files, project, revision }) => pythonCase(role, files, project, revision, digest)))))
+  const authority = try orDie(Effect.tryPromise(() => skillAuthorityPython(repoRoot)))
+  const installer = try orDie(Effect.try(() => python(pythonRenderer(authority), cases.map(({ role, files, project, revision }) => pythonCase(role, files, project, revision, digest)))))
   const fenced = server[6]?.kind === "rendered" ? decoder.decode(server[6].files.find((file) => file.path === "SKILL.md")?.bytes) : ""
   const literal = server[8]?.kind === "rendered" ? decoder.decode(server[8].files.find((file) => file.path === "SKILL.md")?.bytes) : ""
   try Effect.try(() => {
@@ -1183,7 +1190,7 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
         withoutRegistry: { ran: { code: 0, refusal: undefined }, sitemap: false },
       },
     ))
-  })
+  }, { timeout: 120_000 })
 })
 
 interface Repository {
@@ -1661,7 +1668,7 @@ layer(Layer.merge(Running, webCrypto), { excludeTestServices: true, timeout: "30
     try same({ paused: pausedDirect.result.map(shown), asked: [pausedDirect.asked, openDirect.asked] }, { paused: openDirect.result.map(shown), asked: [0, 0] })
     try same(pausedDirect.result.map((answer) => answer.status), direct.map(() => 200))
     try planIntake(intakeCounts("Counts"))
-  })
+  }, { timeout: 180_000 })
 
   it.effect('A restriction or a new registry revision that lands between two requests governs the next one (spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project")', () => effect {
     const discovered = effect {

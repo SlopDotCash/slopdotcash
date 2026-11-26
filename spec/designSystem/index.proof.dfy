@@ -47,6 +47,7 @@ lemma ContrastLiteral()
     Pair(Role.Ok, Role.Background, 45), Pair(Role.Ok, Role.Card, 45),
     Pair(Role.Warn, Role.Background, 45), Pair(Role.Warn, Role.Card, 45),
     Pair(Role.Info, Role.Background, 45), Pair(Role.Info, Role.Card, 45),
+    Pair(Role.Gold, Role.Background, 45), Pair(Role.Gold, Role.Card, 45),
     Pair(Role.Input, Role.Background, 30), Pair(Role.Input, Role.Card, 30),
     Pair(Role.Ring, Role.Background, 30), Pair(Role.Ring, Role.Card, 30)]
 {

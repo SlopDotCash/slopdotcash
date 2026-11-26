@@ -1,4 +1,4 @@
-// spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"
+// spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"
 import { type JsonRpc, RpcMalformed, type RpcFailure, jsonRpc } from "./rpc.vibe"
 import {
   type Abi,

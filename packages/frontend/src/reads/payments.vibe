@@ -170,7 +170,7 @@ export effect function completeHistory<T, R>(mode: Mode, fetchPage: (query: stri
   }
   const ids = new Map<string, number>()
   const rows: T[] = []
-  let legacy = false
+  let legacy: boolean
   while (true) {
     const before = try send({ type: "requestPage" })
     const query = before.through < 0 ? "" : `?after=${before.cursor}&through=${before.through}`

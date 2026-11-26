@@ -93,12 +93,25 @@ function located(base: string, workspace: Workspace, manifest?: string): Resolve
   return { kind: "unresolved" };
 }
 
+function exportTarget(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const record = value as Readonly<Record<string, unknown>>;
+    for (const key of ["default", "import", "types"]) {
+      const resolved = exportTarget(record[key]);
+      if (resolved !== undefined) return resolved;
+    }
+  }
+  return undefined;
+}
+
 function exported(exports: Readonly<Record<string, unknown>>, subpath: string): string | undefined {
-  const exact = exports[subpath];
-  if (typeof exact === "string") return exact;
-  for (const [key, target] of Object.entries(exports)) {
+  const exact = exportTarget(exports[subpath]);
+  if (exact !== undefined) return exact;
+  for (const [key, rawTarget] of Object.entries(exports)) {
     const star = key.indexOf("*");
-    if (star < 0 || typeof target !== "string") continue;
+    const target = exportTarget(rawTarget);
+    if (star < 0 || target === undefined) continue;
     const prefix = key.slice(0, star);
     const suffix = key.slice(star + 1);
     if (subpath.length > prefix.length + suffix.length && subpath.startsWith(prefix) && subpath.endsWith(suffix)) {

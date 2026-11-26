@@ -1,13 +1,18 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { type StartedWorker, bundle, migrate, scheduled, startWorker } from "@repo/platform/testing"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type StartedWorker, bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
+import { anvil, forward } from "@repo/platform/testing/chains"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { type Request, Response } from "miniflare"
+import { IMPLEMENTATION_SLOT, evmAddress } from "../src/chain/evm/abi.ts"
+import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { keeperMarker } from "../src/keeper/signer.vibe"
 import { signerMarker } from "../src/signer/evm.vibe"
 import { posterMarker } from "../src/signer/rootPoster.vibe"
 import { solanaSignerMarker } from "../src/signer/solana.vibe"
 import { paymentsCron } from "../src/jobs/payments.vibe"
+import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
 
 const root = new URL("..", import.meta.url).pathname
 
@@ -25,8 +30,10 @@ function same<T>(actual: T, expected: T) {
   return sync(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function running(script: string, vars: Readonly<Record<string, string>>, options: { readonly objects?: true; readonly executor?: true }) {
+effect function running(script: string, vars: Readonly<Record<string, string>>, options: { readonly objects?: true; readonly executor?: true; readonly rpcUrl?: string }) {
   const seen: string[] = []
+  const rpcOrigin = options.rpcUrl === undefined ? undefined : new URL(options.rpcUrl).origin
+  const rpcForward = options.rpcUrl === undefined ? undefined : forward(options.rpcUrl)
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     vars,
@@ -37,6 +44,7 @@ effect function running(script: string, vars: Readonly<Record<string, string>>, 
       return new Response(JSON.stringify({ error: "execution_pending_or_rejected" }), { status: 409 })
     } } },
     outbound: (request: Request) => {
+      if (rpcOrigin !== undefined && rpcForward !== undefined && new URL(request.url).origin === rpcOrigin) return rpcForward(request)
       seen.push(new URL(request.url).host)
       return new Response("unreachable", { status: 503 })
     },
@@ -44,6 +52,80 @@ effect function running(script: string, vars: Readonly<Record<string, string>>, 
   const failed = (try promise(() => migrate(mf, "PAYMENTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
   if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed`))
   return { mf, seen } satisfies Running
+}
+
+function hexBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array((hex.length - 2) / 2)
+  for (let index = 0; index < bytes.length; index++) bytes[index] = Number.parseInt(hex.slice(2 + index * 2, 4 + index * 2), 16)
+  return bytes
+}
+
+effect function baseSepoliaManifest(escrow: EscrowStack) {
+  const owner = evmAddress(escrow.roles.owner.address)
+  const authority = evmAddress(escrow.roles.authority.address)
+  const registrar = evmAddress(escrow.roles.registrar.address)
+  const upgrader = evmAddress(escrow.roles.upgrader.address)
+  if (owner === undefined || authority === undefined || registrar === undefined || upgrader === undefined) return try die(new Error("invalid escrow role address"))
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(0x7001n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: false }))
+  const head = try promise(() => escrow.head())
+  const created = decodeEscrowLogs(escrow.factory, try promise(() => escrow.logs(escrow.factory, 0n, head)))
+    .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault)
+  if (created === undefined) return try die(new Error("missing VaultCreated log"))
+  const codeDigest = effect (at: string) => {
+    const code = try promise(() => escrow.chain.rpc("eth_getCode", [at, "latest"]))
+    return try sha256Hex(hexBytes(String(code)))
+  }
+  const factorySlot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = `0x${factorySlot.slice(-40)}`
+  const manifest = JSON.stringify({
+    id: "workers-payments",
+    status: "active",
+    escrow: {
+      schemaVersion: "1",
+      effectiveCycle: "2026-11",
+      chain: "base",
+      feeBasisPoints: 200,
+      withdrawalFeeBasisPoints: 200,
+      feeMode: "deduct-from-gross",
+      deployments: [{
+        network: "base-sepolia",
+        vault,
+        programId: null,
+        upgradeAuthority: null,
+        projectPda: null,
+        networkDomain: null,
+        asset: escrow.dollar,
+        owner,
+        identityAuthority: authority,
+        feeRecipient: FEE_RECIPIENT,
+        deploymentTransaction: created.at.transaction,
+        sourceCommit: "7fdedd3507c3f79217ccc896ace0e0b7472ca092",
+        codeSha256: try codeDigest(vault),
+        bindingDelaySeconds: "0",
+        rotationDelaySeconds: null,
+        factory: escrow.factory,
+        factoryCodeSha256: try codeDigest(escrow.factory),
+        registrar,
+        evmUpgrade: {
+          authority: upgrader,
+          vaultImplementation: escrow.implementation,
+          vaultImplementationCodeSha256: try codeDigest(escrow.implementation),
+          factoryImplementation,
+          factoryImplementationCodeSha256: try codeDigest(factoryImplementation),
+        },
+      }],
+    },
+  })
+  const digest = try sha256Hex(manifest)
+  try promise(() => escrow.chain.mine(2))
+  return { manifest, digest }
+}
+
+effect function seedProject(worker: Running, seeded: { readonly manifest: string; readonly digest: string }) {
+  const at = "2026-11-01T00:00:00.000Z"
+  const db = try promise(() => database(worker.mf, "PAYMENTS_DB"))
+  try promise(() => db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'seed', ?)").bind("workers-payments", seeded.manifest, seeded.digest, at).run())
+  try promise(() => db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)").bind("workers-payments", seeded.manifest, seeded.digest, at, at).run())
 }
 
 effect function posted(worker: Running, path: string, body: string, method = "POST", host = "attester.internal") {
@@ -77,7 +159,7 @@ effect function behindPages(script: string, vars: Readonly<Record<string, string
   return { mf, seen } satisfies Running
 }
 
-layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('A zero-pin attester runs no scheduled work, refuses every signing route and carries only its own signer markers (spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const script = try promise(() => bundle(root, { entry: "attester" }))
     const source = try (try FileSystem.FileSystem).readFileString(script)
@@ -143,9 +225,14 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
 
   it.effect('A payments run whose dispatch step fails still runs every other step and reports the failure; with an executor it succeeds without contacting it (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work")', () => effect {
     const script = try promise(() => bundle(root, { entry: "payments" }))
-    const vars = { PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]), PAYMENT_RPC_URLS: "{}", SLOP_ENVIRONMENT: "staging" }
-    const unexecuted = try running(script, vars, {})
-    const executed = try running(script, vars, { executor: true })
+    const chain = try acquireRelease(promise(() => anvil({ chainId: 84532, finalityDepth: 2 })), (started) => promise(() => started.close()))
+    const escrow = try acquireRelease(promise(() => escrowStack(chain)), (started) => promise(() => started.close()))
+    const vars = { PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]), PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": chain.url }), SLOP_ENVIRONMENT: "staging" }
+    const seeded = try baseSepoliaManifest(escrow)
+    const unexecuted = try running(script, vars, { rpcUrl: chain.url })
+    const executed = try running(script, vars, { executor: true, rpcUrl: chain.url })
+    try seedProject(unexecuted, seeded)
+    try seedProject(executed, seeded)
     const misconfigured = try running(script, { ...vars, PAYMENT_NETWORKS: "[]" }, { executor: true })
     const failed = try promise(() => scheduled(unexecuted.mf, paymentsCron))
     const passed = try promise(() => scheduled(executed.mf, paymentsCron))
@@ -161,5 +248,5 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
       contacted: [],
       stagingCrons: true,
     })
-  })
+  }, 180_000)
 })

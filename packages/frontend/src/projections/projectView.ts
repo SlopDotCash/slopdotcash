@@ -270,10 +270,6 @@ export function allocateByWeight(total: bigint, leaders: ReadonlyArray<Pick<Proj
   return amounts;
 }
 
-function emptyUsage(): UsageSummary {
-  return { reportedTokens: 0, relevantTokens: 0, creditedTokens: 0, ambiguousTokens: 0, estimatedCostMicroUsd: 0n, runCount: 0, relevantRunCount: 0, confidence: "none" };
-}
-
 function capUsageOf(month: string, events: ReadonlyArray<ScoreEvent>): CapUsage {
   const used: Record<keyof Omit<CapUsage, "month">, number> = { mergedPullRequests: 0, resolvedIssues: 0, materialTestChanges: 0, evidencePoints: 0, substantiveReviews: 0, evaluatedContributions: 0 };
   for (const event of events) {

@@ -43,7 +43,7 @@ export function buildTree(input: ReadonlyArray<Leaf>): MerkleTree | null {
   for (let current = hashes; current.length > 1; ) {
     const next: Hex[] = [];
     for (let index = 0; index < current.length; index += 2) {
-      const left = current[index] as Hex;
+      const left = current[index];
       const right = current[index + 1];
       next.push(right === undefined ? left : pair(left, right));
     }
@@ -58,9 +58,9 @@ export function buildTree(input: ReadonlyArray<Leaf>): MerkleTree | null {
       if (sibling !== undefined) proof.push(sibling);
       position = Math.floor(position / 2);
     }
-    return { ...leaf, hash: hashes[index] as Hex, proof };
+    return { ...leaf, hash: hashes[index], proof };
   });
-  return { root: levels[levels.length - 1]?.[0] as Hex, leaves };
+  return { root: levels[levels.length - 1]?.[0] ?? hashes[0], leaves };
 }
 
 /** @throws {TypeError | RangeError} */

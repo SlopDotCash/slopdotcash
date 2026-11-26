@@ -76,6 +76,50 @@ export effect function setDueOutcome(pull: FeePull, outcome: DueOutcome, at: str
   return (try (try D1).run(dueOutcome(pull, outcome, at))) === 1
 }
 
+schema CloseAppealRow {
+  readonly open: number
+  readonly upheld_at: string | null
+}
+
+export effect function slopbotCloseAppeal(repositoryId: number, itemNodeId: string) {
+  if (itemNodeId === "") return undefined
+  const row: typeof CloseAppealRow.Type | undefined = try first(CloseAppealRow, sql`SELECT
+      EXISTS (SELECT 1 FROM slopbot_appeals WHERE repository_id = ${repositoryId} AND item_node_id = ${itemNodeId}
+        AND appeal_key NOT LIKE 'value-appeal:%' AND resolved_at IS NULL) AS open,
+      (SELECT MAX(resolved_at) FROM slopbot_appeals WHERE repository_id = ${repositoryId} AND item_node_id = ${itemNodeId}
+        AND appeal_key NOT LIKE 'value-appeal:%' AND resolution = 'upheld') AS upheld_at
+    WHERE EXISTS (SELECT 1 FROM slopbot_actions WHERE repository_id = ${repositoryId} AND item_node_id = ${itemNodeId}
+      AND action = 'close')`)
+  return row === undefined ? undefined : { open: row.open === 1, upheldAt: row.upheld_at }
+}
+
+export effect function reopenKeptFee(appealKey: string, at: string) {
+  const db = try D1
+  const cleared = try db.batch([
+    sql`UPDATE submission_fee_items SET outcome = NULL, outcome_at = NULL
+      WHERE outcome = 'kept_due' AND paid_at IS NOT NULL
+        AND (repository_id, pull_number) IN (
+          SELECT a.repository_id, json_extract(a.job_json, '$.number') FROM slopbot_appeals a
+          WHERE a.appeal_key = ${appealKey}
+            AND json_extract(a.job_json, '$.itemKind') = 'pull_request'
+            AND (a.resolved_at IS NULL OR a.resolution = 'upheld')
+            AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = a.repository_id
+              AND c.item_node_id = a.item_node_id AND c.action = 'close'))
+        AND NOT EXISTS (
+          SELECT 1 FROM submission_fee_sends s, json_each(s.deposits) e
+          WHERE s.network = submission_fee_items.paid_network
+            AND s.state IN ('submitted', 'unknown', 'finalized')
+            AND json_extract(e.value, '$.id') = submission_fee_items.paid_deposit_id)`,
+    sql`UPDATE slopbot_fee_gates SET next_check_at = ${at}
+      WHERE (repository_id, pull_number) IN (
+        SELECT i.repository_id, i.pull_number FROM submission_fee_items i
+        JOIN slopbot_appeals a ON a.repository_id = i.repository_id
+          AND json_extract(a.job_json, '$.number') = i.pull_number
+        WHERE a.appeal_key = ${appealKey} AND i.outcome IS NULL AND i.paid_at IS NOT NULL)`,
+  ])
+  return (cleared[0]?.changes ?? 0) === 1
+}
+
 function markPaid(deposit: FeeDeposit, pull: FeePull, at: string) {
   return sql`UPDATE submission_fee_items
       SET paid_at = COALESCE(paid_at, ${at}), paid_network = ${deposit.network}, paid_deposit_id = ${deposit.depositId}

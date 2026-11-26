@@ -92,7 +92,7 @@ function rejection(event: Event, state: Registry): VaultRegistrationRefused {
   const { account, registration } = event
   if (account.actorBan === "BanUnavailable" || account.stewardBan === "BanUnavailable") return refused("github_unavailable")
   if (account.actorBan === "AccountBanned" || account.stewardBan === "AccountBanned") return refused("maintainer_banned")
-  if (state.security.restriction !== "Clear" || state.project.retirement === "RestrictionRetired") return refused("project_restricted")
+  if (state.security.restriction !== "Clear" || state.project.retirement !== "NotRetired") return refused("project_restricted")
   if (vaultRecorded(state.project.vaults, registration.purpose)) return refused("vault_already_registered")
   if (registration.expectedRevision > 0 && registration.expectedRevision < state.project.revision && !registration.policyMatches) return refused("vault_policy_changed")
   return refused("stale_revision")
@@ -108,6 +108,7 @@ export effect function registerOwnerVault(registration: VaultRegistration) {
   if (deployment === undefined) throw refused("vault_setup_unavailable")
   const current = try storedProject(registration.projectId)
   if (current === undefined) throw refused("stale_revision")
+  if (current.manifest.listingTier === "retired") throw refused("project_restricted")
   const recorded = recordedDeployments(current.manifest, ordinary)
   if (recorded.some((entry) => sameDeployment(entry, deployment))) return { manifest: current.manifest } satisfies Registered
   if (recorded.length > 0) throw refused("vault_already_registered")

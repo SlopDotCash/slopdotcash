@@ -1,4 +1,4 @@
-// spec/contributor/workflow.md, "Submission requires exact attribution and a fresh pre-submission read"; spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable"
+// spec/contributor/workflow.md, "Submission requires exact attribution and a fresh pre-submission read"
 import { Schema } from "effect";
 
 export const UNAVAILABLE_MODEL_IDENTIFIER = "unavailable";

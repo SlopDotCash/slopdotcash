@@ -16,6 +16,7 @@ import type { Driver, Options } from "../../gen/slopbot__submissionFeeGate.confo
 import type { Event, FeeFacts, FeeGate, GateState, PullFacts, Settlement } from "../../gen/slopbot__submissionFeeGate.ts";
 import { dispatchFeeChecks } from "../../src/fee/dispatch.vibe";
 import { gateSubmissionFee } from "../../src/fee/gate.vibe";
+import { reopenKeptFee } from "../../src/fee/items.vibe";
 import { refreshSubmissionFee } from "../../src/fee/refresh.vibe";
 import { SubmissionFeeMode, handBackLease } from "../../src/fee/store.vibe";
 import { webhookSettings } from "../../src/ingress/webhook.vibe";
@@ -113,10 +114,10 @@ async function started(key: string): Promise<Held> {
   const issue = world.addIssue({ repo, author: "ada", title: "Wanted work" });
   world.addLabel(repo, { name: wantedLabel });
   const number = world.addPull({ repo, author: "carol", title: "Fee check", body: `Closes #${issue}`, headSha: "1".padStart(40, "0") });
-  let state: Held | undefined;
+  const holder: { state: Held | undefined } = { state: undefined };
   function current(): Held {
-    if (state === undefined) throw new Error("the driver state is not ready");
-    return state;
+    if (holder.state === undefined) throw new Error("the driver state is not ready");
+    return holder.state;
   }
   const clock = settableClock(start * 1000);
   const ports = Layer.mergeAll(
@@ -155,12 +156,12 @@ async function started(key: string): Promise<Held> {
   function manifestRow() {
     return { projectId, active: true, revision: 1, manifest: current().manifest, manifestSha256: "0".repeat(64), updatedAt: iso(start) };
   }
-  const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, handlerOf(current, fake) as typeof globalThis.fetch));
+  const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, handlerOf(current, fake)));
   const githubLayer = Layer.provide(github({ authority: fake.authority, token: Redacted.make(fake.tokens.installation(installationId)), userAgent: "slopbot-fee-conformance" }), http);
   const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-conformance-secret", SLOPBOT_APP_USER_ID: String(fake.app.bot.id) });
   const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, ports, githubLayer, settings)) as unknown as ManagedRuntime.ManagedRuntime<never, never>;
-  state = { fake, runtime, clock, db, number, issue, now: start, mode: "FeeLive", manifest: JSON.stringify({ id: projectId }), since: null, contributor: true, hidden: false, failLabels: false, unreadLink: false, report: {} };
-  return state;
+  holder.state = { fake, runtime, clock, db, number, issue, now: start, mode: "FeeLive", manifest: JSON.stringify({ id: projectId }), since: null, contributor: true, hidden: false, failLabels: false, unreadLink: false, report: {} };
+  return holder.state;
 }
 
 async function stateOf(key: string): Promise<Held> {
@@ -189,14 +190,37 @@ function realizeLink(state: Held, pull: PullFacts) {
   world.record(issue, "labeled", world.account("ada"), { label: { name: wantedLabel } });
   issue.timeline[0] = { ...issue.timeline[0], createdAt: new Date(pull.invited === "InvitedWork" ? opened - hour : opened + hour).toISOString() };
   read.labels = [...read.labels.filter((label) => label.name !== keepLabel), ...(pull.keepMarked ? [world.addLabel(repo, { name: keepLabel })] : [])];
+  read.timeline.splice(0);
+  if (pull.keepMarked && pull.keepMarkedAt > 0) {
+    world.record(read, "labeled", world.account("ada"), { label: { name: keepLabel } });
+    read.timeline[0] = { ...read.timeline[0], createdAt: iso(pull.keepMarkedAt) };
+  }
 }
 
 async function realizePull(state: Held, pull: PullFacts) {
   state.contributor = pull.contributorScope;
   state.hidden = !pull.readable;
   realizeLink(state, pull);
-  state.report = { ...state.report, state: pull.open && !pull.merged ? "open" : "closed", merged: pull.merged, draft: pull.draft, closed_at: pull.closedAt > 0 ? iso(pull.closedAt) : null };
+  const read = state.fake.world.pull(repo, state.number);
+  state.report = { ...state.report, node_id: read.nodeId, state: pull.open && !pull.merged ? "open" : "closed", merged: pull.merged, draft: pull.draft, closed_at: pull.closedAt > 0 ? iso(pull.closedAt) : null };
   await state.db.prepare("UPDATE slopbot_installations SET removed_at = ? WHERE installation_id = ?").bind(pull.installationActive ? null : iso(start), installationId).run();
+  await state.db.prepare("DELETE FROM slopbot_appeals WHERE repository_id = ? AND item_node_id = ?").bind(repositoryId, read.nodeId).run();
+  await state.db.prepare("DELETE FROM slopbot_actions WHERE repository_id = ? AND item_node_id = ? AND action = 'close'").bind(repositoryId, read.nodeId).run();
+  if (pull.appealOpen || pull.appealUpheldAt > 0) {
+    const jobJson = JSON.stringify({ itemKind: "pull_request", number: state.number });
+    await state.db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${read.nodeId}`, repositoryId, read.nodeId, iso(start)).run();
+    await state.db.prepare("INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at, resolved_at, resolution, resolved_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)").bind(
+      `appeal:${read.nodeId}:1`,
+      repositoryId,
+      read.nodeId,
+      jobJson,
+      iso(start),
+      iso(start + hour),
+      pull.appealOpen ? null : iso(pull.appealUpheldAt),
+      pull.appealOpen ? null : "upheld",
+      pull.appealOpen ? null : "moderator",
+    ).run();
+  }
 }
 
 function jobOf(state: Held) {
@@ -289,6 +313,15 @@ async function dispatched(key: string, event: Event): Promise<"accepted" | "refu
       if (event.commentId <= 0) return "refused";
       const outcome = await refreshed(state, event.facts, event.pull);
       return verdict(outcome === "submission fee paid" || outcome.startsWith("submission fee: "));
+    }
+    case "reopenKept": {
+      const read = state.fake.world.pull(repo, state.number);
+      const appealKey = `appeal:${read.nodeId}:reopen`;
+      const jobJson = JSON.stringify({ itemKind: "pull_request", number: state.number });
+      await state.db.prepare("INSERT OR IGNORE INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${read.nodeId}`, repositoryId, read.nodeId, iso(start)).run();
+      await state.db.prepare("INSERT OR REPLACE INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at) VALUES (?, ?, ?, 1, ?, ?, ?)").bind(appealKey, repositoryId, read.nodeId, jobJson, iso(start), iso(start + hour)).run();
+      const exit = await run(state, reopenKeptFee(appealKey, iso(state.now)));
+      return verdict(exit._tag === "Success" && exit.value === true);
     }
     case "askAgain":
       if (event.commentId <= 0) return "refused";
