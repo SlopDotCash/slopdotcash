@@ -854,10 +854,12 @@ function validateProjectDefinition(value: unknown, { trusted, historical }: Defi
   const seenNodeIds = new Set([String(authority.repositoryNodeId)]);
   repositories.forEach((repository, index) => {
     if (index === 0 || repository.githubId === undefined) return;
-    if (seenGithubIds.has(String(repository.githubId))) fail(`project.repositories[${index}].githubId duplicates another repository`);
-    if (seenNodeIds.has(String(repository.nodeId))) fail(`project.repositories[${index}].nodeId duplicates another repository`);
-    seenGithubIds.add(String(repository.githubId));
-    seenNodeIds.add(String(repository.nodeId));
+    const githubId = typeof repository.githubId === "string" || typeof repository.githubId === "number" ? String(repository.githubId) : "";
+    const nodeId = typeof repository.nodeId === "string" ? repository.nodeId : "";
+    if (seenGithubIds.has(githubId)) fail(`project.repositories[${index}].githubId duplicates another repository`);
+    if (seenNodeIds.has(nodeId)) fail(`project.repositories[${index}].nodeId duplicates another repository`);
+    seenGithubIds.add(githubId);
+    seenNodeIds.add(nodeId);
   });
   const terms = validateTerms(project.terms, primary, validReward, steward, { allowLegacyUnsupportedOwnershipClaim: historical });
   const receiptPolicy = record(terms.receiptPolicy, "project.terms.receiptPolicy");
@@ -986,7 +988,10 @@ const offChainDeploymentKeys = ["maxNativeCostWei", "bindingConsentNonceLimit"];
 
 function implementationReview(review: unknown): string {
   const fields = isRecord(review) ? review : {};
-  return JSON.stringify(evmImplementationReviewKeys.map((key) => String(fields[key] ?? "").toLowerCase()));
+  return JSON.stringify(evmImplementationReviewKeys.map((key) => {
+    const value = fields[key];
+    return (typeof value === "string" || typeof value === "number" ? String(value) : "").toLowerCase();
+  }));
 }
 
 function assertEvmUpgradeHistory(previous: Json, next: Json): void {

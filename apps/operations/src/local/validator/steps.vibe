@@ -1,5 +1,5 @@
 // spec/operations/localValidator.md, "Stage identity is fresh and readiness admits the correct next action"; spec/operations/localValidator.md, "The awaited stop and its exact receipt settle cleanup"
-import { type ValidatorMode, type ValidatorRun, Machine, initial, machineOver } from "../../../gen/operations__localValidator.effect.vibe"
+import { type ValidatorMode, type ValidatorRun, type Machine, initial, machineOver } from "../../../gen/operations__localValidator.effect.vibe"
 import { loopbackHttp } from "../command/steps.vibe"
 
 export type ValidatorMachine = Machine.Shape

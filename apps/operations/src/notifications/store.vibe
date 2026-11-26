@@ -3,7 +3,7 @@ import { isoAt } from "@repo/platform/clock"
 import { RowMismatch, type Statement, list, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, load, update } from "@repo/platform/stored"
 import { Notice } from "@repo/ports/operations"
-import { type Event, type Inbox, NotAState, type Notice as Held, apply, canRead, noNotice } from "../../gen/operations__notifications.effect.vibe"
+import { type Event, type Inbox, type NotAState, type Notice as Held, apply, canRead, noNotice } from "../../gen/operations__notifications.effect.vibe"
 import { type Channel, type Delivery, type Projection, Release, configured, digestNumber, loaded, projected, recipientNumber, storedStates } from "./rows.vibe"
 import { saveNotice } from "./statements.vibe"
 
@@ -113,7 +113,7 @@ const Access = Schema.Union([
   Schema.Struct({ tag: Schema.Literal("Unavailable") }),
 ])
 
-export const Change = Schema.Union([
+const ChangeUnion = Schema.Union([
   Schema.Struct({ type: Schema.Literal("publishConfig"), release: Release }),
   Schema.Struct({ type: Schema.Literal("save"), notice: Notice }),
   Schema.Struct({ type: Schema.Literal("advanceClock"), elapsed: SafeInt }),
@@ -132,7 +132,7 @@ export const Change = Schema.Union([
   Schema.Struct({ type: Schema.Literal("escalate"), id: SafeInt, primaryAccess: Access, backupAccess: Access }),
 ])
 
-export type Change = typeof Change.Type
+export schema Change = ChangeUnion
 
 interface Translated {
   readonly event: Event

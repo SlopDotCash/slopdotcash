@@ -1,4 +1,4 @@
-// spec/contributor/evidence.md, "A signed receipt binds the exact disclosure and either no trace or the stored trace"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"; spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable"
+// spec/contributor/evidence.md, "A signed receipt binds the exact disclosure and either no trace or the stored trace"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"
 import { Schema } from "effect";
 import { isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier } from "../identity/model.schema.ts";
 import { CanonicalUint, Count, ExactUtc, Sha256 } from "./formats.schema.ts";
@@ -38,9 +38,10 @@ export interface ReceiptPolicyProject {
 
 export type Parsed<A> = { readonly kind: "valid"; readonly value: A } | { readonly kind: "invalid"; readonly reason: string };
 
-class Refusal {
+class Refusal extends Error {
   readonly reason: string;
   constructor(reason: string) {
+    super(reason);
     this.reason = reason;
   }
 }
@@ -434,7 +435,7 @@ export function joinPolicy(receipt: ProjectRunReceipt, project: ReceiptPolicyPro
   const acknowledgement = receipt.policyAcknowledgement;
   const verdict = policyJoin({
     sameProject: receipt.projectId === project.id,
-    legacy: receipt.schemaVersion === "1",
+    v1Schema: receipt.schemaVersion === "1",
     acknowledged: acknowledgement !== undefined,
     acknowledgement: acknowledgement
       ? disclosure(acknowledgement.policyRevision, acknowledgement.licenseSha256, acknowledgement.inboundTermsSha256, acknowledgement.prizeRulesSha256)

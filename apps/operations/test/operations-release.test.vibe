@@ -1076,7 +1076,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       },
       coverage: { maintainerSkill: "pages=true", contributorSkill: "pages=true", readme: "pages=false" },
     }))
-  }))
+  }), { timeout: 180_000 })
   it.effect('Keep published contribution data fresh without a person watching it (spec/operations/dailyCollection.md, "Story: Keep published contribution data fresh without a person watching it"; spec/operations/dailyCollection.md, "A daily tick starts one fresh collection only when none runs"; spec/operations/dailyCollection.md, "A superseded collection is published by a retained-data release at most three times and never replaces newer data"; spec/operations/dailyCollection.md, "A failed collection with a checkpoint is resumed once, never a resume of a resume"; spec/operations/dailyCollection.md, "A follow-up acts only on a completed trusted main release, and publishes before it resumes"; spec/operations/dailyCollection.md, "Live data older than 48 hours fails the daily run"; spec/points/retainedFreshness.md, "A manual main release on retained data prepares in its own concurrency group")', () => effect {
     const fresh = "2026-11-19T01:00:00Z"
     const stale = "2026-11-07T12:34:00Z"

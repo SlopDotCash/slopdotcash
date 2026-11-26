@@ -486,7 +486,7 @@ export function holdLock(lock: string): Promise<Holder> {
   return new Promise((resolve, reject) => {
     holder.once("error", reject);
     holder.stdout.once("data", (value: Buffer) => {
-      if (!String(value).includes("locked")) return reject(new Error(`unexpected lock holder output: ${value}`));
+      if (!String(value).includes("locked")) return reject(new Error(`unexpected lock holder output: ${value.toString("utf8")}`));
       resolve({
         release: () => holder.exitCode !== null ? Promise.resolve() : new Promise<void>((done) => {
           holder.once("close", () => done());

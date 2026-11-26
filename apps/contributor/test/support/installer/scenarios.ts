@@ -661,7 +661,7 @@ export function exactRenderingInstallsAdvancesAndRollsBack(): void {
   expect(link).toBe(versionLink(`${revisionA}-r3`, generatedSkill));
   const installedSkill = join(skillsDirectory(f.installRoot), link);
   installedFiles(installedSkill, f.rendered);
-  expect(JSON.parse(readFileSync(join(installedSkill, "PROVENANCE.json"), "utf8")).registry).toEqual(f.binding);
+  expect((JSON.parse(readFileSync(join(installedSkill, "PROVENANCE.json"), "utf8")) as { readonly registry: unknown }).registry).toEqual(f.binding);
   const script = join(installedSkill, "scripts", "run-receipt.mjs");
   expect(authorizeJson(script, { XDG_CONFIG_HOME: join(f.root, "state") }).authorization).toEqual({ kind: "source", revision: revisionA });
   rmSync(join(f.root, "authority"), { recursive: true });
@@ -720,7 +720,7 @@ export function aBackwardClockPublishesNoInvalidReceipt(): void {
   const replayed = runReceiptAt(script, startedAt + 2_000, finishArgs, configuration);
   expect(replayed.status, replayed.stderr).toBe(0);
   expect(readFileSync(completed)).toEqual(committed);
-  expect(JSON.parse(replayed.stdout).receipt).toEqual(JSON.parse(retried.stdout).receipt);
+  expect((JSON.parse(replayed.stdout) as { readonly receipt: unknown }).receipt).toEqual((JSON.parse(retried.stdout) as { readonly receipt: unknown }).receipt);
   const historical = JSON.parse(committed.toString()) as { receipt: { completedAt: string } };
   historical.receipt.completedAt = "2026-11-08T11:59:59.000Z";
   const invalid = Buffer.from(`${JSON.stringify(historical)}\n`);

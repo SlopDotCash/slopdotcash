@@ -56,15 +56,15 @@ export function byCron<R>(jobs: CronJobs<R>) {
   return (controller: ScheduledController) => runCron(jobs, controller)
 }
 
-export interface Area<P, R> {
+export interface Area<P, R, J = unknown> {
   readonly name: string
   readonly api: ReadonlyArray<AnyRoute>
   readonly routes: Layer.Layer<never, never, R>
   readonly provides: Layer.Layer<P, never, unknown>
-  readonly jobs?: CronJobs
+  readonly jobs?: CronJobs<J>
 }
 
-export function area<P, R>(a: Area<P, R>) {
+export function area<P, R, J = unknown>(a: Area<P, R, J>) {
   return a
 }
 
@@ -152,11 +152,11 @@ effect function routable<E, R>(app: HttpServerResponse.HttpServerResponse!E!R) {
   const path = end === -1 ? request.url : request.url.slice(0, end)
   const decodable = Exit.isSuccess(try exit(Effect.try(() => decodeURI(path))))
   if (decodable) return try app
-  return try Effect.provideService(app, HttpServerRequest.HttpServerRequest, request.modify({ url: `${path.replaceAll("%", "%25")}${request.url.slice(path.length)}` }))
+  return try provideService(app, HttpServerRequest.HttpServerRequest, request.modify({ url: `${path.replaceAll("%", "%25")}${request.url.slice(path.length)}` }))
 }
 
 export interface Site<Env extends object, S, LE, K extends string> {
-  readonly areas: ReadonlyArray<Area<never, unknown>>
+  readonly areas: ReadonlyArray<Area<never, unknown, unknown>>
   readonly services: (env: Env) => Layer.Layer<S, LE>
   readonly assets: K
 }

@@ -45,7 +45,7 @@ const pull = (number: number, body: string) => ({ number, title: `Fix ${number}`
 export async function anOpenPullRequestWithAClosingKeywordIsNotFreeWork(): Promise<void> {
   const f = scriptRoot("closing", repo);
   try {
-    const report: LiveReport = await import(f.url);
+    const report = (await import(f.url)) as LiveReport;
     expect(report.closingIssueNumbers("Closes #11", repo)).toEqual([11]);
     expect(report.closingIssueNumbers("Closes: #10", repo)).toEqual([10]);
     expect(report.closingIssueNumbers("Fixes: Example/repo#13", repo)).toEqual([13]);
@@ -113,7 +113,7 @@ export async function termsPreflightAcknowledgesTheServedTerms(): Promise<void> 
       prizeRulesSha256: fields(terms.externalPrize).rulesSha256 ?? null,
     }).toEqual(acknowledged);
     const script = join(f.scripts, "terms-preflight.mjs");
-    const module: TermsPreflight = await import(pathToFileURL(script).href);
+    const module = (await import(pathToFileURL(script).href)) as TermsPreflight;
     const fileAuthority = join(f.root, "authority");
     mkdirSync(join(fileAuthority, "projects", projectId), { recursive: true });
     writeFileSync(join(fileAuthority, "projects", projectId, "terms.json"), JSON.stringify(policy));
@@ -204,7 +204,7 @@ export async function discloseRefusesPlaceholderIdentityAndKeepsLegacyMarkers():
     const footerOf = (root: string, model: string) => {
       const ran = disclose(root, "openai", model, "codex");
       expect(ran.status, ran.stderr).toBe(0);
-      return String(JSON.parse(ran.stdout).footer);
+      return String((JSON.parse(ran.stdout) as { readonly footer: unknown }).footer);
     };
     const footer = footerOf(current.root, "gpt-5.1-codex");
     expect(footer.split("\n")).toEqual([
@@ -224,7 +224,7 @@ export async function discloseRefusesPlaceholderIdentityAndKeepsLegacyMarkers():
       expect(refused.stderr).toContain(`${field} must be an exact non-placeholder identifier`);
       expect(refused.stdout).toBe("");
     }
-    const receipts: Receipts = await import(pathToFileURL(join(current.scripts, "run-receipt.mjs")).href);
+    const receipts = (await import(pathToFileURL(join(current.scripts, "run-receipt.mjs")).href)) as Receipts;
     expect(() => receipts.declaredIdentity("unavailable", "--model", "model")).toThrow("is valid only with disclose");
   } finally {
     removeRoot(current.root);
@@ -267,7 +267,7 @@ export async function theLiveReportRunsThroughGhAndRetriesAChangedInventory(): P
     expect(ran.stderr).toContain("open-item inventory changed during snapshot attempt 1; retrying one complete read");
     const report: unknown = JSON.parse(ran.stdout);
     if (!isLiveRun(report)) throw new Error("live-report --json printed no report");
-    const rendered: Rendered = await import(f.url);
+    const rendered = (await import(f.url)) as Rendered;
     const sections = rendered.renderMarkdown(report).split(/^## /mu);
     const listedIn = (priority: string) => [...(sections.find((section) => section.startsWith(`Priority ${priority}:`)) ?? "").matchAll(/^- \[#(\d+)\]/gmu)].map((match) => Number(match[1]));
     expect({

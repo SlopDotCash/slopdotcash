@@ -4,14 +4,14 @@ import { type Project, prospectiveShare } from "../../../gen/backend__projects.e
 import { postProjects, putProjectsById } from "../../client/refusals.vibe"
 import { fieldsCompleteOf, monthOf, shareHistoryOf, shareOfReward } from "../store/codec.vibe"
 import { manifestOf } from "../store/rows.vibe"
-import { type Json, objectOf, same } from "./revisionChanges.ts"
+import { type Json, objectOf } from "./revisionChanges.ts"
 
-type Row = { readonly status: number; readonly error: string; readonly message?: string }
+type Row = { readonly status: number; readonly error: string; readonly message?: string; readonly headers?: Readonly<Record<string, string>> }
 
 export { shareHistoryOf, shareOfReward }
 
 export function refusal(row: Row, message?: string): Refused {
-  return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "" })
+  return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "", ...(row.headers === undefined ? {} : { headers: row.headers }) })
 }
 
 export function invalidManifest(message: string): Refused {

@@ -1,7 +1,7 @@
 // spec/operations/release.md, "Served bytes are verified against the deployment's own source"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { byteOrder, canonicalJson } from "../manifest/inventory.vibe"
-import { EvidenceArtifact, EvidenceManifest, SiteVerification } from "./records.schema.vibe"
+import { type EvidenceArtifact, EvidenceManifest, SiteVerification } from "./records.schema.vibe"
 
 export error EvidenceRefused { message: string }
 

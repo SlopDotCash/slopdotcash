@@ -1,4 +1,4 @@
-// spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"
+// spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"
 import { recoverPersonalSign } from "@repo/platform/chain/evm"
 import { base64Decode, onCurve, publicKey } from "@repo/platform/chain/solana"
 import { isoAt, millisOf } from "@repo/platform/clock"

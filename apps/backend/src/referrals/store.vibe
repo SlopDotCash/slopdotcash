@@ -1,8 +1,8 @@
 // spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"
 import { isoNow } from "@repo/platform/clock"
-import { D1, RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { D1, type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type CodeRecord, type Event, type LinkRegistry, type Lookup, NotAState, apply, decodeEvent, decodeState, recordFor } from "../../gen/backend__referralCodes.effect.vibe"
+import { type CodeRecord, type Event, type LinkRegistry, type Lookup, type NotAState, apply, decodeEvent, decodeState, recordFor } from "../../gen/backend__referralCodes.effect.vibe"
 
 schema CodeRow { code_key: string; code: string; github_id: string; retired_at: string | null }
 schema LinkedMember { github_id: string; login: string }

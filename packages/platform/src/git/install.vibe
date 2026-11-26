@@ -39,7 +39,7 @@ export effect function installPinnedGit(destination: string) {
     }
     const env = { PATH: searchPath, HOME: directory, LC_ALL: "C" }
     try runInherited("tar", ["-xJf", archive, "--strip-components=1", "-C", directory], env, 600, "Pinned Git archive could not be extracted")
-    try runInherited("make", ["-C", directory, "-j2", `prefix=${destination}`, "NO_GETTEXT=YesPlease", "NO_TCLTK=YesPlease", "NO_PERL=YesPlease", "NO_RUST=YesPlease", "install"], env, 600, "Pinned Git build failed")
+    try runInherited("make", ["-C", directory, "-j2", `prefix=${destination}`, "NO_CURL=YesPlease", "NO_EXPAT=YesPlease", "NO_GETTEXT=YesPlease", "NO_TCLTK=YesPlease", "NO_PERL=YesPlease", "NO_RUST=YesPlease", "install"], env, 600, "Pinned Git build failed")
     const built = try runCommand({ command: path.join(destination, "bin/git"), args: ["--version"], env, limit: 4096, seconds: 30 }, "Built Git version differs from merge profile")
     const version = lossyText(built.stdout).trim()
     if (built.status !== 0 || version !== MERGE_GIT_VERSION) throw refused("Built Git version differs from merge profile")

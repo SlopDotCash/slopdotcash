@@ -3,7 +3,7 @@ import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
-import { Request, Response } from "miniflare"
+import { type Request, Response } from "miniflare"
 
 const stewardId = 41
 const strangerId = 42
@@ -11,6 +11,7 @@ const primaryId = 9001
 const appendedId = 9002
 const otherId = 9003
 const fundedId = 9004
+const renamedId = 9005
 const rpcUrl = "https://rpc.base.test"
 const token = "0x1111111111111111111111111111111111111111"
 
@@ -272,6 +273,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     try seedObligation(id)
     const removed = try area.request(`/api/v1/projects/${id}/remove`, { json: { expectedRevision: 6 }, as: steward })
     const retried = try area.request(`/api/v1/projects/${id}/remove`, { json: { expectedRevision: 6 }, as: steward })
+    const revisedAfterRemoval = try revise(steward, id, { manifest: { ...current, headline: "Edited after removal." }, expectedRevision: 7 })
     const history = try area.sql("SELECT revision FROM project_revisions WHERE project_id = ? ORDER BY revision", id)
     const obligations = try area.sql("SELECT period, github_user_id, gross_base FROM monthly_payment_obligations WHERE project_id = ?", id)
     const mine = try area.get("/api/v1/project-setup", { as: steward })
@@ -298,6 +300,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       updateStatus,
       removed: [removed.status, ...project(removed)],
       retried: [retried.status, ...project(retried)],
+      revisedAfterRemoval: outcome(revisedAfterRemoval),
       history: history.map((row) => row.revision),
       obligations,
       mine: [mine.status, (field(mine.body, "projects") as ReadonlyArray<unknown>).map((entry) => field(entry, "id"))],
@@ -326,6 +329,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       updateStatus: [{ status: "approved" }],
       removed: [200, 7, "paused", "retired"],
       retried: [200, 7, "paused", "retired"],
+      revisedAfterRemoval: [409, "project_restricted"],
       history: [1, 2, 3, 4, 5, 6, 7],
       obligations: [{ period: "2026-11", github_user_id: String(strangerId), gross_base: "1000000" }],
       mine: [200, [id]],
@@ -349,16 +353,27 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     try seedProject(funded.id, JSON.stringify(fundedManifest), `member-${stewardId}/funded`)
     const kept = try revise(steward, funded.id, { manifest: { ...fundedManifest, rewardAsset: { network: "base", kind: "token", address: token, symbol: "FAKE" }, reward: { ...fundedManifest.reward, chain: "base", currency: "FAKE" } }, expectedRevision: 1, monthlyAmount: "1000" })
     const incomplete = try revise(steward, funded.id, { manifest: { ...fundedManifest, contribution: { ...contribution, approvedScope: "" } }, expectedRevision: 1 })
+    const world = try World
+    const renamedBase = manifest({ id: "renamed-tool", name: "old-name", githubId: renamedId, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) })
+    const renamedManifest = { ...renamedBase, repositories: renamedBase.repositories.map((entry) => ({ ...entry, displayName: `member-${stewardId}/new-name`, githubUrl: `https://github.com/member-${stewardId}/new-name`, aliases: [`member-${stewardId}/new-name`] })) }
+    try seedProject("renamed-tool", JSON.stringify(renamedManifest), `member-${stewardId}/old-name`)
+    world.access.missing = [renamedId]
+    const renamedSetup = try area.request("/api/v1/project-setup/renamed-tool/check", { json: {}, as: steward })
+    world.access.missing = []
+    const renamedAuthority = String(field(field(field(field(renamedSetup.body, "setup"), "checks"), "authority"), "message") ?? "")
+    const renamedNext = String(field(nextActionOf(renamedSetup), "message") ?? "")
     try same({
       published: [published.status, ...project(published)],
       publication,
       kept: refused(kept),
       incomplete: refused(incomplete),
+      renamedSetup: [renamedSetup.status, renamedAuthority.includes(`member-${stewardId}/new-name`), !renamedAuthority.includes(`member-${stewardId}/old-name`), renamedNext.includes(`member-${stewardId}/new-name`), !renamedNext.includes(`member-${stewardId}/old-name`)],
     }, {
       published: [201, 1, "paused", "community"],
       publication: [{ revision: 1, status: "paused", source_application_id: application, application: "approved" }],
       kept: [422, "financial_change_restricted", "A funded project keeps its network, asset and vault"],
       incomplete: [422, "invalid_manifest", "project.contribution.approvedScope is invalid"],
+      renamedSetup: [200, true, true, true, true],
     })
   })
 

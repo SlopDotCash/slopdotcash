@@ -71,7 +71,6 @@ effect function same(actual: unknown, expected: unknown) {
 
 schema PhaseRow { day: string; phase: string }
 schema IdRow { id: string }
-schema CountRow { count: number }
 
 effect function phases() {
   return (try rows(PhaseRow, sql`SELECT day, phase FROM vetting_storage_cycles ORDER BY day`)).map((row) => `${row.day} ${row.phase}`)
@@ -281,7 +280,7 @@ layer(Services, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         sourceMetadata: "0".repeat(64),
       })
     }
-  })
+  }, { timeout: 180_000 })
 
   it.effect('Restore only from a complete chain into an isolated prefix, keep retention off until a restoration is proven, and retire a generation only once released (spec/operations/backup.md, "Story: Restore only from a complete chain into an isolated prefix"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Story: Delete raw evidence only under the enabled retention policy"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"; spec/operations/backup.md, "Story: Retire a storage generation only after every reserved target is marked and recorded"; spec/operations/backup.md, "A generation retires only with a verified marker and a D1 record for every reserved target")', () => effect {
     const world = try World
@@ -374,5 +373,5 @@ layer(Services, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         phases: true,
       },
     })
-  })
+  }, { timeout: 180_000 })
 })

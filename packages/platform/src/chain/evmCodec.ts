@@ -1,4 +1,4 @@
-// spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"
+// spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import {
   type Abi,

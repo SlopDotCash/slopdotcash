@@ -59,11 +59,11 @@ export function pinnedWrangler(root: string) {
 effect function collected<E>(stream: Stream.Stream<Uint8Array, E>, limit: number) {
   const chunks: Uint8Array[] = []
   let size = 0
-  for try (const chunk of stream) {
+  try Stream.runForEach(stream, (chunk) => effect {
     size += chunk.length
     if (size > limit) throw new OutputLimit()
     chunks.push(chunk)
-  }
+  })
   const bytes = new Uint8Array(size)
   let offset = 0
   for (const chunk of chunks) {
