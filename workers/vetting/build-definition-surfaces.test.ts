@@ -53,6 +53,28 @@ test("a build definition of a recognized build system is an install surface", ()
   }
 });
 
+test("a Haskell custom-setup script is an install surface", () => {
+  // Cabal runs Setup.hs or Setup.lhs itself during `cabal install`, exactly
+  // like setup.py, extconf.rb and build.rs, so its bytes must reach the review.
+  for (const path of ["Setup.hs", "Setup.lhs", "pkg/Setup.lhs"]) {
+    const inspection = inspected(path, `${PAYLOAD}\n`);
+
+    expect(surfacesOf(path)).toEqual(["installScripts", "source"]);
+    expect(inspection.coverage.installScripts).toEqual({
+      state: "complete",
+      items: 1,
+    });
+    expect(inspection.findings).toContainEqual(
+      expect.objectContaining({
+        path,
+        category: "unsafe-execution",
+        severity: "high",
+      }),
+    );
+    expect(inspection.downloads).toContain("https://evil.example/install.sh");
+  }
+});
+
 // biome-ignore format: Keep this regression consistent with the contributor instruction.
 test("tox test commands are reviewed as an install surface", () => {
   const path = "tox.ini"
