@@ -3,7 +3,7 @@ import { Arbitrary, Schema } from "effect";
 import { encodeAbiParameters, encodeEventTopics, parseAbi } from "viem";
 import { contract } from "vibestack/testing";
 import { type Bytes32, type EvmAddress, type Hex, U64_MAX, U128_MAX, U256_MAX } from "./abi.ts";
-import { adapterVectors } from "./adapterVectors.ts";
+import { adapterVectors } from "../../../test/fixtures/adapterVectors.ts";
 import { type DecodedLog, EVENT_TOPICS, type EscrowLog, decodeEscrowLogs } from "./events.ts";
 
 export const eventTopicsMatchTheDeployedAdapter = contract({

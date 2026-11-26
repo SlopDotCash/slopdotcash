@@ -3,7 +3,7 @@ import { Arbitrary } from "effect";
 import { contract } from "vibestack/testing";
 import { type Bytes32, type EvmAddress, awardId } from "./abi.ts";
 import { claimFeesCalldata, commitAwardCalldata, depositCalldata, payCalldata, setMonthlyCommitmentCalldata, withdrawCalldata } from "./actions.ts";
-import { adapterVectors } from "./adapterVectors.ts";
+import { adapterVectors } from "../../../test/fixtures/adapterVectors.ts";
 import { type VaultCreation, createVaultCalldata, vaultKey } from "./factories.ts";
 import { cancelBindingCalldata } from "./typedData.ts";
 

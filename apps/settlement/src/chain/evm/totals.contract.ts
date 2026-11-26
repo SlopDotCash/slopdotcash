@@ -2,7 +2,7 @@
 import { Arbitrary, Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { type EvmAddress, U128_MAX, uintWord } from "./abi.ts";
-import { adapterVectors } from "./adapterVectors.ts";
+import { adapterVectors } from "../../../test/fixtures/adapterVectors.ts";
 import { type TotalsOutcome, type VaultCounters, conservedTotals, decodeCounters, needsPendingMonthly, readTotals, totalsRefusalMessage } from "./totals.ts";
 
 const answer = (values: ReadonlyArray<bigint>) => `0x${values.map((value) => uintWord(value).slice(2)).join("")}`;

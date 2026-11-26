@@ -3,7 +3,7 @@ import { Arbitrary, Schema } from "effect";
 import { hashTypedData, domainSeparator as independentSeparator } from "viem";
 import { contract } from "vibestack/testing";
 import { type Bytes32, type EvmAddress, type Hex, U64_MAX, U256_MAX } from "./abi.ts";
-import { adapterVectors } from "./adapterVectors.ts";
+import { adapterVectors } from "../../../test/fixtures/adapterVectors.ts";
 import { type BindingInput, ESCROW_DOMAIN_NAME, ESCROW_DOMAIN_VERSION, type EscrowDomain, bindCalldata, bindingDigest, bindingStruct, bindingTypedData, domainSeparator } from "./typedData.ts";
 
 const vault = adapterVectors.vault as EvmAddress;

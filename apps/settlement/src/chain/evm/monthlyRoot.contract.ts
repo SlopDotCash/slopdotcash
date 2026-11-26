@@ -4,7 +4,7 @@ import { hashTypedData } from "viem";
 import { contract } from "vibestack/testing";
 import { type Period, isPeriod } from "../../kernels/calendar.ts";
 import { type Bytes32, type EvmAddress, type Hex, U64_MAX, U128_MAX, U256_MAX } from "./abi.ts";
-import { adapterVectors } from "./adapterVectors.ts";
+import { adapterVectors } from "../../../test/fixtures/adapterVectors.ts";
 import { type MonthlyEntry, type MonthlyReservation, EMPTY_SUM_ROOT, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, monthlyDigest, monthlyReleaseDigest, monthlyReserveDigest, provenRoot, reserveMonthlyCalldata, reserveStruct, sumTree } from "./monthlyRoot.ts";
 import { ESCROW_DOMAIN_NAME, ESCROW_DOMAIN_VERSION } from "./typedData.ts";
 
