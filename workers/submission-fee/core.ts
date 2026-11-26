@@ -14,30 +14,51 @@
  * `security_report_deposits`, its rule is in `report.ts`, and steps 3 to 5
  * treat it the same way: mark the report paid, then send what its row says.
  *
+ * The standing deposit contract (operator decision, 23 November 2026; PRD
+ * section 5, "Standing deposit") is a ledger of its own, `robinhood-standing`,
+ * on the Robinhood Chain tables. Its deposits pay rows in `standing_deposits`
+ * only, by the rule in `standing.ts`, and steps 3 to 5 treat them the same
+ * way. It shares the resolver key and so the nonce with the Robinhood Chain
+ * fee contract, so neither ledger signs while the other has a send in flight.
+ *
  * It decides nothing about merges or closes: `submission_fee_items.outcome`
  * is Slopbot's, and a report row's `outcome` is the backend's. It never keeps
  * a deposit that does not count, and it never signs a second transaction
- * while one is unsettled. A deposit of a token outside the table is never
+ * while one is unsettled on the same chain. A deposit of a token outside the table is never
  * resolved: its payer reclaims it from the contract. A deposit whose payout
  * the token refuses is parked, so the deposits behind it are still resolved.
  */
 
+import { STANDING_DEPOSIT_LEDGER } from "../../src/lib/standing-deposit.mjs";
 import {
   SUBMISSION_FEE_UNKNOWN_ITEM_GRACE_MS,
   type SubmissionFeeRate,
   type SubmissionFeeTerms,
   submissionDepositCounts,
+  submissionFeeSameAddress,
   submissionFeeTokenKind,
   submissionResolveAction,
 } from "../../src/lib/submission-fee.mjs";
-import type { GasLimits, Mode, NetworkConfig } from "./config";
+import {
+  chainOf,
+  type GasLimits,
+  type Mode,
+  type NetworkConfig,
+} from "./config";
 import {
   type ReportRow,
   reportDepositCounts,
   reportResolveAction,
 } from "./report";
 
+import {
+  type StandingRow,
+  standingDepositCounts,
+  standingResolveAction,
+} from "./standing";
+
 export type { ReportRow } from "./report";
+export type { StandingRow } from "./standing";
 
 /** Finalized log pages read for one network in one run. */
 export const FINALIZED_PAGES_PER_RUN = 10;
@@ -154,6 +175,12 @@ export interface ChainDeposit {
   item: string;
   /** 0 none, 1 open, 2 refunded, 3 kept, 4 reclaimed. */
   state: number;
+  /**
+   * True only on Solana, for a deposit whose record account no longer
+   * exists: the program closes the record on every outcome, so the deposit
+   * is settled and the other fields are empty.
+   */
+  closed?: true;
 }
 
 /**
@@ -254,6 +281,8 @@ export interface FeeStore {
    * never returned.
    */
   reportByHash(item: string): Promise<ReportRow | null>;
+  /** The account's standing deposit row with this item, or null. */
+  standingByHash(item: string): Promise<StandingRow | null>;
   rates(): Promise<SubmissionFeeRate[]>;
   /** Marks the pull request paid by this deposit; false when another paid. */
   markPaid(deposit: DepositRow, item: ItemRow, at: string): Promise<boolean>;
@@ -261,6 +290,15 @@ export interface FeeStore {
   markReportPaid(
     deposit: DepositRow,
     report: ReportRow,
+    at: string,
+  ): Promise<boolean>;
+  /**
+   * Marks the standing row paid by this deposit; false when another paid,
+   * it was decided, or it was withdrawn before payment.
+   */
+  markStandingPaid(
+    deposit: DepositRow,
+    row: StandingRow,
     at: string,
   ): Promise<boolean>;
   setJudgement(
@@ -274,12 +312,16 @@ export interface FeeStore {
   /**
    * Finalized deposits still in an open state, each with the pull request's
    * row it was matched to, or the report's row that names it as the deposit
-   * that paid.
+   * that paid. On the standing ledger, each with the standing row that names
+   * it as the deposit that paid, and never a pull request's or report's row.
    */
-  resolvable(
-    network: string,
-  ): Promise<
-    { deposit: DepositRow; item: ItemRow | null; report: ReportRow | null }[]
+  resolvable(network: string): Promise<
+    {
+      deposit: DepositRow;
+      item: ItemRow | null;
+      report: ReportRow | null;
+      standing?: StandingRow | null;
+    }[]
   >;
   setDue(
     network: string,
@@ -308,16 +350,32 @@ export interface FeeStore {
     at: string,
   ): Promise<void>;
   openSend(network: string): Promise<SendRow | null>;
+  /**
+   * The open send of any of these ledgers, or null. The ledgers of one chain
+   * share the resolver key and its nonce.
+   */
+  openSendAmong(networks: readonly string[]): Promise<SendRow | null>;
   latestDryRun(network: string): Promise<SendRow | null>;
-  /** Throws GasBudgetError when the day's native limit would be passed. */
+  /**
+   * Throws GasBudgetError when the day's native limit would be passed. With
+   * `siblings`, the day's spend of those ledgers counts too: one key pays.
+   */
   assertGasBudget(
     network: string,
     maximumNativeWei: string,
     limits: GasLimits,
     now: Date,
+    siblings?: readonly string[],
   ): Promise<void>;
-  /** Records the send. A live row is refused over the day's native limit. */
-  insertSend(row: SendRow, limits: GasLimits): Promise<void>;
+  /**
+   * Records the send. A live row is refused over the day's native limit, and
+   * with SendConflictError while a sibling ledger has a send in flight.
+   */
+  insertSend(
+    row: SendRow,
+    limits: GasLimits,
+    siblings?: readonly string[],
+  ): Promise<void>;
   updateSend(
     id: string,
     fields: {
@@ -339,7 +397,7 @@ export class PayoutFailedError extends Error {
 }
 /** The simulation reverted without naming a deposit. Nothing was signed. */
 export class SendRevertedError extends Error {}
-/** Another run recorded a send for this network first. */
+/** Another run recorded a send for this network or a sibling ledger first. */
 export class SendConflictError extends Error {}
 
 /** Bounded, single-line error text for logs. */
@@ -427,15 +485,29 @@ export function failureReason(error: unknown): string {
   return [step, ...parts].join("/").slice(0, 240);
 }
 
-export interface NetworkDependencies {
+/**
+ * The part of a chain client that judging, parking and sending use. The
+ * Solana ledger has its own scan (`solana-core.ts`) and shares these steps.
+ */
+export type ResolverChain = Pick<
+  FeeChain,
+  "deposit" | "address" | "probe" | "prepare" | "broadcast" | "status"
+>;
+
+export interface NetworkDependencies<Chain extends ResolverChain = FeeChain> {
   mode: Exclude<Mode, "off">;
   network: NetworkConfig;
   terms: SubmissionFeeTerms;
   store: FeeStore;
-  chain: FeeChain;
+  chain: Chain;
   now: () => Date;
   randomId: () => string;
   log: (event: Record<string, unknown>) => void;
+  /**
+   * The other ledgers on the same chain, which sign with the same key and
+   * nonce. This ledger never signs while one of them has a send in flight.
+   */
+  siblings?: readonly string[];
 }
 
 export interface NetworkResult {
@@ -449,6 +521,8 @@ export interface NetworkResult {
   send:
     | "none"
     | "in_flight"
+    /** Another ledger on the same chain has a send in flight; this one waits. */
+    | "sibling_in_flight"
     | "sent"
     | "recorded"
     | "unchanged"
@@ -463,8 +537,6 @@ export interface NetworkResult {
   /** Parked deposits returned to the queue in this run. */
   released: number;
 }
-
-const lower = (value: string) => value.toLowerCase();
 
 async function withTimes(
   chain: FeeChain,
@@ -540,7 +612,7 @@ export async function scan(
       // event is recorded as it stands, so a token that emits nothing
       // cannot hold up the scan.
       if (
-        submissionFeeTokenKind(network.network, source.token, deps.terms) !==
+        submissionFeeTokenKind(chainOf(network), source.token, deps.terms) !==
         null
       )
         await chain.assertResolvedTransfer(event, {
@@ -609,13 +681,19 @@ export async function scan(
  * that names one is an unknown item like any other.
  */
 export async function judge(
-  deps: NetworkDependencies,
+  deps: NetworkDependencies<ResolverChain>,
 ): Promise<{ judged: number; paid: number }> {
   const { store, network, terms } = deps;
   const rates = await store.rates();
   let judged = 0;
   let paid = 0;
   for (const deposit of await store.unjudged(network.network, JUDGED_PER_RUN)) {
+    if (network.network === STANDING_DEPOSIT_LEDGER) {
+      const outcome = await judgeStanding(deps, deposit);
+      judged += outcome.judged;
+      paid += outcome.paid;
+      continue;
+    }
     const item = await store.itemByHash(deposit.item);
     const report = item ? null : await store.reportByHash(deposit.item);
     if (report) {
@@ -706,21 +784,85 @@ export async function judge(
 }
 
 /**
+ * Step 3 on the standing ledger: a deposit pays only a row in
+ * `standing_deposits`, never a pull request or a report. It marks the row
+ * paid first and only then is recorded as accepted, so two deposits can
+ * never both pay one row. A deposit whose item no row has yet waits a day
+ * after it is finalized, as on the other ledgers, and is then refused.
+ */
+async function judgeStanding(
+  deps: NetworkDependencies<ResolverChain>,
+  deposit: DepositRow,
+): Promise<{ judged: number; paid: number }> {
+  const { store, network, terms } = deps;
+  const row = await store.standingByHash(deposit.item);
+  const verdict = standingDepositCounts(network.network, deposit, row, terms);
+  if (verdict.accepted && row) {
+    const at = deps.now().toISOString();
+    if (!(await store.markStandingPaid(deposit, row, at)))
+      return { judged: 0, paid: 0 };
+    await store.setJudgement(deposit, {
+      accepted: 1,
+      reason: null,
+      item: null,
+    });
+    // The log names the deposit only, never the account.
+    deps.log({
+      event: "submission_fee_standing_paid",
+      network: network.network,
+      depositId: deposit.depositId,
+    });
+    return { judged: 1, paid: 1 };
+  }
+  if (verdict.accepted) return { judged: 0, paid: 0 };
+  if (
+    verdict.reason === "unknown_item" &&
+    (deposit.finalizedAt === null ||
+      deps.now().getTime() - Date.parse(deposit.finalizedAt) <
+        SUBMISSION_FEE_UNKNOWN_ITEM_GRACE_MS)
+  )
+    return { judged: 0, paid: 0 };
+  await store.setJudgement(deposit, {
+    accepted: 0,
+    reason: verdict.reason,
+    item: null,
+  });
+  deps.log({
+    event: "submission_fee_refused",
+    network: network.network,
+    depositId: deposit.depositId,
+    reason: verdict.reason,
+  });
+  return { judged: 1, paid: 0 };
+}
+
+/**
  * Step 4: what is due for each finalized open deposit, from the pure rule
  * of the pull request or of the report it paid. Returns the entries to send,
  * oldest deposit first.
  */
-export async function plan(deps: NetworkDependencies): Promise<SendEntry[]> {
+export async function plan(
+  deps: NetworkDependencies<ResolverChain>,
+): Promise<SendEntry[]> {
   const { store, network } = deps;
   const entries: SendEntry[] = [];
   const parked = await store.parked(network.network);
-  for (const { deposit, item, report } of await store.resolvable(
+  for (const { deposit, item, report, standing } of await store.resolvable(
     network.network,
   )) {
-    // A report's row is returned only for the deposit it names as paid.
-    const action = report
-      ? reportResolveAction(network.network, deposit, report, deps.terms)
-      : submissionResolveAction(network.network, deposit, item, deps.terms);
+    // A report's or standing row is returned only for the deposit it names
+    // as paid.
+    const action =
+      network.network === STANDING_DEPOSIT_LEDGER
+        ? standingResolveAction(
+            network.network,
+            deposit,
+            standing ?? null,
+            deps.terms,
+          )
+        : report
+          ? reportResolveAction(network.network, deposit, report, deps.terms)
+          : submissionResolveAction(network.network, deposit, item, deps.terms);
     const state =
       action === "refund"
         ? "refund_due"
@@ -743,7 +885,9 @@ export async function plan(deps: NetworkDependencies): Promise<SendEntry[]> {
  * unpaused, a payer taken off a blacklist) or that are no longer open on
  * chain (reclaimed by their payer). Signs nothing.
  */
-export async function recheck(deps: NetworkDependencies): Promise<number> {
+export async function recheck(
+  deps: NetworkDependencies<ResolverChain>,
+): Promise<number> {
   const { store, chain, network } = deps;
   if (chain.address() === null) return 0;
   const before = new Date(
@@ -755,7 +899,8 @@ export async function recheck(deps: NetworkDependencies): Promise<number> {
     before,
     PARKED_CHECKS_PER_RUN,
   )) {
-    const open = (await chain.deposit(entry.id)).state === 1;
+    const record = await chain.deposit(entry.id);
+    const open = record.closed !== true && record.state === 1;
     const free = !open || (await chain.probe(entry)) === "ok";
     await store.checkedParked(
       network.network,
@@ -776,7 +921,9 @@ export async function recheck(deps: NetworkDependencies): Promise<number> {
 }
 
 /** Reconciles the send in flight. True while one is still unsettled. */
-export async function reconcile(deps: NetworkDependencies): Promise<boolean> {
+export async function reconcile(
+  deps: NetworkDependencies<ResolverChain>,
+): Promise<boolean> {
   const { store, chain, network } = deps;
   const send = await store.openSend(network.network);
   if (!send) return false;
@@ -856,22 +1003,30 @@ function sameEntries(left: readonly SendEntry[], right: readonly SendEntry[]) {
  * contract or key parks nothing.
  */
 export async function send(
-  deps: NetworkDependencies,
+  deps: NetworkDependencies<ResolverChain>,
   planned: readonly SendEntry[],
 ): Promise<{ send: NetworkResult["send"]; parked: number }> {
   const { store, chain, network, mode } = deps;
   const entries: SendEntry[] = [];
+  // EVM addresses are compared without regard to case, Solana ones exactly.
+  const same = (left: string, right: string) =>
+    submissionFeeSameAddress(chainOf(network), left, right);
+  const batchSize = network.maxBatch ?? MAX_BATCH;
   for (const entry of planned) {
-    if (entries.length === MAX_BATCH) break;
+    if (entries.length === batchSize) break;
     const row = await store.deposit(network.network, entry.id);
     const onChain = await chain.deposit(entry.id);
+    if (!row)
+      throw new Error("A stored deposit differs from the contract's record");
+    // Solana only: the record account is gone, so the deposit is settled and
+    // its settlement is on its way through the scan.
+    if (onChain.closed === true) continue;
     if (
-      !row ||
-      lower(onChain.payer) !== lower(row.payer) ||
-      lower(onChain.token) !== lower(row.token) ||
+      !same(onChain.payer, row.payer) ||
+      !same(onChain.token, row.token) ||
       onChain.amount !== row.amount ||
-      lower(onChain.keptTo) !== lower(row.keptTo) ||
-      lower(onChain.item) !== lower(row.item)
+      !same(onChain.keptTo, row.keptTo) ||
+      onChain.item.toLowerCase() !== row.item.toLowerCase()
     )
       throw new Error("A stored deposit differs from the contract's record");
     // Already resolved or reclaimed on chain: its event is still on its way
@@ -951,6 +1106,7 @@ export async function send(
           maximumNativeWei,
           network.gas,
           deps.now(),
+          deps.siblings,
         ),
       );
       // Durable before broadcast. The insert repeats the day's limit and
@@ -968,6 +1124,7 @@ export async function send(
           state: "submitted",
         },
         network.gas,
+        deps.siblings,
       );
       prepared = signed;
     } catch (error) {
@@ -1000,7 +1157,8 @@ export async function send(
       const alone: { entry: SendEntry; result: ProbeResult }[] = [];
       for (const entry of batch) {
         // Resolved or reclaimed since it was read: nothing to send or park.
-        if ((await chain.deposit(entry.id)).state !== 1) continue;
+        const current = await chain.deposit(entry.id);
+        if (current.closed === true || current.state !== 1) continue;
         alone.push({ entry, result: await chain.probe(entry) });
       }
       const through = alone.filter(({ result }) => result === "ok");
@@ -1041,7 +1199,7 @@ export async function send(
 export async function runNetwork(
   deps: NetworkDependencies,
 ): Promise<NetworkResult> {
-  const { network, chain } = deps;
+  const { network, chain, store } = deps;
   const result: NetworkResult = {
     network: network.network,
     status: "ran",
@@ -1065,6 +1223,18 @@ export async function runNetwork(
   const inFlight = deps.mode === "live" ? await reconcile(deps) : false;
   if (inFlight) {
     result.send = "in_flight";
+    return result;
+  }
+  // The ledgers of one chain sign with one key, so its nonce. While another
+  // of them has a send in flight this one waits; that is not an error. The
+  // insert repeats the check, so two runs can never both sign.
+  if (
+    deps.mode === "live" &&
+    deps.siblings &&
+    deps.siblings.length > 0 &&
+    (await store.openSendAmong(deps.siblings))
+  ) {
+    result.send = "sibling_in_flight";
     return result;
   }
   Object.assign(result, await send(deps, await plan(deps)));

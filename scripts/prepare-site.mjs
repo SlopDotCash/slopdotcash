@@ -172,6 +172,14 @@ writeFileSync(
   join(publicProtocolRoot, "private-trace-v2.md"),
   `# Private trace privacy contract v2\n\n${privateTraceContractV2.replace(/^### /gmu, "## ")}\n`,
 );
+const privateTraceContractV3 = documentSection(
+  join(repositoryRoot, "backend", "trace", "README.md"),
+  "## Private trace privacy contract v3",
+);
+writeFileSync(
+  join(publicProtocolRoot, "private-trace-v3.md"),
+  `# Private trace privacy contract v3\n\n${privateTraceContractV3.replace(/^### /gmu, "## ")}\n`,
+);
 const pointsRules = documentSection(
   join(repositoryRoot, "docs", "slop-product-requirements.md"),
   "## 7. Points, discovery, and clear pages",

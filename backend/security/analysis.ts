@@ -26,7 +26,7 @@ const ANALYSIS_PROMPT_REVISION = "slop-security-case-analysis-3";
  * example the request that ran it was cut off), so the owner can run it
  * again. It is a transport bound: well above the provider time limits below.
  */
-const ANALYSIS_STALE_AFTER_MS = 15 * 60 * 1000;
+export const ANALYSIS_STALE_AFTER_MS = 15 * 60 * 1000;
 /** The provider time limit when the owner waits for the analysis. */
 export const ANALYSIS_TIMEOUT_MS = 120_000;
 /**
@@ -525,7 +525,7 @@ export function surplusSecurityAnalyzer(options: {
   };
 }
 
-type AnalysisDependencies = {
+export type AnalysisDependencies = {
   db: D1Database<D1QueryStatement>;
   now: () => Date;
   advisories: AdvisoryReader | null;
@@ -574,7 +574,11 @@ type AnalysisRow = {
   finished_at: string | null;
 };
 
-function retryable(row: AnalysisRow, now: Date): boolean {
+/** True when an attempt ended without an answer or was lost while running. */
+export function retryable(
+  row: Pick<AnalysisRow, "state" | "started_at">,
+  now: Date,
+): boolean {
   return (
     row.state === "failed" ||
     row.state === "unavailable" ||

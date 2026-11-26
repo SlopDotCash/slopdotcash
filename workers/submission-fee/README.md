@@ -195,6 +195,75 @@ names a report is an unknown item.
 **The log** names a paid report only by its deposit
 (`submission_fee_report_paid`, network and deposit id), never by its case.
 
+## Standing deposits
+
+A contributor can post one standing deposit of SLOP instead of paying a fee
+on every pull request (operator decision, 23 November 2026; PRD section 5,
+"Standing deposit", and section 6, FEE-08). It is held in a second
+deployment of the unchanged `SubmissionDeposits` contract on Robinhood
+Chain, with a 365-day reclaim delay. The website writes one row per account
+and round in `standing_deposits` (migration 0149), Slopbot decides when the
+deposit is due back or kept, and this Worker does the chain side only.
+
+**A ledger of its own.** The second contract is read as the ledger
+`robinhood-standing` (`STANDING_DEPOSIT_LEDGER` in
+`src/lib/standing-deposit.mjs`). Its deposit, cursor, send and parked rows
+are keyed by that name, so its deposit ids never meet the fee contract's.
+Its token, burn address, chain id, confirmation count, log page and RPC
+endpoint are Robinhood Chain's (`chain: "robinhood-mainnet"` in its
+configuration). The ledger exists only once `STANDING_DEPOSIT_CONTRACT` and
+`STANDING_DEPOSIT_START_BLOCK` are recorded; while they are null nothing is
+read and nothing is reported for it. The standing contract may not be one of
+the fee contracts.
+
+**When a deposit pays a standing row** (`standingDepositCounts` in
+`standing.ts`). All of these:
+
+- its `item` is the `item` of a row in `standing_deposits`
+  (`standingDepositItem(githubId, round)`);
+- it is on the standing ledger, never the fee contract;
+- the token is SLOP from the Robinhood Chain table;
+- `keptTo` is the burn address;
+- the row was not withdrawn before payment (`cancelled_at` is null);
+- the amount is at least the row's `slop_amount`;
+- the row is not already paid by another deposit, and not already decided.
+
+Reasons specific to it: `standing_wrong_ledger`, `standing_token_not_slop`,
+`standing_cancelled`, `standing_amount_invalid`. The shared reasons keep
+their meaning. A refused deposit of an accepted token is sent back once it is
+finalized, never kept. A deposit of a token outside the table is never
+resolved. A deposit whose item no row has waits 24 hours after it is
+finalized and is then sent back as `unknown_item`. A deposit on either fee
+ledger never pays a standing row, and a standing deposit never pays a pull
+request or a report.
+
+**What the Worker writes on the row.** `paid_at`, `paid_network`
+(`robinhood-standing`) and `paid_deposit_id` once the deposit has the
+confirmation count on top of it, only if no other deposit paid the row and it
+was not withdrawn. It clears them when that unfinalized deposit is
+reorganised away or replaced and the row has no outcome. After the
+contract's finalized `Resolved` or `Reclaimed` event it writes `outcome`
+`refunded` or `kept` and `outcome_at`. `outcome_reason` and the strike
+columns are Slopbot's and are never changed here.
+
+**What is sent** (`standingResolveAction`). For a finalized, accepted
+deposit: sent back when the row it paid says `refund_due`; kept, to the burn
+address, only when that row says `kept_due`, names this very deposit as the
+one that paid, and the deposit is SLOP on the standing ledger kept to the
+burn address. Nothing else keeps a standing deposit.
+
+**One key, one nonce.** The standing ledger and the Robinhood Chain fee
+ledger sign with the same resolver key, so they share its nonce. Neither
+signs while the other has a send in flight: the run reports
+`sibling_in_flight` and waits, which is not an error, and the insert of a
+live send repeats the check so two runs can never both hold a signed nonce.
+The day's native-fee ceiling counts the sends of both ledgers, since one key
+pays for them. On Base nothing changes.
+
+**The log** names a paid standing row only by its deposit
+(`submission_fee_standing_paid`, ledger and deposit id), never by its
+account.
+
 ## Sending
 
 The resolver key can do one thing: mark an open deposit "refund" (its amount
@@ -288,6 +357,151 @@ The hourly readings are spot prices. One reading can be moved by a large
 trade in that block; the averages limit what one reading can do, and the fee
 is refundable and worth about one dollar.
 
+## Solana
+
+Operator decision, 25 November 2026 (PRD section 6, "Submission fee
+deposits", "Solana, off chain"). The fee can also be paid in USDC on Solana,
+into the `slop-submission-deposits` program
+(`contracts/solana/README.md`, "Submission deposits"). The program is not
+deployed: its id and start slot in `src/lib/submission-fee.mjs` are null,
+and while they are null nothing here reads or signs on Solana in any mode.
+
+The Solana ledger is `solana-mainnet`. It has its own switch,
+`SUBMISSION_FEE_SOLANA_MODE` (`off`, `dry_run`, `live`), with the meanings of
+the table under "Modes", independent of `SUBMISSION_FEE_MODE`. It ships
+`off`. `live` changes only together with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`
+in `src/lib/submission-fee.mjs`, which is what makes the pay page, Slopbot's
+comment and the public reads list Solana; the release refuses one without
+the other.
+
+What differs from the EVM ledgers (`solana-core.ts`, `solana.ts`,
+`contracts/solana/submission-deposits.ts`):
+
+- **Reads.** There is no event log. An open deposit is an account of the
+  program, closed on its outcome. Each run reads the program's `Config` and
+  then lists the open `Deposit` accounts with `getProgramAccounts` at a slot
+  not before the `Config` read, all at `finalized` commitment. The endpoint
+  filters the list: the record's size (169 bytes), its first eight bytes,
+  the table's mint at byte 56 and the fee wallet as kept wallet at byte 88.
+  Only the eight bytes of each record's id are returned. A deposit of
+  another mint, or with another kept wallet, is therefore never fetched or
+  recorded; its payer reclaims it from the program. The full records of the
+  new ids are then read together, up to 100 in a run. A pull request is
+  marked paid only by a finalized deposit; there is no earlier confirmed
+  step. The cluster is authenticated by its genesis hash first.
+- **Keys.** A deposit is keyed by the id the program stored in its record.
+  The record's address follows from the payer and a nonce the payer picked,
+  and the same payer and nonce can be used again after a settlement, so an
+  address is never a key. The address is kept beside the row
+  (`deposit_account`, migration 0155). The cursor row holds the next deposit
+  id, not a block.
+- **Nothing depends on an address's history.** Anyone can send a
+  transaction that merely names an address for the base fee, so the Worker
+  never needs the whole list of an address's transactions:
+  - A deposit is recorded from its record alone: `block_time` is the cluster
+    time the program stored, `block_number` the finalized slot the record
+    was read at. For a deposit that names a pull request or report Slop
+    asked a fee for (25 in a run), one page of the address's signatures is
+    read and up to two transactions whose block time is the record's own; a
+    successful `deposit` there whose payer, mint, item, amount, kept wallet
+    and nonce are the record's is stored as `tx_hash`. Otherwise `tx_hash`
+    is the record's address. Recording never waits on it.
+  - A settlement the Worker sent itself is proven from that transaction,
+    whose signature is in the send's row. The send in flight is reconciled
+    before the scan, so this happens in the run that finds it finalized.
+  - Any other settlement (the payer's own reclaim) is searched for only
+    between the slot the record was last known open at and the slot it was
+    first seen gone at (`submission_fee_solana_settlements`). Transactions
+    after the second slot, and failed ones, are passed over without being
+    read. A run reads at most 6 pages of signatures and 20 transactions for
+    all searches together and stores where it stopped (`before_tx`,
+    `candidate_tx`); the next run continues there. The oldest settlement in
+    that span is the deposit's.
+- **Settlement proof.** From the executed instructions of the finalized
+  transaction, never from its logs. A refund or kept fee is recorded only
+  when the transaction shows the program's own transfer of the exact amount
+  of the deposit's mint into an account the right wallet owns, which rose by
+  at least that amount.
+- **One deposit never stops another.** Each outcome is its own write. A
+  deposit that cannot be read, proven or sent is logged
+  (`submission_fee_solana_set_aside`, with `read_failed`, `proof_failed`,
+  `request_limit`, `not_found` or `record_differs`, never provider text),
+  kept with that word where it has a row to keep it in, and tried again
+  later. Every step of a run (reconcile, list, scan, judge, recheck, plan,
+  send) runs by itself: one that fails is named in the result's `steps` and
+  the run ends with `error`, after the other steps ran. A failed listing
+  does not stop what is already due from being sent.
+- **Deposits the Worker never resolves.** A recorded deposit whose amount is
+  below its pull request's fee (`amount_below_due`, `item_fee_invalid`), like
+  one of another mint or kept wallet, is final for the Worker: it leaves
+  what is tracked and planned and is not read again. Its payer reclaims it
+  after 30 days. This differs from the EVM ledgers, where such a deposit of
+  an accepted token is refunded. A deposit of the right amount that paid for
+  nothing (an unknown item after a day, a pull request already paid) is
+  still refunded as a courtesy, after every deposit that paid a pull
+  request, and only while less than half of the day's lamport limit is
+  spent (`submission_fee_solana_courtesy_refunds_wait`).
+- **Addresses** are base58 and compared exactly. USDC is the only accepted
+  mint.
+- **Sending.** One transaction carries up to five `resolve` instructions,
+  each naming the id the Worker recorded, and is all or nothing. A planned
+  or in-flight deposit's record address is always found, by id, however many
+  deposits are recorded. Right before it builds the instructions the Worker
+  reads the records again together at finalized commitment and builds from
+  them; it builds nothing when a record is gone or holds another id, never
+  for another mint, and a kept fee only to the fee wallet of the table.
+  Before a refund it checks that the payer's associated USDC account exists,
+  is of that mint, is still the payer's and is not frozen (the same for the
+  fee wallet's before a kept fee); otherwise the deposit is parked as under
+  "A payout the token refuses" and looked at again a day later. The Worker
+  never creates a token account.
+- **The journal.** Sends are in `submission_fee_solana_sends`. The signed
+  bytes are recorded before the broadcast and resent unchanged while their
+  blockhash can still land. A send is failed only when the finalized chain
+  is past its last valid block height and a node that has itself seen that
+  finalized slot does not know its signature; the slot and height come from
+  one answer (`getEpochInfo`), and a node behind it leaves the send in
+  flight. Its deposits are then sent again in a new transaction. Such a
+  send paid no fee and is not counted in the day's lamports.
+- **Requests.** One run makes at most 300 requests to the Solana endpoint
+  (`SOLANA_REQUESTS_PER_RUN`): the client counts every request and refuses
+  the one after the last before it is sent. The steps' own limits add up to
+  230 (`SOLANA_STEP_REQUESTS` in `solana-core.ts`, with the count for each
+  step). The result reports `requests`, and `open`, the number of listed
+  records; 1,000 or more is also logged (`submission_fee_solana_open_high`).
+  The listing itself is one request whose answer grows by about 150 bytes
+  for each open record of the table's mint and fee wallet; the endpoint
+  offers no way to page it.
+- **Limits and secrets.** `SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX` and
+  `SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY` bound the network fee. The
+  secrets are `RPC_URL_SUBMISSION_FEE_SOLANA`, a keyed https endpoint that
+  serves finalized reads, `getProgramAccounts` with filters and a data
+  slice, `getMultipleAccounts`, `getSignaturesForAddress`, `getTransaction`
+  and `getEpochInfo` (there is no public default), and for `live`
+  `SUBMISSION_FEE_SOLANA_RESOLVER_SEED`, the resolver's 32-byte ed25519 seed
+  as 64 hex digits. The resolver key pays only the network fee; a deposit's
+  rent (2,067,120 lamports, the rent-exempt minimum of its 169 bytes)
+  returns to its payer. A key that is not the program's resolver signs
+  nothing (`submission_fee_solana_resolver_differs`).
+- **Kept fees** are fee income of the Solana fee wallet under the same rule
+  as below, by exact address.
+
+The pay page's route, `POST /api/v1/submission-fee/solana`
+(`backend/submission-fee/solana-pay.ts`), reads the Pages payment endpoint,
+not this Worker's. It counts requests before reading anything: 20 a minute
+from one address, 30 a minute for one pull request, 120 a minute in all,
+and at most six reads a request. A payer's reclaim there needs no row of
+this Worker: the wallet's open deposits for the pull request are found on
+chain by payer and item.
+
+Switching Solana on, each step the operator's and each its own reviewed
+change: deploy and initialize the program and open its USDC vault
+(`docs/submission-deposits-solana-deploy-runbook.md`); put the program id
+and the slot of `initialize` in the tables; install the endpoint secret and
+set the mode to `dry_run`; create the resolver key, fund it with a little
+SOL, name it with `set_resolver` and install its seed; then set the mode to
+`live` together with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`.
+
 ## Modes
 
 `SUBMISSION_FEE_MODE` in `wrangler.toml`:
@@ -338,9 +552,14 @@ fee wallet and is never income.
 
 ```sh
 bun test ./src/lib/submission-fee.test.ts ./workers/submission-fee \
-  ./backend/submission-fee ./workers/fee-converter/submission-fee-income.test.ts
+  ./backend/submission-fee ./workers/fee-converter/submission-fee-income.test.ts \
+  ./contracts/solana/submission-deposits.test.ts
 bun run test:submission-fee:anvil
 ```
+
+The Solana ledger's tests (`solana.test.ts`) run the real reader, resolver
+and store against `fixtures/solana-fake.ts`, a small cluster that behaves like the
+deposit program over JSON-RPC.
 
 The second command deploys the compiled contract and a test token to a local
 Anvil chain and runs the Worker against it. On Robinhood Chain (the local

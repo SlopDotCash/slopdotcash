@@ -34,6 +34,7 @@ import {
   message,
   nonceFloor,
   type PreparedSend,
+  providerErrorLog,
   type Quote,
   type RunDependencies,
 } from "./core";
@@ -927,7 +928,9 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
             event: "fee_buyback_error",
             network: config.network,
             leg,
-            error: message(error),
+            ...(config.network === "solana" && leg === "bridge"
+              ? providerErrorLog(error)
+              : { error: message(error) }),
           });
         }
       };

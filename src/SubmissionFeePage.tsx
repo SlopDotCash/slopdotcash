@@ -6,6 +6,7 @@ import { networkLabel } from "./lib/network-names";
 import { transactionUrl } from "./lib/payments/contracts";
 import { findHistoricalProjectByRepositoryId } from "./lib/projects.mjs";
 import {
+  isSolanaFeeNetwork,
   SUBMISSION_FEE_KEEP_LABEL,
   SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
   SUBMISSION_FEE_RECLAIM_DAYS,
@@ -23,10 +24,13 @@ import {
   feeItemPath,
   feeRepository,
   feeRoute,
+  isSolanaRecordAddress,
+  publishedSolanaWay,
   readFeeItem,
   readFeeRates,
+  type SolanaFeeWay,
 } from "./lib/submission-fee-page";
-import { feePageSetup } from "./lib/submission-fee-setup";
+import { feePageSetup, standingDepositSetup } from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
 import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { formatDate, Spinner } from "./Presentation";
@@ -35,6 +39,13 @@ import "./submission-fee.css";
 const SubmissionFeePay = lazy(() =>
   import("./SubmissionFeePay").then((module) => ({
     default: module.SubmissionFeePay,
+  })),
+);
+
+// Loaded only when Solana is offered or a Solana deposit may be taken back.
+const SubmissionFeePaySolana = lazy(() =>
+  import("./SubmissionFeePaySolana").then((module) => ({
+    default: module.SubmissionFeePaySolana,
   })),
 );
 
@@ -54,7 +65,10 @@ const RECORD_RETENTION = {
 /** A payment saved in this tab reopens the form after a reload. */
 function hasSavedRequest(item: string): boolean {
   try {
-    return sessionStorage.getItem(feeDepositKey(item)) !== null;
+    return (
+      sessionStorage.getItem(feeDepositKey(item)) !== null ||
+      sessionStorage.getItem(`${feeDepositKey(item)}:solana`) !== null
+    );
   } catch {
     return false;
   }
@@ -172,11 +186,18 @@ export function PaidRecord({
           : `Its block is not final yet. ${networkLabel(paid.network)} can still replace it, and the record follows the chain.`}
       </p>
       <p>
-        <TransactionLink
-          network={paid.network}
-          hash={paid.transaction}
-          label="Deposit transaction"
-        />
+        {isSolanaFeeNetwork(paid.network) &&
+        isSolanaRecordAddress(paid.transaction) ? (
+          <>
+            Deposit record <code>{paid.transaction}</code>
+          </>
+        ) : (
+          <TransactionLink
+            network={paid.network}
+            hash={paid.transaction}
+            label="Deposit transaction"
+          />
+        )}
       </p>
       <p>{outcomeText(item, held)}</p>
       {item.resolveTransaction ? (
@@ -197,11 +218,18 @@ export function PaidRecord({
 }
 
 /** The terms, in plain words, shown before a wallet is chosen. */
-function Terms({ ways }: { ways: readonly FeeWay[] }) {
+function Terms({
+  ways,
+  solana,
+}: {
+  ways: readonly FeeWay[];
+  solana: SolanaFeeWay | null;
+}) {
   const stable = [
-    ...new Set(
-      ways.filter((way) => way.kind === "stable").map((way) => way.symbol),
-    ),
+    ...new Set([
+      ...ways.filter((way) => way.kind === "stable").map((way) => way.symbol),
+      ...(solana ? [solana.symbol] : []),
+    ]),
   ].join(" or ");
   const slop = ways.some((way) => way.kind === "slop");
   const kept = [
@@ -243,6 +271,12 @@ function Terms({ ways }: { ways: readonly FeeWay[] }) {
               <code>{contract}</code>
             </span>
           ))}
+          {solana ? (
+            <>
+              {contracts.length > 0 ? "; on Solana, " : ""}the deposit program{" "}
+              <code>{solana.programId}</code>
+            </>
+          ) : null}
           . Nobody from Slop or from the project sends a payment address in a
           message.
         </li>
@@ -265,6 +299,8 @@ function Due({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(() => hasSavedRequest(item.item));
+  const [takeBack, setTakeBack] = useState(false);
+  const [{ deployed: standing }] = useState(standingDepositSetup);
   const confirmDue = useCallback(
     async (way: FeeWay) => {
       const latest = await loadFeeItem(
@@ -290,9 +326,45 @@ function Due({
     },
     [item.repositoryId, item.pullNumber, tables, onChanged],
   );
+  const subject = {
+    repositoryId: item.repositoryId,
+    pullNumber: item.pullNumber,
+    item: item.item,
+  };
+  const confirmSolanaDue = useCallback(async () => {
+    const latest = await loadFeeItem(
+      item.repositoryId,
+      item.pullNumber,
+      tables,
+    );
+    if (!latest?.solana || latest.solana.amount !== item.solana?.amount) {
+      onChanged();
+      throw new Error(
+        latest?.paid
+          ? "This pull request is already recorded as paid. Nothing was sent."
+          : "The fee due for this pull request changed. Nothing was sent. Review the payment again.",
+      );
+    }
+  }, [item.repositoryId, item.pullNumber, item.solana, tables, onChanged]);
+  // A Solana deposit that nothing has settled after the program's delay can
+  // be taken back by the wallet that paid it. The wallet's deposits are
+  // found on chain, so this needs no record of Slop's: it is offered at once
+  // for a recorded deposit past the delay, and on request otherwise.
+  const published = publishedSolanaWay(item.stableMinor, tables);
+  const reclaim =
+    takeBack ||
+    (item.paid &&
+      isSolanaFeeNetwork(item.paid.network) &&
+      item.outcome !== "refunded" &&
+      item.outcome !== "kept" &&
+      Date.now() - Date.parse(item.paid.at) >=
+        SUBMISSION_FEE_RECLAIM_DAYS * 86_400_000)
+      ? published
+      : null;
+  const anyDue = item.due.length > 0 || item.solana !== null;
   return (
     <>
-      {item.due.length > 0 ? (
+      {anyDue ? (
         <>
           <section className="fee-section" aria-label="Fee due">
             <h2>Fee due</h2>
@@ -310,6 +382,12 @@ function Due({
                     : ""}
                 </li>
               ))}
+              {item.solana ? (
+                <li key={`${item.solana.network}:${item.solana.token}`}>
+                  <strong>{feeAmountText(item.solana)}</strong> on{" "}
+                  {networkLabel(item.solana.network)}
+                </li>
+              ) : null}
             </ul>
             {item.slopWithheld ? (
               <p>
@@ -318,21 +396,41 @@ function Due({
                 page to try again.
               </p>
             ) : null}
+            {standing ? (
+              <p>
+                Contribute often? A{" "}
+                <Link href="/deposit">standing deposit</Link> can stand in for
+                this fee on projects that accept it, once you have a merged pull
+                request there.
+              </p>
+            ) : null}
           </section>
-          <Terms ways={item.due} />
+          <Terms ways={item.due} solana={item.solana} />
         </>
       ) : null}
-      {open ? (
+      {open || reclaim ? (
         <Suspense fallback={<Spinner label="Loading the payment form" />}>
-          <SubmissionFeePay
-            item={item.item}
-            ways={item.due}
-            tables={tables}
-            confirmDue={confirmDue}
-            onDeposit={onChanged}
-          />
+          {open ? (
+            <SubmissionFeePay
+              item={item.item}
+              ways={item.due}
+              tables={tables}
+              confirmDue={confirmDue}
+              onDeposit={onChanged}
+            />
+          ) : null}
+          {published ? (
+            <SubmissionFeePaySolana
+              subject={subject}
+              way={open && !takeBack ? item.solana : null}
+              reclaim={reclaim}
+              confirmDue={confirmSolanaDue}
+              onDeposit={onChanged}
+            />
+          ) : null}
         </Suspense>
-      ) : item.due.length > 0 ? (
+      ) : null}
+      {!open && anyDue ? (
         <p>
           <button
             type="button"
@@ -340,6 +438,17 @@ function Due({
             onClick={() => setOpen(true)}
           >
             Pay from a wallet
+          </button>
+        </p>
+      ) : null}
+      {published && !reclaim ? (
+        <p>
+          <button
+            type="button"
+            className="button secondary-button"
+            onClick={() => setTakeBack(true)}
+          >
+            Take back a Solana deposit
           </button>
         </p>
       ) : null}

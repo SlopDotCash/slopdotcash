@@ -1,6 +1,7 @@
 /** A seeded random campaign against the real program on a local validator. After every step,
  * for each mint: the vault's balance equals the ledger's open total equals the sum of the
- * open deposits of a plain model; every open deposit's record still names its payer, kept
+ * open deposits of a plain model; the program's Deposit accounts are exactly the model's
+ * open deposits; every open deposit's record still names its payer, kept
  * wallet and amount; every settled deposit's record is gone; and every wallet holds exactly
  * what the model says, so no token reached anyone but a deposit's payer or its kept wallet.
  * Counterpart of contracts/evm/test/SubmissionDepositsInvariant.t.sol.
@@ -17,6 +18,7 @@ import {
   fixtureKey,
   fund,
   newMint,
+  openDeposits,
   openVault,
   pauseDeposits,
   readConfig,
@@ -121,6 +123,14 @@ test(`the vault always equals the open deposits (${STEPS} steps, seed ${SEED})`,
     }
     const config = await readConfig();
     assert.equal(config.depositsPaused, paused, `step ${step}`);
+    // A reader's scan sees exactly the model's open deposits, by their stored ids.
+    assert.deepEqual(
+      (await openDeposits()).map(({ record }) => record.id.toString()).sort(),
+      open()
+        .map((entry) => entry.id.toString())
+        .sort(),
+      `step ${step}`,
+    );
     for (const entry of deposits.values()) {
       const record = await readDeposit(entry.id);
       if (entry.state !== "open") {

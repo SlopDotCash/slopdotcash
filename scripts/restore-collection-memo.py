@@ -35,7 +35,7 @@ IMPLEMENTATION_MEMO_NAME = "accepted-implementation-memo.json"
 MAX_MEMO_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_MEMO_BYTES + 1024 * 1024
 MAX_AGE = timedelta(days=7)
-MAX_RUNS = 40
+MAX_ATTEMPTS = 5
 MEMO_ARTIFACT = re.compile(r"collection-memo-([1-9][0-9]{0,5})")
 IMPLEMENTATION_MEMO_ARTIFACT = re.compile(r"accepted-implementation-memo-([1-9][0-9]{0,5})")
 
@@ -135,21 +135,50 @@ def extract_memo(archive, destination, member=MEMO_NAME):
             shutil.copyfileobj(source, out)
 
 
-def candidate_runs(repo, current_run, current_sha):
-    response = api(
-        f"repos/{repo}/actions/workflows/deploy.yml/runs"
-        f"?branch=main&status=completed&per_page={MAX_RUNS}"
-    )
-    for run in response["workflow_runs"]:
-        if str(run["id"]) == current_run or not trusted_run(run, repo):
-            continue
-        ancestor = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", run["head_sha"], current_sha],
-            timeout=30,
-            check=False,
+def is_ancestor(candidate, current):
+    return subprocess.run(
+        ["git", "merge-base", "--is-ancestor", candidate, current],
+        timeout=30,
+        check=False,
+    ).returncode == 0
+
+
+def candidate_runs(repo, current_run, current_sha, now=None, fetch=api, ancestor=is_ancestor):
+    """Trusted main releases that hold a memo artifact, newest first.
+
+    The runs are found through their memo artifacts by name rather than by
+    scanning a fixed number of recent releases: quick releases collect
+    nothing, and on 23 November 2026 75 of them pushed the only memo out of
+    the newest 40 runs, so three collections started from nothing.
+    """
+    now = now or datetime.now(UTC)
+    found = set()
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        listing = fetch(
+            f"repos/{repo}/actions/artifacts?name=collection-memo-{attempt}&per_page=100"
         )
-        if ancestor.returncode == 0:
-            yield run
+        for artifact in listing["artifacts"]:
+            if artifact["expired"]:
+                continue
+            created = datetime.fromisoformat(artifact["created_at"])
+            run_id = artifact["workflow_run"]["id"]
+            if (
+                timedelta(0) <= now - created <= MAX_AGE
+                and positive_id(run_id)
+                and str(run_id) != str(current_run)
+            ):
+                found.add(run_id)
+    runs = []
+    for run_id in found:
+        run = fetch(f"repos/{repo}/actions/runs/{run_id}")
+        if (
+            run["id"] == run_id
+            and trusted_run(run, repo)
+            and ancestor(run["head_sha"], current_sha)
+        ):
+            runs.append(run)
+    runs.sort(key=lambda run: datetime.fromisoformat(run["created_at"]), reverse=True)
+    yield from runs
 
 
 def main():

@@ -1,8 +1,13 @@
 // @source contracts/solana/scripts/submission-deposits-plan.mjs
 // @evidence contracts/solana/integration/submission-deposits-rehearsal.e2e.mjs
-// The read-only planner of the Solana submission deposit deployment. It builds two
+// The read-only planner of the Solana submission deposit deployment. It builds four
 // unsigned transactions and one read-back, and never signs or sends: `initialize`
-// for the program's upgrade authority, `open_vault` for any payer, and `status`.
+// for the program's upgrade authority, `open_vault` for any payer, `status`, and the
+// two halves of the runbook's smoke test: a one-base-unit `deposit` for the payer and
+// the `resolve` that refunds it for the Config's resolver. The smoke deposit is
+// planned only with a Config and an open vault and while none is open at its address;
+// its refund only while one is open there, naming the id stored in it. The runbook
+// runs two rounds at one nonce before the authority is removed.
 // Every mode first requires the expected cluster and the reviewed program bytes
 // under the upgrade authority the input names (none once it was removed).
 // `initialize` is planned only while that authority exists and no Config does, for
@@ -16,11 +21,13 @@
 module solana_submission_deposits_deployment {
   type S = { deployed: bool, authority: bool, config: bool, delayDays: int, vault: bool,
     initializePlans: int, vaultPlans: int, plannedWithoutAuthority: bool, toolSigned: bool,
-    reportedReplaceable: str }
+    reportedReplaceable: str, count: int, smokeId: int, smokeDepositPlanned: bool,
+    smokeResolvePlannedFor: int, smokeRefunds: int, refundedIds: Set[int] }
   var s: S
   action init = s' = { deployed: false, authority: false, config: false, delayDays: 0, vault: false,
     initializePlans: 0, vaultPlans: 0, plannedWithoutAuthority: false, toolSigned: false,
-    reportedReplaceable: "unread" }
+    reportedReplaceable: "unread", count: 0, smokeId: 0, smokeDepositPlanned: false,
+    smokeResolvePlannedFor: 0, smokeRefunds: 0, refundedIds: Set() }
 
   // The owner deploys the reviewed build and holds its upgrade authority.
   action deploy = all { not(s.deployed), s' = s.with("deployed", true).with("authority", true) }
@@ -41,6 +48,23 @@ module solana_submission_deposits_deployment {
     s' = s.with("vaultPlans", s.vaultPlans + 1) }
   action sendVault = all { s.vaultPlans > 0, not(s.vault), s' = s.with("vault", true) }
 
+  // The smoke test. `smokeId` is the id of the deposit open at the smoke address, 0 when
+  // the address is free. A plan is only a plan: the payer or the resolver sends it.
+  action planSmokeDeposit(cluster: bool, bytes: bool, authorityAsNamed: bool): bool = all {
+    reviewed(cluster, bytes, authorityAsNamed), s.config, s.vault, s.smokeId == 0, s.count < 2,
+    s' = s.with("smokeDepositPlanned", true) }
+  action sendSmokeDeposit(byPayer: bool): bool = all { s.smokeDepositPlanned, byPayer, s.smokeId == 0,
+    s.count < 2,
+    s' = s.with("count", s.count + 1).with("smokeId", s.count + 1).with("smokeDepositPlanned", false) }
+  action planSmokeResolve(cluster: bool, bytes: bool, authorityAsNamed: bool): bool = all {
+    reviewed(cluster, bytes, authorityAsNamed), s.config, s.smokeId > 0,
+    s' = s.with("smokeResolvePlannedFor", s.smokeId) }
+  // The chain's rule: the resolver, and only for the id the plan named.
+  action sendSmokeResolve(byResolver: bool): bool = all { s.smokeResolvePlannedFor > 0, byResolver,
+    s.smokeId == s.smokeResolvePlannedFor,
+    s' = s.with("smokeId", 0).with("smokeRefunds", s.smokeRefunds + 1)
+      .with("refundedIds", s.refundedIds.union(Set(s.smokeId))) }
+
   action removeAuthority = all { s.deployed, s.authority, s' = s.with("authority", false) }
   action status(cluster: bool, bytes: bool, authorityAsNamed: bool): bool = all {
     reviewed(cluster, bytes, authorityAsNamed),
@@ -52,7 +76,9 @@ module solana_submission_deposits_deployment {
     nondet named = oneOf(Set(true, false))
     nondet flag = oneOf(Set(true, false))
     any { deploy, planInitialize(cluster, bytes, named, flag), sendInitialize(flag),
-      planVault(cluster, bytes, named, flag), sendVault, removeAuthority, status(cluster, bytes, named), s' = s }
+      planVault(cluster, bytes, named, flag), sendVault, removeAuthority, status(cluster, bytes, named),
+      planSmokeDeposit(cluster, bytes, named), sendSmokeDeposit(flag), planSmokeResolve(cluster, bytes, named),
+      sendSmokeResolve(flag), s' = s }
   }
 
   val invariant = all {
@@ -62,6 +88,11 @@ module solana_submission_deposits_deployment {
     not(s.config) implies s.delayDays == 0,
     s.vault implies s.vaultPlans > 0,
     not(s.deployed) implies (not(s.config) and not(s.vault) and s.reportedReplaceable == "unread"),
+    // A smoke deposit exists only with a Config and a vault; each refund settled a
+    // different id, and never one that was not made.
+    s.count > 0 implies (s.config and s.vault),
+    s.smokeId <= s.count, s.smokeRefunds == size(s.refundedIds),
+    s.refundedIds.forall(id => id >= 1 and id <= s.count and id != s.smokeId),
     // The read-back never calls the program fixed while an authority exists.
     s.reportedReplaceable == "no" implies not(s.authority) }
 
@@ -70,6 +101,31 @@ module solana_submission_deposits_deployment {
     .then(planVault(true, true, true, true)).then(sendVault).then(status(true, true, true))
     .expect(s.reportedReplaceable == "yes").then(removeAuthority).then(status(true, true, true))
     .expect(s.config and s.vault and s.delayDays == 30 and s.reportedReplaceable == "no" and invariant)
+  run vaulted = deployed.then(planInitialize(true, true, true, true)).then(sendInitialize(true))
+    .then(planVault(true, true, true, true)).then(sendVault)
+  run smokeRound = vaulted.then(planSmokeDeposit(true, true, true)).then(sendSmokeDeposit(true))
+    .then(planSmokeResolve(true, true, true)).then(sendSmokeResolve(true))
+  // The runbook's order: two rounds at one address, then the authority goes.
+  run smokeTestTwiceBeforeTheAuthorityIsRemovedTest = smokeRound.then(planSmokeDeposit(true, true, true))
+    .then(sendSmokeDeposit(true)).then(planSmokeResolve(true, true, true)).then(sendSmokeResolve(true))
+    .then(removeAuthority).then(status(true, true, true))
+    .expect(s.smokeRefunds == 2 and s.refundedIds == Set(1, 2) and s.smokeId == 0
+      and s.reportedReplaceable == "no" and invariant)
+  run noSmokeDepositBeforeInitializeTest = deployed.then(planSmokeDeposit(true, true, true).fail())
+  run noSmokeDepositWithoutAVaultTest = deployed.then(planInitialize(true, true, true, true))
+    .then(sendInitialize(true)).then(planSmokeDeposit(true, true, true).fail())
+  run noSecondSmokeDepositWhileOneIsOpenTest = vaulted.then(planSmokeDeposit(true, true, true))
+    .then(sendSmokeDeposit(true)).then(planSmokeDeposit(true, true, true).fail())
+  run noSmokeRefundWithoutADepositTest = vaulted.then(planSmokeResolve(true, true, true).fail())
+  run onlyTheResolverSendsTheSmokeRefundTest = vaulted.then(planSmokeDeposit(true, true, true))
+    .then(sendSmokeDeposit(true)).then(planSmokeResolve(true, true, true)).then(sendSmokeResolve(false).fail())
+  run smokeRefundIsSentOnceTest = smokeRound.then(sendSmokeResolve(true).fail())
+  // A refund planned for the first deposit does not settle the second at the same address.
+  run staleSmokeRefundIsRefusedTest = smokeRound.then(planSmokeDeposit(true, true, true))
+    .then(sendSmokeDeposit(true)).then(sendSmokeResolve(true).fail())
+  run smokeTestWorksAfterTheAuthorityIsRemovedTest = vaulted.then(removeAuthority)
+    .then(planSmokeDeposit(true, true, true)).then(sendSmokeDeposit(true))
+    .then(planSmokeResolve(true, true, true)).then(sendSmokeResolve(true)).expect(s.smokeRefunds == 1 and invariant)
   run wrongClusterPlansNothingTest = deployed.then(planInitialize(false, true, true, true).fail())
   run unreviewedBytesPlanNothingTest = deployed.then(planInitialize(true, false, true, true).fail())
   run wrongAuthorityPlansNothingTest = deployed.then(planInitialize(true, true, false, true).fail())

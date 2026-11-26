@@ -10,9 +10,23 @@
  * the final `refunded` or `kept` with its time. Where that table does not
  * exist yet, every statement here is the one it was before report deposits.
  * A report's deposit keeps `repository_id` and `pull_number` null.
+ *
+ * The standing deposit ledger (`robinhood-standing`, migration 0149, whose
+ * table the website and Slopbot own) pays rows in `standing_deposits` only.
+ * The Worker writes `paid_at`, `paid_network`, `paid_deposit_id` there, and
+ * the final `refunded` or `kept` with its time. On the other two ledgers
+ * every statement here is the one it was before standing deposits.
+ *
+ * The Solana ledger (`solana-mainnet`, migration 0155; operator decision,
+ * 25 November 2026) uses `D1SolanaFeeStore` at the end of this file: the
+ * same deposit, cursor and parked tables, the address of each deposit's
+ * record beside its row, and the resolver's sends in
+ * `submission_fee_solana_sends`. On the other ledgers every statement here
+ * is the one it was before Solana.
  */
 
 import { isConstraintFailure } from "../../backend/d1";
+import { STANDING_DEPOSIT_LEDGER } from "../../src/lib/standing-deposit.mjs";
 import type { SubmissionFeeRate } from "../../src/lib/submission-fee.mjs";
 import type { GasLimits } from "./config";
 import {
@@ -28,7 +42,9 @@ import {
   type SendEntry,
   type SendRow,
   type SendState,
+  type StandingRow,
 } from "./core";
+import { SOLANA_EXPIRED } from "./solana";
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -50,6 +66,10 @@ const ITEM = `i.repository_id AS item_repository_id, i.pull_number AS item_pull_
 const REPORT = `r.case_id AS report_case_id, r.item AS report_item,
   r.slop_amount AS report_slop_amount, r.paid_network AS report_paid_network,
   r.paid_deposit_id AS report_paid_deposit_id, r.outcome AS report_outcome`;
+const STANDING = `s.id AS standing_id, s.item AS standing_item,
+  s.slop_amount AS standing_slop_amount, s.cancelled_at AS standing_cancelled_at,
+  s.paid_network AS standing_paid_network,
+  s.paid_deposit_id AS standing_paid_deposit_id, s.outcome AS standing_outcome`;
 
 type DepositRecord = {
   network: string;
@@ -133,6 +153,30 @@ const reportOf = (row: Partial<ReportRecord>): ReportRow | null =>
         paidNetwork: row.report_paid_network ?? null,
         paidDepositId: row.report_paid_deposit_id ?? null,
         outcome: row.report_outcome ?? null,
+      };
+
+type StandingRecord = {
+  standing_id: string | null;
+  standing_item: string | null;
+  standing_slop_amount: string | null;
+  standing_cancelled_at: string | null;
+  standing_paid_network: string | null;
+  standing_paid_deposit_id: number | null;
+  standing_outcome: string | null;
+};
+const standingOf = (row: Partial<StandingRecord>): StandingRow | null =>
+  typeof row.standing_id !== "string" ||
+  typeof row.standing_item !== "string" ||
+  typeof row.standing_slop_amount !== "string"
+    ? null
+    : {
+        id: row.standing_id,
+        item: row.standing_item,
+        slopAmount: row.standing_slop_amount,
+        cancelledAt: row.standing_cancelled_at ?? null,
+        paidNetwork: row.standing_paid_network ?? null,
+        paidDepositId: row.standing_paid_deposit_id ?? null,
+        outcome: row.standing_outcome ?? null,
       };
 
 type SendRecord = {
@@ -227,10 +271,21 @@ const unpayChanged = (table: string) => `UPDATE ${table}
 const UNPAY_CHANGED = unpayChanged("submission_fee_items");
 /** The same for a report: it waits for a deposit again. */
 const UNPAY_CHANGED_REPORT = unpayChanged("security_report_deposits");
+/** The same for a standing row: it waits for a deposit again. */
+const UNPAY_CHANGED_STANDING = unpayChanged("standing_deposits");
 
 const utcDay = (now: Date) => `${now.toISOString().slice(0, 10)}T00:00:00.000Z`;
 const SPENT_TODAY = `(SELECT COALESCE(SUM(CAST(maximum_native_wei AS INTEGER)), 0)
     FROM submission_fee_sends WHERE network = ? AND mode = 'live' AND created_at >= ?)`;
+/**
+ * The same over a ledger and its siblings on one chain, bound as a JSON list:
+ * one key pays the native fee of all of them.
+ */
+const SPENT_TODAY_AMONG = `(SELECT COALESCE(SUM(CAST(maximum_native_wei AS INTEGER)), 0)
+    FROM submission_fee_sends WHERE network IN (SELECT value FROM json_each(?))
+     AND mode = 'live' AND created_at >= ?)`;
+const OPEN_AMONG = `SELECT 1 FROM submission_fee_sends
+    WHERE network IN (SELECT value FROM json_each(?)) AND state IN ('submitted', 'unknown')`;
 
 function assertPerTransaction(maximumNativeWei: string, limits: GasLimits) {
   if (
@@ -245,7 +300,7 @@ function assertPerTransaction(maximumNativeWei: string, limits: GasLimits) {
 export class D1FeeStore implements FeeStore {
   private reportsTable: Promise<boolean> | null = null;
 
-  constructor(private readonly db: SubmissionFeeD1Database) {}
+  constructor(protected readonly db: SubmissionFeeD1Database) {}
 
   /**
    * Whether `security_report_deposits` exists, read once for this store. A
@@ -265,6 +320,18 @@ export class D1FeeStore implements FeeStore {
         },
       );
     return this.reportsTable;
+  }
+
+  /**
+   * The rows a ledger's deposits can pay. The standing ledger pays only
+   * standing rows; the other two pay pull requests and, where the table
+   * exists, reports.
+   */
+  private async paidTables(network: string) {
+    if (network === STANDING_DEPOSIT_LEDGER) return ["standing_deposits"];
+    return (await this.hasReports())
+      ? ["submission_fee_items", "security_report_deposits"]
+      : ["submission_fee_items"];
   }
 
   async hasItems() {
@@ -300,7 +367,7 @@ export class D1FeeStore implements FeeStore {
     network: string,
     deposit: DepositedEvent & { blockTime: string },
     finalizedAt: string | null,
-    reports: boolean,
+    tables: readonly string[],
   ): D1Statement[] {
     const fields: D1Value[] = [
       deposit.item,
@@ -312,17 +379,17 @@ export class D1FeeStore implements FeeStore {
       deposit.blockNumber,
       deposit.blockTime,
     ];
+    const unpay: Record<string, string> = {
+      submission_fee_items: UNPAY_CHANGED,
+      security_report_deposits: UNPAY_CHANGED_REPORT,
+      standing_deposits: UNPAY_CHANGED_STANDING,
+    };
     return [
-      this.db
-        .prepare(UNPAY_CHANGED)
-        .bind(network, deposit.depositId, ...fields),
-      ...(reports
-        ? [
-            this.db
-              .prepare(UNPAY_CHANGED_REPORT)
-              .bind(network, deposit.depositId, ...fields),
-          ]
-        : []),
+      ...tables.map((table) =>
+        this.db
+          .prepare(unpay[table])
+          .bind(network, deposit.depositId, ...fields),
+      ),
       this.db
         .prepare(finalizedAt === null ? `${UPSERT} AND NOT (${SAME})` : UPSERT)
         .bind(network, deposit.depositId, ...fields, finalizedAt),
@@ -330,7 +397,14 @@ export class D1FeeStore implements FeeStore {
   }
 
   async writeFinalizedPage(page: FinalizedPage) {
-    const reports = await this.hasReports();
+    await this.db.batch(await this.finalizedPageStatements(page));
+  }
+
+  /** The statements of one finalized page, the cursor last. */
+  protected async finalizedPageStatements(
+    page: FinalizedPage,
+  ): Promise<D1Statement[]> {
+    const tables = await this.paidTables(page.network);
     const statements: D1Statement[] = [];
     for (const deposit of page.deposits)
       statements.push(
@@ -338,7 +412,7 @@ export class D1FeeStore implements FeeStore {
           page.network,
           deposit,
           page.finalizedAt,
-          reports,
+          tables,
         ),
       );
     for (const resolution of page.resolutions) {
@@ -356,27 +430,16 @@ export class D1FeeStore implements FeeStore {
             page.network,
             resolution.depositId,
           ),
-        // A reclaim returns the fee to its payer, as a refund does.
-        this.db
-          .prepare(
-            `UPDATE submission_fee_items SET outcome = ?, outcome_at = ?
-              WHERE paid_network = ? AND paid_deposit_id = ?
-                AND (outcome IS NULL OR outcome IN ('refund_due', 'kept_due'))`,
-          )
-          .bind(
-            resolution.state === "kept" ? "kept" : "refunded",
-            resolution.at,
-            page.network,
-            resolution.depositId,
-          ),
       );
-      // The report this deposit paid gets the same final outcome and time.
-      // The backend's `outcome_reason` stays as it is.
-      if (reports)
+      // A reclaim returns the fee to its payer, as a refund does. The row
+      // this deposit paid (a pull request's, a report's or a standing row)
+      // gets the final outcome and time; a report's or standing row's
+      // `outcome_reason` stays as it is.
+      for (const table of tables)
         statements.push(
           this.db
             .prepare(
-              `UPDATE security_report_deposits SET outcome = ?, outcome_at = ?
+              `UPDATE ${table} SET outcome = ?, outcome_at = ?
                 WHERE paid_network = ? AND paid_deposit_id = ?
                   AND (outcome IS NULL OR outcome IN ('refund_due', 'kept_due'))`,
             )
@@ -389,9 +452,7 @@ export class D1FeeStore implements FeeStore {
         );
     }
     // What is still unfinalized at or below this page was reorganised away.
-    for (const table of reports
-      ? ["submission_fee_items", "security_report_deposits"]
-      : ["submission_fee_items"])
+    for (const table of tables)
       statements.push(
         this.db
           .prepare(
@@ -418,7 +479,7 @@ export class D1FeeStore implements FeeStore {
         )
         .bind(page.network, page.to + 1),
     );
-    await this.db.batch(statements);
+    return statements;
   }
 
   async writeConfirmed(
@@ -426,19 +487,17 @@ export class D1FeeStore implements FeeStore {
     range: { from: number; to: number; complete: boolean },
     deposits: (DepositedEvent & { blockTime: string })[],
   ) {
-    const reports = await this.hasReports();
+    const tables = await this.paidTables(network);
     const statements: D1Statement[] = [];
     for (const deposit of deposits)
       statements.push(
-        ...this.depositStatements(network, deposit, null, reports),
+        ...this.depositStatements(network, deposit, null, tables),
       );
     if (range.complete) {
       const seen = JSON.stringify(deposits.map((deposit) => deposit.depositId));
       const gone = `network = ?1 AND finalized_at IS NULL AND block_number BETWEEN ?2 AND ?3
         AND deposit_id NOT IN (SELECT value FROM json_each(?4))`;
-      for (const table of reports
-        ? ["submission_fee_items", "security_report_deposits"]
-        : ["submission_fee_items"])
+      for (const table of tables)
         statements.push(
           this.db
             .prepare(
@@ -461,11 +520,14 @@ export class D1FeeStore implements FeeStore {
   async unjudged(network: string, limit: number) {
     // Deposits whose pull request or report is known come first, so
     // deposits for unknown items cannot hold them back.
-    const known = (await this.hasReports())
-      ? `EXISTS (SELECT 1 FROM submission_fee_items i WHERE i.item = d.item)
+    const known =
+      network === STANDING_DEPOSIT_LEDGER
+        ? "EXISTS (SELECT 1 FROM standing_deposits s WHERE s.item = d.item)"
+        : (await this.hasReports())
+          ? `EXISTS (SELECT 1 FROM submission_fee_items i WHERE i.item = d.item)
            OR EXISTS (SELECT 1 FROM security_report_deposits r
                        WHERE r.item = d.item AND r.mode = 'asked')`
-      : "EXISTS (SELECT 1 FROM submission_fee_items i WHERE i.item = d.item)";
+          : "EXISTS (SELECT 1 FROM submission_fee_items i WHERE i.item = d.item)";
     const { results } = await this.db
       .prepare(
         `SELECT ${DEPOSIT} FROM submission_fee_deposits d
@@ -499,6 +561,15 @@ export class D1FeeStore implements FeeStore {
       .bind(item)
       .first<ReportRecord>();
     return row ? reportOf(row) : null;
+  }
+
+  async standingByHash(item: string) {
+    // `item` is unique in the table.
+    const row = await this.db
+      .prepare(`SELECT ${STANDING} FROM standing_deposits s WHERE s.item = ?`)
+      .bind(item)
+      .first<StandingRecord>();
+    return row ? standingOf(row) : null;
   }
 
   async rates(): Promise<SubmissionFeeRate[]> {
@@ -556,6 +627,28 @@ export class D1FeeStore implements FeeStore {
     return (result.meta?.changes ?? 0) === 1;
   }
 
+  async markStandingPaid(deposit: DepositRow, row: StandingRow, at: string) {
+    // A row the contributor withdrew before payment is never paid.
+    const result = await this.db
+      .prepare(
+        `UPDATE standing_deposits
+            SET paid_at = COALESCE(paid_at, ?), paid_network = ?, paid_deposit_id = ?
+          WHERE id = ? AND cancelled_at IS NULL
+            AND ((paid_deposit_id IS NULL AND outcome IS NULL)
+                 OR (paid_network = ? AND paid_deposit_id = ?))`,
+      )
+      .bind(
+        at,
+        deposit.network,
+        deposit.depositId,
+        row.id,
+        deposit.network,
+        deposit.depositId,
+      )
+      .run();
+    return (result.meta?.changes ?? 0) === 1;
+  }
+
   async setJudgement(
     deposit: DepositRow,
     judgement: { accepted: 0 | 1; reason: string | null; item: ItemRow | null },
@@ -586,6 +679,7 @@ export class D1FeeStore implements FeeStore {
   // A report's row is joined only to the deposit it names as the one that
   // paid, and only while it is an asked row.
   async resolvable(network: string) {
+    if (network === STANDING_DEPOSIT_LEDGER) return this.standingResolvable();
     const reports = await this.hasReports();
     const columns = reports
       ? `${DEPOSIT}, ${ITEM}, ${REPORT}`
@@ -617,6 +711,32 @@ export class D1FeeStore implements FeeStore {
       deposit: depositOf(row),
       item: itemOf(row),
       report: reportOf(row),
+    }));
+  }
+
+  // On the standing ledger a deposit is joined only to the standing row that
+  // names it as the deposit that paid, never to a pull request or report.
+  private async standingResolvable() {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${DEPOSIT}, ${STANDING} FROM submission_fee_deposits d
+           LEFT JOIN standing_deposits s
+             ON s.paid_network = d.network AND s.paid_deposit_id = d.deposit_id
+            AND s.item = d.item
+          WHERE d.network = ? AND d.finalized_at IS NOT NULL AND d.accepted IS NOT NULL
+            AND d.state IN ('open', 'refund_due', 'kept_due')
+            AND (d.accepted = 0 OR d.state <> 'open'
+                 OR s.outcome IN ('refund_due', 'kept_due'))
+            AND (d.reject_reason IS NULL OR d.reject_reason <> 'token_not_accepted')
+          ORDER BY d.deposit_id`,
+      )
+      .bind(STANDING_DEPOSIT_LEDGER)
+      .all<DepositRecord & StandingRecord>();
+    return results.map((row) => ({
+      deposit: depositOf(row),
+      item: null,
+      report: null,
+      standing: standingOf(row),
     }));
   }
 
@@ -707,6 +827,17 @@ export class D1FeeStore implements FeeStore {
     return row ? sendOf(row) : null;
   }
 
+  async openSendAmong(networks: readonly string[]) {
+    if (networks.length === 0) return null;
+    const row = await this.db
+      .prepare(
+        "SELECT * FROM submission_fee_sends WHERE network IN (SELECT value FROM json_each(?)) AND state IN ('submitted', 'unknown') ORDER BY rowid LIMIT 1",
+      )
+      .bind(JSON.stringify(networks))
+      .first<SendRecord>();
+    return row ? sendOf(row) : null;
+  }
+
   async latestDryRun(network: string) {
     const row = await this.db
       .prepare(
@@ -722,12 +853,17 @@ export class D1FeeStore implements FeeStore {
     maximumNativeWei: string,
     limits: GasLimits,
     now: Date,
+    siblings: readonly string[] = [],
   ) {
     assertPerTransaction(maximumNativeWei, limits);
-    const row = await this.db
-      .prepare(`SELECT ${SPENT_TODAY} AS spent`)
-      .bind(network, utcDay(now))
-      .first<{ spent: number }>();
+    const row = await (siblings.length === 0
+      ? this.db
+          .prepare(`SELECT ${SPENT_TODAY} AS spent`)
+          .bind(network, utcDay(now))
+      : this.db
+          .prepare(`SELECT ${SPENT_TODAY_AMONG} AS spent`)
+          .bind(JSON.stringify([network, ...siblings]), utcDay(now))
+    ).first<{ spent: number }>();
     if (
       BigInt(row?.spent ?? 0) + BigInt(maximumNativeWei) >
       BigInt(limits.perDayWei)
@@ -737,7 +873,11 @@ export class D1FeeStore implements FeeStore {
       );
   }
 
-  async insertSend(row: SendRow, limits: GasLimits) {
+  async insertSend(
+    row: SendRow,
+    limits: GasLimits,
+    siblings: readonly string[] = [],
+  ) {
     const columns: D1Value[] = [
       row.id,
       row.network,
@@ -773,20 +913,38 @@ export class D1FeeStore implements FeeStore {
       else {
         const reserve = row.maximumNativeWei ?? "";
         assertPerTransaction(reserve, limits);
-        // The day's limit is checked again inside the insert itself.
+        // The day's limit is checked again inside the insert itself. With
+        // siblings, the insert also refuses while one of them has a send in
+        // flight, so two ledgers of one key never both hold a signed nonce.
+        const day = utcDay(new Date(row.createdAt));
         changes =
           (
-            await this.db
-              .prepare(`${insert} WHERE ${SPENT_TODAY} + ? <= ?`)
-              .bind(
-                ...columns,
-                row.network,
-                utcDay(new Date(row.createdAt)),
-                Number(reserve),
-                Number(limits.perDayWei),
-              )
-              .run()
+            await (siblings.length === 0
+              ? this.db
+                  .prepare(`${insert} WHERE ${SPENT_TODAY} + ? <= ?`)
+                  .bind(
+                    ...columns,
+                    row.network,
+                    day,
+                    Number(reserve),
+                    Number(limits.perDayWei),
+                  )
+              : this.db
+                  .prepare(
+                    `${insert} WHERE ${SPENT_TODAY_AMONG} + ? <= ? AND NOT EXISTS (${OPEN_AMONG})`,
+                  )
+                  .bind(
+                    ...columns,
+                    JSON.stringify([row.network, ...siblings]),
+                    day,
+                    Number(reserve),
+                    Number(limits.perDayWei),
+                    JSON.stringify(siblings),
+                  )
+            ).run()
           ).meta?.changes ?? 0;
+        if (changes !== 1 && (await this.openSendAmong(siblings)))
+          throw new SendConflictError("A sibling ledger has a send in flight");
       }
     } catch (error) {
       if (isConstraintFailure(error))
@@ -889,5 +1047,513 @@ export class D1FeeStore implements FeeStore {
       .bind(rate.effectiveAt, rate.slopPerUsd, rate.source, rate.createdAt)
       .run();
     return (result.meta?.changes ?? 0) === 1;
+  }
+}
+
+type SolanaSendRecord = {
+  id: string;
+  network: string;
+  mode: "dry_run" | "live";
+  program: string;
+  deposits: string;
+  resolver: string | null;
+  tx_id: string | null;
+  raw_tx: string | null;
+  last_valid_block_height: number | null;
+  maximum_lamports: string | null;
+  state: SendState;
+  reason: string | null;
+  slot: number | null;
+  created_at: string;
+  updated_at: string;
+  finalized_at: string | null;
+};
+// A Solana send in the shared `SendRow` shape: `contract` is the program id,
+// `evmNonce` the transaction's last valid block height, `maximumNativeWei`
+// its network fee in lamports and `blockNumber` its slot.
+const solanaSendOf = (row: SolanaSendRecord): SendRow => ({
+  id: row.id,
+  network: row.network,
+  mode: row.mode,
+  contract: row.program,
+  deposits: entriesOf(row.deposits),
+  resolver: row.resolver,
+  txId: row.tx_id,
+  rawTx: row.raw_tx,
+  evmNonce: row.last_valid_block_height,
+  maximumNativeWei: row.maximum_lamports,
+  state: row.state,
+  reason: row.reason,
+  blockNumber: row.slot,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  finalizedAt: row.finalized_at,
+});
+// A send whose blockhash expired before it landed paid no fee, so it is not
+// part of the day's spend. A transaction that landed and failed did pay.
+const SOLANA_SPENT_TODAY = `(SELECT COALESCE(SUM(CAST(maximum_lamports AS INTEGER)), 0)
+    FROM submission_fee_solana_sends WHERE network = ? AND mode = 'live' AND created_at >= ?
+     AND NOT (state = 'failed' AND reason = '${SOLANA_EXPIRED}'))`;
+
+/**
+ * Why the Worker never resolves a recorded Solana deposit: it is of a mint
+ * outside the table, its kept wallet is not the fee wallet, or its amount is
+ * not the fee. Such a deposit is final for the Worker: it is left out of
+ * what is tracked and planned, and its payer reclaims it from the program
+ * after 30 days.
+ */
+export const SOLANA_NEVER_RESOLVED = [
+  "token_not_accepted",
+  "wrong_kept_to",
+  "amount_below_due",
+  "item_fee_invalid",
+] as const;
+// Never null: a deposit not judged yet (`accepted` null) is not one of them.
+const NEVER_RESOLVED = `(d.accepted IS 0 AND COALESCE(d.reject_reason, '') IN (${SOLANA_NEVER_RESOLVED.map(
+  (reason) => `'${reason}'`,
+).join(", ")}))`;
+const OPEN_STATES = "('open', 'refund_due', 'kept_due')";
+
+/** A recorded Solana deposit the Worker may still resolve. */
+export interface TrackedSolanaDeposit {
+  depositId: number;
+  account: string;
+  payer: string;
+  token: string;
+  amount: string;
+  keptTo: string;
+  /** The finalized slot its record was first read at. */
+  blockNumber: number;
+}
+type TrackedRecord = {
+  deposit_id: number;
+  deposit_account: string;
+  payer: string;
+  token: string;
+  amount: string;
+  kept_to: string;
+  block_number: number;
+};
+const TRACKED =
+  "d.deposit_id, d.deposit_account, d.payer, d.token, d.amount, d.kept_to, d.block_number";
+const trackedOf = (row: TrackedRecord): TrackedSolanaDeposit => ({
+  depositId: row.deposit_id,
+  account: row.deposit_account,
+  payer: row.payer,
+  token: row.token,
+  amount: row.amount,
+  keptTo: row.kept_to,
+  blockNumber: row.block_number,
+});
+
+/** A search for a gone deposit's settlement, as stored (migration 0155). */
+export interface SolanaSearchRow extends TrackedSolanaDeposit {
+  afterSlot: number;
+  untilSlot: number;
+  before: string | null;
+  candidate: string | null;
+  checks: number;
+}
+
+/**
+ * The Solana ledger's store (migration 0155). Deposits, cursor, judgements
+ * and parked rows are the shared tables; the cursor row holds the next
+ * deposit id. Each deposit's record address is written in the same batch as
+ * its row, and the resolver's sends live in `submission_fee_solana_sends`.
+ * Every limit in `limits` is in lamports here.
+ */
+export class D1SolanaFeeStore extends D1FeeStore {
+  /**
+   * Writes a page of newly recorded deposits and of settlements, with each
+   * new deposit's record address, as one atomic step. `page.from` and
+   * `page.to` are deposit ids.
+   */
+  async writeSolanaPage(
+    page: FinalizedPage,
+    accounts: ReadonlyMap<number, string>,
+  ) {
+    const statements = await this.finalizedPageStatements(page);
+    for (const deposit of page.deposits) {
+      const account = accounts.get(deposit.depositId);
+      if (!account) throw new Error("A Solana deposit has no record address");
+      // Before the cursor statement, which stays last.
+      statements.splice(
+        statements.length - 1,
+        0,
+        this.db
+          .prepare(
+            `UPDATE submission_fee_deposits SET deposit_account = ?
+              WHERE network = ? AND deposit_id = ? AND tx_hash = ?
+                AND deposit_account IS NULL`,
+          )
+          .bind(account, page.network, deposit.depositId, deposit.txHash),
+      );
+    }
+    await this.db.batch(statements);
+  }
+
+  /**
+   * Recorded deposits the Worker may still resolve, those with something
+   * due first, then oldest first. A deposit it never resolves is not in the
+   * list, so no number of them can push another deposit out of it.
+   */
+  async trackedSolanaDeposits(
+    network: string,
+    limit: number,
+  ): Promise<TrackedSolanaDeposit[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${TRACKED} FROM submission_fee_deposits d
+          WHERE d.network = ? AND d.finalized_at IS NOT NULL
+            AND d.deposit_account IS NOT NULL
+            AND d.state IN ${OPEN_STATES} AND NOT ${NEVER_RESOLVED}
+          ORDER BY (d.state <> 'open') DESC, d.deposit_id LIMIT ?`,
+      )
+      .bind(network, limit)
+      .all<TrackedRecord>();
+    return results.map(trackedOf);
+  }
+
+  /** The record address of one recorded deposit, whatever its state. */
+  async solanaAccount(network: string, depositId: number) {
+    const row = await this.db
+      .prepare(
+        "SELECT deposit_account FROM submission_fee_deposits WHERE network = ? AND deposit_id = ?",
+      )
+      .bind(network, depositId)
+      .first<{ deposit_account: string | null }>();
+    return row?.deposit_account ?? null;
+  }
+
+  /**
+   * Deposits of the Worker's own finalized sends whose outcome is not
+   * recorded yet, each with the signature of the transaction that settled
+   * it.
+   */
+  async ownSolanaSettlements(network: string, limit: number) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${TRACKED}, s.tx_id FROM submission_fee_solana_sends s,
+                json_each(s.deposits) j
+           JOIN submission_fee_deposits d
+             ON d.network = s.network AND d.deposit_id = json_extract(j.value, '$.id')
+          WHERE s.network = ? AND s.state = 'finalized' AND s.tx_id IS NOT NULL
+            AND d.deposit_account IS NOT NULL AND d.state IN ${OPEN_STATES}
+          ORDER BY s.finalized_at, d.deposit_id LIMIT ?`,
+      )
+      .bind(network, limit)
+      .all<TrackedRecord & { tx_id: string }>();
+    return results.map((row) => ({ ...trackedOf(row), txId: row.tx_id }));
+  }
+
+  /** Accepted deposits with something due: they are sent before the rest. */
+  async acceptedSolanaDue(network: string, limit: number) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT d.deposit_id FROM submission_fee_deposits d
+          WHERE d.network = ? AND d.accepted = 1
+            AND d.state IN ('refund_due', 'kept_due')
+          ORDER BY d.deposit_id LIMIT ?`,
+      )
+      .bind(network, limit)
+      .all<{ deposit_id: number }>();
+    return new Set(results.map((row) => row.deposit_id));
+  }
+
+  /** Lamports of network fees the resolver's sends of this UTC day paid. */
+  async solanaSpentToday(network: string, now: Date) {
+    const row = await this.db
+      .prepare(`SELECT ${SOLANA_SPENT_TODAY} AS spent`)
+      .bind(network, utcDay(now))
+      .first<{ spent: number }>();
+    return BigInt(row?.spent ?? 0);
+  }
+
+  /** A deposit the Worker never resolves is never planned. */
+  override async resolvable(network: string) {
+    return (await super.resolvable(network)).filter(
+      ({ deposit }) =>
+        !(
+          deposit.accepted === 0 &&
+          (SOLANA_NEVER_RESOLVED as readonly string[]).includes(
+            deposit.rejectReason ?? "",
+          )
+        ),
+    );
+  }
+
+  async comparedSlot(network: string) {
+    const row = await this.db
+      .prepare(
+        "SELECT compared_slot FROM submission_fee_solana_scans WHERE network = ?",
+      )
+      .bind(network)
+      .first<{ compared_slot: number }>();
+    return row ? row.compared_slot : null;
+  }
+
+  async setComparedSlot(network: string, slot: number, at: string) {
+    await this.db
+      .prepare(
+        `INSERT INTO submission_fee_solana_scans (network, compared_slot, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(network) DO UPDATE SET
+           compared_slot = excluded.compared_slot, updated_at = excluded.updated_at
+         WHERE excluded.compared_slot > submission_fee_solana_scans.compared_slot`,
+      )
+      .bind(network, slot, at)
+      .run();
+  }
+
+  /** Opens the search for a gone deposit's settlement, once. */
+  async openSolanaSearch(
+    network: string,
+    depositId: number,
+    afterSlot: number,
+    untilSlot: number,
+    at: string,
+  ) {
+    await this.db
+      .prepare(
+        `INSERT INTO submission_fee_solana_settlements
+           (network, deposit_id, after_slot, until_slot, checks, first_at, checked_at)
+         VALUES (?, ?, ?, ?, 0, ?, ?)
+         ON CONFLICT(network, deposit_id) DO NOTHING`,
+      )
+      .bind(
+        network,
+        depositId,
+        afterSlot,
+        Math.max(afterSlot, untilSlot),
+        at,
+        at,
+      )
+      .run();
+  }
+
+  /** The searches still open, the one looked at longest ago first. */
+  async solanaSearches(
+    network: string,
+    limit: number,
+  ): Promise<SolanaSearchRow[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${TRACKED}, x.after_slot, x.until_slot, x.before_tx,
+                x.candidate_tx, x.checks
+           FROM submission_fee_solana_settlements x
+           JOIN submission_fee_deposits d
+             ON d.network = x.network AND d.deposit_id = x.deposit_id
+          WHERE x.network = ? AND x.done_at IS NULL
+            AND d.deposit_account IS NOT NULL AND d.state IN ${OPEN_STATES}
+          ORDER BY x.checked_at, x.deposit_id LIMIT ?`,
+      )
+      .bind(network, limit)
+      .all<
+        TrackedRecord & {
+          after_slot: number;
+          until_slot: number;
+          before_tx: string | null;
+          candidate_tx: string | null;
+          checks: number;
+        }
+      >();
+    return results.map((row) => ({
+      ...trackedOf(row),
+      afterSlot: row.after_slot,
+      untilSlot: row.until_slot,
+      before: row.before_tx,
+      candidate: row.candidate_tx,
+      checks: row.checks,
+    }));
+  }
+
+  /** The ids, among these, that already have a search row. */
+  async searchedSolana(network: string) {
+    const { results } = await this.db
+      .prepare(
+        "SELECT deposit_id FROM submission_fee_solana_settlements WHERE network = ? AND done_at IS NULL",
+      )
+      .bind(network)
+      .all<{ deposit_id: number }>();
+    return new Set(results.map((row) => row.deposit_id));
+  }
+
+  /** Where a search stands after one step, with a fixed word when it failed. */
+  async saveSolanaSearch(
+    network: string,
+    depositId: number,
+    step: {
+      before: string | null;
+      candidate: string | null;
+      reason: string | null;
+      done?: boolean;
+    },
+    at: string,
+  ) {
+    await this.db
+      .prepare(
+        `UPDATE submission_fee_solana_settlements
+            SET before_tx = ?, candidate_tx = ?, reason = ?, checks = checks + 1,
+                checked_at = ?, done_at = ?
+          WHERE network = ? AND deposit_id = ? AND done_at IS NULL`,
+      )
+      .bind(
+        step.before,
+        step.candidate,
+        step.reason,
+        at,
+        step.done === true ? at : null,
+        network,
+        depositId,
+      )
+      .run();
+  }
+
+  override async openSend(network: string) {
+    const row = await this.db
+      .prepare(
+        "SELECT * FROM submission_fee_solana_sends WHERE network = ? AND state IN ('submitted', 'unknown')",
+      )
+      .bind(network)
+      .first<SolanaSendRecord>();
+    return row ? solanaSendOf(row) : null;
+  }
+
+  /** The Solana resolver key signs for one ledger only: it has no sibling. */
+  override async openSendAmong(networks: readonly string[]) {
+    if (networks.length > 0)
+      throw new Error("The Solana ledger has no sibling ledger");
+    return null;
+  }
+
+  override async latestDryRun(network: string) {
+    const row = await this.db
+      .prepare(
+        "SELECT * FROM submission_fee_solana_sends WHERE network = ? AND mode = 'dry_run' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .bind(network)
+      .first<SolanaSendRecord>();
+    return row ? solanaSendOf(row) : null;
+  }
+
+  override async assertGasBudget(
+    network: string,
+    maximumNativeWei: string,
+    limits: GasLimits,
+    now: Date,
+    siblings: readonly string[] = [],
+  ) {
+    if (siblings.length > 0)
+      throw new Error("The Solana ledger has no sibling ledger");
+    assertPerTransaction(maximumNativeWei, limits);
+    const row = await this.db
+      .prepare(`SELECT ${SOLANA_SPENT_TODAY} AS spent`)
+      .bind(network, utcDay(now))
+      .first<{ spent: number }>();
+    if (
+      BigInt(row?.spent ?? 0) + BigInt(maximumNativeWei) >
+      BigInt(limits.perDayWei)
+    )
+      throw new GasBudgetError(
+        "The day's network fee limit is reached; nothing was signed",
+      );
+  }
+
+  override async insertSend(
+    row: SendRow,
+    limits: GasLimits,
+    siblings: readonly string[] = [],
+  ) {
+    if (siblings.length > 0)
+      throw new Error("The Solana ledger has no sibling ledger");
+    const columns: D1Value[] = [
+      row.id,
+      row.network,
+      row.mode,
+      row.contract,
+      JSON.stringify(row.deposits),
+      row.resolver,
+      row.txId,
+      row.rawTx,
+      row.evmNonce,
+      row.maximumNativeWei,
+      row.state,
+      row.reason,
+      row.blockNumber,
+      row.createdAt,
+      row.updatedAt,
+      row.finalizedAt,
+    ];
+    const insert = `INSERT INTO submission_fee_solana_sends
+        (id, network, mode, program, deposits, resolver, tx_id, raw_tx,
+         last_valid_block_height, maximum_lamports, state, reason, slot,
+         created_at, updated_at, finalized_at)
+      SELECT ${columns.map(() => "?").join(", ")}`;
+    let changes: number;
+    try {
+      if (row.mode === "dry_run")
+        changes =
+          (
+            await this.db
+              .prepare(insert)
+              .bind(...columns)
+              .run()
+          ).meta?.changes ?? 0;
+      else {
+        const reserve = row.maximumNativeWei ?? "";
+        assertPerTransaction(reserve, limits);
+        // The day's limit is checked again inside the insert itself.
+        changes =
+          (
+            await this.db
+              .prepare(`${insert} WHERE ${SOLANA_SPENT_TODAY} + ? <= ?`)
+              .bind(
+                ...columns,
+                row.network,
+                utcDay(new Date(row.createdAt)),
+                Number(reserve),
+                Number(limits.perDayWei),
+              )
+              .run()
+          ).meta?.changes ?? 0;
+      }
+    } catch (error) {
+      if (isConstraintFailure(error))
+        throw new SendConflictError("Another send is already recorded");
+      throw error;
+    }
+    if (changes !== 1)
+      throw new GasBudgetError(
+        "The day's network fee limit is reached; nothing was sent",
+      );
+  }
+
+  override async updateSend(
+    id: string,
+    fields: {
+      state: SendState;
+      reason?: string | null;
+      blockNumber?: number | null;
+      finalizedAt?: string | null;
+      updatedAt: string;
+    },
+  ) {
+    const result = await this.db
+      .prepare(
+        `UPDATE submission_fee_solana_sends
+            SET state = ?, reason = ?, slot = ?, finalized_at = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .bind(
+        fields.state,
+        fields.reason ?? null,
+        fields.blockNumber ?? null,
+        fields.finalizedAt ?? null,
+        fields.updatedAt,
+        id,
+      )
+      .run();
+    if ((result.meta?.changes ?? 0) !== 1)
+      throw new Error("A recorded send was not updated");
   }
 }

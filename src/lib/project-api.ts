@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchWithDeadline } from "./browser-json";
+import { fetchReadWithRetry, fetchWithDeadline } from "./browser-json";
 import type {
   PublicProjectApplication as ProjectApplication,
   WebSession as ProjectSession,
@@ -63,6 +63,8 @@ export function apiRequest(
   });
 }
 
+const RETRIED_READS = new Set(["security-cases", "security-submissions"]);
+
 export async function projectApiRequest<T>(
   method: "GET" | "POST" | "PUT",
   path: string,
@@ -71,7 +73,12 @@ export async function projectApiRequest<T>(
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetchWithDeadline(`/api/v1/${path}`, {
+    // The Inbox's two list reads are asked once more when the server fails
+    // them. Every other request, and every write, is sent once: those screens
+    // show their own error and Retry control.
+    response = await (method === "GET" && RETRIED_READS.has(path)
+      ? fetchReadWithRetry
+      : fetchWithDeadline)(`/api/v1/${path}`, {
       method,
       cache: "no-store",
       credentials: "same-origin",
