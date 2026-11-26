@@ -78,10 +78,6 @@ interface PledgeCopy {
   readonly hold: PledgeHold | undefined
 }
 
-// The stored copy of the vault's finalized pledges becomes the vault state's pledges, from which the generated
-// observation holds back every other month's open pledge. A copy whose open rows do not add up to the stored open
-// total, or on which that differs from the stored total less this month's own open pledge, is refused. The copy is
-// checked against the same snapshot row the free balance is read from, so pledges and free describe one head.
 effect function pledgeCopyOf(key: MonthKey, place: VaultPlace | undefined, snapshot: SnapshotRow | undefined) {
   const none: PledgeCopy = { pledges: [], pledged: amountOf(0n), hold: undefined }
   if (place === undefined || !isNetworkKey(place.network)) return none
@@ -244,6 +240,10 @@ function monthEventOf(settlement: Settlement, event: Decided) {
     case "autoFreeze": return event
     case "finalize": return event
     case "adjust": return event
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
   }
 }
 

@@ -2,7 +2,7 @@
 import { secp256k1 } from "@noble/curves/secp256k1.js"
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
 import { type Hex, keccak } from "@repo/platform/chain/evm"
-import { type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
+import { type EvmAddress, bytes32, evmAddress } from "../chain/evm/abi.ts"
 import { type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
 
 export const keeperMarker = "slop-signer:operator-keeper"
@@ -38,7 +38,15 @@ export effect function signWithOperatorKey(signer: EvmAddress, request: Type2Req
   const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(hash.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => new OperatorKeyUnavailable({ reason: "Signing failed" }) })
   const recovery = signature[0]
   if (recovery !== 0 && recovery !== 1) throw new OperatorKeyUnavailable({ reason: "Signing failed" })
-  const raw = try Effect.try({ try: () => signedType2(request, { r: `0x${bytesToHex(signature.slice(1, 33))}` as never, s: `0x${bytesToHex(signature.slice(33, 65))}` as never, yParity: recovery }), catch: () => new OperatorKeyUnavailable({ reason: "Signing failed" }) })
+  const raw = try Effect.try({
+    try: () => {
+      const r = bytes32(`0x${bytesToHex(signature.slice(1, 33))}`)
+      const s = bytes32(`0x${bytesToHex(signature.slice(33, 65))}`)
+      return r === undefined || s === undefined ? undefined : signedType2(request, { r, s, yParity: recovery })
+    },
+    catch: () => new OperatorKeyUnavailable({ reason: "Signing failed" }),
+  })
+  if (raw === undefined) throw new OperatorKeyUnavailable({ reason: "Signing failed" })
   const signed = readSignedType2(raw)
   if (signed === undefined || signed.sender !== signer) throw new OperatorKeyUnavailable({ reason: "Signed transaction differs from its signer" })
   return { raw, id: signed.id, sender: signed.sender } satisfies Signed

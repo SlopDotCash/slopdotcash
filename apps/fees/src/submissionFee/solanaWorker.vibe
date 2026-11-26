@@ -1,0 +1,250 @@
+// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import { hexToBytes } from "@noble/hashes/utils.js"
+import { jsonRpc } from "@repo/platform/chain/rpc"
+import { base58Encode, base64Decode, base64Encode } from "@repo/platform/chain/solana"
+import { isoAt, isoNow } from "@repo/platform/clock"
+import { D1 } from "@repo/platform/d1"
+import { SubmissionFeeItems } from "@repo/ports/slopbot"
+import { solanaGenesis } from "../runtime/pins.ts"
+import { decimal } from "../evm/abi.ts"
+import { SubmissionFeeConfigInvalid, type Mode } from "./config.vibe"
+import {
+  DEPOSIT_DISCRIMINATOR,
+  DEPOSIT_OFFSETS,
+  SOLANA_SUBMISSION_FEE_KEPT_TO,
+  SOLANA_SUBMISSION_FEE_MINT,
+  SOLANA_SUBMISSION_FEE_NETWORK,
+  SOLANA_SUBMISSION_FEE_PROGRAM_ID,
+  associatedUsdcAccount,
+  buildSolanaMessage,
+  decodeSubmissionConfig,
+  decodeSubmissionDeposit,
+  resolveInstruction,
+  submissionConfigAddress,
+} from "./solanaProgram.ts"
+import { advanceCursor, cursor, recordResolution, resolvable, setJudgement, setJudgementIfItemPaid, unjudged, upsertDeposit } from "./store.vibe"
+
+export interface SolanaSubmissionFeeEnv {
+  readonly SUBMISSION_FEE_SOLANA_MODE?: string
+  readonly SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX?: string
+  readonly SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY?: string
+  readonly RPC_URL_SUBMISSION_FEE_SOLANA?: string
+  readonly SUBMISSION_FEE_SOLANA_RESOLVER_SEED?: string
+}
+
+export interface SolanaLedgerConfig {
+  readonly mode: Mode
+  readonly network: string
+  readonly programId: string
+  readonly mint: string
+  readonly feeWallet: string
+  readonly rpcUrl: Redacted.Redacted<string>
+  readonly maxLamportsPerTx: bigint
+  readonly maxLamportsPerDay: bigint
+  readonly resolverSeed: Redacted.Redacted<string> | undefined
+}
+
+export interface SolanaRunResult {
+  readonly network: string
+  readonly status: "off" | "unset" | "chain_mismatch" | "ran"
+  readonly recorded: number
+  readonly judged: number
+  readonly paid: number
+  readonly resolved: number
+}
+
+schema ProgramAccountRow {
+  readonly pubkey: string
+  readonly account: { readonly data: ReadonlyArray<string> }
+}
+
+schema AccountInfoReply {
+  readonly value: { readonly data: ReadonlyArray<string> } | null
+}
+
+schema BlockhashReply {
+  readonly value: { readonly blockhash: string; readonly lastValidBlockHeight: number }
+}
+
+schema FeeReply {
+  readonly value: number | null
+}
+
+const SEED_PATTERN = /^[0-9a-fA-F]{64}$/u
+
+effect function parseLamports(value: string | undefined, name: string) {
+  const text = (value ?? "").trim()
+  const parsed = /^[1-9][0-9]{0,18}$/u.test(text) ? decimal(text) : undefined
+  if (parsed === undefined || parsed > 9007199254740991n) throw new SubmissionFeeConfigInvalid({ issue: `${name} must be a positive whole number of lamports` })
+  return parsed
+}
+
+export effect function parseSolanaSubmissionFeeConfig(env: SolanaSubmissionFeeEnv, programId: string | null = SOLANA_SUBMISSION_FEE_PROGRAM_ID) {
+  const mode = (env.SUBMISSION_FEE_SOLANA_MODE ?? "off").trim()
+  if (mode !== "off" && mode !== "dry_run" && mode !== "live")
+    throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_SOLANA_MODE must be off, dry_run or live" })
+  if (mode === "off" || programId === null) return null
+  const rpc = (env.RPC_URL_SUBMISSION_FEE_SOLANA ?? "").trim()
+  if (!/^https:\/\//u.test(rpc)) throw new SubmissionFeeConfigInvalid({ issue: "RPC_URL_SUBMISSION_FEE_SOLANA must be an https URL" })
+  const maxLamportsPerTx = try parseLamports(env.SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX, "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX")
+  const maxLamportsPerDay = try parseLamports(env.SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY, "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY")
+  if (maxLamportsPerDay < maxLamportsPerTx) throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY must cover one transaction limit" })
+  const seed = (env.SUBMISSION_FEE_SOLANA_RESOLVER_SEED ?? "").trim()
+  if (mode === "live" && !SEED_PATTERN.test(seed)) throw new SubmissionFeeConfigInvalid({ issue: "live Solana mode needs a 64-hex-digit SUBMISSION_FEE_SOLANA_RESOLVER_SEED" })
+  return {
+    mode,
+    network: SOLANA_SUBMISSION_FEE_NETWORK,
+    programId,
+    mint: SOLANA_SUBMISSION_FEE_MINT,
+    feeWallet: SOLANA_SUBMISSION_FEE_KEPT_TO,
+    rpcUrl: Redacted.make(rpc),
+    maxLamportsPerTx,
+    maxLamportsPerDay,
+    resolverSeed: seed === "" ? undefined : Redacted.make(seed),
+  } satisfies SolanaLedgerConfig
+}
+
+effect function judgeSolanaDeposits(config: SolanaLedgerConfig) {
+  const items = try SubmissionFeeItems
+  let judged = 0
+  let paid = 0
+  for (const deposit of try unjudged(config.network, 50)) {
+    const item = try items.byItem(deposit.item)
+    const tokenOk = deposit.token === config.mint
+    const keptToOk = deposit.keptTo === config.feeWallet
+    if (!tokenOk) {
+      try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "token_not_accepted", repositoryId: item?.repositoryId ?? null, pullNumber: item?.pullNumber ?? null }))
+      judged += 1
+      continue
+    }
+    if (!keptToOk) {
+      try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "wrong_kept_to", repositoryId: item?.repositoryId ?? null, pullNumber: item?.pullNumber ?? null }))
+      judged += 1
+      continue
+    }
+    if (item === null) continue
+    const due = try orDie(Effect.try(() => BigInt(item.stableMinor)))
+    const amount = try orDie(Effect.try(() => BigInt(deposit.amount)))
+    if (amount < due) {
+      try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "amount_below_due", repositoryId: item.repositoryId, pullNumber: item.pullNumber }))
+      judged += 1
+      continue
+    }
+    const pull = { repositoryId: item.repositoryId, pullNumber: item.pullNumber }
+    const [marked] = try (try D1).batch([
+      try items.markPaid(deposit, pull, try isoNow()),
+      setJudgementIfItemPaid(deposit, pull),
+    ])
+    if ((marked?.changes ?? 0) !== 1) continue
+    judged += 1
+    paid += 1
+  }
+  return { judged, paid }
+}
+
+export effect function runSolanaSubmissionFee(env: SolanaSubmissionFeeEnv, programId: string | null = SOLANA_SUBMISSION_FEE_PROGRAM_ID) {
+  const mode = (env.SUBMISSION_FEE_SOLANA_MODE ?? "off").trim()
+  if (mode === "off") return { network: SOLANA_SUBMISSION_FEE_NETWORK, status: "off", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
+  if (programId === null) return { network: SOLANA_SUBMISSION_FEE_NETWORK, status: "unset", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
+  const config = try parseSolanaSubmissionFeeConfig(env, programId)
+  if (config === null) return { network: SOLANA_SUBMISSION_FEE_NETWORK, status: "off", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
+  const client = try jsonRpc({ urls: Redacted.make([Redacted.value(config.rpcUrl)]), timeoutMs: 15_000, maxBytes: 4 * 1024 * 1024 })
+  const genesis = try client.call("getGenesisHash", [], Schema.String)
+  if (genesis !== solanaGenesis) return { network: config.network, status: "chain_mismatch", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
+  const openAccounts = try client.call("getProgramAccounts", [
+    config.programId,
+    {
+      commitment: "finalized",
+      encoding: "base64",
+      filters: [
+        { memcmp: { offset: 0, bytes: base58Encode(DEPOSIT_DISCRIMINATOR) } },
+        { memcmp: { offset: DEPOSIT_OFFSETS.mint, bytes: config.mint } },
+        { memcmp: { offset: DEPOSIT_OFFSETS.keptTo, bytes: config.feeWallet } },
+      ],
+    },
+  ], Schema.Array(ProgramAccountRow))
+  const startId = (try cursor(config.network)) ?? 1
+  let recorded = 0
+  let highestId = startId - 1
+  const openById = new Map<number, string>()
+  for (const entry of openAccounts) {
+    const bytes = base64Decode(entry.account.data[0] ?? "")
+    const decoded = bytes === undefined ? undefined : decodeSubmissionDeposit(bytes)
+    if (decoded === undefined) continue
+    const id = Number(decoded.id)
+    if (!Number.isSafeInteger(id) || id <= 0) continue
+    openById.set(id, entry.pubkey)
+    if (id < startId) continue
+    const at = try isoAt(decoded.depositedAt * 1000)
+    try (try D1).run(upsertDeposit({
+      network: config.network,
+      depositId: id,
+      item: decoded.item,
+      payer: decoded.payer,
+      token: decoded.mint,
+      amount: decoded.amount.toString(),
+      keptTo: decoded.keptTo,
+      txHash: `solana:${entry.pubkey}:${id}`,
+      blockNumber: decoded.depositedAt,
+      blockTime: at,
+    }, at))
+    recorded += 1
+    if (id > highestId) highestId = id
+  }
+  if (highestId >= startId) try (try D1).run(advanceCursor(config.network, highestId + 1))
+  const judgedResult = try judgeSolanaDeposits(config)
+  let resolved = 0
+  if (config.mode === "live" && config.resolverSeed !== undefined) {
+    const seedHex = Redacted.value(config.resolverSeed)
+    const configAddr = submissionConfigAddress(config.programId)
+    const configReply = configAddr === undefined ? undefined : try client.call("getAccountInfo", [configAddr, { commitment: "finalized", encoding: "base64" }], AccountInfoReply)
+    const configBytes = configReply?.value === null || configReply?.value === undefined ? undefined : base64Decode(configReply.value.data[0] ?? "")
+    const onChainConfig = configBytes === undefined ? undefined : decodeSubmissionConfig(configBytes)
+    const seedBytes = try Effect.try(() => hexToBytes(seedHex))
+    const pubBytes = try Effect.try(() => ed25519.getPublicKey(seedBytes))
+    const resolverAddress = base58Encode(pubBytes)
+    if (onChainConfig !== undefined && onChainConfig.resolver === resolverAddress) {
+      const items = try SubmissionFeeItems
+      for (const deposit of try resolvable(config.network)) {
+        const account = openById.get(deposit.depositId)
+        if (account === undefined) continue
+        const item = deposit.repositoryId !== null && deposit.pullNumber !== null
+          ? try items.byPull({ repositoryId: deposit.repositoryId, pullNumber: deposit.pullNumber })
+          : null
+        const refund = deposit.accepted === 0 || item?.outcome === "refund_due"
+        const keep = deposit.accepted === 1 && item?.outcome === "kept_due"
+        if (!refund && !keep) continue
+        const destination = associatedUsdcAccount(refund ? deposit.payer : config.feeWallet, config.mint)
+        if (destination === undefined) continue
+        const ix = resolveInstruction({
+          programId: config.programId,
+          resolver: resolverAddress,
+          deposit: account,
+          mint: config.mint,
+          destination,
+          payer: deposit.payer,
+          refund,
+          expectedId: try orDie(Effect.try(() => BigInt(deposit.depositId))),
+        })
+        if (ix === undefined) continue
+        const bh = try client.call("getLatestBlockhash", [{ commitment: "finalized" }], BlockhashReply)
+        const msg = buildSolanaMessage(resolverAddress, bh.value.blockhash, [ix])
+        if (msg === undefined) continue
+        const feeReply = try client.call("getFeeForMessage", [base64Encode(msg), { commitment: "finalized" }], FeeReply)
+        if (feeReply.value === null) continue
+        const feeLamports = try orDie(Effect.try(() => BigInt(feeReply.value ?? 0)))
+        if (feeLamports > config.maxLamportsPerTx) continue
+        const sig = try Effect.try(() => ed25519.sign(msg, seedBytes))
+        const tx = new Uint8Array(1 + 64 + msg.length)
+        tx[0] = 1
+        tx.set(sig, 1)
+        tx.set(msg, 65)
+        const txId = try client.call("sendTransaction", [base64Encode(tx), { encoding: "base64", skipPreflight: false, preflightCommitment: "finalized" }], Schema.String)
+        try (try D1).run(recordResolution(config.network, { depositId: deposit.depositId, state: refund ? "refunded" : "kept", txHash: txId, at: try isoNow() }))
+        resolved += 1
+      }
+    }
+  }
+  return { network: config.network, status: "ran", recorded, judged: judgedResult.judged, paid: judgedResult.paid, resolved } satisfies SolanaRunResult
+}

@@ -10,9 +10,10 @@ import { planResolutions } from "./plan.vibe"
 import { ratePass } from "./rate.vibe"
 import { scan } from "./scan.vibe"
 import { type SendOutcome, reconcile, send } from "./sends.vibe"
+import { type SolanaRunResult, type SolanaSubmissionFeeEnv, runSolanaSubmissionFee } from "./solanaWorker.vibe"
 import { failureReason, labelled, message, step } from "./steps.vibe"
 
-export interface SubmissionFeeWorkerEnv extends SubmissionFeeEnv, ResolverEnv {}
+export interface SubmissionFeeWorkerEnv extends SubmissionFeeEnv, ResolverEnv, SolanaSubmissionFeeEnv {}
 
 export interface NetworkResult {
   readonly network: string
@@ -34,8 +35,8 @@ export interface NetworkFailure {
 }
 
 export type DepositRun =
-  | { readonly status: "off" }
-  | { readonly status: "ran"; readonly mode: "dry_run" | "live"; readonly unset: ReadonlyArray<string>; readonly networks: ReadonlyArray<NetworkResult | NetworkFailure> }
+  | { readonly status: "off"; readonly solana?: SolanaRunResult }
+  | { readonly status: "ran"; readonly mode: "dry_run" | "live"; readonly unset: ReadonlyArray<string>; readonly networks: ReadonlyArray<NetworkResult | NetworkFailure>; readonly solana?: SolanaRunResult }
 
 export effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: ResolverSigner | null) {
   const unread: NetworkResult = { network: network.network, status: "ran", finalizedThrough: null, recorded: 0, resolved: 0, judged: 0, paid: 0, send: "none", parked: 0, released: 0 }
@@ -60,9 +61,12 @@ export effect function runNetwork(network: NetworkConfig, config: SendConfig, si
 }
 
 export effect function depositPass(env: SubmissionFeeWorkerEnv, terms: ReadonlyArray<FeeNetwork>) {
-  if ((try parseMode(env)) === "off") return { status: "off" } satisfies DepositRun
+  const solana = (env.SUBMISSION_FEE_SOLANA_MODE ?? "off").trim() === "off"
+    ? undefined
+    : (try runSolanaSubmissionFee(env))
+  if ((try parseMode(env)) === "off") return { status: "off", ...solana === undefined ? {} : { solana } } satisfies DepositRun
   const config = try parseConfig(env, terms)
-  if (config.mode === "off") return { status: "off" } satisfies DepositRun
+  if (config.mode === "off") return { status: "off", ...solana === undefined ? {} : { solana } } satisfies DepositRun
   const mode = config.mode
   for (const network of config.unset) {
     try Effect.logInfo("submission_fee_contract_unset", { network })
@@ -81,7 +85,7 @@ export effect function depositPass(env: SubmissionFeeWorkerEnv, terms: ReadonlyA
     }
     networks.push(result)
   }
-  return { status: "ran", mode, unset: config.unset, networks } satisfies DepositRun
+  return { status: "ran", mode, unset: config.unset, networks, ...solana === undefined ? {} : { solana } } satisfies DepositRun
 }
 
 export effect function ratePassOf(env: SubmissionFeeEnv, terms: ReadonlyArray<FeeNetwork>) {

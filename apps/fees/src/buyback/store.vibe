@@ -9,7 +9,7 @@ import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted } from "../
 import { NotAState as JournalNotAState, nonceFloor, solanaSequence } from "../../gen/fees__conversion.effect.vibe"
 import type { Sender } from "../../gen/fees__runtime.effect.vibe"
 import { type Instance, type Journal, amountOf, networkNames, revertedText, unitsOf } from "../journal/codec.vibe"
-import { verifiedEvmSend } from "../journal/signedSend.ts"
+import { verifiedEvmSend, verifiedSolanaSend } from "../journal/signedSend.ts"
 import { aggregate as journalAggregate } from "../journal/store.vibe"
 import * as W from "../journal/writes.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
@@ -35,6 +35,8 @@ export interface SignedFacts {
   readonly maximumWei: string
   readonly intentHash: string
   readonly limits: NativeLimits
+  readonly blockhashSlot?: number | null
+  readonly accountProof?: string | null
 }
 
 export interface ReceiptFacts { readonly landedTxId: string; readonly actualWei: string; readonly blockHash: string; readonly paid?: string }
@@ -113,7 +115,11 @@ effect function sameTx(leg: Leg, txId: string, tx: number, event: Event) {
 }
 
 effect function verifiedBytes(leg: Leg, signed: SignedFacts, wallet: string, event: Event) {
-  if (leg.network === "Solana") return try refuse(event, "a Solana bridge send has no check against its signed intent")
+  if (leg.network === "Solana") {
+    const checked = verifiedSolanaSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet })
+    if (checked.kind === "refused") return try refuse(event, checked.issue)
+    return
+  }
   const checked = try tryPromise({ try: () => verifiedEvmSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet: wallet.toLowerCase() }), catch: () => new BuybackRefused({ event: event.type, issue: "the signed bytes cannot be checked" }) })
   if (checked.kind === "refused") return try refuse(event, checked.issue)
   if (checked.send.nonce !== signed.nonce) return try refuse(event, "the signed nonce is not the reserved one")
@@ -132,8 +138,8 @@ function reservation(leg: Leg, gasId: string, wallet: string, runId: string, sig
     perTransactionWei: signed.limits.perTransaction.toString(),
     perDayWei: signed.limits.perDay.toString(),
     createdAt: now,
-    blockhashSlot: null,
-    accountProof: null,
+    blockhashSlot: signed.blockhashSlot ?? null,
+    accountProof: signed.accountProof ?? null,
     purpose: "fees",
   }
 }

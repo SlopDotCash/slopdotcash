@@ -2,6 +2,7 @@
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
 import { feeReportRoutes } from "./report/routes.vibe"
+import { StandingDepositRoutes } from "./submissionFee/standingRoutes.vibe"
 import { SubmissionFeeRoutes } from "./submissionFee/routes.vibe"
 
-export const fees = area({ name: "fees", api, routes: Layer.mergeAll(feeReportRoutes, SubmissionFeeRoutes), provides: Layer.empty })
+export const fees = area({ name: "fees", api, routes: Layer.mergeAll(feeReportRoutes, SubmissionFeeRoutes, StandingDepositRoutes), provides: Layer.empty })

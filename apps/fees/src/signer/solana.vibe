@@ -2,7 +2,10 @@
 import type { RpcFailure } from "@repo/platform/chain/rpc"
 import { SolanaRpc, base58Encode, base64Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
 import { type SignedSend, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
-import { type Runtime, conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import { type Runtime, buybackSigns, conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import type { DlnRefused } from "../dln/api.vibe"
+import { checkedSolanaOrder } from "../dln/solanaOrder.vibe"
+import { wholeBig } from "../evm/abi.ts"
 import type { Facts } from "../journal/store.vibe"
 import { type JupiterRefused, type JupiterSettings, type JupiterUnavailable, inputMintOf, jupiterQuote, signedMinimum, swapTransaction } from "../jupiter/quote.vibe"
 import { checkRouteSimulation, reviewRouteAccounts } from "../jupiter/review.vibe"
@@ -10,13 +13,13 @@ import type { ClaimRefused } from "../claims/evm.vibe"
 import { solanaClaimPrepared } from "../claims/solana.vibe"
 import { wrapNativeRoute } from "../jupiter/nativeWrap.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
-import { jupiter } from "../runtime/pins.ts"
+import { chainIds, circleUsdc, jupiter, robinhoodUsdg } from "../runtime/pins.ts"
 import { type AccountProof, type RouteExpectation, associatedCreations, expectationJson, resolveAccounts, retainedExpectation, verifyAccountProof } from "../solana/accounts.vibe"
 import { digest58, jsonText, wideOf, withBytes } from "../solana/bytes.ts"
 import { FeeSolana, addressed, admittedMint, blockhashAnchor, networkFee, walletLamports } from "../solana/client.vibe"
 import { ASSOCIATED_TOKEN_PROGRAM, type ParsedTransaction, type SolanaRefused, TOKEN_2022_PROGRAM, blockhashOf, computeBudgetProgram, messageOf, parsedTransaction, solanaNativeAsset, wrappedSol } from "../solana/wire.vibe"
 import { FeeWallet, KeyMismatch, type Prepared, SignRefused, type SolanaPrepared, type SolanaSigned } from "./feeWallet.vibe"
-import type { FeeIntent, JupiterSwap, SolanaIntent } from "./intents.ts"
+import type { FeeIntent, JupiterSwap, SolanaDlnOrder, SolanaIntent } from "./intents.ts"
 import { type SolanaKey, controlsWallet, feeWalletSolanaMarker, solanaKey } from "./solanaKey.ts"
 
 module verified {
@@ -46,13 +49,14 @@ export interface SolanaSent extends SolanaSigned {
 
 const allowedPrograms: ReadonlySet<string> = new Set([computeBudgetProgram, ASSOCIATED_TOKEN_PROGRAM, jupiter.program])
 
-type Unprepared = SignRefused | SolanaRefused | ClaimRefused | RpcFailure | JupiterUnavailable | JupiterRefused
+type Unprepared = SignRefused | SolanaRefused | ClaimRefused | DlnRefused | RpcFailure | JupiterUnavailable | JupiterRefused
 
 function refusalOf(error: Unprepared): SignRefused {
   switch (error._tag) {
     case "SignRefused": return error
     case "SolanaRefused": return new SignRefused({ step: "review", issue: error.issue })
     case "ClaimRefused": return new SignRefused({ step: "facts", issue: error.issue })
+    case "DlnRefused": return new SignRefused({ step: "review", issue: error.issue })
     case "RpcUnavailable": return new SignRefused({ step: "chain", issue: errorText(error.message) })
     case "RpcMalformed": return new SignRefused({ step: "chain", issue: errorText(error.issue) })
     case "RpcRefused": return new SignRefused({ step: "chain", issue: errorText(error.message) })
@@ -153,11 +157,38 @@ effect function jupiterPrepared(options: SolanaWalletOptions, wallet: string, in
   } satisfies SolanaReviewed
 }
 
+effect function dlnOrderPrepared(options: SolanaWalletOptions, wallet: string, intent: SolanaDlnOrder) {
+  if (!buybackSigns(options.runtime, "Solana")) return try deny("activation", "SolanaDlnOrder is not activated on Solana")
+  const parsed = try parsedTransaction(intent.raw)
+  const takeChainId = wholeBig(chainIds.robinhood) ?? 0n
+  const order = try checkedSolanaOrder(parsed, { wallet, mint: circleUsdc.solana, giveAmount: intent.giveAmount, takeToken: robinhoodUsdg, takeChainId, receiver: intent.receiver.toLowerCase(), orderId: intent.orderId })
+  if (order.takeAmount !== intent.takeAmount || order.nonce !== intent.orderNonce) return try deny("facts", "DLN order differs from its quoted terms")
+  const fee = try networkFee(messageOf(intent.raw, parsed))
+  if (fee.fee === 0n) return try deny("facts", "Solana signature fee evidence is missing")
+  if (intent.nativeFee > options.limits.perTransaction || intent.nativeFee > wideOf(transactionCeilingOf("Solana")))
+    return try deny("limits", "Solana DLN native fee exceeds the transaction budget")
+  const blockhashSlot = try blockhashAnchor(blockhashOf(intent.raw, parsed), fee.slot)
+  const proof = try resolveAccounts(intent.raw, parsed)
+  return {
+    family: "solana",
+    intent,
+    intentHash: digest58(messageOf(intent.raw, parsed)),
+    maximumUnits: transactionCeilingOf("Solana"),
+    blockhashSlot,
+    accountProof: jsonText(proof),
+    unsigned: intent.raw,
+    messageOffset: parsed.messageOffset,
+    expiresAt: intent.lastValidBlockHeight,
+    minimumOutput: intent.takeAmount,
+    pricedFeeMicro: 0n,
+  } satisfies SolanaReviewed
+}
+
 effect function prepared(options: SolanaWalletOptions, wallet: string, intent: SolanaIntent) {
   switch (intent.kind) {
     case "JupiterSwap": return try jupiterPrepared(options, wallet, intent)
     case "SolanaClaim": return try solanaClaimPrepared(intent, options)
-    case "SolanaDlnOrder": return try deny("activation", `${intent.kind} is not built by the Solana conversion signer`)
+    case "SolanaDlnOrder": return try dlnOrderPrepared(options, wallet, intent)
   }
 }
 

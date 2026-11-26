@@ -10,6 +10,7 @@ import { SubmissionFeeItems } from "@repo/ports/slopbot"
 import { anySubmissionFee } from "../client/refusals.vibe"
 import { type ReportDepositAnswer, type ReportDepositWay, type SubmissionFeeItemAnswer, type SubmissionFeePaid, type SubmissionFeeRateAnswer, pullIdPattern, reportCasePattern, reportDepositRead, submissionFeePath, submissionFeeRate } from "../client/submissionFee.vibe"
 import { reportNetwork } from "./judge.vibe"
+import { handleSolanaSubmissionFee } from "./solanaPay.vibe"
 
 schema PaidDepositRow { token: string; amount: string; tx_hash: string; finalized_at: string | null; resolve_tx: string | null }
 
@@ -142,9 +143,10 @@ effect function read(parts: ReadonlyArray<string>) {
 effect function answer() {
   const request = try HttpServerRequest.HttpServerRequest
   const method = request.method
+  const parts = new URL(request.originalUrl).pathname.slice(submissionFeePath.length).replace(/\/$/u, "").split("/").slice(1)
+  if (method === "POST" && parts.length === 1 && parts[0] === "solana") return try handleSolanaSubmissionFee(request)
   const refused = anySubmissionFee.methodNotAllowed
   if (method !== "GET" && method !== "HEAD") return json({ error: refused.error }, refused.status, { "cache-control": refused.headers["cache-control"] })
-  const parts = new URL(request.originalUrl).pathname.slice(submissionFeePath.length).replace(/\/$/u, "").split("/").slice(1)
   const served = try read(parts)
   if (method === "HEAD") return HttpServerResponse.empty({ status: served.status, headers: { ...fixedHeaders, "cache-control": served.cache, "content-type": "application/json; charset=utf-8" } })
   return json(served.body, served.status, { "cache-control": served.cache })

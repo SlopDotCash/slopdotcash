@@ -1,0 +1,87 @@
+// spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema StandingDepositPaid {
+  readonly at: string
+  readonly network: string
+  readonly depositId: number
+  readonly token: string
+  readonly amount: string | null
+  readonly transaction: string
+  readonly finalized: boolean
+}
+
+export schema StandingDepositRowAnswer {
+  readonly round: number
+  readonly item: string
+  readonly amount: string
+  readonly askedAt: string
+  readonly paid: StandingDepositPaid | null
+  readonly withdrawRequestedAt: string | null
+  readonly outcome: string | null
+  readonly outcomeReason: string | null
+  readonly outcomeAt: string | null
+  readonly resolveTransaction: string | null
+}
+
+export schema StandingDepositCover {
+  readonly repository: string
+  readonly pullNumber: number
+  readonly state: string
+  readonly open: boolean
+}
+
+export schema StandingDepositAnswer {
+  readonly schema: "slop-standing-deposit-v1"
+  readonly deployed: boolean
+  readonly network: string
+  readonly chainId: number
+  readonly contract: string | null
+  readonly token: string
+  readonly symbol: "SLOP"
+  readonly decimals: number
+  readonly keptTo: string
+  readonly quote: string | null
+  readonly deposit: StandingDepositRowAnswer | null
+  readonly covers: ReadonlyArray<StandingDepositCover>
+}
+
+export schema EmptyStandingDepositRequest {}
+
+export const standingDepositPath = "/api/v1/standing-deposit"
+export const standingDepositWithdrawPath = "/api/v1/standing-deposit/withdraw"
+
+export const standingDepositRead = route({
+  method: "GET",
+  path: standingDepositPath,
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: StandingDepositAnswer,
+  rejected: "unauthorized",
+  cache: "no-store",
+})
+
+export const standingDepositAsk = route({
+  method: "POST",
+  path: standingDepositPath,
+  access: "session",
+  limitKib: 1,
+  request: EmptyStandingDepositRequest,
+  answer: StandingDepositAnswer,
+  rejected: "standing_deposit_not_deployed",
+  cache: "no-store",
+})
+
+export const standingDepositWithdraw = route({
+  method: "POST",
+  path: standingDepositWithdrawPath,
+  access: "session",
+  limitKib: 1,
+  request: EmptyStandingDepositRequest,
+  answer: StandingDepositAnswer,
+  rejected: "no_deposit",
+  cache: "no-store",
+})
+
+export const standingDepositApi: ReadonlyArray<AnyRoute> = [standingDepositRead, standingDepositAsk, standingDepositWithdraw]
