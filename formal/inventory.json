@@ -157,7 +157,7 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "6b30f8c8c03db2613f40b5507321c1f78923259dbf810c013427e1d643afb131",
+      "sha256": "f9687d56212adfda9d69a26b45a18028257939997cdf4e16726a6f41eac8ff4d",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
