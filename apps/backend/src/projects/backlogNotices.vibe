@@ -62,24 +62,24 @@ export effect function sendBacklogNotices(projects: ReadonlyArray<{ readonly pro
   for (const notice of notices) {
     const prefix = `backlog-rule:${notice.projectId}:`
     const write = db.run(sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
-    SELECT ${notice.eventKey}, recipient, 'project_revision', p.id, ${notice.detail}, '/projects/' || p.id || '/manage', ${at}, ${at}
-    FROM projects p
-    JOIN (
-      SELECT DISTINCT recipient FROM (
-        SELECT json_extract(p2.manifest, '$.steward.github.actorId') AS recipient FROM projects p2
-        WHERE p2.id = ${notice.projectId} AND json_extract(p2.manifest, '$.steward.github.type') = 'User'
-        UNION
-        SELECT COALESCE(
-          (SELECT a.applicant_github_id FROM project_applications a WHERE a.id = p2.source_application_id),
-          (SELECT r.actor_github_id FROM project_revisions r WHERE r.project_id = p2.id ORDER BY r.revision ASC LIMIT 1)
-        ) AS recipient FROM projects p2
-        WHERE p2.id = ${notice.projectId} AND json_extract(p2.manifest, '$.steward.github.type') = 'Organization'
-      ) WHERE recipient IS NOT NULL
-    ) audience
-    WHERE p.id = ${notice.projectId}
-    AND substr(${notice.eventKey}, 1, length(${prefix})) = ${prefix}
-    AND length(recipient) BETWEEN 1 AND 20 AND recipient GLOB '[1-9]*' AND recipient NOT GLOB '*[^0-9]*'
-    ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
+      SELECT ${notice.eventKey}, recipient, 'project_revision', p.id, ${notice.detail}, '/projects/' || p.id || '/manage', ${at}, ${at}
+      FROM projects p
+      JOIN (
+        SELECT DISTINCT recipient FROM (
+          SELECT json_extract(p2.manifest, '$.steward.github.actorId') AS recipient FROM projects p2
+          WHERE p2.id = ${notice.projectId} AND json_extract(p2.manifest, '$.steward.github.type') = 'User'
+          UNION
+          SELECT COALESCE(
+            (SELECT a.applicant_github_id FROM project_applications a WHERE a.id = p2.source_application_id),
+            (SELECT r.actor_github_id FROM project_revisions r WHERE r.project_id = p2.id ORDER BY r.revision ASC LIMIT 1)
+          ) AS recipient FROM projects p2
+          WHERE p2.id = ${notice.projectId} AND json_extract(p2.manifest, '$.steward.github.type') = 'Organization'
+        ) WHERE recipient IS NOT NULL
+      ) audience
+      WHERE p.id = ${notice.projectId}
+      AND substr(${notice.eventKey}, 1, length(${prefix})) = ${prefix}
+      AND length(recipient) BETWEEN 1 AND 20 AND recipient GLOB '[1-9]*' AND recipient NOT GLOB '*[^0-9]*'
+      ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
     const outcome = try exit(write)
     if (Exit.isFailure(outcome)) failed += 1
   }
