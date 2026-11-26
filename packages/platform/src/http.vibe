@@ -334,14 +334,15 @@ effect function bearerOf(request: HttpServerRequest.HttpServerRequest) {
   }
 }
 
-effect function signerOf(request: HttpServerRequest.HttpServerRequest, limitBytes: number) {
+effect function signerOf(request: HttpServerRequest.HttpServerRequest, limitBytes: number, unconfiguredHeaders: Refusal["headers"]) {
   const auth = try Effect.serviceOption(ServiceAuth)
   if (Option.isNone(auth)) return try die(new Error("A service route is served without ServiceAuth"))
   const body = try boundedBytes(request, limitBytes)
   const url = new URL(request.originalUrl)
   return auth.value.verify({ method: request.method, path: `${url.pathname}${url.search}`, headers: request.headers, body }) catch effect (error) => {
-    if (error._tag !== "SignatureRefused") throw error
-    throw refusedBy(error.reason === "unknownKey" || error.reason === "signature" ? admission.signatureInvalid : admission.signatureStale)
+    if (error._tag === "SignatureRefused") throw refusedBy(error.reason === "unknownKey" || error.reason === "signature" ? admission.signatureInvalid : admission.signatureStale)
+    if (error.code !== admission.signersUnconfigured.code || unconfiguredHeaders === undefined) throw error
+    throw refuse(error.status, error.code, error.message, { ...error.headers, ...unconfiguredHeaders })
   }
 }
 
@@ -353,7 +354,7 @@ effect function credentialOf(route: AnyRoute, requireJson: boolean) {
       return undefined
     }
     case "bearer": return try bearerOf(request)
-    case "service": return try signerOf(request, route.limitKib * 1024)
+    case "service": return try signerOf(request, route.limitKib * 1024, route.signersUnconfiguredHeaders)
     default: return undefined
   }
 }
