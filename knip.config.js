@@ -26,9 +26,24 @@ import compileSurface from "vibelang/knip"
 
 const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
 
+function withoutLocalModuleImports(surface, text, statements) {
+  for (const node of statements) {
+    // Vibe's `from localModule` names a lexical module and is not a TypeScript import.
+    // Leaving it in the projection hides following namespace member reads from Knip.
+    if (node.type === "ImportDeclaration" && node.source.type === "Identifier") {
+      const declaration = text.slice(...node.range)
+      surface = surface.replaceAll(`\n${declaration}\n`, "\n")
+    } else if (node.type === "VibeModuleDeclaration" && node.body) {
+      const body = Array.isArray(node.body) ? node.body : node.body.body ?? []
+      surface = withoutLocalModuleImports(surface, text, body)
+    }
+  }
+  return surface
+}
+
 function compileVibe(text, filePath) {
-  const surface = compileSurface(text, filePath)
   const { ast, scopeManager } = parseForESLint(text, { filePath })
+  const surface = withoutLocalModuleImports(compileSurface(text, filePath), text, ast.body)
   const declarations = new Set()
   const forwardedBindings = new Set()
   const exportReferences = new Set()
