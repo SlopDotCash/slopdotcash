@@ -128,6 +128,8 @@ export const postRunsByIdTraceIntents = {
   invalidRequestInvalidSha256: { status: 400, error: "invalid_request", message: "Invalid sha256", headers: jsonNoStoreSlopTraceApiContract },
   invalidRequestSizeBytesMustBe1: { status: 400, error: "invalid_request", message: "sizeBytes must be 1-8388608", headers: jsonNoStoreSlopTraceApiContract },
   invalidRequestInvalidContentType: { status: 400, error: "invalid_request", message: "Invalid contentType", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidTermsVersion: { status: 400, error: "invalid_request", message: "termsVersion must be private-trace-v1, private-trace-v2 or private-trace-v3", headers: jsonNoStoreSlopTraceApiContract },
+  traceTermsConflict: { status: 409, error: "trace_terms_conflict", message: "The run already has a different terms version", headers: jsonNoStoreSlopTraceApiContract },
 } as const
 
 export const postRunsByIdFinalize = {

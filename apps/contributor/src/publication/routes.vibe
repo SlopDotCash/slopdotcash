@@ -7,7 +7,7 @@ import { getProjectsByIdByArtifact as rows } from "../client/refusals.vibe"
 import { publicSiteOrigin } from "../render/fields.ts"
 import { buildProjectPublication } from "../render/publication.ts"
 import { type RestrictionState, clearanceOf, gateOf, manifestOf, optimistic, publicReadOf, restrictionStateOf } from "./gate.vibe"
-import { intakeListingFor, intakeRead, monthListingFor } from "./listing.vibe"
+import { backlogOutOfRotationFor, backlogRead, intakeListingFor, intakeRead, monthListingFor } from "./listing.vibe"
 import { passThrough, templateBytes, templateIndex } from "./templates.vibe"
 
 schema ListedRepository { readonly id: string; readonly aliases?: ReadonlyArray<string> }
@@ -105,6 +105,10 @@ effect function refused(answer: Answer, facts: ArtifactFacts, projectId: string)
     case "RetryLater": return facts.clearance === "ClearanceUnverified" ? text(answer, rows.slopCannotConfirmThis, rows.slopCannotConfirmThis.text) : unavailable
     case "Served": return unavailable
     case "PassThrough": return unavailable
+    default: {
+      const _exhaustive: never = answer
+      return _exhaustive
+    }
   }
 }
 
@@ -166,11 +170,13 @@ effect function discoveryFieldsOf(projectId: string, manifest: unknown) {
 effect function discoveryReply(origin: string) {
   const projects = try (try RegistryManifests).current()
   const counts = try intakeRead()
+  const backlog = try backlogRead()
   const now = try Clock.currentTimeMillis
   const index = try templateIndex(origin)
   const listed: DiscoveryRow[] = []
   for (const project of projects) {
     const manifest = try manifestOf(project)
+    if (backlogOutOfRotationFor(backlog, project, manifest, now)) continue
     const hopeful = optimistic(project, manifest, "Listed", monthListingFor(manifest, now), intakeListingFor(counts, project, manifest, now))
     if (!discoverable(hopeful)) continue
     const facts = { ...hopeful, read: try publicReadOf(project, manifest) }

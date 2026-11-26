@@ -217,6 +217,10 @@ effect function planned(loaded: Loaded, event: Event) {
       if (openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0) throw new AccountDecisionUnrecordable({ projectId, reason: "a project appeal is open" })
       return { projectId, action: "deny_reinstatement" } satisfies Planned
     }
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
   }
 }
 

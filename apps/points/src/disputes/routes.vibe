@@ -74,11 +74,18 @@ effect function signedIn() {
   }
 }
 
+const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
+
+function isBusyD1(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
+}
+
 effect function asMember<E, R>(refusals: { readonly notSignedIn: Row; readonly accountChanged: Row; readonly internalError: Row }, handler: (actor: Actor) => HttpServerResponse.HttpServerResponse!E!R) {
   const actor = try signedIn()
   if (actor === "signedOut") return refused(refusals.notSignedIn)
   if (actor === "changed") return refused(refusals.accountChanged)
-  return handler(actor) catch effect () => {
+  return handler(actor) catch effect (error) => {
+    if (isBusyD1(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, privateNoStore)
     try Effect.logError("Points dispute unavailable")
     return refused(refusals.internalError)
   }
@@ -114,6 +121,10 @@ function fileRefusal(result: FileResult) {
     case "InvalidStatement": return postPointsDisputes.invalidRequest
     case "Created": return postPointsDisputes.internalError
     case "ReturnedExisting": return postPointsDisputes.internalError
+    default: {
+      const _exhaustive: never = result
+      return _exhaustive
+    }
   }
 }
 
@@ -182,6 +193,10 @@ function decisionRefusal(result: DecisionResult) {
     case "AlreadyResolved": return postPointsDisputesByKey.alreadyResolvedADecisionHasAlready
     case "InvalidDecision": return postPointsDisputesByKey.invalidRequestEnterADecisionAnd
     case "DecisionRecorded": return postPointsDisputesByKey.internalError
+    default: {
+      const _exhaustive: never = result
+      return _exhaustive
+    }
   }
 }
 

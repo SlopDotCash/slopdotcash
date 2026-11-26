@@ -1,0 +1,330 @@
+// spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"
+import { isoNow } from "@repo/platform/clock"
+import { D1, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { type Refused, handleRaw, json, methodNotAllowed, refuse, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { type TraceLicenceState, type TraceLicensingSetting, traceLicencesRoute, traceLicensingRoute, tracesMeRoute } from "../client/traces.vibe"
+import { TraceTermsVersion } from "./codec.vibe"
+
+const termsVersion: TraceTermsVersion = "private-trace-v3"
+const pageSize = 100
+const maxRunIds = 500
+const maxBodyBytes = 80 * 1024
+const runIdPattern = /^[A-Za-z0-9_.:-]{1,128}$/u
+const isTraceTermsVersion = Schema.is(TraceTermsVersion)
+const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
+
+schema SettingRow {
+  readonly enabled: number
+  readonly provider_terms_confirmed: number
+  readonly changed_at: string
+  readonly confirmed_terms_version: string | null
+}
+
+schema FlagRow {
+  readonly yes: number
+}
+
+schema CountRow {
+  readonly n: number
+}
+
+schema OwnedRow {
+  readonly n: number
+  readonly current: number
+}
+
+schema TotalsRow {
+  readonly traces: number
+  readonly licensed: number
+}
+
+schema TraceListRow {
+  readonly id: string
+  readonly finalized_at: string
+  readonly project_id: string
+  readonly repository: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly terms_version: string
+  readonly licence: string | null
+  readonly pull_request_url: string | null
+}
+
+function closedSql(githubId: string): Statement {
+  return sql`EXISTS (SELECT 1 FROM points_members member WHERE member.github_id = ${githubId} AND member.closed_at IS NOT NULL)`
+}
+
+function bannedSql(githubId: string): Statement {
+  return sql`EXISTS (SELECT 1 FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id = ${githubId} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) LIMIT 1)`
+}
+
+function enabledSql(githubId: string): Statement {
+  return sql`EXISTS (SELECT 1 FROM trace_licensing_settings setting WHERE setting.github_id = ${githubId} AND setting.enabled = 1)`
+}
+
+function confirmedTermsSql(githubId: string): Statement {
+  return sql`(SELECT event.terms_version FROM trace_licensing_events event WHERE event.github_id = ${githubId} AND event.kind = 'enabled' ORDER BY event.id DESC LIMIT 1)`
+}
+
+function latestEventSql(githubId: string, kind: string): Statement {
+  return sql`(SELECT MAX(event.id) FROM trace_licensing_events event WHERE event.github_id = ${githubId} AND event.kind = ${kind})`
+}
+
+function eligibleRunsSql(githubId: string, runIdsJson: string | undefined): Statement {
+  const chosenClause = runIdsJson === undefined ? sql`` : sql` AND run.id IN (SELECT value FROM json_each(${runIdsJson}))`
+  return sql`SELECT run.id AS run_id FROM trace_runs run
+    WHERE run.github_user_id = ${githubId} AND run.state = 'finalized'
+      AND NOT EXISTS (SELECT 1 FROM trace_licences licence WHERE licence.run_id = run.id AND licence.state = 'licensed')
+      AND (run.terms_version IS NOT ${termsVersion} OR ${confirmedTermsSql(githubId)} IS ${termsVersion})${chosenClause}`
+}
+
+effect function withBusyD1<A, E, R>(program: A!E!R) {
+  return program catch effect (error) => {
+    if (typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)) {
+      throw refuse(503, "temporarily_unavailable", "Temporarily unavailable. Try again.")
+    }
+    throw error
+  }
+}
+
+effect function readSetting(githubId: string) {
+  const row = try first(SettingRow, sql`SELECT enabled, provider_terms_confirmed, changed_at, ${confirmedTermsSql(githubId)} AS confirmed_terms_version FROM trace_licensing_settings WHERE github_id = ${githubId}`)
+  const enabled = row?.enabled === 1
+  const confirmed = row?.confirmed_terms_version
+  return {
+    enabled,
+    since: enabled ? (row?.changed_at ?? null) : null,
+    providerTermsConfirmed: row?.provider_terms_confirmed === 1,
+    confirmedTermsVersion: enabled && isTraceTermsVersion(confirmed) ? confirmed : null,
+  } satisfies TraceLicensingSetting
+}
+
+effect function isTrue(condition: Statement) {
+  const row = try first(FlagRow, sql`SELECT ${condition} AS yes`)
+  return row?.yes === 1
+}
+
+effect function refuseClosed(githubId: string) {
+  if (try isTrue(closedSql(githubId))) throw refuse(403, "account_closed", "This account is closed.")
+}
+
+effect function refuseBanned(githubId: string) {
+  if (try isTrue(bannedSql(githubId))) throw refuse(403, "participation_banned", "This account cannot license traces while a participation ban is in force.")
+}
+
+function parseCursor(raw: string | null): { readonly at: string; readonly runId: string } | null | "invalid" {
+  if (raw === null) return null
+  const split = raw.lastIndexOf("|")
+  const at = raw.slice(0, split)
+  const runId = raw.slice(split + 1)
+  const parsed = Date.parse(at)
+  if (split < 1 || !runIdPattern.test(runId) || Number.isNaN(parsed) || new Date(parsed).toISOString() !== at) return "invalid"
+  return { at, runId }
+}
+
+function licenceStateOf(raw: string | null): TraceLicenceState {
+  if (raw === "licensed" || raw === "withdrawn") return raw
+  return "none"
+}
+
+function exactKeysOf(body: Readonly<Record<string, unknown>>, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []): boolean {
+  const allowed = new Set([...required, ...optional])
+  for (const key of required) {
+    if (!Object.hasOwn(body, key)) return false
+  }
+  for (const key of Object.keys(body)) {
+    if (!allowed.has(key)) return false
+  }
+  return true
+}
+
+effect function listTraces(query: URLSearchParams, githubId: string) {
+  const cursor = parseCursor(query.get("cursor"))
+  if (cursor === "invalid") throw refuse(400, "invalid_cursor", "The page cursor is invalid.")
+  const cursorAt = cursor?.at ?? null
+  const cursorRunId = cursor?.runId ?? null
+  const found = try rows(TraceListRow, sql`SELECT run.id, run.finalized_at, run.project_id, run.repository, run.provider, run.model, run.client,
+      COALESCE(run.terms_version, 'private-trace-v1') AS terms_version,
+      licence.state AS licence,
+      (SELECT event.github_url FROM run_progress_events event
+        WHERE event.run_id = run.id AND event.kind = 'pull_request_opened' AND event.github_url IS NOT NULL
+        ORDER BY event.occurred_at DESC, event.id DESC LIMIT 1) AS pull_request_url
+    FROM trace_runs run
+    LEFT JOIN trace_licences licence ON licence.run_id = run.id
+    WHERE run.github_user_id = ${githubId} AND run.state = 'finalized'
+      AND (${cursorAt} IS NULL OR run.finalized_at < ${cursorAt} OR (run.finalized_at = ${cursorAt} AND run.id < ${cursorRunId}))
+    ORDER BY run.finalized_at DESC, run.id DESC
+    LIMIT ${pageSize + 1}`)
+  const shown = found.slice(0, pageSize)
+  const last = shown[shown.length - 1]
+  const totals = try first(TotalsRow, sql`SELECT count(*) AS traces, count(licence.run_id) AS licensed
+    FROM trace_runs run
+    LEFT JOIN trace_licences licence ON licence.run_id = run.id AND licence.state = 'licensed'
+    WHERE run.github_user_id = ${githubId} AND run.state = 'finalized'`)
+  const traces = totals?.traces ?? 0
+  const licensed = totals?.licensed ?? 0
+  return {
+    setting: try readSetting(githubId),
+    totals: { traces, licensed, eligible: traces - licensed },
+    traces: shown.map((row) => ({
+      runId: row.id,
+      finalizedAt: row.finalized_at,
+      projectId: row.project_id,
+      repository: row.repository,
+      provider: row.provider,
+      model: row.model,
+      client: row.client,
+      termsVersion: isTraceTermsVersion(row.terms_version) ? row.terms_version : "private-trace-v1",
+      licence: licenceStateOf(row.licence),
+      pullRequestUrl: row.pull_request_url,
+    })),
+    nextCursor: found.length > pageSize && last !== undefined ? `${last.finalized_at}|${last.id}` : null,
+  }
+}
+
+effect function confirmAgain(githubId: string, providerTermsConfirmed: boolean) {
+  if (!providerTermsConfirmed) throw refuse(422, "provider_terms_unconfirmed", "Confirm that your model provider's terms let you license these runs' output.")
+  try refuseBanned(githubId)
+  const now = try isoNow()
+  const guard = sql`${enabledSql(githubId)} AND NOT ${bannedSql(githubId)} AND NOT ${closedSql(githubId)} AND ${confirmedTermsSql(githubId)} IS NOT ${termsVersion}`
+  try (try D1).batch([
+    sql`INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at) SELECT ${githubId}, 'enabled', ${termsVersion}, 0, ${now} WHERE ${guard}`,
+  ])
+  const after = try readSetting(githubId)
+  if (!after.enabled || after.confirmedTermsVersion !== termsVersion) {
+    try refuseClosed(githubId)
+    try refuseBanned(githubId)
+    throw refuse(409, "setting_changed", "The setting changed. Reload and try again.")
+  }
+  return { setting: after, withdrawn: 0 }
+}
+
+effect function changeSetting(githubId: string) {
+  if (!(try sameOriginWrite())) throw refuse(403, "origin_forbidden", "")
+  const body = try strictBody(Schema.Record(Schema.String, Schema.Unknown), maxBodyBytes)
+  if (!exactKeysOf(body, ["enabled"], ["providerTermsConfirmed"])) throw refuse(400, "invalid_request", "Request body has unexpected fields")
+  const enabled = body.enabled
+  const providerTermsConfirmed = body.providerTermsConfirmed
+  if (typeof enabled !== "boolean") throw refuse(400, "invalid_request", "enabled must be true or false")
+  if (providerTermsConfirmed !== undefined && typeof providerTermsConfirmed !== "boolean") throw refuse(400, "invalid_request", "providerTermsConfirmed must be true or false")
+  try refuseClosed(githubId)
+  const current = try readSetting(githubId)
+  if (current.enabled && enabled && current.confirmedTermsVersion !== termsVersion) {
+    return try confirmAgain(githubId, providerTermsConfirmed === true)
+  }
+  if (current.enabled === enabled) return { setting: current, withdrawn: 0 }
+  if (enabled && providerTermsConfirmed !== true) {
+    throw refuse(422, "provider_terms_unconfirmed", "Confirm that your model provider's terms let you license these runs' output.")
+  }
+  if (enabled) try refuseBanned(githubId)
+  const now = try isoNow()
+  let withdrawn = 0
+  if (enabled) {
+    const guard = sql`NOT ${enabledSql(githubId)} AND NOT ${bannedSql(githubId)} AND NOT ${closedSql(githubId)}`
+    try (try D1).batch([
+      sql`INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at) SELECT ${githubId}, 'enabled', ${termsVersion}, 0, ${now} WHERE ${guard}`,
+      sql`INSERT INTO trace_licensing_settings (github_id, enabled, provider_terms_confirmed, changed_at) SELECT ${githubId}, 1, 1, ${now} WHERE ${guard} ON CONFLICT (github_id) DO UPDATE SET enabled = 1, provider_terms_confirmed = 1, changed_at = excluded.changed_at`,
+    ])
+  } else {
+    const guard = sql`${enabledSql(githubId)} AND NOT ${closedSql(githubId)}`
+    const results = try (try D1).batch([
+      sql`INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at) SELECT ${githubId}, 'disabled', ${termsVersion}, (SELECT count(*) FROM trace_licences WHERE github_id = ${githubId} AND state = 'licensed'), ${now} WHERE ${guard}`,
+      sql`INSERT INTO trace_licence_events (run_id, github_id, kind, reason, account_event_id, at) SELECT licence.run_id, licence.github_id, 'withdrawn', 'setting_off', ${latestEventSql(githubId, "disabled")}, ${now} FROM trace_licences licence WHERE licence.github_id = ${githubId} AND licence.state = 'licensed' AND ${guard}`,
+      sql`UPDATE trace_licences SET state = 'withdrawn', updated_at = ${now} WHERE github_id = ${githubId} AND state = 'licensed' AND ${guard}`,
+      sql`UPDATE trace_licensing_settings SET enabled = 0, changed_at = ${now} WHERE github_id = ${githubId} AND enabled = 1 AND NOT ${closedSql(githubId)}`,
+    ])
+    withdrawn = results[2]?.changes ?? 0
+  }
+  const after = try readSetting(githubId)
+  if (after.enabled !== enabled) {
+    try refuseClosed(githubId)
+    if (enabled) try refuseBanned(githubId)
+    throw refuse(409, "setting_changed", "The setting changed. Reload and try again.")
+  }
+  return { setting: after, withdrawn }
+}
+
+type OptInChoice =
+  | { readonly kind: "chosen"; readonly runIds: ReadonlyArray<string> }
+  | { readonly kind: "all"; readonly expectedCount: number }
+
+effect function parseOptIn(body: Readonly<Record<string, unknown>>): OptInChoice!Refused {
+  if (Object.hasOwn(body, "runIds")) {
+    if (!exactKeysOf(body, ["runIds"])) throw refuse(400, "invalid_request", "Request body has unexpected fields")
+    const runIds = body.runIds
+    if (!Array.isArray(runIds) || runIds.length < 1 || runIds.length > maxRunIds || !runIds.every((id): id is string => typeof id === "string" && runIdPattern.test(id))) {
+      throw refuse(422, "invalid_run_ids", `runIds must list 1 to ${maxRunIds} run ids.`)
+    }
+    return { kind: "chosen", runIds: [...new Set(runIds)] }
+  }
+  if (!exactKeysOf(body, ["all", "expectedCount"])) throw refuse(400, "invalid_request", "Request body has unexpected fields")
+  const allFlag = body.all
+  const expectedCount = body.expectedCount
+  if (allFlag !== true || typeof expectedCount !== "number" || !Number.isSafeInteger(expectedCount) || expectedCount < 0) {
+    throw refuse(422, "invalid_request", "Send all: true with the eligible count you confirmed.")
+  }
+  return { kind: "all", expectedCount }
+}
+
+effect function optIn(githubId: string) {
+  if (!(try sameOriginWrite())) throw refuse(403, "origin_forbidden", "")
+  const body = try strictBody(Schema.Record(Schema.String, Schema.Unknown), maxBodyBytes)
+  const choice = try parseOptIn(body)
+  try refuseClosed(githubId)
+  try refuseBanned(githubId)
+  if (!(try isTrue(enabledSql(githubId)))) throw refuse(409, "licensing_off", "Turn trace licensing on before opting traces in.")
+  const runIdsJson = choice.kind === "chosen" ? JSON.stringify(choice.runIds) : undefined
+  if (choice.kind === "chosen" && runIdsJson !== undefined) {
+    const owned = try first(OwnedRow, sql`SELECT count(*) AS n, count(CASE WHEN terms_version = ${termsVersion} THEN 1 END) AS current FROM trace_runs WHERE github_user_id = ${githubId} AND state = 'finalized' AND id IN (SELECT value FROM json_each(${runIdsJson}))`)
+    if ((owned?.n ?? 0) !== choice.runIds.length) throw refuse(404, "run_not_found", "A run is not one of your finalized traces.")
+    if ((owned?.current ?? 0) > 0 && (try readSetting(githubId)).confirmedTermsVersion !== termsVersion) {
+      throw refuse(409, "confirm_again", "Confirm licensing again under the current terms before licensing these traces.")
+    }
+  }
+  const eligible = eligibleRunsSql(githubId, runIdsJson)
+  const counted = try first(CountRow, sql`SELECT count(*) AS n FROM (${eligible})`)
+  const expected = choice.kind === "chosen" ? (counted?.n ?? 0) : choice.expectedCount
+  if (choice.kind === "all" && (counted?.n ?? 0) !== expected) {
+    throw refuse(409, "count_changed", "The number of eligible traces changed. Review the list and confirm again.")
+  }
+  if (expected === 0) return { licensed: 0 }
+  const now = try isoNow()
+  const guard = sql`(SELECT count(*) FROM (${eligible})) = ${expected} AND ${enabledSql(githubId)} AND NOT ${bannedSql(githubId)} AND NOT ${closedSql(githubId)}`
+  const [written] = try (try D1).batch([
+    sql`INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at) SELECT ${githubId}, 'opted_in', ${termsVersion}, ${expected}, ${now} WHERE ${guard}`,
+    sql`INSERT INTO trace_licence_events (run_id, github_id, kind, reason, account_event_id, at) SELECT eligible.run_id, ${githubId}, 'granted', 'opt_in', ${latestEventSql(githubId, "opted_in")}, ${now} FROM (${eligible}) eligible WHERE ${guard}`,
+    sql`INSERT INTO trace_licences (run_id, github_id, state, basis, updated_at)
+      SELECT granted.run_id, granted.github_id, 'licensed', 'opt_in', ${now}
+      FROM trace_licence_events granted
+      WHERE granted.account_event_id = ${latestEventSql(githubId, "opted_in")}
+        AND granted.github_id = ${githubId} AND granted.kind = 'granted' AND granted.reason = 'opt_in' AND granted.at = ${now}
+        AND NOT EXISTS (SELECT 1 FROM trace_licence_events later WHERE later.run_id = granted.run_id AND later.id > granted.id)
+        AND ${enabledSql(githubId)} AND NOT ${bannedSql(githubId)} AND NOT ${closedSql(githubId)}
+      ON CONFLICT (run_id) DO UPDATE SET state = 'licensed', basis = 'opt_in', updated_at = excluded.updated_at
+      WHERE trace_licences.state = 'withdrawn'`,
+  ])
+  if ((written?.changes ?? 0) !== 1) {
+    try refuseClosed(githubId)
+    try refuseBanned(githubId)
+    if (!(try isTrue(enabledSql(githubId)))) throw refuse(409, "licensing_off", "Turn trace licensing on before opting traces in.")
+    throw refuse(409, "count_changed", "The number of eligible traces changed. Review the list and confirm again.")
+  }
+  return { licensed: expected }
+}
+
+export const traceLicensingRoutes = Layer.mergeAll(
+  handleRaw(tracesMeRoute, (input) => withBusyD1(effect {
+    try refuseClosed(input.actor.githubId)
+    return json(try listTraces(input.query, input.actor.githubId))
+  })),
+  handleRaw(traceLicensingRoute, (input) => withBusyD1(effect {
+    return json(try changeSetting(input.actor.githubId))
+  })),
+  handleRaw(traceLicencesRoute, (input) => withBusyD1(effect {
+    return json(try optIn(input.actor.githubId))
+  })),
+  methodNotAllowed([tracesMeRoute], succeed(json({ error: "method_not_allowed" }, 405, { allow: "GET" }))),
+  methodNotAllowed([traceLicensingRoute], succeed(json({ error: "method_not_allowed" }, 405, { allow: "PUT" }))),
+  methodNotAllowed([traceLicencesRoute], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST" }))),
+)

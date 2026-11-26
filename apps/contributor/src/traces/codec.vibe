@@ -5,6 +5,8 @@ import { intakeOf, secondsAt } from "./facts.vibe"
 
 export schema TraceContentType = "text/plain" | "application/x-ndjson"
 
+export schema TraceTermsVersion = "private-trace-v1" | "private-trace-v2" | "private-trace-v3"
+
 export schema StoredRunState = "awaiting_trace" | "trace_uploaded" | "finalized"
 
 export schema StoredEventKind = "run_started" | "task_selected" | "work_started" | "checkpoint" | "pull_request_opened" | "review_requested" | "merged" | "run_completed" | "run_failed"

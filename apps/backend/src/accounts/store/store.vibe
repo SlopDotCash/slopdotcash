@@ -189,6 +189,10 @@ effect function writesOf(intent: Intent, event: Event, loaded: Loaded, next: Acc
       sql`UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE recipient_github_id = ${githubId} AND state IN ('queued', 'retrying')`,
       sql`UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE recipient_github_id = ${githubId} AND state IN ('queued', 'retrying')`,
       sql`DELETE FROM points_sessions WHERE actor_id = ${actor}`,
+      sql`INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at) SELECT ${githubId}, 'account_closed', 'private-trace-v2', (SELECT count(*) FROM trace_licences WHERE github_id = ${githubId} AND state = 'licensed'), ${at} WHERE EXISTS (SELECT 1 FROM points_members WHERE github_id = ${githubId} AND closed_at IS NOT NULL) AND (EXISTS (SELECT 1 FROM trace_licensing_settings WHERE github_id = ${githubId} AND enabled = 1) OR EXISTS (SELECT 1 FROM trace_licences WHERE github_id = ${githubId} AND state = 'licensed'))`,
+      sql`INSERT INTO trace_licence_events (run_id, github_id, kind, reason, account_event_id, at) SELECT licence.run_id, licence.github_id, 'withdrawn', 'account_closed', (SELECT MAX(event.id) FROM trace_licensing_events event WHERE event.github_id = ${githubId} AND event.kind = 'account_closed'), ${at} FROM trace_licences licence WHERE licence.github_id = ${githubId} AND licence.state = 'licensed' AND EXISTS (SELECT 1 FROM points_members WHERE github_id = ${githubId} AND closed_at IS NOT NULL)`,
+      sql`UPDATE trace_licences SET state = 'withdrawn', updated_at = ${at} WHERE github_id = ${githubId} AND state = 'licensed' AND EXISTS (SELECT 1 FROM points_members WHERE github_id = ${githubId} AND closed_at IS NOT NULL)`,
+      sql`UPDATE trace_licensing_settings SET enabled = 0, changed_at = ${at} WHERE github_id = ${githubId} AND enabled = 1 AND EXISTS (SELECT 1 FROM points_members WHERE github_id = ${githubId} AND closed_at IS NOT NULL)`,
     ]
     case "startX": return [
       sql`DELETE FROM points_x_flows WHERE actor_id = ${actor} OR expires_at <= ${at}`,
