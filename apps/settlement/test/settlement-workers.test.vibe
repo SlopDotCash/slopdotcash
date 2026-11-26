@@ -223,6 +223,34 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
     })
   }, 180_000)
 
+  it.effect('Staging Pages can reach ordinary Solana devnet binding through the test signer only (spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature")', () => effect {
+    const script = try promise(() => bundle(root, { entry: "attester" }))
+    const pins = JSON.stringify([{ projectId: "entrypoint-isolation" }])
+    const vars = {
+      SIGNER_STACK: "test",
+      SLOP_ENVIRONMENT: "staging",
+      PAYMENT_NETWORK: "solana-devnet",
+      PAYMENT_RPC_URLS: "{}",
+      PAYMENT_DEPLOYMENTS: pins,
+      SECURITY_PAYMENT_DEPLOYMENTS: pins,
+    }
+    const staging = try behindPages(script, vars)
+    const mismatched = try behindPages(script, { ...vars, PAYMENT_NETWORK: "solana-mainnet" })
+    const answers = {
+      prepare: try posted(staging, "/v1/pay", "{}"),
+      complete: try posted(staging, "/v1/complete-bind", "{}"),
+      privatePrepare: try posted(staging, "/v1/security/pay", "{}"),
+      privateComplete: try posted(staging, "/v1/security/complete-bind", "{}"),
+      release: try posted(staging, "/v1/monthly-reserve-release", "{}"),
+      read: try posted(staging, "/v1/pay", "", "GET"),
+      wrongNetwork: try posted(mismatched, "/v1/pay", "{}"),
+    }
+    try same({ statuses: Object.fromEntries(Object.entries(answers).map(([name, response]) => [name, response.status])), outbound: [...staging.seen, ...mismatched.seen] }, {
+      statuses: { prepare: 409, complete: 409, privatePrepare: 404, privateComplete: 404, release: 404, read: 404, wrongNetwork: 404 },
+      outbound: [],
+    })
+  }, 180_000)
+
   it.effect('A payments run whose dispatch step fails still runs every other step and reports the failure; with an executor it succeeds without contacting it (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work")', () => effect {
     const script = try promise(() => bundle(root, { entry: "payments" }))
     const chain = try acquireRelease(promise(() => anvil({ chainId: 84532, finalityDepth: 2 })), (started) => promise(() => started.close()))

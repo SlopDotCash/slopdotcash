@@ -384,6 +384,12 @@ mainnet (owner activation of 24 October 2026); a later reviewed activation
 changes `reviewedActivation`, not these rules. A configuration naming a test
 network activates nothing.
 
+Staging Pages uses the reviewed Solana devnet test attester for ordinary
+binding preparation and completion. The binding entrypoint refuses private
+binding paths on the test stack. Production Pages uses the mainnet attester
+for ordinary and private binding, subject to the corresponding deployment
+pins.
+
 ```quint
 type Stack = TestStack | ProductionStack
 type ServiceNetwork = BaseMainnet | EthereumMainnet | RobinhoodMainnet | SolanaMainnet | BaseSepolia | RobinhoodTestnet | EthereumSepolia | SolanaDevnet | SolanaTestnet

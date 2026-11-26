@@ -31408,7 +31408,7 @@
     },
     {
       "path": "spec/settlement/signer.md",
-      "sha256": "7c2d8dd8328e08c76ac3d6126c82640deea44da74efd4cf7398bab65fd57c3e4",
+      "sha256": "a165db8d1e75997464ce8a4f8ca2dac90f7cccca96ce933dd78875817145761e",
       "module": "settlement__signer",
       "stories": [
         {
@@ -31601,7 +31601,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 410,
+          "line": 416,
           "definitions": [
             "actorValues",
             "attemptValues",
