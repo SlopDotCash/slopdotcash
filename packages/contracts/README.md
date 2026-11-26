@@ -49,33 +49,40 @@ or checked after every call of Foundry's invariant campaigns.
 | One allocation root per period, within the period's cap: the larger of the monthly cap and its open pledge | `MonthlyCommitment`, `MonthPledge` tests | unit and fuzz tests |
 | A release returns the whole admitted reserve, once | `MonthlyReserveV2` tests | unit tests |
 | No division by zero, overflow or underflow in the checked steps of the monthly window and the current period | `MonthlyCalendar` | proved (BMC) |
-| `monthlyWindow` refuses exactly the periods outside 200001 to 999912, so a valid window never opens at zero | `EscrowLemmas.onlyAnInvalidPeriodHasNoWindow` | CHC |
-| A window opens before it closes, and the next period's window opens when it closes: window starts strictly increase per period | `EscrowLemmas.windowStartIncreasesPerPeriod` | CHC |
-| `currentPeriod` is a calendar month | `EscrowLemmas.periodIsACalendarMonth` | CHC |
+| `monthlyWindow` refuses exactly the periods outside 200001 to 999912, so a valid window never opens at zero | `CalendarLemmas.onlyAnInvalidPeriodHasNoWindow` | proved (BMC, single-lemma z3 4.12.5 run; opt-in profile) |
+| A window opens before it closes, and the next period's window opens when it closes: window starts strictly increase per period | `CalendarLemmas.windowStartIncreasesPerPeriod` | BMC, not finished |
+| `currentPeriod` is a calendar month for every time before year 42949673, from which YYYYMM no longer fits in `uint32` | `CalendarLemmas.periodIsACalendarMonth` | BMC, not finished |
 | Every window and current period is development's: years 2000 to 2899 and 9100 to 9999, the second before, at and a day after every month start from 1970 to 2800, and fuzzed periods and times | `MonthlyCommitment` `...Development...` tests | unit and fuzz tests |
 | No overflow or underflow in a referral claim | `ReferralClaims` | proved (BMC) |
-| A payable claim pays the cumulative less what the account claimed, and the claimed total never exceeds the root's total | `ReferralLemmas.claimNeverExceedsTotal` | CHC |
-| The root's remainder after a payable claim, `total - (totalClaimed + amount)`, is never negative | `ReferralLemmas.remainingIsNeverNegative` | CHC |
-| A claim is refused only when nothing is new, it exceeds the total, or the claimed total would overflow | `ReferralLemmas.refusesOnlyWhatDoesNotFit` | CHC |
+| A payable claim pays the cumulative less what the account claimed, and the claimed total never exceeds the root's total | `ReferralLemmas.claimNeverExceedsTotal` | proved (CHC) |
+| The root's remainder after a payable claim, `total - (totalClaimed + amount)`, is never negative | `ReferralLemmas.remainingIsNeverNegative` | proved (CHC) |
+| A claim is refused only when nothing is new, it exceeds the total, or the claimed total would overflow | `ReferralLemmas.refusesOnlyWhatDoesNotFit` | proved (CHC) |
 | `claim` and `claimable` answer, pay and revert exactly as development's inline arithmetic | `ReferralDistributor` `...Development...` tests | fuzz tests |
 
 `test` runs two checks in `evm/`, each with `--force`, so a cached build never
 skips the check, and `--deny warnings`, so a violated or unproved target fails
 the run. The `smt` profile checks `src/EscrowMath.sol`, `src/MonthlyCalendar.sol`
-and `src/ReferralClaims.sol` with BMC: the libraries have no loops or calls, so
-BMC explores every path for every input. The `smt_chc` profile proves with CHC
-the lemmas of `test/smt/EscrowLemmas.sol` and `test/smt/ReferralLemmas.sol`,
-contracts that are never deployed and call the same internal library
-functions that `ProjectEscrow` and `ReferralDistributor` inline. Both run under
-the solver's deterministic resource limit.
+and `src/ReferralClaims.sol` with BMC under the solver's deterministic resource
+limit: the libraries have no loops or calls, so BMC explores every path for
+every input. The `smt_chc` profile proves with CHC, under the solver's
+deterministic resource limit, the lemmas of `test/smt/EscrowLemmas.sol` and
+`test/smt/ReferralLemmas.sol`. The separate opt-in `smt_calendar` profile checks
+`test/smt/CalendarLemmas.sol` with BMC and no solver limit (`timeout = 0`, run via
+`FOUNDRY_PROFILE=smt_calendar forge build --force --deny warnings test/smt/CalendarLemmas.sol`);
+it is kept out of `pnpm test` and CI because solc encodes narrowing conversions
+such as `uint32(x)` with `int2bv`, and z3 needs hours for the calendar lemmas: a
+standalone single-lemma `z3 4.12.5` run proved `onlyAnInvalidPeriodHasNoWindow`
+in 97 minutes (not the default CI solver or profile), while the other two lemmas
+remain unfinished. All three lemma contracts are never deployed and call the same
+internal library functions that `ProjectEscrow` and `ReferralDistributor` inline.
 
 The SMTChecker does not check `unchecked` arithmetic. `MonthlyCalendar` leaves
 unchecked only divisions, and sums and products of values that its `uint64`
 and `uint32` inputs keep below 2^100: checking them put `ProjectEscrow` over
 the size limit. `currentPeriod` takes the block time as `uint64`, the width of
 every EVM block header's timestamp. Its civil-from-days arithmetic is all of
-that kind, so BMC proves nothing about it and the equivalence tests with
-development's loop carry it. `ReferralClaims` reports a claimed total that
+that kind, so only `periodIsACalendarMonth` states anything about it, and the
+equivalence tests with development's loop carry it. `ReferralClaims` reports a claimed total that
 would overflow, and `ReferralDistributor` then reaches the same checked
 addition, so a claim reverts with the same panic as before.
 

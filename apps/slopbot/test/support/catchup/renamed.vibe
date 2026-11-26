@@ -46,6 +46,15 @@ export function requestedAtCurrentPath(deliveryId: string, number: number, recei
   ]
 }
 
+export function requestedAtFormerPath(deliveryId: string, number: number, receivedAt: string): ReadonlyArray<Statement> {
+  const [owner = "", repo = ""] = formerPath.split("/")
+  return [
+    sql`INSERT INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (${deliveryId}, 'pull_request', ${receivedAt})`,
+    sql`INSERT INTO slopbot_value_requests (delivery_id, installation_id, repository_id, owner, repo, pull_request_number, received_at)
+      VALUES (${deliveryId}, ${installationId}, ${repositoryId}, ${owner}, ${repo}, ${number}, ${receivedAt})`,
+  ]
+}
+
 type Fields = Readonly<Record<string, unknown>>
 
 function withBlobUrls(body: Fields) {
@@ -73,7 +82,7 @@ export effect function servedWithBlobUrls(world: World, sha: string) {
 }
 
 function census(world: World) {
-  return (body: Fields) => typeof body["data"] !== "object" || body["data"] === null || !("search" in body["data"]) ? body : ({
+  return (body: Readonly<Record<string, unknown>>) => typeof body["data"] !== "object" || body["data"] === null || !("search" in body["data"]) ? body : ({
     data: {
       search: {
         issueCount: pulls.length,
