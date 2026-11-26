@@ -10,27 +10,21 @@ type Copying = typeof CopyingModule;
 const label = "Copy address";
 const restAfter = 86_400_000;
 
-const clock = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
-const issued = new WeakSet<object>();
-const resting = new Map<object, () => void>();
-Object.assign(globalThis, {
-  setTimeout: (run: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
-    if (ms !== restAfter) return clock.setTimeout(run, ms, ...args);
-    const handle = {};
-    issued.add(handle);
-    resting.set(handle, run);
-    return handle;
-  },
-  clearTimeout: (handle: Parameters<typeof clock.clearTimeout>[0] | object) => {
-    if (typeof handle === "object" && handle !== null && issued.has(handle)) resting.delete(handle);
-    else clock.clearTimeout(handle as Parameters<typeof clock.clearTimeout>[0]);
+const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+const resting = new Set<AbortController>();
+Object.assign(AbortSignal, {
+  timeout: (ms: number) => {
+    if (ms !== restAfter) return originalTimeout(ms);
+    const controller = new AbortController();
+    resting.add(controller);
+    return controller.signal;
   },
 });
 
 const elapse = () => {
-  for (const [handle, run] of resting) {
-    resting.delete(handle);
-    run();
+  for (const controller of resting) {
+    resting.delete(controller);
+    controller.abort();
   }
 };
 

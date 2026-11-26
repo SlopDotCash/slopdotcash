@@ -44,7 +44,6 @@ export function FileField({ onFiles, file, preview, onRemove, chooseLabel = "Cho
           className="sr-only"
           onChange={(event) => {
             onFiles([...(event.target.files ?? [])]);
-            // The same file chosen again is a new choice.
             event.target.value = "";
           }}
           {...props}

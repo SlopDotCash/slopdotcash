@@ -3,6 +3,7 @@ import type { Fetcher } from "../../src/bindings.ts"
 import { type ServiceClient, serviceClient } from "../../src/binding.vibe"
 import { deploymentTier } from "../../src/config.vibe"
 import { webCrypto } from "../../src/crypto.vibe"
+import { DatabaseFailure } from "../../src/d1.vibe"
 import { ActorChanged, Bearers, Caller, SessionExpired, Unauthenticated, bytesBody, formBody, handle, handleRaw, json, preflight, refuse, serviceAuth, strictBody } from "../../src/http.vibe"
 import { route } from "../../src/route.vibe"
 import { Conflict } from "../../src/stored.vibe"
@@ -70,6 +71,9 @@ effect function saved(text: string, by: string) {
   if (text === "stale") throw new Conflict({ aggregate: "fixture notes", attempts: 3 })
   if (text === "rejected") throw new Rejected({ reason: "closed" })
   if (text === "github") throw new GitHubUnavailable({ status: 502 })
+  if (text === "busyDb") throw new DatabaseFailure({ operation: "all", message: "D1_ERROR: database is overloaded" })
+  if (text === "busyLock") throw new DatabaseFailure({ operation: "run", message: "D1_ERROR: database is locked: SQLITE_BUSY" })
+  if (text === "dbDefect") throw new DatabaseFailure({ operation: "all", message: "D1_ERROR: no such column: secret_col" })
   if (text === "refused") throw refuse(422, "note_invalid", "Notes must not say refused")
   if (text === "unmapped") throw new Unmapped({ detail: "private detail" })
   if (text === "defect") return try die(new Error("fixture defect"))

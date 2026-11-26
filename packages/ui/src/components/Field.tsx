@@ -16,7 +16,6 @@ export function useDescription(error?: ReactNode, hint?: ReactNode) {
   const ids = parts.map((part) => `${id}-${part}`);
   return {
     id,
-    // Only what is set, so a control's own `invalid` is not overridden by an absent error.
     control: { ...(invalid ? { "aria-invalid": true } : {}), ...(ids.length ? { "aria-describedby": ids.join(" ") } : {}) },
     messages: parts.map((part) =>
       part === "ErrorText" ? (

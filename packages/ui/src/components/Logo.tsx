@@ -10,7 +10,6 @@ const sizes = {
   header: ["gap-3 text-wordmark font-extrabold whitespace-nowrap max-md:text-wordmark-sm", "size-9", "max-sm:sr-only"],
 } as const;
 
-// The Slop mark keeps its published colors in either theme (design.md): another party's identity is not a role of the palette.
 // eslint-disable-next-line design-system/no-literal-colors -- the Slop mark's published orange and ink
 const marks = { default: { tile: "#ff5a19", ink: "#0f0e0c" }, inverse: { tile: "#0f0e0c", ink: "#ff5a19" } };
 

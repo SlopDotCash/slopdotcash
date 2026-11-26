@@ -27,9 +27,6 @@ export type NetworkMarkProps = Omit<ComponentProps<"span">, "children"> &
     decorative?: boolean;
   };
 
-// The marks and colors the Slop app shipped: another party's identity, not a role of this palette (design.md).
-// Robinhood Chain is its official compact symbol (docs.robinhood.com/chain/brand-guidelines). Base is "The Square"
-// (github.com/base-org/brand-kit, logo/TheSquare/Digital/Base_square_blue.svg at commit eba9e730).
 const brand = {
   // eslint-disable-next-line design-system/no-literal-colors -- Base "The Square" blue
   base: "#0000ff",
