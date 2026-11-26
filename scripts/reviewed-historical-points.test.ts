@@ -33,6 +33,7 @@ import {
   collectHistoricalSourceAudit,
   historicalAssessmentAuditInputs,
   historicalPointsSql,
+  historicalReplayRequiresCollection,
   historicalRepositoryReadDiagnostic,
   verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
@@ -957,6 +958,7 @@ test("protected assessment audit accepts exact read-only scope inputs", () => {
     sourceDigest: "a".repeat(64),
     expectedPointsDigest: "b".repeat(64),
     stageReview: false,
+    requireNoActive: false,
   });
   for (const change of [
     { HISTORICAL_POINTS_APPLY: "true" },
@@ -965,6 +967,8 @@ test("protected assessment audit accepts exact read-only scope inputs", () => {
     { HISTORICAL_SOURCE_AUDIT_SHA256: "" },
     { HISTORICAL_POINTS_BASELINE_SHA256: "x".repeat(64) },
     { HISTORICAL_ASSESSMENT_STAGE_REVIEW: "true" },
+    { HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE: "true" },
+    { HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE: "maybe" },
   ])
     expect(() =>
       historicalAssessmentAuditInputs({ ...inputs, ...change }),
@@ -985,6 +989,12 @@ test("private replay handoff requires opt-in and the exact trusted main workflow
       "SlopDotCash/slopdotcash/.github/workflows/reviewed-historical-points.yml@refs/heads/main",
   };
   expect(historicalAssessmentAuditInputs(env, true).stageReview).toBe(true);
+  expect(
+    historicalAssessmentAuditInputs(
+      { ...env, HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE: "true" },
+      true,
+    ),
+  ).toMatchObject({ stageReview: true, requireNoActive: true });
   expect(() => historicalAssessmentAuditInputs(env, false)).toThrow();
   for (const changed of [
     { GITHUB_WORKFLOW_SHA: "d".repeat(40) },
@@ -997,10 +1007,22 @@ test("private replay handoff requires opt-in and the exact trusted main workflow
     { REVIEWED_PACKET_SHA256: "d".repeat(64) },
     { HISTORICAL_POINTS_APPLY: "true" },
     { HISTORICAL_ASSESSMENT_STAGE_REVIEW: "maybe" },
+    { HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE: "maybe" },
   ])
     expect(() =>
       historicalAssessmentAuditInputs({ ...env, ...changed }, true),
     ).toThrow();
+});
+
+test("a separate catalog replay can only qualify a complete scope without active assessments", () => {
+  expect(
+    historicalReplayRequiresCollection("no-scoped-active-assessments", true),
+  ).toBe(false);
+  expect(
+    historicalReplayRequiresCollection("requires-value-replay", false),
+  ).toBe(true);
+  for (const status of ["incomplete", "requires-value-replay"] as const)
+    expect(() => historicalReplayRequiresCollection(status, true)).toThrow();
 });
 
 test("assessment census yields stable digest ordering and refuses duplicate PR numbers", async () => {
@@ -3762,7 +3784,7 @@ test("historical publication installs the canonical merge runtime before verific
     ),
   ).text();
   expect(workflow).toContain(
-    "inputs.operation == 'replay-assessments' && 360 || 90",
+    "inputs.operation == 'replay-assessments' && !inputs.require_no_active_assessments && 360 || 90",
   );
   const install = workflow.indexOf(
     'scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"',
@@ -3776,7 +3798,7 @@ test("historical publication installs the canonical merge runtime before verific
     '"$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"',
   );
   expect(workflow).toContain(
-    "inputs.operation == 'replay-assessments' && 'slop-quality-refs/heads/main-collect' || 'slop-production'",
+    "inputs.operation == 'replay-assessments' && (inputs.require_no_active_assessments && 'slop-historical-catalog-replay' || 'slop-quality-refs/heads/main-collect') || 'slop-production'",
   );
   const preflight = workflow.slice(
     workflow.indexOf("audit-assessments|replay-assessments)"),
@@ -3791,6 +3813,9 @@ test("historical publication installs the canonical merge runtime before verific
     workflow.indexOf("name: Preserve the assessment audit receipt"),
   );
   expect(reading).toContain('"--$OPERATION"');
+  expect(reading).toContain(
+    `HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE: \${{ inputs.require_no_active_assessments }}`,
+  );
   expect(reading).toContain(
     `PRIVATE_PACKET_ENCRYPTION_KEY: \${{ inputs.operation == 'replay-assessments' && inputs.stage_review_handoff && secrets.PRIVATE_PACKET_ENCRYPTION_KEY || '' }}`,
   );

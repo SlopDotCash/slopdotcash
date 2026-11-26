@@ -1519,6 +1519,8 @@ export function historicalAssessmentAuditInputs(
   const sourceDigest = env.HISTORICAL_SOURCE_AUDIT_SHA256 ?? "";
   const expectedPointsDigest = env.HISTORICAL_POINTS_BASELINE_SHA256 ?? "";
   const review = env.HISTORICAL_ASSESSMENT_STAGE_REVIEW ?? "false";
+  const requireNoActive =
+    env.HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE ?? "false";
   if (
     !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(projectId) ||
     ![sourceDigest, expectedPointsDigest].every((digest) =>
@@ -1526,6 +1528,10 @@ export function historicalAssessmentAuditInputs(
     )
   )
     throw Error("Assessment audit requires exact scope and baseline digests");
+  if (requireNoActive !== "false" && (requireNoActive !== "true" || !replay))
+    throw Error(
+      "The no-active-assessments requirement needs a read-only replay",
+    );
   if (
     review !== "false" &&
     (review !== "true" ||
@@ -1542,6 +1548,7 @@ export function historicalAssessmentAuditInputs(
     sourceDigest,
     expectedPointsDigest,
     stageReview: review === "true",
+    requireNoActive: requireNoActive === "true",
   };
 }
 
@@ -1578,13 +1585,27 @@ export function historicalRepositoryReadDiagnostic(error: unknown) {
   }
 }
 
+export function historicalReplayRequiresCollection(
+  status: HistoricalAssessmentReceipt["status"],
+  requireNoActive: boolean,
+): boolean {
+  if (requireNoActive && status !== "no-scoped-active-assessments")
+    throw Error("Active assessments require the shared collector replay");
+  return status === "requires-value-replay";
+}
+
 async function auditHistoricalAssessments(
   setPhase: (phase: PublicationPhase) => void,
   verifyMain: () => Promise<void>,
   replay: boolean,
 ): Promise<void> {
-  const { projectId, sourceDigest, expectedPointsDigest, stageReview } =
-    historicalAssessmentAuditInputs(process.env, replay);
+  const {
+    projectId,
+    sourceDigest,
+    expectedPointsDigest,
+    stageReview,
+    requireNoActive,
+  } = historicalAssessmentAuditInputs(process.env, replay);
 
   setPhase("historical registry pair read");
   const registry = await fetchProjectRegistry();
@@ -1705,7 +1726,10 @@ async function auditHistoricalAssessments(
   let replayResult: HistoricalReplayReceipt["replay"] | undefined;
   let valueSnapshot: HistoricalPointsPacket["valueSnapshot"] = null;
   let valueKeys: HistoricalPointsPacket["valueKeys"] = [];
-  if (replay && receipt.status === "requires-value-replay") {
+  if (
+    replay &&
+    historicalReplayRequiresCollection(receipt.status, requireNoActive)
+  ) {
     setPhase("historical assessment replay");
     const { generateHistoricalLeaderboardFromGitHub, GitHubGraphqlClient } =
       await import("./generate-leaderboard");

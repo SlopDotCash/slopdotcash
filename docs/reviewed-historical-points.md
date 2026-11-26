@@ -61,6 +61,14 @@ transport. It verifies a complete readback and rechecks the live checkpoints
 before it writes `receipt.json`. The Actions artifact contains the sanitized
 receipt with transport sizes and digests. The bundle stays in encrypted storage.
 
+When the project is expected to have no active assessments in the selected scope,
+set `require_no_active_assessments=true` on the read-only replay to use the
+separate catalog queue. The protected workflow still reads and reconciles the
+complete catalog and repository census, verifies the Points and registry
+checkpoints, and stages the same qualified handoff. If active assessments
+require value replay, the run stops before starting the collector. Use the
+normal replay for that scope.
+
 An authorized operator downloads `receipt.json` from the exact successful
 canonical main replay run and attempt. With the existing private packet account
 credentials and encryption key provisioned in the environment, use
