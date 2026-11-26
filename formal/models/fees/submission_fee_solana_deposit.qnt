@@ -21,7 +21,9 @@
 // `published` is the program id in the reviewed table and `mode` the Solana
 // ledger's own switch; with either off nothing is read or signed. `at` is
 // what the address holds: nothing, A or B. `a` is A's state on chain. The
-// Worker reads only finalized state, so reading and recording are one step.
+// Worker records only from finalized state, so reading and recording are one
+// step. What a transaction that landed and failed does to later sends is the
+// model submission_fee_solana_failed_send.
 // `row` is A's row. `known` is whether A is of the table's mint with the fee
 // wallet as kept wallet: the endpoint lists only such records, so any other
 // deposit is never fetched or recorded. `counts` is the pure rule fixed at

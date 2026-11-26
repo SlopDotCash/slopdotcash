@@ -366,6 +366,12 @@ into the `slop-submission-deposits` program
 deployed: its id and start slot in `src/lib/submission-fee.mjs` are null,
 and while they are null nothing here reads or signs on Solana in any mode.
 
+The Solana ledger's own configuration is read apart from the EVM ledgers'
+(operator decision, 26 November 2026): when its mode is `dry_run` or `live`
+and its endpoint or a lamport limit is missing or malformed, the run reports
+`solana-mainnet` as a failed network (reason `config.solana/TypeError`) and
+Base and Robinhood Chain still run.
+
 The Solana ledger is `solana-mainnet`. It has its own switch,
 `SUBMISSION_FEE_SOLANA_MODE` (`off`, `dry_run`, `live`), with the meanings of
 the table under "Modes", independent of `SUBMISSION_FEE_MODE`. It ships
@@ -454,7 +460,24 @@ What differs from the EVM ledgers (`solana-core.ts`, `solana.ts`,
   is of that mint, is still the payer's and is not frozen (the same for the
   fee wallet's before a kept fee); otherwise the deposit is parked as under
   "A payout the token refuses" and looked at again a day later. The Worker
-  never creates a token account.
+  never creates a token account. Those destination accounts and the
+  simulation are read at `confirmed` commitment, about a second old, not
+  `finalized`; nothing is recorded from them.
+- **A send that landed and failed** (operator decision, 26 November 2026).
+  A payer can still close their token account between the simulation and
+  the block, and the whole transaction then fails on chain with reason
+  `resolve transaction failed`. Every deposit of such a send is from then on
+  sent in a transaction of its own, the first in line each run, so it cannot
+  fail another deposit's refund again. A deposit whose own single send
+  landed and failed is parked (`submission_fee_parked`, reason
+  `reverted_alone`) before the send is marked failed, looked at again a day
+  later like every parked deposit, and from then on sent after every other
+  deposit and only while less than half of the day's lamport limit is spent
+  (`submission_fee_solana_failed_alone_waits`). Deposits that were in no
+  failed send still go five to a transaction. One send is in flight at a
+  time and a run starts at most one, so sending singly never raises the
+  number of transactions a day (at most 288, one per run); a failed send
+  pays its network fee and counts in the day's lamports.
 - **The journal.** Sends are in `submission_fee_solana_sends`. The signed
   bytes are recorded before the broadcast and resent unchanged while their
   blockhash can still land. A send is failed only when the finalized chain

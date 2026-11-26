@@ -44,7 +44,7 @@ import {
   type SendState,
   type StandingRow,
 } from "./core";
-import { SOLANA_EXPIRED } from "./solana";
+import { SOLANA_EXPIRED, SOLANA_LANDED_FAILED } from "./solana";
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -1258,6 +1258,34 @@ export class D1SolanaFeeStore extends D1FeeStore {
       .bind(network, limit)
       .all<{ deposit_id: number }>();
     return new Set(results.map((row) => row.deposit_id));
+  }
+
+  /**
+   * Deposits with something still due that were in a send which landed and
+   * failed on chain. `together`: every such deposit. `alone`: those whose
+   * own single send failed. Bounded by the deposits still due.
+   */
+  async solanaFailedOnChain(network: string) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT d.deposit_id,
+                MAX(json_array_length(s.deposits) = 1) AS alone
+           FROM submission_fee_solana_sends s, json_each(s.deposits) j
+           JOIN submission_fee_deposits d
+             ON d.network = s.network AND d.deposit_id = json_extract(j.value, '$.id')
+          WHERE s.network = ? AND s.mode = 'live' AND s.state = 'failed'
+            AND s.reason = '${SOLANA_LANDED_FAILED}'
+            AND d.state IN ('refund_due', 'kept_due')
+          GROUP BY d.deposit_id`,
+      )
+      .bind(network)
+      .all<{ deposit_id: number; alone: number }>();
+    return {
+      together: new Set(results.map((row) => row.deposit_id)),
+      alone: new Set(
+        results.filter((row) => row.alone === 1).map((row) => row.deposit_id),
+      ),
+    };
   }
 
   /** Lamports of network fees the resolver's sends of this UTC day paid. */

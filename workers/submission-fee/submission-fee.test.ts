@@ -18,6 +18,7 @@ import { D1BuybackStore } from "../fee-converter/buyback-store";
 import {
   type NetworkConfig,
   parseConfig,
+  parseSolanaConfig,
   type SubmissionFeeConfig,
 } from "./config";
 import {
@@ -1400,6 +1401,59 @@ describe("the switch", () => {
           error: "submission_fee_operation_failed",
         },
         { network: NETWORK, status: "ran" },
+      ],
+    });
+  });
+
+  test("a Solana configuration error fails the Solana ledger only", async () => {
+    const t = setup();
+    // The Solana ledger is switched on with no endpoint and no lamport
+    // limits: its own configuration cannot be read.
+    const result = await runDeposits(
+      { ...env("dry_run", t.db), SUBMISSION_FEE_SOLANA_MODE: "live" },
+      undefined,
+      {
+        config: local,
+        chain: () => t.chain,
+        solanaConfig: () =>
+          parseSolanaConfig(
+            { SUBMISSION_FEE_SOLANA_MODE: "live" },
+            {
+              network: "solana-mainnet",
+              programId: "11111111111111111111111111111111",
+              startSlot: 1,
+            },
+          ),
+      },
+    );
+    expect(result).toMatchObject({
+      status: "ran",
+      mode: "dry_run",
+      networks: [
+        { network: NETWORK, status: "ran" },
+        {
+          network: "solana-mainnet",
+          error: "submission_fee_invalid_input",
+          reason: "config.solana/TypeError",
+        },
+      ],
+    });
+    // With the EVM ledgers off, the same error is still reported, not thrown.
+    expect(
+      await runDeposits(
+        { ...env("off", t.db), SUBMISSION_FEE_SOLANA_MODE: "dry_run" },
+        undefined,
+        {
+          solanaConfig: () => {
+            throw new TypeError("lamports");
+          },
+        },
+      ),
+    ).toMatchObject({
+      status: "ran",
+      mode: "off",
+      networks: [
+        { network: "solana-mainnet", error: "submission_fee_invalid_input" },
       ],
     });
   });

@@ -10799,30 +10799,32 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "sha256": "f7c8f6529d465892bdac52ab88580948399d700d197235c3e2006029fa8efc5b",
+      "sha256": "cffe8b25cbd837805d6a8f6ec185bcd9729824446849b97c94f653a354b13a19",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "candidateLines": [
         5, 63, 125, 142, 161, 177, 204, 205, 211, 217, 242, 254, 265, 313, 329,
         382, 456, 467, 478, 479, 482, 494, 515, 560, 561, 569, 570, 577, 580,
-        597, 625, 642, 645, 675, 791, 840, 866, 872, 873, 903, 932, 935, 936,
-        938, 940, 942, 950, 951, 957, 966, 972, 1033, 1034, 1050, 1112, 1124,
-        1161, 1187, 1205, 1217, 1230
+        597, 625, 642, 645, 675, 791, 840, 866, 872, 873, 903, 937, 940, 941,
+        943, 945, 947, 954, 956, 957, 963, 972, 978, 1039, 1040, 1056, 1118,
+        1130, 1167, 1193, 1211, 1223, 1236
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "sha256": "93d7e98e3b6b989e67a4b2431b659c863a2e8d9824a4e685d503ee7fdfb4f2c4",
+      "sha256": "967cacdf5a93ed70246b3525250218676eaad61c56e71361ff03a0464a4fdd9c",
       "models": [
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt",
-        "formal/models/fees/submission_fee_solana_deposit.qnt"
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
-      "candidateLines": [82, 83, 85, 116, 123, 136, 242, 306],
+      "candidateLines": [85, 86, 88, 119, 144, 157, 264, 328],
       "review": "mapped-abstraction"
     },
     {
@@ -10841,19 +10843,27 @@
     },
     {
       "path": "workers/submission-fee/solana-core.ts",
-      "sha256": "74b1f8f45a2202e31a736afeaecfcc7c4fe36b00696b127e37650d9eb3f93255",
-      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
-      "candidateLines": [10, 19, 45, 46, 89, 179, 384, 386, 510, 529, 558, 560],
+      "sha256": "2bd55b2980c7eb5a105fced44e410824613c1b9a57a6b1f200059567c3a588bc",
+      "models": [
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
+      ],
+      "candidateLines": [
+        10, 19, 45, 46, 57, 105, 195, 400, 402, 581, 600, 629, 631
+      ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/submission-fee/solana.ts",
-      "sha256": "9389cca61ed51d638054f32d01bd49f8941d23646dd1a9a53767d97398ea57b3",
-      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
+      "sha256": "87b21b984d42ff54b6ce28b7a1dd1476f98b72f015ebd2875418519600be85a2",
+      "models": [
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
+      ],
       "candidateLines": [
-        5, 82, 90, 104, 111, 113, 133, 138, 184, 189, 193, 281, 296, 330, 348,
-        433, 527, 595, 733, 805, 814, 878, 887, 888, 889, 904, 908, 911, 912,
-        913, 915
+        5, 82, 90, 104, 111, 113, 133, 138, 184, 189, 195, 199, 287, 306, 340,
+        358, 444, 541, 609, 747, 819, 828, 892, 901, 902, 903, 918, 922, 925,
+        926, 927, 929
       ],
       "review": "mapped-abstraction"
     },
@@ -10866,22 +10876,23 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "sha256": "9ba174eede6f821eb352db8e2f5137c9477c8774d6189cf5877e01156db7800b",
+      "sha256": "5a01df9545cd7b11f500c747e7bb2fea061e694e3f0de65bc47abc21b66559b1",
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt",
-        "formal/models/fees/submission_fee_solana_deposit.qnt"
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "candidateLines": [
         63, 90, 118, 193, 227, 244, 246, 248, 263, 288, 403, 422, 424, 427, 442,
         447, 459, 470, 476, 477, 504, 513, 590, 612, 634, 660, 702, 703, 727,
         728, 761, 764, 796, 808, 812, 814, 816, 823, 834, 892, 899, 901, 909,
         916, 917, 924, 934, 963, 972, 973, 977, 1011, 1044, 1064, 1085, 1096,
-        1125, 1185, 1209, 1210, 1217, 1229, 1240, 1241, 1255, 1298, 1300, 1318,
-        1347, 1395, 1415, 1480, 1487, 1489, 1498, 1505, 1509, 1534, 1543, 1544,
-        1548
+        1125, 1185, 1209, 1210, 1217, 1229, 1240, 1241, 1255, 1276, 1278, 1326,
+        1328, 1346, 1375, 1423, 1443, 1508, 1515, 1517, 1526, 1533, 1537, 1562,
+        1571, 1572, 1576
       ],
       "review": "mapped-abstraction"
     },
@@ -15296,7 +15307,7 @@
     },
     {
       "path": "formal/models/fees/submission_fee_solana_deposit.qnt",
-      "sha256": "604b7c08986fe1a86b7e4d2489a2471d86325dd6ea17d6ca835594a9c55ccfb5",
+      "sha256": "f0a8298a34f937d5181cf14f8d76def31b6741aaeb6db0a9532fb7f89460cc01",
       "sources": [
         "contracts/solana/submission-deposits.ts",
         "migrations/0155_submission_fee_solana.sql",
@@ -15330,6 +15341,29 @@
         "unlistedDepositIsNeverRecordedTest",
         "unpublishedTakesNoDepositTest",
         "unusableAccountParksTest"
+      ]
+    },
+    {
+      "path": "formal/models/fees/submission_fee_solana_failed_send.qnt",
+      "sha256": "902cbe4d41bc4e6b20cc44cf4d83294ad50f2bcad6d097aa27b9e10ea32aea58",
+      "sources": [
+        "workers/submission-fee/core.ts",
+        "workers/submission-fee/index.ts",
+        "workers/submission-fee/solana-core.ts",
+        "workers/submission-fee/solana.ts",
+        "workers/submission-fee/store.ts"
+      ],
+      "scenarios": [
+        "badOneIsParkedOthersRefundedTest",
+        "closedAtSimulationParksAndOtherGoesTest",
+        "closedAtSimulationSignsNothingTest",
+        "failedAloneGoesLastTest",
+        "failedBatchThenSinglesTest",
+        "parkedRetriedAfterADayTest",
+        "parkedWaitsADayTest",
+        "solanaConfigErrorLeavesEvmRunningTest",
+        "solanaOffIsInertTest",
+        "togetherWhenNothingFailedTest"
       ]
     },
     {
