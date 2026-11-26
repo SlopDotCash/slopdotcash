@@ -2291,6 +2291,12 @@
           "rules": [
             "Story: Rebuild /data/record.json on every release while preserving prior records and receipts / Every release rebuilds /data/record.json without failing the release and never drops a published receipt"
           ]
+        },
+        {
+          "spec": "spec/frontend/recordPages.md",
+          "rules": [
+            "Story: Read the public record and published payout receipts without mistaking failure for an empty record / A failed record read shows unavailable with retry and never empty receipts, and remount drops pending answers"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
