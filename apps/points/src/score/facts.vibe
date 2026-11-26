@@ -337,6 +337,26 @@ export interface ReviewExclusion {
   readonly reviewer?: Actor
 }
 
+export interface OmittedReviewCredit {
+  readonly id: string
+  readonly reviewId: string
+  readonly pullRequestId: string
+  readonly pullRequestNumber: number
+  readonly repository: string
+  readonly reviewer: Actor
+  readonly scoreThirds: number
+  readonly submittedAt: string
+  readonly url: string
+  readonly scoreDecisionSourceId: string
+  readonly scoreDecisionAt?: string
+  readonly reason: string
+}
+
+export interface JointUnitPublication {
+  readonly coveredPullRequestIds: ReadonlySet<string>
+  readonly complete: boolean
+}
+
 export type HoldReason = "attribution-hold" | "synchronization-only" | "incomplete-lines" | "attribution-conflict" | "unbalanced-allocation" | "unverified-group"
 
 export interface HeldSource {
@@ -379,6 +399,8 @@ export interface Scoring {
   readonly leaders: ReadonlyArray<LeaderEntry>
   readonly ledger: ReadonlyArray<ScoreEvent>
   readonly reviewExclusions: ReadonlyArray<ReviewExclusion>
+  readonly omittedReviewCredits: ReadonlyArray<OmittedReviewCredit>
+  readonly jointUnitPublication: ReadonlyMap<string, ReadonlyArray<JointUnitPublication>>
   readonly held: ReadonlyArray<HeldSource>
   readonly implementationHeld: ReadonlySet<string>
   readonly standaloneReview: ReadonlySet<string>

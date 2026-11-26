@@ -7,7 +7,7 @@ import { outboundVia } from "@repo/platform/http"
 import { settableClock } from "@repo/platform/testing/clock"
 import type { GitHubFake } from "@repo/platform/testing/github"
 import { type ValueCensus, ValueInputs } from "@repo/ports/points"
-import { type CollectionMemoFile, type MemoSession, openMemoFromEnv, openSession, readCollectionMemo, writeMemo } from "../src/collect/memo/memo.vibe"
+import { type CollectionMemoFile, type MemoSession, attributionChangedCodeAuditOneIn, attributionRulesVersion, collectionMemoStatsLines, openMemoFromEnv, openSession, parseCollectionMemo, readCollectionMemo, watchAttribution, writeMemo } from "../src/collect/memo/memo.vibe"
 import { restoreMemo } from "../src/collect/memo/restore.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
@@ -59,7 +59,7 @@ function lineEvidence(collection: Collection | undefined) {
   return (collection?.work.outcomes ?? []).map((outcome) => ({ id: outcome.id, commits: (outcome.commits ?? []).map((commit) => [commit.oid, commit.additions, commit.deletions]) }))
 }
 
-describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
+describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced or when the attribution rules changed"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
   it.live("a memo written by a full collection answers the next collection's unchanged commit statistics, a changed object id is read live and a malformed memo collects in full", () => effect {
     const world = try Effect.try(() => seeded())
     provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
@@ -95,6 +95,41 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
         const changedOid = first === undefined ? [] : [[first[0], first[1], first[2] === "f".repeat(40) ? "e".repeat(40) : "f".repeat(40), first[3], first[4]] as const]
         const changed = try collected("changed", { ...incremental.written, commitLines: [...changedOid, ...incremental.written.commitLines.slice(1)] })
 
+        const nowMs = try Clock.currentTimeMillis
+        const changedCodeSession = try openSession({ memo: full.written, forceFull: false, nowMs, codeDigest: "d".repeat(64), context: localRun })
+        const changedRulesSession = try openSession({ memo: full.written, forceFull: false, nowMs, codeDigest, rulesVersion: attributionRulesVersion + 1, context: localRun })
+        const v1Text = JSON.stringify({
+          format: "slop-collection-memo-v1",
+          producedAt: full.written.producedAt,
+          cutoffAt: full.written.cutoffAt,
+          lastFullAt: full.written.lastFullAt,
+          attributionCodeDigest: full.written.attributionCodeDigest,
+          commitLines: full.written.commitLines,
+          attributions: [{
+            outcomeId: "PR_v1",
+            fence: {
+              number: 1,
+              url: "https://github.com/ada/widgets/pull/1",
+              headRefOid: "a".repeat(40),
+              mergedAt: full.written.producedAt,
+              updatedAt: full.written.producedAt,
+              repositoryNodeId: "R_widgets",
+              eligibleCommitShas: ["a".repeat(40)],
+            },
+            pulls: [],
+            references: [],
+            incoming: [],
+            result: { kind: "none" },
+          }],
+        })
+        const parsedV1 = try parseCollectionMemo(v1Text, encoder.encode(v1Text).length)
+        const slowWarnings: string[] = []
+        const watchedValue = try watchAttribution("PR_slow", effect {
+          try Effect.sleep("20 millis")
+          return "ok"
+        }, (value) => value, { thresholdMs: 5, write: (line: string) => Effect.sync(() => { slowWarnings.push(line) }) })
+        const statsLine = collectionMemoStatsLines(changedCodeSession)
+
         try fs.writeFileString(memoPath, "{\"format\":\"slop-collection-memo-v1\"}\n")
         const environment = (values: Record<string, string>) => ConfigProvider.layer(ConfigProvider.fromUnknown({ SLOP_COLLECTION_MEMO: memoPath, ...values }))
         effect function outcomeOf(variables: Record<string, string>) {
@@ -107,17 +142,27 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
 
         const commitCount = new Set(full.evidence.flatMap((outcome) => outcome.commits.map(([oid]) => oid))).size
         try same({
-          full: { mode: full.mode, phase: full.phase, lineReads: full.lineReads > 0, counts: full.counts, lastFull: full.written.lastFullAt === full.written.producedAt, rows: full.written.commitLines.length },
+          full: { mode: full.mode, phase: full.phase, lineReads: full.lineReads > 0, counts: full.counts, lastFull: full.written.lastFullAt === full.written.producedAt, rows: full.written.commitLines.length, rulesVersion: full.written.attributionRulesVersion },
           incremental: { mode: incremental.mode, lineReads: incremental.lineReads, counts: incremental.counts, evidence: incremental.evidence, lastFull: incremental.written.lastFullAt, rows: incremental.written.commitLines },
           changed: { lineReads: changed.lineReads, counts: changed.counts, evidence: changed.evidence, rows: changed.written.commitLines },
+          changedCode: { mode: changedCodeSession.state().mode, reason: changedCodeSession.state().reason, auditOneIn: changedCodeSession.auditOneIn },
+          changedRules: { mode: changedRulesSession.state().mode, reason: changedRulesSession.state().reason },
+          v1Compat: { rulesVersion: parsedV1.attributionRulesVersion, computedAt: parsedV1.attributions[0]?.computedAt },
+          slowWatch: { value: watchedValue, stillRunning: slowWarnings.some((line) => line.includes("slow attribution still running: PR_slow")), finished: slowWarnings.some((line) => line.includes("slow attribution: PR_slow") && line.includes("ok")) },
+          statsHasAudit: statsLine.includes(`audited (1 in ${attributionChangedCodeAuditOneIn})`),
           malformed: typeof malformed === "string" ? malformed : { mode: malformed?.session.mode, reason: malformed?.session.state().reason, output: malformed?.output },
           untrusted,
           unparsedFull,
           nothing,
         }, {
-          full: { mode: "FullCollection", phase: "MemoWritten", lineReads: true, counts: { reused: 0, read: commitCount }, lastFull: true, rows: commitCount },
+          full: { mode: "FullCollection", phase: "MemoWritten", lineReads: true, counts: { reused: 0, read: commitCount }, lastFull: true, rows: commitCount, rulesVersion: attributionRulesVersion },
           incremental: { mode: "IncrementalCollection", lineReads: 0, counts: { reused: commitCount, read: 0 }, evidence: full.evidence, lastFull: full.written.lastFullAt, rows: full.written.commitLines },
           changed: { lineReads: 1, counts: { reused: commitCount - 1, read: 1 }, evidence: full.evidence, rows: full.written.commitLines },
+          changedCode: { mode: "IncrementalCollection", reason: "CodeChanged", auditOneIn: attributionChangedCodeAuditOneIn },
+          changedRules: { mode: "FullCollection", reason: "RulesChanged" },
+          v1Compat: { rulesVersion: 1, computedAt: full.written.lastFullAt },
+          slowWatch: { value: "ok", stillRunning: true, finished: true },
+          statsHasAudit: true,
           malformed: { mode: "full", reason: "NoPreviousMemo", output: undefined },
           untrusted: "MemoRefused",
           unparsedFull: "MemoRefused",

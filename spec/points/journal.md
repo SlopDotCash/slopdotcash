@@ -549,27 +549,30 @@ pure def sometimesRetainedOmissionZeroed(l: Ledger): bool =
 A complete snapshot of a collected project zeroes a positive latest award
 it no longer contains (not payout recognition, not a penalty, not owned by
 the retained batch) when the award occurred inside the snapshot's window,
-or is a review with an adverse exclusion. A pull request's award is zeroed
-only when its value coverage is assessed, human-ratified or legacy-policy,
-or a stale or incomplete coverage invalidates its joint decision, or a
-merge now scored by its own record absorbs its joint unit: a missing
-valuation, or a pull request absent from coverage, never zeroes it, and a
-held unassessed pool is skipped (the holds of the next rule, and a source
-with missing or legacy-policy coverage and a recorded merge pool). A review
-of a source whose implementation is held for joint review, with its own
-review assessment digest (`incomplete` coverage carrying
+or is a review with an adverse exclusion, or is a merged-work award whose
+deciding assessment is explicitly named as superseded by a successor
+published in this snapshot (`explicitSupersession`, carrying the successor's
+value decision, regardless of window or source coverage). A pull request's
+award is otherwise zeroed only when its value coverage is assessed,
+human-ratified or legacy-policy, or a stale or incomplete coverage invalidates
+its joint decision, or a merge now scored by its own record absorbs its joint
+unit: a missing valuation, or a pull request absent from coverage, never
+zeroes it, and a held unassessed pool is skipped (the holds of the next rule,
+and a source with missing or legacy-policy coverage and a recorded merge
+pool). A review of a source whose implementation is held for joint review,
+with its own review assessment digest (`incomplete` coverage carrying
 `reviewAssessmentDigest`, `CoverageReviewAssessed`), is value covered, so
 the snapshot that drops it zeroes it; that source's merge award stays a
 held pool. A reviewed historical replay (`preserveHeldImplementation`)
 also keeps every merge award whose exact source has a coverage row that is
-not assessed, human-ratified or legacy-policy. A held pool gets no
-allocation-only reallocation from a rolling snapshot when the latest revision
-of the pool carries the verified historical allocation decision, nor in a
-reviewed historical replay (`snapshotMayReallocate`). A review omitted for the value policy
-boundary or for the window never zeroes; the omission must agree with the
-recorded occurrence and the policy boundary, or the whole snapshot is
-refused. The zero carries the superseding decision when there is one. A
-frozen reward period refuses it.
+not assessed, human-ratified or legacy-policy (unless explicitly superseded).
+A held pool gets no allocation-only reallocation from a rolling snapshot when
+the latest revision of the pool carries the verified historical allocation
+decision, nor in a reviewed historical replay (`snapshotMayReallocate`). A
+review omitted for the value policy boundary or for the window never zeroes;
+the omission must agree with the recorded occurrence and the policy boundary,
+or the whole snapshot is refused. The zero carries the superseding decision
+when there is one. A frozen reward period refuses it.
 
 ```quint
 type SourceCoverage = CoverageNotApplicable | CoverageAbsent | CoverageAssessed | CoverageRatified | CoverageLegacy |
@@ -577,16 +580,16 @@ type SourceCoverage = CoverageNotApplicable | CoverageAbsent | CoverageAssessed 
 type ReviewOmission = NotOmitted | OmittedBeforePolicy | OmittedOutsideWindow | AdverseExclusion
 type Supersession = { snapshotDigest: str, windowFrom: int, windowTo: int, policyFrom: int, supplied: List[AwardKey],
   projectCollected: bool, heldPool: bool, coverage: SourceCoverage, invalidatesJoint: bool, ownRecordAbsorbs: bool,
-  review: ReviewOmission, decision: Decision, preserveHeld: bool }
+  explicitSupersession: bool, review: ReviewOmission, decision: Decision, preserveHeld: bool }
 pure def exactSourceUnassessed(coverage: SourceCoverage): bool =
   coverage == CoverageStale or coverage == CoverageIncomplete or coverage == CoverageMissing or coverage == CoverageReviewAssessed
 pure def replayKeepsPool(cat: Category, snapshot: Supersession): bool =
-  snapshot.preserveHeld and cat == MergedWork and exactSourceUnassessed(snapshot.coverage)
+  snapshot.preserveHeld and cat == MergedWork and exactSourceUnassessed(snapshot.coverage) and not(snapshot.explicitSupersession)
 pure def inWindow(at: int, snapshot: Supersession): bool = at >= snapshot.windowFrom and at < snapshot.windowTo
 pure def coverageAllowsZero(snapshot: Supersession): bool =
   snapshot.coverage == CoverageNotApplicable or snapshot.coverage == CoverageAssessed or
   snapshot.coverage == CoverageRatified or snapshot.coverage == CoverageLegacy or
-  snapshot.invalidatesJoint or snapshot.ownRecordAbsorbs
+  snapshot.invalidatesJoint or snapshot.ownRecordAbsorbs or snapshot.explicitSupersession
 pure def omissionAgrees(at: int, snapshot: Supersession): bool =
   if (snapshot.review == OmittedBeforePolicy) snapshot.policyFrom >= P::september2026Start and at < snapshot.policyFrom
   else if (snapshot.review == OmittedOutsideWindow) not(inWindow(at, snapshot))
@@ -597,7 +600,8 @@ pure def snapshotMayZero(cat: Category, inside: bool, snapshot: Supersession): b
   cat != PayoutReceived and cat != Penalty and snapshot.snapshotDigest != "" and snapshot.windowFrom < snapshot.windowTo and
   snapshot.projectCollected and not(snapshot.heldPool) and
   (snapshot.review == NotOmitted or (cat == Review and snapshot.review == AdverseExclusion)) and
-  (inside or (cat == Review and snapshot.review == AdverseExclusion)) and
+  (inside or (cat == Review and snapshot.review == AdverseExclusion) or (cat == MergedWork and snapshot.explicitSupersession)) and
+  (snapshot.explicitSupersession implies (cat == MergedWork and snapshot.decision.basis == Superseded and snapshot.decision.valued)) and
   not(replayKeepsPool(cat, snapshot)) and
   (coverageAllowsZero(snapshot) or (cat == Review and snapshot.coverage == CoverageReviewAssessed))
 pure def canZeroSuperseded(l: Ledger, k: AwardKey, snapshot: Supersession): bool =
@@ -620,12 +624,12 @@ pure def lawPolicyOmissionNeverZeroes(cat: Category, inside: bool, snapshot: Sup
     not(snapshotMayZero(cat, inside, snapshot))
 pure def lawMissingValuationNeverZeroes(cat: Category, inside: bool, snapshot: Supersession): bool =
   ((snapshot.coverage == CoverageAbsent or snapshot.coverage == CoverageMissing) and not(snapshot.invalidatesJoint) and
-    not(snapshot.ownRecordAbsorbs)) implies not(snapshotMayZero(cat, inside, snapshot))
+    not(snapshot.ownRecordAbsorbs) and not(snapshot.explicitSupersession)) implies not(snapshotMayZero(cat, inside, snapshot))
 pure def lawHeldImplementationReviewOnlyZeroesReviews(cat: Category, inside: bool, snapshot: Supersession): bool =
   (snapshot.coverage == CoverageReviewAssessed and cat != Review and not(snapshot.invalidatesJoint) and
-    not(snapshot.ownRecordAbsorbs)) implies not(snapshotMayZero(cat, inside, snapshot))
+    not(snapshot.ownRecordAbsorbs) and not(snapshot.explicitSupersession)) implies not(snapshotMayZero(cat, inside, snapshot))
 pure def lawReplayKeepsUnassessedMergePool(inside: bool, snapshot: Supersession): bool =
-  (snapshot.preserveHeld and exactSourceUnassessed(snapshot.coverage)) implies not(snapshotMayZero(MergedWork, inside, snapshot))
+  (snapshot.preserveHeld and exactSourceUnassessed(snapshot.coverage) and not(snapshot.explicitSupersession)) implies not(snapshotMayZero(MergedWork, inside, snapshot))
 pure val verifiedAllocationReason =
   "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved."
 pure def carriesVerifiedAllocation(l: Ledger, k: AwardKey): bool =
@@ -1036,7 +1040,7 @@ pure val batchValues = Set({ digest: "b1", supplied: List(), listedProjects: Set
   { digest: "b2", supplied: List(keyReview), listedProjects: Set("p") }, { digest: "b3", supplied: List(), listedProjects: Set("q") })
 pure val supersedingSample: Supersession = { snapshotDigest: "s1", windowFrom: 2432000, windowTo: 2432200, policyFrom: 2432000,
   supplied: List(), projectCollected: true, heldPool: false, coverage: CoverageAssessed, invalidatesJoint: false,
-  ownRecordAbsorbs: false, review: NotOmitted,
+  ownRecordAbsorbs: false, explicitSupersession: false, review: NotOmitted,
   decision: { basis: Superseded, effectiveAt: 2432000, reason: "superseded", delta: 0, source: "value:s1", valued: true },
   preserveHeld: false }
 pure val snapshotValues = Set(supersedingSample, { ...supersedingSample, decision: noDecision, coverage: CoverageLegacy },
@@ -1044,7 +1048,8 @@ pure val snapshotValues = Set(supersedingSample, { ...supersedingSample, decisio
   { ...supersedingSample, preserveHeld: true, coverage: CoverageMissing, ownRecordAbsorbs: true },
   { ...supersedingSample, coverage: CoverageMissing, ownRecordAbsorbs: true },
   { ...supersedingSample, coverage: CoverageAbsent }, { ...supersedingSample, review: OmittedOutsideWindow },
-  { ...supersedingSample, windowFrom: 2432100, review: AdverseExclusion })
+  { ...supersedingSample, windowFrom: 2432100, review: AdverseExclusion },
+  { ...supersedingSample, windowFrom: 2432100, coverage: CoverageAbsent, explicitSupersession: true })
 pure val retirementValues = Set(RH::readyRetirement, { ...RH::readyRetirement, claimedPaths: 2 }, RH::nativeRetirement)
 pure val packetRunValues = Set(RH::readyRun, { ...RH::readyRun, candidateMatches: false },
   { ...RH::readyRun, preview: true, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false },
