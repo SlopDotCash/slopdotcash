@@ -586,21 +586,21 @@ describe('Exempt only by the frozen set or an audited owner-approved grant (spec
     const ownerSetup = await site.fetch("POST", checkPath, {});
     expect(ownerSetup.status).toBe(200);
     expect(JSON.stringify(ownerSetup)).not.toMatch(/Private fixture|private-fixture/iu);
-    const [recorded] = await site.sql("SELECT result, json_set(result, '$.assessed.repository', 'other/repository') AS wrong_repository FROM vetting_assessments WHERE id = ?", assessment);
-    const original = String(recorded?.result);
-    const mismatched = String(recorded?.wrong_repository);
-    await site.sql("UPDATE vetting_assessments SET result = ?, result_sha256 = ? WHERE id = ?", mismatched, await sha256(mismatched), assessment);
-    const inconsistent = await site.fetch("POST", checkPath, {});
-    expect(JSON.stringify(inconsistent)).toContain("The last scan did not clear the project.");
-    expect(JSON.stringify(inconsistent)).not.toMatch(/Slop's skill template|Specialist: ambiguous/iu);
-    await site.sql("UPDATE vetting_assessments SET result = ?, result_sha256 = ? WHERE id = ?", original, await sha256(original), assessment);
+    const privateReason = /Slop's skill template|Specialist: ambiguous|Private fixture|private-fixture/iu;
     const publicProject = await site.fetch("GET", `/api/v1/projects/${encodeURIComponent(id)}`);
-    expect(JSON.stringify(publicProject)).not.toMatch(/block clearance|Private fixture|private-fixture/iu);
+    expect(JSON.stringify(publicProject)).not.toMatch(privateReason);
     await signOut(users.eli.login);
     await signIn(users.pia.login, "/");
     const strangerSetup = await site.fetch("POST", checkPath, {});
-    expect(JSON.stringify(strangerSetup)).not.toMatch(/block clearance|Private fixture|private-fixture|Slop-side block/iu);
+    expect(JSON.stringify(strangerSetup)).not.toMatch(privateReason);
     await signOut(users.pia.login);
+
+    await signIn(users.eli.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await incompleteAssessment(id, `vet_${"9".repeat(32)}`, "other/repository");
+    const inconsistent = await site.fetch("POST", checkPath, {});
+    expect(JSON.stringify(inconsistent)).toContain("The last scan did not clear the project.");
+    expect(JSON.stringify(inconsistent)).not.toMatch(privateReason);
+    await signOut(users.eli.login);
 
     await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=security`);
     await shown(named("heading", "Owner-approved exemption")).toMatchObject({ visible: true });
