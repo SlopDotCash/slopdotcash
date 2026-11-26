@@ -58,7 +58,7 @@ export function requestedRuntime(page: PageRuntime): RequestedRuntime {
 }
 
 export effect function watchRequested(show: (view: RequestedView) => void!!) {
-  for try (const view of (try RequestedRepos).changes) try show(view)
+  try Stream.runForEach((try RequestedRepos).changes, show)
 }
 
 export effect function actOn(repo: string, action: RepoRequestAction) {

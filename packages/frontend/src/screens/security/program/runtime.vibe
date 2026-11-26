@@ -93,7 +93,7 @@ export effect function loadProgram(reference: string) {
 }
 
 export effect function watchReadiness(show: (shown: ReadinessShown) => void!!) {
-  for try (const shown of (try ProgramReadiness).changes) try show(shown)
+  try Stream.runForEach((try ProgramReadiness).changes, show)
 }
 
 export effect function checkReadiness(projectId: string) {

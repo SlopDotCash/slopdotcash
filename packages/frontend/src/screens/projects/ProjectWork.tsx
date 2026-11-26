@@ -35,7 +35,7 @@ function WorkLink({ row }: { row: Row }) {
   const kind = row.issue ? "Issue" : "PR";
   const Icon = row.note ? Star : row.issue ? CircleDot : GitPullRequest;
   return (
-    <ExternalLink href={row.url} label={`${row.note ? `${row.note}. ` : ""}${kind} #${row.number}: ${row.title}`} className="flex min-h-11 items-center gap-3 py-3 hover:bg-accent">
+    <ExternalLink href={row.url} className="flex min-h-11 items-center gap-3 py-3 hover:bg-accent">
       <Icon aria-hidden className="size-4.5 shrink-0 text-primary-hover" />
       <span className="min-w-0 flex-1 break-words text-foreground underline underline-offset-4">{row.title}</span>
       <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground">

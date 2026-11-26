@@ -202,14 +202,12 @@ effect function followClock() {
 
 export effect function watchMonth(show: (view: MonthlyOwnerView | undefined) => void!!) {
   const { shown } = try AwardsDesk
-  const views = effect {
-    for try (const current of SubscriptionRef.changes(shown)) try show(current.view)
-  }
+  const views = Stream.runForEach(SubscriptionRef.changes(shown), (current) => show(current.view))
   try Effect.raceFirst(views, followClock())
 }
 
 export effect function watchAwardOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
-  for try (const offers of (try WalletChoice).offers) try show(offers)
+  try Stream.runForEach((try WalletChoice).offers, show)
 }
 
 effect function reservable() {

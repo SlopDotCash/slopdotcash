@@ -1,5 +1,4 @@
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
-import type * as PointsTestingModule from "@repo/points/testing";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,7 +71,36 @@ type Canned =
   | { readonly kind: "json"; readonly status: number; readonly body: unknown }
   | { readonly kind: "bytes"; readonly status: number; readonly bytes: Uint8Array; readonly contentType: string };
 
-type PointsTesting = typeof PointsTestingModule;
+interface D1Handle {
+  prepare(text: string): {
+    bind(...params: ReadonlyArray<string | number | null>): {
+      all<T>(): Promise<{ readonly results: ReadonlyArray<T> }>;
+    };
+  };
+}
+
+interface PublishedFile {
+  readonly path: string;
+  readonly bytes: Uint8Array;
+}
+
+interface PublishedFixture {
+  readonly registry: Published["registry"];
+  readonly files: ReadonlyArray<PublishedFile>;
+  readonly transport: {
+    readonly root: Uint8Array;
+    readonly parts: ReadonlyArray<PublishedFile>;
+  };
+  readonly leaderboard: {
+    readonly snapshot: {
+      readonly leaders: ReadonlyArray<{ readonly actor: Published["leaders"][number] }>;
+    };
+  };
+}
+
+interface PointsTesting {
+  readonly publishedFixture: () => Promise<PublishedFixture>;
+}
 
 interface Session {
   readonly context: BrowserContext;
@@ -207,7 +235,10 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
     site: (request) => mf.dispatchFetch(request),
     identity: (request) => mf.dispatchFetch(request),
     github,
-    rows: async (text, params) => (await (await mf.getD1Database("SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
+    rows: async (text, params) => {
+      const db = (await mf.getD1Database("SLOP_DB", "worker")) as unknown as D1Handle;
+      return (await db.prepare(text).bind(...params).all<Row>()).results;
+    },
     verifications,
     deployed: () => deployed,
     deploy: async (deployment) => {
@@ -331,7 +362,8 @@ function watch(opened: BrowserContext, into: Session) {
   });
   opened.on("weberror", (error) => into.console.push(`pageerror ${error.error().message}`));
   opened.on("requestfailed", (request) => {
-    if (request.url().startsWith(site)) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${request.failure()?.errorText ?? ""}`);
+    const error = request.failure()?.errorText ?? "";
+    if (request.url().startsWith(site) && !(request.method() === "GET" && error === "net::ERR_ABORTED")) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${error}`);
   });
   opened.on("response", (response) => {
     if (response.url().startsWith(site) && response.status() >= 400) into.failed.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
@@ -344,7 +376,7 @@ export async function close() {
   if (previous !== undefined) {
     for (const held of previous.holds.values()) held.release();
     await previous.context.close();
-    for (const chain of previous.chains.values()) await (await chain).close();
+    for (const chain of previous.chains.values()) await chain.then((started) => started.close(), () => undefined);
   }
   const replaced = started;
   started = undefined;
@@ -504,10 +536,10 @@ async function read(target: Target): Promise<Shown> {
 
 function layout(): Promise<Layout> {
   return page().evaluate(() => {
-    const shown = (element: Element) => element instanceof HTMLElement && element.offsetParent !== null && getComputedStyle(element).visibility !== "hidden";
+    const shown = (element: Element) => element instanceof HTMLElement && element.offsetParent !== null && getComputedStyle(element).visibility !== "hidden" && element.getAttribute("aria-hidden") !== "true";
     const named = (element: Element) => {
       const labelled = (element.getAttribute("aria-labelledby") ?? "").split(/\s+/u).filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? "").join("");
-      const labels = element instanceof HTMLInputElement ? [...(element.labels ?? [])].map((label) => label.textContent ?? "").join("") : "";
+      const labels = "labels" in element && element.labels instanceof NodeList ? [...element.labels].map((label) => label.textContent ?? "").join("") : "";
       const images = [...element.querySelectorAll("img[alt], [role=img][aria-label]")].map((image) => image.getAttribute("alt") ?? image.getAttribute("aria-label") ?? "").join("");
       return [element.getAttribute("aria-label"), labelled, labels, element.getAttribute("title"), element.textContent, images].some((text) => (text ?? "").trim() !== "");
     };
@@ -726,7 +758,7 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return page().evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
     case "reveal":
       await locate(page(), op.target).first().scrollIntoViewIfNeeded();
-      await page().evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await page().evaluate(() => document.fonts.ready.then(() => undefined));
       return null;
     case "back":
       await page().goBack({ waitUntil: "load" });

@@ -1,5 +1,5 @@
 // spec/frontend/requests.md, "Changing a resource clears its data and invalidates in-flight results"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/requests.md, "Empty and denied never display retained rows as current data"
-import { type Event, type ReadResult, type ReadState, Machine, initial, machineOver } from "../../gen/frontend__requests.effect.vibe"
+import { type Event, type NotAnEvent, type ReadResult, type ReadState, type Rejected, initial, machineOver } from "../../gen/frontend__requests.effect.vibe"
 import { type CallFailure, NetworkError, readResultOf } from "../platform/api.vibe"
 import type { BodyTooLarge, BodyUnreadable } from "../platform/bounded.vibe"
 
@@ -27,8 +27,15 @@ interface Loading<T> {
   readonly fiber: Fiber.Fiber<Settled<T>>
 }
 
+export interface RequestMachine {
+  readonly changes: Stream.Stream<ReadState>
+  get(): ReadState!!
+  send(event: Event, isCurrent?: (state: ReadState) => boolean): ReadState!Rejected
+  receive(input: unknown): ReadState!(NotAnEvent | Rejected)
+}
+
 export interface Resource<T> {
-  readonly machine: Machine.Shape
+  readonly machine: RequestMachine
   value(): T | undefined
   failure(): ReadFailure | undefined
   dispatch(event: Event): boolean!!

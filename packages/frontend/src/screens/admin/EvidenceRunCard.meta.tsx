@@ -19,7 +19,7 @@ export const meta: ComponentMeta<EvidenceRunCardProps> = {
     // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
     Selected: async () => {
       await expect(screen.getByText("Inspecting Scan report")).toBeTruthy();
-      await expect(screen.getByRole("button", { name: /Select Scan report/ }).getAttribute("aria-pressed")).toBe("true");
+      await expect(screen.getByRole("button", { name: /Scan report/ }).getAttribute("aria-pressed")).toBe("true");
     },
     // spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"
     Empty: async () => {
