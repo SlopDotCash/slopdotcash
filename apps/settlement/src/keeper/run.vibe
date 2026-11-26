@@ -19,7 +19,7 @@ import type { RegisteredDeployment } from "../vault/deployments.vibe"
 import { PaymentRpc } from "../vault/rpc.vibe"
 import { type KeeperScope, type SendContext, reasonOf } from "./attempts.vibe"
 import { reconcileGas, reconcileSolanaGas } from "./budget.vibe"
-import { type EvmKeeperConfig, type KeeperConfig, KeeperConfigInvalid, chainOfId, identityOf, modeLabel } from "./config.vibe"
+import { type EvmKeeperConfig, type KeeperConfig, KeeperConfigInvalid, chainOfId, modeLabel } from "./config.vibe"
 import { DEPLOYMENT_MISSING, type KeeperResult, PROJECT_MISSING, causeLabel, classifyFailure, hasFailures, stageLabel } from "./diagnostics.vibe"
 import type { KeeperCore } from "./lifecycle.vibe"
 import { type Authorization, evmMonths, serveMonths } from "./monthly.vibe"
@@ -349,7 +349,7 @@ function publicFailure(error: unknown) {
 export effect function keeperTick(core: KeeperCore, runId: number, config: KeeperConfig | undefined, mode: KeeperMode, award?: SelectedAward) {
   const work = effect {
     if (config === undefined) throw new KeeperRefused({ message: "Operator configuration unavailable" })
-    const bound = bindIdentity(identityOf(config)) catch () => undefined
+    const bound = bindIdentity(config) catch () => undefined
     const state = try core.checked(runId, bound !== undefined)
     if (bound === undefined) throw new KeeperRefused({ message: "Keeper journal unavailable" })
     if (state.liveRun.phase !== "Working" || bound === "Other") throw new KeeperRefused({ message: "Journal belongs to another registry, network or signer" })

@@ -1,6 +1,7 @@
 // spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"
 import { D1, type Statement, classified, decoded, sql } from "@repo/platform/d1"
 import { Journal, type JournalFailure, type SqlTx } from "@repo/platform/journal"
+import { type KeeperConfig, identityOf, matchesKeeperIdentity } from "./config.vibe"
 
 export error RecordInvalid { key: string }
 
@@ -48,11 +49,11 @@ export type IdentityCheck = "Fresh" | "Same" | "Other"
 
 export const IDENTITY_KEY = "keeper-identity"
 
-export effect function bindIdentity(identity: string) {
+export effect function bindIdentity(config: KeeperConfig) {
   return try inTransaction((tx) => effect {
     const previous = try record(tx, IDENTITY_KEY)
-    if (previous !== undefined && previous !== identity) return "Other" satisfies IdentityCheck
-    if (previous === undefined) try keep(tx, IDENTITY_KEY, identity)
+    if (previous !== undefined && !matchesKeeperIdentity(previous, config)) return "Other" satisfies IdentityCheck
+    if (previous === undefined) try keep(tx, IDENTITY_KEY, identityOf(config))
     return (previous === undefined ? "Fresh" : "Same") satisfies IdentityCheck
   })
 }

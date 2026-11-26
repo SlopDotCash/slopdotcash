@@ -47,7 +47,7 @@ import { configuredStart, keeperCore } from "../src/keeper/lifecycle.vibe"
 import { type KeeperRun, keeperTick } from "../src/keeper/run.vibe"
 import { operatorKey } from "../src/keeper/signer.vibe"
 import { operatorSolanaSeed } from "../src/keeper/solana.vibe"
-import { IDENTITY_KEY, inTransaction, openKeeperStore, recordOf } from "../src/keeper/store.vibe"
+import { IDENTITY_KEY, inTransaction, keep, openKeeperStore, recordOf } from "../src/keeper/store.vibe"
 import { registryProjectDigest } from "../src/owner/ownerInstructions.ts"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
 
@@ -429,7 +429,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
   })
 
   it.effect('The keeper CLI can settle one exact funded award while leaving other executable awards alone (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing")', () => effect {
-    const { escrow, program, vault } = try Bench
+    const { escrow, program, vault, registry, operator } = try Bench
     const { id: selected, receipt } = try awardReservation(190n, 0xa190n, 7_000n)
     const other = try award(191n, 0xa191n, 8_000n)
     try bind(190n, escrow.roles.recipient)
@@ -437,6 +437,9 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
     try finalize()
     const config = try writtenConfig("exact-award.json", try operatorConfig(escrow.chain.url))
     const before = try operatorNonce()
+    const legacyIdentity = JSON.stringify([registry, "base-mainnet", `0x${operator.address.slice(2).toUpperCase()}`])
+    try journal(openKeeperStore())
+    try journal(inTransaction((tx) => keep(tx, IDENTITY_KEY, legacyIdentity)))
     const run = (id: string, execute: boolean, reservation?: string) => scoped(effect {
       const args = ["--award-id", id, ...reservation === undefined ? [] : ["--reservation", reservation], ...execute ? ["--execute"] : []]
       const handle = try spawnKeeper(program, config, args)
@@ -460,7 +463,8 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
     const stillReady = try run(other, false)
     try run(other, true)
     try settled()
-    try same({ dry, absent, badReference, readSends: withoutSend - before, submitted, verified, sends: after - before, stillReady }, {
+    const keptIdentity = try journal(recordOf(IDENTITY_KEY))
+    try same({ dry, absent, badReference, readSends: withoutSend - before, submitted, verified, sends: after - before, stillReady, keptIdentity }, {
       dry: { code: 0, results: [[`award:${selected}`, "ready"]] },
       absent: { code: 1, results: [[`award:${selected}`, "unavailable"]] },
       badReference: { code: 1, results: [["deployment", "unavailable"]] },
@@ -469,6 +473,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       verified: { code: 0, results: [[`award:${selected}`, "paid"]] },
       sends: 1n,
       stillReady: { code: 0, results: [[`award:${other}`, "ready"]] },
+      keptIdentity: legacyIdentity,
     })
   })
 
