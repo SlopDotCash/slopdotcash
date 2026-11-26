@@ -23,7 +23,7 @@ depth = 500
 lint_on_build = false
 
 # The SMTChecker run of `pnpm test` (../README.md, "Money invariants"). BMC explores every path of the loop-free
-# libraries for every input; z3 must be on PATH.
+# libraries for every input under the solver's deterministic resource limit; z3 must be on PATH.
 [profile.smt]
 out = ".cache/smt/out"
 cache_path = ".cache/smt/cache"
@@ -31,6 +31,21 @@ cache_path = ".cache/smt/cache"
 [profile.smt.model_checker]
 contracts = { "src/EscrowMath.sol" = ["EscrowMath"], "src/MonthlyCalendar.sol" = ["MonthlyCalendar"], "src/ReferralClaims.sol" = ["ReferralClaims"] }
 engine = "bmc"
+targets = ["assert", "underflow", "overflow", "divByZero"]
+show_proved_safe = true
+show_unproved = true
+show_unsupported = true
+
+# Opt-in unbounded BMC profile for the MonthlyCalendar lemmas (kept out of `pnpm test` and CI because solc encodes
+# narrowing conversions such as uint32(x) with int2bv, which takes hours in z3).
+[profile.smt_calendar]
+out = ".cache/smt-calendar/out"
+cache_path = ".cache/smt-calendar/cache"
+
+[profile.smt_calendar.model_checker]
+contracts = { "test/smt/CalendarLemmas.sol" = ["CalendarLemmas"] }
+engine = "bmc"
+timeout = 0
 targets = ["assert", "underflow", "overflow", "divByZero"]
 show_proved_safe = true
 show_unproved = true
