@@ -189,8 +189,9 @@ export function completesPrepared(prepared: Uint8Array, signed: Uint8Array, sign
   return slot >= 0
     && sameBytes(message, after.value.messageBytes)
     && unsigned(before.value.signatures[slot])
-    && before.value.signatures.every((signature, at) => at === slot || unsigned(signature) || signedBy(message, signature, signers[at]))
-    && after.value.signatures.every((signature, at) => at === slot ? signedBy(message, signature, signer) : sameBytes(signature, before.value.signatures[at]));
+    && after.value.signatures.every((signature, at) => at === slot || sameBytes(signature, before.value.signatures[at]))
+    && signedBy(message, after.value.signatures[slot], signer)
+    && before.value.signatures.every((signature, at) => at === slot || unsigned(signature) || signedBy(message, signature, signers[at]));
 }
 
 /** @throws {never} */
