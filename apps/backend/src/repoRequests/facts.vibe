@@ -1,11 +1,13 @@
 // spec/backend/repoRequests.md, "Only a member with merged work flags a public, original, unarchived repository that is not theirs and not on Slop"
-import { first, sql } from "@repo/platform/d1"
+import { allChunked, first, list, sql } from "@repo/platform/d1"
 import { GitHub } from "@repo/platform/github"
 import type { RepoRead } from "../../gen/backend__repoRequests.ts"
 import { validRepoPath } from "../client/repoRequests.vibe"
 import { listedById, listedByKeys } from "../projectRegistry/claims.vibe"
 
 schema MergedWork { ok: number }
+schema ListedByIdRow { repo_id: string; project_id: string }
+schema ListedByKeyRow { repository_key: string; project_id: string }
 
 export interface GitHubRepository {
   readonly id: string
@@ -63,4 +65,25 @@ export effect function readRepository(path: string) {
 export effect function listedProject(repoId: string, fullName: string) {
   const holders = [...try listedById(repoId), ...try listedByKeys([fullName.toLowerCase()])]
   return holders.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0]
+}
+
+export effect function listedProjects(targets: ReadonlyArray<{ readonly repoId: string; readonly fullName: string }>) {
+  const resolved = new Map<string, string>()
+  if (targets.length === 0) return resolved
+  const repoIds = [...new Set(targets.map((target) => target.repoId))]
+  const keys = [...new Set(targets.map((target) => target.fullName.toLowerCase()))]
+  const byId = new Map<string, string[]>()
+  for (const row of try allChunked(ListedByIdRow, repoIds, (chunk) => sql`SELECT CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) AS repo_id, id AS project_id FROM projects WHERE CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) IN (${list(chunk)}) UNION ALL SELECT CAST(json_extract(listed.value, '$.githubId') AS TEXT) AS repo_id, projects.id AS project_id FROM projects, json_each(projects.manifest, '$.repositories') listed WHERE CAST(json_extract(listed.value, '$.githubId') AS TEXT) IN (${list(chunk)})`)) {
+    byId.set(row.repo_id, [...(byId.get(row.repo_id) ?? []), row.project_id])
+  }
+  const byKey = new Map<string, string[]>()
+  for (const row of try allChunked(ListedByKeyRow, keys, (chunk) => sql`SELECT repository_key, project_id FROM project_repositories WHERE repository_key IN (${list(chunk)})`)) {
+    byKey.set(row.repository_key, [...(byKey.get(row.repository_key) ?? []), row.project_id])
+  }
+  for (const target of targets) {
+    const holders = [...(byId.get(target.repoId) ?? []), ...(byKey.get(target.fullName.toLowerCase()) ?? [])]
+    const firstHolder = holders.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0]
+    if (firstHolder !== undefined) resolved.set(target.repoId, firstHolder)
+  }
+  return resolved
 }

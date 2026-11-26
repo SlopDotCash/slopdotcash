@@ -4,6 +4,8 @@ import { RowMismatch, rows, sql } from "@repo/platform/d1"
 import type { Event } from "../../../gen/backend__mergeActivity.ts"
 import { maxCap, minCap } from "../../../gen/backend__intakeCap.effect.vibe"
 import { canReadFailed, decodeEvent, due, readable, schedule, wantedLabelName } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { type BacklogProjectManifest } from "../backlogRule.ts"
+import { sendBacklogNotices } from "../backlogNotices.vibe"
 import { validRepositoryPath } from "../github/lookup.vibe"
 import { type Read, ownIssue, repositoryRead } from "./github.vibe"
 import { type Evidence, type Facts, type Key, type Step, type StoredRow, noEvidence, rowOf, sendAll, stateOf, storedRows, unlist } from "./store.vibe"
@@ -11,8 +13,11 @@ import { ensureWantedLabel } from "./wantedLabel.vibe"
 
 schema ProjectManifest { id: string; manifest: string }
 schema ListedRepository { id: string; githubUrl?: string }
-schema SlopbotSettings { intakeCap?: number; wantedIssues?: boolean }
-schema Listing { status: string; listingTier: string; repositories: ReadonlyArray<ListedRepository>; slopbot?: SlopbotSettings }
+schema CatchUpStart { startedAt: string }
+schema SlopbotSettings { intakeCap?: number; wantedIssues?: boolean; catchUpUntil?: string | null; catchUpHistory?: ReadonlyArray<CatchUpStart> }
+schema RewardFields { kind?: string; monthlyCapMinor?: string }
+schema SecurityBountyFields { rewardMode?: string }
+schema Listing { status: string; listingTier: string; repositories: ReadonlyArray<ListedRepository>; slopbot?: SlopbotSettings; reward?: RewardFields | null; securityBounty?: SecurityBountyFields | null }
 
 export interface Refreshed {
   readonly read: number
@@ -25,6 +30,7 @@ interface Registered {
   readonly measured: boolean
   readonly intake: boolean
   readonly label: string
+  readonly manifest: BacklogProjectManifest
 }
 
 interface Queued {
@@ -73,6 +79,14 @@ effect function registered() {
       measured: listing.status === "active" && listing.listingTier !== "retired",
       intake: intakeOf(listing.slopbot),
       label: labelOf(listing.slopbot),
+      manifest: {
+        id: row.id,
+        status: listing.status,
+        listingTier: listing.listingTier,
+        reward: listing.reward ?? null,
+        securityBounty: listing.securityBounty ?? null,
+        slopbot: listing.slopbot ?? null,
+      },
     })
   }
   return projects
@@ -152,5 +166,6 @@ export effect function refreshMergeActivity() {
     if (outcome.event.type === "readSucceeded") read += 1
     else failed += 1
   }
+  try sendBacklogNotices(projects, at)
   return { read, failed } satisfies Refreshed
 }

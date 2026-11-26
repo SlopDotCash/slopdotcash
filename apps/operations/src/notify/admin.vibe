@@ -1,18 +1,30 @@
 // spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"
+import { DeploymentTier, type Tier } from "@repo/platform/config"
 import { randomId } from "@repo/platform/crypto"
 import { json, jsonBody } from "@repo/platform/http"
 import { notifyPostV1SlopbotSpend } from "../client/refusals.vibe"
-import { SlopbotFailureNotice, SlopbotSpendNotice } from "../notifications/contracts.schema.vibe"
+import { ProjectApplicationNotice, SlopbotFailureNotice, SlopbotSpendNotice } from "../notifications/contracts.schema.vibe"
 import { NotifySettings, senderValid } from "./config.vibe"
 import { type AdminNotice, adminNoticeMime } from "./letters.vibe"
 import { Mail } from "./send.vibe"
 
 const refusals = notifyPostV1SlopbotSpend
+const siteOrigins: Readonly<Record<Tier, string>> = {
+  production: "https://slop.cash",
+  staging: "https://staging.slop.cash",
+  local: "https://slop.test",
+}
 
 export type AdminKind = AdminNotice["kind"]
 
 function refused(row: { readonly status: number; readonly error: string }) {
   return json({ error: row.error }, row.status)
+}
+
+function validReviewUrl(value: string, tier: Tier): boolean {
+  const parsed = URL.parse(value)
+  if (parsed === null) return false
+  return parsed.href === value && parsed.origin === siteOrigins[tier] && parsed.username === "" && parsed.password === "" && (parsed.pathname === "/admin" || parsed.pathname.startsWith("/admin/"))
 }
 
 effect function jsonRequested() {
@@ -28,6 +40,13 @@ effect function noticeOf(kind: AdminKind) {
   if (kind === "spend") {
     const notice = Schema.decodeUnknownEffect(SlopbotSpendNotice)(body, strict) catch () => undefined
     return notice === undefined ? undefined : { kind, notice } satisfies AdminNotice
+  }
+  if (kind === "application") {
+    const notice = Schema.decodeUnknownEffect(ProjectApplicationNotice)(body, strict) catch () => undefined
+    const deployment = try Effect.serviceOption(DeploymentTier)
+    const tier: Tier = Option.isSome(deployment) ? deployment.value.tier : "production"
+    if (notice === undefined || !validReviewUrl(notice.reviewUrl, tier)) return undefined
+    return { kind, notice } satisfies AdminNotice
   }
   const notice = Schema.decodeUnknownEffect(SlopbotFailureNotice)(body, strict) catch () => undefined
   return notice === undefined ? undefined : { kind, notice } satisfies AdminNotice

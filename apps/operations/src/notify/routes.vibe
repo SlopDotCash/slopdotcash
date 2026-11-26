@@ -1,5 +1,5 @@
 // spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/backend/email.md, "Delivery of the verification mail has its own state"
-import { handleRaw, json, jsonBody } from "@repo/platform/http"
+import { answered, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { type AnyRoute, type Method, route } from "@repo/platform/route"
 import { EmailEnrollment } from "@repo/ports/backend"
 import {
@@ -13,7 +13,7 @@ import {
   notifyPostV1SlopbotFailure,
   notifyPostV1SlopbotSpend,
 } from "../client/refusals.vibe"
-import { notifyInternalHost, slopbotFailureNoticePath, slopbotSpendNoticePath } from "../notifications/contracts.schema.vibe"
+import { notifyInternalHost, projectApplicationNoticePath, slopbotFailureNoticePath, slopbotSpendNoticePath } from "../notifications/contracts.schema.vibe"
 import type { Channel } from "../notifications/rows.vibe"
 import { adminNotice } from "./admin.vibe"
 import { NotifySettings, type Pilot, enrollmentOpen, releaseFor } from "./config.vibe"
@@ -24,6 +24,7 @@ import { sendVerification } from "./verification.vibe"
 const notifyInternalOrigin = `https://${notifyInternalHost}`
 
 const otherMethods: ReadonlyArray<Method> = ["GET", "PUT", "DELETE"]
+const extraDisallowedMethods = ["PATCH", "HEAD", "OPTIONS"] as const
 
 function descriptor(method: Method, path: `/${string}`, limitKib: number) {
   return route({ method, path, access: "public", limitKib, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: "no-store" })
@@ -41,10 +42,11 @@ const activityDispatchPath: Internal = { path: "/v1/activity-notifications/dispa
 const activityReconcilePath: Internal = { path: "/v1/activity-notifications/reconcile", limitKib: 8 }
 const emailCapabilitiesPath: Internal = { path: "/v1/email/capabilities", limitKib: 2 }
 const emailVerificationPath: Internal = { path: "/v1/email/verification", limitKib: 2 }
+const projectApplicationsPath: Internal = { path: projectApplicationNoticePath, limitKib: 8 }
 const slopbotSpendPath: Internal = { path: slopbotSpendNoticePath, limitKib: 8 }
 const slopbotFailurePath: Internal = { path: slopbotFailureNoticePath, limitKib: 8 }
 
-const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, slopbotSpendPath, slopbotFailurePath]
+const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, projectApplicationsPath, slopbotSpendPath, slopbotFailurePath]
 
 export const notifyApi: ReadonlyArray<AnyRoute> = internals.flatMap((internal) => [descriptor("POST", internal.path, internal.limitKib), ...otherMethods.map((method) => descriptor(method, internal.path, 1))])
 
@@ -163,7 +165,8 @@ effect function methodRefused(refusal: Row | NotAllowed) {
 
 function served<E, R>(internal: Internal, failure: Row, notAllowed: Row | NotAllowed, program: () => HttpServerResponse.HttpServerResponse!E!R) {
   const refused = otherMethods.map((method) => handleRaw(descriptor(method, internal.path, 1), () => methodRefused(notAllowed)))
-  return Layer.mergeAll(handleRaw(descriptor("POST", internal.path, internal.limitKib), () => guarded(internal.path, failure, program())), ...refused)
+  const extraRefused = HttpRouter.addAll(extraDisallowedMethods.map((method) => HttpRouter.route(method, internal.path, answered(methodRefused(notAllowed)))))
+  return Layer.mergeAll(handleRaw(descriptor("POST", internal.path, internal.limitKib), () => guarded(internal.path, failure, program())), ...refused, extraRefused)
 }
 
 export const notifyRoutes = Layer.mergeAll(
@@ -182,6 +185,7 @@ export const notifyRoutes = Layer.mergeAll(
   }),
   served(emailCapabilitiesPath, verification.status500, notifyPostV1EmailCapabilities.otherMethods.status405, () => capabilities()),
   served(emailVerificationPath, verification.status500, verification.otherMethods.status405, () => verified()),
+  served(projectApplicationsPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("application")),
   served(slopbotSpendPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("spend")),
   served(slopbotFailurePath, notifyPostV1SlopbotFailure.serviceMisconfigured, notifyPostV1SlopbotFailure.otherMethods.methodNotAllowedNoStore, () => adminNotice("failure")),
 )

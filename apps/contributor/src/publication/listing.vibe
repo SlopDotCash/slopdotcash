@@ -1,4 +1,5 @@
 // spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"
+import { D1, rows, sql } from "@repo/platform/d1"
 import { type IntakeCount, IntakeCounts, type RegistryManifest } from "@repo/ports/backend"
 import type { StoredCount } from "../../gen/backend__intakeCap.effect.vibe"
 import { type IntakeListing, type MonthListing, intakeListingOf, monthListingOf } from "../../gen/contributor__publication.effect.vibe"
@@ -72,6 +73,88 @@ function storedCount(count: IntakeCount, now: number): ReadonlyArray<StoredCount
   const observed = Date.parse(count.observedAt)
   if (!Number.isFinite(observed) || !Number.isSafeInteger(count.openOutside)) return []
   return [{ read: true, count: count.openOutside, observedAt: -Math.ceil((now - observed) / hourMs) }]
+}
+
+schema BacklogActivityRow {
+  readonly project_id: string
+  readonly observed_at: string
+  readonly waiting_outside: number | null
+  readonly last_merged_at: string | null
+}
+
+schema BacklogReward { readonly kind?: string; readonly monthlyCapMinor?: string }
+schema BacklogSecurity { readonly rewardMode?: string }
+schema BacklogSlopbot { readonly catchUpUntil?: string | null }
+schema BacklogManifest {
+  readonly status?: string
+  readonly listingTier?: string
+  readonly reward?: BacklogReward | null
+  readonly securityBounty?: BacklogSecurity | null
+  readonly slopbot?: BacklogSlopbot | null
+}
+
+export interface BacklogCount {
+  readonly observedAt: string
+  readonly waitingOutside: number | null
+  readonly lastMergedAt: string | null
+}
+
+export type BacklogRead = ReadonlyMap<string, ReadonlyArray<BacklogCount>> | undefined
+
+const backlogRuleFromMs = Date.parse("2026-12-01T00:00:00.000Z")
+const backlogMaxAgeMs = 72 * 60 * 60 * 1000
+const backlogDayMs = 24 * 60 * 60 * 1000
+const backlogWaitingLimit = 50
+const backlogDormantDays = 14
+const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const backlogManifestOf = Schema.is(BacklogManifest)
+
+export effect function backlogRead() {
+  const db = try Effect.serviceOption(D1)
+  if (Option.isNone(db)) return undefined satisfies BacklogRead
+  const outcome = try exit(provideService(rows(BacklogActivityRow, sql`SELECT project_id, observed_at, waiting_outside, last_merged_at FROM repository_merge_activity WHERE observed_at IS NOT NULL`), D1, db.value))
+  if (Exit.isFailure(outcome)) {
+    try Effect.logError("project discovery backlog counts unavailable")
+    return undefined satisfies BacklogRead
+  }
+  const index = new Map<string, BacklogCount[]>()
+  for (const row of outcome.value) {
+    index.set(row.project_id, [...(index.get(row.project_id) ?? []), { observedAt: row.observed_at, waitingOutside: row.waiting_outside, lastMergedAt: row.last_merged_at }])
+  }
+  return index satisfies BacklogRead
+}
+
+function isIsoInstant(value: unknown): value is string {
+  return typeof value === "string" && isoInstant.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value
+}
+
+export function backlogOutOfRotationFor(read: BacklogRead, project: RegistryManifest, manifest: unknown, now: number): boolean {
+  if (now < backlogRuleFromMs || !project.active) return false
+  if (!backlogManifestOf(manifest)) return false
+  if (manifest.status !== "active" || manifest.listingTier === "retired" || manifest.reward?.kind !== "monthly-pool") return false
+  const program = manifest.securityBounty
+  if (program !== undefined && program !== null && (program.rewardMode === "bounty-only" || manifest.reward.monthlyCapMinor === "0")) return false
+  const until = manifest.slopbot?.catchUpUntil
+  if (isIsoInstant(until) && Date.parse(until) > now) return false
+  const projectRows = read?.get(project.projectId)
+  if (projectRows === undefined) return false
+  let waiting = 0
+  let lastMergedAt: string | null = null
+  let fresh = false
+  for (const row of projectRows) {
+    const observed = Date.parse(row.observedAt)
+    if (!Number.isFinite(observed) || now - observed > backlogMaxAgeMs || row.waitingOutside === null || !Number.isSafeInteger(row.waitingOutside) || row.waitingOutside < 0) continue
+    fresh = true
+    waiting += row.waitingOutside
+    if (row.lastMergedAt !== null && !Number.isNaN(Date.parse(row.lastMergedAt)) && (lastMergedAt === null || Date.parse(row.lastMergedAt) > Date.parse(lastMergedAt))) {
+      lastMergedAt = row.lastMergedAt
+    }
+  }
+  if (!fresh) return false
+  if (waiting >= backlogWaitingLimit) return true
+  if (waiting < 1) return false
+  if (lastMergedAt === null) return true
+  return Math.floor((now - Date.parse(lastMergedAt)) / backlogDayMs) >= backlogDormantDays
 }
 
 export function intakeListingFor(read: IntakeRead, project: RegistryManifest, manifest: unknown, now: number): IntakeListing {
