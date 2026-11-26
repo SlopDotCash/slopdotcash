@@ -977,6 +977,7 @@ const SiteBuilt = Layer.effect(SiteProgram, effect {
   try fs.makeDirectory(path.join(repository, "docs"), { recursive: true })
   try fs.writeFileString(path.join(repository, "docs/slop-product-requirements.md"), requirements)
   try git(repository, ["-c", "init.defaultBranch=main", "init", "-q"])
+  try git(repository, ["config", "--local", "core.autocrlf", "false"])
   try git(repository, ["add", "-A"])
   try git(repository, [...gitAuthor, "commit", "-q", "-m", "Site fixture"])
   return { program: path.join(scratch, "dist/programs/main.js"), repository, out: path.join(scratch, "site") }
