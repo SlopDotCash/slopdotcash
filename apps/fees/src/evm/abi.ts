@@ -186,7 +186,7 @@ export function transactionId(raw: Hex): Hex {
 
 /** @throws {never} */
 export function sameFields(left: Type2, right: Type2): boolean {
-  return left.chainId === right.chainId && left.nonce === right.nonce && left.to === right.to && lower(left.data) === lower(right.data)
+  return left.chainId === right.chainId && left.nonce === right.nonce && lower(left.to) === lower(right.to) && lower(left.data) === lower(right.data)
     && left.value === right.value && left.gas === right.gas;
 }
 

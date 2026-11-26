@@ -195,7 +195,7 @@ function claimChain(fact: VaultFact) {
         const outcome = try broadcast(rawTx as Hex)
         if (outcome.kind !== "Accepted") throw new ChainUnavailable({ operation: "broadcast", detail: outcome.detail })
       }, services),
-      status: (send) => Effect.provideContext(Effect.mapError(landedSend(send, fact), (error) => new ChainUnavailable({ operation: "status", detail: error._tag })), services),
+      status: (send) => Effect.provideContext(Effect.mapError(landedSend(send, fact), (error) => new ChainUnavailable({ operation: "status", detail: failureText(error) })), services),
       replacement: () => effect { return { kind: "wait", reason: "this journey replaces nothing" } },
     }
     return shape

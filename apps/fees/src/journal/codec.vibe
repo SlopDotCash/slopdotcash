@@ -5,6 +5,7 @@ import type { Rows } from "@repo/platform/stored"
 import { type HoldingKind, type Attempt, type RecordedSend, type Coverage, type ExpiryProof, type ExpiryScan, type Fee, type Holding, type ProviderFinding, type Reason, type Reservation, type Row, type RowState, type SendKind, type Trigger, dayMs, decodeState, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import type { Held } from "../runtime/config.vibe"
+import { tokenScale } from "../conversion/chain.vibe"
 import { signedFees } from "./signedSend.ts"
 import { type Evaluation, type NetworkName, type StateName, releasedAt, rotationPrefix } from "./writes.vibe"
 
@@ -58,6 +59,8 @@ export interface Observed {
   readonly balance: number | undefined
   readonly vault: string | undefined
   readonly vaultObserved: number
+  readonly scale?: bigint
+  readonly rawBalance?: bigint
 }
 
 export interface Reviewed { readonly vault: string; readonly deployment: string; readonly token: string }
@@ -108,6 +111,7 @@ export interface Journal {
   readonly sends: ReadonlyArray<SendRecord>
   readonly gas: ReadonlyArray<GasRecord>
   readonly tokens: ReadonlyArray<string>
+  readonly scales: ReadonlyMap<number, bigint>
   readonly runs: ReadonlyMap<number, string>
   readonly scans: ReadonlyMap<string, string>
   readonly foreign: ReadonlyArray<Foreign>
@@ -220,6 +224,16 @@ effect function exact(text: string | null, label: string) {
   if (text === null) return 0
   const value = Number(text)
   if (!decimal.test(text) || !Number.isSafeInteger(value)) throw new RowMismatch({ text: label, issue: `${text} is not a whole number the journal model holds` })
+  return value
+}
+
+effect function exactScaled(text: string | null, scale: bigint, label: string) {
+  if (text === null) return 0
+  if (scale === 1n) return try exact(text, label)
+  if (!decimal.test(text)) throw new RowMismatch({ text: label, issue: `${text} is not a whole number the journal model holds` })
+  const raw = try orDie(Effect.try(() => BigInt(text)))
+  const value = Number(raw / scale)
+  if (!Number.isSafeInteger(value)) throw new RowMismatch({ text: label, issue: `${text} is not a whole number the journal model holds` })
   return value
 }
 
@@ -375,6 +389,24 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     tokens.push(address)
     return tokens.length
   }
+  const scales = new Map<number, bigint>()
+  const raiseScale = (token: number, candidate: bigint) => {
+    const current = scales.get(token) ?? 1n
+    if (candidate > current) scales.set(token, candidate)
+  }
+  for (const [index, seen] of instance.tokens.entries()) {
+    if (seen.scale !== undefined) raiseScale(index + 1, seen.scale)
+  }
+  for (const carrier of [...carriers, ...pendingImport]) {
+    const token = tokenOf(carrier.token)
+    for (const text of [carrier.amount_in, carrier.token_balance_before]) {
+      if (text !== null && decimal.test(text)) {
+        const raw = try orDie(Effect.try(() => BigInt(text)))
+        raiseScale(token, tokenScale(raw))
+      }
+    }
+  }
+  const scaleOf = (token: number) => scales.get(token) ?? 1n
   const wallets = instance.held.wallets
   const extraWallets: Array<string> = []
   const walletOf = (address: string) => {
@@ -406,18 +438,20 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     })
     const kind: SendKind = carrier.kind === "claim" ? "Claim" : carrier.kind === "approval" || approvalOnly ? "Approval" : "Conversion"
     const nonce = network !== "Solana" && carrier.evm_nonce !== null ? carrier.evm_nonce : firstTx === null ? -1 : reservedNonce.get(firstTx) ?? -1
+    const token = tokenOf(carrier.token)
+    const scale = scaleOf(token)
     modelRows.push({
       id: index + 1,
-      token: tokenOf(carrier.token),
+      token,
       kind,
       live: carrier.mode === "live",
       state,
       reason,
       runId: runOf(carrier.run_id),
       wallet: walletOf(carrier.fee_wallet),
-      amountIn: try exact(carrier.amount_in, label),
+      amountIn: try exactScaled(carrier.amount_in, scale, label),
       valueMicro: carrier.quote_value_micro ?? 0,
-      balanceBefore: try exact(carrier.token_balance_before, label),
+      balanceBefore: try exactScaled(carrier.token_balance_before, scale, label),
       minimumOutput: try exact(carrier.min_amount_out, label),
       nonce,
       gasLimit: signed?.fees.gasLimit ?? 0,
@@ -434,15 +468,16 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     const txId = carrier.tx_id ?? ""
     const signed = try firstAttempt(carrier, network, epoch)
     const kind: SendKind = carrier.kind === "claim" ? "Claim" : carrier.kind === "approval" ? "Approval" : "Conversion"
+    const token = tokenOf(carrier.token)
     unaccounted.push({
       recorded: {
-        token: tokenOf(carrier.token),
+        token,
         kind,
         tx: names.number("tx", txId),
         nonce: carrier.evm_nonce ?? signedFees(carrier.legacy_raw ?? "")?.nonce ?? -1,
         gasLimit: signed.fees.gasLimit,
         fees: { maxFee: signed.fees.maxFee, priority: signed.fees.priority },
-        amountIn: try exact(carrier.amount_in, label),
+        amountIn: try exactScaled(carrier.amount_in, scaleOf(token), label),
         valueMicro: carrier.quote_value_micro ?? 0,
         minimumOutput: try exact(carrier.min_amount_out, label),
         deadline: signed.fees.deadline,
@@ -557,5 +592,5 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     proofs,
     rotation: rotating === undefined || rotating.expires_at === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: names.number("rotation", rotating.run_id.slice(rotationScope.length)), expiresAt: ms(rotating.expires_at) },
   } satisfies Fee)
-  return { state, sends, gas, tokens, runs, scans: latestScans, foreign, unaccounted, pending } satisfies Journal
+  return { state, sends, gas, tokens, scales, runs, scans: latestScans, foreign, unaccounted, pending } satisfies Journal
 }

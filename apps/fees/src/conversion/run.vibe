@@ -108,9 +108,13 @@ export effect function runNetwork(input: NetworkRun, claims?: Claims) {
   const seen = try observed(input.network, input.base.held, input.tokens, input.income)
   const instance = { ...input.base, tokens: seen.tokens, receipts: seen.receipts } satisfies Instance
   const loaded = try journal(instance, names)
+  const scaledTokens = instance.tokens.map((entry, index) => {
+    const scale = loaded.scales.get(index + 1)
+    return scale === undefined ? entry : { ...entry, scale }
+  })
   const runId = names.number("run", try randomId())
   if (runId !== loaded.state.nextRun) throw new RunIdentityTaken({ network: input.network.definition.name, expected: loaded.state.nextRun, named: runId })
-  const session: Session = { instance, state: loaded.state, names, runId, renewedAt: try Clock.currentTimeMillis, leased: false }
+  const session: Session = { instance: { ...instance, tokens: scaledTokens }, state: loaded.state, names, runId, renewedAt: try Clock.currentTimeMillis, leased: false }
   if ((try step(session, { type: "acquireLease", runId, trigger: input.trigger })) === undefined) return { ...idle, status: "locked" } satisfies RunResult
   session.leased = true
   return try Effect.ensuring(leased(session, input, claims), released(session))

@@ -5,7 +5,7 @@ import { type QuotesFake, kyberNative, parsedJson } from "@repo/platform/testing
 import { Response } from "miniflare";
 import { type Address, type Hex, decodeFunctionData, decodeFunctionResult, encodeFunctionData, erc20Abi, parseAbi } from "viem";
 import { kyberRouterAbi } from "../../../src/kyber/swap.ts";
-import { kyberswap } from "../../../src/runtime/pins.ts";
+import { baseGasPriceOracle, kyberswap } from "../../../src/runtime/pins.ts";
 
 export interface FeeTokens {
   readonly chain: Anvil;
@@ -61,6 +61,7 @@ export async function feeTokens(chain: Anvil, out: string, usdcAt: Address): Pro
   const dustToken = await created("FeeConverterToken");
   await chain.rpc("anvil_setCode", [usdcAt, await chain.rpc("eth_getCode", [await created("FeeConverterUSDC"), "latest"])]);
   await chain.rpc("anvil_setCode", [router, await chain.rpc("eth_getCode", [await created("FeeConverterRouter"), "latest"])]);
+  await chain.rpc("anvil_setCode", [baseGasPriceOracle.address, await chain.rpc("eth_getCode", [await created("FeeConverterL1Oracle"), "latest"])]);
   await mint(chain, usdcAt, router, routerFunding);
   return { chain, feeToken: lower(feeToken), dustToken: lower(dustToken), usdc: lower(usdcAt) };
 }
