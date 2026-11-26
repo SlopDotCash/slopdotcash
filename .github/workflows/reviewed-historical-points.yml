@@ -133,9 +133,9 @@ jobs:
           set -euo pipefail
           node apps/points/dist/programs/main.js git install "$RUNNER_TEMP/value-merge-git"
           printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
-      - name: Mint the read-only collector token for replay
+      - name: Mint the read-only collector token for assessment source reads
         id: collector-token
-        if: inputs.operation == 'replay-assessments' && vars.COLLECTOR_APP_CLIENT_ID != ''
+        if: (inputs.operation == 'audit-assessments' || inputs.operation == 'replay-assessments') && vars.COLLECTOR_APP_CLIENT_ID != ''
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         with:

@@ -51,6 +51,7 @@ export interface AssemblyInputs {
   readonly closedCount: number
   readonly decisions: ReadonlyMap<string, ValueDecision>
   readonly joint: ReadonlyMap<string, ValueDecision>
+  readonly jointReads: ReadonlyArray<JointRead>
   readonly attributionHeld: ReadonlySet<string>
   readonly unavailableHeld: ReadonlySet<string>
   readonly penalties: ReadonlyArray<PublishedPenalty>
@@ -524,5 +525,5 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
     ...collection.openPullRequests.map((record) => record.updatedAt),
   ], collection.latestPreflightUpdate)
   const attribution: AttributionSources = { context, bodies, pullSources, evaluated: evaluated.texts }
-  return { facts, sources, closedCount: closed.length, decisions, joint, attributionHeld, unavailableHeld, penalties: penalties.published, sourceUpdatedAt, attribution, ratified: new Set(ratifications.keys()) } satisfies AssemblyInputs
+  return { facts, sources, closedCount: closed.length, decisions, joint, jointReads: reads, attributionHeld, unavailableHeld, penalties: penalties.published, sourceUpdatedAt, attribution, ratified: new Set(ratifications.keys()) } satisfies AssemblyInputs
 }

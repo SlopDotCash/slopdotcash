@@ -1,10 +1,11 @@
 // spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A recorded award follows the latest complete snapshot's score"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A later assessment that reaches an October-protected source holds the overlapping work and records each hold"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type ImplementationAllocation, type LeaderboardSnapshot, type ScoreEvent, type ValueCoverage, valueScoringApprovedHistoryFrom } from "../client/snapshot/schema.vibe"
-import { pointsOfThirdsText } from "../client/units/scoreUnits.ts"
+import { POINTS_PER_THIRD, pointsOfThirdsText } from "../client/units/scoreUnits.ts"
 import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
 import { pointKey } from "../kernels/records/ids.vibe"
 import { instantOf } from "../kernels/records/instants.ts"
+import { workUnitSlug } from "../score/facts.vibe"
 import {
   type Decision, type Event, type JointHoldInput, type JointHoldReason, type SourceActor, type SourceCoverage, type SourceRule, type Supersession, implementationPoolHeld, jointHoldReason,
   noDecision, octoberDuplicateRetirementReason, octoberOriginalContributorReason, reviewedSourceHeld, unassessedSourceHeld, verifiedAllocationReason,
@@ -287,6 +288,19 @@ effect function supersessions(store: Store, repositories: Repositories, snapshot
       joints.set(`${event.repository}\u0000${source}`, event)
     }
   }
+  const successorDecisions = new Map<string, Superseding | null>()
+  const explicitSupersessions = new Map<string, Superseding>()
+  for (const row of snapshot.valueAssessmentSupersessions ?? []) {
+    let decision = successorDecisions.get(row.successorDigest)
+    if (decision === undefined) {
+      const candidate = snapshot.ledger
+        .filter((event) => event.category === "merged-pull-request" && event.actor.kind === "User" && event.scoreDecisionSourceId === `value:${row.successorDigest}` && event.scoreDecisionAt !== undefined)
+        .sort((left, right) => left.id.localeCompare(right.id, "en"))[0]
+      decision = (try decidedBy(candidate)) ?? null
+      successorDecisions.set(row.successorDigest, decision)
+    }
+    if (decision !== null) explicitSupersessions.set(row.predecessorDigest, decision)
+  }
   const windowFrom = try instant(snapshot.window.from)
   const windowTo = try instant(snapshot.window.to)
   const policyFrom = instantOf(snapshot.valuePolicyEffectiveAt ?? "") ?? 0
@@ -296,6 +310,22 @@ effect function supersessions(store: Store, repositories: Repositories, snapshot
     const merged = award.category === "merged-pull-request"
     const source = sourceKey(award.projectId, award.sourceId)
     if (award.category === "substantive-review" && omitted.has(source)) continue
+    const supersedingDecision = merged && previous.decision?.sourceId.startsWith("value:") === true
+      ? explicitSupersessions.get(previous.decision.sourceId.slice(6))
+      : undefined
+    if (supersedingDecision !== undefined && supersedingDecision.sourceId !== previous.decision?.sourceId && award.amount > 0 &&
+      !owned.has(award.key) && !supplied.has(award.key) && projectCollected(repositories, snapshot, award.projectId, award.occurredAt.slice(0, 7))) {
+      found.push({
+        row: previous,
+        effectiveAt: supersedingDecision.effectiveAt,
+        supersession: {
+          snapshotDigest: digest, windowFrom, windowTo, policyFrom, supplied: [], projectCollected: true, heldPool: false, coverage: "CoverageAbsent",
+          invalidatesJoint: false, ownRecordAbsorbs: false, explicitSupersession: true, review: "NotOmitted",
+          decision: try supersededBy(store, supersedingDecision), preserveHeld,
+        },
+      })
+      continue
+    }
     const own = merged && (try unitNameOf(award)) === ownUnit(award.projectId, award.sourceId)
     const url = URL.parse(award.sourceUrl)
     const match = url?.origin === "https://github.com" ? pullUrl.exec(url.pathname) : null
@@ -328,7 +358,7 @@ effect function supersessions(store: Store, repositories: Repositories, snapshot
       effectiveAt: chosen?.effectiveAt ?? store.generatedAt,
       supersession: {
         snapshotDigest: digest, windowFrom, windowTo, policyFrom, supplied: [], projectCollected: true, heldPool: false, coverage: coverageState,
-        invalidatesJoint: invalidated !== undefined, ownRecordAbsorbs: absorbs, review: adverse ? "AdverseExclusion" : "NotOmitted",
+        invalidatesJoint: invalidated !== undefined, ownRecordAbsorbs: absorbs, explicitSupersession: false, review: adverse ? "AdverseExclusion" : "NotOmitted",
         decision: try supersededBy(store, chosen), preserveHeld,
       },
     })
@@ -638,10 +668,54 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     if (merged && award.provisional && unavailable.has(award.sourceId) && recorded) continue
     credited.push(item)
   }
+  const excludedReviews = new Set<string>()
+  for (const exclusion of snapshot.reviewExclusions ?? []) {
+    const projectId = projectOf(repositories, exclusion.repository)
+    if (projectId === undefined || exclusion.reason === omittedBeforePolicy || exclusion.reason === omittedOutsideWindow) continue
+    excludedReviews.add(sourceKey(projectId, exclusion.reviewId))
+  }
+  const supplied = new Set(credited.map((item) => item.award.key))
+  for (const credit of snapshot.omittedReviewCredits ?? []) {
+    const projectId = projectOf(repositories, credit.repository)
+    if (projectId === undefined) throw new UnregisteredRepository({ repository: credit.repository })
+    if (credit.reviewer.kind !== "User") throw new ActorNotUser({ eventId: credit.id })
+    if (!Number.isSafeInteger(credit.scoreThirds) || credit.scoreThirds < 1) throw new ScoreNotExact({ eventId: credit.id })
+    if (!workCounts(repositories, credit.repository, credit.submittedAt)) continue
+    const occurredAt = try isoAt(millisOf(credit.submittedAt))
+    const workUnitId = `wu_value_review_${workUnitSlug(credit.reviewId)}`
+    const award: Award = {
+      key: try pointKey({ projectId, actorId: credit.reviewer.id, category: "substantive-review", sourceId: credit.reviewId }),
+      actor: { id: credit.reviewer.id, login: credit.reviewer.login },
+      projectId,
+      category: "substantive-review",
+      amount: credit.scoreThirds * POINTS_PER_THIRD,
+      occurredAt,
+      sourceId: credit.reviewId,
+      sourceUrl: credit.url,
+      workUnitId,
+      provisional: true,
+    }
+    if (owned.has(award.key) || supplied.has(award.key) || store.latest.has(award.key) || excludedReviews.has(sourceKey(projectId, credit.reviewId))) continue
+    const event: ScoreEvent = {
+      id: credit.id,
+      actor: credit.reviewer,
+      category: "substantive-review",
+      points: credit.scoreThirds / 3,
+      scoreThirds: credit.scoreThirds,
+      workUnitId,
+      scoreDecisionSourceId: credit.scoreDecisionSourceId,
+      ...(credit.scoreDecisionAt === undefined ? {} : { scoreDecisionAt: credit.scoreDecisionAt }),
+      occurredAt,
+      repository: credit.repository,
+      source: { id: credit.reviewId, kind: "review", number: credit.pullRequestNumber, title: "", url: credit.url },
+      reason: credit.reason,
+    }
+    credited.push({ award, event, unit: ownUnit(projectId, credit.reviewId) })
+    supplied.add(award.key)
+  }
   const ownRecordMerges = new Set(credited
     .filter((item) => item.award.category === "merged-pull-request" && item.unit === ownUnit(item.award.projectId, item.award.sourceId))
     .map((item) => sourceKey(item.award.projectId, item.award.sourceId)))
-  const supplied = new Set(credited.map((item) => item.award.key))
   const reconsidered = before.filter((row) => !holdsImplementation(row.award, row.decision?.sourceId))
   for (const [subject, reason] of withheld) hold(store, { subject, reason, digest })
   try zeroSupersededCredit(store, buffer, try supersessions(store, repositories, snapshot, digest, reconsidered, supplied, ownRecordMerges, owned, preserveHeld), digest, recordedAt)
