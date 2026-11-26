@@ -1,9 +1,15 @@
 import {
   ArrowDown,
-  ChartNoAxesColumnIncreasing,
+  BookOpen,
   ChevronDown,
+  Download,
+  Eye,
+  GitMerge,
   LogIn,
+  RotateCcw,
   UserRound,
+  Users,
+  Wrench,
 } from "lucide-react";
 import {
   createContext,
@@ -28,6 +34,7 @@ import {
 } from "./lib/browser-deployment";
 import {
   fetchWithDeadline,
+  PUBLISHED_DATA_DEADLINE_MS,
   readBoundedJson,
   readBoundedText,
 } from "./lib/browser-json";
@@ -47,13 +54,11 @@ import {
 import { loginReturnPath } from "./lib/login-return";
 import {
   assemblePoints,
-  POINTS_NOTICE,
   type PointsIndex,
   type PointsJournal,
   type PointsMember,
   pointMembers,
 } from "./lib/points";
-import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
 import {
   notifyProjectSessionChanged,
@@ -71,11 +76,15 @@ import {
   NotFound,
   Pager,
   RoutePageHeader,
+  Spinner,
+  StatusBadge,
 } from "./Presentation";
 import "./account-design.css";
 import { ContributionPointTiers } from "./PointsRules";
 import { ProfileActivity, useProfiles } from "./Profiles";
 import { ReferralCode } from "./ReferralCode";
+import { SecurityReadKey } from "./SecurityReadKey";
+import { TraceLicensing } from "./TraceLicensing";
 
 const EarningsPage = lazy(() =>
   import("./Earnings").then((module) => ({ default: module.EarningsPage })),
@@ -92,6 +101,18 @@ function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
       Admin
     </Link>
   );
+}
+
+/**
+ * Projects this account stewards, so an owner can reach a project's settings
+ * from the account menu instead of finding the project page first.
+ */
+function ownedProjects(actor: ActorRef) {
+  return PROJECTS.filter(
+    (project) =>
+      project.steward.github.nodeId === actor.id ||
+      project.steward.github.actorId === actor.id,
+  ).sort((left, right) => left.name.localeCompare(right.name));
 }
 
 interface Membership {
@@ -144,6 +165,10 @@ class PointsRequestError extends Error {
  * one-minute rate limit, and anything else means the service is unavailable.
  */
 function identityFailure(status: number, code?: unknown): string {
+  // A sign-in is bound to the browser that started it by a cookie on the
+  // identity service; without that cookie the poll is refused.
+  if (status === 403 && code === "browser_mismatch")
+    return "Sign-in could not be confirmed in this browser. Allow cookies for slop.cash, then start again.";
   if (status === 410 && code === "callback_failed")
     return "Sign-in failed. Please start again.";
   if (status === 410) return "Sign-in expired. Please start again.";
@@ -151,11 +176,16 @@ function identityFailure(status: number, code?: unknown): string {
     return "Too many sign-in attempts. Wait one minute, then try again.";
   return "Sign-in is temporarily unavailable. Try again in a few minutes.";
 }
-async function requestJson(url: string, init: RequestInit = {}) {
-  const response = await fetchWithDeadline(url, {
-    ...init,
-    cache: "no-store",
-  });
+async function requestJson(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs?: number,
+) {
+  const response = await fetchWithDeadline(
+    url,
+    { ...init, cache: "no-store" },
+    timeoutMs,
+  );
   if (!response.ok) {
     let code: string | null = null;
     try {
@@ -170,16 +200,22 @@ async function requestJson(url: string, init: RequestInit = {}) {
   return readBoundedJson(response, 24 * 1024 * 1024, "points");
 }
 async function loadPoints(signal: AbortSignal) {
-  const index = (await requestJson("/data/points.json", {
-    signal,
-  })) as PointsIndex;
+  const index = (await requestJson(
+    "/data/points.json",
+    { signal },
+    PUBLISHED_DATA_DEADLINE_MS,
+  )) as PointsIndex;
   if (!Array.isArray(index.shards) || index.shards.length !== 16)
     throw new Error("Invalid points index");
   const parts = await Promise.all(
     index.shards.map(async (s, i) => {
       if (s.path !== `/data/points/${i.toString(16)}.json`)
         throw new Error("Invalid points path");
-      const r = await fetchWithDeadline(s.path, { signal, cache: "no-store" });
+      const r = await fetchWithDeadline(
+        s.path,
+        { signal, cache: "no-store" },
+        PUBLISHED_DATA_DEADLINE_MS,
+      );
       if (!r.ok) throw new Error("Points shard unavailable");
       return readBoundedText(r, 8 * 1024 * 1024, "points history");
     }),
@@ -354,7 +390,7 @@ const currentPath = () =>
   `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
 export function PointsNav() {
-  const { state, me, session, setMe, requestPoints, refresh } = usePoints();
+  const { me, session, setMe, requestPoints } = usePoints();
   const [open, setOpen] = useState(false);
   const [failedImage, setFailedImage] = useState("");
   const { busy, error, run } = useAction();
@@ -384,12 +420,6 @@ export function PointsNav() {
       window.removeEventListener("popstate", close);
     };
   }, [open]);
-  const total =
-    state.status === "ready" && me
-      ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
-        me.welcome +
-        (me.socialPoints ?? 0)
-      : null;
   const signedIn = me !== null;
   useEffect(() => {
     if (signedIn) requestPoints();
@@ -423,11 +453,7 @@ export function PointsNav() {
   }
   if (!me && window.location.pathname === "/login") return null;
   if (!me && session === "loading")
-    return (
-      <span className="account-control" role="status">
-        Checking login…
-      </span>
-    );
+    return <Spinner className="account-control" label="Checking login" />;
   if (!me)
     return (
       <a
@@ -468,9 +494,6 @@ export function PointsNav() {
             onError={() => setFailedImage(avatar)}
           />
         )}
-        {total !== null ? (
-          <span className="account-points">{total.toLocaleString()} pts</span>
-        ) : null}
         <ChevronDown aria-hidden="true" className="account-chevron" />
       </button>
       {open ? (
@@ -480,18 +503,6 @@ export function PointsNav() {
           aria-label="Your account details"
         >
           <strong>@{me.actor.login}</strong>
-          {total === null ? (
-            <p role="status">
-              {state.status === "error"
-                ? "Points unavailable"
-                : "Loading points…"}
-            </p>
-          ) : null}
-          {state.status === "error" ? (
-            <button type="button" onClick={refresh}>
-              Retry points
-            </button>
-          ) : null}
           <a
             href={`/contributors/${encodeURIComponent(me.actor.login)}`}
             onClick={navigate}
@@ -507,6 +518,15 @@ export function PointsNav() {
           <a href="/account" onClick={navigate}>
             Settings
           </a>
+          {ownedProjects(me.actor).map((project) => (
+            <a
+              key={project.id}
+              href={`/projects/${encodeURIComponent(project.slug)}/manage`}
+              onClick={navigate}
+            >
+              {project.name} settings
+            </a>
+          ))}
           <AdminAccountLink onNavigate={navigate} />
           <button type="button" onClick={signout} disabled={busy}>
             {busy ? "Signing out…" : "Sign out"}
@@ -525,11 +545,22 @@ function Notice() {
     return (
       <div role="status">
         <p>
-          {state.status === "error" ? state.message : "Points may be outdated."}
+          {state.status === "error" ? (
+            state.message
+          ) : (
+            <>
+              <span className="pr-dot pr-bar-open" aria-hidden="true" /> Stale
+            </>
+          )}{" "}
+          <button
+            aria-label="Retry points"
+            title="Retry points"
+            type="button"
+            onClick={refresh}
+          >
+            <RotateCcw aria-hidden="true" size={15} />
+          </button>
         </p>
-        <button type="button" onClick={refresh}>
-          Retry points
-        </button>
       </div>
     );
   return null;
@@ -595,9 +626,6 @@ export function useProfileMembership(login: string, enabled = true) {
   };
 }
 
-/** The profile shows points earned over this many recent days beside the total. */
-const RECENT_POINTS_DAYS = 30;
-
 export function ProfilePoints({
   actorId,
   login,
@@ -652,15 +680,6 @@ export function ProfilePoints({
           ? named[0]
           : undefined
       : undefined;
-  // A known actor with no Points record and no membership has none.
-  const pointsKnown =
-    state.status === "ready" &&
-    (m || identity || recorded || (actorId && joinStatus === "absent"));
-  const pointsUnavailable = pointsKnown
-    ? null
-    : state.status === "loading"
-      ? "Loading…"
-      : "Unavailable";
   if (
     notFoundWhenUnrecorded &&
     state.status === "ready" &&
@@ -671,15 +690,10 @@ export function ProfilePoints({
     !recorded &&
     named.length === 0
   )
-    return (
-      <NotFound as="section" title="No Slop contributor with this login">
-        <p>Slop has no public record for {login}.</p>
-      </NotFound>
-    );
+    return <NotFound as="section" title="Contributor not found" />;
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
-        awards={m?.awards}
         login={login}
         actorId={resolvedActorId ?? m?.actor.id}
         census={census}
@@ -694,41 +708,14 @@ export function ProfilePoints({
                   actorId={(m?.actor ?? identity?.actor ?? recorded!).id}
                 />
               </div>
-            ) : state.status === "ready" ? (
+            ) : state.status === "ready" &&
+              (joinStatus === "loading" || joinStatus === "unavailable") ? (
               <p>
                 {joinStatus === "loading"
                   ? "Looking up membership…"
-                  : joinStatus === "unavailable"
-                    ? "Membership could not load."
-                    : "No recorded points yet."}
+                  : "Membership could not load."}
               </p>
             ) : null}
-          </>
-        }
-        summary={
-          <>
-            <div>
-              <strong>
-                {pointsUnavailable ??
-                  recentPoints(
-                    m?.awards ?? [],
-                    new Date(),
-                    RECENT_POINTS_DAYS,
-                  ).toLocaleString()}
-              </strong>
-              <span>Points · last {RECENT_POINTS_DAYS} days</span>
-            </div>
-            <div>
-              <strong>
-                {pointsUnavailable ??
-                  (
-                    (m?.total ?? 0) +
-                    (identity?.welcome ?? 0) +
-                    (identity?.socialPoints ?? 0)
-                  ).toLocaleString()}
-              </strong>
-              <span>total points</span>
-            </div>
           </>
         }
       >
@@ -738,11 +725,12 @@ export function ProfilePoints({
     </section>
   );
 }
+const SIGNED_IN_NOTICE = "You’re signed in.";
+const REOPENED_NOTICE = "Account reopened";
+
 function JoinPoints({
-  showHeading = true,
   onSignedIn,
 }: {
-  showHeading?: boolean;
   onSignedIn?: (message: string) => void;
 }) {
   const { me, setMe, session } = usePoints();
@@ -755,9 +743,7 @@ function JoinPoints({
   useEffect(() => {
     if (!me)
       setMessage((current) =>
-        current === "You’re signed in." ||
-        current ===
-          "Your account is open again. Connections and activity email are off."
+        current === SIGNED_IN_NOTICE || current === REOPENED_NOTICE
           ? ""
           : current,
       );
@@ -789,9 +775,7 @@ function JoinPoints({
         // Some browsers, including embedded ones, never open the window; without
         // it the sign-in would wait for a GitHub page nobody can see.
         setBusy(false);
-        setMessage(
-          "Your browser did not open the GitHub sign-in window. Allow pop-ups for this site, or open it in another browser, and try again.",
-        );
+        setMessage("Pop-up blocked. Allow pop-ups and retry.");
         return;
       }
       if (popup) popup.opener = null;
@@ -832,7 +816,9 @@ function JoinPoints({
           const response = await fetchWithDeadline(url, {
             ...init,
             signal: c.signal,
-            credentials: "omit",
+            // Start sets, and poll presents, the cookie that binds the sign-in
+            // to this browser on the identity service.
+            credentials: "include",
             redirect: "error",
             cache: "no-store",
             referrerPolicy: "no-referrer",
@@ -851,7 +837,7 @@ function JoinPoints({
               );
             }
             const refusal =
-              response.status === 410
+              response.status === 410 || response.status === 403
                 ? ((await readBoundedJson(response, 16384, "sign-in").catch(
                     () => null,
                   )) as { error?: unknown } | null)
@@ -885,9 +871,7 @@ function JoinPoints({
       c.signal.throwIfAborted();
       setClosedAccount(false);
       setMe(member(joined));
-      const notice = reopen
-        ? "Your account is open again. Connections and activity email are off."
-        : "You’re signed in.";
+      const notice = reopen ? REOPENED_NOTICE : SIGNED_IN_NOTICE;
       setMessage(notice);
       onSignedIn?.(notice);
     } catch (e) {
@@ -897,7 +881,7 @@ function JoinPoints({
       if (localBackendOrigin !== null) clearLocalFlow();
       if (e instanceof PointsRequestError && e.code === "account_closed") {
         setClosedAccount(true);
-        setMessage("You closed this account. Reopen it to sign in.");
+        setMessage("Account closed");
       } else
         setMessage(
           e instanceof TypeError
@@ -917,7 +901,6 @@ function JoinPoints({
     if (next) destination.searchParams.set("next", next);
     return (
       <section className="points-panel">
-        {showHeading ? <h2>Sign in to Slop</h2> : null}
         <a
           className="button primary-button"
           href={destination.href}
@@ -933,13 +916,11 @@ function JoinPoints({
   if (me) return null;
   return (
     <section className="points-panel">
-      {showHeading ? <h2>Sign in to Slop</h2> : null}
       {session === "error" ? (
         <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
       <p>
-        Signing in makes your Slop membership and any connected X profile link
-        public.
+        <Eye aria-hidden="true" size={16} /> Membership and X link are public
       </p>
       <button
         className="button primary-button"
@@ -953,7 +934,7 @@ function JoinPoints({
             ? "Waiting for GitHub…"
             : "Signing in…"
           : closedAccount
-            ? "Reopen account with GitHub"
+            ? "Reopen account"
             : "Continue with GitHub"}
       </button>
       <p role="status">{message}</p>
@@ -971,11 +952,7 @@ export function LoginPage() {
   return (
     <main className="shell route-main login-page">
       <RoutePageHeader icon={<LogIn />} title={me ? "Signed in" : "Log in"} />
-      {me ? (
-        <p role="status">Redirecting…</p>
-      ) : (
-        <JoinPoints showHeading={false} />
-      )}
+      {me ? <p role="status">Redirecting…</p> : <JoinPoints />}
     </main>
   );
 }
@@ -1027,9 +1004,9 @@ export function AccountPage() {
     pointsActor === null || pointsActor === emailActor;
   const emailFailure =
     accountSession.status === "error"
-      ? "The account check failed."
+      ? "Couldn't load"
       : accountSession.status === "signed-in" && !emailActorMatchesMember
-        ? "The inbox account changed. Retry."
+        ? "Account changed"
         : undefined;
   const emailViewKey =
     emailActor && emailActorMatchesMember
@@ -1070,7 +1047,7 @@ export function AccountPage() {
         >
           <h2 id="wallets-heading">Wallets</h2>
           {session === "loading" ? (
-            <p role="status">Checking your account…</p>
+            <Spinner label="Checking your account" />
           ) : (
             <EarningsPage
               walletsOnly
@@ -1086,7 +1063,7 @@ export function AccountPage() {
           className="points-panel"
           aria-labelledby="notifications-heading"
         >
-          <h2 id="notifications-heading">Email preferences</h2>
+          <h2 id="notifications-heading">Email</h2>
           {emailViewKey ? (
             <InboxEmail
               key={emailViewKey}
@@ -1107,7 +1084,7 @@ export function AccountPage() {
               .
             </p>
           ) : (
-            <p role="status">Checking your account…</p>
+            <Spinner label="Checking your account" />
           )}
         </section>
       ) : null}
@@ -1124,82 +1101,79 @@ export function AccountPage() {
             code={me.referralCode ?? null}
             onSaved={(referralCode) => setMe({ ...me, referralCode })}
           />
+          <p>
+            <Link href="/requested">Requested repos</Link> lists repos Slop
+            contributors want to work on, with a pitch that carries your link.
+          </p>
+        </section>
+      ) : null}
+      {me !== null ? (
+        <section
+          id="trace-licensing"
+          className="points-panel"
+          aria-labelledby="trace-licensing-heading"
+        >
+          <h2 id="trace-licensing-heading">Trace licensing</h2>
+          <TraceLicensing key={me.actor.id} githubId={pointsActor} />
+        </section>
+      ) : null}
+      {me !== null ? (
+        <section
+          id="security-read-key"
+          className="points-panel"
+          aria-labelledby="security-read-key-heading"
+        >
+          <h2 id="security-read-key-heading">Security read key</h2>
+          <SecurityReadKey key={me.actor.id} githubId={pointsActor} />
         </section>
       ) : null}
     </main>
   );
 }
 
-/** Categories from PRD section 7: activity and points. */
-const HISTORICAL_POINT_CATEGORIES: readonly (readonly [string, string])[] = [
-  ["Merged PR before scoring began", "10 each"],
-  ["Verified payout", "25 per project and month"],
+/** Review credit by depth, shown beside the contribution tiers. */
+const REVIEW_POINT_TIERS: readonly (readonly [string, number])[] = [
+  ["Triage", 10],
+  ["Standard", 30],
+  ["Deep", 90],
+  ["Specialist", 240],
 ];
 function readPointsView() {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    people:
-      params.get("view") === "people" || window.location.hash === "#people",
-    query: params.get("q") ?? "",
-  };
+  return { query: new URLSearchParams(window.location.search).get("q") ?? "" };
 }
 export function PointsPage() {
-  const [view, setView] = useState(readPointsView);
-  const [peopleVisited, setPeopleVisited] = useState(() => view.people);
+  const [query, setQuery] = useState(() => readPointsView().query);
   useEffect(() => {
-    const restore = () => setView(readPointsView());
+    const restore = () => setQuery(readPointsView().query);
     window.addEventListener("popstate", restore);
-    window.addEventListener("hashchange", restore);
-    return () => {
-      window.removeEventListener("popstate", restore);
-      window.removeEventListener("hashchange", restore);
-    };
+    return () => window.removeEventListener("popstate", restore);
   }, []);
-  useEffect(() => {
-    if (view.people) setPeopleVisited(true);
-  }, [view.people]);
-  const renderHeader = (periodControls?: ReactNode) => (
-    <RoutePageHeader
-      icon={<ChartNoAxesColumnIncreasing />}
-      title="Leaderboard"
-      actions={periodControls}
-    />
-  );
+  // A directory of contributors, never a ranking (operator decision,
+  // 18 November 2026). Points stay where they explain a payout.
   return (
     <main className="shell route-main points-page standings-page">
-      {view.people ? renderHeader() : null}
-      <div hidden={view.people}>
-        <ContributorStandings renderHeader={renderHeader} />
-      </div>
-      {peopleVisited ? (
-        <div hidden={!view.people}>
-          <People query={view.query} />
-        </div>
-      ) : null}
-      <Disclosure
-        className="points-panel"
-        id="rules"
-        summary="Points rules and downloads"
-      >
-        <p>{POINTS_NOTICE}</p>
+      <RoutePageHeader icon={<Users />} title="Contributors" />
+      <People query={query} />
+      <Disclosure className="points-panel" id="rules" summary="Rules">
         <ContributionPointTiers />
         <p>
-          Useful reviews: triage 10 · standard 30 · deep 90 · specialist 240
-          points.
+          {REVIEW_POINT_TIERS.map(([tier, points]) => (
+            <span key={tier}>
+              <StatusBadge
+                icon={<Eye />}
+                title={`${tier} review: ${points} points`}
+              >
+                {tier} {points}
+              </StatusBadge>{" "}
+            </span>
+          ))}
         </p>
-        <Disclosure summary="Historical and participation points">
-          <ul aria-label="Historical point categories" className="points-rules">
-            {HISTORICAL_POINT_CATEGORIES.map(([activity, points]) => (
-              <li key={activity}>
-                <span>{activity}</span>
-                <strong>{points}</strong>
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
-        <a href="/protocol/points-v1.md">Read the points rules</a> ·{" "}
+        <a href="/protocol/points-v1.md">
+          <BookOpen aria-hidden="true" size={15} /> Rules
+        </a>{" "}
+        ·{" "}
         <a href="/data/points.json" download>
-          Download points index
+          <Download aria-hidden="true" size={15} /> JSON
         </a>
       </Disclosure>
     </main>
@@ -1417,7 +1391,7 @@ export function ContributorStandings({
                 </tbody>
               </table>
             </section>
-            {rows.length === 0 ? <p>No contributors match this view.</p> : null}
+            {rows.length === 0 ? <p>No results</p> : null}
             {rows.length > pageSize ? (
               <Pager
                 onPage={setPage}
@@ -1479,7 +1453,7 @@ function PublicXLink({ actorId }: { actorId: string }) {
       <XAccountLink account={account} />
     </span>
   ) : failed ? (
-    <small>X link unavailable</small>
+    <small>X unavailable</small>
   ) : null;
 }
 type Person = {
@@ -1529,7 +1503,7 @@ const PEOPLE_PAGE_SIZE = 24;
  * People without score stay discoverable without receiving a rank.
  */
 function People({ query }: { query: string }) {
-  const { state, me } = usePoints();
+  const { me } = usePoints();
   const census = useProfiles();
   const [members, setMembers] = useState<MemberState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -1592,34 +1566,47 @@ function People({ query }: { query: string }) {
         <p role="status">Loading contributors…</p>
       ) : census.state.status === "error" ? (
         <p role="status">
-          Contributors unavailable.{" "}
-          <button type="button" onClick={census.retry}>
-            Retry contributors
+          Contributors unavailable{" "}
+          <button
+            aria-label="Retry contributors"
+            title="Retry contributors"
+            type="button"
+            onClick={census.retry}
+          >
+            <RotateCcw aria-hidden="true" size={15} />
           </button>
         </p>
       ) : census.state.refreshError ? (
         <p role="status">
-          Contributor records may be outdated.{" "}
-          <button type="button" onClick={census.retry}>
-            Retry contributors
+          <span className="pr-dot pr-bar-open" aria-hidden="true" /> Stale{" "}
+          <button
+            aria-label="Retry contributors"
+            title="Retry contributors"
+            type="button"
+            onClick={census.retry}
+          >
+            <RotateCcw aria-hidden="true" size={15} />
           </button>
         </p>
       ) : null}
       {members.status === "preview" ? (
         <p>
-          Public members load only on {new URL(browserDeployment.site).hostname}
-          .{" "}
           <a href={`${browserDeployment.site}/points#people`}>
-            View public members
+            View on {new URL(browserDeployment.site).hostname}
           </a>
         </p>
       ) : members.status === "loading" ? (
         <p role="status">Loading members…</p>
       ) : members.status === "error" ? (
         <p role="status">
-          Members unavailable.{" "}
-          <button type="button" onClick={() => setAttempt((v) => v + 1)}>
-            Retry members
+          Members unavailable{" "}
+          <button
+            aria-label="Retry members"
+            title="Retry members"
+            type="button"
+            onClick={() => setAttempt((v) => v + 1)}
+          >
+            <RotateCcw aria-hidden="true" size={15} />
           </button>
         </p>
       ) : null}
@@ -1633,42 +1620,38 @@ function People({ query }: { query: string }) {
                 (current + 1) * PEOPLE_PAGE_SIZE,
               )
               .map((p) => {
-                const earned =
-                  state.status === "ready"
-                    ? (state.members.find((m) => m.actor.id === p.id)?.total ??
-                      0)
-                    : null;
                 const steward = PROJECTS.filter(
                   (project) =>
                     project.authority.state === "verified" &&
                     project.steward.github.nodeId === p.id,
                 );
-                const participation = p.member
-                  ? p.member.welcome + p.member.socialPoints
-                  : 0;
                 return (
                   <li key={p.id}>
                     <a href={`/contributors/${encodeURIComponent(p.login)}`}>
                       {p.login}
                     </a>
-                    <span>
-                      {p.merged === null
-                        ? "PR count unavailable"
-                        : p.merged === 0
-                          ? "No merged PRs"
-                          : `${p.merged.toLocaleString()} merged PR${p.merged === 1 ? "" : "s"}`}
+                    <span
+                      title={
+                        p.merged === null
+                          ? "PR count unavailable"
+                          : "Merged PRs"
+                      }
+                    >
+                      <GitMerge aria-hidden="true" size={14} />{" "}
+                      {p.merged === null ? "—" : p.merged.toLocaleString()}
+                      <span className="visually-hidden">
+                        {p.merged === null
+                          ? " PR count unavailable"
+                          : " merged PRs"}
+                      </span>
                     </span>
-                    <span>
-                      {earned === null
-                        ? "Points unavailable"
-                        : `${(earned + participation).toLocaleString()} pts`}
-                    </span>
-                    {p.member ? <small>Public member</small> : null}
                     {steward.length ? (
-                      <small>
-                        Project maintainer ·{" "}
+                      <StatusBadge icon={<Wrench />} title="Project maintainer">
+                        <span className="visually-hidden">
+                          Project maintainer ·{" "}
+                        </span>
                         {steward.map((s) => s.name).join(", ")}
-                      </small>
+                      </StatusBadge>
                     ) : null}
                     {p.member?.x ? <XAccountLink account={p.member.x} /> : null}
                   </li>

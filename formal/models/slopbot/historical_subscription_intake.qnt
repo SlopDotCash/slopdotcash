@@ -1,6 +1,9 @@
 // @source backend/slopbot/value-import.ts
+// @source backend/slopbot/value-import-observation.ts
+// @evidence backend/slopbot/value-import.test.ts
 // @source workers/slopbot/value-import-service.ts
 // @source workers/slopbot/value-import.ts
+// @source workers/slopbot/value-import-diagnostics.ts
 // @source workers/slopbot/value-settings.ts
 // @source workers/slopbot/value-publication.ts
 // @source workers/slopbot/value-work-unit-publication.ts
@@ -12,6 +15,7 @@
 // @source migrations/0046_slopbot_work_unit_journal.sql
 // @evidence workers/slopbot/value-settings.test.ts
 // @evidence workers/slopbot/value-publication-fence.test.ts
+// @evidence workers/slopbot/value-import-diagnostics.test.ts
 // Two HTTP requests, each with at most one repeated envelope; two source
 // identities/revisions, two assessment keys per journal and payload classes.
 // One overlapping source family represents competing single/joint revisions.
@@ -35,23 +39,33 @@
 // set for this bounded family; detailed multi-parent rules have separate models.
 // An INSERT or subsequent readback/RPC response can fail after commit. HTTP409
 // and a lost HTTP response are not proof that no journal row was written.
-// Listed test files cover selected settings/fence branches only. No direct
-// HTTP-to-RPC historical import conformance test was found. These scenarios
-// have not been parsed, simulated, model-checked or executed.
+// Pages checks same origin, owner-admin authority and publisher availability
+// before Worker dispatch. At response delivery, terminalOffer summarizes the
+// fixed opt-in version, valid correlation, named binding and exact sanitized
+// reply. "matchingSafe" is the only class that passes all of these checks.
+// Only the matching request correlation and the declared six-field projection
+// can be returned. No success receipt, journal entry or retry is added by
+// delivering a diagnostic. Concrete field values, streaming and distributed
+// transport are covered by focused source tests rather than this model.
 module historical_subscription_intake {
   val slots = Set(1, 2)
   val sources = Set(1, 2)
   val rows = Set(1, 2, 3, 4)
+  val terminalOffers = Set("ordinary", "wrongVersion", "invalidCorrelation", "noBinding",
+    "unavailable", "mismatch", "unsafe", "matchingSafe")
+  val terminalFields = Set("stage", "sourceIndex", "sourceCount", "errorName", "httpStatus", "messageSha256")
   type Record = { exists: bool, mode: str, parent: int, payload: int, members: Set[int] }
   val absent: Record = { exists: false, mode: "single", parent: 0, payload: 0, members: Set() }
   type Request = { phase: str, attempt: int, mode: str, key: int, parent: int,
     payload: int, bundle: bool, members: Set[int], collected: Set[int], refreshed: Set[int],
     sourceRevisions: int -> int, registryRevision: int, status: int,
-    returnedRow: int, returnedPayload: int, noStore: bool, received: bool }
+    returnedRow: int, returnedPayload: int, noStore: bool, received: bool,
+    admittedByPages: bool, disclosedFields: Set[str] }
   val idle: Request = { phase: "unused", attempt: 0, mode: "single", key: 1, parent: 0,
     payload: 1, bundle: false, members: Set(), collected: Set(), refreshed: Set(),
     sourceRevisions: sources.mapBy(_ => 0), registryRevision: 0, status: 0,
-    returnedRow: 0, returnedPayload: 0, noStore: false, received: false }
+    returnedRow: 0, returnedPayload: 0, noStore: false, received: false,
+    admittedByPages: false, disclosedFields: Set() }
   var s: { requests: int -> Request, sourceRevisions: int -> int, registryRevision: int,
     active: bool, installed: bool, selected: Set[int], tip: int,
     records: int -> Record, sourceIndex: int -> Set[int], claimIndex: int -> Set[int],
@@ -92,7 +106,7 @@ module historical_subscription_intake {
       s' = s.with("requests", s.requests.set(id,
         if (result == "error") respond(r, 503) else if (result == "missing") respond(r, 401)
         else if (result == "forbidden") respond(r, 403) else if (not(publisher)) respond(r, 503)
-        else r.with("phase", "body"))) }
+        else r.with("phase", "body").with("admittedByPages", true))) }
   }
   action body(id: int, valid: bool): bool = {
     val r = s.requests.get(id)
@@ -179,10 +193,16 @@ module historical_subscription_intake {
     all { Set("worker", "installation", "collect", "reconstruct", "capture", "refresh", "prepare", "preflight", "append").contains(r.phase),
       s' = s.with("requests", s.requests.set(id, respond(r, 409))) }
   }
-  action send(id: int, received: bool): bool = {
+  pure def completeResponse(r: Request, received: bool, terminalOffer: str): Request =
+    r.with("phase", "done").with("received", received).with("disclosedFields",
+      if (r.admittedByPages and r.status == 409 and received and terminalOffer == "matchingSafe")
+        terminalFields else Set())
+  action sendTerminal(id: int, received: bool, terminalOffer: str): bool = {
     val r = s.requests.get(id)
-    all { r.phase == "response", s' = s.with("requests", s.requests.set(id, r.with("phase", "done").with("received", received))) }
+    all { r.phase == "response", terminalOffers.contains(terminalOffer),
+      s' = s.with("requests", s.requests.set(id, completeResponse(r, received, terminalOffer))) }
   }
+  action send(id: int, received: bool): bool = sendTerminal(id, received, "ordinary")
   action step = {
     any {
       { nondet source = sources.oneOf() sourceChanges(source) },
@@ -213,7 +233,9 @@ module historical_subscription_intake {
       { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() appendRecord(id, yes) },
       { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() readback(id, yes) },
       { nondet id = slots.oneOf() failure(id) },
-      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() send(id, yes) },
+      // All rejected offers have the same next state as an ordinary response.
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf()
+        nondet terminalOffer = Set("ordinary", "matchingSafe").oneOf() sendTerminal(id, yes, terminalOffer) },
       s' = s
     }
   }
@@ -230,8 +252,25 @@ module historical_subscription_intake {
       val r = s.requests.get(id)
       all { r.status > 0 implies r.noStore,
         r.status == 200 implies rowAt(r.returnedRow).exists and r.returnedPayload == rowAt(r.returnedRow).payload,
+        r.status == 409 implies r.admittedByPages,
+        r.disclosedFields != Set() implies r.disclosedFields == terminalFields and r.admittedByPages
+          and r.phase == "done" and r.received and r.status == 409 and r.returnedRow == 0 and r.returnedPayload == 0,
         r.refreshed.subseteq(r.collected), r.collected.subseteq(r.members) }
     }) }
+  // A finite boundary check enumerates all terminal inputs, including rejected
+  // admission and lost delivery. Reachability of these classes through the
+  // publication lifecycle is checked separately by step and the scenarios.
+  action terminalBoundaryProofStep = s' = s
+  pure val terminalBoundaryInvariant = Set(200, 400, 401, 403, 405, 409, 503).forall(status =>
+    Set(false, true).forall(admittedByPages => Set(false, true).forall(received => terminalOffers.forall(offer => {
+      val r = idle.with("phase", "response").with("status", status).with("admittedByPages", admittedByPages)
+      val completed = completeResponse(r, received, offer)
+      all {
+        completed.disclosedFields ==
+          (if (admittedByPages and received and status == 409 and offer == "matchingSafe") terminalFields else Set()),
+        completed.with("disclosedFields", Set()) == r.with("phase", "done").with("received", received)
+      }
+    }))))
   action admitted(id: int, mode: str, key: int, parent: int, payload: int, bundle: bool): bool = begin(id, mode, key, parent, payload, bundle)
     .then(headers(id, true, true)).then(session(id, "admin", true)).then(body(id, true)).then(envelope(id, true)).then(installation(id, true))
   action singleCollected(id: int): bool = collect(id, 1, true, true).then(capture(id)).then(refresh(id, 1, true)).then(prepare(id, true)).then(preflight(id))
@@ -298,4 +337,28 @@ module historical_subscription_intake {
   run jointSuccessorIndexesItsJointParentTest = init.then(admitted(1, "joint", 1, 0, 1, false)).then(jointCollected(1)).then(jointPrepared(1)).then(receipt(1))
     .then(admitted(2, "joint", 2, 3, 2, false)).then(jointCollected(2)).then(jointPrepared(2)).then(receipt(2))
     .expect(s.parentIndex.get(4) == Set(3) and s.tip == 4 and invariant)
+  run terminalDiagnosticBoundaryTest = init.expect(terminalBoundaryInvariant)
+  run sameOriginOwnerReceivesOnlyMatchingDiagnosticsTest = init.then(admitted(1, "single", 1, 0, 1, false))
+    .then(failure(1)).then(sendTerminal(1, true, "matchingSafe"))
+    .expect(s.requests.get(1).disclosedFields == terminalFields and s.requests.get(1).attempt == 1
+      and s.tip == 0 and invariant)
+  run differentCorrelationReturnsOnlyOrdinaryFailureTest = init.then(admitted(1, "single", 1, 0, 1, false))
+    .then(failure(1)).then(sendTerminal(1, true, "mismatch"))
+    .expect(s.requests.get(1).status == 409 and s.requests.get(1).disclosedFields == Set()
+      and s.requests.get(1).attempt == 1 and invariant)
+  run foreignOriginCannotReceiveDiagnosticsTest = init.then(begin(1, "single", 1, 0, 1, false))
+    .then(headers(1, true, false)).then(sendTerminal(1, true, "matchingSafe"))
+    .expect(s.requests.get(1).status == 403 and s.requests.get(1).disclosedFields == Set() and invariant)
+  run nonAdminCannotReceiveDiagnosticsTest = init.then(begin(1, "single", 1, 0, 1, false)).then(headers(1, true, true))
+    .then(session(1, "forbidden", true)).then(sendTerminal(1, true, "matchingSafe"))
+    .expect(s.requests.get(1).status == 403 and s.requests.get(1).disclosedFields == Set() and invariant)
+  run optInSuccessReturnsOnlyReceiptTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1))
+    .then(appendRecord(1, false)).then(readback(1, true)).then(sendTerminal(1, true, "matchingSafe"))
+    .expect(s.requests.get(1).status == 200 and s.requests.get(1).returnedRow == 1
+      and s.requests.get(1).disclosedFields == Set() and invariant)
+  run diagnosticAfterReadbackFailurePreservesRecordTest = init.then(admitted(1, "joint", 1, 0, 1, false))
+    .then(jointCollected(1)).then(jointPrepared(1)).then(appendRecord(1, false)).then(readback(1, false))
+    .then(sendTerminal(1, true, "matchingSafe"))
+    .expect(s.requests.get(1).disclosedFields == terminalFields and s.requests.get(1).attempt == 1
+      and s.tip == 3 and s.sourceIndex.get(3) == sources and invariant)
 }

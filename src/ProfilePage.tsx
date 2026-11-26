@@ -1,3 +1,4 @@
+import { Clock, Info, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import {
@@ -20,15 +21,18 @@ import {
   formatCycleMonth,
   formatPointsFromThirds,
   NotFound,
+  Spinner,
+  StatusBadge,
 } from "./Presentation";
 import { useProfiles } from "./Profiles";
 
 /** The categories of the published penalty table (PRD section 7). */
 const PENALTY_CATEGORY_LABELS: Record<string, string> = {
   spam: "Spam",
-  scam: "Scam or malicious",
-  busywork: "Clear violation of a quoted project rule",
-  gaming: "Clear violation of a quoted project rule",
+  scam: "Scam",
+  busywork: "Rule violation",
+  gaming: "Rule violation",
+  missing_evidence: "Missing PR evidence",
 };
 
 export function ProfilePage({
@@ -78,32 +82,26 @@ export function ProfilePage({
       <main className="shell route-main">
         <UnverifiedIdentity login={login} />
         {checking ? (
-          <p className="data-notice" role="status">
-            Checking contributor…
-          </p>
+          <Spinner className="data-notice" label="Checking contributor" />
         ) : (
           <>
             <p className="data-notice" role="status">
-              Contributor records are unavailable.
+              Profile unavailable
             </p>
             <button
               className="button secondary-button button-small"
               type="button"
+              aria-label="Retry profile"
               onClick={() => {
                 profiles.retry();
                 membership.retry();
                 points.refresh();
               }}
             >
-              Retry profile
+              Retry
             </button>
           </>
         )}
-        {!checking ? (
-          <p>
-            <Link href="/points">Find a contributor</Link>
-          </p>
-        ) : null}
       </main>
     );
   }
@@ -164,12 +162,17 @@ export function ProfilePage({
           <ExternalLinkAnchor
             className="profile-wallet"
             href={wallet.sourceUrl}
+            label={`${currentWallet.status === "ready" ? "Wallet" : "Past wallet"} · ${shortAddress(wallet.address)}`}
           >
-            {currentWallet.status === "ready" ? "Wallet" : "Past wallet"} ·{" "}
+            {currentWallet.status === "ready" ? (
+              <Wallet aria-hidden="true" size={14} />
+            ) : (
+              <span title="Past wallet">
+                <Clock aria-hidden="true" size={14} />
+              </span>
+            )}{" "}
             {shortAddress(wallet.address)}
           </ExternalLinkAnchor>
-        ) : currentWallet.status === "loading" ? (
-          <span>Checking wallet…</span>
         ) : null}
       </ContributorIdentity>
       <ProfilePoints
@@ -189,42 +192,30 @@ export function ProfilePage({
             <ul className="project-bars">
               {matches
                 .slice()
-                .sort((left, right) => right.leader.score - left.leader.score)
-                .map(({ leader, view }) => {
-                  const totalWeight = view.leaders.reduce(
-                    (total, entry) => total + entry.adjustedWeight,
-                    0,
-                  );
-                  const share =
-                    totalWeight > 0 ? leader.adjustedWeight / totalWeight : 0;
-                  return (
-                    <li key={view.project.id}>
-                      <Link href={`/projects/${view.project.slug}`}>
-                        <span className="project-bar-label">
-                          <strong>{view.project.name}</strong>
-                          <small title="Accepted-work points">
-                            {formatPointsFromThirds(leader.scoreThirds)} points
-                          </small>
-                        </span>
-                        <span className="project-bar-track" aria-hidden="true">
-                          <span
-                            style={{ width: `${Math.max(2, share * 100)}%` }}
-                          />
-                        </span>
-                      </Link>
-                    </li>
-                  );
-                })}
+                .sort((left, right) =>
+                  left.view.project.name.localeCompare(right.view.project.name),
+                )
+                .map(({ view }) => (
+                  <li key={view.project.id}>
+                    <Link href={`/projects/${view.project.slug}`}>
+                      <span className="project-bar-label">
+                        <strong>{view.project.name}</strong>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
             </ul>
           </section>
         ) : null}
       </ProfilePoints>
       {penalties.length > 0 ? (
         <details className="section profile-section">
-          <summary>Penalty history · {penalties.length}</summary>
-          <p>
-            <Link href="/how-it-works#penalties">How penalties work</Link>
-          </p>
+          <summary>
+            Penalty history · {penalties.length}{" "}
+            <Link href="/how-it-works#penalties" ariaLabel="How penalties work">
+              <Info aria-hidden="true" size={15} />
+            </Link>
+          </summary>
           <ul className="profile-penalties">
             {penalties.map((penalty) => (
               <li key={penalty.id}>
@@ -233,11 +224,15 @@ export function ProfilePage({
                     penalty.repository}{" "}
                   #{penalty.source.number}
                 </ExternalLinkAnchor>{" "}
-                <span>
+                <StatusBadge
+                  tone={penalty.category === "spam" ? "warning" : "danger"}
+                >
                   {PENALTY_CATEGORY_LABELS[penalty.category] ??
-                    penalty.category}{" "}
-                  · {formatCycleMonth(penalty.occurredAt.slice(0, 7))} · −
-                  {formatPointsFromThirds(penalty.debitThirds)} point debit ·{" "}
+                    penalty.category}
+                </StatusBadge>
+                <span>
+                  {formatCycleMonth(penalty.occurredAt.slice(0, 7))} −
+                  {formatPointsFromThirds(penalty.debitThirds)} pts ·{" "}
                   {formatPointsFromThirds(
                     appliedPenalties.get(penalty.id) ?? 0,
                   )}{" "}
@@ -267,9 +262,8 @@ function UnverifiedIdentity({ login }: { login: string }) {
 /** Every identity source has answered and none records this login. */
 function UnknownContributor({ login }: { login: string }) {
   return (
-    <NotFound title="No Slop contributor with this login">
+    <NotFound title={`@${login} not found`}>
       <p>
-        Slop has no contributor record for <strong>@{login}</strong>.{" "}
         <Link href="/points">Find a contributor</Link>
       </p>
     </NotFound>

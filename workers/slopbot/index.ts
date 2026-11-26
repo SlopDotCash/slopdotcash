@@ -16,6 +16,12 @@ import {
 } from "./points-disputes";
 import { QUALITY_MARKER } from "./quality";
 import {
+  dispatchReadyChecks,
+  readyJob,
+  readyLabelWanted,
+  refreshReadyLabel,
+} from "./ready-label";
+import {
   registeredHistoryProject,
   registeredHistoryRepository,
   registeredRepository,
@@ -32,6 +38,15 @@ import {
   reviewItem,
 } from "./review";
 import { dispatchSpendAlert } from "./spend-alerts";
+import { checkStandingDeposits } from "./standing-deposit";
+import { hasSlopParticipationFooter } from "./submission-evidence";
+import {
+  dispatchFeeChecks,
+  feeCheckWanted,
+  feeJob,
+  feeReviewJob,
+  refreshSubmissionFee,
+} from "./submission-fee";
 import {
   consumePendingValueRequests,
   type ValueConsumerEnv,
@@ -40,7 +55,9 @@ import { valueHistory } from "./value-journal";
 import { recordValueRequest } from "./value-requests";
 import { workUnitHistory } from "./value-work-unit-journal";
 
-type Queue = { send(body: Job): Promise<void> };
+type Queue = {
+  send(body: Job, options?: { delaySeconds: number }): Promise<void>;
+};
 type Env = Omit<ValueConsumerEnv, "SLOPBOT_DB"> & {
   SLOPBOT_DB: store.D1TransactionalDatabase<store.D1QueryStatement>;
   SLOPBOT_WEBHOOK_SECRET: string;
@@ -58,6 +75,23 @@ const REVIEW_ACTIONS: Record<string, ReadonlySet<string>> = {
     "ready_for_review",
   ]),
 };
+
+/** Events that can change a slopbot:ready decision (PRD section 5). A closed
+ * pull request keeps its last label, so closing is not one of them. */
+const READY_ACTIONS: Record<string, ReadonlySet<string>> = {
+  pull_request: new Set([
+    "synchronize",
+    "edited",
+    "reopened",
+    "converted_to_draft",
+    "ready_for_review",
+  ]),
+  pull_request_review: new Set(["submitted", "edited", "dismissed"]),
+};
+
+/** A merge, close or reopen can make a paid submission fee due back or kept
+ * (PRD section 5). The check re-reads everything; this only queues it. */
+const FEE_ACTIONS: ReadonlySet<string> = new Set(["closed", "reopened"]);
 
 const VALUE_ACTIONS: Record<string, ReadonlySet<string>> = {
   pull_request: new Set(["closed", "reopened", "edited", "synchronize"]),
@@ -81,7 +115,7 @@ type Payload = {
   };
   sender?: { id: number; type: string };
   issue?: ReopenItem & { number: number; pull_request?: unknown };
-  pull_request?: ReopenItem & { number: number };
+  pull_request?: ReopenItem & { number: number; body?: string | null };
   comment?: { body: string; id?: number };
 };
 
@@ -466,6 +500,47 @@ export default {
           valuationPending = true;
         }
       }
+      // A push, a draft change or a review decision re-checks the label. The
+      // check itself re-reads everything; this only decides whether to queue.
+      if (
+        payload.action &&
+        READY_ACTIONS[event]?.has(payload.action) &&
+        payload.installation &&
+        payload.repository &&
+        payload.repository.private === false &&
+        payload.pull_request !== undefined &&
+        String(payload.sender?.id) !== env.SLOPBOT_APP_USER_ID
+      ) {
+        const ready = readyJob({
+          deliveryId: `${deliveryId}:ready`,
+          installationId: payload.installation.id,
+          repositoryId: payload.repository.id,
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          number: payload.pull_request.number,
+        });
+        if (await readyLabelWanted(env.SLOPBOT_DB, ready))
+          await env.SLOPBOT_QUEUE.send(ready);
+      }
+      if (
+        event === "pull_request" &&
+        payload.action &&
+        FEE_ACTIONS.has(payload.action) &&
+        payload.installation &&
+        payload.repository &&
+        payload.repository.private === false &&
+        payload.pull_request !== undefined
+      ) {
+        const fee = feeJob({
+          deliveryId: `${deliveryId}:fee`,
+          installationId: payload.installation.id,
+          repositoryId: payload.repository.id,
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          number: payload.pull_request.number,
+        });
+        if (await feeCheckWanted(env, fee)) await env.SLOPBOT_QUEUE.send(fee);
+      }
       const job = jobFor(event, deliveryId, payload, env.SLOPBOT_APP_USER_ID);
       if (job !== null) {
         // Paused projects stay registered: their review is security-only.
@@ -502,7 +577,17 @@ export default {
             status: 202,
           });
         }
-        await env.SLOPBOT_QUEUE.send(job);
+        const awaitsReceipt =
+          env.SLOPBOT_EVIDENCE_CLOSURE_ENABLED === "true" &&
+          job.kind === "review" &&
+          event === "pull_request" &&
+          payload.action === "opened" &&
+          typeof payload.pull_request?.body === "string" &&
+          hasSlopParticipationFooter(payload.pull_request.body);
+        await env.SLOPBOT_QUEUE.send(
+          job,
+          awaitsReceipt ? { delaySeconds: 60 } : undefined,
+        );
       }
       await store.completeDelivery(env.SLOPBOT_DB, deliveryId);
       return new Response(
@@ -528,6 +613,9 @@ export default {
       resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
+      dispatchReadyChecks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
+      dispatchFeeChecks(env, env.SLOPBOT_QUEUE),
+      checkStandingDeposits(env),
       processPendingPointsDisputes(env),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
@@ -553,16 +641,29 @@ export default {
   ) {
     for (const message of batch.messages) {
       try {
-        const outcome =
-          message.body.kind === "review"
-            ? await reviewItem(env, message.body)
-            : message.body.kind === "maintainer_hold"
-              ? await applyMaintainerHold(env, message.body)
-              : message.body.kind === "appeal_command"
-                ? await applyAppealCommand(env, message.body)
-                : message.body.kind === "appeal_due"
-                  ? await escalateDueAppeal(env, message.body)
-                  : await recordHumanSignal(env, message.body);
+        const body = message.body;
+        let outcome: string;
+        if (body.kind === "submission_fee") {
+          // A paid or released submission fee runs the review it held back.
+          const fee = await refreshSubmissionFee(env, body);
+          if (fee.review)
+            await env.SLOPBOT_QUEUE.send(
+              feeReviewJob(body, new Date().toISOString()),
+            );
+          outcome = fee.outcome;
+        } else
+          outcome =
+            body.kind === "review"
+              ? await reviewItem(env, body)
+              : body.kind === "ready_label"
+                ? await refreshReadyLabel(env, body)
+                : body.kind === "maintainer_hold"
+                  ? await applyMaintainerHold(env, body)
+                  : body.kind === "appeal_command"
+                    ? await applyAppealCommand(env, body)
+                    : body.kind === "appeal_due"
+                      ? await escalateDueAppeal(env, body)
+                      : await recordHumanSignal(env, body);
         console.log(
           JSON.stringify({
             delivery: message.body.deliveryId,
@@ -570,6 +671,52 @@ export default {
             outcome,
           }),
         );
+        // A finished review of a pull request may change its ready label. A
+        // failure here must not replay the review; the next pull request
+        // event checks the label again.
+        if (body.kind === "review" && body.itemKind === "pull_request")
+          try {
+            if (await readyLabelWanted(env.SLOPBOT_DB, body))
+              await env.SLOPBOT_QUEUE.send(
+                readyJob({
+                  deliveryId: `${body.deliveryId}:ready`,
+                  installationId: body.installationId,
+                  repositoryId: body.repositoryId,
+                  owner: body.owner,
+                  repo: body.repo,
+                  number: body.number,
+                }),
+              );
+          } catch (error) {
+            console.error(
+              JSON.stringify({
+                delivery: body.deliveryId,
+                readyLabel: String(error).slice(0, 300),
+              }),
+            );
+          }
+        // A review may find a fee that was paid moments ago; the fee check
+        // then swaps the label without waiting for the schedule.
+        if (body.kind === "review" && body.itemKind === "pull_request")
+          try {
+            const check = feeJob({
+              deliveryId: `${body.deliveryId}:fee`,
+              installationId: body.installationId,
+              repositoryId: body.repositoryId,
+              owner: body.owner,
+              repo: body.repo,
+              number: body.number,
+            });
+            if (await feeCheckWanted(env, check, true))
+              await env.SLOPBOT_QUEUE.send(check);
+          } catch (error) {
+            console.error(
+              JSON.stringify({
+                delivery: body.deliveryId,
+                submissionFee: String(error).slice(0, 300),
+              }),
+            );
+          }
         // A changed source leaves the review failed. Retry it against the
         // current source instead of acknowledging unfinished work.
         if (

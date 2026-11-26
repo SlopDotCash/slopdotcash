@@ -5,11 +5,19 @@
  * reason, while the value path threw and aborted generation.
  */
 import { afterAll, beforeAll, expect, setSystemTime, test } from "bun:test";
-import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  assertLeaderboardSnapshot,
+  createLeaderboardSnapshot,
+} from "../src/lib/leaderboard";
 import type {
   GitHubActor,
   LeaderboardInput,
 } from "../src/lib/leaderboard-types";
+import {
+  applyPointsSnapshot,
+  emptyPointsJournal,
+  latestPoints,
+} from "../src/lib/points";
 import {
   AFTER_NOVEMBER,
   GENERATED_AT,
@@ -41,12 +49,23 @@ function build(input: {
   assessedReview?: boolean;
   implementationActor?: boolean;
   wrongHead?: boolean;
+  earlierOverlap?: boolean;
+  reviewTier?: "standard" | "none";
 }) {
   const census = penaltyScoreInput([], GENERATED_AT);
   const pull = census.mergedPullRequests.find(
     (row) => row.id === "PR_november",
   );
   if (!pull?.mergedAt) throw new Error("missing fixture pull request");
+  if (input.earlierOverlap) {
+    const earlierCommit = census.mergedPullRequestOutcomes.find(
+      (outcome) => outcome.id === pull.id,
+    )?.commits?.[0];
+    if (!earlierCommit) throw new Error("missing earlier acceptance fixture");
+    census.previousAcceptedOrdinaryOwners = new Map([
+      [`elizaos/asi\0${earlierCommit.oid}`, "PR_earlier"],
+    ]);
+  }
   const reviewId = "PRR_fixture";
   pull.reviews = [
     {
@@ -85,7 +104,7 @@ function build(input: {
           : [
               {
                 sourceId: reviewId,
-                tier: "standard",
+                tier: input.reviewTier ?? "standard",
                 finding: "confirms the fix",
                 outcome: "useful validation",
               },
@@ -153,6 +172,79 @@ test("a qualifying human review keeps its credit", () => {
   );
   expect(reviews.map((event) => event.actor.login)).toEqual(["reviewer"]);
   expect(reviews[0]?.scoreThirds).toBeGreaterThan(0);
+});
+
+test("held implementation still publishes and reconciles its independently assessed review", () => {
+  const input = { author: human, submittedAt: REVIEWED_AT };
+  const before = build(input);
+  const held = build({ ...input, earlierOverlap: true });
+  const reviews = (snapshot: ReturnType<typeof build>) =>
+    snapshot.ledger.filter((event) => event.category === "substantive-review");
+  expect(reviews(held)).toEqual(reviews(before));
+  expect(reviews(held)).toHaveLength(1);
+  expect(
+    held.valueAssessmentCoverage?.find(
+      (row) => row.pullRequestId === "PR_november",
+    ),
+  ).toMatchObject({
+    status: "incomplete",
+    recordDigest: null,
+    reviewAssessmentDigest: "d".repeat(64),
+  });
+
+  const checkpoint = applyPointsSnapshot(
+    emptyPointsJournal(GENERATED_AT),
+    before,
+    "8".repeat(64),
+    GENERATED_AT,
+  );
+  const replay = applyPointsSnapshot(
+    checkpoint,
+    held,
+    "9".repeat(64),
+    GENERATED_AT,
+  );
+  expect(replay.revisions).toEqual(checkpoint.revisions);
+  const revokedReview = build({
+    ...input,
+    earlierOverlap: true,
+    reviewTier: "none",
+  });
+  const next = applyPointsSnapshot(
+    replay,
+    revokedReview,
+    "a".repeat(64),
+    GENERATED_AT,
+  );
+  const appended = next.revisions.slice(checkpoint.revisions.length);
+  expect(appended).toHaveLength(1);
+  expect(appended[0]?.award).toMatchObject({
+    category: "substantive-review",
+    sourceId: "PRR_fixture",
+    amount: 0,
+  });
+
+  const forgedHold = structuredClone(before);
+  const row = forgedHold.valueAssessmentCoverage?.find(
+    (value) => value.pullRequestId === "PR_november",
+  );
+  if (!row) throw new Error("missing review assessment coverage");
+  delete row.implementationAllocation;
+  row.reviewAssessmentDigest = "d".repeat(64);
+  expect(() => assertLeaderboardSnapshot(forgedHold)).toThrow(
+    "Review assessment coverage requires a held implementation source",
+  );
+  row.status = "incomplete";
+  row.recordDigest = null;
+  expect(() => assertLeaderboardSnapshot(forgedHold)).toThrow(
+    "Held implementation source cannot publish merge credit",
+  );
+  const replayed = latestPoints(next);
+  for (const prior of checkpoint.revisions.filter(
+    ({ award }) => award.category === "merged-pull-request",
+  )) {
+    expect(replayed.get(prior.award.key)).toEqual(prior);
+  }
 });
 
 test("a missing eligible human assessment still refuses the snapshot", () => {

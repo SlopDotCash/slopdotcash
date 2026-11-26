@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { installGitHubAppTokenRefresh } from "./github-app-token-refresh";
 
 async function loadGhToken(): Promise<string> {
   let value: string;
@@ -21,6 +22,8 @@ export async function resolveGitHubToken(
   environment: Record<string, string | undefined> = process.env,
   ghTokenLoader: () => Promise<string> = loadGhToken,
 ): Promise<string> {
+  // A collector App token expires after one hour; keep it fresh for the run.
+  if (environment === process.env) installGitHubAppTokenRefresh(environment);
   return (
     environment.GITHUB_TOKEN?.trim() ||
     environment.GH_TOKEN?.trim() ||

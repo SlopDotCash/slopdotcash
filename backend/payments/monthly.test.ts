@@ -23,12 +23,20 @@ import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
-import type { ProjectRecord } from "../../src/lib/project-contracts";
+import type {
+  ProjectRecord,
+  RepositoryAccess,
+} from "../../src/lib/project-contracts";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
+import {
+  activityMailEligibility,
+  dispatchActivityMail,
+  parseActivityMailConfig,
+} from "../../workers/notify/activity";
 import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
@@ -36,10 +44,13 @@ import {
   runMonthlyCommitments,
   runMonthlyCoordinator,
 } from "../../workers/payments/index";
+import { handleEmailPreferences } from "../notifications/email";
+import type { NotificationsDependencies } from "../notifications/handler";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
 } from "../projects/cloudflare-persistence";
+import type { SecurityD1Database } from "../security/case-store";
 import { handlePaymentsApi } from "./handler";
 import {
   CUT_NOTICE_MS,
@@ -649,6 +660,8 @@ test("write collaborators on an organization project may read monthly awards but
   const facts = {
     id: Number(orgManifest.authority.repositoryId),
     node_id: orgManifest.authority.repositoryNodeId,
+    full_name: new URL(orgManifest.repositories[0].githubUrl).pathname.slice(1),
+    private: false,
     owner: {
       id: Number(steward.actorId),
       node_id: steward.nodeId,
@@ -656,74 +669,89 @@ test("write collaborators on an organization project may read monthly awards but
       login: steward.login,
     },
   };
-  let permission = "write";
-  let userId = OWNER;
-  const nativeFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) =>
-    String(input).endsWith("/permission")
-      ? Response.json({ permission, user: { id: Number(userId) } })
-      : Response.json(facts)) as typeof fetch;
-  try {
-    const service = owner((_current, who, level) =>
-      verifyProjectAuthority(orgManifest, who, undefined, level),
+  let permission: "admin" | "write" | "read" = "write";
+  let roleName = "write";
+  const repositoryAccess = async (): Promise<RepositoryAccess> => ({
+    installation: "installed",
+    installationId: 123,
+    permission,
+    roleName,
+    repository: facts,
+  });
+  const service = owner((_current, who, level) =>
+    verifyProjectAuthority(orgManifest, who, repositoryAccess, level),
+  );
+  const refused = async (action: Promise<unknown>) => {
+    const error = await action.then(
+      () => null,
+      (caught: unknown) => caught,
     );
-    const refused = async (action: Promise<unknown>) => {
-      const error = await action.then(
-        () => null,
-        (caught: unknown) => caught,
-      );
-      expect(error).toBeInstanceOf(MonthlyPaymentError);
-      expect((error as MonthlyPaymentError).code).toBe("owner_required");
-    };
-    const read = await service.view(project.id, "2026-11", actor);
-    expect(read.automatic).toBe(true);
-    // The awards UI hides owner controls the API would refuse.
-    expect(read.canManage).toBe(false);
-    permission = "maintain";
-    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
-      false,
-    );
-    await refused(service.setAutomatic(project.id, actor, false));
-    permission = "write";
-    await refused(service.setAutomatic(project.id, actor, false));
-    await refused(
-      service.changeAllocation(project.id, "2026-11", actor, {
-        githubUserId: B,
-        grossBase: "300",
-        expectedSequence: 0,
-      }),
-    );
-    await refused(service.finalize(project.id, "2026-11", actor, 0));
-    await refused(
-      service.releaseReserve(project.id, "2026-11", actor, {
-        network: "base-sepolia",
-        manifestSha256: project.manifestSha256,
-      }),
-    );
-    expect(
-      sqlite.query("SELECT COUNT(*) AS n FROM monthly_payment_settings").get(),
-    ).toEqual({ n: 0 });
-    // A repository admin is the owner of an organization project.
-    permission = "admin";
-    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
-      true,
-    );
-    expect(await service.setAutomatic(project.id, actor, false)).toEqual({
-      automatic: false,
-    });
-    // The steward with write access is also the owner.
-    permission = "write";
-    userId = steward.actorId;
-    const stewardActor = { githubId: steward.actorId, githubLogin: "steward" };
-    expect(
-      (await service.view(project.id, "2026-11", stewardActor)).canManage,
-    ).toBe(true);
-    // Without any maintainer permission the read itself is refused.
-    permission = "read";
-    await refused(service.view(project.id, "2026-11", stewardActor));
-  } finally {
-    globalThis.fetch = nativeFetch;
-  }
+    expect(error).toBeInstanceOf(MonthlyPaymentError);
+    expect((error as MonthlyPaymentError).code).toBe("owner_required");
+  };
+  const read = await service.view(project.id, "2026-11", actor);
+  expect(read.automatic).toBe(true);
+  // The awards UI hides owner controls the API would refuse.
+  expect(read.canManage).toBe(false);
+  roleName = "maintain";
+  expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+    false,
+  );
+  await refused(service.setAutomatic(project.id, actor, false));
+  permission = "write";
+  await refused(service.setAutomatic(project.id, actor, false));
+  await refused(
+    service.changeAllocation(project.id, "2026-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+    }),
+  );
+  await refused(service.finalize(project.id, "2026-11", actor, 0));
+  await refused(
+    service.releaseReserve(project.id, "2026-11", actor, {
+      network: "base-sepolia",
+      manifestSha256: project.manifestSha256,
+    }),
+  );
+  expect(
+    sqlite.query("SELECT COUNT(*) AS n FROM monthly_payment_settings").get(),
+  ).toEqual({ n: 0 });
+  // A repository admin is the owner of an organization project.
+  permission = "admin";
+  expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+    true,
+  );
+  expect(await service.setAutomatic(project.id, actor, false)).toEqual({
+    automatic: false,
+  });
+  // The steward with write access is also the owner.
+  permission = "write";
+  const stewardActor = { githubId: steward.actorId, githubLogin: "steward" };
+  expect(
+    (await service.view(project.id, "2026-11", stewardActor)).canManage,
+  ).toBe(true);
+  // Without any maintainer permission the read itself is refused.
+  permission = "read";
+  await refused(service.view(project.id, "2026-11", stewardActor));
+});
+
+test("a personal project refuses another actor before reading installation authority", async () => {
+  const personal = {
+    ...project.manifest,
+    steward: {
+      ...project.manifest.steward,
+      github: { ...project.manifest.steward.github, type: "User" as const },
+    },
+  };
+  let reads = 0;
+  await expect(
+    verifyProjectAuthority(personal, actor, async () => {
+      reads++;
+      throw new Error("An unrelated actor must not request project authority");
+    }),
+  ).rejects.toMatchObject({ status: 403, code: "owner_required" });
+  expect(reads).toBe(0);
 });
 
 test("an unchanged paused project still permits owner opt-out and allocation edits", async () => {
@@ -1649,6 +1677,154 @@ describe("monthly coordinator", () => {
     expect((await coordinate(afterCutoff, null)).created).toEqual([]);
   });
 
+  describe("a month pledged on chain (operator decision, 15 November 2026)", () => {
+    const pledge = (
+      period: string,
+      amount: string,
+      open = 1,
+      vaultAddress?: string,
+    ) => {
+      const fixture = project.manifest.escrow?.deployments[0];
+      if (!fixture) throw new Error("Missing fixture deployment");
+      const selected = { ...fixture, vault: vaultAddress ?? fixture.vault };
+      sqlite
+        .prepare(
+          "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,?,?,?,'100',?)",
+        )
+        .run(
+          project.id,
+          selected.network,
+          selected.vault,
+          period,
+          amount,
+          open,
+          afterCutoff.toISOString(),
+        );
+      sqlite
+        .prepare(
+          "UPDATE vault_snapshots SET open_pledged_gross=(SELECT CAST(COALESCE(SUM(CAST(amount AS INTEGER)),0) AS TEXT) FROM vault_month_pledges WHERE project_id=?1 AND open=1) WHERE project_id=?1",
+        )
+        .run(project.id);
+    };
+
+    test("freezes and funds the month with automatic payment off", async () => {
+      expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+        automatic: false,
+      });
+      vault("1000");
+      pledge("2082-11", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.failures).toEqual([]);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+      expect(report.created).toEqual([`${project.id}/2082-11`]);
+      expect(count("monthly_payment_obligations")).toBe(2);
+    });
+
+    test("freezes the month of a restricted project", async () => {
+      restricted = true;
+      vault("1000");
+      pledge("2082-11", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.failures).toEqual([]);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+    });
+
+    test("freezes the month of a paused project", async () => {
+      const manifest = { ...project.manifest, status: "paused" as const };
+      const text = JSON.stringify(manifest);
+      expect(
+        await new CloudflareProjectPersistence(db).appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: project.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Paused after the owner pledged the month",
+            actor,
+            at: afterCutoff.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+      vault("1000");
+      pledge("2082-11", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.failures).toEqual([]);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+    });
+
+    test("a pledge in another vault of the project gives no consent", async () => {
+      await owner().setAutomatic(project.id, actor, false);
+      vault("1000");
+      pledge(
+        "2082-11",
+        "1000",
+        1,
+        "0x9000000000000000000000000000000000000009",
+      );
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "automatic-off" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
+    });
+
+    test("a retired project's pledged month does not freeze", async () => {
+      const manifest = {
+        ...project.manifest,
+        status: "paused" as const,
+        listingTier: "retired" as const,
+      };
+      const text = JSON.stringify(manifest);
+      expect(
+        await new CloudflareProjectPersistence(db).appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: project.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Retired after the owner pledged the month",
+            actor,
+            at: afterCutoff.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+      vault("1000");
+      pledge("2082-11", "1000");
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "project-restricted" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
+    });
+
+    test("a pledge for another month gives no consent for this one", async () => {
+      await owner().setAutomatic(project.id, actor, false);
+      vault("2000");
+      pledge("2082-12", "1000");
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "automatic-off" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
+    });
+
+    test("another month's open pledge is held back from this month's funding", async () => {
+      vault("1500");
+      pledge("2082-12", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+      expect(report.waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "underfunded" },
+      ]);
+      expect(count("monthly_payment_obligations")).toBe(0);
+      vault("2000");
+      expect((await coordinate(afterCutoff)).created).toEqual([
+        `${project.id}/2082-11`,
+      ]);
+    });
+  });
+
   test("an owner who turns the default off, a restricted project and an unserved vault are not distributed automatically", async () => {
     expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
       automatic: false,
@@ -2358,6 +2534,27 @@ describe("monthly attestation input", () => {
     await rejects(prepare(), "automatic_off");
     expect(count("monthly_payment_obligations")).toBe(2);
   });
+  test("a month pledged on chain is signed with the default off or the project restricted", async () => {
+    vault("1000");
+    await coordinate(afterCutoff);
+    sqlite
+      .prepare(
+        "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,'2082-11','1000',1,'100',?)",
+      )
+      .run(
+        project.id,
+        deployment.network,
+        deployment.vault,
+        afterCutoff.toISOString(),
+      );
+    restricted = true;
+    sqlite
+      .prepare(
+        "INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) VALUES(?,1,0,?,?)",
+      )
+      .run(project.id, OWNER, afterCutoff.toISOString());
+    expect((await prepare()).totalGrossBase).toBe("1000");
+  });
   test("omits funding-time exclusions while preserving awards funded before a later ban", async () => {
     seedParticipationBan(
       sqlite,
@@ -2526,7 +2723,8 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     prepare(query: string) {
       if (
         unavailable &&
-        query.startsWith("SELECT automatic FROM monthly_payment_settings")
+        query.startsWith("SELECT") &&
+        query.includes("SELECT automatic FROM monthly_payment_settings")
       )
         throw new Error("Synthetic settings storage outage");
       return prepare(query);
@@ -3809,6 +4007,76 @@ describe("owner cuts (operator decision, 15 November 2026)", () => {
     expect(detail).not.toMatch(/earned|owed|—/u);
   });
 
+  test("a cut's notice reaches the opted-in contributor's activity email", async () => {
+    clock = beforeCutoff;
+    const config = parseActivityMailConfig(
+      JSON.stringify({
+        inboxUrl: "https://staging.slop.cash/inbox",
+        recipients: {
+          [B]: {
+            email: "contributor@example.com",
+            verifiedAt: clock.toISOString(),
+            evidenceReference: "private-operator-receipt",
+          },
+        },
+      }),
+    );
+    if (!config) throw new Error("Activity mail fixture invalid");
+    const preference = async (method: string, body?: unknown) => {
+      const response = await handleEmailPreferences(
+        new Request("https://slop.test/api/v1/notifications/email", {
+          method,
+          headers: {
+            origin: "https://slop.test",
+            "content-type": "application/json",
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+        {
+          db: db as unknown as NotificationsDependencies["db"],
+          sessionActor: async () => ({ githubId: B }),
+          now: () => clock,
+          eligibility: (id) => activityMailEligibility(config, id, clock),
+        },
+      );
+      if (!response) throw new Error("Preference route missing");
+      return (await response.json()) as { destinationVersion?: string };
+    };
+    // Contributor B, not the project's steward, opts in before the cut.
+    const { destinationVersion } = await preference("GET");
+    await preference("POST", { enabled: true, destinationVersion });
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+      reason: REASON,
+    });
+    const sent: string[] = [];
+    await dispatchActivityMail({
+      db: db as unknown as SecurityD1Database,
+      config,
+      fromAddress: "notifications@slop.cash",
+      now: () => clock,
+      sendEmail: async (_from, _to, mime) => {
+        sent.push(mime);
+      },
+    });
+    expect(
+      sqlite
+        .query(
+          "SELECT event_key,recipient_github_id,state FROM activity_notification_outbox",
+        )
+        .all(),
+    ).toEqual([
+      {
+        event_key: `monthly-cut:${project.id}:2082-11:1`,
+        recipient_github_id: B,
+        state: "provider-accepted",
+      },
+    ]);
+    expect(sent).toHaveLength(1);
+  });
+
   test("with automatic finalization on, a cut is refused in the final 24 hours before the cutoff", async () => {
     clock = new Date(afterCutoff.getTime() - CUT_NOTICE_MS);
     await rejects(
@@ -3928,5 +4196,97 @@ describe("owner cuts (operator decision, 15 November 2026)", () => {
     expect(cutNotices()).toHaveLength(2);
     // The public list names no owner.
     expect(JSON.stringify(await publicCuts())).not.toContain(OWNER);
+  });
+
+  describe("a month pledged on chain freezes at the cutoff with automatic finalization off", () => {
+    /** The refresh's stored pledge for November, in the vault that pays it. */
+    const pledgeNovember = (vaultAddress?: string) => {
+      const fixture = project.manifest.escrow?.deployments[0];
+      if (!fixture) throw new Error("Missing fixture deployment");
+      sqlite
+        .prepare(
+          "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,'2082-11','1000',1,'100',?)",
+        )
+        .run(
+          project.id,
+          fixture.network,
+          vaultAddress ?? fixture.vault,
+          beforeCutoff.toISOString(),
+        );
+    };
+    const cut = (expectedSequence = 0) =>
+      service().changeAllocation(project.id, "2082-11", actor, {
+        githubUserId: B,
+        grossBase: "300",
+        expectedSequence,
+        reason: REASON,
+      });
+
+    test("a cut in the final 24 hours is refused", async () => {
+      clock = beforeCutoff;
+      await service().setAutomatic(project.id, actor, false);
+      pledgeNovember();
+      clock = new Date(afterCutoff.getTime() - 2 * 60 * 60 * 1000);
+      const refused = cut();
+      await rejects(refused, "cut_notice_window");
+      // Automatic finalization is off; the pledge is why the month freezes.
+      await expect(refused).rejects.toThrow(
+        "A contributor gets 24 hours of notice before a cut takes effect. Because this month freezes at the cutoff, cuts close at 2082-12-03 00:00 UTC, 24 hours before the cutoff.",
+      );
+      expect(count("monthly_allocation_changes")).toBe(0);
+      expect(cutNotices()).toEqual([]);
+      // A change at the proposed amount is not a cut and needs no notice.
+      const same = await service().changeAllocation(
+        project.id,
+        "2082-11",
+        actor,
+        { githubUserId: B, grossBase: "400", expectedSequence: 0 },
+      );
+      expect(same.proposal?.allocationSequence).toBe(1);
+      // The coordinator freezes the pledged month at the cutoff without a
+      // cut that had less than 24 hours of notice.
+      const report = await coordinate(afterCutoff);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+      expect(cutRows()).toEqual([]);
+    });
+
+    test("no change is accepted after the cutoff, before the scheduled freeze", async () => {
+      clock = beforeCutoff;
+      await service().setAutomatic(project.id, actor, false);
+      pledgeNovember();
+      clock = new Date(afterCutoff.getTime() + 60 * 1000);
+      await rejects(cut(), "cutoff_passed");
+      await rejects(
+        service().changeAllocation(project.id, "2082-11", actor, {
+          githubUserId: B,
+          grossBase: "400",
+          expectedSequence: 0,
+        }),
+        "cutoff_passed",
+      );
+      expect(count("monthly_allocation_changes")).toBe(0);
+    });
+
+    test("an earlier cut's notice says the month locks at the cutoff", async () => {
+      clock = beforeCutoff;
+      await service().setAutomatic(project.id, actor, false);
+      pledgeNovember();
+      await cut();
+      const detail = String(cutNotices()[0]?.detail ?? "");
+      expect(detail).toContain("The month locks at 2082-12-04 00:00 UTC");
+      expect(detail).toContain("not before 2082-12-03 23:30 UTC");
+    });
+
+    test("a pledge in another vault of the project leaves cuts open", async () => {
+      clock = beforeCutoff;
+      await service().setAutomatic(project.id, actor, false);
+      pledgeNovember("0x9000000000000000000000000000000000000009");
+      clock = new Date(afterCutoff.getTime() + 60 * 1000);
+      await cut();
+      expect(cutRows()).toHaveLength(1);
+      expect(String(cutNotices()[0]?.detail ?? "")).toContain(
+        "The month locks when the owner finalizes it",
+      );
+    });
   });
 });

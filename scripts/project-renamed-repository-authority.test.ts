@@ -191,12 +191,13 @@ test("setup for a repository with a recorded rename names its current path", asy
       nextAction: { message: string };
     };
   };
-  const messages = [
-    setup.checks.installation.message,
+  expect(setup.checks.installation.message).not.toContain(
+    "example/open-registry",
+  );
+  for (const message of [
     setup.checks.authority.message,
     setup.nextAction.message,
-  ];
-  for (const message of messages) {
+  ]) {
     expect(message).toContain("example/renamed-registry");
     expect(message).not.toContain("example/open-registry");
   }

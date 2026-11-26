@@ -7,13 +7,16 @@
  */
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { fail } from "../backend/http";
 import { hasParticipationBan } from "../backend/projects/account-bans";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import type { RepositoryControl } from "../backend/projects/contracts";
 import {
+  finishSavedVaultCreations,
   handleProjectApi,
   type ProjectApiDependencies,
   refreshProjectSetup,
+  savedVaultCreationSweep,
 } from "../backend/projects/handler";
 import type { ScanRequest } from "../backend/projects/setup";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
@@ -31,6 +34,7 @@ import {
   assertEscrowPolicy,
   type EscrowDeployment,
 } from "../src/lib/escrow-policy.mjs";
+import { maintainerShareBasisPoints } from "../src/lib/maintainer-share.mjs";
 import type {
   ProjectEnforcement,
   RepositoryAccess,
@@ -192,6 +196,35 @@ test("a new project cannot reuse a listed project id or repository", async () =>
   expect(duplicate.body).toMatchObject({
     error: "registry_conflict",
   });
+  expect((await persistence.listProjects()).map((p) => p.id)).toEqual([
+    "open-registry",
+  ]);
+});
+
+test("creating an already listed repository again points the owner to its manage page", async () => {
+  const { persistence, create } = registry();
+  expect((await create("open-registry", "example/open-registry")).status).toBe(
+    201,
+  );
+  const again = await create("open-registry", "example/open-registry");
+  expect(again.status).toBe(409);
+  expect(again.body.error).toBe("registry_conflict");
+  expect(String(again.body.message)).toContain(
+    "example/open-registry is already listed on Slop as open-registry",
+  );
+  expect(String(again.body.message)).toContain(
+    "/projects/open-registry/manage",
+  );
+  const renamed = await create("open-registry-two", "example/open-registry");
+  expect(renamed.status).toBe(409);
+  expect(String(renamed.body.message)).toContain(
+    "/projects/open-registry/manage",
+  );
+  const taken = await create("open-registry", "other/their-repo", OTHER);
+  expect(taken.status).toBe(409);
+  expect(String(taken.body.message)).toContain(
+    "The project id open-registry is already used",
+  );
   expect((await persistence.listProjects()).map((p) => p.id)).toEqual([
     "open-registry",
   ]);
@@ -769,6 +802,159 @@ test("an owner records and revokes explicit closure consent with current authori
   ).toBe(true);
 });
 
+test("same-repository branch changes require a live GitHub admin and preserve history and obligations", async () => {
+  const { call, create, deps, persistence, state } = registry();
+  const path = "example/open-registry";
+  const route = "projects/open-registry";
+  await create("open-registry", path);
+  state.clearance = CLEARED;
+  await call("POST", "project-setup/open-registry/check", OWNER, {});
+  const current = await persistence.getProject("open-registry");
+  if (!current) throw new Error("project was not listed");
+  const { manifest, revision } = current;
+  if (!manifest.contribution)
+    throw new Error("project contribution rules missing");
+  expect(current.status).toBe("active");
+  const historyPath = `project-revisions/${current.id}/${revision}`;
+  const oldRevision = await call("GET", historyPath, OWNER);
+  const repo = {
+    full_name: path,
+    id: Number(manifest.authority.repositoryId),
+    node_id: manifest.authority.repositoryNodeId,
+    private: false,
+    owner: {
+      id: Number(manifest.steward.github.actorId),
+      node_id: manifest.steward.github.nodeId,
+      login: manifest.steward.github.login,
+      type: manifest.steward.github.type,
+    },
+  };
+  const commitSha = "a".repeat(40);
+  const contribution = {
+    ...manifest.contribution,
+    contributionGuide: "Read the contribution rules on vibestack.",
+  };
+  const write = () =>
+    call("PUT", route, OWNER, {
+      expectedRevision: revision,
+      integrationBranch: { name: "vibestack", commitSha },
+      contribution,
+    });
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+    repository: repo,
+  };
+  expect(await write()).toMatchObject({
+    status: 403,
+    body: { error: "authority_required" },
+  });
+  state.access = { ...state.access, permission: "admin", roleName: "admin" };
+  deps.github.token = "public-read-fixture";
+  let head = commitSha;
+  let repositoryId: string | null = null;
+  deps.github.fetch = async (url, init) => {
+    expect(new URL(url).pathname).toBe("/graphql");
+    expect(JSON.parse(String(init.body)).variables).toEqual({
+      id: repo.node_id,
+      qualifiedName: "refs/heads/vibestack",
+      expression: `${commitSha}:.github/slop-project.json`,
+    });
+    const proof = JSON.stringify({
+      kind: "slop-project-authority",
+      schemaVersion: "1",
+      projectId: current.id,
+      policyRevision: manifest.terms.revision,
+      repository: {
+        fullName: path,
+        id: repositoryId,
+        integrationBranch: "vibestack",
+      },
+      steward: manifest.steward.github,
+    });
+    return Response.json({
+      data: {
+        node: {
+          __typename: "Repository",
+          id: repo.node_id,
+          fullDatabaseId: repo.id,
+          isPrivate: false,
+          ref: {
+            name: "vibestack",
+            prefix: "refs/heads/",
+            target: { __typename: "Commit", oid: head },
+          },
+          object:
+            repositoryId === null
+              ? null
+              : { __typename: "Blob", byteSize: proof.length, text: proof },
+        },
+      },
+    });
+  };
+  expect(await write()).toMatchObject({
+    status: 422,
+    body: { error: "branch_proof_required" },
+  });
+  repositoryId = "555555555";
+  expect(await write()).toMatchObject({
+    status: 422,
+    body: { error: "branch_proof_required" },
+  });
+  repositoryId = manifest.authority.repositoryId;
+  head = "b".repeat(40);
+  expect(await write()).toMatchObject({
+    status: 409,
+    body: { error: "branch_head_changed" },
+  });
+  expect(await persistence.getProject(current.id)).toEqual(current);
+  head = commitSha;
+
+  state.clearance = { state: "unscanned" };
+  expect(await write()).toMatchObject({
+    status: 422,
+    body: { error: "vetting_required" },
+  });
+  expect(await persistence.getProject(current.id)).toEqual(current);
+  state.clearance = CLEARED;
+
+  const cache = new Map<string, Response>();
+  deps.cache = {
+    match: async (request) => cache.get(request.url)?.clone(),
+    put: async (request, response) => {
+      cache.set(request.url, response.clone());
+    },
+    delete: async (request) => cache.delete(request.url),
+  };
+  expect(JSON.stringify((await call("GET", "projects", OWNER)).body)).toContain(
+    '"integrationBranch":"main"',
+  );
+  expect(cache.size).toBe(1);
+  expect(await write()).toMatchObject({ status: 200 });
+  const updated = await persistence.getProject(current.id);
+  expect(updated?.revision).toBe(revision + 1);
+  expect(updated?.status).toBe(current.status);
+  expect(updated?.manifest).toEqual({
+    ...manifest,
+    contribution,
+    repositories: [
+      { ...manifest.repositories[0], integrationBranch: "vibestack" },
+    ],
+  });
+  expect(cache.size).toBe(0);
+  expect(JSON.stringify((await call("GET", "projects", OWNER)).body)).toContain(
+    '"integrationBranch":"vibestack"',
+  );
+  expect(await call("GET", historyPath, OWNER)).toEqual(oldRevision);
+  expect(await write()).toMatchObject({
+    status: 409,
+    body: { error: "stale_revision" },
+  });
+  expect(await persistence.getProject(current.id)).toEqual(updated);
+});
+
 test("owner revisions publish presentation, require admission and apply money prospectively", async () => {
   const { persistence, call, create, state } = registry();
   await create("open-registry", "example/open-registry");
@@ -897,6 +1083,433 @@ test("owner revisions publish presentation, require admission and apply money pr
   });
   expect(budget.status).toBe(422);
   expect(budget.body.error).toBe("financial_change_restricted");
+});
+
+test("an owner explicitly publishes and removes an honor-system promise in immutable revisions", async () => {
+  const { persistence, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  const reward = initial.reward as ProjectDefinition["reward"];
+  const created = await call("POST", "projects", OWNER, {
+    manifest: { ...initial, reward: { ...reward, honorSystem: true } },
+  });
+  expect(created.status).toBe(201);
+  const promised = await persistence.getProject("open-registry");
+  if (!promised) throw new Error("project expected");
+  expect(promised.manifest.reward).toEqual({ ...reward, honorSystem: true });
+  expect(promised.manifest.reward.paymentMode).toBe("disabled");
+  expect(promised.manifest.reward.committedMinor).toBe("0");
+  const raised = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        monthlyCapMinor: "2000000000",
+        monthlyCapDisplay: "$2,000",
+      },
+    },
+  });
+  expect(raised.status).toBe(200);
+  const changed = await persistence.getProject("open-registry");
+  if (!changed) throw new Error("project expected");
+  expect(changed.manifest.reward).toMatchObject({
+    honorSystem: true,
+    monthlyCapMinor: "2000000000",
+    paymentMode: "disabled",
+    committedMinor: "0",
+    cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "1000000000" }],
+  });
+  const { honorSystem: _promise, ...withoutPromise } = changed.manifest.reward;
+  const removed = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: changed.revision,
+    manifest: { ...changed.manifest, reward: withoutPromise },
+  });
+  expect(removed.status).toBe(200);
+  expect(
+    (await persistence.getProject("open-registry"))?.manifest.reward,
+  ).toEqual(withoutPromise);
+  const publicProject = await call("GET", "projects/open-registry", OWNER);
+  expect(
+    (publicProject.body.project as ProjectDefinition).reward.honorSystem,
+  ).toBeUndefined();
+  const history = (await persistence.listRevisions()).filter(
+    (entry) => entry.projectId === promised.id,
+  );
+  expect(
+    history.find((entry) => entry.revision === promised.revision)?.manifest,
+  ).toEqual(promised.manifest);
+  expect(
+    history.find((entry) => entry.revision === changed.revision)?.manifest,
+  ).toEqual(changed.manifest);
+});
+
+test("an owner's maintainer share starts with the next UTC month and its history is server-written", async () => {
+  const { persistence, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  expect(
+    (await call("POST", "projects", OWNER, { manifest: initial })).status,
+  ).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  const set = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: created.revision,
+    manifest: {
+      ...created.manifest,
+      reward: { ...created.manifest.reward, maintainerShare: 2000 },
+    },
+  });
+  expect(set.status).toBe(200);
+  const shared = await persistence.getProject("open-registry");
+  if (!shared) throw new Error("project expected");
+  // The open month (October) and every earlier month keep no share.
+  expect(shared.manifest.reward).toEqual({
+    ...created.manifest.reward,
+    maintainerShare: 2000,
+    maintainerShareHistory: [{ throughCycle: "2026-10", basisPoints: 0 }],
+  });
+  expect(maintainerShareBasisPoints(shared.manifest, "2026-10")).toBe(0);
+  expect(maintainerShareBasisPoints(shared.manifest, "2026-11")).toBe(2000);
+  // A second change in the same month keeps October's recorded share.
+  const lowered = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: shared.revision,
+    manifest: {
+      ...shared.manifest,
+      reward: { ...shared.manifest.reward, maintainerShare: 1000 },
+    },
+  });
+  expect(lowered.status).toBe(200);
+  const second = await persistence.getProject("open-registry");
+  if (!second) throw new Error("project expected");
+  expect(second.manifest.reward.maintainerShareHistory).toEqual([
+    { throughCycle: "2026-10", basisPoints: 0 },
+  ]);
+  expect(maintainerShareBasisPoints(second.manifest, "2026-11")).toBe(1000);
+  for (const reward of [
+    // Above the 30% limit.
+    { ...second.manifest.reward, maintainerShare: 3001 },
+    // Zero is written by omitting the field.
+    { ...second.manifest.reward, maintainerShare: 0 },
+    // The owner cannot rewrite what earlier months had.
+    {
+      ...second.manifest.reward,
+      maintainerShare: 1500,
+      maintainerShareHistory: [{ throughCycle: "2026-10", basisPoints: 3000 }],
+    },
+    {
+      ...second.manifest.reward,
+      maintainerShare: 1500,
+      maintainerShareHistory: undefined,
+    },
+  ]) {
+    const refused = await call("PUT", "projects/open-registry", OWNER, {
+      expectedRevision: second.revision,
+      manifest: { ...second.manifest, reward },
+    });
+    expect(refused.status).toBe(422);
+  }
+  expect((await persistence.getProject("open-registry"))?.revision).toBe(
+    second.revision,
+  );
+});
+
+test("a new project cannot submit a maintainer share history", async () => {
+  const { persistence, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  const reward = initial.reward as ProjectDefinition["reward"];
+  // The history would give every month through 2099 a 30% share while the
+  // public line says the share ends next month, and no owner revision could
+  // remove it.
+  const forged = await call("POST", "projects", OWNER, {
+    manifest: {
+      ...initial,
+      reward: {
+        ...reward,
+        maintainerShareHistory: [
+          { throughCycle: "2099-12", basisPoints: 3000 },
+        ],
+      },
+    },
+  });
+  expect(forged.status).toBe(422);
+  expect(forged.body.error).toBe("invalid_manifest");
+  expect(await persistence.getProject("open-registry")).toBeNull();
+  // A share set at creation is still accepted and has no history.
+  const shared = await call("POST", "projects", OWNER, {
+    manifest: {
+      ...initial,
+      reward: { ...reward, maintainerShare: 2000 },
+    },
+  });
+  expect(shared.status).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  expect(created.manifest.reward.maintainerShare).toBe(2000);
+  expect(created.manifest.reward.maintainerShareHistory).toBeUndefined();
+  expect(maintainerShareBasisPoints(created.manifest, "2026-10")).toBe(2000);
+});
+
+test("an owner catches up on reviews once a month for up to 14 days; the server writes the history", async () => {
+  const { persistence, state, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  // A new project starts without a catch-up pause.
+  const forged = await call("POST", "projects", OWNER, {
+    manifest: {
+      ...initial,
+      slopbot: {
+        automaticClosure: false,
+        catchUpUntil: "2026-11-05T00:00:00.000Z",
+      },
+    },
+  });
+  expect(forged.status).toBe(422);
+  expect(forged.body.error).toBe("invalid_manifest");
+  expect(
+    (await call("POST", "projects", OWNER, { manifest: initial })).status,
+  ).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  const at = new Date(state.now).getTime();
+  const iso = (days: number) => new Date(at + days * 86_400_000).toISOString();
+  const publish = (revision: number, slopbot: Record<string, unknown>) =>
+    call("PUT", "projects/open-registry", OWNER, {
+      expectedRevision: revision,
+      manifest: { ...created.manifest, slopbot },
+    });
+  // Past 14 days from now, or not after now, is refused.
+  for (const until of [iso(14.001), iso(0)]) {
+    const refused = await publish(created.revision, {
+      automaticClosure: false,
+      catchUpUntil: until,
+    });
+    expect(refused.status).toBe(422);
+    expect(refused.body.error).toBe("catch_up_refused");
+  }
+  // A submitted history is refused: only the server writes it.
+  const history = await publish(created.revision, {
+    automaticClosure: false,
+    catchUpUntil: iso(14),
+    catchUpHistory: [{ startedAt: iso(-40) }],
+  });
+  expect(history.status).toBe(422);
+  const started = await publish(created.revision, {
+    automaticClosure: false,
+    catchUpUntil: iso(14),
+  });
+  expect(started.status).toBe(200);
+  const running = await persistence.getProject("open-registry");
+  if (!running) throw new Error("project expected");
+  expect(running.manifest.slopbot).toEqual({
+    automaticClosure: false,
+    catchUpUntil: iso(14),
+    catchUpHistory: [{ startedAt: iso(0) }],
+  });
+  const kept = { catchUpHistory: [{ startedAt: iso(0) }] };
+  // It cannot be extended past 14 days from its start.
+  const extended = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: running.revision,
+    manifest: {
+      ...running.manifest,
+      slopbot: { automaticClosure: false, catchUpUntil: iso(15), ...kept },
+    },
+  });
+  expect(extended.status).toBe(422);
+  // Ending it early is always allowed.
+  const ended = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: running.revision,
+    manifest: {
+      ...running.manifest,
+      slopbot: { automaticClosure: false, ...kept },
+    },
+  });
+  expect(ended.status).toBe(200);
+  const stopped = await persistence.getProject("open-registry");
+  if (!stopped) throw new Error("project expected");
+  expect(stopped.manifest.slopbot).toEqual({
+    automaticClosure: false,
+    ...kept,
+  });
+  // A second start in the same UTC month is refused.
+  const again = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: stopped.revision,
+    manifest: {
+      ...stopped.manifest,
+      slopbot: { automaticClosure: false, catchUpUntil: iso(5), ...kept },
+    },
+  });
+  expect(again.status).toBe(422);
+  expect(again.body.error).toBe("catch_up_refused");
+  expect((await persistence.getProject("open-registry"))?.revision).toBe(
+    stopped.revision,
+  );
+});
+
+test("a stored application cannot publish a maintainer share history", async () => {
+  const { persistence, sqlite, call } = registry();
+  // Submission stored the verified reward asset with the manifest.
+  const initial = applicationManifest(
+    "open-registry",
+    "example/open-registry",
+    {
+      rewardAsset: {
+        network: "ethereum",
+        kind: "stablecoin",
+        address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        decimals: 6,
+        chainId: "1",
+        cluster: null,
+        verifiedAt: "2026-10-10T00:00:00.000Z",
+      },
+    },
+  );
+  const reward = {
+    ...(initial.reward as ProjectDefinition["reward"]),
+    maintainerShare: 2000,
+  };
+  const store = sqlite.query(
+    `INSERT INTO project_applications
+     (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,
+      applicant_github_id,applicant_github_login,submitted_at,status,admin_notification)
+     VALUES('app_storedsharehistory','open-registry','example/open-registry',?,?,
+      'Merged pull requests',?,'owner',?,'pending','pending')`,
+  );
+  store.run(
+    JSON.stringify({
+      ...initial,
+      reward: {
+        ...reward,
+        maintainerShareHistory: [
+          { throughCycle: "2099-12", basisPoints: 3000 },
+        ],
+      },
+    }),
+    "a".repeat(64),
+    OWNER,
+    NOW,
+  );
+  const publish = () =>
+    call(
+      "POST",
+      "project-applications/app_storedsharehistory/publish",
+      OWNER,
+      {},
+    );
+  const forged = await publish();
+  expect(forged.status).toBe(422);
+  expect(forged.body.error).toBe("invalid_manifest");
+  expect(await persistence.getProject("open-registry")).toBeNull();
+  expect(
+    await persistence.getApplication("app_storedsharehistory"),
+  ).toMatchObject({ status: "pending" });
+  // The same stored application publishes once it carries only the share.
+  sqlite
+    .query("UPDATE project_applications SET manifest=? WHERE id=?")
+    .run(JSON.stringify({ ...initial, reward }), "app_storedsharehistory");
+  expect((await publish()).status).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  expect(created.manifest.reward.maintainerShare).toBe(2000);
+  expect(created.manifest.reward.maintainerShareHistory).toBeUndefined();
+});
+
+test("honor-system changes require current authority and cannot rewrite reward history", async () => {
+  const { persistence, call, create, state } = registry();
+  await create("open-registry", "example/open-registry");
+  const original = await persistence.getProject("open-registry");
+  if (!original) throw new Error("project expected");
+  const manifest = {
+    ...original.manifest,
+    reward: { ...original.manifest.reward, honorSystem: true as const },
+  };
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  const denied = await call("PUT", "projects/open-registry", OWNER, {
+    manifest,
+    expectedRevision: original.revision,
+  });
+  expect(denied.status).toBe(403);
+  expect(denied.body.error).toBe("authority_required");
+  expect((await persistence.getProject(original.id))?.revision).toBe(
+    original.revision,
+  );
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "admin",
+    roleName: "admin",
+  };
+  const published = await call("PUT", "projects/open-registry", OWNER, {
+    manifest,
+    expectedRevision: original.revision,
+  });
+  expect(published.status).toBe(200);
+  const promised = await persistence.getProject(original.id);
+  if (!promised) throw new Error("project expected");
+  expect(promised.manifest.reward).toEqual(manifest.reward);
+  const stale = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: original.manifest,
+    expectedRevision: original.revision,
+  });
+  expect(stale.status).toBe(409);
+  expect(stale.body.error).toBe("stale_revision");
+  const historical = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "500000000" }],
+      },
+    },
+  });
+  expect(historical.status).toBe(422);
+  expect(historical.body.error).toBe("financial_change_restricted");
+  const alteredPolicy = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: promised.revision,
+    manifest: {
+      ...promised.manifest,
+      reward: {
+        ...promised.manifest.reward,
+        honorSystem: undefined,
+        rewardStartAt: NOW,
+      },
+    },
+  });
+  expect(alteredPolicy.status).toBe(422);
+  expect(alteredPolicy.body.error).toBe("financial_change_restricted");
+  expect((await persistence.getProject(original.id))?.manifest).toEqual(
+    promised.manifest,
+  );
+});
+
+test("honor-system opt-in rejects false and a points-only pool before publication", async () => {
+  const { persistence, call } = registry();
+  const manifest = applicationManifest(
+    "open-registry",
+    "example/open-registry",
+  );
+  const reward = manifest.reward as ProjectDefinition["reward"];
+  for (const changedReward of [
+    { ...reward, honorSystem: false },
+    {
+      ...reward,
+      honorSystem: true,
+      monthlyCapMinor: "0",
+      monthlyCapDisplay: "$0",
+    },
+  ]) {
+    const invalid = await call("POST", "projects", OWNER, {
+      manifest: { ...manifest, reward: changedReward },
+    });
+    expect(invalid.status).toBe(422);
+    expect(invalid.body.error).toBe("invalid_manifest");
+    expect(invalid.body.message).toContain("honorSystem");
+  }
+  expect(await persistence.listProjects()).toEqual([]);
 });
 
 test("an owner revision cannot record a vault; a reviewed admin revision can", async () => {
@@ -1452,6 +2065,113 @@ test("removing a registered project in setup stops later clearance from activati
   expect(t.state.scans).toHaveLength(1);
 });
 
+test("an owner revision cannot change a removed project or queue its scan", async () => {
+  const t = registry();
+  await t.create("remove-edit", "example/remove-edit");
+  expect(
+    (
+      await t.call("POST", "projects/remove-edit/remove", OWNER, {
+        expectedRevision: 1,
+      })
+    ).status,
+  ).toBe(200);
+  const removed = await t.persistence.getProject("remove-edit");
+  if (!removed) throw new Error("Project missing");
+  const edit = await t.call("PUT", "projects/remove-edit", OWNER, {
+    expectedRevision: removed.revision,
+    manifest: {
+      ...removed.manifest,
+      name: "Edited after removal",
+      contribution: {
+        ...removed.manifest.contribution,
+        approvedScope:
+          "Bug fixes and documented features, edited after the project was removed.",
+      },
+    },
+  });
+  expect(edit.status).toBe(409);
+  expect(edit.body).toMatchObject({ error: "project_restricted" });
+  expect(await t.persistence.getProject("remove-edit")).toMatchObject({
+    revision: removed.revision,
+    manifestSha256: removed.manifestSha256,
+  });
+  // Only the first setup scan; a removed project is never scanned again.
+  expect(t.state.scans).toEqual([
+    "remove-edit@1: First scan after self-service setup",
+  ]);
+});
+
+test("a vault registration cannot append a revision to a removed project", async () => {
+  const t = registry();
+  await t.create("remove-vault", "example/remove-vault");
+  const created = await t.persistence.getProject("remove-vault");
+  if (!created) throw new Error("Project missing");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/remove-vault/manifest", ADMIN, {
+        expectedRevision: created.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...created.manifest,
+          reward: { ...created.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const funded = await t.persistence.getProject("remove-vault");
+  if (!funded) throw new Error("Project missing");
+  expect(
+    (
+      await t.call("POST", "projects/remove-vault/remove", OWNER, {
+        expectedRevision: funded.revision,
+      })
+    ).status,
+  ).toBe(200);
+  const removed = await t.persistence.getProject("remove-vault");
+  if (!removed) throw new Error("Project missing");
+  let registered = 0;
+  t.deps.vaultSetup = {
+    observe: async () => {},
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    register: async () => {
+      registered += 1;
+      return { deployment: TEST_VAULT, evidence: "finalized" };
+    },
+  };
+  const registration = await t.call(
+    "POST",
+    "project-vaults/remove-vault",
+    OWNER,
+    {
+      step: "register",
+      expectedRevision: funded.revision,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId: TEST_VAULT.deploymentTransaction,
+    },
+  );
+  expect(registration.status).toBe(409);
+  expect(registration.body).toMatchObject({ error: "project_restricted" });
+  expect(registered).toBe(0);
+  expect(await t.persistence.getProject("remove-vault")).toMatchObject({
+    revision: removed.revision,
+    manifestSha256: removed.manifestSha256,
+  });
+});
+
 test("an intervening revision refuses removal without overwriting the newer project", async () => {
   const t = registry();
   await t.create("remove-race", "example/remove-race");
@@ -1490,6 +2210,203 @@ test("an intervening revision refuses removal without overwriting the newer proj
     manifest: { listingTier: "community", headline: "Newer maintainer edit." },
   });
   expect(await t.persistence.listRevisions()).toHaveLength(2);
+});
+
+test("removal waits for reinstatement instead of reporting a quarantine's own retired revision as removed", async () => {
+  const t = registry();
+  const MOD_2 = "900000005";
+  t.deps.adminGithubIds = new Set([ADMIN, MOD_2]);
+  t.deps.moderatorGithubIds = new Set([ADMIN, MOD_2]);
+  await t.create("remove-quarantined", "example/remove-quarantined");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-quarantined");
+  if (!listed) throw new Error("Project missing");
+  expect(listed).toMatchObject({
+    status: "active",
+    manifest: { listingTier: "community" },
+  });
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        ADMIN,
+        {
+          action: "quarantine",
+          reason: "Investigating a contributor report",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: listed.revision,
+          expectedSequence: 1,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const quarantined = await t.persistence.getProject("remove-quarantined");
+  if (!quarantined) throw new Error("Project missing");
+  expect(quarantined.manifest).toMatchObject({
+    status: "paused",
+    listingTier: "retired",
+  });
+  // That revision is the quarantine's, not a removal: reinstatement lists
+  // the project again. Neither the current head nor an editor loaded before
+  // the quarantine is told that the project was removed.
+  for (const expectedRevision of [quarantined.revision, listed.revision]) {
+    const removed = await t.call(
+      "POST",
+      "projects/remove-quarantined/remove",
+      OTHER,
+      { expectedRevision },
+    );
+    expect(removed.status).toBe(409);
+    expect(removed.body).toMatchObject({ error: "project_restricted" });
+  }
+  expect((await t.persistence.getProject(listed.id))?.revision).toBe(
+    quarantined.revision,
+  );
+  // The owner appeals; after a fresh clean scan another moderator reinstates.
+  expect(
+    (
+      await t.call("POST", "project-appeals", OWNER, {
+        projectId: "remove-quarantined",
+        reason: "The report is mistaken",
+        evidenceReference: "private-appeal-fixture",
+      })
+    ).status,
+  ).toBe(200);
+  t.state.clearance = {
+    ...CLEARED,
+    assessment: CLEARED.assessment && {
+      ...CLEARED.assessment,
+      revision: quarantined.revision,
+    },
+  };
+  t.sqlite
+    .prepare(
+      `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean', 'fixture', ?, ?, ?, ?)`,
+    )
+    .run(
+      CLEARED.assessment?.id ?? "",
+      listed.id,
+      quarantined.revision,
+      quarantined.manifestSha256,
+      "e".repeat(64),
+      "a".repeat(40),
+      "d".repeat(64),
+      ADMIN,
+      "admin",
+      NOW,
+      "Reinstatement scan",
+      JSON.stringify({ disposition: "clean" }),
+      "f".repeat(64),
+      "0".repeat(64),
+      NOW,
+    );
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        MOD_2,
+        {
+          action: "reinstate",
+          reason: "The report did not hold up",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: quarantined.revision,
+          expectedSequence: 3,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const reinstated = await t.persistence.getProject(listed.id);
+  if (!reinstated) throw new Error("Project missing");
+  expect(reinstated.manifest.listingTier).toBe("community");
+  // A removal now appends its own revision, and that revision holds.
+  expect(
+    (
+      await t.call("POST", "projects/remove-quarantined/remove", OTHER, {
+        expectedRevision: reinstated.revision,
+      })
+    ).status,
+  ).toBe(200);
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: reinstated.revision + 1,
+    status: "paused",
+    manifest: { listingTier: "retired" },
+  });
+  expect((await t.call("GET", "projects/remove-quarantined", "")).status).toBe(
+    404,
+  );
+});
+
+test("a Ban recorded while a removal is in flight refuses it at the guarded write", async () => {
+  const t = registry();
+  await t.create("remove-ban-race", "example/remove-ban-race");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-ban-race/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-ban-race");
+  if (!listed) throw new Error("Project missing");
+  expect(listed.status).toBe("active");
+  // A confirmed malicious scan records its Ban after the removal read a clear
+  // restriction. The Ban's paused, retired revision is still pending, so a
+  // removal revision written now would become the one reinstatement undoes.
+  const generation = t.persistence.enforcementGeneration.bind(t.persistence);
+  let banned = false;
+  t.persistence.enforcementGeneration = async () => {
+    if (!banned) {
+      banned = true;
+      expect(
+        await t.persistence.appendEnforcement(
+          {
+            id: "enf_remove_ban_race_scan",
+            projectId: listed.id,
+            sequence: 1,
+            action: "ban",
+            stateAfter: "banned",
+            appealAfter: "none",
+            reason: "Synthetic confirmed malicious scan",
+            evidenceReference: "private-case-fixture",
+            repositoryGithubId: "987654321",
+            repositoryKeys: ["example/remove-ban-race"],
+            actor: null,
+            actorRole: "vetting-service",
+            decisionSource: "standing-rule",
+            systemIssuer: {
+              kind: "vetting-service",
+              keySha256: "a".repeat(64),
+              assessmentId: "vet_fixture",
+              policyVersion: "fixture",
+              rule: "confirmed-malicious",
+            },
+            beforeRevision: listed.revision,
+            beforeManifestSha256: listed.manifestSha256,
+            afterRevision: null,
+            afterManifestSha256: null,
+            result: "revision_pending",
+            createdAt: NOW,
+          },
+          null,
+          [],
+        ),
+      ).toBe("recorded");
+    }
+    return generation();
+  };
+  const removed = await t.call(
+    "POST",
+    "projects/remove-ban-race/remove",
+    OTHER,
+    { expectedRevision: listed.revision },
+  );
+  expect(banned).toBe(true);
+  expect(removed.status).toBe(409);
+  expect(removed.body).toMatchObject({ error: "project_restricted" });
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: listed.revision,
+    manifest: { listingTier: "community" },
+  });
 });
 
 function storeCancellableApplication(
@@ -4389,4 +5306,197 @@ test("an appended name another project takes during the write is a registry conf
   expect(response.status).toBe(409);
   expect(response.body.error).toBe("registry_conflict");
   expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+// A vault creation that is not final when its owner leaves the page is saved
+// and finished by the server as the same owner (PRD section 6).
+async function savedCreationFixture() {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const target = await t.persistence.getProject("vault-target");
+  if (!target) throw new Error("Project required");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+        expectedRevision: target.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...target.manifest,
+          reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const chain = {
+    answer: "absent" as "absent" | "included" | "finalized" | "failed",
+  };
+  const asked: string[] = [];
+  t.deps.vaultSetup = {
+    observe: async () => {},
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    register: async (_project, actor) => {
+      asked.push(actor.githubId);
+      if (chain.answer === "failed")
+        fail(409, "vault_creation_failed", "The vault creation failed.");
+      return chain.answer === "absent"
+        ? null
+        : { deployment: TEST_VAULT, evidence: chain.answer };
+    },
+  };
+  const register = () =>
+    t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId: TEST_VAULT.deploymentTransaction,
+    });
+  const later = (minutes: number) => {
+    t.state.now = new Date(
+      Date.parse(t.state.now) + minutes * 60_000,
+    ).toISOString();
+  };
+  const finish = () =>
+    finishSavedVaultCreations(
+      new Request("https://slop.cash/api/v1/projects"),
+      t.deps,
+    );
+  const vaults = async () =>
+    (await t.persistence.getProject("vault-target"))?.manifest.escrow
+      ?.deployments ?? [];
+  return { t, chain, asked, register, later, finish, vaults };
+}
+
+test.each(["absent", "included"] as const)(
+  "the server finishes a creation that was %s when the owner left",
+  async (seen) => {
+    const f = await savedCreationFixture();
+    f.chain.answer = seen;
+    const first = await f.register();
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe("pending");
+    // Nothing is due yet, so nothing is asked again.
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toEqual([OWNER]);
+    // Still not final at the first check: the creation keeps waiting.
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+    expect(await f.vaults()).toEqual([]);
+    f.chain.answer = "finalized";
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
+    // The same owner is named, and the vault is on the project record.
+    expect(f.asked).toEqual([OWNER, OWNER, OWNER]);
+    expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+    expect((await f.t.persistence.getProject("vault-target"))?.revision).toBe(
+      3,
+    );
+    // A finished creation is never asked about again.
+    f.later(60);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toHaveLength(3);
+  },
+);
+
+test("the server does not finish a creation for an owner who lost access", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a failed creation is not asked about again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "failed";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  f.chain.answer = "finalized";
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("the owner's own registration closes the saved creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  expect((await f.register()).body.status).toBe("registered");
+  const asks = f.asked.length;
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(f.asked).toHaveLength(asks);
+});
+
+test("a saved creation is given up after two days", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  expect(f.asked).toEqual([OWNER]);
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a later request to the project API finishes a due creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  const background: Promise<unknown>[] = [];
+  f.t.deps.waitUntil = (work) => void background.push(work);
+  savedVaultCreationSweep.nextAt = 0;
+  expect((await f.t.call("GET", "project-setup", OWNER)).status).toBe(200);
+  await Promise.all(background);
+  expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+});
+
+test("at most three creations wait for one project", async () => {
+  const f = await savedCreationFixture();
+  const ask = (transactionId: string) =>
+    f.t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId,
+    });
+  for (const digit of ["1", "2", "3", "4"])
+    expect((await ask(`0x${digit.repeat(64)}`)).body.status).toBe("pending");
+  f.later(3);
+  // Only three were kept, so only three are asked about again.
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 3, ended: 0 });
+});
+
+test("an expired creation waits again when its owner asks again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
 });

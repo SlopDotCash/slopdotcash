@@ -30,6 +30,23 @@ use the authenticated original PR creator as the fallback. Every selected carrie
 follow-up must descend from that original head. Other work units retain their
 own attribution.
 
+A fresh authenticated GitHub review may bind an earlier original PR revision
+that its current commit list has replaced. The review must pin the exact head,
+and every retained commit must form its complete selected native chain with the
+same linked primary author and verified first acceptance. The complete current
+PR stays in the proof. Disconnected reviewed revisions use separate native
+bindings, with disjoint claims and one verified recipient for the unchanged unit.
+Missing revision evidence retains the hold.
+
+For native merges with three or more parents, the fixed Git collector retains
+an ordered combined-parent delta. It binds every parent and result tree, path,
+mode and blob identity. Only lines added or removed against every parent count
+as new merge work. Inherited lines remain with their earlier sources. Missing,
+truncated, binary, newly added or deleted path evidence stays held when this
+profile cannot represent all parent snapshots. The representation contains no
+synthetic automatic merge tree. It supplies evidence for valuation and ordinary
+attribution, while contributor and payout decisions keep their existing gates.
+
 Run the preview and reconcile value and duplicate work before recording.
 
 ## Collection and review
@@ -40,6 +57,17 @@ recipients. The campaign freezes that journal prefix, registry and collection
 time. It collects the complete repository ownership census in monthly pieces
 and reconstructs cached results from retained raw GitHub responses on resume.
 A partial census never supplies a complete first-accepted-owner proof.
+When GitHub search omits a recorded positive pool, the collector checks the
+immutable PR directly before assigning first acceptance. It binds those raw
+observations to the census digest. A verified distinct squash SHA prevents
+duplicate credit in later PRs without adding line weights to the earlier pool.
+Unavailable evidence holds the source and any proven conflicting later claim.
+
+A rolling standalone assessment that overlaps verified earlier accepted
+commits holds its implementation credit for joint review. Its qualifying
+reviews keep their own assessment binding. Use a release reader that supports
+this coverage when reusing the snapshot or a retained donor. Earlier validators
+refuse this coverage before Points generation.
 
 An ordinary PR uses its accepted commit changes. A grouped work unit requires
 the exact retained valuation decision and claim paths. A retained-copy fallback
@@ -52,6 +80,9 @@ IDs for largest-remainder ties. A sole verified recipient needs no line ratio.
 Use the workflow's default `apply=false` to collect and preview. `month` limits
 one census piece; `candidate_month` limits which pools get new proofs without
 removing the rest from the inventory. Blank month collects the complete census.
+Collect month pieces in calendar order: a repository's later month reuses the
+commit statistics its earlier months loaded, so the collector refuses a later
+month while an earlier month of that repository has no piece.
 Bounded month runs collect and preview only. Apply once from the complete resumed
 historical scope, without either month filter. The workflow leaves time to upload checkpoints before its job limit. Resume
 with `resume_run` from this repository's same manual workflow on main. The

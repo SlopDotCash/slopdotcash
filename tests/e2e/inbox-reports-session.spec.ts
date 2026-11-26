@@ -97,16 +97,14 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
       page.getByRole("button", { name: /^(Reports|Notifications)$/u }),
     ).toHaveCount(0);
     const notifications = page.getByRole("list", { name: "Notifications" });
-    await expect(
-      page.getByText("Link or import a GitHub report", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.getByText("Link report", { exact: true })).toHaveCount(0);
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("unified-inbox.png"),
       fullPage: false,
     });
     await page
-      .getByRole("button", { name: "Mark shown as read", exact: true })
+      .getByRole("button", { name: "Mark page read", exact: true })
       .dblclick();
     await expect.poll(() => markRequests).toBe(1);
     await expect(
@@ -191,9 +189,7 @@ test("Reports view retains sign-in and account-error recovery", async ({
   await expect(page.getByRole("alert")).toBeVisible();
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(
-    page.getByText("You have no private reports yet.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("No reports", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Retry", exact: true }),
   ).toHaveCount(0);
@@ -256,7 +252,7 @@ test("the financial filter keeps remediation distinct from payment", async ({
     name: "Show reports",
     exact: true,
   });
-  await filter.selectOption({ label: "Paid or ineligible" });
+  await filter.selectOption({ label: "Closed 2" });
   await expect(page.getByText(pending.nextStep, { exact: true })).toHaveCount(
     0,
   );
@@ -264,6 +260,154 @@ test("the financial filter keeps remediation distinct from payment", async ({
   await expect(
     page.getByText(ineligible.nextStep, { exact: true }),
   ).toBeVisible();
-  await filter.selectOption({ label: "All reports" });
+  await filter.selectOption({ label: "All" });
   await expect(page.getByText(pending.nextStep, { exact: true })).toBeVisible();
+});
+
+test("a tab return keeps the Inbox reports on screen without reloading them", async ({
+  page,
+}) => {
+  const requests = { cases: 0, submissions: 0, sessions: 0 };
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/projects")
+      return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
+    if (path === "/api/v1/notifications")
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          unread: 0,
+          nextCursor: null,
+          notifications: [],
+        },
+      });
+    if (path === "/api/v1/project-session") {
+      requests.sessions++;
+      return route.fulfill({
+        json: { session: { githubId: "42", githubLogin: "viewer-42" } },
+      });
+    }
+    if (path === "/api/v1/security-cases") {
+      requests.cases++;
+      return route.fulfill({
+        json: {
+          viewer: { githubId: "42", githubLogin: "viewer-42" },
+          programs: [],
+          cases: [record("42")],
+        },
+      });
+    }
+    if (path === "/api/v1/security-submissions") {
+      requests.submissions++;
+      return route.fulfill({
+        json: { recipientGithubId: "42", automatic: false, submissions: [] },
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await page.goto("/inbox", { waitUntil: "networkidle" });
+  const report = page.getByText("Private account 42 finding", { exact: true });
+  await expect(report).toBeVisible();
+  const loaded = { ...requests };
+  for (let round = 0; round < 3; round++) {
+    const rechecked = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname === "/api/v1/project-session",
+    );
+    // A synthetic return signal is deterministic in headless Chromium.
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await rechecked;
+    await expect(report).toBeVisible();
+    await expect(page.getByText("Checking private session…")).toHaveCount(0);
+  }
+  await page.waitForLoadState("networkidle");
+  await expect(report).toBeVisible();
+  expect(requests.sessions).toBeGreaterThan(loaded.sessions);
+  expect(requests.cases).toBe(loaded.cases);
+  expect(requests.submissions).toBe(loaded.submissions);
+});
+
+test("the Inbox asks again when a read fails once, at load and on a tab return", async ({
+  page,
+  diagnostics,
+}) => {
+  // The planned failures below are the subject of this test.
+  diagnostics.allowCanceledBackgroundReads();
+  for (const path of ["notifications", "security-submissions"])
+    diagnostics.allowResponse(503, "GET", `/api/v1/${path}`);
+  const fail = { notifications: 1, submissions: 1 };
+  const requests = { notifications: 0, submissions: 0 };
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const unavailable = () =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: "temporarily_unavailable",
+          message: "Temporarily unavailable. Try again.",
+        },
+      });
+    if (path === "/api/v1/projects")
+      return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
+    if (path === "/api/v1/notifications") {
+      requests.notifications++;
+      if (fail.notifications > 0) {
+        fail.notifications--;
+        return unavailable();
+      }
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          unread: 0,
+          nextCursor: null,
+          notifications: [],
+        },
+      });
+    }
+    if (path === "/api/v1/project-session")
+      return route.fulfill({
+        json: { session: { githubId: "42", githubLogin: "viewer-42" } },
+      });
+    if (path === "/api/v1/security-cases")
+      return route.fulfill({
+        json: {
+          viewer: { githubId: "42", githubLogin: "viewer-42" },
+          programs: [],
+          cases: [record("42")],
+        },
+      });
+    if (path === "/api/v1/security-submissions") {
+      requests.submissions++;
+      if (fail.submissions > 0) {
+        fail.submissions--;
+        return unavailable();
+      }
+      return route.fulfill({
+        json: { recipientGithubId: "42", automatic: false, submissions: [] },
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await page.goto("/inbox", { waitUntil: "networkidle" });
+  const report = page.getByText("Private account 42 finding", { exact: true });
+  await expect(report).toBeVisible();
+  // Each failed read was asked exactly once more, and neither error showed.
+  await expect.poll(() => requests.submissions).toBe(2);
+  expect(requests.notifications).toBe(2);
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByText("Inbox unavailable")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+
+  // A tab return whose refresh fails once is asked again and keeps the list.
+  fail.notifications = 1;
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect.poll(() => requests.notifications).toBe(4);
+  await page.waitForLoadState("networkidle");
+  await expect(report).toBeVisible();
+  await expect(page.getByText("Inbox unavailable")).toHaveCount(0);
 });

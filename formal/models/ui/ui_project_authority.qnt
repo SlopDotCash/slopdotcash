@@ -5,6 +5,7 @@
 // @source backend/projects/handler.ts
 // @source backend/http.ts
 // @evidence tests/e2e/project-access-retry.spec.ts
+// @evidence scripts/project-session-return.test.ts
 // Only useProjectMaintainer, its caller gates, and expected-actor admission.
 // Two actors, projects, requests and lifetimes. Source-only; not executed.
 module ui_project_authority {
@@ -25,15 +26,16 @@ module ui_project_authority {
     and s.requests.get(id).actor == s.actor
   action cookieChanges(actor: int): bool = all { Set(0, 1, 2).contains(actor),
     s' = s.with("cookie", actor) }
-  // useProjectSession observations and focus invalidation precede the
-  // separately authenticated maintainer request.
+  // useProjectSession observations precede the separately authenticated
+  // maintainer request. A tab return rechecks the session behind the page:
+  // the page keeps its state until the answer, and an answer naming the same
+  // actor changes nothing. A changed or ended session drops the old grant.
   action sessionObserved(actor: int): bool = all { s.mounted,
     Set(0, 1, 2).contains(actor),
-    s' = s.with("actor", actor).with("verified", 0).with("active", 0)
-      .with("status", if (actor == 0) "signed-out" else "checking") }
-  action focus = all { s.mounted,
-    s' = s.with("actor", 0).with("verified", 0).with("active", 0)
-      .with("status", "checking") }
+    s' = if (actor != 0 and actor == s.actor) s
+      else s.with("actor", actor).with("verified", 0).with("active", 0)
+        .with("status", if (actor == 0) "signed-out" else "checking") }
+  action focus = all { s.mounted, s' = s }
   action begin(id: int): bool = all { s.mounted, s.actor != 0,
     ids.contains(id), s.requests.get(id).phase == "unused",
     s' = s.with("active", id).with("verified", 0).with("status", "checking")
@@ -131,9 +133,21 @@ module ui_project_authority {
     .then(recheck(1, true)).expect(s.status == "error" and not(controls))
   run unknownFinalIdentityCannotGrantTest = init.then(sessionObserved(1)).then(begin(1)).then(dispatch(1))
     .then(admit(1)).then(response(1, "success", 1)).then(recheck(1, false)).expect(not(controls))
-  run focusInvalidatesOldAuthorityTest = init.then(sessionObserved(1)).then(begin(1)).then(dispatch(1))
-    .then(admit(1)).then(focus).then(response(1, "success", 1)).then(recheck(1, true))
+  run tabReturnKeepsSameActorTest = init.then(sessionObserved(1)).then(begin(1)).then(dispatch(1))
+    .then(admit(1)).then(response(1, "success", 1)).then(recheck(1, true))
+    .then(focus).expect(controls).then(sessionObserved(1))
+    .expect(controls and s.status == "allowed")
+  run tabReturnDuringCheckStillGrantsTest = init.then(sessionObserved(1)).then(begin(1)).then(dispatch(1))
+    .then(admit(1)).then(focus).then(sessionObserved(1)).then(response(1, "success", 1))
+    .then(recheck(1, true)).expect(controls)
+  run tabReturnDropsChangedActorTest = init.then(sessionObserved(1)).then(begin(1)).then(dispatch(1))
+    .then(admit(1)).then(response(1, "success", 1)).then(recheck(1, true))
+    .then(cookieChanges(2)).then(focus).then(sessionObserved(2))
     .expect(not(controls) and s.status == "checking")
+  run tabReturnDropsEndedSessionTest = init.then(sessionObserved(1)).then(begin(1)).then(dispatch(1))
+    .then(admit(1)).then(response(1, "success", 1)).then(recheck(1, true))
+    .then(cookieChanges(0)).then(focus).then(sessionObserved(0))
+    .expect(not(controls) and s.status == "signed-out")
   run oldProjectReplyCannotGrantTest = init.then(sessionObserved(1)).then(begin(1)).then(dispatch(1))
     .then(admit(1)).then(changeProject).then(response(1, "success", 1)).then(recheck(1, true))
     .expect(not(controls) and s.project == 2)

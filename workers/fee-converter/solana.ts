@@ -26,6 +26,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { decodeFunctionResult, encodeFunctionData, type Hex } from "viem";
 import {
+  PRE_PLEDGE_PROJECT_SIZE,
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
   SOLANA_NATIVE_ASSET,
@@ -79,6 +80,7 @@ import type {
   SendStatus,
   VaultFeeClient,
 } from "./core";
+import { noteProviderFailure } from "./core";
 import { DLN_DESTINATION_ABI, proposeDlnOrder, TAKE_STATUS } from "./debridge";
 import {
   type CheckedSolanaDlnOrder,
@@ -343,7 +345,14 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     });
     const body = (await (method === "getMultipleAccounts"
       ? readBoundedJson(response, 8 * 1024 * 1024, "Solana route accounts")
-      : response.json())) as {
+      : response.json().catch((error: unknown) => {
+          throw noteProviderFailure(error, {
+            provider: "solana-rpc",
+            stage: "response-json",
+            method,
+            httpStatus: response.status,
+          });
+        }))) as {
       result?: T;
       error?: { message?: string };
     };
@@ -372,7 +381,15 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     } catch {
       // A refusal may carry plain text; an accepted reply must be JSON.
       if (response.ok)
-        throw new Error(`Jupiter ${path.split("?")[0]}: unparseable response`);
+        throw noteProviderFailure(
+          new Error(`Jupiter ${path.split("?")[0]}: unparseable response`),
+          {
+            provider: "jupiter",
+            stage: "response-json",
+            method: path.split("?")[0],
+            httpStatus: response.status,
+          },
+        );
     }
     if (!response.ok) {
       const detail = body as { error?: string; errorCode?: string } | null;
@@ -896,15 +913,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       { commitment: "confirmed", encoding: "base64" },
     ]);
     if (info.value === null) throw new Error("project account missing");
-    return solanaUint(
-      solanaAccount(
-        info.value,
-        escrow.programId,
-        PROJECT_SIZE,
-        PROJECT_DISCRIMINATOR,
-      ),
-      ACCRUED_FEES_OFFSET,
-    );
+    return projectAccruedFees(info.value, escrow.programId);
   }
 
   /** Token balance change of `owner`'s `mint` accounts in one transaction. */
@@ -1792,4 +1801,25 @@ interface TransactionReceipt {
     postTokenBalances: TokenBalance[];
     logMessages: string[] | null;
   };
+}
+
+/**
+ * Accrued fees from a Project account. Before the month-pledge program
+ * upgrade a Project is 332 bytes; after `migrate_project` it is 340, with
+ * `pledged_open` appended after every field read here (operator decision,
+ * 15 November 2026).
+ */
+export function projectAccruedFees(value: unknown, programId: string): bigint {
+  let mismatch: unknown;
+  for (const size of [PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE]) {
+    try {
+      return solanaUint(
+        solanaAccount(value, programId, size, PROJECT_DISCRIMINATOR),
+        ACCRUED_FEES_OFFSET,
+      );
+    } catch (error) {
+      mismatch = error;
+    }
+  }
+  throw mismatch;
 }

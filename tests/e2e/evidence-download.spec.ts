@@ -150,7 +150,9 @@ for (const mode of ["streamed", "buffered"] as const) {
       })
       .click();
     await page
-      .getByLabel(`Reason to inspect ${label}`)
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: label, exact: true }) })
+      .getByLabel("Reason", { exact: true })
       .fill("Inspect exact fixture bytes without execution");
     await holdFinalEvidenceSession(page, mode === "streamed" ? 2 : 3);
     await page.evaluate((path) => {
@@ -356,17 +358,14 @@ test("large private evidence downloads with a single-use browser grant @registry
     `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
     { waitUntil: "networkidle" },
   );
-  const retention = page.getByText("Run details and retention", {
-    exact: true,
-  });
+  const retention = page.getByText("Details", { exact: true });
   await retention.focus();
   await page.keyboard.press("Enter");
-  await expect(
-    page.getByText(
-      "Case open. Evidence is retained until 90 days after closure.",
-      { exact: false },
-    ),
-  ).toBeVisible();
+  const retained = page.getByTitle("Retained until 90 days after closure", {
+    exact: true,
+  });
+  await expect(retained).toBeVisible();
+  await expect(retained).toHaveText("Open · +90d after close");
   await retention.focus();
   await page.keyboard.press("Enter");
   await page
@@ -415,11 +414,6 @@ test("large private evidence downloads with a single-use browser grant @registry
   );
   await page.keyboard.press("Enter");
   await grantWaiting;
-  const homeSummaryRead = page.waitForResponse(
-    (response) =>
-      response.request().method() === "GET" &&
-      new URL(response.url()).pathname === "/data/points-summary.json",
-  );
   try {
     // Leave through the actual SPA control while the real grant reply waits.
     await page.getByRole("link", { name: "Slop home", exact: true }).click();
@@ -439,8 +433,7 @@ test("large private evidence downloads with a single-use browser grant @registry
   expect(abandonedDownloads).toEqual([]);
   page.off("download", observeAbandoned);
   await page.unroute(`**${grantPath}`);
-  // Finish the home summary read and fonts before the next hard navigation.
-  expect(await (await homeSummaryRead).finished()).toBeNull();
+  // Let the home route finish loading fonts before the next hard navigation.
   await page.evaluate(() => document.fonts.ready);
   await page.goto(
     `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,

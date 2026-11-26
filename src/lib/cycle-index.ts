@@ -24,7 +24,11 @@ import {
   assertAllocationFundingBasis,
   LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
-import { fetchWithDeadline, readBoundedJson } from "./browser-json";
+import {
+  fetchWithDeadline,
+  PUBLISHED_DATA_DEADLINE_MS,
+  readBoundedJson,
+} from "./browser-json";
 import { findHistoricalProject } from "./projects.mjs";
 import {
   isWalletAddress,
@@ -990,11 +994,11 @@ export async function loadCycleIndex(
   signal: AbortSignal,
   query: string,
 ): Promise<CycleIndex> {
-  const response = await fetchWithDeadline(`/data/cycles/index.json?${query}`, {
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-    signal,
-  });
+  const response = await fetchWithDeadline(
+    `/data/cycles/index.json?${query}`,
+    { cache: "no-store", headers: { Accept: "application/json" }, signal },
+    PUBLISHED_DATA_DEADLINE_MS,
+  );
   if (!response.ok) throw new Error(`cycle index returned ${response.status}`);
   const cycleIndex = await readBoundedJson(
     response,

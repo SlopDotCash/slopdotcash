@@ -20,17 +20,25 @@ import {
   verifiedValueFileClient,
 } from "./value-file-recovery";
 import { importSubscriptionAssessment } from "./value-import";
+import type { HistoricalIntakeProgress } from "./value-import-diagnostics";
 import type { ValueMergeInput } from "./value-merge-profile";
 import { mergeRecipe } from "./value-merge-profile";
 import { prepareWorkUnitEvidence } from "./value-work-unit";
 
 /** Synthetic transport exercises canonical import and final recollection, with
  * an unresolved fixture verdict. It makes no model-backed value assertion. */
-for (const changed of [false, true])
-  test(`subscription import ${changed ? "refuses changed metadata" : "rechecks recovered files through normal journal publication"}`, async () => {
+for (const variant of [
+  "unchanged",
+  "changed",
+  "repository activity",
+  "later unclaimed context",
+] as const)
+  test(`subscription import ${variant === "changed" ? "refuses changed metadata" : variant === "repository activity" ? "ignores repository and milestone counters that move between reads" : "rechecks recovered files through normal journal publication"}`, async () => {
+    const changed = variant === "changed";
     const source = fixture({ direct: true, textOnly: true });
+    const lineCount = variant === "later unclaimed context" ? 1000 : 100000;
     const bytes = new TextEncoder().encode(
-      "retained large text evidence\n".repeat(100000),
+      "retained large text evidence\n".repeat(lineCount),
     );
     const head = source.pull.head.sha;
     const merged = source.pull.merge_commit_sha;
@@ -40,9 +48,11 @@ for (const changed of [false, true])
       source.pull.base.sha,
       head,
     ]);
-    source.files[0].additions = 100000;
+    source.files[0].additions = lineCount;
     delete source.files[0].patch;
+    const laterContext = variant === "later unclaimed context";
     let collections = 0;
+    const commitPages = new Map<string, number>();
     let recoveryCompleted = false;
     const client = {
       ...source.client,
@@ -54,17 +64,79 @@ for (const changed of [false, true])
             ],
           } as T;
         if (path.endsWith("/pulls/1")) collections++;
+        if (laterContext && /\/(?:pulls|issues)\/2(?:\/|$)/u.test(path)) {
+          const mapped = path.replace(/\/(pulls|issues)\/2/u, "/$1/1");
+          const value = await source.client.get<T>(mapped);
+          if (mapped.endsWith("/pulls/1") && value) {
+            Object.assign(value, {
+              node_id: "PR_later_context",
+              number: 2,
+              html_url: `https://github.com/${repository.id}/pull/2`,
+              merged_at: null,
+              closed_at: "2026-11-01T07:20:21Z",
+              updated_at: "2026-11-01T07:20:21Z",
+              merge_commit_sha: null,
+            });
+          }
+          return value;
+        }
         const value = await source.client.get<T>(path);
+        if (
+          /\/commits\/[a-f0-9]{40}\?per_page=100&page=[1-9][0-9]*$/u.test(path)
+        )
+          commitPages.set(path, (commitPages.get(path) ?? 0) + 1);
         if (value && path.includes("/commits/") && !path.includes("/git/"))
           (value as unknown as { stats: unknown }).stats = {
-            additions: 100000,
+            additions: lineCount,
             deletions: 0,
-            total: 100000,
+            total: lineCount,
           };
         if (changed && recoveryCompleted && path.endsWith("/pulls/1") && value)
           (value as unknown as { title: string }).title =
             "Changed after recovery";
+        // GitHub's pull body embeds the base and head repositories and the
+        // milestone. A push to any branch, a new issue or a star moves their
+        // timestamps and counters between reads; the PR itself is unchanged.
+        if (
+          variant === "repository activity" &&
+          path.endsWith("/pulls/1") &&
+          value
+        ) {
+          const activity = {
+            id: 42,
+            node_id: repository.expectedNodeId,
+            full_name: repository.id,
+            pushed_at: `2026-10-20T10:00:${String(collections).padStart(2, "0")}Z`,
+            updated_at: `2026-10-20T10:00:${String(collections).padStart(2, "0")}Z`,
+            open_issues_count: 100 + collections,
+            stargazers_count: 200 + collections,
+          };
+          const pull = value as unknown as {
+            base: Record<string, unknown>;
+            head: Record<string, unknown>;
+            milestone: unknown;
+          };
+          pull.base.repo = { ...activity };
+          pull.head.repo = { ...activity };
+          pull.milestone = {
+            number: 1,
+            open_issues: collections,
+            closed_issues: 10,
+            updated_at: activity.updated_at,
+          };
+        }
         return value;
+      },
+    };
+    const githubClient = {
+      ...client,
+      async graphql<T>(_query: string, variables: { number?: number }) {
+        const result = await source.client.graphql<{
+          repository: { pullRequest: { id: string } };
+        }>();
+        if (laterContext && variables?.number === 2)
+          result.repository.pullRequest.id = "PR_later_context";
+        return result as T;
       },
     };
     const blobSha = createHash("sha1")
@@ -101,7 +173,7 @@ for (const changed of [false, true])
       path: "fix.ts",
     }));
     const verified = await verifiedValueFileClient(
-      client,
+      githubClient,
       requests,
       makeRecovery(requests),
     );
@@ -134,10 +206,24 @@ for (const changed of [false, true])
       repositories[0],
     );
     evidence.mergeResolutions = [];
-    const joint = await prepareWorkUnitEvidence(
-      [{ evidence, policy, mergeRecipe: await mergeRecipe(evidence) }],
-      repositories,
-    );
+    const preparedSources = [
+      { evidence, policy, mergeRecipe: await mergeRecipe(evidence) },
+    ];
+    if (laterContext) {
+      const context = await collectValueEvidence(
+        verified,
+        repository.id,
+        2,
+        repositories[0],
+      );
+      context.mergeResolutions = [];
+      preparedSources.push({
+        evidence: context,
+        policy,
+        mergeRecipe: await mergeRecipe(context),
+      });
+    }
+    const joint = await prepareWorkUnitEvidence(preparedSources, repositories);
     expect(joint.limitations).toEqual([]);
     const result = {
       sourceDigest: joint.sourceDigest,
@@ -198,10 +284,12 @@ for (const changed of [false, true])
     );
     const original = GitHubClient.forInstallation;
     GitHubClient.forInstallation = async () =>
-      client as unknown as GitHubClient;
+      githubClient as unknown as GitHubClient;
     let recoveryCalls = 0,
       mergeCalls = 0;
     try {
+      commitPages.clear();
+      const observed: HistoricalIntakeProgress[] = [];
       const pending = importSubscriptionAssessment(
         {
           SLOPBOT_DB: db,
@@ -235,19 +323,20 @@ for (const changed of [false, true])
         {
           mode: "work-unit",
           installationId: 1,
-          sources: [
-            {
-              repository: repository.id,
-              pullRequestNumber: 1,
-              contextPaths: [],
-            },
-          ],
+          sources: [1, ...(laterContext ? [2] : [])].map((number) => ({
+            repository: repository.id,
+            pullRequestNumber: number,
+            contextPaths: [],
+          })),
           result,
           supersedes: [],
           legacyPredecessors: [],
           revisionReason: null,
         },
         new Blob(["fixture bundle"]).stream(),
+        (progress) => {
+          observed.push(progress);
+        },
       );
       if (changed) {
         await expect(pending).rejects.toThrow(
@@ -258,13 +347,27 @@ for (const changed of [false, true])
             .query("SELECT COUNT(*) AS n FROM slopbot_work_unit_journal")
             .get(),
         ).toEqual({ n: 0 });
+        expect(observed.at(-1)?.stage).toBe("bundle-metadata");
         return;
       }
       const stored = await pending;
       expect(stored.sequence).toBe(1);
+      expect(observed.at(-1)?.stage).toBe("publish-work-unit");
+      expect(
+        observed.some(
+          (p) =>
+            p.stage === "source-evidence" &&
+            p.sourceIndex === (laterContext ? 1 : 0) &&
+            p.sourceCount === (laterContext ? 2 : 1),
+        ),
+      ).toBe(true);
       expect(recoveryCalls).toBe(1);
       expect(mergeCalls).toBe(1);
       expect(collections).toBeGreaterThanOrEqual(4);
+      expect(commitPages.size).toBeGreaterThan(0);
+      expect([...commitPages]).toEqual(
+        [...commitPages].map(([path]) => [path, 1]),
+      );
       expect(
         sqlite
           .query("SELECT COUNT(*) AS n FROM slopbot_work_unit_journal")

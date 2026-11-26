@@ -133,6 +133,7 @@ export async function runValueInference<T>(
     name: string;
     schema: Record<string, unknown>;
     validate(value: unknown): T | null;
+    explain?(value: unknown): string | null;
   },
   mayCall: () => Promise<boolean>,
   budget: ValueInferenceBudget,

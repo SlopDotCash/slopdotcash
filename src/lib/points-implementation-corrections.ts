@@ -1,5 +1,11 @@
+import { sameRepositoryCommitHints } from "../../workers/slopbot/value-commit-hints";
 import type { ValueMergeResolution } from "../../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-resolution";
+import {
+  isOriginalContributorRepair,
+  type OriginalContributorRepair,
+  referencesOriginalContributorSource,
+} from "./original-contributor-repair";
 /**
  * Allocation-only correction of existing Points pools (PRD section 7).
  *
@@ -12,12 +18,15 @@ import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-res
  * the ordinary pointsSql financial guard remains mandatory at publication.
  */
 
+import type {
+  Pull,
+  ValueEvidence,
+} from "../../workers/slopbot/value-evidence-types";
 import {
-  githubLinkDestinations,
-  sameRepositoryCommitHints,
-} from "../../workers/slopbot/value-commit-hints";
-import type { Pull } from "../../workers/slopbot/value-evidence-types";
-import { isCreditEligibleCommitAuthor } from "./commit-credit";
+  implementationCreditActors,
+  isCreditEligibleCommitAuthor,
+  isUnprovedZeroLinePromotion,
+} from "./commit-credit";
 import { shareImplementationPoints } from "./implementation-allocation";
 import {
   appendPointAwards,
@@ -30,9 +39,16 @@ import {
   type PointsJournal,
   pointKey,
   pointMembers,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "./points";
 import { findHistoricalRepository } from "./projects.mjs";
 import { sha256Hex } from "./sha256";
+
+export {
+  isOriginalContributorRepair,
+  type OriginalContributorRepair,
+  referencesOriginalContributorSource,
+} from "./original-contributor-repair";
 
 export interface CorrectionActor {
   id: string;
@@ -101,6 +117,7 @@ export interface OriginalContributorFollowup {
     target: { id: string; number: number; url: string; repository: string };
     acknowledgement?: {
       node_id: string;
+      html_url?: string;
       body: string;
       user: { node_id: string; type: string } | null;
       created_at?: string;
@@ -110,45 +127,175 @@ export interface OriginalContributorFollowup {
     digest: string;
   };
 }
-export interface OriginalContributorRepair {
-  sourceId: string;
-  commitSha: string;
-  authorNodeId: string;
-  reference: {
-    sourceDigests: Record<string, string>;
-    pull: Pull;
-    acceptingPull: Pull;
-    acknowledgement?: NonNullable<
-      OriginalContributorFollowup["reference"]
-    >["acknowledgement"];
-    headSha: string;
-    bodyEdit?: {
-      id: string;
-      body: string;
-      headRefOid: string;
-      mergedAt: string;
-      updatedAt: string;
-      lastEditedAt: string | null;
-      editor: { id: string; type: string } | null;
-      author: { id: string; type: string };
-    };
-    digest: string;
-  };
-}
 export interface OriginalContributorBinding {
   /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
   exactAcceptance?: true;
   /** Exact reviewed unit within a multi-origin native integration. */
   claimIds?: string[];
+  copiedClaims?: {
+    claimId: string;
+    originalCommitSha: string;
+    acceptedCommitSha: string;
+    path: string;
+    bindingDigest: string;
+  }[];
+  /** Sole verified primary author when a maintainer opened the original PR. */
+  originatingActor?: CorrectionActor;
+  /** Authenticated merger authority for a selected null-author native resolution. */
+  resolutionAcceptance?: { pull: Pull; sourceDigest: string };
   /** First accepted carrier when the recorded unit completes on its donor. */
   acceptedSourceId?: string;
   followups?: OriginalContributorFollowup[];
   repairs?: OriginalContributorRepair[];
+  /** A previously reviewed native commit, retained separately from the current PR head. */
+  reviewedOriginal?: {
+    sourceDigest: string;
+    currentSourceDigest: string;
+    review?: ValueEvidence["reviews"][number];
+    bodyReference?: {
+      kind: "pre-merge-body";
+      pull: Pull;
+      metadata: NonNullable<ValueEvidence["repairBodyEdit"]>;
+      headSha: string;
+      headCommittedAt: string;
+      createdAt: string;
+    };
+    commits: CorrectionCommit[];
+    digest: string;
+  };
   originalSourceId: string;
   originalCommitSha: string;
   acceptedCommitSha: string;
   boundPaths: string[];
   bindingDigest: string;
+}
+
+export function originalContributorSource(
+  source: CorrectionSource,
+  originatingActor?: CorrectionActor,
+): CorrectionSource {
+  if (originatingActor === undefined) return source;
+  actor(originatingActor);
+  const ordinary = source.commits.filter((commit) => commit.parentCount <= 1);
+  check(
+    source.complete &&
+      source.commitCount === source.commits.length &&
+      eligibleActor(originatingActor) &&
+      ordinary.length > 0 &&
+      ordinary.every(
+        (commit) =>
+          implementationCreditActors(source.author, [commit.author])[0]?.id ===
+          originatingActor.id,
+      ),
+    "original primary author is not uniquely verified",
+  );
+  return { ...source, author: originatingActor };
+}
+
+function reviewedOriginalSource(
+  source: CorrectionSource,
+  accepted: CorrectionSource,
+  binding: OriginalContributorBinding,
+): CorrectionSource {
+  const retained = binding.reviewedOriginal;
+  if (!retained) return source;
+  const { digest: retainedDigest, ...evidence } = retained;
+  const { review, bodyReference, commits } = retained;
+  const head = commits.at(-1);
+  const metadata = bodyReference?.metadata;
+  const bodyActor =
+    metadata?.lastEditedAt === null ? metadata.author : metadata?.editor;
+  const referenceValid =
+    review !== undefined && bodyReference === undefined
+      ? review.node_id.length > 0 &&
+        Number.isSafeInteger(review.id) &&
+        review.html_url ===
+          `${source.sourceUrl}#pullrequestreview-${review.id}` &&
+        review.commit_id === head?.sha &&
+        review.user?.type === "User" &&
+        Number.isFinite(Date.parse(review.submitted_at ?? "")) &&
+        accepted.occurredAt !== null &&
+        Date.parse(review.submitted_at ?? "") < Date.parse(accepted.occurredAt)
+      : review === undefined &&
+        bodyReference?.kind === "pre-merge-body" &&
+        bodyReference.headSha === head?.sha &&
+        Number.isFinite(Date.parse(bodyReference.createdAt)) &&
+        Date.parse(bodyReference.createdAt) <=
+          Date.parse(metadata?.lastEditedAt ?? "") &&
+        Number.isFinite(Date.parse(bodyReference.headCommittedAt ?? "")) &&
+        Date.parse(bodyReference.headCommittedAt ?? "") <=
+          Date.parse(metadata?.lastEditedAt ?? "") &&
+        metadata !== undefined &&
+        metadata.id === source.sourceId &&
+        metadata.id === bodyReference.pull.node_id &&
+        bodyReference.pull.html_url === source.sourceUrl &&
+        bodyReference.pull.html_url ===
+          `https://github.com/${source.repository}/pull/${bodyReference.pull.number}` &&
+        Number.isSafeInteger(bodyReference.pull.number) &&
+        bodyReference.pull.number > 0 &&
+        bodyReference.pull.state === "closed" &&
+        bodyReference.pull.merged_by?.type === "User" &&
+        bodyReference.pull.merged_at !== null &&
+        source.occurredAt !== null &&
+        Date.parse(bodyReference.pull.merged_at) ===
+          Date.parse(source.occurredAt) &&
+        metadata.body === bodyReference.pull.body &&
+        metadata.headRefOid === source.headSha &&
+        metadata.headRefOid === bodyReference.pull.head.sha &&
+        metadata.updatedAt === bodyReference.pull.updated_at &&
+        metadata.author.id === bodyReference.pull.user.node_id &&
+        metadata.author.type === bodyReference.pull.user.type &&
+        Date.parse(metadata.lastEditedAt ?? "") <=
+          Date.parse(bodyReference.pull.updated_at) &&
+        Date.parse(metadata.lastEditedAt ?? "") <=
+          Date.parse(bodyReference.pull.merged_at) &&
+        metadata.mergedAt === bodyReference.pull.merged_at &&
+        bodyActor?.type === "User" &&
+        bodyActor.id === bodyReference.pull.merged_by?.node_id &&
+        Number.isFinite(Date.parse(metadata.lastEditedAt ?? "")) &&
+        accepted.occurredAt !== null &&
+        Date.parse(metadata.lastEditedAt ?? "") <
+          Date.parse(accepted.occurredAt) &&
+        sameRepositoryCommitHints(source.repository, metadata.body).includes(
+          bodyReference.headSha,
+        );
+  check(
+    binding.exactAcceptance === true &&
+      binding.claimIds !== undefined &&
+      digest.test(retained.sourceDigest) &&
+      retained.currentSourceDigest === sha256Hex(JSON.stringify(source)) &&
+      digest.test(retainedDigest) &&
+      sha256Hex(JSON.stringify(evidence)) === retainedDigest &&
+      referenceValid &&
+      head !== undefined &&
+      commits.some((commit) => commit.sha === binding.originalCommitSha) &&
+      new Set(commits.map((commit) => commit.sha)).size === commits.length &&
+      commits.every(
+        (commit, index) =>
+          !source.commits.some((current) => current.sha === commit.sha) &&
+          commit.parentCount === 1 &&
+          validParentShas(commit) &&
+          (index === 0 || commit.parentShas?.[0] === commits[index - 1].sha) &&
+          commit.author?.kind === "User" &&
+          commit.author.id === source.author?.id &&
+          commit.firstAcceptedSourceId === accepted.sourceId &&
+          !commit.retainedCopy &&
+          commit.files !== undefined &&
+          commit.files.length > 0 &&
+          accepted.commits.some(
+            (copy) =>
+              copy.sha === commit.sha &&
+              copy.author?.id === commit.author?.id &&
+              copy.author?.kind === commit.author?.kind &&
+              copy.parentCount === commit.parentCount &&
+              JSON.stringify(copy.parentShas) ===
+                JSON.stringify(commit.parentShas) &&
+              JSON.stringify(copy.files) === JSON.stringify(commit.files),
+          ),
+      ),
+    "reviewed original commits do not bind their authenticated PR revision",
+  );
+  return { ...source, headSha: head.sha, commitCount: commits.length, commits };
 }
 interface CompleteCorrectionProof {
   status: "complete";
@@ -157,8 +304,10 @@ interface CompleteCorrectionProof {
   sources: CorrectionSource[];
   /** Verified retained implementation for the October 2026 replacement rule. */
   originalContributor?: OriginalContributorBinding;
-  /** Independent native subproofs for one unit by the same verified person. */
+  /** Disjoint native subproofs for the verified origins of one accepted unit. */
   originalContributorParts?: OriginalContributorBinding[];
+  /** Independent accepted work outside the verified replacement parts. */
+  independentClaimIds?: string[];
 }
 export type PointsImplementationCorrectionCandidate =
   | (CorrectionCandidateBase & {
@@ -283,110 +432,6 @@ export function isOriginalContributorContext(
         (commit.firstAcceptedSourceId === null ||
           commit.firstAcceptedSourceId === accepted.sourceId),
     )
-  );
-}
-
-/** A resolved direct reference retains the authenticated carrier statement. */
-export function referencesOriginalContributorSource(
-  body: string,
-  repository: string,
-  number: number,
-): boolean {
-  const text = githubLinkDestinations(body).replace(
-    /\[[^[\]\n]*\](?:\[[^[\]\n]*\])?/gu,
-    " ",
-  );
-  return [
-    ...text.matchAll(
-      /(?:https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/|(?<![\w/?.:=&-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#)([1-9]\d*)\b/gu,
-    ),
-  ].some(
-    (match) =>
-      Number(match[3]) === number &&
-      (match[1] ?? match[2] ?? repository).toLowerCase() ===
-        repository.toLowerCase(),
-  );
-}
-
-/** The accepting merger acknowledges a repair at its exact retained source head. */
-export function isOriginalContributorRepair(
-  repair: OriginalContributorRepair,
-  original: CorrectionSource,
-  accepted: CorrectionSource,
-  commit: CorrectionCommit,
-): boolean {
-  const { digest: referenceDigest, ...reference } = repair.reference;
-  const pull = reference.pull;
-  const acknowledgement = reference.acknowledgement;
-  const source = repair.sourceId === original.sourceId ? original : accepted;
-  const text = acknowledgement?.body ?? pull.body ?? "";
-  const bodyEdit = reference.bodyEdit;
-  const bodyActor =
-    bodyEdit?.lastEditedAt === null ? bodyEdit.author : bodyEdit?.editor;
-  const actorId = acknowledgement?.user?.node_id ?? bodyActor?.id;
-  const actorType = acknowledgement?.user?.type ?? bodyActor?.type;
-  const occurredAt =
-    acknowledgement?.created_at ??
-    acknowledgement?.submitted_at ??
-    bodyEdit?.lastEditedAt ??
-    pull.updated_at;
-  const edited = acknowledgement?.updated_at;
-  return (
-    (repair.sourceId === original.sourceId ||
-      repair.sourceId === accepted.sourceId) &&
-    repair.commitSha === commit.sha &&
-    repair.authorNodeId === commit.author?.id &&
-    eligibleActor(commit.author) &&
-    Object.keys(reference.sourceDigests).length === 2 &&
-    digest.test(reference.sourceDigests[original.sourceId] ?? "") &&
-    digest.test(reference.sourceDigests[accepted.sourceId] ?? "") &&
-    pull.node_id === source.sourceId &&
-    Number.isSafeInteger(pull.number) &&
-    pull.number > 0 &&
-    source.sourceUrl.endsWith(`/pull/${pull.number}`) &&
-    pull.html_url === source.sourceUrl &&
-    pull.head.sha === source.headSha &&
-    pull.state === "closed" &&
-    (source.occurredAt === null
-      ? pull.merged_at === null
-      : pull.merged_at !== null &&
-        Date.parse(pull.merged_at) === Date.parse(source.occurredAt)) &&
-    accepted.occurredAt !== null &&
-    actorType === "User" &&
-    reference.acceptingPull.node_id === accepted.sourceId &&
-    Number.isSafeInteger(reference.acceptingPull.number) &&
-    accepted.sourceUrl.endsWith(`/pull/${reference.acceptingPull.number}`) &&
-    reference.acceptingPull.head.sha === accepted.headSha &&
-    reference.acceptingPull.html_url === accepted.sourceUrl &&
-    reference.acceptingPull.merged_at !== null &&
-    Date.parse(reference.acceptingPull.merged_at) ===
-      Date.parse(accepted.occurredAt) &&
-    reference.acceptingPull.merged_by?.type === "User" &&
-    actorId === reference.acceptingPull.merged_by.node_id &&
-    Number.isFinite(Date.parse(occurredAt ?? "")) &&
-    Date.parse(occurredAt ?? "") <= Date.parse(pull.updated_at) &&
-    (acknowledgement === undefined || acknowledgement.node_id.length > 0) &&
-    (edited === undefined || edited === occurredAt) &&
-    (acknowledgement !== undefined ||
-      (bodyEdit?.id === pull.node_id &&
-        bodyEdit.body === pull.body &&
-        bodyEdit.headRefOid === pull.head.sha &&
-        bodyEdit.mergedAt === pull.merged_at &&
-        bodyEdit.updatedAt === pull.updated_at)) &&
-    digest.test(referenceDigest) &&
-    sha256Hex(JSON.stringify(reference)) === referenceDigest &&
-    sha.test(reference.headSha) &&
-    (repair.sourceId === original.sourceId ||
-      referencesOriginalContributorSource(
-        text,
-        original.repository,
-        Number(original.sourceUrl.split("/").at(-1)),
-      )) &&
-    sameRepositoryCommitHints(source.repository, text).includes(
-      reference.headSha,
-    ) &&
-    (reference.headSha === original.headSha ||
-      reference.headSha === accepted.headSha)
   );
 }
 
@@ -572,6 +617,9 @@ export function originalContributorClaimScope(
   }[] = [],
   anchorSha = original.headSha,
   repairs: readonly OriginalContributorRepair[] = [],
+  copiedClaims: NonNullable<OriginalContributorBinding["copiedClaims"]> = [],
+  acceptedAnchorSha = anchorSha,
+  resolutionAcceptance?: OriginalContributorBinding["resolutionAcceptance"],
 ): boolean {
   const origin = original.author;
   const carrier = accepted.author;
@@ -592,8 +640,13 @@ export function originalContributorClaimScope(
     original.commits.map((commit) => [commit.sha, commit]),
   );
   const anchor = originals.get(anchorSha);
+  const copiedAnchor = copiedClaims.find(
+    (claim) =>
+      claim.originalCommitSha === anchorSha &&
+      claim.acceptedCommitSha === acceptedAnchorSha,
+  );
   const acceptedAnchor = accepted.commits.find(
-    (commit) => commit.sha === anchorSha,
+    (commit) => commit.sha === (copiedAnchor?.acceptedCommitSha ?? anchorSha),
   );
   if (
     originals.size !== original.commits.length ||
@@ -603,11 +656,40 @@ export function originalContributorClaimScope(
     acceptedAnchor.firstAcceptedSourceId !== accepted.sourceId ||
     anchor.parentCount > 2 ||
     (anchor.parentCount > 1 && !eligibleActor(anchor.author)) ||
-    (anchor.author !== null &&
-      anchor.author.id !== origin.id &&
-      anchor.author.id !== carrier.id) ||
+    (implementationCreditActors(original.author, [anchor.author])[0]?.id !==
+      origin.id &&
+      anchor.author?.id !== carrier.id) ||
     acceptedAnchor.author?.id !== anchor.author?.id ||
     acceptedAnchor.author?.kind !== anchor.author?.kind
+  )
+    return false;
+  if (
+    new Set(copiedClaims.map((copy) => copy.claimId)).size !==
+      copiedClaims.length ||
+    copiedClaims.some((copy) => {
+      const claim = claims.find((item) => item.id === copy.claimId);
+      const originalCommit = originals.get(copy.originalCommitSha);
+      const acceptedCommit = accepted.commits.find(
+        (item) => item.sha === copy.acceptedCommitSha,
+      );
+      return (
+        !claim ||
+        claim.sourceId !== accepted.sourceId ||
+        claim.commitSha !== copy.acceptedCommitSha ||
+        claim.path !== copy.path ||
+        !digest.test(copy.bindingDigest) ||
+        !originalCommit ||
+        !acceptedCommit ||
+        originalCommit.parentCount > 1 ||
+        acceptedCommit.parentCount > 1 ||
+        originalCommit.author?.id !== origin.id ||
+        acceptedCommit.author?.id !== origin.id ||
+        originalCommit.author.kind !== acceptedCommit.author.kind ||
+        acceptedCommit.firstAcceptedSourceId !== accepted.sourceId ||
+        !originalCommit.files?.some((file) => file.path === copy.path) ||
+        !acceptedCommit.files?.some((file) => file.path === copy.path)
+      );
+    })
   )
     return false;
   const graph = new Map<string, CorrectionCommit & { parentShas: string[] }>();
@@ -694,7 +776,7 @@ export function originalContributorClaimScope(
     !original.commits.every((commit) => descends(original.headSha, commit.sha))
   )
     return false;
-  const scoped = { anchorSha, origin };
+  const scoped = { anchorSha: acceptedAnchor.sha, origin };
   const followupIds = new Set(followups.map(({ source }) => source.sourceId));
   if (
     followupIds.size !== followups.length ||
@@ -720,7 +802,7 @@ export function originalContributorClaimScope(
         !commit ||
         !claims.some((claim) => claim.commitSha === repair.commitSha) ||
         !isOriginalContributorRepair(repair, original, accepted, commit) ||
-        !descends(commit.sha, anchorSha) ||
+        !descends(commit.sha, acceptedAnchor.sha) ||
         !descends(repair.reference.headSha, commit.sha)
       );
     })
@@ -745,13 +827,18 @@ export function originalContributorClaimScope(
     const acknowledgedRepair =
       repair !== undefined &&
       isOriginalContributorRepair(repair, original, accepted, commit) &&
-      descends(commit.sha, anchorSha) &&
+      descends(commit.sha, acceptedAnchor.sha) &&
       descends(repair.reference.headSha, commit.sha);
+    if (copiedClaims.some((copy) => copy.claimId === claim.id)) {
+      hasOriginal = true;
+      continue;
+    }
     if (originals.has(commit.sha)) {
       if (
         commit.author !== null &&
         commit.author.id !== origin.id &&
         commit.author.id !== carrier.id &&
+        isCreditEligibleCommitAuthor(commit.author) &&
         !acknowledgedRepair
       )
         return false;
@@ -759,17 +846,43 @@ export function originalContributorClaimScope(
         return false;
       if (
         commit.parentCount <= 1 &&
-        (commit.author === null || commit.author.id === origin.id)
+        implementationCreditActors(original.author, [commit.author])[0]?.id ===
+          origin.id
       )
         hasOriginal = true;
-    } else if (
-      !eligibleActor(commit.author) ||
-      (commit.author.id !== origin.id &&
-        commit.author.id !== carrier.id &&
-        !acknowledgedRepair) ||
-      !descends(commit.sha, anchorSha)
-    )
-      return false;
+    } else {
+      const pull = resolutionAcceptance?.pull;
+      const nativeResolution =
+        source.sourceId === accepted.sourceId &&
+        commit.author === null &&
+        commit.parentCount > 1 &&
+        commit.mergeResolution !== undefined &&
+        correctionClaimCommit(commit) &&
+        resolutionAcceptance !== undefined &&
+        digest.test(resolutionAcceptance.sourceDigest) &&
+        pull?.node_id === accepted.sourceId &&
+        pull.html_url === accepted.sourceUrl &&
+        pull.head.sha === accepted.headSha &&
+        pull.state === "closed" &&
+        pull.merged_at !== null &&
+        accepted.occurredAt !== null &&
+        Date.parse(pull.merged_at) === Date.parse(accepted.occurredAt) &&
+        pull.user.node_id === carrier.id &&
+        pull.user.type === "User" &&
+        pull.merged_by?.node_id === carrier.id &&
+        pull.merged_by.type === "User";
+      if (
+        (!eligibleActor(commit.author) &&
+          !nativeResolution &&
+          !acknowledgedRepair) ||
+        (commit.author !== null &&
+          commit.author.id !== origin.id &&
+          commit.author.id !== carrier.id &&
+          !acknowledgedRepair) ||
+        !descends(commit.sha, acceptedAnchorSha)
+      )
+        return false;
+    }
   }
   return hasOriginal;
 }
@@ -933,13 +1046,18 @@ function deriveProof(
         proof.originalContributor === undefined &&
         proof.originalContributorParts.length >= 2 &&
         sameSet(
-          proof.originalContributorParts.map((part) => part.originalSourceId),
-          proof.originalContributorParts.map((part) => part.originalSourceId),
+          proof.originalContributorParts.map(
+            (part) => `${part.originalSourceId}\0${part.originalCommitSha}`,
+          ),
+          proof.originalContributorParts.map(
+            (part) => `${part.originalSourceId}\0${part.originalCommitSha}`,
+          ),
         ),
       "invalid multi-original native unit",
     );
     const parts = proof.originalContributorParts;
     const claims = candidate.proof.claims;
+    const independentClaimIds = proof.independentClaimIds ?? [];
     check(
       sameSet(
         candidate.proof.expectedClaimIds,
@@ -952,7 +1070,10 @@ function deriveProof(
             part.claimIds.length > 0,
         ) &&
         sameSet(
-          parts.flatMap((part) => part.claimIds ?? []),
+          [
+            ...parts.flatMap((part) => part.claimIds ?? []),
+            ...independentClaimIds,
+          ],
           claims.map((claim) => claim.id),
         ) &&
         parts.some(
@@ -975,7 +1096,12 @@ function deriveProof(
         completion.occurredAt === candidate.occurredAt,
       "completion source does not match the recorded pool",
     );
-    let result: DerivedProof | null = null;
+    const result: DerivedProof = {
+      actors: new Map(),
+      weights: new Map(),
+      scopes: [],
+    };
+    let incompleteLines = false;
     for (const part of parts) {
       const acceptedId = part.acceptedSourceId ?? candidate.sourceId;
       const accepted = proof.sources.find(
@@ -1026,6 +1152,7 @@ function deriveProof(
         proof: {
           ...candidate.proof,
           originalContributorParts: undefined,
+          independentClaimIds: undefined,
           originalContributor: binding,
           expectedClaimIds: selected.map((claim) => claim.id),
           claims: selected,
@@ -1033,16 +1160,59 @@ function deriveProof(
       });
       if (derived === null) return null;
       check(
-        derived.actors.size === 1 &&
-          (!result ||
-            [...derived.actors.keys()][0] === [...result.actors.keys()][0]),
-        "native subproofs identify different originating contributors",
+        derived.actors.size === 1,
+        "native subproof lacks one originating contributor",
       );
-      if (result) result.scopes.push(...derived.scopes);
-      else result = derived;
+      const origin = [...derived.actors.values()][0];
+      result.actors.set(origin.id, origin);
+      let weight = 0n;
+      for (const claim of selected) {
+        const source = proof.sources.find(
+          (source) => source.sourceId === claim.sourceId,
+        );
+        const commit = source?.commits.find(
+          (commit) => commit.sha === claim.commitSha,
+        );
+        const file = commit?.files?.find((file) => file.path === claim.path);
+        if (!file || !count(file.additions) || !count(file.deletions)) {
+          incompleteLines = true;
+          continue;
+        }
+        weight += BigInt(file.additions) + BigInt(file.deletions);
+      }
+      result.weights.set(
+        origin.id,
+        (result.weights.get(origin.id) ?? 0n) + weight,
+      );
+      result.scopes.push(...derived.scopes);
     }
+    if (independentClaimIds.length) {
+      const independent = claims.filter((claim) =>
+        independentClaimIds.includes(claim.id),
+      );
+      const ordinary = deriveProof({
+        ...candidate,
+        proof: {
+          ...candidate.proof,
+          originalContributorParts: undefined,
+          independentClaimIds: undefined,
+          claims: independent,
+          expectedClaimIds: independentClaimIds,
+        },
+      });
+      if (!ordinary) return null;
+      for (const [id, actor] of ordinary.actors) result.actors.set(id, actor);
+      for (const [id, weight] of ordinary.weights)
+        result.weights.set(id, (result.weights.get(id) ?? 0n) + weight);
+      result.scopes.push(...ordinary.scopes);
+    }
+    if (incompleteLines && result.actors.size > 1) return null;
     return result;
   }
+  check(
+    proof.independentClaimIds === undefined,
+    "independent claims require a complete original partition",
+  );
   check(
     sameSet(
       candidate.sourceIds,
@@ -1265,6 +1435,14 @@ function deriveProof(
     );
   };
   if (candidate.kind === "pull-request") {
+    if (
+      proof.originalContributor === undefined &&
+      isUnprovedZeroLinePromotion(
+        accepted.commits,
+        (commit) => commit.firstAcceptedSourceId === accepted.sourceId,
+      )
+    )
+      return null;
     for (const commit of accepted.commits)
       add(accepted, commit, commit.additions, commit.deletions, "*");
   } else {
@@ -1318,7 +1496,23 @@ function deriveProof(
         binding.boundPaths.length > 0,
       "original-contributor proof is invalid outside the October replacement rule",
     );
-    const original = sources.get(binding.originalSourceId);
+    check(
+      binding.originatingActor === undefined ||
+        (candidate.kind === "work-unit" &&
+          binding.claimIds !== undefined &&
+          (binding.exactAcceptance === true ||
+            (binding.exactAcceptance === undefined &&
+              binding.copiedClaims !== undefined &&
+              binding.copiedClaims.length > 0))),
+      "sole primary origin requires reviewed accepted claim scope",
+    );
+    const rawOriginal = sources.get(binding.originalSourceId);
+    const currentOriginal = rawOriginal
+      ? originalContributorSource(rawOriginal, binding.originatingActor)
+      : undefined;
+    const original = currentOriginal
+      ? reviewedOriginalSource(currentOriginal, accepted, binding)
+      : undefined;
     const originalCommit = original?.commits.find(
       (commit) => commit.sha === binding.originalCommitSha,
     );
@@ -1329,10 +1523,20 @@ function deriveProof(
       check(
         candidate.kind === "work-unit" &&
           candidate.proof.status === "complete" &&
-          binding.exactAcceptance === true &&
+          (binding.copiedClaims !== undefined
+            ? binding.exactAcceptance === undefined &&
+              original?.occurredAt === null &&
+              binding.copiedClaims.length > 0 &&
+              binding.copiedClaims.some(
+                (copy) =>
+                  copy.originalCommitSha === binding.originalCommitSha &&
+                  copy.acceptedCommitSha === binding.acceptedCommitSha,
+              )
+            : binding.exactAcceptance === true) &&
           original &&
           acceptedCommit &&
-          binding.originalCommitSha === binding.acceptedCommitSha &&
+          (binding.copiedClaims !== undefined ||
+            binding.originalCommitSha === binding.acceptedCommitSha) &&
           sameSet(
             binding.boundPaths,
             acceptedCommit.parentCount === 2
@@ -1360,6 +1564,9 @@ function deriveProof(
             }),
             binding.originalCommitSha,
             binding.repairs,
+            binding.copiedClaims,
+            binding.acceptedCommitSha,
+            binding.resolutionAcceptance,
           ),
         "original-contributor unit scope does not bind the reviewed native claims",
       );
@@ -1693,6 +1900,37 @@ export function applyPointsImplementationCorrections(
           baseline.get(award.key)?.decision?.reason !==
             OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION),
     );
+    // An unchanged split can depend on an earlier acceptance or a verified
+    // copy outside the rolling window. Persist that proof on one existing
+    // award so an unassessed refresh cannot guess the recipients again.
+    if (
+      changed.length === 0 &&
+      proof &&
+      !usesOctoberDecision &&
+      candidate.kind === "pull-request" &&
+      candidate.proof.status === "complete" &&
+      !previous.some(
+        ({ decision }) =>
+          decision?.reason ===
+          VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+      ) &&
+      candidate.proof.sources.some(
+        (source) =>
+          source.sourceId === candidate.sourceId &&
+          source.commits.some(
+            (commit) =>
+              commit.parentCount <= 1 &&
+              commit.firstAcceptedSourceId !== null &&
+              (commit.firstAcceptedSourceId !== source.sourceId ||
+                commit.retainedCopy !== undefined),
+          ),
+      )
+    ) {
+      const confirmation = replacements
+        .filter(({ amount }) => amount > 0)
+        .sort((left, right) => left.key.localeCompare(right.key))[0];
+      if (confirmation) changed.push(confirmation);
+    }
     const participationHeld = replacements.some((award) => {
       const at = bannedAt.get(award.actor.id);
       return (
@@ -1945,7 +2183,7 @@ export function applyPointsImplementationCorrections(
           effectiveAt: recordedAt,
           reason: plan.usesOctoberDecision
             ? OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION
-            : "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved.",
+            : VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
         });
     }
     return appendPointAwards(

@@ -15,23 +15,33 @@ import {
   readRecord as record,
   timestamp,
 } from "./record-validation.mjs";
+
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
  * skills, or money-shaped views. The schema is intentionally narrow so a pull
  * request cannot smuggle executable configuration or ambiguous reward terms.
  */
 
+import { assertCatchUpHistory, assertCatchUpUntil } from "./backlog-rule.mjs";
 import {
   assertFundingAddresses,
   fundingAssetForNetwork,
 } from "./funding-address.mjs";
+import { assertIntakeCap } from "./intake-cap.mjs";
 import LEGACY_PROJECTS from "./legacy-projects.json" with { type: "json" };
+import {
+  assertMaintainerShare,
+  assertMaintainerShareHistory,
+} from "./maintainer-share.mjs";
 import { validatePayoutExclusions } from "./payout-exclusions.mjs";
 import {
   assertRewardAsset,
   REWARD_ASSET_NETWORK_IDS,
 } from "./reward-asset.mjs";
 import { assertSecurityBountyTerms } from "./security-bounty.mjs";
+import { assertReadyLabelSettings } from "./slopbot-ready.mjs";
+import { assertSubmissionFeeSetting } from "./submission-fee-setting.mjs";
+import { assertWantedIssues } from "./wanted-label.mjs";
 
 /**
  * The canonical generic templates every generated project skill renders from
@@ -137,6 +147,7 @@ const OPTIONAL_PROJECT_KEYS = [
   "participation",
   "rewardAsset",
   "contribution",
+  "security",
   "securityBounty",
   "slopbot",
 ];
@@ -1014,6 +1025,12 @@ function validateReward(
   const hasCycleCaps = Object.hasOwn(reward, "cycleCaps");
   const hasExternalEvaluations = Object.hasOwn(reward, "externalEvaluations");
   const hasPayoutExclusions = Object.hasOwn(reward, "payoutExclusions");
+  const hasHonorSystem = Object.hasOwn(reward, "honorSystem");
+  const hasMaintainerShare = Object.hasOwn(reward, "maintainerShare");
+  const hasMaintainerShareHistory = Object.hasOwn(
+    reward,
+    "maintainerShareHistory",
+  );
   exactKeys(
     reward,
     [
@@ -1026,7 +1043,10 @@ function validateReward(
       ...(hasCycleCaps ? ["cycleCaps"] : []),
       "feeBasisPoints",
       "fundingState",
+      ...(hasHonorSystem ? ["honorSystem"] : []),
       "kind",
+      ...(hasMaintainerShare ? ["maintainerShare"] : []),
+      ...(hasMaintainerShareHistory ? ["maintainerShareHistory"] : []),
       "monthlyCapDisplay",
       "monthlyCapMinor",
       ...(hasPayoutExclusions ? ["payoutExclusions"] : []),
@@ -1056,6 +1076,29 @@ function validateReward(
     reward.committedMinor,
     `${field}.committedMinor`,
   );
+  if (
+    hasHonorSystem &&
+    (reward.honorSystem !== true ||
+      reward.kind !== "monthly-pool" ||
+      BigInt(monthlyCapMinor) === 0n)
+  )
+    throw new TypeError(
+      `${field}.honorSystem must be true on a positive monthly pool, or omitted`,
+    );
+  if (
+    (hasMaintainerShare || hasMaintainerShareHistory) &&
+    reward.kind !== "monthly-pool"
+  )
+    throw new TypeError(
+      `${field}.maintainerShare applies to a monthly pool only`,
+    );
+  if (hasMaintainerShare)
+    assertMaintainerShare(reward.maintainerShare, `${field}.maintainerShare`);
+  if (hasMaintainerShareHistory)
+    assertMaintainerShareHistory(
+      reward.maintainerShareHistory,
+      `${field}.maintainerShareHistory`,
+    );
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") {
     throw new TypeError(`${field}.paymentMode is invalid`);
   }
@@ -1265,9 +1308,56 @@ function validateProjectDefinition(
     validateContribution(project.contribution);
   if (project.slopbot !== undefined) {
     const slopbot = record(project.slopbot, "project.slopbot");
-    exactKeys(slopbot, ["automaticClosure"], "project.slopbot");
+    exactKeys(
+      slopbot,
+      [
+        "automaticClosure",
+        ...(slopbot.catchUpUntil === undefined ? [] : ["catchUpUntil"]),
+        ...(slopbot.catchUpHistory === undefined ? [] : ["catchUpHistory"]),
+        ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
+        ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
+        ...(slopbot.submissionFee === undefined ? [] : ["submissionFee"]),
+        ...(slopbot.wantedIssues === undefined ? [] : ["wantedIssues"]),
+      ],
+      "project.slopbot",
+    );
     if (typeof slopbot.automaticClosure !== "boolean")
       throw new TypeError("project.slopbot.automaticClosure must be a boolean");
+    if (slopbot.readyLabel !== undefined)
+      assertReadyLabelSettings(
+        slopbot.readyLabel,
+        "project.slopbot.readyLabel",
+      );
+    if (slopbot.intakeCap !== undefined)
+      assertIntakeCap(slopbot.intakeCap, "project.slopbot.intakeCap");
+    if (slopbot.catchUpUntil !== undefined)
+      assertCatchUpUntil(slopbot.catchUpUntil, "project.slopbot.catchUpUntil");
+    if (slopbot.catchUpHistory !== undefined)
+      assertCatchUpHistory(
+        slopbot.catchUpHistory,
+        "project.slopbot.catchUpHistory",
+      );
+    if (slopbot.submissionFee !== undefined)
+      assertSubmissionFeeSetting(
+        slopbot.submissionFee,
+        "project.slopbot.submissionFee",
+      );
+    if (slopbot.wantedIssues !== undefined)
+      assertWantedIssues(slopbot.wantedIssues, "project.slopbot.wantedIssues");
+  }
+  if (project.security !== undefined) {
+    // The report deposit setting (PRD section 8): absent or true is on.
+    const security = record(project.security, "project.security");
+    exactKeys(
+      security,
+      security.reportDeposit === undefined ? [] : ["reportDeposit"],
+      "project.security",
+    );
+    if (
+      security.reportDeposit !== undefined &&
+      typeof security.reportDeposit !== "boolean"
+    )
+      throw new TypeError("project.security.reportDeposit must be a boolean");
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&

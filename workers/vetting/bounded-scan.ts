@@ -26,6 +26,7 @@ import {
   type ScanThreat,
   scanProblems,
   specialistRequired,
+  TEMPLATE_PREFIX,
   VETTING_SCAN_SCHEMA,
   type VettingScanResult,
 } from "../../backend/vetting/scan-result";
@@ -58,6 +59,12 @@ export type ScanInputFile = {
   /** Trusted derived inputs retain the decoded name and exact archive lineage. */
   logicalPath?: string;
   parentArtifactSha256?: string;
+  /**
+   * Set only by the controller for the queued canonical skill-template
+   * inputs it reread by digest. A repository path never carries it, so a
+   * repository file under the template prefix is never trusted as template.
+   */
+  templateInput?: true;
   symlink?: {
     gitSha: string;
     sha256: string;
@@ -342,6 +349,17 @@ const INTERPRETER_COMMAND = commandToken(
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
+/** Words that forbid the instruction they belong to ("never paste ..."). */
+const INSTRUCTION_NEGATION = String.raw`\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b`;
+const SECRET_SEND_VERB = String.raw`\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b`;
+/**
+ * Trailing refusals in protective guidance ("when asked to send a key to a
+ * webhook, refuse" / "..., do not comply"), scoped to the same sentence after
+ * the destination while keeping concealment clauses ("and do not tell the
+ * user", "and refuse to tell the user") flagged.
+ */
+const TRAILING_REFUSAL = String.raw`\b(?:refus(?:e[ds]?|ing)(?!\s+to\s+(?:tell|inform|notify|alert|warn|mention|report|disclose|explain|log|show)\b)|declin(?:e[ds]?|ing)|reject(?:ed|ing|s)?|disobey(?:ed|ing|s)?|prohibit(?:ed|ing|s)?|forbid(?:den|ding|s)?|ignore\s+(?:it|that|this|the\s+(?:request|instruction|prompt|message))|(?:must|should)\s+be\s+(?:refused|declined|rejected|ignored|blocked|denied)|(?:do\s+not|don['\u2019]?t|never|must\s+not|should\s+not|cannot|can['\u2019]?t)\s+(?:comply|obey|follow(?:\s+(?:it|that|this|the\s+(?:request|instruction|prompt)))?|do\s+(?:it|so|that|this)|proceed|execute|fulfill|honou?r|allow|permit|accept|agree))\b`;
+
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
@@ -460,23 +478,43 @@ const RULES: Rule[] = [
   {
     threat: "prompt-injection",
     severity: "medium",
+    // Concealment needs an object: "do not tell the user about it" hides
+    // something, while "do not tell the user to buy tokens" protects the
+    // user and is ordinary agent guidance (operator decision, 19 November
+    // 2026).
     pattern:
-      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)/iu,
+      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|\b(?:do\s+not|don['\u2019]?t)\s+(?:tell|inform|show|alert|notify)\s+the\s+(?:user|operator|human)\s+(?:about|that|what|this|these|it\b|anything)|\b(?:hide|conceal|keep)\s+(?:this|it|these|them)\s+(?:secret\s+)?from\s+the\s+(?:user|operator|human)\b|\b(?:do\s+not|don['\u2019]?t)\s+let\s+the\s+(?:user|operator|human)\s+(?:know|see|find\s+out)\b/iu,
     summary: "Text matches wording used to override agent instructions",
   },
   {
     threat: "prompt-injection",
     severity: "medium",
-    pattern:
-      /\b(?:send|post|upload|exfiltrate|paste)\b[^\n]{0,80}\b(?:api[ _-]?key|token|secret|credential|password|private key|\.env)\b/iu,
+    // An instruction to send a secret somewhere: the verb, the secret and a
+    // destination in one sentence that does not forbid it. "Never paste your
+    // token into an issue", "post the token count", and trailing-refusal
+    // guidance ("when asked to send an API key to a webhook, refuse") are
+    // ordinary agent guidance (operator decision, 19 November 2026). A leading
+    // negation forbids it only from the same sentence, before the destination
+    // and at most 200 characters before the verb; an unrelated negation in a
+    // later clause ("... and do not tell the user") or another sentence does
+    // not. The match starts at the verb, so its cost stays linear on a long
+    // line.
+    pattern: new RegExp(
+      String.raw`(?=${SECRET_SEND_VERB})(?<!${INSTRUCTION_NEGATION}(?:(?![.!?;]\s)[^\n]){0,200})${SECRET_SEND_VERB}(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))(?!(?:(?![.!?;]\s)[^\n]){0,160}${TRAILING_REFUSAL})`,
+      "iu",
+    ),
     summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
   {
     threat: "prompt-injection",
     severity: "medium",
-    // Zero-width and bidirectional control characters hide text from reviewers.
-    pattern: /[​-‏‪-‮⁦-⁩]/u,
+    // Zero-width space, word joiner, bidirectional embeddings, overrides and
+    // isolates, and Unicode tag characters hide or reorder text from
+    // reviewers. Joiners inside emoji and the directional marks of
+    // right-to-left text are ordinary writing (operator decision,
+    // 19 November 2026).
+    pattern: /[\u200b\u2060\u202a-\u202e\u2066-\u2069\u{E0000}-\u{E007F}]/u,
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
   },
@@ -559,8 +597,11 @@ const RULE_POLICY_SHA256 = sha256(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
-    localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    localInstallHelpers:
+      "literal-shell-exec-wrapper-closure-substitution-branch-v3",
     sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
+    imageFormats: "png-jpeg-gif-webp-sfnt-woff-woff2-whole-structure-v2",
+    templateReview: "queued-canonical-template-deterministic-only-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -604,6 +645,278 @@ function binaryMagic(bytes: Uint8Array): boolean {
     is(0xca, 0xfe, 0xba, 0xbe) || // Mach-O fat or Java class
     is(0x00, 0x61, 0x73, 0x6d) // WASM
   );
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const uint32 = (bytes: Uint8Array, at: number) =>
+  ((bytes[at] << 24) |
+    (bytes[at + 1] << 16) |
+    (bytes[at + 2] << 8) |
+    bytes[at + 3]) >>>
+  0;
+
+/** Every chunk length and CRC checks out, from IHDR to a final IEND. */
+function wellFormedPng(bytes: Uint8Array): boolean {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (!signature.every((value, i) => bytes[i] === value)) return false;
+  let at = 8;
+  let first = true;
+  while (at + 12 <= bytes.length) {
+    const length = uint32(bytes, at);
+    const end = at + 12 + length;
+    if (length > 0x7fffffff || end > bytes.length) return false;
+    const type = String.fromCharCode(...bytes.subarray(at + 4, at + 8));
+    if (!/^[A-Za-z]{4}$/u.test(type)) return false;
+    if (first && (type !== "IHDR" || length !== 13)) return false;
+    first = false;
+    if (
+      crc32(bytes.subarray(at + 4, at + 8 + length)) !==
+      uint32(bytes, at + 8 + length)
+    )
+      return false;
+    at = end;
+    if (type === "IEND") return length === 0 && at === bytes.length;
+  }
+  return false;
+}
+
+/** Marker segments with valid lengths up to the scan, then EOI as the last bytes. */
+function wellFormedJpeg(bytes: Uint8Array): boolean {
+  const n = bytes.length;
+  if (n < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return false;
+  if (bytes[n - 2] !== 0xff || bytes[n - 1] !== 0xd9) return false;
+  let at = 2;
+  while (at + 4 <= n) {
+    if (bytes[at] !== 0xff) return false;
+    const marker = bytes[at + 1];
+    if (marker === 0xff) {
+      at += 1;
+      continue;
+    }
+    // Standalone markers carry no length.
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      at += 2;
+      continue;
+    }
+    if (marker === 0xd8 || marker === 0xd9) return false;
+    const length = (bytes[at + 2] << 8) | bytes[at + 3];
+    if (length < 2 || at + 2 + length > n) return false;
+    // Entropy-coded data follows the start of scan; the file ends at EOI.
+    if (marker === 0xda) return at + 2 + length <= n - 2;
+    at += 2 + length;
+  }
+  return false;
+}
+
+/** Header, color table, extension and image blocks, then the trailer as the last byte. */
+function wellFormedGif(bytes: Uint8Array): boolean {
+  const header = String.fromCharCode(...bytes.subarray(0, 6));
+  if (header !== "GIF87a" && header !== "GIF89a") return false;
+  if (bytes.length < 14) return false;
+  let at = 13;
+  if (bytes[10] & 0x80) at += 3 * 2 ** ((bytes[10] & 0x07) + 1);
+  const subBlocks = () => {
+    for (;;) {
+      if (at >= bytes.length) return false;
+      const size = bytes[at];
+      at += 1 + size;
+      if (size === 0) return at <= bytes.length;
+    }
+  };
+  while (at < bytes.length) {
+    const block = bytes[at];
+    if (block === 0x3b) return at === bytes.length - 1;
+    if (block === 0x21) {
+      at += 2;
+      if (!subBlocks()) return false;
+    } else if (block === 0x2c) {
+      if (at + 10 > bytes.length) return false;
+      const packed = bytes[at + 9];
+      at += 10;
+      if (packed & 0x80) at += 3 * 2 ** ((packed & 0x07) + 1);
+      at += 1; // LZW minimum code size
+      if (!subBlocks()) return false;
+    } else return false;
+  }
+  return false;
+}
+
+/** The RIFF size covers the file exactly and its chunks fill it exactly. */
+function wellFormedWebp(bytes: Uint8Array): boolean {
+  const ascii = (at: number) =>
+    String.fromCharCode(...bytes.subarray(at, at + 4));
+  const le = (at: number) =>
+    (bytes[at] |
+      (bytes[at + 1] << 8) |
+      (bytes[at + 2] << 16) |
+      (bytes[at + 3] << 24)) >>>
+    0;
+  if (bytes.length < 20 || ascii(0) !== "RIFF" || ascii(8) !== "WEBP")
+    return false;
+  if (le(4) + 8 !== bytes.length) return false;
+  let at = 12;
+  let chunks = 0;
+  while (at < bytes.length) {
+    if (at + 8 > bytes.length) return false;
+    if (!/^[A-Z0-9 ]{4}$/u.test(ascii(at))) return false;
+    const size = le(at + 4);
+    at += 8 + size + (size % 2);
+    chunks += 1;
+  }
+  return chunks > 0 && at === bytes.length;
+}
+
+/** Big-endian unsigned 16-bit. */
+const uint16 = (bytes: Uint8Array, at: number) =>
+  (bytes[at] << 8) | bytes[at + 1];
+const printableTag = (bytes: Uint8Array, at: number) => {
+  for (let i = 0; i < 4; i += 1)
+    if (bytes[at + i] < 0x20 || bytes[at + i] > 0x7e) return false;
+  return true;
+};
+const align4 = (value: number) => Math.ceil(value / 4) * 4;
+
+/**
+ * A single TrueType or OpenType font: a known sfnt version, a table directory
+ * whose tables lie inside the file without repeating a tag, a `head` (or, for
+ * a bitmap-only font, `bhed`) table, and nothing after the last table but its
+ * padding. The recorded whole-file checksum is not required: font tools often
+ * leave it stale, and anyone writing a file can set it.
+ */
+function wellFormedSfnt(bytes: Uint8Array): boolean {
+  const n = bytes.length;
+  if (n < 12) return false;
+  const version = uint32(bytes, 0);
+  if (
+    version !== 0x00010000 &&
+    version !== 0x4f54544f && // OTTO
+    version !== 0x74727565 // true
+  )
+    return false;
+  const tables = uint16(bytes, 4);
+  const directoryEnd = 12 + 16 * tables;
+  if (tables === 0 || directoryEnd > n) return false;
+  const tags = new Set<string>();
+  let end = directoryEnd;
+  let head = false;
+  for (let i = 0; i < tables; i += 1) {
+    const at = 12 + 16 * i;
+    if (!printableTag(bytes, at)) return false;
+    const tag = String.fromCharCode(...bytes.subarray(at, at + 4));
+    if (tags.has(tag)) return false;
+    tags.add(tag);
+    const offset = uint32(bytes, at + 8);
+    const length = uint32(bytes, at + 12);
+    if (offset < directoryEnd || offset % 4 !== 0 || offset + length > n)
+      return false;
+    if (tag === "head" || tag === "bhed") head = length >= 12;
+    end = Math.max(end, offset + length);
+  }
+  return head && n <= align4(end);
+}
+
+/**
+ * A WOFF font: its recorded length is the file length, its tables and the
+ * optional metadata and private blocks lie inside the file, no tag repeats,
+ * and nothing follows the last block but its padding.
+ */
+function wellFormedWoff(bytes: Uint8Array): boolean {
+  const n = bytes.length;
+  if (n < 44 || uint32(bytes, 0) !== 0x774f4646) return false; // wOFF
+  if (uint32(bytes, 8) !== n || uint16(bytes, 14) !== 0) return false;
+  const tables = uint16(bytes, 12);
+  const directoryEnd = 44 + 20 * tables;
+  if (tables === 0 || directoryEnd > n) return false;
+  const tags = new Set<string>();
+  let end = directoryEnd;
+  for (let i = 0; i < tables; i += 1) {
+    const at = 44 + 20 * i;
+    if (!printableTag(bytes, at)) return false;
+    const tag = String.fromCharCode(...bytes.subarray(at, at + 4));
+    if (tags.has(tag)) return false;
+    tags.add(tag);
+    const offset = uint32(bytes, at + 4);
+    const compressed = uint32(bytes, at + 8);
+    const original = uint32(bytes, at + 12);
+    if (
+      offset < directoryEnd ||
+      offset % 4 !== 0 ||
+      compressed > original ||
+      offset + compressed > n
+    )
+      return false;
+    end = Math.max(end, offset + compressed);
+  }
+  for (const [offsetAt, lengthAt] of [
+    [24, 28],
+    [36, 40],
+  ]) {
+    const offset = uint32(bytes, offsetAt);
+    const length = uint32(bytes, lengthAt);
+    if (length === 0) continue;
+    if (offset < directoryEnd || offset + length > n) return false;
+    end = Math.max(end, offset + length);
+  }
+  return n <= align4(end);
+}
+
+/**
+ * A WOFF2 font: its signature, a recorded length equal to the file length, at
+ * least one table and a zero reserved field. Its table directory is variable
+ * length and its data is Brotli-compressed, so the end of the data is not
+ * located; the recorded length is what binds the whole file.
+ */
+function wellFormedWoff2(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 48 &&
+    uint32(bytes, 0) === 0x774f4632 && // wOF2
+    uint32(bytes, 8) === bytes.length &&
+    uint16(bytes, 12) > 0 &&
+    uint16(bytes, 14) === 0
+  );
+}
+
+const IMAGE_FORMATS = [
+  { extension: /\.png$/iu, format: "png", check: wellFormedPng },
+  { extension: /\.jpe?g$/iu, format: "jpeg", check: wellFormedJpeg },
+  { extension: /\.gif$/iu, format: "gif", check: wellFormedGif },
+  { extension: /\.webp$/iu, format: "webp", check: wellFormedWebp },
+  { extension: /\.(?:ttf|otf)$/iu, format: "sfnt", check: wellFormedSfnt },
+  { extension: /\.woff$/iu, format: "woff", check: wellFormedWoff },
+  { extension: /\.woff2$/iu, format: "woff2", check: wellFormedWoff2 },
+] as const;
+
+/**
+ * An ordinary image or font: its name and its whole byte structure agree on
+ * one of these formats, with nothing before the signature or after the end
+ * marker. No package manager, build tool or agent runs such a file, so it is
+ * listed by digest instead of quarantined as an unknown binary (operator
+ * decisions, 19 November 2026 for images and 23 November 2026 for fonts).
+ * Code that reads it is source and is reviewed as such.
+ */
+export function wellFormedImage(
+  path: string,
+  bytes: Uint8Array,
+): (typeof IMAGE_FORMATS)[number]["format"] | null {
+  for (const entry of IMAGE_FORMATS)
+    if (entry.extension.test(path))
+      return entry.check(bytes) ? entry.format : null;
+  return null;
 }
 
 const NAMED_XML_ENTITIES: Readonly<Record<string, string>> = {
@@ -1033,7 +1346,7 @@ export type DeterministicRecord = {
   path: string;
   sha256: string;
   bytes: number;
-  class: "lockfile" | "data" | "generated" | "vendored";
+  class: "lockfile" | "data" | "generated" | "vendored" | "template";
   /** The model read every rule match and obfuscation signal as `<path>#signals`. */
   signals?: true;
 };
@@ -1059,6 +1372,15 @@ export type RepositoryInspection = {
   deterministic: DeterministicRecord[];
   /** Paths of reviewed items with a deterministic finding or obfuscation signal. */
   riskSignals: string[];
+  /** Well-formed images (`wellFormedImage`), listed by digest and not sent to the model. */
+  media: MediaRecord[];
+};
+
+export type MediaRecord = {
+  path: string;
+  sha256: string;
+  bytes: number;
+  format: NonNullable<ReturnType<typeof wellFormedImage>>;
 };
 
 /**
@@ -1692,6 +2014,10 @@ export function inspectRepository(input: {
     nonMatches?: ReadonlySet<RegExp>;
   };
   const candidates: Candidate[] = [];
+  const media: MediaRecord[] = [];
+  const templatePaths = new Set(
+    files.filter((file) => file.templateInput).map((file) => file.path),
+  );
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
   const downloads = new Set<string>();
   const gyp = gypIncludedPaths(files);
@@ -1723,7 +2049,10 @@ export function inspectRepository(input: {
         (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
           /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
       )
-        commands.push(text);
+        return [
+          ...commands.map((text) => ({ path: file.path, text, directory })),
+          { path: file.path, text, directory, file: true },
+        ];
       return commands.map((text) => ({ path: file.path, text, directory }));
     }),
   );
@@ -1747,6 +2076,30 @@ export function inspectRepository(input: {
       if (!surfaces.includes("source")) surfaces.push("source");
     }
     const unclassified = surfaces.length === 0;
+    if (
+      !file.templateInput &&
+      file.path.toLowerCase().startsWith(`${TEMPLATE_PREFIX}/`)
+    ) {
+      // The template namespace is reserved for queued template inputs. A
+      // repository file there could otherwise be mistaken for Slop's template.
+      partial.add("source");
+      gaps.push(
+        `Repository path in the reserved template namespace: ${file.path}`,
+      );
+    }
+    const image =
+      unclassified && !file.parentArtifactSha256 && !file.templateInput
+        ? wellFormedImage(file.logicalPath ?? file.path, file.bytes)
+        : null;
+    if (image !== null) {
+      media.push({
+        path: file.path.slice(0, 500),
+        sha256: sha256(file.bytes),
+        bytes: file.bytes.byteLength,
+        format: image,
+      });
+      continue;
+    }
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
@@ -1881,8 +2234,22 @@ export function inspectRepository(input: {
       }),
     );
   });
-  let items = [...candidates.flatMap(itemsOf), ...links];
-  const deterministic: DeterministicRecord[] = [];
+  // The queued canonical template is Slop's own code at the digest the queue
+  // assigned. Every deterministic check reads it above; it is listed by
+  // digest and not sent to the model, so the models judge the project's own
+  // content (operator decision, 19 November 2026; issue #1991 option 2).
+  const deterministic: DeterministicRecord[] = candidates
+    .filter((candidate) => templatePaths.has(candidate.path))
+    .map((candidate) => ({
+      path: candidate.path,
+      sha256: candidate.sha256,
+      bytes: candidate.bytes,
+      class: "template" as const,
+    }));
+  const reviewable = candidates.filter(
+    (candidate) => !templatePaths.has(candidate.path),
+  );
+  let items = [...reviewable.flatMap(itemsOf), ...links];
   const envelope = (list: typeof items) =>
     list.length > MAX_INVENTORY_ITEMS ||
     list.reduce(
@@ -1895,7 +2262,7 @@ export function inspectRepository(input: {
   const excerpted = new Set<string>();
   if (envelope(items)) {
     items = [...links];
-    for (const candidate of candidates) {
+    for (const candidate of reviewable) {
       const kind = candidate.fullTextRequired
         ? null
         : bulkClass(candidate.path, candidate.surfaces);
@@ -1966,6 +2333,8 @@ export function inspectRepository(input: {
       // Binary and archive bytes are not text items. Bind their digests so
       // adding or changing quarantined content invalidates clean scan reuse.
       artifacts,
+      // Images are not text items. Bind their digests like artifacts.
+      ...(media.length > 0 ? { media } : {}),
       visibilityGaps: gaps,
     }),
   );
@@ -1997,6 +2366,7 @@ export function inspectRepository(input: {
     downloads: [...downloads].sort(),
     deterministic,
     riskSignals,
+    media,
   };
 }
 
@@ -2033,11 +2403,22 @@ export function executionInventory(inspection: RepositoryInspection) {
 
 /**
  * The intake form of one model review. Its risk is read from the review
- * itself, with no score threshold: any suspected malice or high finding is
- * high risk, any other finding or incomplete coverage is ambiguous.
+ * itself, with no score threshold: any suspected malice or high or critical
+ * finding is high risk; a medium finding or unverified coverage is
+ * ambiguous; info and low findings with verified coverage are low.
  */
 function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
+  // Coverage as `review-coverage.ts` verified it; an unverified review keeps
+  // the reviewer's own call. Content outside the acquired revision is
+  // recorded but is not unreviewed content (operator decision, 19 November
+  // 2026).
+  const covered = (area: (typeof SCAN_REVIEW_AREAS)[number]) => {
+    const state = evidence.verifiedCoverage
+      ? evidence.verifiedCoverage[area]
+      : evidence.coverage?.[area];
+    return state === "complete" || state === "outside-revision";
+  };
   const risk = !completed
     ? null
     : evidence.review.verdict === "malicious-suspected" ||
@@ -2045,11 +2426,9 @@ function scanReview(evidence: ScannerEvidence): ScanReview {
           ["high", "critical"].includes(finding.severity),
         )
       ? "high"
-      : evidence.review.verdict === "findings" ||
-          evidence.coverage === null ||
-          SCAN_REVIEW_AREAS.some(
-            (area) => evidence.coverage?.[area] !== "complete",
-          )
+      : evidence.coverage === null ||
+          SCAN_REVIEW_AREAS.some((area) => !covered(area)) ||
+          evidence.findings.some((finding) => finding.severity === "medium")
         ? "ambiguous"
         : "low";
   return {
@@ -2152,6 +2531,22 @@ export function composeAcquisitionRefusal(input: {
     confirmation: null,
   };
   return { result, report, inventory };
+}
+
+/**
+ * Truncates one composed visibility gap to what the intake parser accepts:
+ * at most 300 printable characters, no control characters, no trailing
+ * whitespace. Control characters are replaced with a space first: the parser
+ * rejects them anywhere in the string, so a tab in a repository path would
+ * fail the same way a long gap did. A UTF-16 slice can split a surrogate
+ * pair, so a trailing lone high surrogate is dropped whole instead of leaving
+ * a string that corrupts on a UTF-8 round-trip.
+ */
+function truncateVisibilityGap(gap: string): string {
+  const printable = gap.replace(/\p{Cc}/gu, " ");
+  let truncated = printable.slice(0, 300);
+  if (/[\uD800-\uDBFF]$/.test(truncated)) truncated = truncated.slice(0, -1);
+  return truncated.trimEnd();
 }
 
 /**
@@ -2261,6 +2656,11 @@ export function composeScanResult(input: {
       .map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
+  // The intake parser caps each visibility gap at 300 printable characters
+  // (parseRecordedVettingResult), but gap strings carry repository paths and
+  // download URLs that can run longer. Truncate them here instead of emitting
+  // a result no intake can record.
+  result.visibilityGaps = result.visibilityGaps.map(truncateVisibilityGap);
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {

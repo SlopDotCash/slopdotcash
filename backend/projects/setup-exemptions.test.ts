@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { ProjectRecord } from "../../src/lib/project-contracts";
+import {
+  type ProjectRecord,
+  slopbotInstallScopeNote,
+} from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { scanClearanceView } from "../../src/lib/scan-clearance";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
@@ -126,8 +129,8 @@ describe("quarantined scan status presentation", () => {
     expect(result.checks.scan.message).toBe(
       "The last scan could not finish, so it did not clear the project.",
     );
-    expect(result.nextAction.message).toContain(
-      "The last scan could not finish, so it did not clear the project. Fix the cause if you know it, then request a new scan.",
+    expect(result.nextAction.message).toBe(
+      "The last scan could not finish, so it did not clear the project.",
     );
   });
 
@@ -144,8 +147,8 @@ describe("quarantined scan status presentation", () => {
     expect(result.checks.scan.message).toBe(
       "The last scan could not finish, so it did not clear the project.",
     );
-    expect(result.nextAction.message).toContain(
-      "The last scan could not finish, so it did not clear the project. Fix the cause if you know it, then request a new scan.",
+    expect(result.nextAction.message).toBe(
+      "The last scan could not finish, so it did not clear the project.",
     );
   });
 
@@ -161,8 +164,8 @@ describe("quarantined scan status presentation", () => {
     expect(result.checks.scan.message).toBe(
       "Findings in the project repository block clearance.",
     );
-    expect(result.nextAction.message).toContain(
-      "Fix the cause if you know it, then request a new scan.",
+    expect(result.nextAction.message).toBe(
+      "Findings in the project repository block clearance.",
     );
   });
 
@@ -178,8 +181,8 @@ describe("quarantined scan status presentation", () => {
     expect(result.checks.scan.message).toBe(
       "Findings in Slop's skill template block clearance.",
     );
-    expect(result.nextAction.message).toContain(
-      "Check for an updated skill template before requesting a new scan.",
+    expect(result.nextAction.message).toBe(
+      "Findings in Slop's skill template block clearance. Check for an updated skill template first.",
     );
   });
 
@@ -195,8 +198,8 @@ describe("quarantined scan status presentation", () => {
     expect(result.checks.scan.message).toBe(
       "Findings in both the repository and skill template block clearance.",
     );
-    expect(result.nextAction.message).toContain(
-      "Fix the cause if you know it, then request a new scan.",
+    expect(result.nextAction.message).toBe(
+      "Findings in both the repository and skill template block clearance.",
     );
   });
 });
@@ -288,7 +291,7 @@ describe("summarize findings location classification", () => {
       if (location === "unknown") {
         expect(result.checks.scan.message).toBe("Findings block clearance.");
         expect(result.nextAction.message).toBe(
-          "Findings block clearance. Review the scan result before requesting a new scan.",
+          "Findings block clearance. Review the scan result first.",
         );
       }
     },
@@ -425,7 +428,7 @@ describe("paused project with a cleared scan", () => {
     const result = paused(true);
     expect(result.state).toBe("action_required");
     expect(result.nextAction.kind).toBe("activate_project");
-    expect(result.nextAction.message).toContain("Check again to activate it.");
+    expect(result.nextAction.message).toBe("Paused by your edit.");
     expect(result.nextAction.message).not.toContain("queue");
   });
 
@@ -433,9 +436,7 @@ describe("paused project with a cleared scan", () => {
     const result = paused(false);
     expect(result.state).toBe("action_required");
     expect(result.nextAction.kind).toBe("complete_skill_fields");
-    expect(result.nextAction.message).toContain(
-      "contributor guide and skill fields are complete",
-    );
+    expect(result.nextAction.message).toBe("Paused: add contributor rules.");
   });
 });
 
@@ -780,11 +781,13 @@ describe("setup of a project with more than one repository", () => {
     });
     expect(result.checks.installation).toEqual({
       state: "missing",
-      message: `Slopbot is not installed on ${second}.`,
+      message: `Not installed on ${second}.`,
     });
     expect(result.state).toBe("action_required");
     expect(result.nextAction.kind).toBe("install_slopbot");
-    expect(result.nextAction.message).toContain(second);
+    expect(result.nextAction.message).toBe(
+      `Not installed on ${second}. ${slopbotInstallScopeNote(second)}`,
+    );
     const suspended = setup(cleared, {
       state: "read",
       access: { installation: "suspended", installationId: 9 },
@@ -799,7 +802,7 @@ describe("setup of a project with more than one repository", () => {
     const result = setup(cleared, installed);
     expect(result.checks.installation).toEqual({
       state: "installed",
-      message: `Slopbot is installed on ${multi.manifest.repositories[0].id} and ${second}.`,
+      message: `Installed on ${multi.manifest.repositories[0].id} and ${second}.`,
     });
     expect(result.state).toBe("ready");
   });

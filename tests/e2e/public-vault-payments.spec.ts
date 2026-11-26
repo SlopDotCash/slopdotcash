@@ -146,11 +146,13 @@ test("finalized project payments show net assets and source months on cycles and
     name: "Finalized project payments",
     exact: true,
   });
-  await expect(history).toContainText("Project payment records unavailable.");
-  await expect(history).not.toContainText("No finalized");
-  await history.getByRole("button", { name: "Retry project payments" }).click();
+  await expect(history).toContainText("Payments unavailable");
+  await expect(history).not.toContainText("No payments yet");
+  await history
+    .getByRole("button", { name: "Retry project payments", exact: true })
+    .click();
   await expect(history.getByRole("listitem")).toHaveCount(5);
-  await history.getByRole("button", { name: "Show all 6 payments" }).focus();
+  await history.getByRole("button", { name: "All 6", exact: true }).focus();
   await page.keyboard.press("Enter");
   await expect(history.getByRole("listitem")).toHaveCount(6);
   await expect(history).toContainText(/98\s*USDC/u);
@@ -161,7 +163,9 @@ test("finalized project payments show net assets and source months on cycles and
   await expect(history.locator("code")).toHaveText(token);
   await expect(history).toContainText(/2\.5\s*Token/u);
   await expect(history).toContainText("November 2026");
-  await expect(history).toContainText("Not recorded");
+  await expect(
+    history.locator(".payment-record-identity small").filter({ hasText: "—" }),
+  ).not.toHaveCount(0);
   await expect(
     history.getByRole("link", { name: "View transaction" }).last(),
   ).toHaveAttribute(
@@ -211,17 +215,21 @@ test("finalized project payments show net assets and source months on cycles and
     exact: true,
   });
   await expect(
-    profileHistory
-      .getByRole("listitem")
-      .filter({ hasText: "Finalized vault payment" }),
+    profileHistory.getByRole("listitem").filter({
+      has: page.locator(".payment-record-amount small", {
+        hasText: /^Net$/u,
+      }),
+    }),
   ).toHaveCount(5);
   await profileHistory
-    .getByRole("button", { name: /Show all .* records/u })
+    .getByRole("button", { name: /^Show all \(\d+\)$/u })
     .click();
   await expect(
-    profileHistory
-      .getByRole("listitem")
-      .filter({ hasText: "Finalized vault payment" }),
+    profileHistory.getByRole("listitem").filter({
+      has: page.locator(".payment-record-amount small", {
+        hasText: /^Net$/u,
+      }),
+    }),
   ).toHaveCount(6);
   await expect(profileHistory).toContainText(/98\s*USDC/u);
   await expect(profileHistory).not.toContainText("100 USDC");

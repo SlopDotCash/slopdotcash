@@ -72,12 +72,90 @@ function renderSocialMetadata(contents: string, hostname: string): string {
   );
 }
 
+/**
+ * Head tags for a page that a sponsor is sent to. The app shell carries the
+ * home page's general headline, so a shared link to one of these paths
+ * needs its own offer and image.
+ */
+type RouteMetadata = {
+  canonicalPath: string;
+  title: string;
+  headline: string;
+  description: string;
+  imageUrl: string;
+};
+
+const SHELL_TITLE = "<title>Slop: ship and maintain open source</title>";
+const SHELL_HEADLINE = 'content="Slop: ship and maintain open source"';
+const SHELL_IMAGE_ALT = 'content="MAKE MONEY SHIPPING OPEN SOURCE."';
+const SHELL_DESCRIPTION =
+  'content="Contribute to open source or maintain your project with your coding agent."';
+
+const SPONSOR_METADATA: RouteMetadata = {
+  canonicalPath: "/sponsors",
+  title: "Fund a project · Slop",
+  headline: "Fund a project. Pay for accepted work.",
+  description:
+    "Fund a monthly pool for an open-source project. It pays contributors for the work the project's maintainers accept.",
+  imageUrl: "https://slop.cash/og-slop-cash-sponsors.png",
+};
+
+function routeMetadata(pathname: string): RouteMetadata | null {
+  return pathname === "/sponsors" || pathname === "/sponsors/"
+    ? SPONSOR_METADATA
+    : null;
+}
+
+/**
+ * Rewrites the shell's head for one route. Every source string must occur the
+ * expected number of times; a shell that no longer matches is served as it is
+ * instead of failing the page.
+ */
+export function renderRouteMetadata(
+  contents: string,
+  metadata: RouteMetadata,
+): string {
+  const replacements: ReadonlyArray<readonly [string, string, number]> = [
+    [SHELL_TITLE, `<title>${metadata.title}</title>`, 1],
+    [SHELL_HEADLINE, `content="${metadata.headline}"`, 2],
+    [SHELL_IMAGE_ALT, `content="${metadata.headline}"`, 2],
+    [SHELL_DESCRIPTION, `content="${metadata.description}"`, 3],
+    [
+      'href="https://slop.cash/"',
+      `href="https://slop.cash${metadata.canonicalPath}"`,
+      1,
+    ],
+    [
+      'content="https://slop.cash/"',
+      `content="https://slop.cash${metadata.canonicalPath}"`,
+      1,
+    ],
+    [
+      'content="https://slop.cash/og-slop-cash.png"',
+      `content="${metadata.imageUrl}"`,
+      2,
+    ],
+  ];
+  if (
+    replacements.some(
+      ([source, , expectedCount]) =>
+        contents.split(source).length - 1 !== expectedCount,
+    )
+  ) {
+    return contents;
+  }
+  return replacements.reduce(
+    (html, [source, replacement]) => html.replaceAll(source, replacement),
+    contents,
+  );
+}
+
 export async function onRequest(
   context: Pick<PagesMiddlewareContext<unknown>, "request" | "next">,
 ): Promise<Response> {
   if (context.request.method !== "GET") return context.next();
 
-  const hostname = new URL(context.request.url).hostname;
+  const { hostname, pathname } = new URL(context.request.url);
   const response = await context.next();
   if (
     response.status < 200 ||
@@ -102,15 +180,43 @@ export async function onRequest(
     );
   }
 
+  // Route head tags are written for slop.cash and its test hosts only;
+  // slop.tech keeps the shell's own tags.
+  const metadata =
+    publicSocialMetadata(hostname).domain === CASH_DOMAIN
+      ? routeMetadata(pathname)
+      : null;
+  const forRoute = (contents: string) =>
+    metadata === null ? contents : renderRouteMetadata(contents, metadata);
+
   if (isWebAnalyticsHost(hostname)) {
     return new Response(
       renderWebAnalytics(
+        forRoute(
+          await readBoundedText(
+            response,
+            MAX_TRANSFORMED_HTML_BYTES,
+            "HTML response",
+          ),
+        ),
+        hostname,
+      ),
+      {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      },
+    );
+  }
+
+  if (metadata !== null) {
+    return new Response(
+      forRoute(
         await readBoundedText(
           response,
           MAX_TRANSFORMED_HTML_BYTES,
           "HTML response",
         ),
-        hostname,
       ),
       {
         status: response.status,

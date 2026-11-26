@@ -5,8 +5,10 @@ import {
   issueEmailUnsubscribeToken,
 } from "../../backend/notifications/email-destinations";
 import {
+  PAYOUT_EXCEPTION_RECIPIENTS,
   PROJECT_AFFECTED_CONTRIBUTORS,
   PROJECT_OWNERS,
+  REINSTATEMENT_REQUEST_OPEN,
 } from "../../backend/notifications/events";
 import type { SecurityD1Database } from "../../backend/security/case-store";
 import { retryableEmailRejection, SENDER_ADDRESS } from "./contracts";
@@ -77,8 +79,9 @@ const PROJECT_OWNER_KINDS = new Set([
 
 /**
  * PRD section 9: recheck roles before sending. A payout exception mails only
- * the project's current GitHub steward, and an owner notice only a current
- * owner. A vetting ban also reaches its current affected contributors and
+ * its current audience (the user steward, or an Organization steward's lister), and an owner notice only a current
+ * owner. An owner cut's notice is a payout exception for the contributor its
+ * cut record names (PRD section 6). A vetting ban also reaches its current affected contributors and
  * staff; the shared event key can retain an owner link for a staff recipient.
  * A contributor-flag pause reaches current staff and owners.
  */
@@ -91,10 +94,13 @@ async function stillProjectRecipient(
     .prepare(
       `SELECT n.kind,
               n.action_path,
-              n.recipient_github_id = (
-                SELECT json_extract(manifest, '$.steward.github.actorId')
-                  FROM projects WHERE id = n.subject
-              ) AS steward,
+              n.recipient_github_id IN ${PAYOUT_EXCEPTION_RECIPIENTS("n.subject")} AS steward,
+              EXISTS (
+                SELECT 1 FROM monthly_allocation_cut_reasons c
+                 WHERE n.event_key = 'monthly-cut:' || c.project_id || ':' || c.period || ':' || c.sequence
+                   AND c.project_id = n.subject
+                   AND c.github_user_id = n.recipient_github_id
+              ) AS cut_contributor,
               n.recipient_github_id IN ${PROJECT_OWNERS("n.subject")} AS owner,
               EXISTS (
                 SELECT 1 FROM project_enforcements e
@@ -112,12 +118,14 @@ async function stillProjectRecipient(
       kind: string;
       action_path: string;
       steward: number | null;
+      cut_contributor: number;
       owner: number | null;
       vetting_ban: number;
       affected_contributor: number;
     }>();
   if (!notice) return true;
-  if (notice.kind === "payout_exception") return notice.steward === 1;
+  if (notice.kind === "payout_exception")
+    return notice.steward === 1 || notice.cut_contributor === 1;
   // The owner writer can win the shared event key before the staff writer.
   // Recheck the actual audience, not the link that happened to be retained.
   if (notice.kind === "project_banned" && notice.vetting_ban === 1)
@@ -231,13 +239,22 @@ export async function dispatchActivityMail(
         }
       }
       // A reinstatement review (ELG-02) asks the moderators who may decide the
-      // request. A removed moderator no longer belongs to that audience.
-      if (
-        row.event_key.startsWith("reinstatement-review:") &&
-        !deps.moderatorGithubIds?.has(row.recipient_github_id)
-      ) {
-        await recordDelivery(deps, row, "suppressed", null, "activity");
-        continue;
+      // request. A removed moderator no longer belongs to that audience, and
+      // a request another moderator already decided asks nothing, exactly as
+      // a resolved appeal above no longer mails its reviewers.
+      if (row.event_key.startsWith("reinstatement-review:")) {
+        const open = deps.moderatorGithubIds?.has(row.recipient_github_id)
+          ? await deps.db
+              .prepare(
+                `SELECT 1 AS open WHERE ${REINSTATEMENT_REQUEST_OPEN("?")}`,
+              )
+              .bind(row.event_key)
+              .first<{ open: number }>()
+          : null;
+        if (!open) {
+          await recordDelivery(deps, row, "suppressed", null, "activity");
+          continue;
+        }
       }
       if (
         !(await stillProjectRecipient(

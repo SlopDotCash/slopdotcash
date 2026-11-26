@@ -169,7 +169,7 @@ test("an image decoded after a headline publication uses the new draft revision"
       .getByRole("button", { name: "Publish changes", exact: true })
       .click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision 2." }),
+      page.getByRole("status").filter({ hasText: /Rev 2\b/u }),
     ).toBeVisible();
     const first = await api.stored();
     expect(first.revision).toBe(2);
@@ -178,10 +178,7 @@ test("an image decoded after a headline publication uses the new draft revision"
     await page.evaluate(() =>
       (window as unknown as ImageWindow).lateProjectImage.release(),
     );
-    const preview = page.getByRole("img", {
-      name: "Project avatar preview",
-      exact: true,
-    });
+    const preview = page.locator('.project-image-upload img[src^="data:"]');
     await expect(preview).toBeVisible();
     await expect(
       page.getByText("Preparing image…", { exact: true }),
@@ -197,13 +194,13 @@ test("an image decoded after a headline publication uses the new draft revision"
       await readProjectDraft(page, "slop:project-update:v2:eliza"),
     ).toMatchObject({ baseRevision: 2, image });
     await expect(
-      page.getByRole("button", { name: "Use this draft", exact: true }),
+      page.getByRole("button", { name: "Keep", exact: true }),
     ).toHaveCount(0);
     await page
       .getByRole("button", { name: "Publish changes", exact: true })
       .click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision 3." }),
+      page.getByRole("status").filter({ hasText: /Rev 3\b/u }),
     ).toBeVisible();
     const second = await api.stored();
     expect(second.revision).toBe(3);
@@ -296,10 +293,7 @@ test("a browser without WebP encoding can upload and persist its project image",
         mimeType: "image/png",
         buffer: Buffer.from(png.split(",")[1], "base64"),
       });
-    const preview = page.getByRole("img", {
-      name: "Project avatar preview",
-      exact: true,
-    });
+    const preview = page.locator('.project-image-upload img[src^="data:"]');
     await expect(preview).toBeVisible();
     const uploaded = await preview.getAttribute("src");
     expect(uploaded).toMatch(/^data:image\/jpeg;base64,/u);
@@ -444,7 +438,7 @@ test("retains edits typed while a project revision is being published", async ({
     fullPage: true,
   });
   release();
-  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  await expect(page.getByText("Rev 2", { exact: true })).toBeVisible();
   await expect(description).toHaveValue(
     "Second description typed while the save is pending",
   );
@@ -455,7 +449,7 @@ test("retains edits typed while a project revision is being published", async ({
   await page
     .getByRole("button", { name: "Publish changes", exact: true })
     .click();
-  await expect(page.getByText("Published revision 3.")).toBeVisible();
+  await expect(page.getByText("Rev 3", { exact: true })).toBeVisible();
   expect(
     writes.map((write) => [write.expectedRevision, write.manifest.headline]),
   ).toEqual([
@@ -521,6 +515,9 @@ for (const boundary of ["departure", "actor-change"] as const) {
             ...(request.method() === "GET" ? {} : { body: request.postData() }),
           }),
         );
+        // Retain the completed API bytes before the deliberately held browser
+        // response is cancelled by departure or an account change.
+        const responseBody = await response.text();
         if (request.method() === "PUT") {
           expect(request.headers()["x-slop-expected-github-id"]).toBe("4242");
           expect(response.status).toBe(200);
@@ -532,7 +529,7 @@ for (const boundary of ["departure", "actor-change"] as const) {
         await route.fulfill({
           status: response.status,
           headers: Object.fromEntries(response.headers),
-          body: await response.text(),
+          body: responseBody,
         });
       },
     );
@@ -558,6 +555,9 @@ for (const boundary of ["departure", "actor-change"] as const) {
           .getByRole("link", { name: "Slop home", exact: true })
           .click();
         await expect(description).toHaveCount(0);
+        // Finish the destination's independent reads before navigating back;
+        // only the old publication response is deliberately held in this case.
+        await page.waitForLoadState("networkidle");
         await page.goBack();
       } else {
         // The real fixture changes both its session response and the actor
@@ -585,9 +585,7 @@ for (const boundary of ["departure", "actor-change"] as const) {
         (await readProjectDraft(page, "slop:project-update:v2:eliza"))
           ?.headline,
       ).toBe("Newer local draft must survive the old response");
-      await expect(
-        page.getByText("Published revision 2.", { exact: true }),
-      ).toHaveCount(0);
+      await expect(page.getByText("Rev 2", { exact: true })).toHaveCount(0);
       const stored = await api.stored();
       expect(stored.revision).toBe(2);
       expect(stored.project.headline).toBe(
@@ -672,7 +670,7 @@ test("discarding an old project draft cancels its pending image decode", async (
   try {
     await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
     await expect(
-      page.getByRole("button", { name: "Discard draft", exact: true }),
+      page.getByRole("button", { name: "Discard", exact: true }),
     ).toBeVisible();
     const png = await page.evaluate(() => {
       const canvas = document.createElement("canvas");
@@ -690,9 +688,7 @@ test("discarding an old project draft cancels its pending image decode", async (
     await expect(
       page.getByText("Preparing image…", { exact: true }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Discard draft", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Discard", exact: true }).click();
     await expect(page.getByLabel("Short description")).toHaveValue(
       registered.headline,
     );
@@ -712,7 +708,7 @@ test("discarding an old project draft cancels its pending image decode", async (
       page.getByText("Preparing image…", { exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("img", { name: "Project avatar preview", exact: true }),
+      page.locator('.project-image-upload img[src^="data:"]'),
     ).toHaveCount(0);
     expect(
       await readProjectDraft(page, "slop:project-update:v2:eliza"),
@@ -725,4 +721,104 @@ test("discarding an old project draft cancels its pending image decode", async (
       });
     await api.dispose();
   }
+});
+
+test("project pages show website and X, and owners publish and clear them", async ({
+  page,
+}) => {
+  await page.goto("/projects/thenetwork", { waitUntil: "networkidle" });
+  const website = page.locator(".project-links-line");
+  await expect(website).toHaveText("Website: ntwrk.party");
+  await expect(website.getByRole("link")).toHaveAttribute(
+    "href",
+    "https://ntwrk.party",
+  );
+  const registered = PROJECTS.find((entry) => entry.id === "eliza");
+  if (!registered) throw new Error("Eliza is missing");
+  let current = { ...registered, contribution: { ...CONTRIBUTION } };
+  let revision = 1;
+  const writes: (typeof current)["links"][] = [];
+  const setup = {
+    projectId: "eliza",
+    name: current.name,
+    slug: current.slug,
+    revision,
+    status: "active",
+    state: "ready",
+    nextAction: { kind: "none", message: "Project is ready.", href: "/" },
+    checks: {
+      authority: { state: "verified", message: "Maintainer verified." },
+      installation: { state: "installed", message: "Slopbot installed." },
+      scan: { state: "cleared", exempt: true, message: "Existing project." },
+    },
+    funding: { mode: "none" },
+    activatedRevision: 1,
+    checkedAt: "2026-10-26T00:00:00.000Z",
+  };
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    }),
+  );
+  await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
+  );
+  await page.route("**/api/v1/projects/eliza*", async (route) => {
+    if (route.request().method() === "PUT") {
+      current = route.request().postDataJSON().manifest;
+      writes.push(current.links);
+      revision += 1;
+      await route.fulfill({
+        json: {
+          project: {
+            id: "eliza",
+            revision,
+            status: "active",
+            manifest: current,
+          },
+          changes: { presentation: ["links"], executable: [], financial: [] },
+          setup: { ...setup, revision, activatedRevision: revision },
+        },
+      });
+    } else await route.fulfill({ json: { revision, project: current } });
+  });
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  await expect(
+    page.locator(".project-links-line").getByRole("link", { name: "@elizaOS" }),
+  ).toHaveAttribute("href", "https://x.com/elizaOS");
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  const x = page.getByLabel("X account (optional)");
+  await expect(x).toHaveValue("@elizaOS");
+  const site = page.getByLabel("Website (optional)");
+  await site.fill("http://elizaos.example");
+  const publish = page.getByRole("button", {
+    name: "Publish changes",
+    exact: true,
+  });
+  await publish.click();
+  await expect(page.getByText("Use an https:// address.")).toBeVisible();
+  expect(writes).toEqual([]);
+  await site.fill("elizaos.example");
+  await x.fill("https://twitter.com/elizaOS_ai");
+  await publish.click();
+  await expect(page.getByText("Rev 2", { exact: true })).toBeVisible();
+  await x.fill("");
+  await publish.click();
+  await expect(page.getByText("Rev 3", { exact: true })).toBeVisible();
+  const kept = {
+    repository: registered.links.repository,
+    issues: registered.links.issues,
+    discussions: registered.links.discussions,
+  };
+  expect(writes).toEqual([
+    {
+      ...kept,
+      website: "https://elizaos.example",
+      x: "https://x.com/elizaOS_ai",
+    },
+    { ...kept, website: "https://elizaos.example" },
+  ]);
+  await expectAccessible(page);
 });

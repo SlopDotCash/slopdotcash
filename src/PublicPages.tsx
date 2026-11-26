@@ -4,6 +4,7 @@ import {
   BookOpen,
   CalendarCheck,
   CircleSlash,
+  FolderPlus,
   GitPullRequest,
   HandCoins,
   ListChecks,
@@ -11,23 +12,52 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
+import { backlogOutOfRotation } from "./lib/backlog-rule.mjs";
 import { browserDeployment } from "./lib/browser-deployment";
+import { intakePaused } from "./lib/intake-cap.mjs";
+import {
+  MAINTAINER_SHARE_LIMITS,
+  maintainerShareCardLine,
+} from "./lib/maintainer-share.mjs";
 import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
 import {
-  asShown,
+  listedThisMonth,
+  listingPoolReward,
   loadPoolFunding,
+  monthsCovered,
+  monthsCoveredLabel,
   type PoolFundingIndex,
 } from "./lib/pool-funding";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { REPORT_DEPOSIT_USD_TEXT } from "./lib/report-deposit-page";
 import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import {
+  REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS,
+  REPORT_DEPOSIT_REFUND_SILENT_DAYS,
+} from "./lib/security-report-deposit.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import {
+  STANDING_DEPOSIT_OPEN_CAP,
+  STANDING_DEPOSIT_STRIKE_WINDOW_DAYS,
+  STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS,
+} from "./lib/standing-deposit.mjs";
+import {
+  SUBMISSION_FEE_DEFAULT_MINOR,
+  SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
+  SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
+} from "./lib/submission-fee.mjs";
+import {
+  reportDepositSetup,
+  standingDepositSetup,
+} from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
@@ -39,13 +69,21 @@ import {
 import {
   DataNotice,
   ExternalLinkAnchor,
+  MetricGrid,
+  MetricTile,
   NetworkName,
   PaymentLifecycle,
+  ReviewBudget,
   RoutePageHeader,
-  reviewBudgetLabel,
+  StatusBadge,
 } from "./Presentation";
 
 export function HowItWorksPage() {
+  // Whether Slop asks reporters for the refundable deposit (PRD section 8).
+  const [{ switchedOn: reportDeposit }] = useState(reportDepositSetup);
+  // Whether the standing deposit contract is recorded (PRD section 5).
+  const [{ deployed: standingDeposit }] = useState(standingDepositSetup);
+  const depositSize = `a refundable deposit of about ${REPORT_DEPOSIT_USD_TEXT} US dollars of SLOP on Robinhood Chain`;
   return (
     <main className="shell evidence-page how-it-works route-guide">
       <RoutePageHeader title="How Slop works" icon={<BookOpen />} />
@@ -57,34 +95,23 @@ export function HowItWorksPage() {
               <Search className="route-step-icon" aria-hidden="true" />
               <strong>1. Choose work</strong>
               <p>
-                Find an active <Link href="/#projects">project</Link>, read its
-                skill and choose unblocked work.
+                <Link href="/">Use the contributor skill</Link> to find
+                unblocked work.
               </p>
             </li>
             <li>
               <GitPullRequest className="route-step-icon" aria-hidden="true" />
               <strong>2. Submit a PR</strong>
-              <p>
-                Use any agent. Test the result and disclose the exact provider,
-                model and client.
-              </p>
             </li>
             <li>
               <ShieldCheck className="route-step-icon" aria-hidden="true" />
               <strong>3. Maintainer review</strong>
-              <p>
-                Maintainers accept the work. Accepted work and useful reviews
-                earn Points.
-              </p>
             </li>
             <li>
               <Wallet className="route-step-icon" aria-hidden="true" />
-              <strong>4. Points and payout</strong>
-              <p>
-                Track points and funded awards in{" "}
-                <Link href="/earnings">Payouts</Link>.{" "}
-                <a href="#payments">Payment stages and timing</a>.
-              </p>
+              <strong>
+                <Link href="/earnings">4. Points and payout</Link>
+              </strong>
             </li>
           </ol>
         </section>
@@ -92,37 +119,31 @@ export function HowItWorksPage() {
           <h2 id="maintainer-path">For maintainers</h2>
           <ol className="mechanism-flow">
             <li>
-              <GitPullRequest className="route-step-icon" aria-hidden="true" />
-              <strong>1. Add a project</strong>
+              <FolderPlus className="route-step-icon" aria-hidden="true" />
+              <strong>1. Add or resume</strong>
               <p>
-                <Link href="/projects/new">
-                  Add your repository and contribution rules
+                <Link href="/?audience=maintainer">
+                  Use the maintainer skill
                 </Link>
-                . Install free Slopbot and complete the security checks.
+                .
               </p>
             </li>
             <li>
-              <Wallet className="route-step-icon" aria-hidden="true" />
-              <strong>2. Fund the pool</strong>
-              <p>
-                Only funds in the project vault pay awards. Unused funds roll
-                over. <Link href="/sponsors">Funding options</Link>
-              </p>
+              <ShieldCheck className="route-step-icon" aria-hidden="true" />
+              <strong>2. Get ready</strong>
+              <p>GitHub access. Free Slopbot. Admission.</p>
             </li>
             <li>
               <ListChecks className="route-step-icon" aria-hidden="true" />
-              <strong>3. Adjust awards</strong>
-              <p>
-                Change proposed amounts within the cap before the monthly
-                cutoff.
-              </p>
+              <strong>3. Maintain your project</strong>
+              <p>PRs, CI, rules and private reports.</p>
             </li>
             <li>
-              <CalendarCheck className="route-step-icon" aria-hidden="true" />
-              <strong>4. Automatic payment</strong>
+              <Wallet className="route-step-icon" aria-hidden="true" />
+              <strong>4. Manage rewards</strong>
               <p>
-                Funded awards pay at the <a href="#payments">monthly cutoff</a>{" "}
-                unless you turn automatic payment off.
+                Funding is optional. Adjust allocations before the{" "}
+                <a href="#payments">monthly cutoff</a>.
               </p>
             </li>
           </ol>
@@ -131,34 +152,19 @@ export function HowItWorksPage() {
       <section className="worked-example score-contract" id="points">
         <div>
           <h2>Points</h2>
-          <p>
-            Slopbot sizes each accepted pull request with the tiers in this
-            table and awards points. Every accepted merge earns at least 10
-            points. Only accepted-work points count toward payouts. Joining and
-            connecting X earn no points.
-          </p>
+          <p>Min 10 points per accepted merge.</p>
         </div>
         <ContributionPointTiers />
       </section>
       <section className="worked-example score-contract" id="penalties">
         <div>
           <h2>Penalties</h2>
-          <p>
-            Slopbot applies this one published penalty table. A debit reduces
-            only that UTC month's accepted-work points and never takes it below
-            zero. A debit never changes an approved, scheduled, or paid award.
-            Maintainers and authors outside the closure scope receive no
-            penalty.
-          </p>
         </div>
         <PenaltyPointTable />
       </section>
       <section className="worked-example">
         <div>
           <h2>Example allocation</h2>
-          <p>
-            Your points ÷ project points × funded pool = projected allocation.
-          </p>
         </div>
         <dl className="equation-card" aria-label="Example projected allocation">
           <div>
@@ -178,12 +184,9 @@ export function HowItWorksPage() {
       <section className="custody-proof money-states">
         <h2 id="payments">Payment stages</h2>
         <p>
-          After each UTC month ends, the owner has 72 hours to adjust awards. A
-          cut below the proposed amount needs a public reason, and the
-          contributor gets 24 hours of notice before the month locks. When
-          payments are enabled, the vault then pays funded awards automatically
-          unless the owner turned this off. Awards without a wallet remain
-          reserved.
+          Funded awards pay automatically 72 h after month end unless the owner
+          turned this off. Awards without a wallet stay reserved. A cut needs a
+          public reason and 24 h notice.
         </p>
         <PaymentLifecycle />
       </section>
@@ -198,29 +201,15 @@ export function HowItWorksPage() {
             <h3>What work can I contribute?</h3>
             <div>
               <p>
-                Choose unblocked work in an active{" "}
-                <Link href="/#projects">project</Link> and follow its
-                contribution rules. You do not need to claim an issue.
-              </p>
-              <p>
-                Non-code work counts only on projects that opt in. The{" "}
-                <Link href="/projects/slopdotcash">Slop project</Link> ran one
-                round for October 2026: a tutorial, explainer, video, or support
-                answer about Slop could receive a reviewed award of 1 to 8
-                points. That round closed on 28 October 2026. Check each
-                project's current contribution rules before preparing non-code
-                work.
+                Any unblocked work in an active{" "}
+                <Link href="/#projects">project</Link>. No claim needed.
               </p>
             </div>
           </article>
           <article className="faq-answer">
             <h3>When will my work show up?</h3>
             <div>
-              <p>
-                Merged pull requests and their qualifying reviews appear at the
-                next site update. There is no waiting period or minimum account
-                age.
-              </p>
+              <p>At the next site update.</p>
             </div>
           </article>
           <article className="faq-answer">
@@ -285,25 +274,102 @@ export function HowItWorksPage() {
             </div>
           </article>
           <article className="faq-answer">
+            <h3>Can maintainers be paid?</h3>
+            <div>
+              <p>
+                Yes, when a project sets a maintainer share. The owner can set
+                aside up to {MAINTAINER_SHARE_LIMITS.max / 100}% of the monthly
+                amount for the people who merge or close pull requests from
+                outside contributors. It is split by how many each decided, and
+                a close counts the same as a merge. Owners set it on the
+                project&apos;s manage page, and a change starts with the next
+                UTC month. In a month with no such decision, the whole amount
+                stays with contributors.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Is there a fee to open a pull request?</h3>
+            <div>
+              <p>
+                Only on a project whose owner turned on the refundable
+                submission fee. There, Slopbot comments once on a pull request
+                from an outside contributor with a link to its pay page on
+                slop.cash, and holds its review until the fee is recorded. The
+                fee is {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000} USDC
+                on Base or {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000}{" "}
+                USDG on Robinhood Chain unless the owner set another amount, or
+                the same fee in SLOP on Robinhood Chain at half the price. It is
+                a deposit: a merge sends it back, and so do{" "}
+                {SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days without a maintainer
+                decision. A pull request closed without a merge for{" "}
+                {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days keeps it: a
+                stablecoin fee goes to Slop and a SLOP fee is burned. A pull
+                request for an issue labelled slop-wanted is the exception: it
+                is sent back unless a maintainer marks it with slop-keep-fee. An
+                unpaid pull request is never closed for that reason, the fee
+                does not buy a merge and scoring does not read it. Pay only
+                through the page linked in Slopbot&apos;s own comment.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Can I skip the fee on every pull request?</h3>
+            <div>
+              <p>
+                {standingDeposit
+                  ? "Yes, with a standing deposit: one refundable deposit of SLOP on Robinhood Chain worth 10 US dollars at Slop's SLOP rate."
+                  : "Not yet. Slop has not opened standing deposits. Once they are open, one refundable deposit of SLOP on Robinhood Chain worth 10 US dollars at Slop's SLOP rate will stand in for the fee."}{" "}
+                While it stands, Slopbot does not ask you the fee on a project
+                that accepts standing deposits, once you have had a pull request
+                merged there, for up to {STANDING_DEPOSIT_OPEN_CAP} covered pull
+                requests open at once. It is kept, and burned, only if a
+                maintainer closes a covered pull request without a merge within{" "}
+                {STANDING_DEPOSIT_STRIKE_WINDOW_DAYS} days and adds
+                slop-keep-fee; an ordinary close costs nothing. You can withdraw
+                it at any time, and it is sent back{" "}
+                {STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS} days later. It does not
+                buy a review, a merge or Points.{" "}
+                {standingDeposit ? (
+                  <>
+                    <Link href="/deposit">Post or manage yours</Link>.
+                  </>
+                ) : null}
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Is there a deposit to file a security report?</h3>
+            <div>
+              <p>
+                {reportDeposit
+                  ? `Yes, unless the project's owner turned it off. A private report filed through Slop needs ${depositSize}.`
+                  : `Not yet. Slop has not switched the deposit on. Once it is on, a private report filed through Slop needs ${depositSize}, unless the project's owner turned it off.`}{" "}
+                The report is stored at once and screened once the deposit is
+                recorded; your Inbox shows the exact amount and links its pay
+                page. The deposit is kept only if the report is closed as spam,
+                as a duplicate or as out of scope and that close stands for{" "}
+                {REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS} days with no open
+                appeal: it is then sent to the burn address, so neither Slop nor
+                the project receives it. It is sent back to the wallet that paid
+                when the report gets its first response that is not one of those
+                closes, or after {REPORT_DEPOSIT_REFUND_SILENT_DAYS} days with
+                no response, or when the owner turns the deposit off. A report
+                is never closed or deleted for an unpaid deposit. The deposit is
+                public on chain and shows the wallet that paid, not the project
+                or the report. Pay only through the page linked in your Inbox.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
             <h3>GitHub flagged my account. What happens to my work?</h3>
             <div>
               <p>
-                A flag is GitHub&apos;s restriction, not Slop&apos;s. Slop does
-                not report accounts and cannot lift a flag. Appeal to GitHub
-                through its{" "}
+                Appeal to GitHub (
                 <ExternalLinkAnchor href="https://support.github.com/contact/flagged">
                   flagged account form
-                </ExternalLinkAnchor>{" "}
-                from the account&apos;s primary email.
-              </p>
-              <p>
-                Keep the same account. Sign-in and wallet registration are tied
-                to it, and a new account inherits nothing. If GitHub prevents
-                Slop from verifying your account, Slop sign-in will fail. Your
-                wallet registrations are unchanged. If GitHub hides your pull
-                requests, merged work may be missing from the site. Once GitHub
-                restores access, eligible work can appear again after a
-                successful Slop collection and site update.
+                </ExternalLinkAnchor>
+                ). Keep the same account.
               </p>
             </div>
           </article>
@@ -311,21 +377,33 @@ export function HowItWorksPage() {
             <h3>How do I receive an award?</h3>
             <div>
               <p>
-                Add a wallet for your award's network in{" "}
-                <Link href="/account#wallets">Account wallets</Link>. Wallet
-                confirmation requires your signature. Follow the award and its
-                payment status in <Link href="/earnings">Payouts</Link>.
+                Add a wallet in <Link href="/account#wallets">Settings</Link>.
+                Track it in <Link href="/earnings">Payouts</Link>.
               </p>
             </div>
           </article>
           <article className="faq-answer">
             <h3>What does projected mean? Is the pool funded?</h3>
             <div>
+              <p>An estimate at the cap, not a balance.</p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Can the owner take this month&apos;s pool back?</h3>
+            <div>
               <p>
-                A live estimate at the project&apos;s cap. It is not a balance
-                or a guarantee: a cap is a target, and only funds in the vault
-                can be allocated. Funds added after a month freezes count toward
-                later months.
+                When an owner locks a month in the project vault, that
+                month&apos;s pool is locked in the vault until it is paid out:
+                the vault contract refuses to withdraw it, and it can be paid
+                even if the owner turns automatic payment off. The owner can
+                still lower an individual contributor&apos;s amount before the
+                cutoff, with a public reason. A locked month that is never
+                reserved for payout can be released back to the owner&apos;s
+                free funds from the 4th of the second month after it, by a
+                transaction anyone can send; the project&apos;s manage page
+                offers it. Without a lock, Slop&apos;s pages refuse that
+                withdrawal but the contract does not. Slop&apos;s upgrade key
+                can still change the vault contract.
               </p>
             </div>
           </article>
@@ -338,9 +416,7 @@ export function HowItWorksPage() {
                 your GitHub login. The referral is recorded when the project
                 lists. A referrer receives SLOP only after a project they
                 brought in has paid its contributors.{" "}
-                <ExternalLinkAnchor href="https://record.slop.cash/referrals">
-                  Referral terms
-                </ExternalLinkAnchor>
+                <Link href="/referrals">Referral terms</Link>
               </p>
             </div>
           </article>
@@ -354,9 +430,7 @@ export function HowItWorksPage() {
                 allocated to burning. The first verified bridge fill, purchase
                 and burn are still pending. Funding comes from fees, not the
                 treasury, and nothing is guaranteed.{" "}
-                <ExternalLinkAnchor href="https://record.slop.cash/buyback">
-                  How the buyback works
-                </ExternalLinkAnchor>
+                <Link href="/buyback">How the buyback works</Link>
               </p>
             </div>
           </article>
@@ -366,18 +440,30 @@ export function HowItWorksPage() {
   );
 }
 
-/** Only money in a vault is shown (operator decision, 15 November 2026). */
 function sponsorPoolLabel(
   registered: ProjectDefinition,
   index: PoolFundingIndex | null,
-): string {
+  now: Date,
+): ReactNode {
   const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
-    return `external prize share · ${reward.externalOpportunity.name}`;
+    return (
+      <StatusBadge title={reward.externalOpportunity.name}>
+        External
+      </StatusBadge>
+    );
   }
-  const project = asShown(registered, index, new Date());
-  if (project.reward.monthlyCapMinor === "0") return "points only";
-  return `${formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
+  const { project, fundingTag, warning } = listingPoolReward(
+    registered,
+    index,
+    now,
+  );
+  if (fundingTag === null) return "Security bounty";
+  const amount = formatRewardCapDisplay(
+    project.reward.monthlyCapDisplay,
+    project.rewardAsset,
+  );
+  return `${amount} monthly · ${warning ? `${fundingTag} · ${warning}` : "in the vault"}`;
 }
 
 function WhoBuildsOnSlop({
@@ -414,9 +500,7 @@ function WhoBuildsOnSlop({
   const massNote =
     massCount === 0
       ? ""
-      : massCount === 1
-        ? ", one mass pull-request account excluded"
-        : `, ${massCount === 2 ? "two" : count.format(massCount)} mass pull-request accounts excluded`;
+      : ` · ${count.format(massCount)} mass ${massCount === 1 ? "account" : "accounts"} excluded`;
   const footprint =
     state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
   const models =
@@ -426,39 +510,37 @@ function WhoBuildsOnSlop({
       aria-labelledby="who-builds-heading"
       className="model-outcomes-section who-builds"
     >
-      <h2 id="who-builds-heading">Who builds on Slop.</h2>
+      <h2 id="who-builds-heading">Who builds on Slop</h2>
       <p>
-        What the {count.format(all.size)} contributors on the leaderboard as of{" "}
-        {dateLabel} did elsewhere on GitHub in 2026.
+        {count.format(all.size)} contributors · {dateLabel}
       </p>
       <DataNotice retry={retry} state={state} />
-      <div className="money-summary model-outcomes-summary">
-        <span>
-          <strong>{percent(all.aiPrimary, all.classifiable)}</strong> build AI
-          agents or LLM tooling as their primary focus (
-          {count.format(all.aiPrimary)} of the {count.format(all.classifiable)}{" "}
-          with classifiable public work)
-        </span>
-        <span>
-          <strong>{percent(all.aiExternalPr, all.size)}</strong> merged into an
-          outside AI repository this year ({count.format(all.aiExternalPr)} of{" "}
-          {count.format(all.size)})
-        </span>
-      </div>
+      <MetricGrid>
+        <MetricTile
+          label="build AI tooling"
+          value={percent(all.aiPrimary, all.classifiable)}
+          detail={`${count.format(all.aiPrimary)} of ${count.format(all.classifiable)} classifiable`}
+        />
+        <MetricTile
+          label="merged into AI repos"
+          value={percent(all.aiExternalPr, all.size)}
+          detail={`${count.format(all.aiExternalPr)} of ${count.format(all.size)}`}
+        />
+      </MetricGrid>
       <details className="audience-data">
         <summary>Research details</summary>
-        <div className="money-summary model-outcomes-summary">
-          <span>
-            <strong>{count.format(outside.externalPrsExMass)}</strong> merged
-            pull requests across {count.format(outside.externalReposExMass)}{" "}
-            outside repositories since 1 January 2026
-          </span>
-          <span>
-            <strong>{count.format(outside.aiRepoMedianStars)}</strong> stars is
-            the median outside AI repository they work in;{" "}
-            {percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten
-          </span>
-        </div>
+        <MetricGrid>
+          <MetricTile
+            label={`outside PRs · ${count.format(outside.externalReposExMass)} repos`}
+            value={count.format(outside.externalPrsExMass)}
+            detail={`since 1 Jan 2026${massNote}`}
+          />
+          <MetricTile
+            label="median AI repo"
+            value={`${count.format(outside.aiRepoMedianStars)}★`}
+            detail={`${percentOfRatio(outside.aiRepoShareUnder10)} under 10 stars`}
+          />
+        </MetricGrid>
         <div className="who-builds-grid">
           <section
             className="who-builds-block"
@@ -509,9 +591,7 @@ function WhoBuildsOnSlop({
             className="who-builds-block"
             aria-labelledby="who-builds-known-heading"
           >
-            <h3 id="who-builds-known-heading">
-              Well-known repositories they merged into this year
-            </h3>
+            <h3 id="who-builds-known-heading">Notable repos</h3>
             <section
               className="plain-table-wrap"
               aria-label="Well-known repositories outside Slop"
@@ -552,27 +632,29 @@ function WhoBuildsOnSlop({
           </section>
         </div>
         {footprint && models && footprint.scoredEvents > 0 ? (
-          <p className="model-outcomes-note">
-            Inside Slop, live: {count.format(footprint.contributors)}{" "}
-            contributors scored in the last {footprint.windowDays} days, and{" "}
-            {percent(
-              models.totals.mergedPullRequestsWithModel,
-              models.totals.mergedPullRequests,
-            )}{" "}
-            of merged pull requests name the model that did the work (
-            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
-            {count.format(models.totals.mergedPullRequests)}).
-          </p>
+          <MetricGrid>
+            <MetricTile
+              label={`active · ${footprint.windowDays}d`}
+              value={count.format(footprint.contributors)}
+            />
+            <MetricTile
+              label="PRs name model"
+              value={percent(
+                models.totals.mergedPullRequestsWithModel,
+                models.totals.mergedPullRequests,
+              )}
+              detail={`${count.format(models.totals.mergedPullRequestsWithModel)} of ${count.format(models.totals.mergedPullRequests)}`}
+            />
+          </MetricGrid>
         ) : null}
       </details>
       <p className="who-builds-sources">
-        Public GitHub data since 1 January 2026{massNote}.{" "}
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
-          Snapshot JSON, {pin.date}
+          Snapshot
         </ExternalLinkAnchor>
         {" · "}
         <ExternalLinkAnchor href={pinnedFile(pin.methodPath)}>
-          Method and caveats
+          Method
         </ExternalLinkAnchor>
       </p>
     </section>
@@ -592,12 +674,6 @@ export function SponsorsPage({
     "Pool funding unavailable",
   );
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  const hasReviewBudget = PROJECTS.some(
-    (project) => project.reward.reviewBudget,
-  );
-  const hasExternalPrize = PROJECTS.some(
-    (project) => project.reward.kind === "external-prize-share",
-  );
   // One shared read of the daily merge activity (#1993) for every card.
   const [merge] = usePublicResource(
     true,
@@ -607,11 +683,7 @@ export function SponsorsPage({
   const now = new Date();
   return (
     <main className="shell evidence-page route-sponsors">
-      <RoutePageHeader
-        title="Fund a project"
-        icon={<HandCoins />}
-        lead="Deposit into a project’s vault. Funded awards pay monthly when payments are enabled."
-      />
+      <RoutePageHeader title="Fund a project" icon={<HandCoins />} />
       <section className="custody-proof sponsor-pools">
         <div className="section-heading">
           <h2>Projects</h2>
@@ -619,8 +691,31 @@ export function SponsorsPage({
             Add a project
           </Link>
         </div>
+        <p>
+          Anyone can deposit from their own wallet into a project's registered
+          vault. Deposits are public. Depositors have no refund right, and the
+          project owner can withdraw free funds, less a 2% fee.
+        </p>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.map((project) => {
+          {PROJECTS.filter((project) => {
+            // A project over its owner's intake cap has paused new
+            // contributors, and the backlog rule takes a project out of
+            // rotation; a failed or pending read leaves out nothing.
+            const rows =
+              merge.status === "ready"
+                ? merge.index.get(project.id)
+                : undefined;
+            return (
+              listedThisMonth(project, now) &&
+              !intakePaused(project, rows, now) &&
+              !backlogOutOfRotation(project, rows, now)
+            );
+          }).map((project) => {
+            const covered = monthsCovered(
+              project,
+              fundingIndex?.get(project.id),
+              now,
+            );
             return (
               <li className="route-sponsor-card" key={project.id}>
                 <Link
@@ -630,7 +725,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project, fundingIndex)}</p>
+                <p>{sponsorPoolLabel(project, fundingIndex, now)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}
@@ -640,6 +735,9 @@ export function SponsorsPage({
                   project={project}
                   className="route-sponsor-status"
                 />
+                {covered !== null && covered > 0 ? (
+                  <small>{monthsCoveredLabel(covered)}</small>
+                ) : null}
                 {project.status === "active" && merge.status === "ready"
                   ? (() => {
                       const line = mergeActivityCardLine(
@@ -651,85 +749,58 @@ export function SponsorsPage({
                       ) : null;
                     })()
                   : null}
-                {hasReviewBudget ? (
-                  project.reward.reviewBudget ? (
-                    <small>
-                      {reviewBudgetLabel(project.reward.reviewBudget)}
-                    </small>
-                  ) : null
+                {project.reward.reviewBudget?.fundingState === "committed" ? (
+                  <small>
+                    <ReviewBudget reviewBudget={project.reward.reviewBudget} />
+                  </small>
                 ) : null}
+                {(() => {
+                  const share = maintainerShareCardLine(project, now);
+                  return share ? <small>{share}</small> : null;
+                })()}
               </li>
             );
           })}
         </ul>
       </section>
       <details className="sponsor-details">
-        <summary>Funding rules and fees</summary>
+        <summary>Fees &amp; rules</summary>
         <section className="worked-example sponsor-fee">
           <div>
             <h2>Fees</h2>
-            <p>Ordinary awards deduct 2% in the award asset.</p>
-            {hasExternalPrize ? (
-              <p>
-                External prize shares use the terms published for that project.
-                The prize sponsor controls eligibility and payment.
-              </p>
-            ) : null}
+            <p>
+              <StatusBadge>2% fee</StatusBadge>
+            </p>
           </div>
           <dl
             className="equation-card"
             aria-label="Example: $5,000 in gross escrow awards"
           >
             <div>
-              <dt>Example gross awards</dt>
+              <dt>Awards</dt>
               <dd>$5,000</dd>
             </div>
             <div>
-              <dt>Slop fee, deducted</dt>
+              <dt>Fee 2%</dt>
               <dd>$100</dd>
             </div>
             <div>
-              <dt>Contributors receive</dt>
+              <dt>Paid out</dt>
               <dd>$4,900</dd>
             </div>
           </dl>
         </section>
-        <section className="worked-example sponsor-controls">
-          <div>
-            <h2>What you decide</h2>
-            <ul>
-              <li>The monthly cap.</li>
-              <li>
-                Award changes before the monthly cutoff, and whether automatic
-                payment runs.
-              </li>
-            </ul>
-            <p>
-              <Link href="/how-it-works">Payment stages</Link>
-            </p>
-          </div>
-        </section>
         <section className="custody-proof">
           <h2>Custody and keys</h2>
           <ul>
+            <li>Held in the project vault contract.</li>
+            <li>Owner withdrawals: 2% fee. Reserved awards locked.</li>
             <li>
-              Funds are held by the project vault contract. Private bounties use
-              a separate vault.
-            </li>
-            <li>
-              The owner can withdraw free funds with the 2% fee. Reserved awards
-              cannot be withdrawn.
-            </li>
-            <li>
-              Slop’s fee key can only claim and convert fees. A compromised
-              identity attester key can redirect unpaid awards, and Slop’s
-              upgrade keys can change the contracts. Read the{" "}
               <ExternalLinkAnchor
                 href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/docs/slop-product-requirements.md#11-source-delivery-and-acceptance`}
               >
-                authority and key risks
+                Key risks
               </ExternalLinkAnchor>
-              .
             </li>
           </ul>
         </section>
@@ -745,7 +816,7 @@ export function SponsorsPage({
         <h2>Public records</h2>
         <ul>
           <li>
-            <Link href="/#leaderboard">Live leaderboard</Link>
+            <Link href="/points">Contributors</Link>
           </li>
           <li>
             <Link href="/cycles">Cycle archive</Link>

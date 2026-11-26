@@ -7,6 +7,7 @@ import {
   type PointsJournal,
   pointKey,
   pointMembers,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "../src/lib/points";
 import {
   applyPointsImplementationCorrections,
@@ -568,6 +569,28 @@ test("complete zero-line evidence uses actor-ID ties, while zero recipients cann
   expect(total(result.journal)).toBe(1);
 });
 
+test("an empty promotion marker cannot reallocate previously credited implementation", () => {
+  const journal = initial([award(A, 18), award(B, 12)]);
+  const input = manifest(journal);
+  const evidence = complete(input).sources[0];
+  const [marker, carried] = evidence.commits;
+  marker.additions = 0;
+  marker.deletions = 0;
+  delete marker.files;
+  carried.firstAcceptedSourceId = "PR_earlier";
+  evidence.headSha = marker.sha;
+  evidence.commits = [carried, marker];
+
+  const result = apply(journal, input);
+  expect(result.dispositions[0].status).toBe("held");
+  expect(result.journal).toBe(journal);
+
+  marker.files = [{ path: "diagram.png", additions: 0, deletions: 0 }];
+  const binary = apply(journal, input);
+  expect(binary.dispositions[0].status).toBe("applied");
+  expect(amounts(binary.journal)).toEqual({ [A.id]: 30, [B.id]: 0 });
+});
+
 test("a sole verified recipient keeps the pool when line counts are unavailable", () => {
   const journal = initial();
   const input = manifest(journal);
@@ -656,6 +679,43 @@ test("current zero pools remain zero and exactly unchanged recipients cause no r
   const input = manifest(unchanged);
   complete(input).sources[0].commits[0].author = { ...A, login: "renamed-a" };
   expect(apply(unchanged, input).journal).toBe(unchanged);
+});
+
+test("an already-correct pool records its complete earlier-acceptance proof once", () => {
+  const journal = initial([award(B)]);
+  const input = manifest(journal);
+  complete(input).sources[0].commits[0].firstAcceptedSourceId = "PR_earlier";
+  expect(apply(journal, input, false).journal).toBe(journal);
+  expect(
+    apply(journal, input, true, RECORDED, new Map([[B.id, OCCURRED]])).journal,
+  ).toBe(journal);
+  const superseded = appendPointAwards(
+    journal,
+    [award(B, 8)],
+    "e".repeat(64),
+    "slop-score-v2",
+    COLLECTED,
+  );
+  expect(() => apply(superseded, input)).toThrow(
+    "selected predecessors changed",
+  );
+
+  const confirmed = apply(journal, input);
+  expect(confirmed.dispositions[0].status).toBe("applied");
+  expect(confirmed.journal.revisions.slice(0, 1)).toEqual(journal.revisions);
+  const marker = confirmed.journal.revisions.at(-1);
+  expect(confirmed.journal.revisions).toHaveLength(2);
+  expect(marker?.award).toEqual(journal.revisions[0].award);
+  expect(marker?.decision?.reason).toBe(
+    VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+  );
+  const retry = apply(confirmed.journal, input, true, LATER);
+  expect(retry.dispositions[0].status).toBe("already-applied");
+  expect(retry.journal).toBe(confirmed.journal);
+
+  const fresh = manifest(confirmed.journal);
+  complete(fresh).sources[0].commits[0].firstAcceptedSourceId = "PR_earlier";
+  expect(apply(confirmed.journal, fresh).journal).toBe(confirmed.journal);
 });
 
 test("the complete manifest replays once and never revives later corrections or revocations", () => {
@@ -890,6 +950,25 @@ test("verified complete retained copies use the original source creator and acce
     [C.id]: 0,
     [A.id]: 13,
   });
+  const alreadyCorrect = initial([award(A)]);
+  const confirmation = {
+    ...input,
+    baseline: createPointsCorrectionBaseline(alreadyCorrect),
+    candidates: [
+      {
+        ...input.candidates[0],
+        expectedPredecessors: candidate(alreadyCorrect).expectedPredecessors,
+      },
+    ],
+  };
+  const confirmed = apply(alreadyCorrect, confirmation).journal;
+  expect(confirmed.revisions).toHaveLength(2);
+  expect(confirmed.revisions[1].award).toEqual(
+    alreadyCorrect.revisions[0].award,
+  );
+  expect(confirmed.revisions[1].decision?.reason).toBe(
+    VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+  );
   accepted.commits[0].retainedCopy.boundPaths = [];
   expect(() => apply(journal, input)).toThrow(
     "complete accepted-path bindings",
@@ -2268,7 +2347,6 @@ test("one contributor retains one whole unit across separate original PRs", () =
 for (const fault of [
   "missing-claim",
   "repeated-claim",
-  "different-origin",
   "duplicate-original",
   "ordinary",
   "unscoped",
@@ -2276,7 +2354,7 @@ for (const fault of [
   "expected-scope",
 ] as const) {
   test(`multi-original native unit rejects ${fault}`, () => {
-    const { journal, input, grouped, second, accepted } = multiOriginalPrUnit();
+    const { journal, input, grouped, accepted } = multiOriginalPrUnit();
     if (
       grouped.proof.status !== "complete" ||
       !grouped.proof.originalContributorParts
@@ -2287,7 +2365,6 @@ for (const fault of [
       parts[0].claimIds = parts[0].claimIds?.slice(1);
     if (fault === "repeated-claim")
       parts[1].claimIds?.push(parts[0].claimIds?.[0] ?? "missing_claim");
-    if (fault === "different-origin") second.author = B;
     if (fault === "duplicate-original")
       parts[1].originalSourceId = parts[0].originalSourceId;
     if (fault === "ordinary") Object.assign(grouped, { kind: "pull-request" });
@@ -2399,6 +2476,967 @@ for (const fault of [
     const { digest: _, ...payload } = reference;
     reference.digest =
       fault === "digest" ? "0".repeat(64) : sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function reviewedOriginalReplacement() {
+  const sample = mergedDonorGroupedReplacement();
+  const { donor, accepted, grouped } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const historical = structuredClone(accepted.commits[0]);
+  historical.author = A;
+  donor.commits = [
+    { ...structuredClone(historical), sha: sha("e"), parentShas: [sha("d")] },
+  ];
+  donor.headSha = sha("e");
+  donor.commitCount = 1;
+  const retained = {
+    sourceDigest: "8".repeat(64),
+    currentSourceDigest: sha256Hex(JSON.stringify(donor)),
+    review: {
+      id: 23,
+      node_id: "PRR_historical",
+      html_url: `${donor.sourceUrl}#pullrequestreview-23`,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      body: "Reviewed",
+      state: "COMMENTED",
+      submitted_at: "2026-10-22T00:00:00Z",
+      commit_id: historical.sha,
+    },
+    commits: [historical],
+  };
+  const binding = grouped.proof.originalContributor;
+  binding.claimIds = grouped.proof.claims.map((claim) => claim.id);
+  binding.reviewedOriginal = {
+    ...retained,
+    digest: sha256Hex(JSON.stringify(retained)),
+  };
+  return { ...sample, binding };
+}
+
+test("reviewed original revision preserves the current source and applies the complete October pool once", () => {
+  const { journal, input, donor } = reviewedOriginalReplacement();
+  const before = structuredClone(donor);
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(donor).toEqual(before);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+for (const fault of [
+  "digest",
+  "current-head",
+  "review-source",
+  "review-head",
+  "review-time",
+  "author",
+  "parent",
+  "outside-october",
+] as const) {
+  test(`reviewed original proof refuses ${fault}`, () => {
+    const { journal, input, donor, grouped, binding } =
+      reviewedOriginalReplacement();
+    const retained = binding.reviewedOriginal;
+    if (!retained?.review) throw Error("fixture");
+    if (fault === "digest") retained.digest = "9".repeat(64);
+    if (fault === "current-head") donor.headSha = sha("f");
+    if (fault === "review-source")
+      retained.review.html_url =
+        "https://github.com/other/repo/pull/1#pullrequestreview-23";
+    if (fault === "review-head") retained.review.commit_id = sha("9");
+    if (fault === "review-time")
+      retained.review.submitted_at = "2026-10-24T00:00:00Z";
+    if (fault === "author") retained.commits[0].author = B;
+    if (fault === "parent") retained.commits[0].parentShas = [sha("9")];
+    if (fault === "outside-october")
+      grouped.occurredAt = "2026-11-01T00:00:00.000Z";
+    if (fault !== "digest") {
+      const { digest: _, ...payload } = retained;
+      retained.digest = sha256Hex(JSON.stringify(payload));
+    }
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function reviewedBranchParts() {
+  const sample = multiOriginalPrUnit();
+  const { grouped, donor, accepted, second } = sample;
+  if (
+    grouped.proof.status !== "complete" ||
+    !grouped.proof.originalContributorParts
+  )
+    throw Error("fixture");
+  const parts = grouped.proof.originalContributorParts;
+  const originals = [
+    structuredClone(accepted.commits[0]),
+    structuredClone(second.commits[0]),
+  ];
+  for (const commit of originals) commit.author = A;
+  accepted.commits[0].author = A;
+  const acceptedSecond = accepted.commits.find(
+    (commit) => commit.sha === second.headSha,
+  );
+  if (!acceptedSecond) throw Error("fixture");
+  acceptedSecond.author = A;
+  second.commits[0].author = A;
+  donor.commits = [
+    { ...structuredClone(originals[0]), sha: sha("e"), parentShas: [sha("d")] },
+  ];
+  donor.headSha = sha("e");
+  for (const [index, part] of parts.entries()) {
+    part.originalSourceId = donor.sourceId;
+    const retained = {
+      sourceDigest: "8".repeat(64),
+      currentSourceDigest: sha256Hex(JSON.stringify(donor)),
+      review: {
+        id: 23 + index,
+        node_id: `PRR_historical_${index}`,
+        html_url: `${donor.sourceUrl}#pullrequestreview-${23 + index}`,
+        user: { node_id: C.id, login: C.login, type: "User" },
+        body: "Reviewed",
+        state: "COMMENTED",
+        submitted_at: "2026-10-22T00:00:00Z",
+        commit_id: originals[index].sha,
+      },
+      commits: [originals[index]],
+    };
+    part.reviewedOriginal = {
+      ...retained,
+      digest: sha256Hex(JSON.stringify(retained)),
+    };
+  }
+  return sample;
+}
+
+test("separate reviewed branches from one original PR preserve one complete unit", () => {
+  const { journal, input } = reviewedBranchParts();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "overlap",
+  "different-author",
+  "duplicate-anchor",
+] as const) {
+  test(`reviewed branch parts reject ${fault}`, () => {
+    const { journal, input, grouped } = reviewedBranchParts();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributorParts
+    )
+      throw Error("fixture");
+    const [first, second] = grouped.proof.originalContributorParts;
+    if (fault === "overlap") second.claimIds = first.claimIds;
+    if (fault === "duplicate-anchor")
+      second.originalCommitSha = first.originalCommitSha;
+    if (fault === "different-author") {
+      const retained = second.reviewedOriginal;
+      if (!retained) throw Error("fixture");
+      retained.commits[0].author = B;
+      const { digest: _, ...payload } = retained;
+      retained.digest = sha256Hex(JSON.stringify(payload));
+    }
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("verified nine-parent delta uses the existing author fallback and keeps its pool", () => {
+  const { journal, input, units } = grouped();
+  const first = input.candidates[0];
+  if (first.proof.status !== "complete" || first.kind !== "work-unit")
+    throw Error("fixture");
+  const source = first.proof.sources[0];
+  source.author = A;
+  const parents = Array.from({ length: 9 }, (_, i) =>
+    (i + 1).toString(16).repeat(40),
+  );
+  const blob = "c".repeat(40),
+    result = "d".repeat(40),
+    path = "one.ts";
+  const patch = `diff --combined ${path}\nindex ${parents.map(() => blob).join(",")}..${result}\n${parents.map(() => `--- a/${path}\n`).join("")}+++ b/${path}\n@@@@@@@@@@ ${parents.map(() => "-1 ").join("")}+1,2 @@@@@@@@@@\n         old\n+++++++++new\n`;
+  const commit = source.commits[0];
+  commit.parentCount = 9;
+  commit.parentShas = parents;
+  commit.author = null;
+  commit.mergeResolution = {
+    kind: "combined-parent-delta",
+    commitSha: commit.sha,
+    parents,
+    parentTrees: parents.map(() => "e".repeat(40)),
+    gitVersion: "git version 2.56.0",
+    resolvedTree: "f".repeat(40),
+    patch,
+    patchSha256: sha256Hex(patch),
+    paths: [path],
+    files: [
+      {
+        path,
+        parents: parents.map(() => ({ mode: "100644", blobSha: blob })),
+        result: { mode: "100644", blobSha: result },
+      },
+    ],
+  };
+  const other = input.candidates[1];
+  if (other.proof.status !== "complete") throw Error("fixture");
+  other.proof.sources[0].author = A;
+  other.proof.sources[0].commits[0] = structuredClone(commit);
+  const value = apply(journal, input);
+  expect(
+    [...latestPoints(value.journal).values()].find(
+      (row) => row.award.workUnitId === units[0] && row.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(7);
+  expect(total(value.journal)).toBe(total(journal));
+  expect(apply(value.journal, input, true, LATER).journal).toBe(value.journal);
+});
+
+function scopedCopiedOriginal() {
+  const sample = octoberGroupedReplacement();
+  if (
+    sample.grouped.proof.status !== "complete" ||
+    !sample.grouped.proof.originalContributor
+  )
+    throw Error("fixture");
+  const proof = sample.grouped.proof,
+    accepted = proof.sources[0],
+    original = proof.sources[1];
+  const binding = proof.originalContributor;
+  if (!binding) throw Error("fixture binding");
+  binding.claimIds = proof.claims.map((c) => c.id);
+  binding.copiedClaims = [
+    {
+      claimId: proof.claims[0].id,
+      originalCommitSha: original.commits[0].sha,
+      acceptedCommitSha: accepted.commits[0].sha,
+      path: proof.claims[0].path,
+      bindingDigest: VALUE,
+    },
+  ];
+  original.commits[0].parentShas = [sha("0")];
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  const other = structuredClone(accepted.commits[1]);
+  other.sha = sha("9");
+  other.author = B;
+  other.parentShas = [accepted.commits[1].sha];
+  accepted.commits.push(other);
+  accepted.commitCount++;
+  accepted.headSha = other.sha;
+  return { ...sample, accepted, original, binding };
+}
+
+test("a copied reviewed unit preserves the original pool while retaining unrelated carrier work", () => {
+  const { journal, input, accepted } = scopedCopiedOriginal();
+  const before = JSON.stringify(input);
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(accepted.commits).toHaveLength(3);
+  expect(JSON.stringify(input)).toBe(before);
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "claim-id",
+  "copy-path",
+  "copy-author",
+  "first-acceptance",
+  "missing-binding",
+  "foreign-claim",
+  "native-flag",
+  "outer-anchor",
+  "original-sha",
+  "accepted-sha",
+  "duplicate-id",
+  "merged-original",
+  "competing-anchor",
+] as const) {
+  test(`copied reviewed unit refuses ${fault}`, () => {
+    const { journal, input, grouped, accepted, binding } =
+      scopedCopiedOriginal();
+    if (grouped.proof.status !== "complete" || !binding?.copiedClaims)
+      throw Error("fixture");
+    if (fault === "claim-id") binding.copiedClaims[0].claimId = "different";
+    if (fault === "copy-path") binding.copiedClaims[0].path = "other.ts";
+    if (fault === "copy-author") accepted.commits[0].author = B;
+    if (fault === "first-acceptance")
+      accepted.commits[0].firstAcceptedSourceId = "PR_elsewhere";
+    const copies = binding.copiedClaims;
+    if (fault === "missing-binding") delete binding.copiedClaims;
+    if (fault === "native-flag") binding.exactAcceptance = true;
+    if (fault === "outer-anchor")
+      binding.acceptedCommitSha = accepted.commits[1].sha;
+    if (fault === "original-sha") copies[0].originalCommitSha = sha("8");
+    if (fault === "accepted-sha")
+      copies[0].acceptedCommitSha = accepted.commits[1].sha;
+    if (fault === "duplicate-id") copies.push({ ...copies[0] });
+    if (fault === "merged-original")
+      grouped.proof.sources[1].occurredAt = grouped.occurredAt;
+    if (fault === "competing-anchor") {
+      copies.unshift({
+        ...copies[0],
+        claimId: grouped.proof.claims[1].id,
+        acceptedCommitSha: accepted.commits[1].sha,
+      });
+    }
+    if (fault === "foreign-claim") {
+      grouped.proof.claims[1].commitSha = accepted.commits[2].sha;
+    }
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("native unit credits its sole primary initiator while retaining the PR creator", () => {
+  const { journal, input, donor, accepted, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  donor.author = C;
+  donor.commits[0].author = A;
+  accepted.commits[0].author = A;
+  grouped.proof.originalContributor.originatingActor = A;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(donor.author).toEqual(C);
+  expect(donor.commits[0].author).toEqual(A);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+});
+
+for (const fault of [
+  "wrong-origin",
+  "null-author",
+  "bot",
+  "mixed-authors",
+  "wrong-accepted",
+  "missing-scope",
+] as const) {
+  test(`sole primary origin refuses ${fault}`, () => {
+    const { journal, input, donor, accepted, grouped } =
+      scopedUnlinkedOriginal();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor
+    )
+      throw Error("fixture");
+    donor.author = C;
+    donor.commits[0].author = A;
+    accepted.commits[0].author = A;
+    const binding = grouped.proof.originalContributor;
+    binding.originatingActor = A;
+    if (fault === "wrong-origin") binding.originatingActor = B;
+    if (fault === "null-author") donor.commits[0].author = null;
+    if (fault === "bot") {
+      donor.commits[0].author = { ...A, kind: "Bot" };
+      binding.originatingActor = donor.commits[0].author;
+    }
+    if (fault === "mixed-authors") {
+      donor.commits.push(structuredClone(accepted.commits[1]));
+      donor.commitCount++;
+      donor.headSha = donor.commits[1].sha;
+    }
+    if (fault === "wrong-accepted") accepted.commits[0].author = B;
+    if (fault === "missing-scope") delete binding.claimIds;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function historicalAcknowledgedRepair() {
+  const input = acknowledgedRepair();
+  const reference = input.repair.reference;
+  const text = reference.acknowledgement.body;
+  delete (reference as Partial<typeof reference>).acknowledgement;
+  Object.assign(reference, {
+    bodyEdit: {
+      id: reference.pull.node_id,
+      body: reference.pull.body,
+      headRefOid: reference.pull.head.sha,
+      mergedAt: reference.pull.merged_at,
+      updatedAt: reference.pull.updated_at,
+      lastEditedAt: "2026-10-24T00:00:00Z",
+      editor: { id: C.id, type: "User" },
+      author: { id: C.id, type: "User" },
+    },
+    historicalBodyEdit: {
+      id: "UCE_authenticated",
+      createdAt: "2026-10-22T22:00:00Z",
+      editedAt: "2026-10-22T22:00:00Z",
+      updatedAt: "2026-10-22T22:00:00Z",
+      deletedAt: null,
+      diff: text,
+      editor: { id: C.id, type: "User" },
+      headCommit: {
+        sha: reference.headSha,
+        committedAt: "2026-10-22T21:00:00Z",
+      },
+    },
+  });
+  const { digest: _, ...payload } = reference;
+  reference.digest = sha256Hex(JSON.stringify(payload));
+  return input;
+}
+
+test("an authenticated historical body keeps an original's pool after later body edits", () => {
+  const { journal, input } = historicalAcknowledgedRepair();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "actor",
+  "date",
+  "text",
+  "head",
+  "future-head",
+  "deleted",
+  "missing-editor",
+  "missing-head",
+] as const) {
+  test(`historical repair domain refuses ${fault}`, () => {
+    const { journal, input, repair } = historicalAcknowledgedRepair();
+    const reference = repair.reference as typeof repair.reference & {
+      historicalBodyEdit: {
+        id: string;
+        createdAt: string;
+        editedAt: string;
+        updatedAt: string;
+        deletedAt: string | null;
+        diff: string;
+        editor: { id: string; type: string } | null;
+        headCommit: { sha: string; committedAt: string } | null;
+      };
+    };
+    const historical = reference.historicalBodyEdit;
+    if (fault === "actor" && historical.editor) historical.editor.id = B.id;
+    if (fault === "date")
+      historical.createdAt =
+        historical.editedAt =
+        historical.updatedAt =
+          "2026-10-25T00:00:00Z";
+    if (fault === "text") historical.diff = `Other #999 ${reference.headSha}`;
+    if (fault === "head" && historical.headCommit)
+      historical.headCommit.sha = sha("9");
+    if (fault === "future-head" && historical.headCommit)
+      historical.headCommit.committedAt = "2026-10-23T00:00:00Z";
+    if (fault === "deleted") historical.deletedAt = historical.editedAt;
+    if (fault === "missing-editor") historical.editor = null;
+    if (fault === "missing-head") historical.headCommit = null;
+    const { digest: _, ...payload } = reference;
+    reference.digest = sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("native original keeps the existing creator fallback for an agent primary", () => {
+  const { journal, input, donor, accepted } = scopedUnlinkedOriginal();
+  const agent = { id: "U_kgDOC972lw", login: "cursoragent", kind: "User" };
+  donor.commits[0].author = agent;
+  accepted.commits[0].author = agent;
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  expect(donor.commits[0].author).toEqual(agent);
+});
+
+function nullResolutionUnit() {
+  const sample = scopedUnlinkedOriginal();
+  const { grouped, accepted, donor } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const patch =
+    "diff --git a/merge.ts b/merge.ts\n--- a/merge.ts\n+++ b/merge.ts\n@@ -1 +1 @@\n-old\n+resolved\n";
+  const commit = {
+    sha: sha("8"),
+    parentCount: 2,
+    parentShas: [accepted.headSha, donor.headSha],
+    author: null,
+    additions: 1,
+    deletions: 1,
+    files: [{ path: "merge.ts", additions: 1, deletions: 1 }],
+    firstAcceptedSourceId: accepted.sourceId,
+    mergeResolution: {
+      commitSha: sha("8"),
+      parents: [accepted.headSha, donor.headSha] as [string, string],
+      gitVersion: "git version 2.56.0",
+      automaticTree: sha("1"),
+      resolvedTree: sha("2"),
+      hadConflicts: true,
+      patch,
+      patchSha256: resolutionDigest(patch),
+      paths: ["merge.ts"],
+    },
+  };
+  accepted.commits.push(commit);
+  accepted.commitCount++;
+  accepted.headSha = commit.sha;
+  const claim = {
+    id: "claim_null_resolution",
+    sourceId: accepted.sourceId,
+    commitSha: commit.sha,
+    path: "merge.ts",
+  };
+  grouped.proof.claims.push(claim);
+  grouped.proof.expectedClaimIds.push(claim.id);
+  const binding = grouped.proof.originalContributor;
+  binding.claimIds = [...grouped.proof.expectedClaimIds];
+  binding.resolutionAcceptance = {
+    sourceDigest: "1".repeat(64),
+    pull: {
+      node_id: accepted.sourceId,
+      html_url: accepted.sourceUrl,
+      head: { sha: accepted.headSha },
+      state: "closed",
+      merged_at: accepted.occurredAt,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      merged_by: { node_id: C.id, login: C.login, type: "User" },
+    } as NonNullable<typeof binding.resolutionAcceptance>["pull"],
+  };
+  return { ...sample, commit, binding };
+}
+
+test("a verified native resolution retains its null primary and the original's whole pool", () => {
+  const { journal, input, commit } = nullResolutionUnit();
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  expect(commit.author).toBeNull();
+});
+for (const fault of [
+  "foreign-author",
+  "missing-resolution",
+  "wrong-merger",
+  "wrong-head",
+  "wrong-source",
+  "wrong-hash",
+  "ordinary-null",
+] as const) {
+  test(`native resolution fallback refuses ${fault}`, () => {
+    const { journal, input, commit, binding } = nullResolutionUnit();
+    if (fault === "foreign-author")
+      (commit as { author: CorrectionActor | null }).author = B;
+    if (fault === "missing-resolution")
+      delete (commit as { mergeResolution?: unknown }).mergeResolution;
+    if (
+      fault === "wrong-merger" &&
+      binding.resolutionAcceptance?.pull.merged_by
+    )
+      binding.resolutionAcceptance.pull.merged_by.node_id = B.id;
+    if (fault === "wrong-head" && binding.resolutionAcceptance)
+      binding.resolutionAcceptance.pull.head.sha = sha("9");
+    if (fault === "wrong-source" && binding.resolutionAcceptance)
+      binding.resolutionAcceptance.pull.node_id = "PR_wrong";
+    if (fault === "wrong-hash")
+      commit.mergeResolution.patchSha256 = "0".repeat(64);
+    if (fault === "ordinary-null") commit.parentCount = 1;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("a later null-author resolution cannot reuse the first carrier's merger proof", () => {
+  const { journal, input, grouped, accepted, followup } =
+    laterAcceptedFollowup();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const original = grouped.proof.sources[1];
+  original.headSha = accepted.commits[0].sha;
+  original.commits[0].sha = accepted.commits[0].sha;
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  const binding = grouped.proof.originalContributor;
+  binding.exactAcceptance = true;
+  binding.originalCommitSha = original.headSha;
+  binding.acceptedCommitSha = original.headSha;
+  binding.claimIds = [...grouped.proof.expectedClaimIds];
+  const commit = followup.commits[0];
+  commit.author = null;
+  commit.parentCount = 2;
+  commit.parentShas = [accepted.headSha, sha("7")];
+  const patch =
+    "diff --git a/later.ts b/later.ts\n--- a/later.ts\n+++ b/later.ts\n@@ -1 +1 @@\n-old\n+resolved\n";
+  commit.files = [{ path: "later.ts", additions: 1, deletions: 1 }];
+  commit.mergeResolution = {
+    commitSha: commit.sha,
+    parents: [...commit.parentShas] as [string, string],
+    gitVersion: "git version 2.56.0",
+    automaticTree: sha("1"),
+    resolvedTree: sha("2"),
+    hadConflicts: true,
+    patch,
+    patchSha256: resolutionDigest(patch),
+    paths: ["later.ts"],
+  };
+  const claim = grouped.proof.claims.find(
+    (item) => item.sourceId === followup.sourceId,
+  );
+  if (!claim) throw Error("fixture claim");
+  claim.path = "later.ts";
+  const native = binding.followups?.[0].commits.find(
+    (item) => item.sha === commit.sha,
+  );
+  if (!native) throw Error("fixture parent proof");
+  native.parentShas = [...commit.parentShas];
+  binding.resolutionAcceptance = {
+    sourceDigest: "1".repeat(64),
+    pull: {
+      node_id: accepted.sourceId,
+      html_url: accepted.sourceUrl,
+      head: { sha: accepted.headSha },
+      state: "closed",
+      merged_at: accepted.occurredAt,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      merged_by: { node_id: C.id, login: C.login, type: "User" },
+    } as NonNullable<typeof binding.resolutionAcceptance>["pull"],
+  };
+  expect(() => apply(journal, input)).toThrow("unit scope");
+});
+
+function pairedNullRepair() {
+  const sample = acknowledgedRepair();
+  const { grouped, accepted, donor, commit } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  commit.author = null;
+  const reference = structuredClone(sample.repair.reference);
+  reference.acknowledgement.body = `Final source ${accepted.headSha}`;
+  const originalAcknowledgement = {
+    pull: {
+      ...reference.pull,
+      node_id: donor.sourceId,
+      number: Number(donor.sourceUrl.split("/").at(-1)),
+      html_url: donor.sourceUrl,
+      head: { sha: donor.headSha },
+      merged_at: donor.occurredAt,
+      created_at: "2026-10-21T00:00:00Z",
+    },
+    comment: {
+      node_id: "IC_original_pair",
+      html_url: `${donor.sourceUrl}#issuecomment-10`,
+      body: `Finished in integration #${reference.pull.number}`,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      created_at: "2026-10-22T23:59:58Z",
+      updated_at: "2026-10-22T23:59:58Z",
+    },
+  };
+  const payload = {
+    ...reference,
+    acceptingPull: {
+      ...reference.acceptingPull,
+      created_at: "2026-10-22T00:00:00Z",
+    },
+    acknowledgement: {
+      ...reference.acknowledgement,
+      created_at: "2026-10-22T23:59:59Z",
+      updated_at: "2026-10-22T23:59:59Z",
+      html_url: `${accepted.sourceUrl}#issuecomment-11`,
+    },
+    originalAcknowledgement,
+  };
+  const { digest: _, ...bound } = payload;
+  const repair = {
+    ...sample.repair,
+    authorNodeId: null,
+    reference: { ...bound, digest: sha256Hex(JSON.stringify(bound)) },
+  };
+  grouped.proof.originalContributor.repairs = [repair];
+  return { ...sample, repair };
+}
+
+test("paired merger acknowledgements preserve null repair authors and award the original whole pool", () => {
+  const { journal, input, commit } = pairedNullRepair();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(commit.author).toBeNull();
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+for (const fault of [
+  "missing-pair",
+  "original-actor",
+  "accepted-actor",
+  "original-url",
+  "original-node",
+  "original-head",
+  "original-edited",
+  "accepted-edited",
+  "reversed",
+  "late",
+  "head",
+  "reference",
+  "author",
+  "ancestor",
+  "first-owner",
+  "unselected",
+] as const) {
+  test(`paired null repair domain rejects ${fault}`, () => {
+    const { journal, input, grouped, repair, commit } = pairedNullRepair();
+    const reference = repair.reference;
+    const original = reference.originalAcknowledgement;
+    if (fault === "missing-pair")
+      delete (reference as Partial<typeof reference>).originalAcknowledgement;
+    if (fault === "original-actor") original.comment.user.node_id = B.id;
+    if (fault === "accepted-actor")
+      reference.acknowledgement.user.node_id = B.id;
+    if (fault === "original-url")
+      original.comment.html_url =
+        "https://github.com/foreign/repo/pull/1#issuecomment-10";
+    if (fault === "original-node") original.pull.node_id = "PR_foreign";
+    if (fault === "original-head") original.pull.head.sha = sha("9");
+    if (fault === "original-edited")
+      original.comment.updated_at = "2026-10-23T00:00:02Z";
+    if (fault === "accepted-edited")
+      reference.acknowledgement.updated_at = "2026-10-23T00:00:02Z";
+    if (fault === "reversed")
+      original.comment.created_at = original.comment.updated_at =
+        "2026-10-23T00:00:02Z";
+    if (fault === "late")
+      reference.acknowledgement.created_at =
+        reference.acknowledgement.updated_at = "2026-10-30T00:00:00Z";
+    if (fault === "head")
+      reference.acknowledgement.body = `Final source ${sha("9")}`;
+    if (fault === "reference") original.comment.body = "Integration #999";
+    if (fault === "author") commit.author = B;
+    if (fault === "ancestor") commit.parentShas = [sha("9")];
+    if (fault === "first-owner") commit.firstAcceptedSourceId = "PR_other";
+    if (fault === "unselected" && grouped.proof.status === "complete")
+      grouped.proof.claims[1].commitSha = sha("f");
+    const { digest: _, ...payload } = reference;
+    reference.digest = sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function bodyOriginalReplacement() {
+  const sample = reviewedOriginalReplacement();
+  const { binding, donor } = sample;
+  const retained = binding.reviewedOriginal;
+  if (!retained) throw Error("fixture");
+  delete retained.review;
+  const head = retained.commits.at(-1)?.sha;
+  if (!head) throw Error("fixture head");
+  const body = `Verified original head ${head}.`;
+  const user = { node_id: C.id, login: C.login, type: "User" };
+  retained.bodyReference = {
+    kind: "pre-merge-body",
+    headSha: head,
+    headCommittedAt: "2026-10-20T00:00:00Z",
+    createdAt: "2026-10-19T00:00:00Z",
+    pull: {
+      node_id: donor.sourceId,
+      number: 10,
+      html_url: donor.sourceUrl,
+      state: "closed",
+      merged_at: donor.occurredAt,
+      updated_at: "2026-10-23T00:00:03Z",
+      head: { sha: donor.headSha },
+      body,
+      user,
+      merged_by: user,
+    } as NonNullable<typeof retained.bodyReference>["pull"],
+    metadata: {
+      id: donor.sourceId,
+      body,
+      headRefOid: donor.headSha,
+      mergedAt: donor.occurredAt ?? "",
+      updatedAt: "2026-10-23T00:00:03Z",
+      lastEditedAt: "2026-10-22T00:00:00Z",
+      author: { id: C.id, type: "User" },
+      editor: { id: C.id, type: "User" },
+    },
+  };
+  const { digest: _, ...payload } = retained;
+  retained.digest = sha256Hex(JSON.stringify(payload));
+  return sample;
+}
+test("authenticated pre-merge body binds a historical native original without a formal review", () => {
+  const { journal, input, donor } = bodyOriginalReplacement();
+  const before = structuredClone(donor);
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  expect(donor).toEqual(before);
+});
+for (const fault of [
+  "editor",
+  "late",
+  "head",
+  "commit-time",
+  "number",
+  "author",
+  "mixed-primary",
+  "created-after-edit",
+] as const) {
+  test(`historical body original rejects ${fault}`, () => {
+    const { journal, input, binding } = bodyOriginalReplacement();
+    const retained = binding.reviewedOriginal,
+      reference = retained?.bodyReference;
+    if (!retained || !reference) throw Error("fixture");
+    if (fault === "editor" && reference.metadata.editor)
+      reference.metadata.editor.id = B.id;
+    if (fault === "late")
+      reference.metadata.lastEditedAt = "2026-10-24T00:00:00Z";
+    if (fault === "head") reference.metadata.headRefOid = sha("9");
+    if (fault === "commit-time")
+      reference.headCommittedAt = "2026-10-22T00:00:01Z";
+    if (fault === "number") reference.pull.number = 99;
+    if (fault === "author") reference.metadata.author.id = B.id;
+    if (fault === "created-after-edit")
+      reference.createdAt = "2026-10-22T00:00:01Z";
+    if (fault === "mixed-primary") retained.commits[0].author = B;
+    const { digest: _, ...payload } = retained;
+    retained.digest = sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("copied claim scope binds the sole primary without rewriting a maintainer PR creator", () => {
+  const { journal, input, original, binding } = scopedCopiedOriginal();
+  original.author = C;
+  binding.originatingActor = A;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(original.author).toEqual(C);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "different-primary",
+  "different-accepted",
+  "missing-copies",
+  "missing-claims",
+] as const) {
+  test(`copied primary binding refuses ${fault}`, () => {
+    const { journal, input, original, accepted, binding } =
+      scopedCopiedOriginal();
+    original.author = C;
+    binding.originatingActor = A;
+    if (fault === "different-primary") original.commits[0].author = B;
+    if (fault === "different-accepted") accepted.commits[0].author = B;
+    if (fault === "missing-copies") delete binding.copiedClaims;
+    if (fault === "missing-claims") delete binding.claimIds;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("different verified original contributors share one native unit by accepted lines", () => {
+  const { journal, input, second, accepted } = multiOriginalPrUnit();
+  second.author = B;
+  second.commits[0].author = B;
+  const commit = accepted.commits.find((c) => c.sha === second.headSha);
+  if (!commit) throw Error("fixture");
+  commit.author = B;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 24, [B.id]: 6, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+test("independent carrier claims retain ordinary changed-line credit beside verified original parts", () => {
+  const { journal, input, grouped, accepted } = multiOriginalPrUnit();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  const commit = {
+    sha: sha("8"),
+    parentCount: 1,
+    parentShas: [sha("0")],
+    author: C,
+    firstAcceptedSourceId: accepted.sourceId,
+    additions: 5,
+    deletions: 0,
+    files: [{ path: "independent.ts", additions: 5, deletions: 0 }],
+  };
+  accepted.commits.push(commit);
+  accepted.commitCount++;
+  const claim = {
+    id: "claim_independent",
+    sourceId: accepted.sourceId,
+    commitSha: commit.sha,
+    path: "independent.ts",
+  };
+  grouped.proof.claims.push(claim);
+  grouped.proof.expectedClaimIds.push(claim.id);
+  grouped.proof.independentClaimIds = [claim.id];
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 15, [C.id]: 15 });
+  expect(total(result.journal)).toBe(total(journal));
+  grouped.proof.independentClaimIds.push(grouped.proof.claims[0].id);
+  expect(() => apply(journal, input)).toThrow("partition");
+});
+
+test("independent claim metadata requires a complete original partition", () => {
+  const { journal, input, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  grouped.proof.independentClaimIds = [];
+  expect(() => apply(journal, input)).toThrow("independent claims require");
+});
+
+test("complete zero-line multi-origin parts share the unchanged pool equally", () => {
+  const { journal, input, grouped, second } = multiOriginalPrUnit();
+  second.author = B;
+  second.commits[0].author = B;
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  for (const commit of grouped.proof.sources.flatMap(
+    (source) => source.commits,
+  )) {
+    if (commit.sha === second.headSha) commit.author = B;
+    commit.additions = 0;
+    commit.deletions = 0;
+    for (const file of commit.files ?? []) {
+      file.additions = 0;
+      file.deletions = 0;
+    }
+  }
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 15,
+    [B.id]: 15,
+    [C.id]: 0,
+  });
+});
+
+for (const fault of [
+  "missing-lines",
+  "foreign-claim",
+  "duplicate-independent",
+] as const) {
+  test(`multi-origin changed-line allocation refuses ${fault}`, () => {
+    const { journal, input, grouped, second, accepted } = multiOriginalPrUnit();
+    if (grouped.proof.status !== "complete") throw Error("fixture");
+    second.author = B;
+    second.commits[0].author = B;
+    const acceptedSecond = accepted.commits.find(
+      (commit) => commit.sha === second.headSha,
+    );
+    if (!acceptedSecond) throw Error("fixture");
+    acceptedSecond.author = B;
+    if (fault === "missing-lines") delete accepted.commits[0].files;
+    if (fault === "foreign-claim")
+      grouped.proof.independentClaimIds = ["foreign_claim"];
+    if (fault === "duplicate-independent")
+      grouped.proof.independentClaimIds = [
+        grouped.proof.claims[0].id,
+        grouped.proof.claims[0].id,
+      ];
     expect(() => apply(journal, input)).toThrow();
   });
 }

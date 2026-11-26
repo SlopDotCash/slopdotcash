@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  PRE_PLEDGE_PROJECT_SIZE,
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
   readVaultTotals,
@@ -41,9 +42,13 @@ const base: Counters = {
   withdrawalFees: 10n,
   accruedFees: 12n,
 };
-/** A Project account in the current 332-byte layout. */
-function projectAccount(c: Counters, mint = MINT_BYTES): Uint8Array {
-  const data = new Uint8Array(PROJECT_SIZE);
+/** A Project account in the current 340-byte layout, or the 332-byte pre-pledge one. */
+function projectAccount(
+  c: Counters,
+  mint = MINT_BYTES,
+  size = PROJECT_SIZE,
+): Uint8Array {
+  const data = new Uint8Array(size);
   const view = new DataView(data.buffer);
   data.set(
     Uint8Array.from(PROJECT_DISCRIMINATOR.match(/../g) ?? [], (h) =>
@@ -179,6 +184,22 @@ const config = {
 };
 
 describe("readVaultTotals", () => {
+  test("reads a 332-byte Project from before month pledges with the same counters", async () => {
+    mockRpc({ project: projectAccount(base), mint: mintAccount(18) });
+    const current = await readVaultTotals(config);
+    mockRpc({
+      project: projectAccount(base, MINT_BYTES, PRE_PLEDGE_PROJECT_SIZE),
+      mint: mintAccount(18),
+    });
+    expect(await readVaultTotals(config)).toEqual(current);
+    mockRpc({
+      project: projectAccount(base, MINT_BYTES, PROJECT_SIZE + 8),
+      mint: mintAccount(18),
+    });
+    await expect(readVaultTotals(config)).rejects.toThrow(
+      "Account layout mismatch",
+    );
+  });
   test("reads counters and decimals from one finalized slot", async () => {
     mockRpc({
       project: projectAccount(base),

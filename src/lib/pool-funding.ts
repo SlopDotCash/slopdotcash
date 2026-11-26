@@ -3,22 +3,31 @@ import {
   mainnetExecutionEnabled,
 } from "../../workers/payment-executor/mainnet-execution.mjs";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
+import { monthlyAmountDisplay } from "./project-schema.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 
 /**
- * Only money in a vault is shown (operator decision, 15 November 2026). A
+ * A vault-backed amount requires verified funding. A
  * monthly pool shows its amount when a recorded vault on a paying network
  * holds at least this month's amount; every other pool shows as points only.
  * The balances come from `GET /api/v1/pool-funding`, cached finalized vault
  * counters (PRD section 9). While they load, or when they cannot be read,
- * no amount is shown.
+ * no vault-backed amount is shown. Explicit honor-system promises use a
+ * separate presentation and do not change this funding check.
  *
  * From December 2026 a month is promised only if it was funded on the 1st:
  * the first finalized read of the month must hold this month's amount plus
  * last month's, which is paid out from the 4th. The amount stays shown only
  * while the vault still covers what is owed. If money was withdrawn during
  * the month and the vault no longer covers it, the page says so.
+ *
+ * A vault whose contract supports month pledges is judged by its pledges
+ * instead (operator decision, 15 November 2026): the month is funded when the
+ * owner pledged at least this month's amount on chain, summed over the
+ * project's paying vaults with pledge support. The contract then keeps that
+ * amount in the vault until the month is paid out. A vault without pledge
+ * support keeps the rule above unchanged.
  */
 
 export type MonthStart = {
@@ -28,6 +37,8 @@ export type MonthStart = {
   blockTime: string;
 };
 
+export type MonthPledge = { period: string; amount: string; open: boolean };
+
 export type VaultFreeBalance = {
   network: string;
   vault: string;
@@ -36,6 +47,9 @@ export type VaultFreeBalance = {
   blockTime: string;
   observedAt: string;
   monthStarts?: MonthStart[];
+  /** Null or absent: the vault's contract has no month pledges. */
+  openPledgedGross?: string | null;
+  pledges?: MonthPledge[];
 };
 
 /** The first month judged by its funding on the 1st. */
@@ -67,9 +81,24 @@ function isMonthStart(value: unknown): value is MonthStart {
   );
 }
 
+function isMonthPledge(value: unknown): value is MonthPledge {
+  const row = value as MonthPledge;
+  return (
+    !!row &&
+    /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(row.period) &&
+    BASE_UNITS.test(row.amount) &&
+    typeof row.open === "boolean"
+  );
+}
+
 function isVault(value: unknown): value is VaultFreeBalance {
   const row = value as VaultFreeBalance;
   return (
+    (row?.openPledgedGross === undefined ||
+      row.openPledgedGross === null ||
+      BASE_UNITS.test(row.openPledgedGross)) &&
+    (row?.pledges === undefined ||
+      (Array.isArray(row.pledges) && row.pledges.every(isMonthPledge))) &&
     (row?.totalGrossWithdrawn === undefined ||
       BASE_UNITS.test(row.totalGrossWithdrawn)) &&
     (row?.monthStarts === undefined ||
@@ -140,6 +169,14 @@ function networkPays(network: string): boolean {
   );
 }
 
+function payingVaultKeys(project: ProjectDefinition): Set<string> {
+  return new Set(
+    (project.escrow?.deployments ?? [])
+      .filter((deployment) => networkPays(deployment.network))
+      .map((deployment) => vaultKey(deployment.network, deployment.vault)),
+  );
+}
+
 function monthStartMs(period: string): number {
   return Date.parse(`${period}-01T00:00:00Z`);
 }
@@ -151,9 +188,17 @@ function previousPeriod(period: string): string {
     .slice(0, 7);
 }
 
+/** The vault's contract supports month pledges. */
+export function hasPledgeSupport(vault: VaultFreeBalance): boolean {
+  return typeof vault.openPledgedGross === "string";
+}
+
 export type PoolFundingStatus =
-  /** The vault holds what this month promises; `owedMinor` must stay in it. */
-  | { state: "funded"; period: string; owedMinor: bigint }
+  /**
+   * The vault holds what this month promises; `owedMinor` must stay in it.
+   * `locked`: the owner pledged it on chain and the contract keeps it there.
+   */
+  | { state: "funded"; period: string; owedMinor: bigint; locked: boolean }
   /** Funded on the 1st, then money was withdrawn and it no longer covers it. */
   | { state: "withdrawn"; period: string }
   /** Not funded (no vault, short vault, not funded on the 1st, not loaded). */
@@ -178,15 +223,24 @@ export function poolFundingStatus(
     prior >= FIRST_PAYING_PERIOD
       ? BigInt(resolveRewardCapMinor(project, prior))
       : 0n;
-  const recorded = new Set(
-    (project.escrow?.deployments ?? [])
-      .filter((deployment) => networkPays(deployment.network))
-      .map((deployment) => vaultKey(deployment.network, deployment.vault)),
+  const recorded = payingVaultKeys(project);
+  const paying = (index.get(project.id) ?? []).filter((vault) =>
+    recorded.has(vaultKey(vault.network, vault.vault)),
   );
-  const vaults = (index.get(project.id) ?? []).filter(
-    (vault) =>
-      vault.freeBalance !== null &&
-      recorded.has(vaultKey(vault.network, vault.vault)),
+  // A vault with pledge support counts only what its owner pledged on chain.
+  const pledging = paying.filter(hasPledgeSupport);
+  const pledged = pledging.reduce(
+    (sum, vault) =>
+      sum +
+      (vault.pledges ?? [])
+        .filter((pledge) => pledge.period === period)
+        .reduce((total, pledge) => total + BigInt(pledge.amount), 0n),
+    0n,
+  );
+  if (pledging.length > 0 && pledged >= cap)
+    return { state: "funded", period, owedMinor: pledged, locked: true };
+  const vaults = paying.filter(
+    (vault) => vault.freeBalance !== null && !hasPledgeSupport(vault),
   );
   // Last month's allocation still sits in free funds until it is reserved.
   const priorPending =
@@ -198,7 +252,9 @@ export function poolFundingStatus(
   );
   const coversNow = freeNow >= owedNow;
   if (period < FUNDED_ON_FIRST_FROM)
-    return coversNow ? { state: "funded", period, owedMinor: owedNow } : points;
+    return coversNow
+      ? { state: "funded", period, owedMinor: owedNow, locked: false }
+      : points;
   let freeAtStart = 0n;
   let withdrawnSince = false;
   for (const vault of vaults) {
@@ -217,8 +273,50 @@ export function poolFundingStatus(
       withdrawnSince = true;
   }
   if (freeAtStart < cap + priorCap) return points;
-  if (coversNow) return { state: "funded", period, owedMinor: owedNow };
+  if (coversNow)
+    return { state: "funded", period, owedMinor: owedNow, locked: false };
   return withdrawnSince ? { state: "withdrawn", period } : points;
+}
+
+/**
+ * How many whole months of this month's amount the free funds of the
+ * project's recorded vaults on paying networks cover (operator decision,
+ * 18 November 2026). Anyone may deposit, but only the owner sets the monthly
+ * amount, so extra money covers more months. Null when the project has no
+ * monthly amount this month or no such vault has a free balance on record.
+ * It is a reading of today's balance, not a promise: the owner can withdraw
+ * free funds.
+ */
+export function monthsCovered(
+  project: ProjectDefinition,
+  vaults:
+    | readonly Pick<VaultFreeBalance, "network" | "vault" | "freeBalance">[]
+    | undefined,
+  now: Date,
+): number | null {
+  if (project.reward.kind !== "monthly-pool") return null;
+  const cap = BigInt(resolveRewardCapMinor(project, utcMonth(now)));
+  if (cap === 0n) return null;
+  const recorded = payingVaultKeys(project);
+  const read = (vaults ?? []).filter(
+    (vault) =>
+      vault.freeBalance !== null &&
+      BASE_UNITS.test(vault.freeBalance) &&
+      recorded.has(vaultKey(vault.network, vault.vault)),
+  );
+  if (read.length === 0) return null;
+  const free = read.reduce(
+    (sum, vault) => sum + BigInt(vault.freeBalance as string),
+    0n,
+  );
+  const months = free / cap;
+  return months > 1200n ? 1200 : Number(months);
+}
+
+/** "Covers 3 months", "Covers 1 month", or that a month is not covered. */
+export function monthsCoveredLabel(months: number): string {
+  if (months === 0) return "Covers less than one month";
+  return `Covers ${months} ${months === 1 ? "month" : "months"}`;
 }
 
 /** True when this month's amount is backed by the vault. */
@@ -231,8 +329,8 @@ export function poolFunded(
 }
 
 /**
- * The project as contributors should see it: an unfunded monthly pool reads
- * as points only everywhere the registry amount would otherwise appear.
+ * The vault-backed amount for this month. An unfunded pool reads as Points
+ * only in contexts that show verified funding exclusively.
  */
 export function asShown(
   project: ProjectDefinition,
@@ -240,20 +338,94 @@ export function asShown(
   now: Date,
 ): ProjectDefinition {
   if (project.reward.kind !== "monthly-pool") return project;
-  if (poolFunded(project, index, now)) return project;
-  if (project.reward.monthlyCapMinor === "0" && !project.reward.cycleCaps)
+  const amount = poolFunded(project, index, now)
+    ? resolveRewardCapMinor(project, utcMonth(now))
+    : "0";
+  return withDisplayedCap(project, amount);
+}
+
+function withDisplayedCap(
+  project: ProjectDefinition,
+  amount: string,
+): ProjectDefinition {
+  if (project.reward.monthlyCapMinor === amount && !project.reward.cycleCaps)
     return project;
   const { cycleCaps: _cycleCaps, ...reward } = project.reward;
   return {
     ...project,
     reward: {
       ...reward,
-      monthlyCapMinor: "0",
-      // A token pool's label swaps its last word for the token symbol.
-      monthlyCapDisplay:
-        project.rewardAsset && project.rewardAsset.kind !== "stablecoin"
-          ? "0 TOKEN"
-          : "$0",
+      monthlyCapMinor: amount,
+      monthlyCapDisplay: monthlyAmountDisplay(amount, project.rewardAsset),
     },
-  } as ProjectDefinition;
+  };
+}
+
+export function publicPoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+): { project: ProjectDefinition; promise: string | null } {
+  const display = displayedPoolReward(project, index, now, false);
+  return {
+    project: display.project,
+    promise: display.warning ? `Promised · ${display.warning}` : null,
+  };
+}
+
+type PoolRewardDisplay = {
+  project: ProjectDefinition;
+  fundingTag: "Vaulted" | "Promised" | "Configured" | null;
+  warning: "Vault funding unverified" | "Not vaulted" | null;
+};
+
+export function listingPoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+): PoolRewardDisplay {
+  return displayedPoolReward(project, index, now, true);
+}
+
+function displayedPoolReward(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+  showConfigured: boolean,
+): PoolRewardDisplay {
+  const shown = asShown(project, index, now);
+  if (project.reward.kind !== "monthly-pool")
+    return { project: shown, fundingTag: null, warning: null };
+  if (shown.reward.monthlyCapMinor !== "0")
+    return { project: shown, fundingTag: "Vaulted", warning: null };
+  const optedIn = project.reward.honorSystem === true;
+  const amount =
+    showConfigured || optedIn
+      ? resolveRewardCapMinor(project, utcMonth(now))
+      : "0";
+  if (amount === "0")
+    return { project: shown, fundingTag: null, warning: null };
+  const unread = payingVaultKeys(project);
+  for (const vault of index?.get(project.id) ?? []) {
+    if (vault.freeBalance !== null || hasPledgeSupport(vault)) {
+      unread.delete(vaultKey(vault.network, vault.vault));
+    }
+  }
+  return {
+    project: withDisplayedCap(project, amount),
+    fundingTag: optedIn ? "Promised" : "Configured",
+    warning: unread.size ? "Vault funding unverified" : "Not vaulted",
+  };
+}
+
+/** The registry determines discovery eligibility. Vault reads only label the amount. */
+export function listedThisMonth(
+  project: ProjectDefinition,
+  now: Date,
+): boolean {
+  return (
+    project.reward.kind !== "monthly-pool" ||
+    project.securityBounty?.status === "open" ||
+    resolveRewardCapMinor(project, utcMonth(now)) !== "0"
+  );
 }

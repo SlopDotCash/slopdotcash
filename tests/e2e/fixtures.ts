@@ -99,6 +99,34 @@ export async function serveProjectCycleIndex(
   );
 }
 
+/** Empty cached project reads for specs that serve the site from local files. */
+export async function servePublicProjectReads(page: Page): Promise<void> {
+  await page.route("**/api/v1/merge-activity", (route) =>
+    route.fulfill({ json: { schema: "slop-merge-activity-v1", projects: [] } }),
+  );
+  await page.route("**/api/v1/pool-funding", (route) =>
+    route.fulfill({ json: { schema: "slop-pool-funding-v1", projects: [] } }),
+  );
+}
+
+/**
+ * Fails the vault funding read, so every project is listed as before the
+ * 16 November 2026 rule that leaves unfunded monthly pools out of the home
+ * page and /sponsors. For specs that follow a project card, not funding.
+ */
+export async function failPoolFundingRead(
+  page: Page,
+  diagnostics: Diagnostics,
+): Promise<void> {
+  diagnostics.allow(
+    /^503 GET [^ ]+\/api\/v1\/pool-funding$/u,
+    /^console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at [^ ]+\/api\/v1\/pool-funding$/u,
+  );
+  await page.route("**/api/v1/pool-funding", (route) =>
+    route.fulfill({ status: 503, json: { error: "unavailable" } }),
+  );
+}
+
 /**
  * Serves reporter 42's Inbox reads (session, empty registry, notifications,
  * cases and the listed private report) and passes every other API path to
@@ -167,6 +195,19 @@ export async function routeReporterInbox(
 /** Escapes a literal for a RegExp source. */
 export const escapeRegExp = (value: string) =>
   value.replaceAll(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
+
+/** The trace licensing listing of a member who has never opted in. */
+export const EMPTY_TRACE_LISTING = {
+  setting: {
+    enabled: false,
+    since: null,
+    providerTermsConfirmed: false,
+    confirmedTermsVersion: null,
+  },
+  totals: { traces: 0, licensed: 0, eligible: 0 },
+  traces: [],
+  nextCursor: null,
+};
 
 export const test = base.extend<{ diagnostics: Diagnostics }>({
   diagnostics: [
@@ -240,6 +281,40 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
           },
         }),
       );
+      // The preview server has no payments backend, and the pages server
+      // refuses payments reads from the test origin. A project page with a
+      // vault on record reads its recorded deposits ("Funded by"); that list
+      // is empty unless a spec routes its own records (page routes win).
+      if (
+        testInfo.config.metadata.server === "preview" ||
+        testInfo.config.metadata.server === "pages"
+      )
+        await context.route(
+          /\/api\/v1\/payments\/projects\/[a-z0-9-]+\/deposits$/u,
+          (route) => {
+            const projectId = new URL(route.request().url()).pathname.split(
+              "/",
+            )[5];
+            return route.fulfill({
+              json: {
+                projectId,
+                deposits: [],
+                total: 0,
+                servedAt: "2026-01-01T00:00:00.000Z",
+              },
+            });
+          },
+        );
+      // Settings reads the member's trace licensing listing. Neither server
+      // has the trace backend in these lanes, so it reads as off with no
+      // traces unless a spec routes its own listing (page routes win).
+      if (
+        testInfo.config.metadata.server === "preview" ||
+        testInfo.config.metadata.server === "pages"
+      )
+        await context.route(/\/api\/v1\/traces\/me(\?.*)?$/u, (route) =>
+          route.fulfill({ json: EMPTY_TRACE_LISTING }),
+        );
       await use({
         allow: (...patterns) => allowed.push(...patterns),
         allowResponse: (status, method, path) => {

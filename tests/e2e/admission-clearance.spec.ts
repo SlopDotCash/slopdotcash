@@ -112,9 +112,9 @@ test("admin distinguishes retained admission from the current revision and can r
     name: `Security vetting for ${project.id}`,
   });
   await expect(card.locator(".admin-badge")).toHaveText("Admitted");
-  await expect(card).toContainText("revision 4 · active");
-  await expect(card).toContainText("Admission scan of revision 1 · Clean");
-  await expect(card).not.toContainText("Scan of revision 4 · Clean");
+  await expect(card).toContainText("Rev 4");
+  await expect(card).toContainText("Rev 1 · Clean");
+  await expect(card).not.toContainText("Rev 4 · Clean");
   await expectAccessible(page);
   await enlargeText(page.locator("body"));
   expect(
@@ -127,15 +127,18 @@ test("admin distinguishes retained admission from the current revision and can r
     fullPage: true,
   });
   await expect(page.locator("main details")).toHaveCount(0);
-  await expect(card.getByLabel("Reason for the scan")).toBeVisible();
-  await card
-    .getByLabel("Reason for the scan")
+  const scan = card.locator("section").filter({
+    has: page.getByRole("heading", { name: "Scan", exact: true }),
+  });
+  await expect(scan.getByLabel("Scan reason", { exact: true })).toBeVisible();
+  await scan
+    .getByLabel("Scan reason", { exact: true })
     .fill("Investigate a reported dependency");
-  await card.getByRole("button", { name: "Queue scan of revision 4" }).focus();
+  await card.getByRole("button", { name: "Queue scan", exact: true }).focus();
   await page.keyboard.press("Enter");
   await expect(card.locator(".admin-badge")).toHaveText("Queued");
   await expect(
-    card.getByRole("button", { name: "Queue scan of revision 4" }),
+    card.getByRole("button", { name: "Queue scan", exact: true }),
   ).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
@@ -162,14 +165,13 @@ test("admin distinguishes retained admission from the current revision and can r
   );
   await page.goto("/vetting-evidence?assessmentId=admission-1&runId=run-1");
   // A signed-in evidence deep link loads its exact inventory automatically.
-  await page.getByText("Run details and retention", { exact: true }).focus();
+  await page.getByText("Details", { exact: true }).focus();
   await page.keyboard.press("Enter");
+  await expect(page.getByText("Permanent", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("Admission evidence is retained permanently.", {
-      exact: false,
-    }),
+    page.getByTitle("Retained permanently; each read needs a grant"),
   ).toBeVisible();
-  await expect(page.getByText("Case open.", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("Open · +90d after close")).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("permanent-admission-evidence.png"),

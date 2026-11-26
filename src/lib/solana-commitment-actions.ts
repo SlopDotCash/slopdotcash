@@ -88,7 +88,7 @@ async function request(
     throw new Error(
       typeof value.message === "string"
         ? value.message
-        : "The award could not be verified. Retry the review or transaction check.",
+        : "Award not verified. Retry.",
     );
   return value;
 }

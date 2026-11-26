@@ -613,8 +613,300 @@ test("October opt-in holds both sides of a merged donor's shared commit", async 
   );
 });
 
-test("complete census reuse holds absent or mismatched recorded sources", async () => {
-  for (const mismatch of ["absent", "url", "occurredAt"] as const) {
+test.each([
+  "submitted-head",
+  "distinct-squash",
+  "mismatched-squash",
+  "unavailable-squash",
+  "null-merge",
+] as const)(
+  "Search omissions preserve earlier commit ownership for %s",
+  async (acceptance) => {
+    const unavailableAccepted = acceptance === "unavailable-squash";
+    const missingMergeIdentity = acceptance === "null-merge";
+    const earlierHeld = unavailableAccepted || missingMergeIdentity;
+    const overlapSha = acceptance === "submitted-head" ? sha : "d".repeat(40);
+    const earlier = fixture(missingMergeIdentity ? "" : overlapSha);
+    earlier.url = "https://github.com/elizaOS/asi/pull/1";
+    earlier.mergedAt = "2026-01-14T00:00:00Z";
+    earlier.updatedAt = earlier.mergedAt;
+    const laterSha = "c".repeat(40);
+    const later = fixture(laterSha);
+    later.id = "PR_later";
+    later.number = 2;
+    later.url = "https://github.com/elizaOS/asi/pull/2";
+    later.headRefOid = laterSha;
+    const originalCommit = earlier.commits.nodes[0].commit;
+    const overlapCommit =
+      acceptance === "submitted-head"
+        ? originalCommit
+        : { ...originalCommit, id: "C_squash", oid: overlapSha };
+    const independentAuthor = {
+      ...earlier.author,
+      id: "MDQ6VXNlcjQz",
+      login: "contributor",
+      avatarUrl: "https://avatars.githubusercontent.com/u/43",
+      url: "https://github.com/contributor",
+    };
+    const independentCommit = {
+      ...originalCommit,
+      id: "C_later",
+      oid: laterSha,
+      author: { user: independentAuthor },
+    };
+    later.commits.totalCount = 2;
+    later.commits.nodes = [
+      { commit: overlapCommit },
+      { commit: independentCommit },
+    ];
+    const earlierAward = {
+      ...award(),
+      occurredAt: new Date(earlier.mergedAt).toISOString(),
+      sourceUrl: earlier.url,
+    };
+    const laterAward = {
+      ...award(),
+      key: pointKey("asi", actor.id, "merged-pull-request", later.id),
+      sourceId: later.id,
+      sourceUrl: later.url,
+      workUnitId: "history_PR_later",
+    };
+    const unrelatedSha = "f".repeat(40);
+    const unrelatedCommit = {
+      ...independentCommit,
+      id: "C_unrelated",
+      oid: unrelatedSha,
+    };
+    const other = fixture(unrelatedSha);
+    other.id = "PR_other";
+    other.number = 3;
+    other.url = "https://github.com/elizaOS/asi/pull/3";
+    other.headRefOid = unrelatedSha;
+    other.commits.nodes = [{ commit: unrelatedCommit }];
+    const otherAward = {
+      ...award(),
+      key: pointKey("asi", actor.id, "merged-pull-request", other.id),
+      sourceId: other.id,
+      sourceUrl: other.url,
+      workUnitId: "history_PR_other",
+    };
+    const journal = baseline([earlierAward, laterAward, otherAward]);
+    const commitShas = new Map(
+      [originalCommit, overlapCommit, independentCommit, unrelatedCommit].map(
+        ({ id, oid }) => [id, oid],
+      ),
+    );
+    const searchedNodes = earlierHeld ? [later, other] : [later];
+    const base = transport();
+    const metadataBatches: string[][] = [];
+    const acceptedObjectReads: string[] = [];
+    const network = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname !== "/graphql") {
+          expect(url.pathname).toBe(
+            `/repos/SlopDotCash/asi/git/commits/${overlapSha}`,
+          );
+          acceptedObjectReads.push(url.pathname);
+          if (unavailableAccepted)
+            return Response.json({ message: "Not Found" }, { status: 404 });
+          return Response.json({
+            sha:
+              acceptance === "mismatched-squash" ? "f".repeat(40) : overlapSha,
+            tree: { sha: "e".repeat(40) },
+            parents: [{ sha: earlier.baseRefOid }],
+          });
+        }
+        const { query, variables } = JSON.parse(String(init?.body));
+        let data: Record<string, unknown>;
+        let missingIndex = -1;
+        if (query.includes("LeaderboardSearchReferences")) {
+          data = {
+            search: {
+              issueCount: searchedNodes.length,
+              nodes: searchedNodes,
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          };
+        } else if (query.includes("CorrectionMetadata")) {
+          const ids: string[] = variables.ids;
+          metadataBatches.push([...ids]);
+          missingIndex = ids.indexOf(otherAward.sourceId);
+          data = {
+            nodes: ids.map((id) => {
+              if (id === earlier.id) return earlier;
+              expect(id).toBe(otherAward.sourceId);
+              return null;
+            }),
+          };
+        } else if (query.includes("LeaderboardOutcomeCommitLines")) {
+          data = {
+            nodes: (variables.ids as string[]).map((id) => ({
+              __typename: "Commit",
+              id,
+              oid: commitShas.get(id),
+              additions: 2,
+              deletions: 1,
+              repository: { id: earlier.repository.id },
+            })),
+          };
+        } else {
+          return await base.call(input, init);
+        }
+        return Response.json({
+          ...(acceptance === "submitted-head" && missingIndex >= 0
+            ? {
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["nodes", missingIndex],
+                    message: `Could not resolve to a node with the global id of '${otherAward.sourceId}'.`,
+                  },
+                ],
+              }
+            : {}),
+          data: {
+            ...data,
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T01:00:00Z",
+            },
+          },
+        });
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const options = {
+      projects: ["asi"],
+      directory: await directory(),
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const dependencies = {
+      journal,
+      registry: registry(),
+      token: "fixture-token",
+      transport: network,
+      now: new Date("2026-01-31T23:59:59Z"),
+    };
+    const collection = collectImplementationCorrections(options, dependencies);
+    if (acceptance === "mismatched-squash") {
+      await expect(collection).rejects.toThrow(
+        "Baseline census accepted object differs from the linked merge commit",
+      );
+      await expect(
+        readFile(join(options.directory, "manifest.json")),
+      ).rejects.toThrow();
+      return;
+    }
+    const result = await collection;
+    const candidates = new Map(
+      result.manifest.candidates.map((candidate) => [
+        candidate.sourceId,
+        candidate,
+      ]),
+    );
+    expect(result.receipt.ownershipComplete).toBe(true);
+    if (earlierHeld) {
+      expect(candidates.get(earlier.id)?.proof).toEqual({ status: "held" });
+      expect(candidates.get(other.id)?.proof).toMatchObject({
+        status: "complete",
+        sources: [
+          {
+            commits: [{ sha: unrelatedSha, firstAcceptedSourceId: other.id }],
+          },
+        ],
+      });
+    } else {
+      expect(candidates.get(earlier.id)?.proof).toMatchObject({
+        status: "complete",
+        sources: [{ commits: [{ sha, firstAcceptedSourceId: earlier.id }] }],
+      });
+      expect(candidates.get(other.id)?.proof).toEqual({ status: "held" });
+    }
+    if (unavailableAccepted) {
+      expect(candidates.get(later.id)?.proof).toEqual({ status: "held" });
+    } else {
+      expect(candidates.get(later.id)?.proof).toMatchObject({
+        status: "complete",
+        sources: [
+          {
+            commits: [
+              {
+                sha: overlapSha,
+                firstAcceptedSourceId: missingMergeIdentity
+                  ? later.id
+                  : earlier.id,
+              },
+              { sha: laterSha, firstAcceptedSourceId: later.id },
+            ],
+          },
+        ],
+      });
+    }
+    expect(metadataBatches.map((ids) => ids.sort())).toEqual([
+      earlierHeld ? [earlier.id] : [earlier.id, other.id].sort(),
+    ]);
+    expect(acceptedObjectReads).toHaveLength(
+      acceptance === "submitted-head" || missingMergeIdentity ? 0 : 1,
+    );
+    if (missingMergeIdentity) {
+      expect(result.receipt.limitations).toContainEqual({
+        id: earlier.id,
+        reason: "accepted-merge-identity-unavailable",
+      });
+    }
+    const applied = applyPointsImplementationCorrections(
+      journal,
+      result.manifest,
+      result.manifest.candidates.map(({ id }) => ({
+        candidateId: id,
+        eligible: true,
+      })),
+      result.manifest.generatedAt,
+      new Map(),
+    );
+    const current = latestPoints(applied.journal);
+    const before = latestPoints(journal);
+    const reallocatedAward = earlierHeld ? otherAward : laterAward;
+    expect(current.get(earlierAward.key)).toEqual(before.get(earlierAward.key));
+    if (!missingMergeIdentity) {
+      const heldAward = unavailableAccepted ? laterAward : otherAward;
+      expect(current.get(heldAward.key)).toEqual(before.get(heldAward.key));
+    }
+    expect(current.get(reallocatedAward.key)?.award.amount).toBe(0);
+    expect(
+      current.get(
+        pointKey(
+          "asi",
+          independentAuthor.id,
+          "merged-pull-request",
+          reallocatedAward.sourceId,
+        ),
+      )?.award,
+    ).toMatchObject({
+      amount: reallocatedAward.amount,
+      occurredAt: reallocatedAward.occurredAt,
+    });
+    const replay = await collectImplementationCorrections(options, {
+      ...dependencies,
+      transport: Object.assign(
+        async () => {
+          throw new Error("Offline replay attempted a GitHub read");
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    expect(replay.receipt.requests).toBe(0);
+    expect(replay.receipt.censusDigest).toBe(result.receipt.censusDigest);
+    expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+  },
+);
+
+test("complete census reuse holds mismatched recorded sources", async () => {
+  for (const mismatch of ["url", "occurredAt"] as const) {
     const dir = await directory();
     const base = transport();
     const network = Object.assign(
@@ -625,7 +917,6 @@ test("complete census reuse holds absent or mismatched recorded sources", async 
         if (!body.query.includes("LeaderboardSearchReferences"))
           return base.call(input, init);
         const node = fixture();
-        if (mismatch === "absent") node.id = "PR_other";
         if (mismatch === "url")
           node.url = "https://github.com/SlopDotCash/asi/pull/2";
         if (mismatch === "occurredAt") node.mergedAt = "2026-01-16T00:00:00Z";
@@ -893,6 +1184,137 @@ test("a request-budget stop retains raw progress and the next invocation complet
   expect(resumed.receipt.ownershipComplete).toBe(true);
   expect(resumed.receipt.completeProofs).toBe(1);
   expect(resumed.receipt.cacheHits).toBeGreaterThan(0);
+});
+
+// January's feature PR and February's promotion PR list the same accepted
+// commit, so the repository's one commit-line loader carries January's
+// statistics into February's request.
+function promotionTransport() {
+  const january = { ...fixture(), baseRefName: "development" };
+  const shared = january.commits.nodes[0];
+  const next = {
+    commit: { ...shared.commit, id: "C_next", oid: "c".repeat(40) },
+  };
+  const february = {
+    ...fixture("d".repeat(40)),
+    id: "PR_promotion",
+    number: 2,
+    url: "https://github.com/SlopDotCash/asi/pull/2",
+    updatedAt: "2026-02-10T00:00:00Z",
+    mergedAt: "2026-02-10T00:00:00Z",
+    headRefOid: next.commit.oid,
+    commits: {
+      totalCount: 2,
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes: [shared, next],
+    },
+  };
+  const lines: Record<string, { oid: string; additions: number }> = {
+    C_source: { oid: sha, additions: 2 },
+    C_next: { oid: next.commit.oid, additions: 5 },
+  };
+  const searchedMonths: string[] = [];
+  const call = Object.assign(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const query: string = body.query;
+      let data: Record<string, unknown>;
+      if (query.includes("CorrectionRepository"))
+        data = {
+          repository: {
+            id: "R_kgDOT23CXA",
+            nameWithOwner: "SlopDotCash/asi",
+            isPrivate: false,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        };
+      else if (query.includes("LeaderboardSearchReferences")) {
+        const isJanuary = String(body.variables.searchQuery).includes(
+          "merged:2026-01-01",
+        );
+        searchedMonths.push(isJanuary ? "2026-01" : "2026-02");
+        data = {
+          search: {
+            issueCount: 1,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [isJanuary ? january : february],
+          },
+        };
+      } else if (query.includes("CorrectionMetadata"))
+        data = {
+          nodes: (body.variables.ids as string[]).map((id) =>
+            id === january.id ? january : february,
+          ),
+        };
+      else if (query.includes("LeaderboardOutcomeCommitLines"))
+        data = {
+          nodes: (body.variables.ids as string[]).map((id) => ({
+            __typename: "Commit",
+            id,
+            oid: lines[id].oid,
+            additions: lines[id].additions,
+            deletions: 1,
+            repository: { id: "R_kgDOT23CXA" },
+          })),
+        };
+      else throw new Error(`Unexpected fixture query: ${query.slice(0, 70)}`);
+      return Response.json({
+        data: {
+          ...data,
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-03-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  return { call, searchedMonths };
+}
+
+test("a bounded run refuses a later census month until the earlier months are collected", async () => {
+  const run = (dir: string, network: { call: typeof fetch }, month?: string) =>
+    collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        before: "2026-01-31T00:00:00.000Z",
+        directory: dir,
+        ...(month ? { month } : {}),
+      },
+      {
+        journal: baseline(),
+        registry: registry(),
+        token: "private-test-token",
+        transport: network.call,
+        now: new Date("2026-02-20T00:00:00Z"),
+      },
+    );
+  const fresh = await run(await directory(), promotionTransport());
+  expect(fresh.receipt.ownershipComplete).toBe(true);
+  expect(fresh.receipt.completeProofs).toBe(1);
+
+  // February first would cache a statistics request that a resumed campaign,
+  // which loads January's shared commit first, never asks again.
+  const dir = await directory(),
+    early = promotionTransport();
+  await expect(run(dir, early, "2026-02")).rejects.toThrow(
+    "Collect earlier census months first",
+  );
+  expect(early.searchedMonths).toEqual([]);
+  const resumed = await run(dir, promotionTransport());
+  expect(resumed.receipt.ownershipComplete).toBe(true);
+  expect(resumed.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
+
+  const ordered = await directory(),
+    network = promotionTransport();
+  await run(ordered, network, "2026-01");
+  await run(ordered, network, "2026-02");
+  expect(network.searchedMonths).toEqual(["2026-01", "2026-02"]);
+  const complete = await run(ordered, promotionTransport());
+  expect(complete.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
 });
 
 test("resumed attempts in one millisecond retain distinct immutable evidence", async () => {
@@ -1411,6 +1833,7 @@ test("parallel quota reads wait for the strictest reset and stop when no request
     const now = new Date("2026-01-31T23:59:59Z");
     let clock = now.getTime();
     let siblingReads = 0;
+    const waitingSiblings: Array<() => void> = [];
     const delays: number[] = [];
     const network = Object.assign(
       async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1427,12 +1850,18 @@ test("parallel quota reads wait for the strictest reset and stop when no request
           });
         if (url.pathname !== "/graphql") {
           siblingReads++;
+          // Start every sibling before a quota response can interrupt cache reads.
+          await new Promise<void>((resolve) => {
+            waitingSiblings.push(resolve);
+            if (waitingSiblings.length === 3) {
+              for (const release of waitingSiblings.splice(0)) release();
+            }
+          });
           if (url.pathname.endsWith("/reviews"))
             return Response.json(
               { message: "Secondary rate limit" },
               { status: 403, headers: { "retry-after": "5" } },
             );
-          await Bun.sleep(30);
           return Response.json(
             { message: "API rate limit exceeded" },
             {
@@ -2783,7 +3212,14 @@ test("resumed months keep a later month's verified author link like an uninterru
 });
 
 function relatedHistoricalFixture(
-  original: "empty" | "bound" | "ambiguous" | "wrong-head",
+  original:
+    | "empty"
+    | "bound"
+    | "ambiguous"
+    | "wrong-head"
+    | "disjoint"
+    | "incomplete-disjoint"
+    | "renamed-overlap",
   mixed?: "linked" | "binding-mismatch" | "linked-mismatch",
 ) {
   const f = valueFixture({ textOnly: true, direct: true });
@@ -2875,7 +3311,13 @@ function relatedHistoricalFixture(
           ? { sha: linkedSha }
           : f.pull.head,
     changed_files:
-      number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
+      number === 1 && original === "empty"
+        ? 0
+        : number === 1 && original === "incomplete-disjoint"
+          ? 2
+          : number === 2 && mixed
+            ? 2
+            : 1,
     commits:
       number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
   });
@@ -2986,6 +3428,18 @@ function relatedHistoricalFixture(
         ]);
       if (original === "empty" && /\/pulls\/1\/(commits|files)\?/u.test(full))
         return Response.json([]);
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes(`/commits/${"e".repeat(40)}?`)
+      )
+        return Response.json({
+          sha: "e".repeat(40),
+          parents: [{ sha: f.pull.base.sha }],
+          stats: { additions: 1, deletions: 0, total: 1 },
+          files: [{ ...f.files[0], filename: "adjacent.ts" }],
+        });
       const remapped = full
         .replace(path, `/repos/${valueRepository.id}`)
         .replace(/\/(pulls|issues)\/2(?=\/|$)/u, "/$1/1");
@@ -3019,6 +3473,27 @@ function relatedHistoricalFixture(
           stats: { additions: 2, deletions: 0, total: 2 },
           files: [linkedFile],
         });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/files?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((file) => {
+          file.filename = "adjacent.ts";
+          if (original === "renamed-overlap") file.previous_filename = "fix.ts";
+        });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/commits?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((commit) => {
+          commit.sha = "e".repeat(40);
+        });
       return Response.json(evidence);
     },
     { preconnect: fetch.preconnect },
@@ -3049,6 +3524,65 @@ async function collectRelatedHistoricalSource(
   );
   return { journal, result, calls: network.calls };
 }
+
+test.each(["disjoint", "incomplete-disjoint", "renamed-overlap"] as const)(
+  "October reference path completeness and renames remain conservative (%s)",
+  async (scenario) => {
+    const network = relatedHistoricalFixture(scenario);
+    const inOctober = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const translated = init?.body
+          ? {
+              ...init,
+              body: String(init.body).replaceAll("2026-10", "2026-01"),
+            }
+          : init;
+        const response = await network.call(input, translated);
+        return new Response(
+          (await response.text())
+            .replaceAll("2026-01", "2026-10")
+            .replaceAll("2026-02", "2026-11"),
+          { status: response.status, headers: response.headers },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const journal = baseline([
+      {
+        ...award(),
+        sourceUrl: network.url,
+        occurredAt: "2026-10-15T00:00:00.000Z",
+      },
+    ]);
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: await directory(),
+        month: "2026-10",
+        before: "2026-10-31T00:00:00.000Z",
+        octoberOriginalCredit: true,
+      },
+      {
+        journal,
+        registry: registry(),
+        token: "fixture-token",
+        transport: inOctober,
+        now: new Date("2026-10-31T23:59:59Z"),
+      },
+    );
+    if (scenario !== "disjoint") {
+      expect(result.receipt.completeProofs).toBe(0);
+      expect(result.manifest.candidates[0].proof.status).toBe("held");
+      return;
+    }
+    expect(result.receipt.completeProofs).toBe(1);
+    expect(result.manifest.candidates[0].sourceIds).toEqual(["PR_source"]);
+    expect(result.manifest.candidates[0].proof).toMatchObject({
+      status: "complete",
+      sources: [{ sourceId: "PR_source", commits: [{ author: null }] }],
+    });
+  },
+);
 
 test("an unrelated zero-commit reference does not poison the complete historical manifest", async () => {
   const { journal, result, calls } =
@@ -3169,7 +3703,7 @@ test("conflicting author evidence holds a historical retained source", async () 
   }
 });
 
-test("the grouped collector binds the reviewed accepted subset without weakening ordinary attribution", async () => {
+test("grouped attribution restores cached actor batch halves through the normal loader adapter", async () => {
   const original = makeOriginal();
   const accepted = structuredClone(original);
   const path = "elizaOS/asi";
@@ -3274,10 +3808,53 @@ test("the grouped collector binds the reviewed accepted subset without weakening
   >["jointValueDecisions"] extends Map<string, infer T>
     ? T
     : never;
-  const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
-    jointValueDecisions: new Map([["PR_source", decision]]),
-    heldWorkUnits: [],
-  } as unknown as Awaited<ReturnType<typeof valueIngestion.loadValueInputs>>);
+  const received: string[][] = [];
+  const loader = spyOn(valueIngestion, "loadValueInputs").mockImplementation(
+    async (github) => {
+      const actors = await github.graphql<{ nodes: { id: string }[] }>(
+        "query FixtureValueActors($ids:[ID!]!){nodes(ids:$ids){id}}",
+        { ids: ["U_actor_one", "U_actor_two"] },
+      );
+      expect(actors.nodes.map((actor) => actor.id)).toEqual([
+        "U_actor_one",
+        "U_actor_two",
+      ]);
+      return {
+        jointValueDecisions: new Map([["PR_source", decision]]),
+        heldWorkUnits: [],
+      } as unknown as Awaited<
+        ReturnType<typeof valueIngestion.loadValueInputs>
+      >;
+    },
+  );
+  const baseTransport = transport(sha, {
+    ...fixture(),
+    number: 2,
+    url: accepted.evidence.pull.html_url,
+  }).call;
+  const actorTransport = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (!String(body.query).includes("FixtureValueActors"))
+        return baseTransport(input, init);
+      const ids = body.variables.ids as string[];
+      received.push(ids);
+      if (ids.length > 1)
+        return new Response("gateway failure", { status: 502 });
+      return Response.json({
+        data: {
+          nodes: ids.map((id) => ({ id })),
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-02-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
   try {
     const source = {
       ...award(30, true),
@@ -3300,25 +3877,35 @@ test("the grouped collector binds the reviewed accepted subset without weakening
         ],
       ]),
     );
-    const result = await collectImplementationCorrections(
-      {
-        projects: ["asi"],
-        directory: await directory(),
-        month: "2026-01",
-        before: "2026-01-31T00:00:00.000Z",
-      },
-      {
-        journal,
-        registry: registry(),
-        token: "fixture-token",
-        transport: transport(sha, {
-          ...fixture(),
-          number: 2,
-          url: accepted.evidence.pull.html_url,
-        }).call,
-        now: new Date("2026-01-31T23:59:59Z"),
-      },
-    );
+    const dir = await directory();
+    const options = {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const deps = {
+      journal,
+      registry: registry(),
+      token: "fixture-token",
+      transport: actorTransport,
+      now: new Date("2026-01-31T23:59:59Z"),
+    };
+    const result = await collectImplementationCorrections(options, deps);
+    expect(received.at(0)).toEqual(["U_actor_one", "U_actor_two"]);
+    expect(received.slice(-2)).toEqual([["U_actor_one"], ["U_actor_two"]]);
+    const liveCalls = received.length;
+    const replay = await collectImplementationCorrections(options, {
+      ...deps,
+      transport: Object.assign(
+        async () => {
+          throw Error("No replay network reads");
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+    expect(received).toHaveLength(liveCalls);
     expect(
       result.receipt.limitations.filter(
         (item) => item.reason !== "outside-reviewed-candidate-scope",
@@ -3336,6 +3923,194 @@ test("the grouped collector binds the reviewed accepted subset without weakening
     loader.mockRestore();
   }
 });
+
+for (const linkedAuthor of ["original", "conflicting"] as const) {
+  test(`October grouped work preserves verified original credit with ${linkedAuthor} author evidence`, async () => {
+    const original = makeOriginal();
+    const accepted = structuredClone(original);
+    const repo = "elizaOS/asi";
+    const originActor = { node_id: "U_origin", login: "origin", type: "User" };
+    const carrier = { node_id: actor.id, login: actor.login, type: "User" };
+    for (const source of [original, accepted]) {
+      Object.assign(source.evidence, {
+        repository: repo,
+        repositoryNodeId: "R_kgDOT23CXA",
+        repositoryPolicy: {
+          id: repo,
+          projectId: "asi",
+          integrationBranch: "main",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      });
+      source.evidence.pull.user = carrier;
+      source.evidence.pull.base.ref = "main";
+      source.evidence.commits[0].sha = sha;
+      source.evidence.commits[0].author = originActor;
+      source.evidence.commitAttribution[0].sha = sha;
+      source.evidence.commitAttribution[0].actorNodeIds = [originActor.node_id];
+      source.evidence.pull.head.sha = sha;
+    }
+    original.evidence.pull.node_id = "PR_original";
+    original.evidence.pull.number = 1;
+    original.evidence.pull.html_url = `https://github.com/${repo}/pull/1`;
+    original.evidence.pull.merged_at = null;
+    original.evidence.pull.closed_at = "2026-10-14T00:00:00Z";
+    original.evidence.pull.merge_commit_sha = null;
+    original.evidence.pull.merged_by = null;
+    original.evidence.mergeCommitEvidence = null;
+    accepted.evidence.pull.node_id = "PR_source";
+    accepted.evidence.pull.number = 2;
+    accepted.evidence.pull.html_url = `https://github.com/${repo}/pull/2`;
+    accepted.evidence.pull.merged_at = "2026-10-15T00:00:00Z";
+    accepted.evidence.pull.merged_by = carrier;
+    if (linkedAuthor === "conflicting") {
+      accepted.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+      accepted.evidence.commitAttribution[0].actorNodeIds = ["U_other"];
+    }
+    const evidence = await prepareWorkUnitEvidence(
+      [original, accepted],
+      [
+        {
+          ...valueRepository,
+          id: repo,
+          projectId: "asi",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      ],
+    );
+    expect(evidence.limitations).toEqual([]);
+    for (const claim of evidence.claims) {
+      claim.creditPullRequestId = original.evidence.pull.node_id;
+      claim.retainedCopy = {
+        acceptancePullRequestId: accepted.evidence.pull.node_id,
+        acceptedCommitSha: claim.commitSha,
+        preexistingCommitShas: [],
+      };
+    }
+
+    const digest = "d".repeat(64);
+    const workUnitId = `wu_${"b".repeat(64)}`;
+    const decision = {
+      status: "assessed",
+      latestDigest: digest,
+      evidence,
+      record: {
+        units: [{ workUnitId, claimIds: evidence.claims.map((c) => c.id) }],
+      },
+    };
+    const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
+      jointValueDecisions: new Map([["PR_source", decision]]),
+      heldWorkUnits: [],
+    } as never);
+    const node = fixture(sha);
+    node.commits.nodes[0].commit.oid = sha;
+    Object.assign(node, {
+      number: 2,
+      url: accepted.evidence.pull.html_url,
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-15T00:00:00Z",
+      mergedAt: "2026-10-15T00:00:00Z",
+    });
+    node.commits.nodes[0].commit.author.user = {
+      ...node.author,
+      id: linkedAuthor === "original" ? originActor.node_id : "U_other",
+      login: linkedAuthor === "original" ? originActor.login : "other",
+    };
+    const source = {
+      ...award(30, true),
+      sourceUrl: node.url,
+      occurredAt: "2026-10-15T00:00:00.000Z",
+    };
+    const journal = appendPointAwards(
+      emptyPointsJournal("2026-10-31T00:00:00.000Z"),
+      [source],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-10-31T00:00:00.000Z",
+      new Map([
+        [
+          source.key,
+          {
+            sourceId: `value:${digest}`,
+            effectiveAt: source.occurredAt,
+            reason: "Retained assessed work unit",
+          },
+        ],
+      ]),
+    );
+    try {
+      const result = await collectImplementationCorrections(
+        {
+          projects: ["asi"],
+          directory: await directory(),
+          candidateMonth: "2026-10",
+          before: "2026-11-01T00:00:00.000Z",
+          octoberOriginalCredit: true,
+        },
+        {
+          journal,
+          registry: registry(),
+          token: "fixture-token",
+          transport: Object.assign(
+            async (input: RequestInfo | URL, init?: RequestInit) => {
+              const request = JSON.parse(String(init?.body));
+
+              if (
+                request.query.includes("LeaderboardSearchReferences") &&
+                !request.variables.searchQuery.includes("merged:2026-10")
+              )
+                return Response.json({
+                  data: {
+                    search: {
+                      issueCount: 0,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                    rateLimit: {
+                      cost: 1,
+                      limit: 5000,
+                      remaining: 4900,
+                      resetAt: "2026-11-02T01:00:00Z",
+                    },
+                  },
+                });
+              return transport(sha, node).call(input, init);
+            },
+            { preconnect: fetch.preconnect },
+          ),
+          now: new Date("2026-11-02T00:00:00Z"),
+        },
+      );
+      const proof = result.manifest.candidates[0].proof;
+      if (linkedAuthor === "conflicting") {
+        expect(proof.status).toBe("held");
+        return;
+      }
+      expect(result.receipt.completeProofs).toBe(1);
+      expect(proof.status).toBe("complete");
+      if (proof.status !== "complete") throw Error("Missing proof");
+      expect(proof.originalContributor).toBeUndefined();
+      const applied = applyPointsImplementationCorrections(
+        journal,
+        result.manifest,
+        [{ candidateId: result.manifest.candidates[0].id, eligible: true }],
+        result.manifest.generatedAt,
+        new Map(),
+      );
+      expect(
+        [...latestPoints(applied.journal).values()].find(
+          (row) => row.award.actor.id === originActor.node_id,
+        )?.award.amount,
+      ).toBe(30);
+    } finally {
+      loader.mockRestore();
+    }
+  });
+}
 
 const head = "1".repeat(40),
   later = "4".repeat(40),

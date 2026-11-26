@@ -5,7 +5,8 @@
  *
  * Usage: node scripts/render-social-images.mjs
  *
- * Writes public/og-slop-cash.png and public/og-slop-tech.png. Run it after a
+ * Writes public/og-slop-cash.png, public/og-slop-tech.png and the sponsor card
+ * public/og-slop-cash-sponsors.png. Run it after a
  * brand token, mark or hero message change, and rename the files when their
  * content changes so link-preview caches fetch the new image.
  */
@@ -28,12 +29,21 @@ const displayFont = fontDataUrl(
   "@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-opsz-normal.woff2",
 );
 
+const HOME_HEADLINE = { lead: "Make money", action: "Shipping open source." };
+
 const images = [
-  { domain: "slop.cash", file: "og-slop-cash.png" },
-  { domain: "slop.tech", file: "og-slop-tech.png" },
+  { domain: "slop.cash", file: "og-slop-cash.png", ...HOME_HEADLINE },
+  { domain: "slop.tech", file: "og-slop-tech.png", ...HOME_HEADLINE },
+  // Served for /sponsors by functions/index.ts.
+  {
+    domain: "slop.cash",
+    file: "og-slop-cash-sponsors.png",
+    lead: "Fund a project",
+    action: "Pay for accepted work.",
+  },
 ];
 
-function html(domain) {
+function html({ domain, lead, action }) {
   const [name, tld] = domain.split(".");
   const { color, font } = tokens;
   return `<!doctype html>
@@ -56,7 +66,7 @@ h1 span { display: block; width: max-content; letter-spacing: -0.04em; line-heig
 .action { color: ${color.accent}; }
 </style></head><body>
 <div class="wordmark"><img alt="" src="data:image/svg+xml;base64,${mark.toString("base64")}"><span>${name}<span class="dot">.</span>${tld}</span></div>
-<h1><span class="lead">Make money</span><span class="action">Shipping open source.</span></h1>
+<h1><span class="lead">${lead}</span><span class="action">${action}</span></h1>
 </body></html>`;
 }
 
@@ -78,8 +88,9 @@ try {
     viewport: { width: 1200, height: 630 },
     deviceScaleFactor: 1,
   });
-  for (const { domain, file } of images) {
-    await page.setContent(html(domain), { waitUntil: "load" });
+  for (const image of images) {
+    const { file } = image;
+    await page.setContent(html(image), { waitUntil: "load" });
     await page.evaluate(() => document.fonts.ready);
     await page.evaluate(fitHeadline);
     await page.screenshot({ path: join(repositoryRoot, "public", file) });

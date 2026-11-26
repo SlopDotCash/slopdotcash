@@ -6,6 +6,8 @@ import type { ContributionField } from "./project-schema.mjs";
 
 import type { RewardAsset } from "./reward-asset.mjs";
 import type { SecurityBountyTerms } from "./security-bounty.mjs";
+import type { ReadyLabelSettings } from "./slopbot-ready.mjs";
+import type { SubmissionFeeSetting } from "./submission-fee-setting.mjs";
 
 export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
@@ -33,6 +35,18 @@ export interface ProjectReviewBudgetPolicy {
 }
 
 export interface ProjectRewardPolicy {
+  /** Owner opts to advertise the stated pool as a promise without vault funding. */
+  readonly honorSystem?: true;
+  /**
+   * Basis points of the monthly amount that go to the accounts that decide
+   * outside pull requests (1 to 3000). Absent means no maintainer share.
+   */
+  readonly maintainerShare?: number;
+  /** Server-written: the share every month through `throughCycle` had. */
+  readonly maintainerShareHistory?: readonly {
+    readonly throughCycle: string;
+    readonly basisPoints: number;
+  }[];
   /** Exact-cycle overrides; unlisted cycles use monthlyCapMinor. */
   readonly cycleCaps?: readonly {
     readonly cycleId: string;
@@ -212,7 +226,38 @@ export interface ProjectDefinition {
   /** Maintainer-authored fields that generate the project skills (SKL-03). */
   readonly contribution?: Readonly<Record<ContributionField, string>>;
   /** Explicit owner consent, recorded by immutable revision; absent is false. */
-  readonly slopbot?: { readonly automaticClosure: boolean };
+  readonly slopbot?: {
+    readonly automaticClosure: boolean;
+    /** The slopbot:ready label (PRD section 5); absent means off. */
+    readonly readyLabel?: ReadyLabelSettings;
+    /**
+     * Pause new contributors when this many outside pull requests are open
+     * (PRD section 5); absent means off.
+     */
+    readonly intakeCap?: number;
+    /**
+     * Catching up on reviews until this instant (PRD section 5, backlog
+     * rule); absent means not catching up.
+     */
+    readonly catchUpUntil?: string;
+    /** Each catch-up start, written only by the server. */
+    readonly catchUpHistory?: readonly { readonly startedAt: string }[];
+    /**
+     * The refundable submission fee (PRD section 5); absent means off.
+     */
+    readonly submissionFee?: SubmissionFeeSetting;
+    /**
+     * Wanted issues: Slopbot creates the `slop-wanted` label and the project
+     * page lists the issues that carry it (PRD section 5); absent is off.
+     */
+    readonly wantedIssues?: boolean;
+  };
+  /**
+   * Private report settings (PRD section 8). `reportDeposit` is the
+   * refundable SLOP deposit on a private report: absent or true is on, false
+   * is off.
+   */
+  readonly security?: { readonly reportDeposit?: boolean };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
   readonly repositories: readonly {

@@ -340,3 +340,66 @@ test("an out-of-window REST reset yields a distinct checkpoint and retains succe
     );
   });
 });
+
+test("a resumed run revalidates commit-addressed pages instead of downloading them again", async () => {
+  const sha = "a".repeat(40);
+  const base = "b".repeat(40);
+  const commitPage = `/repos/owner/repo/commits/${sha}?per_page=100&page=2`;
+  const comparePage = `/repos/owner/repo/compare/${base}...${sha}?per_page=100&page=1`;
+  const tree = `/repos/owner/repo/git/trees/${sha}?recursive=1`;
+  const immutable = new Map<string, unknown>([
+    [commitPage, { sha, files: [{ filename: "a.ts", patch: "+x" }] }],
+    [
+      comparePage,
+      { status: "ahead", base_commit: { sha: base }, commits: [], files: [] },
+    ],
+    [tree, { sha, tree: [] }],
+  ]);
+  await withCache(async (directory) => {
+    const first = client(directory, (path, validator) => {
+      expect(validator).toBeNull();
+      return Response.json(immutable.get(path), { headers: { etag } });
+    });
+    for (const [path, expected] of immutable)
+      expect(await first.get<unknown>(path)).toEqual(expected);
+    expect(await readdir(directory)).toHaveLength(immutable.size);
+    const calls: string[] = [];
+    const resumed = client(
+      directory,
+      (path, validator) => {
+        calls.push(path);
+        expect(validator).toBe(etag);
+        return new Response(null, { status: 304, headers: { etag } });
+      },
+      { token: "rotated-test-token" },
+    );
+    for (const [path, expected] of immutable)
+      expect(await resumed.get<unknown>(path)).toEqual(expected);
+    expect(calls).toEqual([...immutable.keys()]);
+  });
+});
+
+test("commit-addressed pages are not kept for another commit, a branch name or an unregistered repository", async () => {
+  const sha = "c".repeat(40);
+  const rejected = new Map<string, unknown>([
+    // The body names a different commit than the URL.
+    [
+      `/repos/owner/repo/commits/${sha}?per_page=100&page=1`,
+      { sha: "d".repeat(40), files: [] },
+    ],
+    // A branch name is not commit-addressed.
+    ["/repos/owner/repo/commits/main?per_page=100&page=1", { sha, files: [] }],
+    // A repository outside the registry is never kept.
+    [
+      `/repos/other/repo/commits/${sha}?per_page=100&page=1`,
+      { sha, files: [] },
+    ],
+  ]);
+  await withCache(async (directory) => {
+    const read = client(directory, (path) =>
+      Response.json(rejected.get(path), { headers: { etag } }),
+    );
+    for (const path of rejected.keys()) await read.get<unknown>(path);
+    expect(await readdir(directory)).toHaveLength(0);
+  });
+});

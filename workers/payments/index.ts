@@ -8,10 +8,15 @@ import {
   indexPaymentEvent,
   type PaymentChainAdapter,
 } from "../../backend/payments/ledger";
+import { chainPledgeReaders } from "../../backend/payments/month-pledge-readers";
 import {
-  automaticMonthlyPayment,
-  coordinateMonthlyPayments,
-} from "../../backend/payments/monthly";
+  chainPeriod,
+  pledgeReadPeriods,
+  runConsent,
+  type StoredMonthPledges,
+  storedMonthPledges,
+} from "../../backend/payments/month-pledges";
+import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
 import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   refreshVaultSnapshots,
@@ -46,6 +51,7 @@ import {
   loadRegistryPaymentDeployments,
   parsePaymentNetworks,
 } from "./deployments";
+import { type DepositScanReport, recordVaultDeposits } from "./deposits";
 import { reconcileFailedAttempts } from "./reconcile";
 import { type ScanEvent, scanEvmPayments, scanSolanaPayments } from "./scanner";
 
@@ -415,10 +421,9 @@ export async function runMonthlyCommitments(
           now.toISOString(),
         )
         .run();
-      const automatic = await automaticMonthlyPayment(
-        env.PAYMENTS_DB,
-        plan.request.projectId,
-      );
+      // A month pledged on chain may be admitted with automatic payment off
+      // (operator decision, 15 November 2026).
+      const automatic = await runConsent(env.PAYMENTS_DB, plan.request);
       const cutoff = monthlyCutoff(schedule, plan.request.period);
       const closes = monthlyCutoff(
         schedule,
@@ -642,6 +647,65 @@ export async function readDeploymentVaultTotals(
     projectPda: deployment.projectPda,
   });
 }
+/** Months whose stored pledge is still open, for one vault. */
+async function storedOpenPledgePeriods(
+  db: D1Database,
+  deployment: { projectId: string; network: string; vault: string },
+): Promise<string[]> {
+  const row = await db
+    .prepare(
+      "SELECT json_group_array(period) periods FROM (SELECT period FROM vault_month_pledges WHERE project_id=? AND network=? AND vault=? AND open=1 ORDER BY period)",
+    )
+    .bind(deployment.projectId, deployment.network, deployment.vault)
+    .first<{ periods: string }>();
+  return JSON.parse(row?.periods ?? "[]") as string[];
+}
+
+/**
+ * Reads the vault's month pledges at the totals' block (EVM) or at the
+ * finalized commitment (Solana), from the previous month to eleven months
+ * ahead. Null when the vault's contract has no pledge support, including
+ * every vault while the adapters have no pledge reader.
+ */
+export async function readDeploymentMonthPledges(
+  deployment: DeploymentView<"chain" | "vault", "programId" | "projectPda">,
+  rpcUrl: string,
+  totals: Pick<VaultTotals, "blockNumber" | "blockTime">,
+  readers = chainPledgeReaders,
+  /** Months stored open earlier: a lapsed lock stays read until released. */
+  storedOpen: readonly string[] = [],
+): Promise<StoredMonthPledges | null> {
+  const periods = [
+    ...new Set([
+      ...storedOpen,
+      ...pledgeReadPeriods(new Date(totals.blockTime)),
+    ]),
+  ]
+    .sort()
+    .map(chainPeriod);
+  if (chainFamily(deployment.chain) === "evm") {
+    if (!readers.evm) return null;
+    const read = await readers.evm({
+      rpcUrl,
+      vault: deployment.vault,
+      periods,
+      blockTag: `0x${BigInt(totals.blockNumber).toString(16)}`,
+    });
+    return read === null ? null : storedMonthPledges(read);
+  }
+  if (!readers.solana) return null;
+  if (!deployment.programId || !deployment.projectPda)
+    throw new Error("Solana project deployment missing");
+  const read = await readers.solana({
+    rpcUrl,
+    network: deployment.network,
+    programId: deployment.programId,
+    projectPda: deployment.projectPda,
+    periods,
+  });
+  return read === null ? null : storedMonthPledges(read);
+}
+
 /**
  * The cron's chain read: discover the served networks' vaults in the D1
  * registry, store each vault's finalized counters in vault_snapshots, then
@@ -666,7 +730,25 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
             rpcUrl,
             genesisHash: paymentSolanaGenesis(env, deployment.network),
           });
-        return readDeploymentVaultTotals(deployment, rpcUrl);
+        const totals = await readDeploymentVaultTotals(deployment, rpcUrl);
+        if (deployment.payoutPolicy === "security-bounty") return totals;
+        // A failed pledge read keeps the stored pledges and is reported; the
+        // counters still refresh.
+        try {
+          return {
+            ...totals,
+            monthPledges: await readDeploymentMonthPledges(
+              deployment,
+              rpcUrl,
+              totals,
+              chainPledgeReaders,
+              await storedOpenPledgePeriods(env.PAYMENTS_DB, deployment),
+            ),
+          };
+        } catch (error) {
+          failures.push(error);
+          return totals;
+        }
       },
     );
   } catch (error) {
@@ -699,6 +781,35 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
   }
   return { deployments, rpcUrls, failures };
 }
+/**
+ * Records the served ordinary vaults' finalized deposits for the public
+ * "Funded by" list (operator decision, 18 November 2026). It runs after the
+ * payout steps and never throws, so it cannot delay or fail one; a failed
+ * read is logged and retried on the next run. A private bounty Worker
+ * records nothing.
+ */
+export async function recordRegistryDeposits(
+  env: PaymentsWorkerEnvironment,
+  deployments: readonly PaymentDeployment[],
+  rpcUrls: Record<string, string>,
+): Promise<DepositScanReport | null> {
+  if (env.PAYMENT_SCOPE === "security-bounty") return null;
+  try {
+    return await recordVaultDeposits(
+      env.PAYMENTS_DB,
+      deployments,
+      rpcUrls,
+      (network) => paymentSolanaGenesis(env, network),
+    );
+  } catch (error) {
+    // Display evidence only: the run's own result must not depend on it.
+    console.error(
+      "vault deposit record unavailable",
+      error instanceof Error ? error.name : "Error",
+    );
+    return null;
+  }
+}
 export default {
   async scheduled(_controller: unknown, env: PaymentsWorkerEnvironment) {
     // One failing deployment or step must not stop scanning or payouts elsewhere.
@@ -708,6 +819,7 @@ export default {
       () =>
         reconcileFailedAttempts(
           env.PAYMENTS_DB,
+          parsePaymentNetworks(env.PAYMENT_NETWORKS),
           deployments,
           rpcUrls,
           JSON.parse(env.PAYMENT_SOLANA_GENESIS ?? "{}") as Record<
@@ -725,6 +837,7 @@ export default {
         failures.push(error);
       }
     }
+    await recordRegistryDeposits(env, deployments, rpcUrls);
     if (failures.length)
       throw new AggregateError(failures, "Payment worker failures");
   },

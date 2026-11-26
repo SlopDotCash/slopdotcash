@@ -1,5 +1,4 @@
 // @source src/lib/profiles.ts
-// @source src/lib/profile-activity.ts
 // Visible issue close/reopen history must reproduce state/reason, or be
 // explicitly flagged incomplete. Retirement preserves history outside display.
 module ui_profile_history {

@@ -18,6 +18,13 @@ import { handlePointsDisputes } from "./disputes";
 import { handleX } from "./x";
 
 const SESSION_COOKIE = "__Host-slop_points";
+// Guard for the closure event: closed, and licensing still on or a licence
+// still held. Bound with the GitHub id three times.
+const CLOSED_ACCOUNT_LICENSING = `EXISTS (SELECT 1 FROM points_members WHERE github_id = ? AND closed_at IS NOT NULL)
+  AND (EXISTS (SELECT 1 FROM trace_licensing_settings WHERE github_id = ? AND enabled = 1)
+    OR EXISTS (SELECT 1 FROM trace_licences WHERE github_id = ? AND state = 'licensed'))`;
+const MEMBER_SESSION_SECONDS = 60 * 60;
+const OWNER_SESSION_SECONDS = 7 * 24 * 60 * 60;
 function json(status: number, body: unknown, cookie?: string) {
   return jsonResponse(status, body, {
     cacheControl: "no-store",
@@ -210,7 +217,13 @@ export async function handlePointsApi(
       const actor = existing?.actor_id ?? node;
       const token = randomToken(32);
       const hash = await sha256Hex(token);
-      const expires = new Date(Date.parse(now) + 60 * 60 * 1000).toISOString();
+      const sessionSeconds =
+        id === deps.ownerSessionGithubId
+          ? OWNER_SESSION_SECONDS
+          : MEMBER_SESSION_SECONDS;
+      const expires = new Date(
+        Date.parse(now) + sessionSeconds * 1000,
+      ).toISOString();
       // A unique actor/numeric identity and one atomic batch make retries safe.
       // Sign-in and explicit reopening publish this membership and any
       // existing X link together. A disconnected link is never recreated.
@@ -257,7 +270,11 @@ export async function handlePointsApi(
         .bind(actor)
         .first<Member>();
       if (!member) throw new Error("Missing joined member");
-      return json(200, publicMember(member), sessionCookie(token, 3600));
+      return json(
+        200,
+        publicMember(member),
+        sessionCookie(token, sessionSeconds),
+      );
     }
     if (
       route === "/me" ||
@@ -358,6 +375,52 @@ export async function handlePointsApi(
           deps.db
             .prepare("DELETE FROM points_sessions WHERE actor_id=?")
             .bind(member.actor_id),
+          // Closing withdraws every trace licence and turns trace licensing
+          // off, recorded like turning it off (trace-licensing/handler.ts):
+          // the account event first, then one withdrawal per licensed trace
+          // linked to it, then the licences and the setting. Each statement
+          // acts only once the account is closed and only while licensing is
+          // still on or a licence is still held, so a repeated close writes
+          // nothing and an account that never used licensing gets no rows.
+          // Reopening through /join touches none of this.
+          deps.db
+            .prepare(
+              `INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at)
+               SELECT ?, 'account_closed', 'private-trace-v2',
+                 (SELECT count(*) FROM trace_licences WHERE github_id = ? AND state = 'licensed'), ?
+               WHERE ${CLOSED_ACCOUNT_LICENSING}`,
+            )
+            .bind(
+              member.github_id,
+              member.github_id,
+              now,
+              ...Array(3).fill(member.github_id),
+            ),
+          deps.db
+            .prepare(
+              `INSERT INTO trace_licence_events (run_id, github_id, kind, reason, account_event_id, at)
+               SELECT licence.run_id, licence.github_id, 'withdrawn', 'account_closed',
+                 (SELECT MAX(event.id) FROM trace_licensing_events event
+                   WHERE event.github_id = ? AND event.kind = 'account_closed'), ?
+               FROM trace_licences licence
+               WHERE licence.github_id = ? AND licence.state = 'licensed'
+                 AND EXISTS (SELECT 1 FROM points_members WHERE github_id = ? AND closed_at IS NOT NULL)`,
+            )
+            .bind(member.github_id, now, member.github_id, member.github_id),
+          deps.db
+            .prepare(
+              `UPDATE trace_licences SET state = 'withdrawn', updated_at = ?
+               WHERE github_id = ? AND state = 'licensed'
+                 AND EXISTS (SELECT 1 FROM points_members WHERE github_id = ? AND closed_at IS NOT NULL)`,
+            )
+            .bind(now, member.github_id, member.github_id),
+          deps.db
+            .prepare(
+              `UPDATE trace_licensing_settings SET enabled = 0, changed_at = ?
+               WHERE github_id = ? AND enabled = 1
+                 AND EXISTS (SELECT 1 FROM points_members WHERE github_id = ? AND closed_at IS NOT NULL)`,
+            )
+            .bind(now, member.github_id, member.github_id),
         ]);
         if (results.some((r) => !r.success))
           throw new Error("Account closure failed");

@@ -3,6 +3,58 @@ import { fixture, repository } from "../../tests/value-binary-fixture";
 import { collectValueEvidence } from "./value-evidence";
 import { valueAdditionCount, valueDeletionCount } from "./value-patch";
 
+test("historical allocation accepts an exact direct merge on an older base", async () => {
+  const source = fixture({ direct: true, textOnly: true });
+  source.pull.base.ref = "develop";
+  const { merge_commit_sha: acceptedSha, merged_at: mergedAt } = source.pull;
+  if (!acceptedSha || !mergedAt || !repository.expectedNodeId)
+    throw new Error("Missing accepted source fixture");
+  const historical = {
+    repositoryNodeId: repository.expectedNodeId,
+    pullRequestNodeId: source.pull.node_id,
+    headSha: source.pull.head.sha,
+    acceptedSha,
+    mergedAt,
+    baseSha: source.pull.base.sha,
+    baseRef: source.pull.base.ref,
+  };
+  const ordinary = await collectValueEvidence(
+    source.client,
+    repository.id,
+    1,
+    repository,
+  );
+  expect(ordinary.limitations).toEqual([
+    "Historical integration branch authority is unavailable or ambiguous",
+  ]);
+  const replay = await collectValueEvidence(
+    source.client,
+    repository.id,
+    1,
+    repository,
+    historical,
+  );
+  expect(replay.limitations).toEqual([]);
+  expect(replay.commits).toEqual(ordinary.commits);
+  expect(replay.eligibleReviewIds).toEqual(ordinary.eligibleReviewIds);
+  expect(replay.repositoryPolicy).toEqual(ordinary.repositoryPolicy);
+  await expect(
+    collectValueEvidence(source.client, repository.id, 1, repository, {
+      ...historical,
+      acceptedSha: "d".repeat(40),
+    }),
+  ).rejects.toThrow("Historical allocation acceptance changed");
+  source.pull.changed_files += 1;
+  const incomplete = await collectValueEvidence(
+    source.client,
+    repository.id,
+    1,
+    repository,
+    historical,
+  );
+  expect(incomplete.limitations).toContain("Incomplete files: 1/2");
+});
+
 for (const corrupt of [false, true]) {
   test(`collection ${corrupt ? "holds invalid" : "recovers verified"} omitted modified-file counts before commit totals`, async () => {
     const source = fixture({ direct: true, textOnly: true });

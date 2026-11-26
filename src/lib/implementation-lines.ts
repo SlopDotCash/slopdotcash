@@ -1,4 +1,5 @@
 import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-resolution";
+import { retainedRepair } from "../../workers/slopbot/value-original-repair";
 import {
   valueAdditionCount,
   valueDeletionCount,
@@ -26,6 +27,47 @@ export function workUnitCreditActorIds(
   );
   if (commits.length !== 1) return null;
   const commit = commits[0];
+  if (claim.retainedCopy?.repair) {
+    const original = evidence.sources.find(
+      (item) => item.evidence.pull.node_id === claim.creditPullRequestId,
+    );
+    const accepted = evidence.sources.find(
+      (item) =>
+        item.evidence.pull.node_id ===
+        claim.retainedCopy?.acceptancePullRequestId,
+    );
+    if (!original || !accepted) return null;
+    const verified = retainedRepair(
+      original,
+      accepted,
+      claim.retainedCopy.acceptedCommitSha,
+      claim.commitSha,
+      claim.path,
+    );
+    if (
+      !verified ||
+      JSON.stringify(verified) !== JSON.stringify(claim.retainedCopy.repair)
+    )
+      return null;
+    const acceptedCommit = accepted.evidence.commits.find(
+      (item) => item.sha === claim.retainedCopy?.acceptedCommitSha,
+    );
+    if (!acceptedCommit) return null;
+    return implementationCreditActors(
+      {
+        id: accepted.evidence.pull.user.node_id,
+        kind: accepted.evidence.pull.user.type,
+      },
+      [
+        acceptedCommit.author
+          ? {
+              id: acceptedCommit.author.node_id,
+              kind: acceptedCommit.author.type,
+            }
+          : null,
+      ],
+    ).map((actor) => actor.id);
+  }
   if (commit.parents.length > 1) {
     const resolutions = source.mergeResolutions?.filter(
       (resolution) => resolution.commitSha === commit.sha,
@@ -58,6 +100,8 @@ export function workUnitLineWeights(
 ): Map<string, bigint> | null {
   const weights = new Map<string, bigint>();
   const seen = new Set<string>();
+  // A moved file has a claim for each of its two paths; count its lines once.
+  const counted = new Set<string>();
   for (const claim of claims) {
     if (seen.has(claim.id)) return null;
     seen.add(claim.id);
@@ -93,9 +137,14 @@ export function workUnitLineWeights(
     );
     if (attribution?.length !== 1 || attribution[0].limitations.length)
       return null;
-    const files = attribution[0].files?.filter(
+    const named = attribution[0].files?.filter(
       (file) => file.filename === claim.path,
     );
+    const files = named?.length
+      ? named
+      : attribution[0].files?.filter(
+          (file) => file.previous_filename === claim.path,
+        );
     if (files?.length !== 1) return null;
     const additions = valueAdditionCount(files[0]);
     const deletions = valueDeletionCount(files[0]);
@@ -107,10 +156,12 @@ export function workUnitLineWeights(
     )
       return null;
     const actorId = actors[0];
-    weights.set(
-      actorId,
-      (weights.get(actorId) ?? 0n) + BigInt(additions) + BigInt(deletions),
-    );
+    const file = JSON.stringify([sourceId, commitSha, files[0].filename]);
+    const lines = counted.has(file)
+      ? 0n
+      : BigInt(additions) + BigInt(deletions);
+    counted.add(file);
+    weights.set(actorId, (weights.get(actorId) ?? 0n) + lines);
   }
   return weights;
 }

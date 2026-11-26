@@ -7,6 +7,8 @@ PUBLIC_SITE_URL = "https://slop.cash"
 # GitHub numeric actor IDs allowed to review project applications: lalalune
 # and drew-dot-com. Admin email recipients live in workers/notify.
 ADMIN_GITHUB_IDS = "18633264,202660855"
+# The production owner receives a seven-day site session after GitHub sign-in.
+OWNER_SESSION_GITHUB_ID = "18633264"
 # Production moderators (PRD section 11, owner decision of 24 October 2026).
 PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
 # Monthly payment period (owner decision D1, 24 October 2026): calendar UTC
@@ -18,6 +20,18 @@ PAYMENT_NETWORKS = '[]'
 # Automatic private-report intake (PRD section 8; owner activation of 26
 # October 2026). Routes stay closed unless every intake App secret is set.
 SLOP_PRIVATE_INTAKE_MODE = "on"
+# Routine decisions on undecided private reports (PRD section 8; operator
+# decision of 17 November 2026): off, dry_run or live. dry_run records what a
+# pass would decide and changes no case and notifies nobody. Moving to live
+# needs its own reviewed change after the dry-run counts are read.
+SECURITY_ROUTINE_DECISIONS = "live"
+# The refundable SLOP deposit on a private report (PRD section 8, "Report
+# deposit"; operator decision of 21 November 2026): off, dry_run or live; any
+# other value is off. dry_run records which reports would have been asked and
+# holds nothing. Live since 21 November 2026 (operator decision; record-only
+# earlier that day). Change it only together with REPORT_DEPOSIT_SWITCHED_ON in
+# src/lib/security-report-deposit.mjs.
+SECURITY_REPORT_DEPOSIT = "live"
 
 [[d1_databases]]
 binding = "SLOP_DB"

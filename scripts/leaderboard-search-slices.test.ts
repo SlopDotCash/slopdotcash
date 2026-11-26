@@ -94,6 +94,62 @@ test("more results than Search returns within one second still refuse the snapsh
   ).rejects.toThrow("minimum-size range");
 });
 
+function driftingSplitSearch(reconcileOnRetry: boolean) {
+  const from = new Date("2026-10-31T12:20:56Z");
+  const to = new Date("2026-11-18T00:20:56Z");
+  const midpoint = new Date("2026-11-09T06:20:56Z");
+  const earlier = Array.from({ length: 140 }, () => from);
+  const later = Array.from({ length: 447 }, () => midpoint);
+  const { queries, execute } = searchExecutor([...earlier, ...later]);
+  const parentQuery = `closed:${from.toISOString()}..${new Date(to.getTime() - 1000).toISOString()}`;
+  let parentStarts = 0;
+  const client = {
+    async execute(document: string, variables: Record<string, unknown> = {}) {
+      const result = await execute(document, variables);
+      if (String(variables.searchQuery).endsWith(parentQuery)) {
+        if (variables.after === null) parentStarts += 1;
+        if (!reconcileOnRetry || parentStarts === 1)
+          result.search.issueCount += 5;
+      }
+      return result;
+    },
+  };
+  const stats = { searchSliceCount: 0 };
+  const collect = () =>
+    collectSearchReferences(
+      client as never,
+      repository,
+      from,
+      to,
+      "closed",
+      "is:issue is:closed",
+      "Issue",
+      stats,
+    );
+  return { collect, parentStarts: () => parentStarts, queries, stats };
+}
+
+test("a split count mismatch repeats the original census with fresh counts", async () => {
+  const replay = driftingSplitSearch(true);
+  const references = await replay.collect();
+  expect(references.map(({ id }) => id)).toEqual(
+    Array.from({ length: 587 }, (_, index) => `I_${index}`),
+  );
+  expect(replay.parentStarts()).toBe(2);
+  expect(replay.stats.searchSliceCount).toBe(4);
+  expect(replay.queries).toHaveLength(19);
+});
+
+test("a second split count mismatch still refuses an incomplete census", async () => {
+  const replay = driftingSplitSearch(false);
+  await expect(replay.collect()).rejects.toThrow(
+    "Split GitHub Search returned 587 unique references but parent reported 592",
+  );
+  expect(replay.parentStarts()).toBe(2);
+  expect(replay.stats.searchSliceCount).toBe(6);
+  expect(replay.queries).toHaveLength(26);
+});
+
 test("a repeated Search cursor refuses the crawl before another billed request", async () => {
   let requests = 0;
   const server = Bun.serve({

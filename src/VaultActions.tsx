@@ -6,6 +6,10 @@ import {
   type EscrowDeployment,
 } from "./lib/escrow-policy.mjs";
 import {
+  assertWithdrawalOutsideLocks,
+  pledgedFundsRefusal,
+} from "./lib/evm-month-lock";
+import {
   checkVaultAction,
   checkVaultBatch,
   reviewVaultAction,
@@ -29,6 +33,7 @@ import {
   type PendingAttempt,
   updatePendingRecord,
   validPendingAttemptId,
+  vaultActionKey,
 } from "./lib/pending-attempt";
 import {
   checkSolanaVaultAction,
@@ -39,6 +44,7 @@ import {
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
+import { receivedNotice } from "./lib/vault-auto-register";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 import { PendingWalletCheck } from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
@@ -116,6 +122,7 @@ export function VaultActions({
   connectedWallet,
   payoutPolicy = "ordinary",
   canDeposit = true,
+  depositOnly = false,
   provisional = false,
   onFinalized,
   onWallet,
@@ -125,7 +132,8 @@ export function VaultActions({
   /**
    * What this month promises contributors and the vault must keep, with the
    * month's name. Our page refuses a withdrawal below it (operator decision,
-   * 15 November 2026); the contract itself does not.
+   * 15 November 2026); a vault without month locks does not. A vault with
+   * month locks refuses it in its contract.
    */
   promised?: { minor: string; display: string; month: string };
   projectId: string;
@@ -133,6 +141,12 @@ export function VaultActions({
   connectedWallet?: VaultConnection;
   payoutPolicy?: PayoutPolicy;
   canDeposit?: boolean;
+  /**
+   * The public project page (operator decision, 18 November 2026): any
+   * connected wallet may deposit, and no wallet, the owner's included, is
+   * offered a withdrawal here. Withdrawals stay on the owner's manage page.
+   */
+  depositOnly?: boolean;
   /**
    * The vault's creation is in a block that is not final and the vault is not
    * registered yet. Its owner may deposit now; the vault is read at the latest
@@ -149,7 +163,7 @@ export function VaultActions({
   const family = ESCROW_NETWORKS[deployment.network].family;
   const solana = family === "solana";
   const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
-  const key = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
+  const key = vaultActionKey(deployment);
   const {
     mounted,
     saved,
@@ -174,8 +188,15 @@ export function VaultActions({
     connectedWallet ?? null,
   );
   const [operation, setOperation] = useState<VaultOperation>(
-    saved.pending?.operation ?? (canDeposit ? "deposit" : "withdraw"),
+    saved.pending?.operation ??
+      (canDeposit || depositOnly ? "deposit" : "withdraw"),
   );
+  // A withdrawal saved on the manage page is still checked here; once it
+  // settles, the public form offers only a deposit again.
+  useEffect(() => {
+    if (depositOnly && !pending && operation !== "deposit")
+      setOperation("deposit");
+  }, [depositOnly, pending, operation]);
   const [amount, setAmount] = useState(saved.pending?.amount ?? "");
   const [review, setReview] = useState<Review | null>(null);
   const [notice, setNotice] = useState("");
@@ -233,7 +254,7 @@ export function VaultActions({
       setWallet(connection);
       setReview(null);
       // Only the owner may withdraw; any other wallet can only deposit.
-      if (!sameWallet(connection.address, deployment.owner))
+      if (depositOnly || !sameWallet(connection.address, deployment.owner))
         setOperation("deposit");
     });
   const inspect = () =>
@@ -241,6 +262,8 @@ export function VaultActions({
       if (!wallet) throw new Error("Choose a wallet first.");
       if (!canDeposit && operation === "deposit")
         throw new Error("New deposits are currently unavailable.");
+      if (depositOnly && operation !== "deposit")
+        throw new Error("Withdrawals are made from the project's manage page.");
       const result = solana
         ? await reviewSolanaVaultAction(
             projectId,
@@ -258,8 +281,20 @@ export function VaultActions({
             payoutPolicy,
             evidence,
           );
+      // A vault with month locks enforces them itself; the page's own guard
+      // is for vaults without them (operator decision, 15 November 2026).
+      const locksEnforced =
+        !solana &&
+        operation === "withdraw" &&
+        (await assertWithdrawalOutsideLocks(
+          deployment,
+          wallet,
+          result.freeBalance,
+          result.gross,
+        ));
       if (
         operation === "withdraw" &&
+        !locksEnforced &&
         promised &&
         result.freeBalance !== null &&
         BigInt(result.freeBalance) - BigInt(result.gross) <
@@ -275,6 +310,8 @@ export function VaultActions({
       if (!wallet || !review || pending || storageError) return;
       if (!canDeposit && operation === "deposit")
         throw new Error("New deposits are currently unavailable.");
+      if (depositOnly && operation !== "deposit")
+        throw new Error("Withdrawals are made from the project's manage page.");
       const current = solana
         ? await reviewSolanaVaultAction(
             projectId,
@@ -396,7 +433,8 @@ export function VaultActions({
           throw new Error(
             "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
           );
-        throw caught;
+        // An upgraded vault refuses a withdrawal of locked funds.
+        throw (!solana && pledgedFundsRefusal(caught)) || caught;
       }
     });
   const checking = useRef(false);
@@ -492,7 +530,12 @@ export function VaultActions({
         // Included in a canonical block but not final: say it arrived, keep
         // the saved request and keep checking. It counts only once final.
         const network = networkLabel(deployment.network);
-        const receivedNotice = `${pending.operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${network} block. It counts once ${network} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}`;
+        const received = receivedNotice(
+          pending.operation,
+          network,
+          hash,
+          provisional,
+        );
         const waitingNotice =
           fromWallet || pending.batchId
             ? "Submitted. Waiting for finalized chain evidence."
@@ -503,7 +546,7 @@ export function VaultActions({
           autoErrored.current = false;
           if (result === "received") {
             receivedShown.current = true;
-            setNotice(receivedNotice);
+            setNotice(received);
           } else if (receivedShown.current) {
             // The block that carried it was replaced; it is pending again.
             receivedShown.current = false;
@@ -535,7 +578,7 @@ export function VaultActions({
           setPending(candidate);
         }
         receivedShown.current = result === "received";
-        setNotice(result === "received" ? receivedNotice : waitingNotice);
+        setNotice(result === "received" ? received : waitingNotice);
         return;
       }
       receivedShown.current = false;
@@ -645,13 +688,28 @@ export function VaultActions({
   const isOwner =
     wallet !== null && sameWallet(wallet.address, deployment.owner);
   const link = transactionUrl(deployment.network, pending?.hash ?? null);
+  const title = depositOnly ? "Fund this project" : "Fund or withdraw";
+  // Only a saved request can leave a withdrawal selected on the public page.
+  const choices: readonly VaultOperation[] = depositOnly
+    ? canDeposit
+      ? ["deposit"]
+      : []
+    : isOwner
+      ? canDeposit
+        ? provisional
+          ? ["deposit"]
+          : ["deposit", "withdraw"]
+        : ["withdraw"]
+      : canDeposit
+        ? ["deposit"]
+        : [];
   return (
     <section
       className="admin-card vault-actions"
-      aria-label={`Fund or withdraw · ${networkLabel(deployment.network)}`}
+      aria-label={`${title} · ${networkLabel(deployment.network)}`}
     >
       <h3>
-        Fund or withdraw ·{" "}
+        {title} ·{" "}
         <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain}>
           {networkLabel(deployment.network)}
         </NetworkName>
@@ -740,16 +798,7 @@ export function VaultActions({
           <fieldset className="admin-fieldset" disabled={busy}>
             <fieldset className="vault-operation">
               <legend>Action</legend>
-              {(isOwner
-                ? canDeposit
-                  ? provisional
-                    ? (["deposit"] as const)
-                    : (["deposit", "withdraw"] as const)
-                  : (["withdraw"] as const)
-                : canDeposit
-                  ? (["deposit"] as const)
-                  : []
-              ).map((choice) => (
+              {choices.map((choice) => (
                 <label key={choice}>
                   <input
                     type="radio"
@@ -768,7 +817,7 @@ export function VaultActions({
                   </span>
                 </label>
               ))}
-              {isOwner ? null : (
+              {isOwner || depositOnly ? null : (
                 <p>Only the vault owner's wallet can withdraw free funds.</p>
               )}
             </fieldset>

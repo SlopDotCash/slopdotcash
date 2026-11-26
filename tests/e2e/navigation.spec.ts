@@ -2,7 +2,12 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -142,7 +147,7 @@ test("removed security fragments retain usable Settings without hidden forms", a
     // The Points membership above does not authenticate account settings.
     // With project-session:null, the email panel must request sign-in.
     const email = page.getByRole("region", {
-      name: "Email preferences",
+      name: "Email",
       exact: true,
     });
     await expect(email).toContainText("Your session expired.");
@@ -205,6 +210,9 @@ test("a walletless award leads to wallet setup without changing the award", asyn
   await page.route("**/api/v1/referrals/me", (route) =>
     route.fulfill({ json: { enabled: false } }),
   );
+  await page.route("**/api/v1/traces/me*", (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
+  );
   await page.route(`${site}/**`, (route) => {
     if (new URL(route.request().url()).pathname.startsWith("/api/"))
       return route.fallback();
@@ -231,7 +239,10 @@ test("a walletless award leads to wallet setup without changing the award", asyn
   await expect(award).not.toContainText("Paid");
   await page.screenshot({ path: info.outputPath("walletless-award.png") });
   await award
-    .getByRole("link", { name: "Add or confirm your Base wallet", exact: true })
+    .getByRole("link", {
+      name: "Awaiting wallet: add or confirm your Base wallet",
+      exact: true,
+    })
     .click();
   await expect(page).toHaveURL(`${site}/account#wallets`);
   await expect(

@@ -26,6 +26,8 @@ public/claude-code.md
 public/manual.md
 public/skill-manifest.json
 public/SKILL.md
+public/contribute/
+public/maintain/
 public/.well-known/
 public/llms.txt
 public/sitemap.xml
@@ -33,6 +35,7 @@ public/data/
 public/projects/
 public/protocol/
 public/skill-templates/
+public/scanner-inputs.json
 
 .points-build/
 

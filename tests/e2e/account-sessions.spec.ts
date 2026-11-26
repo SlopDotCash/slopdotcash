@@ -2,7 +2,12 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 const { site, identity: identityOrigin } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -118,6 +123,9 @@ test("Settings waits for identity and keeps current sign-out without individual 
   await page.route(`${site}/api/v1/referrals/me`, (route) =>
     route.fulfill({ json: { enabled: false } }),
   );
+  await page.route(`${site}/api/v1/traces/me*`, (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
+  );
   await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("#wallets")).toContainText("Checking your account");
   releaseIdentity();
@@ -128,17 +136,14 @@ test("Settings waits for identity and keeps current sign-out without individual 
     page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   const wallets = page.getByRole("region", { name: "Wallets", exact: true });
-  const email = page.getByRole("region", {
-    name: "Email preferences",
-    exact: true,
-  });
+  const email = page.getByRole("region", { name: "Email", exact: true });
   await expect(wallets).toHaveCount(1);
   await expect(email).toHaveCount(1);
   await expect(
     page.locator("#wallets > summary, #notifications > summary"),
   ).toHaveCount(0);
   await expect(
-    email.getByRole("switch", { name: "Activity email", exact: true }),
+    email.getByRole("switch", { name: "Activity", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".wallet-note")).toHaveCount(0);
   await expect(page.getByText(/Local preview only/u)).toHaveCount(0);
@@ -165,7 +170,7 @@ test("Settings waits for identity and keeps current sign-out without individual 
   ).toHaveCount(0);
   await expect(page.locator("#sessions")).toHaveCount(0);
   await expect(
-    page.getByRole("switch", { name: "Activity email", exact: true }),
+    page.getByRole("switch", { name: "Activity", exact: true }),
   ).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, 0));
   await expectAccessible(page);
@@ -199,9 +204,7 @@ test("Settings waits for identity and keeps current sign-out without individual 
   await menu.getByRole("link", { name: "Inbox", exact: true }).focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(`${site}/inbox`);
-  await expect(
-    page.getByText("You have no notifications.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Nothing yet", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Account navigation" }),
   ).toHaveCount(0);
@@ -228,7 +231,7 @@ test("Settings waits for identity and keeps current sign-out without individual 
     page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeVisible();
   await expect(
-    email.getByRole("switch", { name: "Activity email", exact: true }),
+    email.getByRole("switch", { name: "Activity", exact: true }),
   ).toBeVisible();
   const restore = await enlargeText(page.locator("main"));
   await expectAccessible(page);
@@ -339,6 +342,9 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
       },
     }),
   );
+  await page.route(`${site}/api/v1/traces/me*`, (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
+  );
   // Explicit identity double, as in login.spec.ts.
   const expiresAt = new Date(
     Math.floor(Date.now() / 1000) * 1000 + 240_000,
@@ -381,7 +387,7 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
   await signIn.click();
   const authWindow = await popup;
   await expect(
-    profile.getByRole("button", { name: /with GitHub$/u }),
+    profile.getByRole("button", { name: /with GitHub$|^Reopen account$/u }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Connections", exact: true }),
@@ -396,7 +402,7 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
     page.getByRole("region", { name: "Wallets", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Email preferences", exact: true }),
+    page.getByRole("region", { name: "Email", exact: true }),
   ).toBeVisible();
   expect(appealReads).toBe(0);
   await expectAccessible(page);
@@ -414,6 +420,6 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
     page.getByRole("region", { name: "Wallets", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("region", { name: "Email preferences", exact: true }),
+    page.getByRole("region", { name: "Email", exact: true }),
   ).toHaveCount(0);
 });

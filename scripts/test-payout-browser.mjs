@@ -118,7 +118,7 @@ try {
   }, signer.address);
   await page.goto("http://127.0.0.1:18549/earnings");
   await page.getByRole("heading", { name: "Payouts", exact: true }).waitFor();
-  await page.getByRole("link", { name: "Manage payout wallets" }).click();
+  await page.getByRole("link", { name: "Wallets", exact: true }).click();
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
   await page.getByRole("button", { name: "Connect EVM wallet" }).waitFor();
   await page.getByRole("button", { name: "Connect Solana wallet" }).waitFor();
@@ -134,7 +134,7 @@ try {
     .focus();
   await page.keyboard.press("Enter");
   await page
-    .getByText("EVM wallet confirmed.", { exact: false })
+    .getByText("EVM confirmed", { exact: true })
     .waitFor({ timeout: 60000 });
   await page.goto("http://127.0.0.1:18549/earnings");
   // Settlement runs after wallet authorization. Wait for its finalized API
@@ -161,7 +161,7 @@ try {
     paid.payments[0].state !== "paid"
   )
     throw new Error("Wrong payment result");
-  await page.getByRole("link", { name: "Manage payout wallets" }).click();
+  await page.getByRole("link", { name: "Wallets", exact: true }).click();
   // One family connection signs a distinct claim for each EVM chain.
   // Reopening Wallets must retain those claims and the finalized Base payment.
   const both = await (
@@ -208,7 +208,7 @@ try {
     !(await paidRow.innerText()).includes("Local EVM test") ||
     (await amount.locator("strong").innerText()).trim() !== "98" ||
     !amountText.includes("Gross 100 token ") ||
-    !amountText.includes("fee 2 token ") ||
+    !amountText.includes("−2 token ") ||
     !amountText.includes(paid.payments[0].assetAddress)
   )
     throw new Error(
@@ -233,7 +233,7 @@ try {
   });
   if (amountLines !== 1)
     throw new Error("Mobile payment amount splits its digits across lines");
-  await page.getByRole("link", { name: "Manage payout wallets" }).focus();
+  await page.getByRole("link", { name: "Wallets", exact: true }).focus();
   let reachedProject = false;
   for (let tab = 0; tab < 12 && !reachedProject; tab++) {
     await page.keyboard.press("Tab");

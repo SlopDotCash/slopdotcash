@@ -1,9 +1,13 @@
+import { deriveAllocationFundingBasis } from "../allocation-funding-basis.mjs";
 import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
 import { githubUserIdFromNodeId } from "../github-actor";
 import { assertLeaderboardSnapshot } from "../leaderboard";
+import { maintainerShareBasisPoints } from "../maintainer-share.mjs";
+import { payoutExcludedGithubUserIds } from "../payout-exclusions.mjs";
+import { repositoriesCountedFor } from "../project-repositories.mjs";
 import { assertProjectDefinition } from "../project-schema.mjs";
 import {
   allocateIntegerTotal,
@@ -17,6 +21,11 @@ import {
 } from "../reward-cycle";
 import { sha256Hex as digest } from "../sha256";
 import { combineAwards } from "../verified-money";
+import { ASI_NOVEMBER_CLOSEOUT } from "./asi-november-closeout";
+import {
+  assertMaintainerDecisionRecord,
+  maintainerShare,
+} from "./maintainer-share";
 
 interface EscrowIdentity {
   nodeId: string;
@@ -44,10 +53,16 @@ export function buildEscrowCycle(
     projectId: string;
     cycleId: string;
     generatedAt: string;
+    earlyCloseAt?: typeof ASI_NOVEMBER_CLOSEOUT.cutoff;
   },
   bytes: Uint8Array,
   identityBytes: Uint8Array | null,
   policyBytes: Uint8Array,
+  /**
+   * The month's maintainer decision record. Required exactly when the
+   * project's revision sets a maintainer share for the month.
+   */
+  decisionBytes: Uint8Array | null = null,
 ) {
   const project = assertProjectDefinition(JSON.parse(text(policyBytes)));
   if (project.id !== input.projectId)
@@ -62,23 +77,60 @@ export function buildEscrowCycle(
   assertLeaderboardSnapshot(snapshot);
   const generatedAt = input.generatedAt;
   const sourceSnapshotSha256 = digest(bytes);
+  const closeout =
+    input.earlyCloseAt === ASI_NOVEMBER_CLOSEOUT.cutoff
+      ? ASI_NOVEMBER_CLOSEOUT
+      : undefined;
+  if (
+    closeout &&
+    (project.id !== closeout.projectId ||
+      input.cycleId !== closeout.period ||
+      project.rewardAsset?.network !== closeout.chain ||
+      project.rewardAsset.symbol !== closeout.assetSymbol ||
+      project.rewardAsset.decimals !== closeout.assetDecimals ||
+      snapshot.window.to < closeout.cutoff ||
+      snapshot.source.cutoffAt !== snapshot.window.to ||
+      snapshot.source.verificationWindow.from !== snapshot.window.from ||
+      snapshot.source.verificationWindow.to !== snapshot.window.to ||
+      snapshot.source.evidenceVerification.status !== "complete" ||
+      snapshot.source.unavailableSources?.length ||
+      snapshot.source.heldWorkUnits?.length ||
+      snapshot.generatedAt < closeout.cutoff ||
+      snapshot.generatedAt > generatedAt ||
+      new Date(generatedAt).toISOString() !== generatedAt)
+  )
+    throw new Error(
+      "ASI's November closeout requires complete verified coverage through the approved cutoff.",
+    );
   const view = createPaymentProjectView(
-    snapshot,
+    closeout
+      ? { ...snapshot, window: { ...snapshot.window, to: closeout.cutoff } }
+      : snapshot,
     project.id,
     input.cycleId,
-    undefined,
+    closeout && {
+      ...deriveAllocationFundingBasis(project, input.cycleId),
+      monthlyCapMinor: closeout.grossBase,
+    },
     project,
   );
-  ensureCompleteCycle(
-    {
-      projectId: project.id,
-      cycleId: input.cycleId,
-      generatedAt,
-      sourceSnapshotSha256,
-      snapshot,
-    },
-    view,
-  );
+  if (closeout) {
+    if (view.cycle.from !== `${closeout.period}-01T00:00:00.000Z`)
+      throw new Error(
+        "ASI's November closeout requires the entire approved earning period.",
+      );
+  } else {
+    ensureCompleteCycle(
+      {
+        projectId: project.id,
+        cycleId: input.cycleId,
+        generatedAt,
+        sourceSnapshotSha256,
+        snapshot,
+      },
+      view,
+    );
+  }
   if (view.reward.kind !== "monthly-pool")
     throw new Error("Expected monthly pool");
   const cap = BigInt(view.reward.capMinor);
@@ -100,7 +152,42 @@ export function buildEscrowCycle(
       ),
     ),
   );
-  const allocations = allocateIntegerTotal(cap, view.leaders);
+  // The maintainer share comes out of the monthly amount before the points
+  // split, so the month never distributes more than `cap`.
+  const shareBasisPoints = maintainerShareBasisPoints(project, input.cycleId);
+  if (closeout && (shareBasisPoints !== 0 || reviewCap !== 0n))
+    throw new Error(
+      "ASI's November closeout only covers the approved ordinary pool.",
+    );
+  if (shareBasisPoints > 0 !== (decisionBytes !== null))
+    throw new Error(
+      shareBasisPoints > 0
+        ? "A month with a maintainer share needs its maintainer decision record"
+        : "A month without a maintainer share takes no maintainer decision record",
+    );
+  const decisionRecord: unknown =
+    decisionBytes === null ? null : JSON.parse(text(decisionBytes));
+  if (decisionRecord !== null) {
+    assertMaintainerDecisionRecord(decisionRecord, project.id, input.cycleId);
+    // The record must cover exactly the repositories that count this month.
+    const counted = repositoriesCountedFor(
+      project,
+      Date.parse(`${input.cycleId}-01T00:00:00.000Z`),
+    )
+      .map((repository) => repository.id)
+      .sort();
+    if (JSON.stringify(counted) !== JSON.stringify(decisionRecord.repositories))
+      throw new Error(
+        "Maintainer decision record does not cover the project's repositories",
+      );
+  }
+  const share = maintainerShare({
+    cap,
+    basisPoints: shareBasisPoints,
+    decisions: decisionRecord?.decisions ?? [],
+    excludedGithubUserIds: payoutExcludedGithubUserIds(project, input.cycleId),
+  });
+  const allocations = allocateIntegerTotal(cap - share.pool, view.leaders);
   // Monthly proposals derive identities from this already computed view.
   // Archive reconstruction still uses its exact retained identity bytes.
   const resolvedIdentityBytes =
@@ -133,34 +220,63 @@ export function buildEscrowCycle(
       identities.length
   )
     throw new Error("Actor identity coverage differs from proposal");
+  // One row per account: a maintainer who also scored gets both parts in
+  // one award, because an account has one award origin per project month.
+  const maintainerAmount = new Map(
+    share.rows.map((row) => [row.githubUserId, row.amount]),
+  );
+  const recipients = view.leaders.map((leader) => {
+    const identity = identities.find(
+      (actor) => actor.nodeId === leader.actor.id,
+    );
+    if (!identity) throw new Error("Missing numeric GitHub identity");
+    return {
+      githubUserId: identity.githubUserId,
+      githubNodeId: leader.actor.id,
+      login: leader.actor.login,
+      shared: allocations.get(leader.actor.id) ?? 0n,
+      review: reviewAllocations.get(leader.actor.id) ?? 0n,
+      evidenceEventIds: [...leader.evidenceEventIds].sort(),
+    };
+  });
+  const scored = new Set(recipients.map((entry) => entry.githubUserId));
+  for (const row of share.rows)
+    if (!scored.has(row.githubUserId))
+      recipients.push({
+        githubUserId: row.githubUserId,
+        githubNodeId: row.nodeId,
+        login: row.login,
+        shared: 0n,
+        review: 0n,
+        evidenceEventIds: [],
+      });
   const combined = combineAwards(
-    view.leaders.map((leader) => allocations.get(leader.actor.id) ?? 0n),
-    view.leaders.map((leader) => reviewAllocations.get(leader.actor.id) ?? 0n),
+    recipients.map(
+      (entry) =>
+        entry.shared + (maintainerAmount.get(entry.githubUserId) ?? 0n),
+    ),
+    recipients.map((entry) => entry.review),
     cap,
     reviewCap,
   );
   if (!combined.ok)
     throw new Error("Award allocations exceed their monthly caps");
-  const awards = view.leaders
-    .map((leader, index) => {
-      const identity = identities.find(
-        (actor) => actor.nodeId === leader.actor.id,
-      );
-      if (!identity) throw new Error("Missing numeric GitHub identity");
+  const awards = recipients
+    .map((entry, index) => {
       const { gross, fee, net } = combined.awards[index];
       return {
-        githubUserId: identity.githubUserId,
-        githubNodeId: leader.actor.id,
-        login: leader.actor.login,
+        githubUserId: entry.githubUserId,
+        githubNodeId: entry.githubNodeId,
+        login: entry.login,
         sourceDigest: escrowAwardOrigin(
           project.id,
           input.cycleId,
-          identity.githubUserId,
+          entry.githubUserId,
         ),
         grossMicro: gross.toString(),
         feeMicro: fee.toString(),
         netMicro: net.toString(),
-        evidenceEventIds: [...leader.evidenceEventIds].sort(),
+        evidenceEventIds: entry.evidenceEventIds,
       };
     })
     .sort((a, b) => a.githubUserId.localeCompare(b.githubUserId));
@@ -185,6 +301,23 @@ export function buildEscrowCycle(
     reviewBudgetCapMicro: reviewCap.toString(),
     feeBasisPoints: ESCROW_PAYOUT_FEE_BASIS_POINTS,
     feeMode: "deduct-from-gross",
+    // Present only for a month with a maintainer share, so the proposal of
+    // every other month keeps its exact bytes.
+    ...(decisionBytes === null
+      ? {}
+      : {
+          maintainerShare: {
+            basisPoints: shareBasisPoints,
+            poolMicro: share.pool.toString(),
+            decisionsSha256: digest(decisionBytes),
+            rows: share.rows.map((row) => ({
+              githubUserId: row.githubUserId,
+              login: row.login,
+              decisions: row.decisions,
+              grossMicro: row.amount.toString(),
+            })),
+          },
+        }),
     awards,
   };
   return proposal;
@@ -203,11 +336,18 @@ export async function validateEscrowCycle(
     throw new Error("Missing review start");
   const identityBytes = await readArchive("github-identities.json");
   const policyBytes = await readArchive("project.json");
+  // An archive holds the decision record exactly when its proposal names a
+  // maintainer share; the rebuild refuses a record the policy does not call for.
+  const decisionBytes =
+    value.maintainerShare === undefined
+      ? null
+      : await readArchive("maintainer-decisions.json");
   const baseline = buildEscrowCycle(
     { projectId, cycleId, generatedAt: value.generatedAt },
     bytes,
     identityBytes,
     policyBytes,
+    decisionBytes,
   );
   if (JSON.stringify(value) !== JSON.stringify(baseline))
     throw new Error(

@@ -249,6 +249,11 @@ function hasRetainedPullReference(
   );
   // Sentence punctuation followed by whitespace preserves dots inside URLs.
   return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
+    const incorporated =
+      /^\s*incorporated\s+into\s+merged\b/iu.test(sentence) &&
+      !/\b(?:will|would|could|should|may|might|must|if|unless|but)\b/iu.test(
+        sentence,
+      );
     const includedFix =
       /\b(?:fix|fixes|correction|corrections)\b[^.!?\r\n]*\b(?:is|are|was|were)\s+included\s+in\b/iu.test(
         sentence,
@@ -258,10 +263,13 @@ function hasRetainedPullReference(
       ) &&
       !/\bbut\b/iu.test(sentence);
     if (
-      (!/\b(?:commits?|changes?|work)\b/iu.test(sentence) && !includedFix) ||
+      (!/\b(?:commits?|changes?|work)\b/iu.test(sentence) &&
+        !includedFix &&
+        !incorporated) ||
       !(rebase
         ? /\brebased\b/iu.test(sentence) && /\bauthorship\b/iu.test(sentence)
         : includedFix ||
+          incorporated ||
           /\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(
             sentence,
           )) ||
@@ -382,8 +390,8 @@ async function retainedCopySources(
       )
     )
       acknowledged = true;
-    // An outgoing reference only discovers the source. Without an authenticated
-    // acknowledgement, both commits must independently name that contributor.
+    // A reference and shared author alone do not establish copied work. Without
+    // an acknowledgement, require a verified retained path with that primary.
     const linkedOnly =
       !acknowledged &&
       evidence.pull.state === "closed" &&
@@ -401,18 +409,40 @@ async function retainedCopySources(
           reference.repository.toLowerCase() ===
             evidence.repository.toLowerCase(),
       ) &&
-      evidence.commits.some(
-        (commit) =>
-          commit.parents.length === 1 &&
-          commit.author?.type === "User" &&
-          commit.author.node_id === evidence.pull.user.node_id &&
-          integration.commits.some(
-            (copy) =>
-              copy.parents.length === 1 &&
-              copy.author?.type === "User" &&
-              copy.author.node_id === commit.author?.node_id,
-          ),
-      );
+      evidence.commitAttribution.some((entry) => {
+        const commit = evidence.commits.find((item) => item.sha === entry.sha);
+        if (
+          commit?.parents.length !== 1 ||
+          commit.author?.type !== "User" ||
+          commit.author.node_id !== evidence.pull.user.node_id ||
+          entry.limitations.length
+        )
+          return false;
+        return (entry.files ?? []).some((file) => {
+          const identity = retainedEditIdentity(file);
+          if (identity === null) return false;
+          return integration.commitAttribution.some((copied) => {
+            const copy = integration.commits.find(
+              (item) => item.sha === copied.sha,
+            );
+            if (
+              copy?.parents.length !== 1 ||
+              copy.author?.type !== "User" ||
+              copy.author.node_id !== commit.author?.node_id ||
+              copied.limitations.length
+            )
+              return false;
+            return (copied.files ?? []).some(
+              (candidate) =>
+                retainedEditIdentity(candidate) === identity ||
+                (retainedManifestIdentity(file, commit) !== null &&
+                  retainedManifestIdentity(file, commit) ===
+                    retainedManifestIdentity(candidate, copy)) ||
+                preexistingHunks(file, candidate, source, copied.sha) !== null,
+            );
+          });
+        });
+      });
     if (acknowledged || linkedOnly) retained.push({ source, linkedOnly });
   }
   return retained;
@@ -422,7 +452,7 @@ async function retainedCopySources(
  * hunk offsets may change when other accepted fixes precede a copied commit.
  * This identifies exact retained edits for review, not their semantic value.
  */
-function retainedEditIdentity(file: FileChange): string | null {
+export function retainedEditIdentity(file: FileChange): string | null {
   if (
     !hasCompleteValuePatch(file) ||
     file.previous_filename !== undefined ||
@@ -937,6 +967,7 @@ async function retainedResolutionSignature(
     !commit ||
     !mergeResolutionMatches(resolution, commit) ||
     resolution.gitVersion !== MERGE_GIT_VERSION ||
+    resolution.kind === "combined-parent-delta" ||
     !resolution.hadConflicts ||
     !source.evidence.commits.some(
       (entry) => entry.sha === commit.parents[0].sha,
@@ -1107,7 +1138,11 @@ export async function retainedCopyBindings(
           limitations.add(
             `${evidence.pull.node_id}: retained merge ${commit.sha} needs complete canonical resolution evidence`,
           );
-        } else if (resolution.hadConflicts || resolution.paths.length > 0) {
+        } else if (
+          (resolution.kind !== "combined-parent-delta" &&
+            resolution.hadConflicts) ||
+          resolution.paths.length > 0
+        ) {
           const signature = await retainedResolutionSignature(
             original,
             resolution,
@@ -1185,7 +1220,7 @@ export async function retainedCopyBindings(
       }
       for (const file of attribution.files) {
         const identity = retainedEditIdentity(file);
-        const matches = integrations.flatMap(
+        let matches = integrations.flatMap(
           ({ source: integration, linkedOnly }) =>
             integration.evidence.commitAttribution.flatMap((accepted) => {
               const known = integration.evidence.commits.find(
@@ -1231,6 +1266,28 @@ export async function retainedCopyBindings(
               });
             }),
         );
+        if (options.acceptedSubset && matches.length > 1) {
+          // A retained native commit is the original, even when the carrier
+          // also contains a rewritten copy of its patch. Require the complete
+          // commit and attribution observation before preferring that identity.
+          const native = matches.filter(
+            (match) => match.acceptedCommitSha === commit.sha,
+          );
+          if (
+            native.length === 1 &&
+            JSON.stringify(
+              native[0].integration.evidence.commits.find(
+                (entry) => entry.sha === commit.sha,
+              ),
+            ) === JSON.stringify(commit) &&
+            JSON.stringify(
+              native[0].integration.evidence.commitAttribution.find(
+                (entry) => entry.sha === commit.sha,
+              ),
+            ) === JSON.stringify(attribution)
+          )
+            matches = native;
+        }
         // October requires a full accepted anchor commit, while rebasing can
         // legitimately alter other original paths. Ambiguity still fails closed.
         if (!matches.length && options.octoberOriginalCredit) continue;

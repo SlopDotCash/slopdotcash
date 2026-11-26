@@ -34,6 +34,7 @@ const NOTIFICATION_KINDS = [
   "slopbot_appeal_review",
   "slopbot_appeal_resolved",
   "slopbot_scam_review",
+  "trace_licensing_available",
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -74,6 +75,12 @@ export interface Notification {
   acknowledgedAt?: string | null;
   /** Present only when an email delivery for this notice exists. */
   emailDelivery?: EmailDelivery;
+  /**
+   * Present only on the appellant's own Points dispute intake receipt.
+   * The receipt shares its event key and kind with the moderator queue
+   * row, so the title cannot tell them apart from those fields alone.
+   */
+  pointsDisputeReceipt?: boolean;
 }
 
 export interface NotificationsResponse {
@@ -120,7 +127,9 @@ function isNotification(value: unknown): value is Notification {
       n.acknowledgedAt === null ||
       isTimestamp(n.acknowledgedAt)) &&
     (n.emailDelivery === undefined ||
-      EMAIL_DELIVERY_STATES.includes(n.emailDelivery as EmailDelivery))
+      EMAIL_DELIVERY_STATES.includes(n.emailDelivery as EmailDelivery)) &&
+    (n.pointsDisputeReceipt === undefined ||
+      typeof n.pointsDisputeReceipt === "boolean")
   );
 }
 
@@ -170,61 +179,75 @@ export function parseNotificationsResponse(
   return body as NotificationsResponse;
 }
 
-/** One plain sentence for each event kind. */
+/** One short label for each event kind. */
 export function notificationTitle(n: Notification): string {
   switch (n.kind) {
     case "application_approved":
-      return `${n.subject} was added to Slop.`;
+      return `${n.subject} added`;
     case "application_rejected":
-      return `${n.subject} was not added to Slop.`;
+      return `${n.subject} not added`;
     case "project_ready":
-      return `The ${n.subject} project is open to contributors.`;
+      return `${n.subject} is open`;
     case "project_scan_failed":
-      return `The security scan of ${n.subject} did not clear. Contributor work stays closed until a scan passes.`;
+      return `${n.subject} scan failed`;
     case "project_installation_lost":
-      return `Slopbot is no longer installed on a ${n.subject} repository. Install it again so reviews continue.`;
+      return `${n.subject}: reinstall Slopbot`;
     case "project_revision":
-      return `The ${n.subject} project settings changed.`;
+      // The weekly report reminder and the backlog rule reuse this kind
+      // (PRD sections 8 and 5).
+      if (n.eventKey.startsWith("security-queue:"))
+        return `${n.subject} reports are waiting`;
+      return n.eventKey.startsWith("backlog-rule:")
+        ? n.eventKey.includes(":out:")
+          ? `${n.subject} is out of rotation`
+          : n.eventKey.includes(":warn:")
+            ? `${n.subject} needs a merge`
+            : `${n.subject} review backlog`
+        : `${n.subject} settings changed`;
     case "award_reserved":
-      return `An award from ${n.subject} is reserved for you.`;
+      return `${n.subject} award reserved`;
     case "payment_paid":
-      return `A payment from ${n.subject} is finalized.`;
+      return `${n.subject} payment paid`;
     case "payout_held":
-      return `A payout from ${n.subject} is held.`;
+      return `${n.subject} payout held`;
     case "wallet_changed":
-      return `A ${n.subject} payout wallet was added to your account.`;
+      return `${n.subject} wallet added`;
     case "project_quarantined":
-      return `The ${n.subject} project is quarantined. It is paused and not listed.`;
+      return `${n.subject} quarantined`;
     case "project_banned":
-      return `The ${n.subject} project is banned. It is paused and not listed.`;
+      return `${n.subject} banned`;
     case "reinstatement_requested":
-      return `A reinstatement request for ${n.subject} is open for independent review.`;
+      return `${n.subject} reinstatement in review`;
     case "project_reinstated":
-      return `The ${n.subject} project is reinstated.`;
+      return `${n.subject} reinstated`;
     case "reinstatement_denied":
-      return `The reinstatement request for ${n.subject} was denied.`;
+      return `${n.subject} reinstatement denied`;
     case "reinstatement_review":
-      return `A reinstatement request for ${n.subject} needs your independent review.`;
+      return `Review ${n.subject} reinstatement`;
     case "payout_exception":
       return n.eventKey.startsWith("monthly-underfunded:")
-        ? `The ${n.subject} monthly awards are underfunded.`
+        ? `${n.subject} awards underfunded`
         : n.eventKey.startsWith("monthly-cut:")
-          ? `The ${n.subject} owner set your monthly amount below the proposed amount.`
-          : `A payout from ${n.subject} is held and needs attention.`;
+          ? `${n.subject} owner cut your monthly amount`
+          : `${n.subject} payout held`;
     case "slopbot_appeal_review":
       return n.eventKey.startsWith("slopbot-points-dispute:")
-        ? "A Points dispute is awaiting review."
-        : "A contribution appeal needs your decision on GitHub.";
+        ? n.pointsDisputeReceipt
+          ? "Points dispute filed"
+          : "Points dispute to review"
+        : "Appeal to decide";
     case "slopbot_appeal_resolved":
       return n.eventKey.startsWith("slopbot-points-dispute:")
-        ? "The Points dispute was resolved."
-        : "The contribution appeal was resolved.";
+        ? "Points dispute resolved"
+        : "Appeal resolved";
     case "slopbot_scam_review":
-      return `Slopbot closed a ${n.subject} contribution as a scam. Review the author's account.`;
+      return `${n.subject} scam closure: review author`;
+    case "trace_licensing_available":
+      return "You can now license your traces";
     case "security_case":
-      return `Private security case ${n.subject} changed.`;
+      return `Case ${n.subject} updated`;
     case "security_report_received":
-      return `Your private report ${n.subject} was received.`;
+      return `Report ${n.subject} received`;
   }
 }
 
@@ -235,8 +258,12 @@ export function notificationAction(n: Notification): string {
     case "project_quarantined":
       // Moderators get the same event with an admin link (contributor flags).
       return n.actionPath === "/admin" ? "Open admin" : "Open project";
-    case "application_approved":
     case "project_revision":
+      if (n.eventKey.startsWith("security-queue:")) return "Open Inbox";
+      return n.eventKey.startsWith("backlog-rule:")
+        ? "Open settings"
+        : "Open project";
+    case "application_approved":
     case "reinstatement_requested":
     case "project_reinstated":
     case "reinstatement_denied":
@@ -260,6 +287,8 @@ export function notificationAction(n: Notification): string {
         : "Open appeal on GitHub";
     case "slopbot_scam_review":
       return "Open closed item on GitHub";
+    case "trace_licensing_available":
+      return "Open trace licensing";
     case "security_case":
     case "security_report_received":
       return "Open security cases";

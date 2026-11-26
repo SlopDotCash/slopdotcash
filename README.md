@@ -8,7 +8,7 @@
     ·
     <a href="https://slop.cash/projects/new">Add a project</a>
     ·
-    <a href="https://slop.cash/#leaderboard">View the leaderboard</a>
+    <a href="https://slop.cash/points">Browse contributors</a>
   </p>
 </div>
 
@@ -46,8 +46,9 @@ remains the place where work is proposed, reviewed, merged, and audited.
    live work, tests the result, and prepares public evidence.
 4. **Get accepted.** Maintainers decide what merges. Slopbot sizes accepted
    outcomes—not commits, comments, token volume, or busywork.
-5. **Build your record.** Leaderboards and contributor profiles show accepted
-   work, Points, review state, and verified settlement history.
+5. **Build your record.** Contributor profiles show accepted work, and each
+   project's monthly standings and cycle records show Points, review state,
+   and verified settlement history.
 
 ```mermaid
 flowchart LR
@@ -59,6 +60,10 @@ flowchart LR
 ```
 
 ## Add your open-source project
+
+Choose **Maintainer** on [slop.cash](https://slop.cash/?audience=maintainer), or
+give your agent the [maintainer skill](https://slop.cash/maintain/SKILL.md), to
+add, resume or maintain a project through the existing GitHub and Slop workflows.
 
 Sign in with GitHub and create your project at
 [`slop.cash/projects/new`](https://slop.cash/projects/new). The form checks your
@@ -92,7 +97,10 @@ review checklist, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Points
 
-Slop shows one public measure: Points. Slopbot reviews each accepted pull
+Slop scores with one measure: Points. They appear on each project's monthly
+standings and cycle records; the homepage has no leaderboard, and profiles and
+the contributor directory show accepted work without Points totals. Slopbot
+reviews each accepted pull
 request, estimates its size and value, and assigns accepted-work Points. A
 maintainer `slop-score` record can correct that assessment. Useful reviews earn
 separate credit. Usage evidence is diagnostic and never changes Points, rank,
@@ -115,15 +123,27 @@ Slop uses precise financial states:
 The project vault contract is the only funding mode. Anyone may deposit into a
 vault; all free funds are refundable only to the project owner's refund
 destination. Slop does not create wallets or custody project funds. Its
-services hold three narrow kinds of key: the identity attester key, which
+services hold four narrow kinds of key: the identity attester key, which
 co-signs wallet bindings that the contributor's wallet also signs and signs
-bounded monthly allocations; one fee-wallet key per network, which only claims
-fees into Slop's fee wallet and converts them; and the referral root-posting
-key, which posts referral reward roots and moves no tokens. The
-[funding guide](funding/README.md) and [AGENTS.md](AGENTS.md) record their
-limits and risks. A 2% fee is deducted from each gross award, and the same 2%
-fee applies to a withdrawal of unused funds. Legacy Squads and Sablier funding
-and its 1% fee are removed; their records stay in git history.
+bounded monthly allocations; one fee-wallet key per network, which claims
+fees into Slop's fee wallet, converts them, and runs the SLOP buyback and
+burn from half of that income; the deposit resolver key, which can only send
+a submission-fee or report deposit back to its payer or to the kept
+destination fixed when it was deposited; and the referral root-posting key,
+which posts referral reward roots and moves no tokens. The contract upgrade
+keys are the owner's. [PRD section 6](docs/slop-product-requirements.md#6-funds-and-payments)
+and [AGENTS.md](AGENTS.md) record their limits and risks. A 2% fee is deducted from each gross award, and the same 2%
+fee applies to a withdrawal of unused funds. The standard split of a
+private security award is 75% to the reporter and 25% to Slop. Legacy Squads
+and Sablier funding and its 1% fee are removed; their records stay in git
+history.
+
+Project owners can also turn on a maintainer share of the monthly amount (up
+to 30%, for the people who merge or close outside pull requests), a refundable
+submission fee on outside pull requests (stablecoin, or SLOP at half the
+price), and wanted issues (the `slop-wanted` label). A private security report
+filed through Slop carries a refundable SLOP deposit unless the project's
+owner turned it off. The PRD sections 5, 6 and 8 hold the exact rules.
 
 ## Repository architecture
 
@@ -382,6 +402,19 @@ files never select the source.
 and CI. The former checks source records; the latter checks types, lint and
 the local integration suites. Live chain verification and browser checks remain
 separate.
+
+`bun run audit:dependencies` runs the full Bun registry audit after a frozen
+install and prints its complete report. The locked Picomatch 2.3.2 and 4.0.5
+copies carry local backports for [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+The backports use Picomatch's literal fallback for repeated extglobs unless
+the parser can use its existing safe reduction or the alternatives are
+prefix-free ASCII literals. This also applies with `maxExtglobRecursion: false`.
+Bun reports the original npm versions. The release gate accepts that exact
+finding only if the lock identities, patch files, installed package bytes and
+consumer resolutions match the reviewed backports. Other findings, unreadable
+reports and mismatched bytes fail the gate. Remove the matching patch and its
+local audit proof in the same reviewed update that removes the affected copy
+or installs a registry version listed as fixed.
 
 Edit shared contributor and reviewer rules in the canonical generic
 project-skill templates. The contributor template's `scripts/` directory is the

@@ -7,9 +7,18 @@
 // @source scripts/verify-staging-deployment.mjs
 // @source scripts/release-notify.mjs
 // @source scripts/release-robinhood-rpc.ts
+// @source scripts/rotate-fee-solana-rpc.ts
 // @source scripts/qualify-solana-rpc-pair.ts
+// @source scripts/check-retained-release-data.ts
+// @source scripts/restore-collected-data.py
+// @source scripts/github-app-token-refresh.ts
+// @source scripts/read-local-leaderboard.ts
+// @evidence scripts/check-retained-release-data.test.ts
+// @evidence scripts/restore-collected-data.test.ts
+// @evidence scripts/read-local-leaderboard.test.ts
 // @evidence scripts/pages-secret-inventory.test.ts
 // @evidence scripts/release-robinhood-rpc.test.ts
+// @evidence scripts/rotate-fee-solana-rpc.test.ts
 // @evidence scripts/qualify-solana-rpc-pair.test.ts
 // Source advancement before service writes supersedes; advancement afterward
 // is an explicit partial-publication failure, never a verified release.
@@ -34,8 +43,15 @@
 // Its data/RPC and identity predicates (including immediate version succession)
 // model bounded observations, not a lock
 // on the fee journal or guarantees about Cloudflare and the chain.
+// A deployment-command failure can precede accepted remote activation. The
+// Solana rotation retries metadata reads only: confirmed readback reconciles
+// the same candidate; absent confirmation retains uncertainty without another
+// deployment. The implementation bounds those reads to ten attempts.
 // An enabled normal release checks RPC inheritance before service writes. A
 // later change can still stop the fee-converter upload at its own boundary.
+// Retained-data freshness is an external validated input at the publication
+// boundary. Its logical snapshot timestamps are checked under the shared
+// production lock before service writes; the model does not prove transport.
 module release_publication {
   type State = { stage: str, main: bool, manual: bool, retainedData: bool,
     proofs: bool, tested: bool, sourceMatches: bool, workers: bool, pages: bool, verified: bool,
@@ -125,6 +141,10 @@ module release_publication {
       if (confirmed) s.with("rpcRotation", "confirmed").with("stage", "rpc-confirmed")
       else failed(s.with("rpcRotation", "uncertain"))
       else failed(s) }
+  action reconcileRpcRotation(confirmed: bool): bool = all {
+    s.stage == "partial-failure", s.rpcRotation == "uncertain",
+    s.uploaded, s.versionValidated, not(s.privateFile),
+    s' = if (confirmed) s.with("rpcRotation", "confirmed").with("stage", "rpc-confirmed") else s }
   action partialFailure = all { Set("tested", "workers").contains(s.stage), not(s.sourceMatches),
     s.earlierWorker or s.uploaded or s.workers,
     s' = s.with("stage", "partial-failure") }
@@ -164,6 +184,8 @@ module release_publication {
     { nondet prior = Set(false, true).oneOf()
       nondet confirmed = Set(false, true).oneOf()
       promoteRpcRotation(prior, confirmed) },
+    { nondet confirmed = Set(false, true).oneOf()
+      reconcileRpcRotation(confirmed) },
     publishWorkers, partialFailure, publishPages, verifyBytesAndMetadata, providerFailure
   }
 
@@ -250,6 +272,12 @@ module release_publication {
     .then(promoteRpcRotation(true, true).fail())
   run rpcRotationAmbiguousDeployRemainsUncertainTest = init.then(rpcCandidate).then(promoteRpcRotation(true, false))
     .expect(s.rpcRotation == "uncertain" and not(s.verified))
+  run rpcRotationCommandFailureThenReadbackConfirmsTest = init.then(rpcCandidate).then(promoteRpcRotation(true, false))
+    .then(reconcileRpcRotation(true)).expect(s.rpcRotation == "confirmed" and s.stage == "rpc-confirmed")
+    .then(promoteRpcRotation(true, true).fail())
+  run rpcRotationUnconfirmedReadbackCannotRedeployTest = init.then(rpcCandidate).then(promoteRpcRotation(true, false))
+    .then(reconcileRpcRotation(false)).expect(s.rpcRotation == "uncertain" and s.stage == "partial-failure")
+    .then(promoteRpcRotation(true, true).fail())
   run rpcRotationNeedsManualMainTest = init.then(requestRpcRotation).then(prepare(false, true, false).fail())
   run rpcRotationCannotWriteOtherServicesTest = init.then(rpcRotationIntent).then(publishEarlierWorker.fail())
 

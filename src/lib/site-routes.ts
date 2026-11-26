@@ -2,16 +2,24 @@
 import { PROJECTS } from "./projects.mjs";
 
 export const SITE_ORIGIN = "https://slop.cash";
-const HOME_TITLE = "Slop: make money shipping open source";
+const HOME_TITLE = "Slop: ship and maintain open source";
 
 /** Indexable pages with fixed paths, in sitemap order. */
 export const STATIC_PAGE_TITLES = new Map([
   ["/", HOME_TITLE],
   ["/how-it-works", "How it works"],
-  ["/sponsors", "Sponsors"],
+  ["/sponsors", "Fund a project"],
   ["/cycles", "Cycle archive"],
-  ["/points", "Leaderboard"],
+  ["/points", "Contributors"],
   ["/projects/new", "Add a project"],
+  ["/requested", "Requested repos"],
+  ["/record", "Record"],
+  ["/receipts", "Receipts"],
+  ["/referrals", "Referral program"],
+  ["/buyback", "SLOP buyback"],
+  ["/october-allocation", "October allocation"],
+  ["/sponsored-pools", "Sponsored pools"],
+  ["/privacy", "Privacy policy"],
 ]);
 
 export function pageTitle(name: string): string {

@@ -22,7 +22,11 @@ import {
   requireActor,
 } from "../http";
 import type { RepositoryAccessReader } from "../projects/setup";
-import { SCAM_REVIEW_PATH, scamReviewGitHubUrl } from "./events";
+import {
+  REINSTATEMENT_REQUEST_OPEN,
+  SCAM_REVIEW_PATH,
+  scamReviewGitHubUrl,
+} from "./events";
 import {
   incompleteAssessments,
   readIncompleteAssessments,
@@ -55,6 +59,7 @@ interface Row {
   acknowledged_at: string | null;
   security_notice_id: string | null;
   delivery_state: string | null;
+  points_dispute_receipt: number;
 }
 
 /**
@@ -193,7 +198,9 @@ export async function handleNotificationsApi(
             `SELECT event_key,
                     CASE WHEN kind = 'slopbot_appeal_review' AND EXISTS (
                       SELECT 1 FROM slopbot_appeals a WHERE 'slopbot-' || a.appeal_key = notifications.event_key AND a.resolved_at IS NOT NULL
-                      UNION ALL SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.resolved_at IS NOT NULL
+                      UNION ALL SELECT 1 FROM points_disputes p WHERE p.resolved_at IS NOT NULL
+                        AND (notifications.event_key = 'slopbot-' || p.appeal_key || ':resolved'
+                          OR (notifications.event_key = 'slopbot-' || p.appeal_key AND p.appellant_github_id <> notifications.recipient_github_id))
                     ) THEN 'slopbot_appeal_resolved' ELSE kind END AS kind,
                     subject, detail, action_path, source_at,
                     created_at, read_at,
@@ -211,11 +218,13 @@ export async function handleNotificationsApi(
                       (SELECT CASE WHEN a.state = 'exhausted' AND a.destination_digest IS NULL THEN 'suppressed' ELSE a.state END
                         FROM activity_notification_outbox a
                         WHERE a.event_key = notifications.event_key AND a.recipient_github_id = notifications.recipient_github_id
-                          AND a.template_version = 'activity-inbox-v1')) AS delivery_state
+                          AND a.template_version = 'activity-inbox-v1')) AS delivery_state,
+                    EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key = 'slopbot-' || p.appeal_key AND p.appellant_github_id = notifications.recipient_github_id) AS points_dispute_receipt
                FROM notifications WHERE recipient_github_id = ?
                 AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
                   OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
                 AND (kind <> 'slopbot_scam_review' OR EXISTS(SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1) AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL))
+                AND (kind <> 'reinstatement_review' OR ${REINSTATEMENT_REQUEST_OPEN("notifications.event_key")})
                 ${cursor ? "AND (source_at < ? OR (source_at = ? AND event_key > ?))" : ""}
               ORDER BY source_at DESC, event_key LIMIT ?`,
           )
@@ -232,7 +241,8 @@ export async function handleNotificationsApi(
               WHERE recipient_github_id = ? AND read_at IS NULL
                 AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
                   OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
-                AND (kind <> 'slopbot_scam_review' OR EXISTS(SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1) AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL))`,
+                AND (kind <> 'slopbot_scam_review' OR EXISTS(SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1) AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL))
+                AND (kind <> 'reinstatement_review' OR ${REINSTATEMENT_REQUEST_OPEN("notifications.event_key")})`,
           )
           .bind(actor.githubId, moderator ? 1 : 0)
           .all<{ count: number }>(),
@@ -264,6 +274,9 @@ export async function handleNotificationsApi(
             readAt: row.read_at,
             ...(row.kind === "security_case" && row.security_notice_id !== null
               ? { acknowledgedAt: row.acknowledged_at }
+              : {}),
+            ...(row.points_dispute_receipt
+              ? { pointsDisputeReceipt: true }
               : {}),
             ...(delivery ? { emailDelivery: delivery } : {}),
           };
@@ -309,6 +322,7 @@ export async function handleNotificationsApi(
             AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
                   OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
             AND (kind <> 'slopbot_scam_review' OR EXISTS(SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1) AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL))
+            AND (kind <> 'reinstatement_review' OR ${REINSTATEMENT_REQUEST_OPEN("notifications.event_key")})
             AND event_key IN (SELECT value FROM json_each(?))`,
       )
       .bind(

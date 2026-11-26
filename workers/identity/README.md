@@ -98,6 +98,20 @@ returns the separate ten-minute contributor session described in
 
 - OAuth state is 256 random bits, hash-only in D1, and bound to an HttpOnly,
   Secure, SameSite=Lax `__Host-` cookie.
+- A website (`slop-points-web`) flow is bound to the browser that started it
+  (operator decision, 21 November 2026). Its start must come from an allowed
+  browser origin; the response sets a random secret as an HttpOnly, Secure
+  `__Host-slop_oauth_bind_<flowId>` cookie on the identity origin and D1 keeps
+  only its SHA-256 (migration `0146_identity_browser_binding.sql`).
+  Authorization, the callback and every poll refuse the flow without that
+  cookie, so a sign-in link completed in another browser yields no assertion
+  for whoever started it. Start and poll answer allowed origins with
+  `Access-Control-Allow-Credentials: true`; the site sends them with
+  credentials. The cookie is `SameSite=None` so the cross-site product origins
+  keep working where the browser allows third-party cookies; the exact
+  per-flow hash match enforces the binding. Terminal (`private-trace-api`) and
+  local development flows have no browser to bind and keep the unbound
+  protocol above.
 - The PKCE verifier is encrypted in D1 with AES-256-GCM and flow-bound
   additional authenticated data. The atomic callback claim clears its
   ciphertext before contacting GitHub.
@@ -123,6 +137,10 @@ returns the separate ten-minute contributor session described in
   persisted.
 - Expired flows and assertions are removed hourly. Trace retention is
   unaffected.
+- OAuth failures emit `github_identity_failed` with the token/user stage,
+  a fixed reason, HTTP status when available and an allowlisted OAuth error.
+  Unknown provider errors, response bodies and request values remain excluded.
+  Custom console logs remain enabled while invocation logs stay disabled.
 - Response bodies and application logs never contain GitHub codes or access
   tokens. Persisted Worker invocation logs are disabled because OAuth codes
   arrive in the standard callback query parameter. Do not enable full-URL

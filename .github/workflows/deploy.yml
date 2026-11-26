@@ -21,9 +21,17 @@ on:
         description: "Manual main or development release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
+      data_from_run:
+        description: "Manual main release with use_published_data only: take the leaderboard and profiles from this completed main release's own fresh collection instead of the live site"
+        type: string
+        default: ""
       discussion_resume_run:
         description: "Optional trusted main run ID whose public GitHub discussion reads can be revalidated during a fresh release"
         type: string
+      full_collection:
+        description: "Manual main release only: recompute every commit attribution live instead of reusing the previous collection's fenced answers"
+        type: boolean
+        default: false
       rotate_robinhood_rpc_from:
         description: "Manual main only: rotate the fee-converter Robinhood RPC from this active Worker version UUID"
         type: string
@@ -38,6 +46,14 @@ on:
         default: false
       skip_browser_tests:
         description: "Manual main or development release only: run the browser smoke lane instead of the complete browser lanes; every other check and all deployment verification still run"
+        type: boolean
+        default: false
+      defer_retained_attribution:
+        description: "Manual main release only: hold the retained-copy attribution check for merged pull requests that replaced a closed submission; held pull requests keep their prior scoring until a later collection resolves them"
+        type: boolean
+        default: false
+      parallel_collection:
+        description: "Manual main release only: collect on GitHub-hosted runners in a separate lane beside a collection that is already running"
         type: boolean
         default: false
 
@@ -84,9 +100,19 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
       - name: Load the exact trusted main attempt's checkpoint
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
           RESUME_RUN: ${{ inputs.discussion_resume_run }}
         run: python3 scripts/restore-leaderboard-discussions.py
       - name: Pass verified checkpoint to preparation
@@ -98,12 +124,120 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  # A fresh collection takes hours; when main advances meanwhile that run is
+  # superseded and publishes nothing. A manual retained-data release may name
+  # it, and only its collected ledger and profiles are restored here.
+  restore_collection:
+    name: Restore a trusted main release's collected data
+    if: github.event_name == 'workflow_dispatch' && inputs.data_from_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.retained.outputs.artifact-id }}
+    steps:
+      - name: Require a manual retained-data main release
+        env:
+          USE_PUBLISHED_DATA: ${{ inputs.use_published_data }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$USE_PUBLISHED_DATA" = true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
+      - name: Load the exact trusted main attempt's collected data
+        env:
+          GH_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
+          DATA_RUN: ${{ inputs.data_from_run }}
+        run: python3 scripts/restore-collected-data.py
+      - name: Pass verified data to preparation
+        id: retained
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: restored-collected-data-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/collected-data
+          if-no-files-found: error
+          retention-days: 2
+
+  # Incremental collection (PRD section 9): the newest trusted main
+  # collection's memo lets this one reuse immutable commit statistics and
+  # fenced commit attributions. A missing or unverifiable memo means a full
+  # collection, never a failed release.
+  restore_memo:
+    name: Restore the previous trusted collection memo
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.use_published_data != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.retained.outputs.artifact-id }}
+      memo: ${{ steps.restore.outputs.memo }}
+      discussions: ${{ steps.restore.outputs.discussions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
+      - name: Load the newest trusted collection memo
+        id: restore
+        # The memo only saves reads; failing to restore it means a full
+        # collection, never a failed release.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
+          RESTORE_OUTPUT: ${{ runner.temp }}/restored-collection
+          # An explicit discussion resume keeps its own restore job.
+          RESTORE_DISCUSSIONS: ${{ (github.event_name != 'workflow_dispatch' || !inputs.discussion_resume_run) && 'true' || 'false' }}
+        run: python3 scripts/restore-collection-memo.py
+      - name: Pass the verified memo to preparation
+        id: retained
+        if: steps.restore.outputs.memo == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: restored-collection-memo-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/restored-collection
+          if-no-files-found: error
+          retention-days: 2
+
   prepare:
     name: Prepare checked browser bundle
-    needs: restore_discussions
+    needs: [restore_discussions, restore_collection, restore_memo]
     if: >-
       !cancelled() &&
-      (needs.restore_discussions.result == 'success' || needs.restore_discussions.result == 'skipped')
+      (needs.restore_discussions.result == 'success' || needs.restore_discussions.result == 'skipped') &&
+      (needs.restore_collection.result == 'success' || needs.restore_collection.result == 'skipped') &&
+      (needs.restore_memo.result == 'success' || needs.restore_memo.result == 'skipped')
     outputs:
       browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
       sandbox: ${{ steps.scope.outputs.sandbox }}
@@ -113,17 +247,37 @@ jobs:
     env:
       RELEASE_SHA: ${{ github.sha }}
       VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
-    runs-on: ubuntu-24.04
+      # Collection and site generation both verify that a blank Points origin is new.
+      SLOP_POINTS_BOOTSTRAP: "1"
+      # A fresh main collection runs on Slop's own collector runner, which
+      # has no 6-hour job limit (operator decision, 20 November 2026). The
+      # runner refuses any job that is not a main-branch run of this
+      # workflow. Clearing the repository variable returns it to hosted runners.
+      SLOP_COLLECTION_DEADLINE_S: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && '72000' || '19200' }}
+    runs-on: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && vars.SLOP_COLLECTOR_RUNNER || 'ubuntu-24.04' }}
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
       # pending revision; only superseded pull requests cancel a running check.
-      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+      # Every fresh main collection, push or manual, shares one lane: they
+      # spend one collector App allowance, so a second waits for the first
+      # (operator decision, 19 November 2026). Manual retained-data
+      # production can prepare beside live collection, and a manual
+      # parallel_collection run collects on hosted runners in its own lane
+      # (operator decision, 20 November 2026).
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (inputs.use_published_data == true && 'retained' || inputs.parallel_collection == true && 'collect-parallel' || 'collect') || github.event_name }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.
     # The three-hour window expired before the complete census was written.
-    timeout-minutes: 360
+    timeout-minutes: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && 1440 || 360 }}
     steps:
+      - name: Reserve checked bundle time for hosted main collection
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && inputs.use_published_data != true && runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          # The 6-hour hosted job needs time to check and upload the bundle.
+          echo "SLOP_PREPARE_COLLECT_UNTIL_SECONDS=$(( $(date +%s) + 20820 ))" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -212,7 +366,7 @@ jobs:
       - name: Install pinned skill validator dependency
         run: |
           printf '%s\n' \
-            'PyYAML==6.0.3 --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6' \
+            'PyYAML==6.0.3 --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6 --hash=sha256:ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c' \
             > "$RUNNER_TEMP/slop-python-requirements.txt"
           python -m pip install \
             --disable-pip-version-check \
@@ -257,6 +411,90 @@ jobs:
           artifact-ids: ${{ needs.restore_discussions.outputs.artifact_id }}
           path: ${{ runner.temp }}/leaderboard-discussions
 
+      - name: Copy the restored collection memo
+        if: needs.restore_memo.outputs.memo == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.restore_memo.outputs.artifact_id }}
+          path: ${{ runner.temp }}/restored-collection
+
+      - name: Place the restored discussion reads
+        if: needs.restore_memo.outputs.discussions == 'true'
+        run: |
+          set -euo pipefail
+          # An explicit resume already placed its own checkpoint.
+          if [ ! -e "$RUNNER_TEMP/leaderboard-discussions" ]; then
+            mv "$RUNNER_TEMP/restored-collection/leaderboard-discussions" "$RUNNER_TEMP/leaderboard-discussions"
+          fi
+
+      # Every workflow in this repository shares one GITHUB_TOKEN request
+      # quota (1,000 REST requests an hour), and a full collection needs
+      # more than that, so it stalled behind releases, scans and checks. A
+      # dedicated read-only GitHub App has its own, larger quota. It reads
+      # only public data. Only production (main) collects with it, so staging
+      # collections on development never spend its quota. Without the App, or
+      # if minting fails, the steps below use GITHUB_TOKEN as before.
+      - name: Mint collector token
+        id: collector-token
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          github.event_name != 'pull_request' &&
+          inputs.use_published_data != true &&
+          vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+
+      # The value evidence walks Git trees and commits through the GitHub
+      # REST API, which spent most of a collection's hourly allowance (19
+      # November 2026: over an hour on one pull request's tree walk). The
+      # collector answers those exact reads from local bare clones instead,
+      # and reads GitHub whenever a clone cannot answer one exactly
+      # (operator decision, 20 November 2026). The clones live in the
+      # runner's temporary directory, never in the published bundle. Each
+      # directory name must be the repository's canonical GitHub name.
+      # LOCAL_GIT_REPOSITORIES may add more public repositories.
+      - name: Clone repositories for local Git object reads
+        id: local_git
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          github.event_name != 'pull_request' &&
+          inputs.use_published_data != true
+        continue-on-error: true
+        env:
+          LOCAL_GIT_REPOSITORIES: ${{ github.repository }} ${{ vars.LOCAL_GIT_REPOSITORIES }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -uo pipefail
+          root="$RUNNER_TEMP/local-git"
+          for repository in $LOCAL_GIT_REPOSITORIES; do
+            if ! [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+              echo "::warning::Skipping invalid repository name $repository"
+              continue
+            fi
+            target="$root/$repository.git"
+            [ -d "$target" ] && continue
+            mkdir -p "$(dirname "$target")"
+            if timeout 900 git clone --bare --quiet --no-tags \
+                "https://github.com/$repository.git" "$target" &&
+              timeout 900 git -C "$target" fetch --quiet --no-tags origin \
+                '+refs/pull/*/head:refs/pull/*/head'; then
+              echo "Cloned $repository ($(du -sh "$target" | cut -f1))"
+            else
+              echo "::warning::Could not clone $repository; its Git objects are read from GitHub"
+              rm -rf "$target"
+            fi
+          done
+          if compgen -G "$root/*/*.git" > /dev/null; then
+            echo "directory=$root" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate live contribution data
         id: live_ledger
         # Pull-request code is untrusted, so this step never explicitly injects
@@ -264,8 +502,22 @@ jobs:
         # ledger before producing a deployable build.
         if: github.event_name != 'pull_request' && inputs.use_published_data != true
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
+          # Retry one value-feed read after a temporary outage instead of
+          # restarting the whole collection (19 November 2026).
+          SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
+          # Read the first value-history pages six at a time before the
+          # sequential history loop (operator decision, 21 November 2026).
+          SLOP_VALUE_FEED_CONCURRENCY: "6"
+          # Empty unless the clone step above made at least one clone.
+          SLOP_LOCAL_GIT_DIR: ${{ steps.local_git.outputs.directory }}
+          SLOP_DEFER_RETAINED_ATTRIBUTION: ${{ inputs.defer_retained_attribution == true && '1' || '' }}
         run: |
           set -euo pipefail
           leaderboard_origin="https://slop.cash"
@@ -273,13 +525,27 @@ jobs:
             leaderboard_origin="https://staging.slop.cash"
           fi
           collect=(bun run leaderboard:generate)
+          hosted_collection_deadline=""
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             export SLOP_DISCUSSION_CHECKPOINT="$RUNNER_TEMP/leaderboard-discussions"
             mkdir -p "$SLOP_DISCUSSION_CHECKPOINT"
-            export SLOP_DISCUSSION_DEADLINE_MS="$(( $(date +%s) * 1000 + 18000000 ))"
-            # Reserve time to retain the latest journal of public reads before
-            # the job limit, even when an unrelated live endpoint stalls.
-            collect=(timeout --signal=TERM --kill-after=10s 18100 "${collect[@]}")
+            collector_started=$(date +%s)
+            if [ -n "${SLOP_PREPARE_COLLECT_UNTIL_SECONDS:-}" ]; then
+              hosted_collection_deadline=$((collector_started + SLOP_COLLECTION_DEADLINE_S))
+              if [ "$SLOP_PREPARE_COLLECT_UNTIL_SECONDS" -lt "$hosted_collection_deadline" ]; then
+                hosted_collection_deadline=$SLOP_PREPARE_COLLECT_UNTIL_SECONDS
+              fi
+              export SLOP_DISCUSSION_DEADLINE_MS="$((hosted_collection_deadline * 1000))"
+            else
+              export SLOP_DISCUSSION_DEADLINE_MS="$(( (collector_started + SLOP_COLLECTION_DEADLINE_S) * 1000 ))"
+              collect=(timeout --signal=TERM --kill-after=10s "$(( SLOP_COLLECTION_DEADLINE_S + 100 ))" "${collect[@]}")
+            fi
+            # Incremental collection: reuse the previous trusted memo when
+            # one was restored, and always write this collection's memo.
+            if [ -f "$RUNNER_TEMP/restored-collection/collection-memo.json" ]; then
+              export SLOP_COLLECTION_MEMO="$RUNNER_TEMP/restored-collection/collection-memo.json"
+            fi
+            export SLOP_COLLECTION_MEMO_OUT="$RUNNER_TEMP/collection-memo/collection-memo.json"
           fi
           # Selects the versioned value scoring policy for new work. Exit 75
           # means the hosted value feed is unavailable (owner decision D2):
@@ -288,12 +554,27 @@ jobs:
           # legacy fallback. Every other failure stops the release.
           feed_status=0
           for attempt in 1 2; do
+            attempt_command=("${collect[@]}")
+            if [ -n "$hosted_collection_deadline" ]; then
+              remaining_seconds=$((hosted_collection_deadline - $(date +%s)))
+              if [ "$remaining_seconds" -le 0 ]; then
+                if [ "$feed_status" -eq 75 ]; then
+                  break
+                fi
+                echo "::error::No time remains for live collection before checked bundle preparation."
+                exit 1
+              fi
+              attempt_command=(timeout --signal=TERM --kill-after=10s "$((remaining_seconds + 100))" "${collect[@]}")
+            fi
             feed_status=0
-            "${collect[@]}" || feed_status=$?
+            "${attempt_command[@]}" || feed_status=$?
             if [ "$feed_status" -ne 75 ]; then
               break
             fi
             if [ "$attempt" -eq 1 ]; then
+              if [ -n "$hosted_collection_deadline" ] && [ "$(( $(date +%s) + 60 ))" -ge "$hosted_collection_deadline" ]; then
+                break
+              fi
               echo "::warning::Hosted value feed unavailable; retrying in 60 seconds."
               sleep 60
             fi
@@ -307,6 +588,30 @@ jobs:
           elif [ "$feed_status" -ne 0 ]; then
             exit "$feed_status"
           fi
+
+      - name: Save the collection memo for the next trusted collection
+        # Written only after a complete snapshot, so only a successful
+        # collection seeds the next incremental one.
+        if: >-
+          !cancelled() && github.ref == 'refs/heads/main' &&
+          steps.live_ledger.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: collection-memo-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/collection-memo/collection-memo.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Save accepted implementation evidence for the next trusted collection
+        if: >-
+          !cancelled() && github.ref == 'refs/heads/main' &&
+          steps.live_ledger.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: accepted-implementation-memo-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/collection-memo/accepted-implementation-memo.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Save public discussion reads for a subsequent trusted run
         if: >-
@@ -322,8 +627,12 @@ jobs:
       - name: Generate live contributor profiles
         if: github.event_name != 'pull_request' && inputs.use_published_data != true
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
         run: |
           set -euo pipefail
@@ -357,8 +666,17 @@ jobs:
             echo "::warning::Profile census did not reconcile; retrying once."
           done
 
+      - name: Copy restored collected data
+        if: github.event_name == 'workflow_dispatch' && inputs.use_published_data == true && inputs.data_from_run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.restore_collection.outputs.artifact_id }}
+          path: ${{ runner.temp }}/collected-data
+
       - name: Load validated published data for manual release
         if: inputs.use_published_data == true
+        env:
+          DATA_FROM_RUN: ${{ inputs.data_from_run || '' }}
         run: |
           set -euo pipefail
           # Each environment reuses only its own last publication, which was
@@ -371,12 +689,23 @@ jobs:
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-release-ledger.XXXXXX")"
           profiles_file="$(mktemp "$RUNNER_TEMP/slop-release-profiles.XXXXXX")"
           trap 'rm -f "$ledger_file" "$profiles_file"' EXIT
-          bun scripts/download-leaderboard.ts \
-            "$data_origin/data/leaderboard.json" "$ledger_file"
-          curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
-            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-            "$data_origin/data/profiles.json" --output "$profiles_file"
+          if [ -n "$DATA_FROM_RUN" ]; then
+            # Verified by restore_collection: a completed trusted main
+            # release whose own collection step succeeded, at an ancestor of
+            # this commit. Production only; the retained-data age check in
+            # the deploy job still refuses data older than the live site.
+            test "$VITE_SLOP_ENVIRONMENT" = "production"
+            collected="$RUNNER_TEMP/collected-data"
+            bun scripts/read-local-leaderboard.ts "$collected" "$ledger_file"
+            cp "$collected/profiles.json" "$profiles_file"
+          else
+            bun scripts/download-leaderboard.ts \
+              "$data_origin/data/leaderboard.json" "$ledger_file"
+            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+              "$data_origin/data/profiles.json" --output "$profiles_file"
+          fi
           # shellcheck disable=SC2016
           bun --no-env-file -e '
             import { assertLeaderboardSnapshot } from "./src/lib/leaderboard";
@@ -416,7 +745,20 @@ jobs:
           # Trusted refreshes use the census produced above; PR builds use the captured seed.
           SLOP_PROFILES_INPUT: ${{ github.event_name == 'pull_request' && 'data/profiles/seed.json' || 'public/data/profiles.json' }}
           SLOP_POINTS_ONLINE: ${{ github.event_name != 'pull_request' && '1' || '0' }}
-          SLOP_POINTS_BOOTSTRAP: "1"
+          # The points generator also reads the protected project months from
+          # production's private route (PRD section 7). Only a trusted run on
+          # main receives the address and the token; a pull request and
+          # staging get neither. An unset secret leaves the token empty, and
+          # the generator then uses data/points/protected-months.json alone.
+          POINTS_PROTECTION_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && 'https://slop.cash/api/v1/operator/protected-point-months' || '' }}
+          POINTS_PROTECTION_TOKEN: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.POINTS_PROTECTION_TOKEN || '' }}
+          # Every release build (fresh or published data) rebuilds the public
+          # record, /data/record.json (PRD section 7). It never fails the build:
+          # on any error the previous record is published unchanged. Pull
+          # requests skip it. The token only lifts the GitHub API rate limit
+          # for reading the public archive commit.
+          SLOP_RECORD_BUILD: ${{ github.event_name != 'pull_request' && '1' || '0' }}
+          SLOP_RECORD_GITHUB_TOKEN: ${{ github.event_name != 'pull_request' && github.token || '' }}
         run: bun run build
 
       - name: Bind the checked registry snapshot
@@ -507,6 +849,14 @@ jobs:
 
       - name: Install frozen workspace dependencies
         run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install the pinned merge collector for source tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
 
       # verify:code without formal:check: the Quint state-models job runs that
       # same check for this SHA, and the quality gate requires it. Running it
@@ -599,7 +949,7 @@ jobs:
       - name: Install pinned skill validator dependency
         run: |
           printf '%s\n' \
-            'PyYAML==6.0.3 --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6' \
+            'PyYAML==6.0.3 --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6 --hash=sha256:ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c' \
             > "$RUNNER_TEMP/slop-python-requirements.txt"
           python -m pip install \
             --disable-pip-version-check \
@@ -792,6 +1142,10 @@ jobs:
       name: slop-staging
       url: https://staging.slop.cash
     steps:
+      - name: Set staging order retry deadline
+        run: |
+          # Keep quota recovery in the first five minutes of the 20-minute job.
+          echo "STAGING_ORDER_RETRY_UNTIL=$(($(date +%s) + 300))" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -1095,6 +1449,10 @@ jobs:
             exit 0
           fi
 
+      - name: Refuse older retained production data
+        if: steps.release-input.outputs.superseded != 'true' && inputs.use_published_data == true && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        run: bun scripts/check-retained-release-data.ts dist
+
       - name: Require scoped Cloudflare credentials
         if: steps.release-input.outputs.superseded != 'true'
         env:
@@ -1177,6 +1535,19 @@ jobs:
         # logs only its category. This protected main-only job fails before
         # any publication on failure.
         run: bun --no-env-file scripts/qualify-security-screening.ts
+
+      - name: Qualify private report routine decisions with the real provider
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        timeout-minutes: 6
+        env:
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        # Three synthetic reports through the production routine-decision
+        # call (PRD section 8): at most five bounded calls (1 USD each,
+        # 5 USD total) that retry only transient failures; no private reports
+        # or delivery side effects. A wrong answer fails at once, and every
+        # failure logs only its category. This protected main-only job fails
+        # before any publication on failure.
+        run: bun --no-env-file scripts/qualify-security-routine.ts
 
       - name: Require reviewed Pages project
         if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
@@ -1333,10 +1704,14 @@ jobs:
           if (xKeys.length === 1) throw new TypeError("X OAuth credentials must be configured together");
           // Optional owner-provisioned payment RPC, private-report intake,
           // private analysis and public GitHub read secrets (PRD sections 4, 6,
-          // 8 and 11). They stay inert until their feature is enabled or set;
-          // any other name still fails closed.
+          // 8 and 11), the operator's reserved-awards feed token (PRD
+          // section 9) and the points generator's protected-months token
+          // (PRD section 7). They stay inert until their feature is enabled
+          // or set; any other name still fails closed.
           const optional = [
+            "OPERATOR_FEED_TOKEN",
             "PAYMENT_RPC_URLS",
+            "POINTS_PROTECTION_TOKEN",
             "REWARD_RPC_SOLANA",
             "SLOP_GITHUB_READ_TOKEN",
             "GITHUB_INTAKE_APP_CLIENT_ID",
@@ -1857,6 +2232,12 @@ jobs:
           # No additional rollout flag or manual Worker shell is required.
           bun scripts/release-referral.ts
 
+          # Submission-fee Worker (workers/submission-fee, PRD section 6). Its
+          # reviewed mode ships off: it reads no chain and loads no key, and
+          # deployment activates nothing. The release refuses live mode
+          # unless both contracts are recorded and the Worker holds its key.
+          bun scripts/release-submission-fee.ts
+
           # Fee-wallet converter (workers/fee-converter, PRD MVP-07c). The owner
           # creates the Worker shell and its secrets once, then sets the
           # SLOP_FEE_CONVERTER_RELEASE repository variable to "enabled". The
@@ -2204,18 +2585,62 @@ jobs:
           # Run this after Pages verification so an identity configuration
           # failure cannot suppress an unrelated, already-verified site fix.
           github_app_response="$RUNNER_TEMP/slop-identity-github-app.json"
-          github_app_status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize 65536 \
-              --output "$github_app_response" \
-              --write-out "%{http_code}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              https://api.github.com/apps/slop-identity
-          )"
+          github_app_headers="$RUNNER_TEMP/slop-identity-github-app.headers"
+          # Unauthenticated API calls share a small per-address quota on hosted
+          # runners, so a 403 or 429 is often GitHub refusing the runner, not
+          # the App. Retry a few times before deciding.
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            github_app_status="$(
+              curl --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --max-filesize 65536 \
+                --dump-header "$github_app_headers" \
+                --output "$github_app_response" \
+                --write-out "%{http_code}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                https://api.github.com/apps/slop-identity
+            )" || github_app_status=000
+            case "$github_app_status" in
+              200) break ;;
+              403|429|000)
+                if [ "$attempt" -lt 4 ]; then
+                  echo "GitHub answered HTTP $github_app_status for the public App lookup; retrying (attempt $attempt)."
+                  sleep $((attempt * 15))
+                  continue
+                fi
+                ;;
+            esac
+            break
+          done
           if [ "$github_app_status" != "200" ]; then
+            rate_limited=false
+            if [ "$github_app_status" = "429" ] || grep -qi '^x-ratelimit-remaining: 0' "$github_app_headers" 2>/dev/null; then
+              rate_limited=true
+            fi
+            if [ "$rate_limited" = true ]; then
+              # The API quota for this runner address is spent. The public App
+              # page answers 404 for a private or missing App, so a 200 still
+              # proves contributors can find it. The contract fields are
+              # checked on the next release whose lookup is not refused.
+              page_status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 30 \
+                  --output /dev/null \
+                  --write-out "%{http_code}" \
+                  https://github.com/apps/slop-identity
+              )" || page_status=000
+              if [ "$page_status" = "200" ]; then
+                echo "::warning::GitHub's unauthenticated API quota for this runner was spent (HTTP $github_app_status); the public Slop Identity App page answered 200, so the App is still public. Contract fields were not re-read this release."
+                exit 0
+              fi
+              echo "::error::The Slop Identity GitHub App lookup was rate limited (HTTP $github_app_status) and its public page answered HTTP $page_status."
+              exit 1
+            fi
             echo "::error::The Slop Identity GitHub App is not publicly discoverable (HTTP $github_app_status)."
             exit 1
           fi

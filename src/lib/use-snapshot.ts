@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchWithDeadline, readBoundedBytes } from "./browser-json";
+import {
+  fetchWithDeadline,
+  PUBLISHED_DATA_DEADLINE_MS,
+  readBoundedBytes,
+} from "./browser-json";
 import { type CycleIndex, loadCycleIndex } from "./cycle-index";
 import {
   assertLeaderboardSnapshot,
@@ -83,16 +87,18 @@ async function loadSnapshot(
             headers: { Accept: "application/json" },
             signal: requestSignal,
           },
+          PUBLISHED_DATA_DEADLINE_MS,
         );
         if (!response.ok)
           throw new Error(`snapshot returned ${response.status}`);
         const bytes = await readLeaderboardBytes(
           await readBoundedBytes(response, MAX_LEADERBOARD_BYTES, "snapshot"),
           async (path) => {
-            const part = await fetchWithDeadline(path, {
-              signal: requestSignal,
-              cache: "no-store",
-            });
+            const part = await fetchWithDeadline(
+              path,
+              { signal: requestSignal, cache: "no-store" },
+              PUBLISHED_DATA_DEADLINE_MS,
+            );
             if (!part.ok)
               throw new Error(`snapshot part returned ${part.status}`);
             return readBoundedBytes(

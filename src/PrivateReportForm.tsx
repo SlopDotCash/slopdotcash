@@ -1,3 +1,4 @@
+import { Lock, TriangleAlert } from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
@@ -19,6 +20,7 @@ import {
   projectApiRequest,
 } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { StatusBadge } from "./Presentation";
 import { SecurityOffer } from "./SecurityOffer";
 
 const PREFIX = "slop-report-compose:";
@@ -56,7 +58,12 @@ function restore(owner: string, project: string): SavedReport {
     }
     const raw = sessionStorage.getItem(`${accountPrefix}${project}`);
     if (!raw) return fresh;
-    const saved = JSON.parse(raw) as SavedReport;
+    const parsed = JSON.parse(raw) as SavedReport;
+    // A draft saved before a field existed gets that field empty.
+    const saved =
+      parsed && typeof parsed.draft === "object" && parsed.draft !== null
+        ? { ...parsed, draft: { ...EMPTY_DRAFT, ...parsed.draft } }
+        : parsed;
     if (
       typeof saved.key !== "string" ||
       typeof saved.attempted !== "boolean" ||
@@ -237,10 +244,7 @@ export function PrivateReportForm({
         try {
           current = await currentProjectSession();
         } catch {
-          if (isCurrent())
-            setError(
-              "Your current account could not be verified. Your original report is kept privately for recovery.",
-            );
+          if (isCurrent()) setError("Session check failed. Report kept.");
           return;
         }
         if (!isCurrent()) return;
@@ -248,9 +252,7 @@ export function PrivateReportForm({
           clearCapturedDraft(recoveryDraftBytes.current);
           hideDraft();
           setNeedsSession(false);
-          setError(
-            "Your account changed or signed out. Sign in again before submitting a report.",
-          );
+          setError("Signed out. Sign in to submit.");
           return;
         }
         setNeedsSession(false);
@@ -266,9 +268,7 @@ export function PrivateReportForm({
       if (current?.githubId !== owner) {
         clearCapturedDraft(draftBytes);
         hideDraft();
-        setError(
-          "Your account changed or signed out. Sign in again before submitting a report.",
-        );
+        setError("Signed out. Sign in to submit.");
         return;
       }
       const result = await projectApiRequest<{ submission?: { id?: unknown } }>(
@@ -293,7 +293,7 @@ export function PrivateReportForm({
         throw new ProjectApiError(
           0,
           "invalid_response",
-          "The server did not return a usable report receipt. Retry the same report to reconcile it.",
+          "No receipt returned. Retry.",
         );
       const received = { id: submissionId, draftBytes };
       accepted.current = true;
@@ -312,9 +312,7 @@ export function PrivateReportForm({
       } catch {
         if (isCurrent()) {
           setNeedsSession(true);
-          setError(
-            "Your current account could not be verified. Your original report is kept privately for recovery.",
-          );
+          setError("Session check failed. Report kept.");
         }
         return;
       }
@@ -322,9 +320,7 @@ export function PrivateReportForm({
       if (current?.githubId !== owner) {
         clearCapturedDraft(draftBytes);
         hideDraft();
-        setError(
-          "Your account changed or signed out. Sign in again before submitting a report.",
-        );
+        setError("Signed out. Sign in to submit.");
         return;
       }
       setError(errorMessage(cause));
@@ -376,10 +372,6 @@ export function PrivateReportForm({
       >
         <div role="status">
           <h3>Report received</h3>
-          <p>
-            Slop saved your private report. Opening its receipt requires the
-            same signed-in account.
-          </p>
           {receiptMessage ? <p>{receiptMessage}</p> : null}
         </div>
         <div className="report-form-actions">
@@ -388,7 +380,7 @@ export function PrivateReportForm({
             className="button primary-button"
             disabled={busy}
           >
-            {busy ? "Checking receipt…" : "Check session and open receipt"}
+            {busy ? "Checking receipt…" : "Open receipt"}
           </button>
         </div>
       </form>
@@ -401,9 +393,8 @@ export function PrivateReportForm({
         onSubmit={submit}
       >
         <div role="alert">
-          <h3>Check your private session</h3>
+          <h3>Sign-in check needed</h3>
           <p>{error}</p>
-          <p>No new report will be sent when you check your session.</p>
         </div>
         <div className="report-form-actions">
           <button
@@ -411,7 +402,7 @@ export function PrivateReportForm({
             className="button primary-button"
             disabled={busy}
           >
-            {busy ? "Checking session…" : "Check session to recover report"}
+            {busy ? "Checking session…" : "Recover report"}
           </button>
         </div>
       </form>
@@ -440,25 +431,27 @@ export function PrivateReportForm({
         </div>
       ) : null}
       <ol className="report-steps" aria-label="Report steps">
-        <li aria-current={!review ? "step" : undefined}>1. Write report</li>
-        <li aria-current={review ? "step" : undefined}>2. Review and submit</li>
+        <li aria-current={!review ? "step" : undefined}>Write</li>
+        <li aria-current={review ? "step" : undefined}>Review</li>
       </ol>
       {!storageAvailable ? (
         <p role="alert">
-          This tab cannot save your draft. Keep this page open until you receive
-          a receipt.
+          <TriangleAlert aria-hidden="true" size={16} /> Draft not saved. Keep
+          this tab open.
         </p>
       ) : (
         <p className="field-hint">
-          {saved.attempted
-            ? `This tab keeps the report for @${login}. Its receipt is not confirmed.`
-            : `Draft kept in this tab for @${login}. It is not submitted yet.`}
+          {saved.attempted ? (
+            <StatusBadge tone="warning">Unconfirmed · @{login}</StatusBadge>
+          ) : (
+            <StatusBadge>Draft · @{login}</StatusBadge>
+          )}
         </p>
       )}
       {review ? (
         <>
           <h3 ref={heading} tabIndex={-1}>
-            Review your private report
+            <Lock aria-hidden="true" size={18} /> Review
           </h3>
           <p>
             To {project.name}, as @{login}.
@@ -466,6 +459,12 @@ export function PrivateReportForm({
           <SecurityOffer project={project} compact />
           <h4>{String(reviewed.summary)}</h4>
           <pre className="report-preview">{String(reviewed.description)}</pre>
+          {saved.draft.proofName && saved.draft.proofText ? (
+            <>
+              <p>Proof of concept: {saved.draft.proofName}</p>
+              <pre className="report-preview">{saved.draft.proofText}</pre>
+            </>
+          ) : null}
           {reviewed.severity || reviewed.cvssVectorString || reviewed.cweIds ? (
             <p>
               Classification:{" "}
@@ -479,50 +478,23 @@ export function PrivateReportForm({
             </p>
           ) : null}
           <p>
-            Slop stores this report privately and uses Surplus Intelligence to
-            screen it. Only you and currently authorized reviewers can read it.
-            GitHub delivery is optional and separate.
+            <StatusBadge icon={<Lock />}>
+              Private · screened by Surplus Intelligence
+            </StatusBadge>{" "}
+            <StatusBadge>Provider may retain data</StatusBadge>{" "}
+            <StatusBadge tone="warning">No credentials</StatusBadge>
           </p>
-          <details>
-            <summary>Privacy and review</summary>
-            <p>
-              Screening is advice, not an award decision. Provider retention
-              follows the account terms; zero retention is not promised. Do not
-              include credentials. Your receipt records the terms in force when
-              Slop accepts the report.
-            </p>
-          </details>
         </>
       ) : (
-        <>
-          <p>
-            Explain the affected component or revision, what an attacker could
-            do, and how to reproduce it safely.
-          </p>
-          {fields(saved.draft, (draft) => {
-            closedDraft.current = false;
-            setSaved({ ...saved, draft });
-          })}
-          <details>
-            <summary>Example report structure</summary>
-            <pre className="report-preview">
-              Affected component and revision:\n\nImpact:\n\nSafe reproduction
-              steps:\n1.\n2.\n\nExpected and actual results:\n\nSupporting
-              evidence:
-            </pre>
-          </details>
-        </>
+        fields(saved.draft, (draft) => {
+          closedDraft.current = false;
+          setSaved({ ...saved, draft });
+        })
       )}
       {error ? (
         <div className="form-error" role="alert">
           <strong>Report not confirmed</strong>
           <p>{error}</p>
-          {saved.attempted ? (
-            <p>
-              Your original report is kept. Retry it to reconcile the same
-              submission.
-            </p>
-          ) : null}
         </div>
       ) : null}
       <div className="report-form-actions">

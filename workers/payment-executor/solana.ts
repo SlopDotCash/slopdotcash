@@ -10,6 +10,7 @@ import {
   BINDING_SIZE,
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
+  PRE_PLEDGE_PROJECT_SIZE,
   PROJECT_SIZE,
   SOLANA_NATIVE_ASSET,
   type SolanaEscrowConfig,
@@ -148,6 +149,36 @@ export async function preflightSolanaDeployment(
   await verifySolanaDeployment(config);
   return config;
 }
+/**
+ * Project account sizes the executor reads: before the month-pledge program
+ * upgrade and after `migrate_project` appends `pledged_open` (operator
+ * decision, 15 November 2026). Every field the executor reads sits before
+ * the appended one.
+ */
+export const PROJECT_SIZES = [PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE] as const;
+
+/** Reads the Project account at either size; null when it does not exist. */
+export async function readSolanaProject(
+  config: SolanaEscrowConfig,
+  address: string,
+  disc: string,
+) {
+  const response = (await solanaRpc(config, "getAccountInfo", [
+    address,
+    { commitment: "finalized", encoding: "base64" },
+  ])) as { value: unknown };
+  if (response.value === null) return null;
+  let mismatch: unknown;
+  for (const size of PROJECT_SIZES) {
+    try {
+      return solanaAccount(response.value, config.programId, size, disc);
+    } catch (error) {
+      mismatch = error;
+    }
+  }
+  throw mismatch;
+}
+
 export async function readSolanaAccount(
   config: SolanaEscrowConfig,
   address: string,
@@ -200,10 +231,9 @@ async function readAward(
   input: Pick<Input, "network" | "vault" | "obligationId" | "githubUserId">,
 ): Promise<Context> {
   const config = await preflightSolanaDeployment(env, input);
-  const project = await readSolanaAccount(
+  const project = await readSolanaProject(
     config,
     config.projectPda,
-    PROJECT_SIZE,
     "cda8bdcab5f78e13",
   );
   if (
@@ -325,7 +355,15 @@ async function send(
     const status = await solanaTransactionStatus(ctx, attempt);
     if (status && !status.failed)
       return { transactionId: attempt.transactionId };
-    if (status?.failed && (role !== "keeper" || !status.finalized))
+    // A keeper payment and an attester binding may be replaced after a
+    // finalized failure: finality proves the transaction took no effect, and
+    // the refresh below re-reads the finalized obligation/binding before any
+    // new signing. A failure short of finality still blocks replacement.
+    const finalizedFailure = status?.failed === true && status.finalized;
+    if (
+      status?.failed &&
+      (!finalizedFailure || (role !== "keeper" && role !== "attester"))
+    )
       throw new Error("Existing transaction failed; reconcile before retry");
     const height = await solanaRpc(ctx.config, "getBlockHeight", [
       { commitment: "finalized" },
@@ -334,15 +372,17 @@ async function send(
       throw new Error("Invalid finalized block height");
     if (
       height > attempt.lastValidBlockHeight ||
-      (role === "keeper" && status?.failed && status.finalized)
+      ((role === "keeper" || role === "attester") && finalizedFailure)
     ) {
-      // Re-read finalized obligation/binding only after finalized expiry. No resubmission
-      // can race an old valid blockhash. Preserve prior signed attempt in the journal.
+      // Re-read finalized obligation/binding only after finalized expiry or a
+      // finalized failure. No resubmission can race an old valid blockhash.
+      // Preserve prior signed attempt in the journal.
       const current = await refresh();
-      if (
-        (role === "relayer" || role === "keeper") &&
-        current.obligation[136] !== 0
-      )
+      // Every role rechecks the paid flag on the refreshed state: the
+      // opening read is stale by the time the blockhash expires, so a
+      // payment that landed in between must refuse a re-sign here, not
+      // after the fresh branch re-reads the same stale snapshot.
+      if (current.obligation[136] !== 0)
         throw new Error(
           "Paid outside known attempt; finalized receipt reconciliation required",
         );

@@ -8,6 +8,7 @@ import {
   addedBinaryRecovery,
   binarySourceLimitations,
   needsAddedBinaryProof,
+  recoverRetainedBinaryAtMerge,
 } from "./value-binary";
 import {
   collectBranchPolicy,
@@ -15,6 +16,7 @@ import {
 } from "./value-branch-policy";
 import {
   githubLinkDestinations,
+  sameRepositoryCommitHints,
   withoutClosedCodeFences,
   withoutClosedCodeSpans,
 } from "./value-commit-hints";
@@ -214,11 +216,10 @@ async function collectCommitChanges(
         commit.sha,
       );
     }
-    if (client.verifiedFile)
-      await addedValuePatchRecovery(client, root.slice("/repos/".length))(
-        commit.files,
-        commit.sha,
-      );
+    await addedValuePatchRecovery(client, root.slice("/repos/".length))(
+      commit.files,
+      commit.sha,
+    );
     for (const kind of ["additions", "deletions"] as const)
       if (
         commit.files.reduce(
@@ -244,6 +245,7 @@ export interface RelatedPullRequestTimelineNode {
   };
 }
 
+// attribution-rules: begin reference-discovery
 export function valueReferenceTimelineRequest(
   repository: string,
   number: number,
@@ -555,6 +557,7 @@ export async function collectValueReferenceEvidence(
       related.limitations.push(`Incomplete ${name}: ${actual}/${expected}`);
   return { pull, ...related };
 }
+// attribution-rules: end reference-discovery
 /** True when `id` names the repository or one of its aliases, ignoring case. */
 export function namesRepository(
   repository: Pick<TargetRepository, "id" | "aliases">,
@@ -650,6 +653,16 @@ export async function pullCommits(
   return complete;
 }
 
+interface HistoricalAllocationAcceptance {
+  repositoryNodeId: string;
+  pullRequestNodeId: string;
+  headSha: string;
+  acceptedSha: string;
+  mergedAt: string;
+  baseSha: string;
+  baseRef: string;
+}
+
 export async function collectValueEvidence(
   client: EvidenceClient,
   repository: string,
@@ -657,6 +670,7 @@ export async function collectValueEvidence(
   repositoryPolicy: TargetRepository | null = findRegisteredRepositoryById(
     repository,
   ),
+  historicalAllocationAcceptance?: HistoricalAllocationAcceptance,
 ): Promise<ValueEvidence> {
   if (
     !/^[\w.-]+\/[\w.-]+$/u.test(repository) ||
@@ -1080,6 +1094,25 @@ export async function collectValueEvidence(
     // Unavailable or malformed Git objects never establish a duplicate.
   }
   if (noChangePromotion) limitations.push(NO_CHANGE_PROMOTION_CONTEXT);
+  // The historical allocation collector reconstructs implementation from a
+  // directly accepted PR on any base. A verified merge on an older branch is
+  // not missing evidence merely because the current integration branch moved.
+  if (
+    historicalAllocationAcceptance &&
+    (repositoryPolicy === null ||
+      historicalAllocationAcceptance.repositoryNodeId !==
+        repositoryIdentity.node_id ||
+      historicalAllocationAcceptance.pullRequestNodeId !== pull.node_id ||
+      historicalAllocationAcceptance.headSha !== pull.head.sha ||
+      historicalAllocationAcceptance.acceptedSha !== pull.merge_commit_sha ||
+      historicalAllocationAcceptance.acceptedSha !== mergeCommitEvidence?.sha ||
+      historicalAllocationAcceptance.mergedAt !== pull.merged_at ||
+      historicalAllocationAcceptance.baseSha !== pull.base.sha ||
+      historicalAllocationAcceptance.baseRef !== pull.base.ref ||
+      indirect.acceptance !== null ||
+      pull.state !== "closed")
+  )
+    throw new Error("Historical allocation acceptance changed");
   if (
     noChangePromotion === null &&
     pull.merged_at !== null &&
@@ -1103,9 +1136,10 @@ export async function collectValueEvidence(
         pull.base.sha,
       );
     } catch {
-      limitations.push(
-        "Historical integration branch authority is unavailable or ambiguous",
-      );
+      if (historicalAllocationAcceptance === undefined)
+        limitations.push(
+          "Historical integration branch authority is unavailable or ambiguous",
+        );
     }
   }
   if (
@@ -1200,6 +1234,54 @@ export async function collectValueEvidence(
       ? { unavailablePublicReferences: related.unavailablePublicReferences }
       : {}),
   };
+  // A narrowly discovered repair keeps the authenticated editor record with
+  // the source. Ordinary PR bodies do not incur an additional provider read.
+  if (
+    pull.merged_at?.startsWith("2026-10-") &&
+    pull.body &&
+    related.references.length &&
+    commits.some((commit) => commit.author?.node_id !== pull.user.node_id) &&
+    sameRepositoryCommitHints(repository, pull.body).includes(pull.head.sha) &&
+    client.graphql
+  ) {
+    const [owner, name] = repository.split("/");
+    const result = await client.graphql<{
+      repository: {
+        pullRequest: {
+          id: string;
+          body: string;
+          headRefOid: string;
+          mergedAt: string;
+          updatedAt: string;
+          lastEditedAt: string | null;
+          editor: { id: string; __typename: string } | null;
+          author: { id: string; __typename: string };
+        };
+      };
+    }>(
+      "query SlopRetainedRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}",
+      { owner, name, number: pull.number },
+    );
+    const body = result.repository?.pullRequest;
+    if (
+      body?.id === pull.node_id &&
+      body.body === pull.body &&
+      body.headRefOid === pull.head.sha &&
+      body.mergedAt === pull.merged_at &&
+      body.updatedAt === pull.updated_at &&
+      typeof body.author?.id === "string" &&
+      typeof body.author.__typename === "string"
+    )
+      evidence.repairBodyEdit = {
+        ...body,
+        editor: body.editor
+          ? { id: body.editor.id, type: body.editor.__typename }
+          : null,
+        author: { id: body.author.id, type: body.author.__typename },
+      };
+    else limitations.push("Retained repair body changed during collection");
+  }
+  await recoverRetainedBinaryAtMerge(client, evidence);
   limitations.push(...(await binarySourceLimitations(evidence)));
   return evidence;
 }

@@ -22,6 +22,7 @@ import {
   NO_CHANGE_PROMOTION_CONTEXT,
   noChangePromotionMatches,
 } from "./value-no-change-promotion";
+import { retainedRepair } from "./value-original-repair";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
 import type {
@@ -166,7 +167,11 @@ export async function prepareWorkUnitEvidence(
     const covered = new Set<string>();
     const relocated = new Map<string, Set<string>>();
     for (const resolution of evidence.mergeResolutions ?? []) {
-      if (!resolution.automaticRelocations?.length) continue;
+      if (
+        resolution.kind === "combined-parent-delta" ||
+        !resolution.automaticRelocations?.length
+      )
+        continue;
       const merge = evidence.commits.find(
         (entry) => entry.sha === resolution.commitSha,
       );
@@ -409,11 +414,26 @@ export async function prepareWorkUnitEvidence(
       // unlinked or ineligible original author cannot hide a different one.
       // A verified resolution copy has a shared implementation antecedent and
       // resolved blob. Its accepting merger need not be the original resolver.
+      // An acknowledged copied repair keeps both primary identities. Ordinary
+      // allocation uses its accepted author; October's verified override is separate.
       const acceptedAuthor = copied.integration.evidence.commits.find(
         (commit) => commit.sha === copied.acceptedCommitSha,
       )?.author;
+      const repair =
+        !copied.mergeResolution &&
+        (acceptedAuthor?.node_id ?? null) !==
+          (originCommit.author?.node_id ?? null)
+          ? retainedRepair(
+              copied.original,
+              copied.integration,
+              copied.acceptedCommitSha,
+              copied.originalCommitSha,
+              claim.path,
+            )
+          : null;
       if (
         !copied.mergeResolution &&
+        !repair &&
         (acceptedAuthor?.node_id ?? null) !==
           (originCommit.author?.node_id ?? null)
       )
@@ -449,6 +469,7 @@ export async function prepareWorkUnitEvidence(
           acceptancePullRequestId: copied.integration.evidence.pull.node_id,
           acceptedCommitSha: copied.acceptedCommitSha,
           preexistingCommitShas: copied.preexistingCommitShas,
+          ...(repair ? { repair } : {}),
         },
       });
       continue;

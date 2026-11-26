@@ -40,7 +40,10 @@ function projectWithVault() {
 
 async function openMonthlyAwards(page: Page) {
   await page.goto("/projects/eliza/funding");
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards" })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
 }
 
 test(
@@ -134,7 +137,9 @@ test(
           .toBeGreaterThanOrEqual(0);
       }
       await expect(
-        page.getByRole("button", { name: "Review monthly awards" }),
+        page
+          .getByRole("region", { name: "Monthly awards" })
+          .getByRole("button", { name: "Open", exact: true }),
       ).toBeVisible();
       await page.screenshot({
         path: info.outputPath(
@@ -289,7 +294,10 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await page.goto("/projects/eliza/awards?keep=1");
   await expect(page).toHaveURL(/\/projects\/eliza\?keep=1#monthly-awards$/u);
   await expect(page.locator("#monthly-awards")).toBeInViewport();
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards" })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Monthly awards", exact: true }),
   ).toBeVisible();
@@ -325,18 +333,9 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     });
   await expect(firstBreakdown).toContainText("1.209876532 $TEST");
   await expect(firstBreakdown).toContainText("0.024691358 $TEST");
-  const basis = firstBreakdown.locator("details");
   await expect(
-    basis.getByText("Proposed gross", { exact: true }),
-  ).not.toBeVisible();
-  await basis.getByText("Allocation basis", { exact: true }).focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    basis.getByText("Proposed gross", { exact: true }),
-  ).toBeVisible();
-  await expect(basis).toContainText("1.23456789 $TEST");
-  await basis.getByText("Allocation basis", { exact: true }).focus();
-  await page.keyboard.press("Enter");
+    firstBreakdown.locator(".owner-award-recipient small"),
+  ).toHaveText("Proposed 1.23456789 $TEST");
   const secondBreakdown = awards
     .getByRole("list", { name: "Allocations", exact: true })
     .locator("li")
@@ -365,11 +364,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await expect(saveSecond).toBeDisabled();
   await reason.fill("  Part of this work was reverted after merge.  ");
   await saveSecond.click();
-  await expect(
-    page.getByText(
-      "Cut saved. The reason is public and the contributor was notified.",
-    ),
-  ).toBeVisible();
+  await expect(secondBreakdown.getByRole("status")).toHaveText("Saved");
   await expect(secondBreakdown).toContainText("1.47 $TEST");
   await expect(secondBreakdown).toContainText("0.03 $TEST");
   expect(changes).toEqual([
@@ -426,20 +421,23 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   // After the cutoff, with the automatic default on, allocations are fixed.
   cutoffAt = "2026-10-01T00:00:00.000Z";
   await load.click();
-  await expect(awards).toContainText("Cutoff passed");
+  await expect(awards).toContainText("Finalizing");
   await expect(
     awards.getByLabel("Award for second-contributor"),
   ).toBeDisabled();
   cutoffAt = "2026-10-04T00:00:00.000Z";
   await load.click();
-  await expect(awards).toContainText("You can finalize earlier");
   // The cutoff is a calendar UTC instant, shown in UTC for every viewer.
-  await expect(awards).toContainText("Finalizes Oct 4, 2026, 00:00 UTC.");
+  await expect(awards).toContainText("Finalizes Oct 4, 2026, 00:00 UTC");
   await expect(awards.getByLabel("Award for second-contributor")).toBeEnabled();
-  await awards
-    .getByRole("button", { name: "Turn off automatic finalization" })
-    .click();
-  await expect(awards).toContainText("Finalize each month manually.");
+  const autoFinalize = awards.getByRole("switch", {
+    name: "Auto-finalize",
+    exact: true,
+  });
+  await expect(autoFinalize).toBeChecked();
+  await autoFinalize.click();
+  await expect(autoFinalize).not.toBeChecked();
+  await expect(awards).not.toContainText("Finalizes");
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: info.outputPath("owner-monthly-allocations.png"),
@@ -492,8 +490,10 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   });
   await restoreAllocationText();
   await awards.getByRole("button", { name: "Finalize awards" }).click();
-  await expect(awards).toContainText("Finalized by you");
-  await expect(awards).toContainText("Oct 2, 2026, 00:00 UTC");
+  await expect(awards).toContainText("Final · you · Oct 2, 2026");
+  await expect(
+    awards.locator('time[datetime="2026-10-02T00:00:00.000Z"]'),
+  ).toBeVisible();
   await expect(awards).toContainText("Underfunded");
   await expect(awards.getByLabel("Award for second-contributor")).toHaveCount(
     0,
@@ -501,9 +501,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   empty = true;
   frozen = false;
   await load.click();
-  await expect(awards).toContainText(
-    "No allocation is proposed for this month yet.",
-  );
+  await expect(awards).toContainText("No proposal yet");
   // Native month controls must shrink within the form at 200% text size.
   await enlargeText(page.locator("body"));
   expect(
@@ -515,9 +513,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await page.keyboard.press("Tab");
   await expect(load).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(awards).toContainText(
-    "No allocation is proposed for this month yet.",
-  );
+  await expect(awards).toContainText("No proposal yet");
   await expectAccessible(page);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
@@ -527,8 +523,19 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
 });
 
 test("owner reserve repair keeps healthy and unknown states held and restores a submitted transaction after reload", async ({
+  baseURL,
+  diagnostics,
   page,
 }, info) => {
+  // Leaving the project intentionally cancels its in-flight standings reads.
+  if (!baseURL) throw new Error("Browser fixture has no base URL");
+  const origin = escapeRegExp(new URL(baseURL).origin);
+  diagnostics.allow(
+    new RegExp(
+      `^net::ERR_ABORTED GET ${origin}/data/(?:leaderboard\\.json\\?[^ ]+|points/[0-9a-f]\\.json)$`,
+      "u",
+    ),
+  );
   const project = projectWithVault();
   await page.clock.setFixedTime(new Date("2026-10-02T12:00:00Z"));
   await page.route(
@@ -609,17 +616,17 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     .getByRole("button", { name: "Check reserve", exact: true })
     .click();
   await expect(details.getByRole("status")).toHaveText(
-    "The reserve total is correct. No release is needed.",
+    "Total correct. Nothing to release.",
   );
   await expect(
-    details.getByRole("button", { name: "Review and sign release" }),
+    details.getByRole("button", { name: "Sign release" }),
   ).toHaveCount(0);
   reason = "allocation-unavailable";
   await details
     .getByRole("button", { name: "Check reserve", exact: true })
     .click();
   await expect(details.getByRole("status")).toContainText(
-    "complete original allocation is unavailable",
+    "Allocation unavailable. Held.",
   );
   expect(requests).toEqual(
     Array.from({ length: 2 }, () => ({
@@ -638,18 +645,14 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   await expect(
     details.getByRole("button", { name: "Check reserve", exact: true }),
   ).toHaveCount(0);
-  await expect(details.getByLabel("Transaction hash or signature")).toHaveValue(
-    `0x${"c".repeat(64)}`,
-  );
+  await expect(
+    details.getByLabel("Transaction hash", { exact: true }),
+  ).toHaveValue(`0x${"c".repeat(64)}`);
   await details
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(details.getByRole("status")).toHaveText(
-    "Waiting for the transaction to finalize.",
-  );
-  await expect(
-    details.getByText("Release verified.", { exact: false }),
-  ).toHaveCount(0);
+  await expect(details.getByRole("status")).toHaveText("Finalizing");
+  await expect(details.getByText("Released.", { exact: true })).toHaveCount(0);
   // A pending readback from the departed component cannot replace the
   // newer transaction evidence accepted by its replacement component.
   holdCheck = true;
@@ -657,19 +660,18 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect.poll(() => checkStarted).toBe(true);
-  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await page.getByRole("link", { name: "How it works", exact: true }).click();
+  await expect(page).toHaveURL(/\/how-it-works$/u);
   await expect(details).toHaveCount(0);
   await page.goBack();
   await details.locator("summary").click();
   await details
-    .getByLabel("Transaction hash or signature")
+    .getByLabel("Transaction hash", { exact: true })
     .fill(`0x${"d".repeat(64)}`);
   await details
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(details.getByRole("status")).toHaveText(
-    "Waiting for the transaction to finalize.",
-  );
+  await expect(details.getByRole("status")).toHaveText("Finalizing");
   const releaseKey = "slop:monthly-release:v1:eliza:2026-09:base-sepolia";
   const newerEvidence = await page.evaluate(
     (key) => sessionStorage.getItem(key),
@@ -685,9 +687,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   await details
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(details.getByRole("status")).toHaveText(
-    "Release verified. The reserve returned to the vault's free balance.",
-  );
+  await expect(details.getByRole("status")).toHaveText("Released.");
   expect(
     await page.evaluate(() =>
       sessionStorage.getItem(
@@ -706,6 +706,118 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+});
+
+test("ASI's reviewed closeout can finalize in November from monthly awards", async ({
+  page,
+}, info) => {
+  const cutoff = "2026-11-19T00:00:00.000Z";
+  const now = "2026-11-19T12:00:00.000Z";
+  const project = stagingPaymentProject("robinhood-mainnet", "asi");
+  await page.clock.setFixedTime(new Date(now));
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "123", githubLogin: "owner", admin: false },
+      },
+    }),
+  );
+  await page.route("**/api/v1/points/session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const view = {
+    projectId: "asi",
+    period: "2026-11",
+    manifestSha256: "a".repeat(64),
+    automatic: false,
+    canManage: true,
+    cutoffAt: "2026-12-04T00:00:00.000Z",
+    deployment: null,
+    asset: {
+      network: "robinhood-mainnet",
+      assetAddress: `0x${"1".repeat(40)}`,
+      assetDecimals: 6,
+      symbol: "USDG",
+    },
+    proposal: {
+      earlyCloseAt: cutoff,
+      capBase: "150000000",
+      allocationSequence: 0,
+      allocations: [
+        {
+          githubUserId: "1",
+          login: "fixture-contributor",
+          grossBase: "150000000",
+          proposedGrossBase: "150000000",
+          sourceDigest: "c".repeat(64),
+        },
+      ],
+    },
+  };
+  const monthly = "**/api/v1/payments/projects/asi/monthly/2026-11";
+  await page.route(monthly, (route) =>
+    route.fulfill({ json: { ...view, run: null } }),
+  );
+  await page.route(`${monthly}/finalize`, (route) => {
+    expect(route.request().postDataJSON()).toEqual({ expectedSequence: 0 });
+    return route.fulfill({
+      json: {
+        ...view,
+        run: {
+          trigger: "owner",
+          frozenAt: now,
+          snapshotSha256: "d".repeat(64),
+          totalGrossBase: "150000000",
+          network: "robinhood-mainnet",
+          vault: `0x${"2".repeat(40)}`,
+          funded: false,
+          awards: [
+            {
+              githubUserId: "1",
+              login: "fixture-contributor",
+              grossBase: "150000000",
+              feeBase: "3000000",
+              netBase: "147000000",
+              state: "underfunded",
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page.goto("/projects/asi/funding");
+  const awards = page.getByRole("region", { name: "Monthly awards" });
+  await awards.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(
+    awards.getByRole("navigation", { name: "Contribution month" }),
+  ).toContainText("November 2026");
+  await expect(
+    awards.getByRole("button", { name: "Next award month" }),
+  ).toBeDisabled();
+  await expect(awards.locator(`time[datetime="${cutoff}"]`)).toBeVisible();
+  await expect(awards).toContainText("150 USDG");
+  await expect(awards.getByLabel("Award for fixture-contributor")).toHaveCount(
+    0,
+  );
+  const finalize = awards.getByRole("button", { name: "Finalize awards" });
+  await finalize.focus();
+  await page.keyboard.press("Enter");
+  await expect(awards).toContainText("Final · you · Nov 19, 2026");
+  await expect(awards).toContainText("147 USDG");
+  await expectAccessible(page);
+  await page.screenshot({ path: info.outputPath("asi-closeout.png") });
 });
 
 /** Routes for the December 2026 review window: a private November proposal. */
@@ -880,7 +992,9 @@ for (const status of [200, 403]) {
       0,
     );
     await expect(awards.getByRole("alert")).toContainText("account changed");
-    await expect(awards).not.toContainText("Allocation saved.");
+    await expect(
+      awards.getByRole("status").filter({ hasText: "Saved" }),
+    ).toHaveCount(0);
   });
 }
 
@@ -965,7 +1079,7 @@ test("a departed allocation save keeps server acceptance without changing the ne
   expect(accepted).toBe(1);
   await expect(page).toHaveURL(/\/$/u);
   await expect(
-    page.getByText("Allocation saved.", { exact: true }),
+    page.getByRole("status").filter({ hasText: /^Saved$/u }),
   ).toHaveCount(0);
 });
 
@@ -980,7 +1094,10 @@ test("a monthly proposal with no public cycle is reachable", async ({
     cycles: [],
   });
   await page.goto("/projects/eliza/funding");
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards" })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   const navigation = page.getByRole("navigation", {
     name: "Contribution month",
   });
@@ -1011,14 +1128,12 @@ test("a maintainer without owner authority sees monthly awards without owner con
   await expect(awards).toContainText("first-contributor");
   await expect(awards.getByText("View only")).toBeVisible();
   await expect(awards).toContainText("Finalizes");
-  await expect(awards).not.toContainText("You can finalize earlier.");
-  await expect(awards).not.toContainText(
-    /finalize (this|each) month manually/i,
-  );
+  await expect(awards).toContainText("Auto-finalize");
+  await expect(awards.getByRole("switch")).toHaveCount(0);
   await expect(awards.getByRole("textbox")).toHaveCount(0);
-  for (const name of [/automatic finalization/, /^Save /, /^Finalize awards/])
+  for (const name of [/^Save /, /^Finalize awards/])
     await expect(awards.getByRole("button", { name })).toHaveCount(0);
-  await expect(page.getByText("Repair a stuck monthly reserve")).toHaveCount(0);
+  await expect(page.getByText("Repair reserve")).toHaveCount(0);
 });
 
 test("a stale public cycle does not lock the review month or discard its draft", async ({
@@ -1063,7 +1178,10 @@ test("a stale public cycle does not lock the review month or discard its draft",
   ).toString();
   await serveDecemberReview(page, published);
   await page.goto("/projects/eliza/funding");
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards" })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   const navigation = page.getByRole("navigation", {
     name: "Contribution month",
   });
@@ -1078,9 +1196,7 @@ test("a stale public cycle does not lock the review month or discard its draft",
   await expect(next).toBeDisabled();
   await previous.click();
   await expect(navigation).toContainText("October 2026");
-  await expect(awards).toContainText(
-    "No allocation is proposed for this month yet.",
-  );
+  await expect(awards).toContainText("No proposal yet");
   await previous.click();
   await expect(navigation).toContainText("September 2026");
   await expect(previous).toBeDisabled();

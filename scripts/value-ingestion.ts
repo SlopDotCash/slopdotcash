@@ -25,12 +25,14 @@ import { assertPenaltyHistory } from "../src/lib/score-penalties";
 import type { GitHubClient } from "../workers/slopbot/github";
 import type { PublishedPenaltyHistory as PublishedPenaltyRow } from "../workers/slopbot/penalties";
 import { loadPolicy } from "../workers/slopbot/review";
+import { publicationCommitPages } from "../workers/slopbot/value-commit-pages";
 import { readValueDecisionFromHistory } from "../workers/slopbot/value-consumption";
 import {
   collectValueContext,
   type ValueContextSelection,
 } from "../workers/slopbot/value-context";
 import {
+  type CompleteValueReferenceDiscussion,
   collectValueEvidence,
   collectValueReferenceEvidence,
 } from "../workers/slopbot/value-evidence";
@@ -46,6 +48,23 @@ import {
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
+import {
+  AttributionRecorder,
+  canonicalJson,
+  revalidateAttributionEntries,
+} from "./attribution-memo";
+import {
+  type AttributionLog,
+  type AttributionMemoEntry,
+  type AttributionMemoFence,
+  type AttributionMemoResult,
+  type CollectionMemoSession,
+  collectionMemoStatsLines,
+  watchAttribution,
+} from "./collection-memo";
+import { rebindHistoricalStandaloneReview } from "./historical-closed-review-source";
+import type { ValueReferenceDiscussionSource } from "./historical-discussion-evidence";
+import type { HistoricalClosedContextBindings } from "./historical-merged-replay";
 import {
   RetainedAttributionIncompleteError,
   retainedCommitCreditSources,
@@ -77,6 +96,65 @@ export class ValueFeedUnavailableError extends Error {
 /** Process exit status for a value feed outage (EX_TEMPFAIL). */
 export const VALUE_FEED_UNAVAILABLE_EXIT_CODE = 75;
 
+/**
+ * Waits between attempts of one feed read after an outage, from
+ * SLOP_VALUE_FEED_RETRY_DELAYS_MS (comma-separated milliseconds). Unset means
+ * one attempt. The release collector sets it: a single 503 among thousands of
+ * history pages otherwise restarts a five-hour collection (19 November 2026).
+ * Only an outage is retried; an integrity failure still stops at once.
+ */
+function feedRetryDelays(): number[] {
+  const raw = process.env.SLOP_VALUE_FEED_RETRY_DELAYS_MS?.trim();
+  if (!raw) return [];
+  const delays = raw.split(",").map((part) => Number(part.trim()));
+  if (
+    delays.length > 10 ||
+    delays.some((delay) => !Number.isSafeInteger(delay) || delay < 0)
+  )
+    throw new Error("SLOP_VALUE_FEED_RETRY_DELAYS_MS is invalid");
+  return delays;
+}
+
+/**
+ * How many first history pages are read at once before the sequential
+ * history loop of loadValueInputs, from SLOP_VALUE_FEED_CONCURRENCY (an
+ * integer from 1 to 16). Unset, empty or 1 means no read-ahead: every page is
+ * read in order, one at a time. The release collector sets it: about 9,000
+ * outcomes each cost two small feed reads, which took 80 to 100 minutes of
+ * pure waiting when read one after another (operator decision, 21 November
+ * 2026).
+ */
+function valueFeedConcurrency(): number {
+  const raw = process.env.SLOP_VALUE_FEED_CONCURRENCY?.trim();
+  if (!raw) return 1;
+  if (!/^[0-9]{1,2}$/u.test(raw))
+    throw new Error("SLOP_VALUE_FEED_CONCURRENCY is invalid");
+  return Number(raw);
+}
+
+async function withFeedRetry<T>(read: () => Promise<T>): Promise<T> {
+  const delays = feedRetryDelays();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await read();
+    } catch (error) {
+      if (
+        !(error instanceof ValueFeedUnavailableError) ||
+        attempt >= delays.length
+      )
+        throw error;
+      console.warn(
+        JSON.stringify({
+          event: "value_feed_retry",
+          attempt: attempt + 1,
+          delayMs: delays[attempt],
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+}
+
 /** A native fetch body may fulfill with a prefix after its request expires. */
 function assertFeedDeadline(signal: AbortSignal): void {
   if (signal.aborted) throw new ValueFeedUnavailableError(signal.reason);
@@ -103,7 +181,17 @@ async function readFeedJson<T>(
  * 404 (a release without the route), 408, 429 or 5xx is an outage that keeps
  * the last published snapshot; any other non-200 answer or a redirect is an
  * integrity failure reported as `unavailable`. */
-async function fetchAuthoritativeFeed<T>(
+function fetchAuthoritativeFeed<T>(
+  url: URL | string,
+  transport: Fetch,
+  unavailable: string,
+): Promise<T> {
+  return withFeedRetry(() =>
+    fetchAuthoritativeFeedOnce<T>(url, transport, unavailable),
+  );
+}
+
+async function fetchAuthoritativeFeedOnce<T>(
   url: URL | string,
   transport: Fetch,
   unavailable: string,
@@ -135,7 +223,29 @@ async function fetchAuthoritativeFeed<T>(
 /** The fixed HTTPS origin, not a digest supplied by an arbitrary URL, is the
  * publication authority. Test callers can inject a transport, never a new URL.
  */
-async function fetchHistoryPage(
+function fetchHistoryPage(
+  kind: "single" | "joint",
+  repository: string,
+  pull: number,
+  after: number,
+  transport: Fetch,
+  through: number | null = null,
+  repositoryNodeId?: string,
+) {
+  return withFeedRetry(() =>
+    fetchHistoryPageOnce(
+      kind,
+      repository,
+      pull,
+      after,
+      transport,
+      through,
+      repositoryNodeId,
+    ),
+  );
+}
+
+async function fetchHistoryPageOnce(
   kind: "single" | "joint",
   repository: string,
   pull: number,
@@ -448,8 +558,24 @@ export interface ValueInputProgress {
   total: number;
 }
 
+/** Reuse of commit attributions from the previous trusted collection. */
+export interface AttributionMemoContext {
+  session: CollectionMemoSession;
+  /** Seeds the audit sample, so one cutoff always audits the same sources. */
+  cutoffAt: string;
+  /** Slow-attribution and reuse-count lines; the default is stderr. */
+  log?: AttributionLog;
+}
+
+type ValueGithub = Pick<GitHubClient, "get" | "graphql" | "fileText"> & {
+  readReferenceDiscussion?: (
+    source: ValueReferenceDiscussionSource,
+    pull: Pull,
+  ) => Promise<CompleteValueReferenceDiscussion | null>;
+};
+
 export async function loadValueInputs(
-  github: Pick<GitHubClient, "get" | "graphql" | "fileText">,
+  liveGithub: ValueGithub,
   outcomes: readonly AttributionOutcome[],
   transport: Fetch = fetch,
   unavailableJointSources?: (
@@ -457,7 +583,69 @@ export async function loadValueInputs(
   ) => Promise<readonly string[]>,
   attributionOutcomes: readonly AttributionOutcome[] = outcomes,
   onProgress: (progress: ValueInputProgress) => void = () => {},
+  memo?: AttributionMemoContext,
+  feedConcurrency: number = valueFeedConcurrency(),
+  historicalClosedContexts?: HistoricalClosedContextBindings,
 ) {
+  if (
+    !Number.isSafeInteger(feedConcurrency) ||
+    feedConcurrency < 1 ||
+    feedConcurrency > 16
+  )
+    throw new Error("SLOP_VALUE_FEED_CONCURRENCY is invalid");
+  // While an attribution is computed live, every read passes through its
+  // recorder so the next collection can tell whether the answer still holds.
+  let recorder: AttributionRecorder | null = null;
+  const github: ValueGithub = {
+    get: async <T>(path: string) => {
+      const current = recorder;
+      try {
+        const value = await liveGithub.get<T>(path);
+        current?.observeGet(path, value);
+        return value;
+      } catch (error) {
+        current?.observeError();
+        throw error;
+      }
+    },
+    graphql: async <T>(query: string, variables: Record<string, unknown>) => {
+      const current = recorder;
+      try {
+        const value = await liveGithub.graphql<T>(query, variables);
+        current?.observeGraphql(query, variables, value);
+        return value;
+      } catch (error) {
+        current?.observeError();
+        throw error;
+      }
+    },
+    fileText: async (...args: Parameters<GitHubClient["fileText"]>) => {
+      const current = recorder;
+      current?.observeFile(args[0], args[1], args[3]);
+      try {
+        return await liveGithub.fileText(...args);
+      } catch (error) {
+        current?.observeError();
+        throw error;
+      }
+    },
+    readReferenceDiscussion: liveGithub.readReferenceDiscussion
+      ? async (source, pull) => {
+          const current = recorder;
+          try {
+            const discussion = await liveGithub.readReferenceDiscussion?.(
+              source,
+              pull,
+            );
+            if (discussion) current?.observeIncoming(discussion.timeline);
+            return discussion ?? null;
+          } catch (error) {
+            current?.observeError();
+            throw error;
+          }
+        }
+      : undefined,
+  };
   const heldWorkUnits: HeldWorkUnit[] = [];
   const valueDecisions = new Map<
     string,
@@ -529,6 +717,7 @@ export async function loadValueInputs(
     }
   }
   const sourceCache = new Map<string, WorkUnitSource>();
+  const commitPages = publicationCommitPages();
   const observedGroups = new Map<string, string | null>();
   const groups = new Map<string, JointDecision>();
 
@@ -562,31 +751,35 @@ export async function loadValueInputs(
     contextPaths: readonly ValueContextSelection[] = [],
     recipe?: ValueMergeRecipe,
   ) {
+    const { repository, identity } = await repositoryIdentity(repositoryId);
+    const client = commitPages(github);
     const hydrate = async (raw: WorkUnitSource) => {
       const collected = {
         ...raw,
         evidence: await collectValueContext(github, raw.evidence, contextPaths),
       };
-      return recipe
-        ? hydrateValueMergeSource(
-            collected,
-            recipe,
-            (await repositoryIdentity(repositoryId)).identity,
-          )
-        : collected;
+      return hydrateValueMergeSource(
+        collected,
+        recipe,
+        identity,
+        client,
+        repository,
+      );
     };
     const cached = sourceCache.get(id);
     if (cached) {
+      recorder?.observePull(cached.evidence.pull);
       if (
         cached.evidence.repository.toLowerCase() !==
-          repositoryId.toLowerCase() ||
+          repository.id.toLowerCase() ||
+        cached.evidence.repositoryNodeId !== identity.node_id ||
+        cached.evidence.repositoryDatabaseId !== identity.id ||
         cached.evidence.pull.number !== number
       )
         throw new Error("Joint source identity changed between records");
       return hydrate(cached);
     }
-    const { repository, identity } = await repositoryIdentity(repositoryId);
-    const evidence = await collectValueEvidence(github, repository.id, number);
+    const evidence = await collectValueEvidence(client, repository.id, number);
     const outcome = census.get(id);
     if (
       evidence.repositoryNodeId !== identity.node_id ||
@@ -643,7 +836,7 @@ export async function loadValueInputs(
     const missing = [...actorIds].filter((id) => !valueActors.has(id));
     for (let offset = 0; offset < missing.length; offset += 100) {
       const ids = missing.slice(offset, offset + 100);
-      const result = await github.graphql<{
+      const result = await liveGithub.graphql<{
         nodes: ({
           __typename: string;
           id: string;
@@ -674,16 +867,32 @@ export async function loadValueInputs(
     }
   }
 
-  async function resolveRetainedAuthors(
-    outcome: (typeof outcomes)[number],
-    repositoryId: string,
-  ) {
-    if (!outcome.mergedAt) return;
-    // Every branch credits primary authors. Read retained-copy evidence only
-    // for known ordinary unlinked commits first accepted by this PR; a later
-    // promotion cannot trigger another attribution pass for imported work.
+  type RetainedAuthor = {
+    actor: GitHubActor;
+    originalPullRequestId: string;
+    originalPullRequestUrl: string;
+    originalCommitSha: string;
+  };
+  type AttributionAnswer =
+    | { kind: "none" }
+    | { kind: "hold"; limitations: readonly string[] }
+    | {
+        kind: "authors";
+        authors: Map<string, RetainedAuthor>;
+        bindings: Extract<
+          AttributionMemoResult,
+          { kind: "authors" }
+        >["authors"];
+      };
+
+  // attribution-rules: begin retained-authors
+  // Every branch credits primary authors. Read retained-copy evidence only
+  // for known ordinary unlinked commits first accepted by this PR; a later
+  // promotion cannot trigger another attribution pass for imported work.
+  function eligibleCommitShasFor(outcome: (typeof outcomes)[number]) {
+    if (!outcome.mergedAt) return new Set<string>();
     const creditRepositoryId = repositoryIdFromUrl(outcome.url).toLowerCase();
-    const eligibleCommitShas = new Set(
+    return new Set(
       (outcome.commits ?? [])
         .filter(
           (commit) =>
@@ -695,26 +904,55 @@ export async function loadValueInputs(
         )
         .map((commit) => commit.oid),
     );
-    if (eligibleCommitShas.size === 0) return;
-    await repositoryIdentity(repositoryId);
+  }
+
+  async function resolveRetainedAuthors(
+    outcome: (typeof outcomes)[number],
+    repositoryId: string,
+    eligibleCommitShas: ReadonlySet<string>,
+  ): Promise<AttributionAnswer> {
+    const mergedAt = outcome.mergedAt;
+    if (!mergedAt || eligibleCommitShas.size === 0) return { kind: "none" };
+    const { identity } = await repositoryIdentity(repositoryId);
+    const assertAttributionSource = (pull: Pull) => {
+      if (
+        pull.node_id !== outcome.id ||
+        pull.number !== outcome.number ||
+        pull.html_url !== outcome.url ||
+        pull.head.sha !== outcome.headRefOid ||
+        pull.merged_at !== mergedAt ||
+        Date.parse(pull.updated_at) !== Date.parse(outcome.updatedAt)
+      )
+        throw new Error("Attribution source changed after the outcome census");
+    };
+    const readReferenceDiscussion = github.readReferenceDiscussion;
     const discovery = await collectValueReferenceEvidence(
       github,
       repositoryId,
       outcome.number,
+      readReferenceDiscussion
+        ? (pull) => {
+            assertAttributionSource(pull);
+            const headSha = outcome.headRefOid;
+            if (!headSha) return Promise.resolve(null);
+            return readReferenceDiscussion(
+              {
+                repository: repositoryId,
+                repositoryNodeId: identity.node_id,
+                id: outcome.id,
+                number: outcome.number,
+                url: outcome.url,
+                headSha,
+                mergedAt,
+              },
+              pull,
+            );
+          }
+        : undefined,
     );
-    if (
-      discovery.pull.node_id !== outcome.id ||
-      discovery.pull.number !== outcome.number ||
-      discovery.pull.html_url !== outcome.url ||
-      discovery.pull.head.sha !== outcome.headRefOid ||
-      discovery.pull.merged_at !== outcome.mergedAt ||
-      Date.parse(discovery.pull.updated_at) !== Date.parse(outcome.updatedAt)
-    )
-      throw new Error("Attribution source changed after the outcome census");
-    if (discovery.limitations.length) {
-      implementationAttributionHolds.set(outcome.id, discovery.limitations);
-      return;
-    }
+    assertAttributionSource(discovery.pull);
+    if (discovery.limitations.length)
+      return { kind: "hold", limitations: discovery.limitations };
     const originalCandidates = new Map<string, boolean>();
     async function isOriginal(reference: RelatedPullRequest) {
       if (
@@ -743,7 +981,16 @@ export async function loadValueInputs(
       if (await isOriginal(reference)) hasOriginal = true;
     // Most unlinked commits have no replaced submission. Do not collect every
     // historical commit patch merely to discover that no claim can be made.
-    if (!hasOriginal) return;
+    if (!hasOriginal) return { kind: "none" };
+    // A manual release may defer the retained-copy comparison, which can read
+    // thousands of tree pages for one pull request. A held source keeps its
+    // prior journal row and is not memoized, so the next collection resolves
+    // it live (operator decision, 20 November 2026).
+    if (process.env.SLOP_DEFER_RETAINED_ATTRIBUTION === "1")
+      return {
+        kind: "hold",
+        limitations: ["Retained attribution deferred for this collection"],
+      };
     const accepted = await source(repositoryId, outcome.number, outcome.id);
     const sources = [accepted];
     for (const reference of accepted.evidence.relatedPullRequests) {
@@ -761,14 +1008,13 @@ export async function loadValueInputs(
     }
     // Without an original-source candidate, unlinked work keeps the ordinary
     // source-creator fallback. Its provisional minimum needs no value review.
-    if (sources.length === 1) return;
+    if (sources.length === 1) return { kind: "none" };
     let bindings: Awaited<ReturnType<typeof retainedCommitCreditSources>>;
     try {
       bindings = await retainedCommitCreditSources(accepted, sources);
     } catch (error) {
       if (!(error instanceof RetainedAttributionIncompleteError)) throw error;
-      implementationAttributionHolds.set(outcome.id, error.limitations);
-      return;
+      return { kind: "hold", limitations: error.limitations };
     }
     const eligibleBindings = [...bindings].filter(([sha]) =>
       eligibleCommitShas.has(sha),
@@ -776,15 +1022,11 @@ export async function loadValueInputs(
     await hydrateActors(
       new Set(eligibleBindings.map(([, entry]) => entry.actorNodeId)),
     );
-    const authors = new Map<
-      string,
-      {
-        actor: GitHubActor;
-        originalPullRequestId: string;
-        originalPullRequestUrl: string;
-        originalCommitSha: string;
-      }
-    >();
+    const authors = new Map<string, RetainedAuthor>();
+    const memoBindings: Extract<
+      AttributionMemoResult,
+      { kind: "authors" }
+    >["authors"] = [];
     for (const [sha, binding] of eligibleBindings) {
       const actor = valueActors.get(binding.actorNodeId);
       if (!actor || !isCreditEligibleCommitAuthor(actor))
@@ -795,8 +1037,106 @@ export async function loadValueInputs(
         originalPullRequestUrl: binding.originalPullRequestUrl,
         originalCommitSha: binding.originalCommitSha,
       });
+      memoBindings.push([
+        sha,
+        binding.actorNodeId,
+        binding.originalPullRequestId,
+        binding.originalPullRequestUrl,
+        binding.originalCommitSha,
+      ]);
     }
-    if (authors.size) retainedCommitAuthors.set(outcome.id, authors);
+    return authors.size
+      ? { kind: "authors", authors, bindings: memoBindings }
+      : { kind: "none" };
+  }
+
+  function memoResult(answer: AttributionAnswer): AttributionMemoResult | null {
+    if (answer.kind === "hold") return null;
+    return answer.kind === "none"
+      ? { kind: "none" }
+      : { kind: "authors", authors: answer.bindings };
+  }
+  // attribution-rules: end retained-authors
+
+  /** The live computation, recorded for the next collection. */
+  async function liveAttribution(
+    outcome: (typeof outcomes)[number],
+    repositoryId: string,
+    eligibleCommitShas: ReadonlySet<string>,
+  ): Promise<AttributionAnswer> {
+    if (eligibleCommitShas.size === 0 || !outcome.mergedAt)
+      return { kind: "none" };
+    const registered = findRegisteredRepositoryById(repositoryId);
+    const active = new AttributionRecorder(
+      registered
+        ? [
+            repositoryId,
+            registered.id,
+            `${registered.owner}/${registered.name}`,
+            ...registered.aliases,
+          ]
+        : [repositoryId],
+    );
+    recorder = active;
+    let answer: AttributionAnswer;
+    try {
+      answer = await resolveRetainedAuthors(
+        outcome,
+        repositoryId,
+        eligibleCommitShas,
+      );
+    } finally {
+      recorder = null;
+    }
+    if (memo && outcome.headRefOid) {
+      const { identity } = await repositoryIdentity(repositoryId);
+      const entry = active.entry(
+        outcome.id,
+        attributionFence(outcome, identity.node_id, eligibleCommitShas),
+        memoResult(answer),
+      );
+      if (entry) memo.session.next.set(outcome.id, entry);
+      else memo.session.noteNotReusable(active.reasons);
+    }
+    return answer;
+  }
+
+  function attributionFence(
+    outcome: (typeof outcomes)[number],
+    repositoryNodeId: string,
+    eligibleCommitShas: ReadonlySet<string>,
+  ): AttributionMemoFence {
+    return {
+      number: outcome.number,
+      url: outcome.url,
+      headRefOid: outcome.headRefOid as string,
+      mergedAt: new Date(outcome.mergedAt as string).toISOString(),
+      updatedAt: new Date(outcome.updatedAt).toISOString(),
+      repositoryNodeId,
+      eligibleCommitShas: [...eligibleCommitShas].sort(),
+    };
+  }
+
+  /** A reused answer: actors are re-read live, exactly as the live path does. */
+  async function reusedAttribution(
+    entry: AttributionMemoEntry,
+  ): Promise<AttributionAnswer | null> {
+    if (entry.result.kind === "none") return { kind: "none" };
+    await hydrateActors(
+      new Set(entry.result.authors.map((author) => author[1])),
+    );
+    const authors = new Map<string, RetainedAuthor>();
+    for (const [sha, actorNodeId, id, url, original] of entry.result.authors) {
+      const actor = valueActors.get(actorNodeId);
+      if (!actor || !isCreditEligibleCommitAuthor(actor)) return null;
+      authors.set(sha, {
+        actor,
+        originalPullRequestId: id,
+        originalPullRequestUrl: url,
+        originalCommitSha: original,
+      });
+    }
+    return { kind: "authors", authors, bindings: entry.result.authors };
   }
 
   // Attribution applies to the complete merge census, including historical
@@ -806,17 +1146,224 @@ export async function loadValueInputs(
     completed: 0,
     total: attributionOutcomes.length,
   });
-  for (const [index, outcome] of attributionOutcomes.entries()) {
+  const repositoryOf = (outcome: (typeof outcomes)[number]) => {
     const [owner, repo] = new URL(outcome.url).pathname
       .split("/")
       .filter(Boolean);
-    await resolveRetainedAuthors(outcome, `${owner}/${repo}`);
+    return `${owner}/${repo}`;
+  };
+  const eligible = new Map(
+    attributionOutcomes.map((outcome) => [
+      outcome.id,
+      eligibleCommitShasFor(outcome),
+    ]),
+  );
+  // Incremental collection: an earlier answer is reused only when the live
+  // census and every recorded input still match. Everything else is live.
+  const reusable = new Map<string, AttributionMemoEntry>();
+  if (memo?.session.prior.size) {
+    const candidates: AttributionMemoEntry[] = [];
+    for (const outcome of attributionOutcomes) {
+      const entry = memo.session.prior.get(outcome.id);
+      const shas = eligible.get(outcome.id) ?? new Set<string>();
+      if (!entry || shas.size === 0 || !outcome.mergedAt || !outcome.headRefOid)
+        continue;
+      const repositoryId = repositoryOf(outcome);
+      const { identity } = await repositoryIdentity(repositoryId);
+      if (
+        canonicalJson(entry.fence) ===
+        canonicalJson(attributionFence(outcome, identity.node_id, shas))
+      )
+        candidates.push(entry);
+      else memo.session.stats.fenceMisses += 1;
+    }
+    const valid = await revalidateAttributionEntries(
+      liveGithub.graphql.bind(liveGithub) as Parameters<
+        typeof revalidateAttributionEntries
+      >[0],
+      candidates,
+    );
+    for (const entry of candidates) {
+      if (valid.has(entry.outcomeId)) reusable.set(entry.outcomeId, entry);
+      else memo.session.stats.fenceMisses += 1;
+    }
+  }
+  // Audit sample: recompute some reusable answers live first. One difference
+  // discards every reuse in this run.
+  const answers = new Map<string, AttributionAnswer>();
+  if (memo)
+    for (const outcome of attributionOutcomes) {
+      const entry = reusable.get(outcome.id);
+      if (!entry || !memo.session.audits(outcome.id, memo.cutoffAt)) continue;
+      const done = watchAttribution(
+        `${repositoryOf(outcome)}#${outcome.number}`,
+        memo.log,
+      );
+      const answer = await liveAttribution(
+        outcome,
+        repositoryOf(outcome),
+        eligible.get(outcome.id) as Set<string>,
+      );
+      done(answer.kind === "hold" ? "audited, hold" : "audited");
+      answers.set(outcome.id, answer);
+      memo.session.stats.audited += 1;
+      if (canonicalJson(memoResult(answer)) !== canonicalJson(entry.result)) {
+        memo.session.stats.auditMismatches += 1;
+        reusable.clear();
+      }
+    }
+  for (const [index, outcome] of attributionOutcomes.entries()) {
+    const repositoryId = repositoryOf(outcome);
+    const shas = eligible.get(outcome.id) ?? new Set<string>();
+    let answer = answers.get(outcome.id);
+    const entry = reusable.get(outcome.id);
+    // An audited answer was timed above; this pass only takes it.
+    const done = answer
+      ? null
+      : watchAttribution(`${repositoryId}#${outcome.number}`, memo?.log);
+    let how = "computed live";
+    if (!answer && entry) {
+      const reused = await reusedAttribution(entry);
+      if (reused && memo) {
+        answer = reused;
+        how = "reused from the memo";
+        memo.session.next.set(outcome.id, entry);
+        memo.session.stats.reused += 1;
+      }
+    }
+    if (!answer) {
+      answer = await liveAttribution(outcome, repositoryId, shas);
+      if (memo && shas.size) memo.session.stats.live += 1;
+    }
+    done?.(answer.kind === "hold" ? `${how}, hold` : how);
+    if (answer.kind === "hold")
+      implementationAttributionHolds.set(outcome.id, answer.limitations);
+    else if (answer.kind === "authors")
+      retainedCommitAuthors.set(outcome.id, answer.authors);
     onProgress({
       phase: "commit-attributions",
       completed: index + 1,
       total: attributionOutcomes.length,
     });
   }
+  // Reported here, not only after a written snapshot, so a collection that
+  // fails in a later phase has still said what it reused.
+  if (memo)
+    (memo.log?.write ?? ((line: string) => void process.stderr.write(line)))(
+      collectionMemoStatsLines(memo.session),
+    );
+
+  // First history pages read ahead of the loop below, keyed by the outcome's
+  // position and the exact arguments of its first read. The loop takes each
+  // page at most once and reads every other page itself.
+  const warmedJointPages = new Map<string, JointPage>();
+  const warmedSinglePages = new Map<string, Page>();
+  const firstPageKey = (
+    index: number,
+    repositoryId: string,
+    pull: number,
+    repositoryNodeId: string,
+  ) => JSON.stringify([index, repositoryId, pull, repositoryNodeId]);
+  function takeWarmed<T>(pages: Map<string, T>, key: string): T | undefined {
+    const page = pages.get(key);
+    pages.delete(key);
+    return page;
+  }
+
+  /**
+   * Reads the first joint page of every outcome, and the first single page
+   * where that joint history is empty, a bounded number at a time. It only
+   * saves waiting: it calls the same readers with the arguments the loop
+   * uses, decides nothing and reports nothing. A read that fails here is
+   * dropped and ends the read-ahead, so the loop repeats that read in its
+   * own turn and its failure surfaces there, in order, as without it.
+   */
+  async function warmFirstHistoryPages() {
+    const targets: ({ repositoryId: string; nodeId: string } | null)[] = [];
+    const unresolved = new Set<string>();
+    // Resolve each repository once, in outcome order, before any feed read.
+    for (const outcome of outcomes) {
+      let target: (typeof targets)[number] = null;
+      try {
+        const [owner, repo] = new URL(outcome.url).pathname
+          .split("/")
+          .filter(Boolean);
+        const route = `${owner}/${repo}`;
+        if (!unresolved.has(route))
+          try {
+            const { repository, identity } = await repositoryIdentity(route);
+            target = { repositoryId: repository.id, nodeId: identity.node_id };
+          } catch {
+            unresolved.add(route);
+          }
+      } catch {
+        // The loop reports an outcome URL it cannot read.
+      }
+      targets.push(target);
+    }
+    let next = 0;
+    let stopped = false;
+    const worker = async () => {
+      while (!stopped && next < outcomes.length) {
+        const index = next++;
+        const target = targets[index];
+        if (!target) continue;
+        const pull = outcomes[index].number;
+        const key = firstPageKey(
+          index,
+          target.repositoryId,
+          pull,
+          target.nodeId,
+        );
+        try {
+          const joint = await fetchWorkUnitHistoryPage(
+            target.repositoryId,
+            pull,
+            0,
+            null,
+            transport,
+            target.nodeId,
+          );
+          warmedJointPages.set(key, joint);
+          // The loop reads the single history only after an empty joint one.
+          if (
+            stopped ||
+            joint.records.length !== 0 ||
+            joint.nextAfter !== null ||
+            joint.totalRecords !== 0
+          )
+            continue;
+          warmedSinglePages.set(
+            key,
+            await fetchValueHistoryPage(
+              target.repositoryId,
+              pull,
+              0,
+              transport,
+              target.nodeId,
+            ),
+          );
+        } catch {
+          stopped = true;
+        }
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(feedConcurrency, outcomes.length) },
+        worker,
+      ),
+    );
+    console.warn(
+      JSON.stringify({
+        event: "value_history_first_pages_warmed",
+        concurrency: feedConcurrency,
+        outcomes: outcomes.length,
+        pages: warmedJointPages.size + warmedSinglePages.size,
+      }),
+    );
+  }
+  if (feedConcurrency > 1 && outcomes.length > 0) await warmFirstHistoryPages();
 
   for (const [index, outcome] of outcomes.entries()) {
     onProgress({
@@ -830,16 +1377,29 @@ export async function loadValueInputs(
     const { repository, identity } = await repositoryIdentity(
       `${owner}/${repo}`,
     );
+    const firstPage = firstPageKey(
+      index,
+      repository.id,
+      outcome.number,
+      identity.node_id,
+    );
     const graph = await readWorkUnitHistory(
-      (after, through) =>
-        fetchWorkUnitHistoryPage(
-          repository.id,
-          outcome.number,
-          after,
-          through,
-          transport,
-          identity.node_id,
-        ),
+      (after, through) => {
+        const warmed =
+          after === 0 && through === null
+            ? takeWarmed(warmedJointPages, firstPage)
+            : undefined;
+        return warmed
+          ? Promise.resolve(warmed)
+          : fetchWorkUnitHistoryPage(
+              repository.id,
+              outcome.number,
+              after,
+              through,
+              transport,
+              identity.node_id,
+            );
+      },
       { repositoryNodeId: identity.node_id, pullRequestNodeId: outcome.id },
     );
     const groupDigest = graph.current?.row.record_digest ?? null;
@@ -911,6 +1471,25 @@ export async function loadValueInputs(
           );
         }
         decision = await consumeWorkUnitHistory(graph, members, legacyDigests);
+        const closure = historicalClosedContexts?.get(outcome.id);
+        if (
+          decision.status === "stale" &&
+          closure?.standaloneReview &&
+          closure.digest === groupDigest &&
+          members.length === 1
+        ) {
+          const rebound = await rebindHistoricalStandaloneReview(
+            members[0],
+            graph.current.record,
+            github,
+          );
+          if (rebound !== members[0])
+            decision = await consumeWorkUnitHistory(
+              graph,
+              [rebound],
+              legacyDigests,
+            );
+        }
         groups.set(graph.current.row.record_digest, decision);
         if (decision.status === "assessed") {
           const actors = new Set(
@@ -942,13 +1521,15 @@ export async function loadValueInputs(
         jointValueDecisions.set(member.pullRequestNodeId, decision);
       continue;
     }
-    const first = await fetchValueHistoryPage(
-      repository.id,
-      outcome.number,
-      0,
-      transport,
-      identity.node_id,
-    );
+    const first =
+      takeWarmed(warmedSinglePages, firstPage) ??
+      (await fetchValueHistoryPage(
+        repository.id,
+        outcome.number,
+        0,
+        transport,
+        identity.node_id,
+      ));
     if (first.records.length === 0 && first.nextAfter === null) {
       valueDecisions.set(outcome.id, {
         status: "missing",

@@ -123,7 +123,7 @@ try {
           !(
             request.failure()?.errorText === "net::ERR_ABORTED" &&
             request.method() === "GET" &&
-            /^\/api\/v1\/(?:project-session|points\/(?:me|sessions)|payments\/me|notifications\/email)$/.test(
+            /^\/api\/v1\/(?:project-session|points\/(?:me|sessions)|payments\/me|notifications\/email|traces\/me)$/.test(
               new URL(request.url()).pathname,
             )
           )
@@ -167,6 +167,7 @@ try {
           "POST /api/v1/points/join",
           "GET /api/v1/points/me",
           "GET /api/v1/points/sessions",
+          "GET /api/v1/traces/me",
         ]);
         if (!allowed.has(`${method} ${path}`)) {
           unexpectedRequests.push(`${method} ${path}`);
@@ -192,6 +193,18 @@ try {
         } else if (path === "/api/v1/points/me")
           json = signedIn ? member : null;
         else if (path === "/api/v1/points/sessions") json = { sessions: [] };
+        else if (path === "/api/v1/traces/me")
+          json = {
+            setting: {
+              enabled: false,
+              since: null,
+              providerTermsConfirmed: false,
+              confirmedTermsVersion: null,
+            },
+            totals: { traces: 0, licensed: 0, eligible: 0 },
+            traces: [],
+            nextCursor: null,
+          };
         return route.fulfill({ json });
       });
       const flow = {
@@ -279,7 +292,7 @@ try {
             .count(),
           0,
         );
-        for (const name of ["Wallets", "Email preferences"]) {
+        for (const name of ["Wallets", "Email"]) {
           const section = page.getByRole("region", { name, exact: true });
           await section.waitFor({ state: "visible" });
           assert.equal(await section.locator("summary").count(), 0);

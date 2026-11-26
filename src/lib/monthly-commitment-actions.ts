@@ -51,14 +51,32 @@ export interface MonthlyReview {
   solanaPlan?: SolanaMonthlyPlan;
 }
 
+/** Milliseconds in the contracts' MONTHLY_CUTOFF_DELAY (72 hours). */
+const MONTHLY_CUTOFF_DELAY_MS = 72 * 60 * 60 * 1000;
+
 /**
- * The project's recorded monthly amount in the vault asset's base units.
- * The vault must use that asset and its recorded decimals.
+ * The last moment a month's pinned cap can still be committed on chain.
+ * Both vaults admit cycle `YYYY-MM` only inside `monthlyWindow`, which
+ * closes MONTHLY_CUTOFF_DELAY after the start of the month two months
+ * later; after that the pin can never be used again.
  */
-function vaultMonthlyCap(
+function pinWindowClosesAt(cycleId: string): number {
+  const year = Number(cycleId.slice(0, 4));
+  const month = Number(cycleId.slice(5, 7));
+  return Date.UTC(year, month + 1, 1) + MONTHLY_CUTOFF_DELAY_MS;
+}
+
+/**
+ * The project's recorded monthly amount in the vault asset's base units,
+ * raised to the highest month-specific cap the manifest pins for an
+ * individual month (`reward.cycleCaps`) whose commit window is still
+ * open. The vault must use that asset and its recorded decimals.
+ */
+export function vaultMonthlyCap(
   project: Pick<ProjectDefinition, "reward" | "rewardAsset">,
   deployment: Pick<EscrowDeployment, "network" | "asset">,
   vaultDecimals: number,
+  now: Date = new Date(),
 ): bigint {
   if (project.reward.kind !== "monthly-pool")
     throw new Error("This project has no monthly amount.");
@@ -72,20 +90,31 @@ function vaultMonthlyCap(
     !expectedAsset ||
     canonical(deployment.asset) !== canonical(expectedAsset)
   )
-    throw new Error(
-      "The vault token differs from the project's reward asset. Update the reward asset in project settings first.",
-    );
+    throw new Error("Vault token mismatch. Update the reward asset.");
   const recorded = project.rewardAsset?.decimals ?? network.assetDecimals;
   if (vaultDecimals !== recorded)
-    throw new Error(
-      "The vault token's decimals differ from the project's monthly amount. Update the reward asset in project settings first.",
-    );
+    throw new Error("Token decimals mismatch. Update the reward asset.");
   if (!CANONICAL_UINT.test(project.reward.monthlyCapMinor))
     throw new Error("The project's monthly amount is invalid.");
-  return BigInt(project.reward.monthlyCapMinor);
+  // The proposal, the owner's allocation cap and the frozen total all
+  // resolve an individual month's own pinned cap, and the vault admits a
+  // month only when its gross total fits the vault's one monthly cap. The
+  // standing target therefore covers the highest pinned month as well as
+  // the monthly amount; a pin at or below the amount changes nothing, and
+  // no month can commit more than its own resolved cap. Pins are never
+  // pruned, so a pin counts only while its month can still commit: once
+  // the month's window has closed the pin can never be used on chain and
+  // no longer holds the standing target up.
+  let cap = BigInt(project.reward.monthlyCapMinor);
+  for (const entry of project.reward.cycleCaps ?? []) {
+    if (now.getTime() >= pinWindowClosesAt(entry.cycleId)) continue;
+    const pinned = BigInt(entry.monthlyCapMinor);
+    if (pinned > cap) cap = pinned;
+  }
+  return cap;
 }
 /** On uses the project's monthly amount; off keeps the cap the vault already holds. */
-function monthlyTarget(
+export function monthlyTarget(
   automatic: boolean,
   projectCap: bigint,
   current: MonthlySetting,
@@ -107,9 +136,7 @@ export async function reviewEvmMonthlySetting(
   const config = walletVaultConfig(deployment, wallet);
   await assertVaultWalletAccount(wallet, config);
   if (wallet.address.toLowerCase() !== deployment.owner.toLowerCase())
-    throw new Error(
-      "Connect the vault owner's wallet to change automatic monthly payment.",
-    );
+    throw new Error("Connect the vault owner's wallet.");
   await verifyEvmDeployment(config);
   const totals = await readVaultTotals({
     ...config,
@@ -170,9 +197,7 @@ export async function sendEvmMonthlySetting(
   beforeSend();
   const hash = await request("eth_sendTransaction", [transaction]);
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
-    throw new Error(
-      "The wallet did not return a transaction hash. Check wallet activity before another attempt.",
-    );
+    throw new Error("No transaction hash returned. Check wallet activity.");
   return hash;
 }
 /** Exact calldata, canonical finality and the one matching vault event. */
@@ -279,9 +304,7 @@ async function solanaRequest(
   if (!response.ok) {
     if (response.status === 422 && typeof value.message === "string")
       throw new Error(value.message);
-    throw new Error(
-      "The monthly payment setting could not be verified. Retry the review or transaction check.",
-    );
+    throw new Error("Monthly payment setting not verified. Retry.");
   }
   return value;
 }
@@ -305,9 +328,7 @@ export async function reviewSolanaMonthlySetting(
   if (!wallet.solanaSend)
     throw new Error("Choose a wallet with Solana transaction support.");
   if (wallet.address !== deployment.owner)
-    throw new Error(
-      "Connect the vault owner's wallet to change automatic monthly payment.",
-    );
+    throw new Error("Connect the vault owner's wallet.");
   const read = (await solanaRequest(project.id, deployment, { step: "read" }))
     .setting as { current: unknown; decimals: unknown } | undefined;
   if (!read || !isSetting(read.current) || !isAssetDecimals(read.decimals))
@@ -338,9 +359,7 @@ export async function reviewSolanaMonthlySetting(
   )
     throw new Error("The monthly payment review response is invalid.");
   if (!same(plan.current, read.current))
-    throw new Error(
-      "The vault's monthly payment setting changed during review. Review again.",
-    );
+    throw new Error("Monthly payment setting changed. Review again.");
   verifySolanaMonthlyPlan(deployment, plan, wallet.address, target);
   return {
     target,

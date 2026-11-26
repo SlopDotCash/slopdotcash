@@ -19,6 +19,8 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   });
   let role = "maintainer";
   let unavailable = false;
+  // A failed read is asked once more, so an outage fails both attempts.
+  let failingNotificationReads = 0;
   let holdQueue = false;
   let swapOnNextQueue = false;
   let notificationReads = 0;
@@ -74,6 +76,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   diagnostics.allowCanceledBackgroundReads();
   // The deliberate account swap can also reject the parent Inbox refresh.
   diagnostics.allowResponse(403, "GET", "/api/v1/notifications");
+  diagnostics.allowResponse(503, "GET", "/api/v1/notifications");
   diagnostics.allowResponse(
     403,
     "GET",
@@ -89,12 +92,18 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/notifications") {
+      notificationReads++;
+      if (failingNotificationReads > 0) {
+        failingNotificationReads--;
+        return route.fulfill({ status: 503 });
+      }
+    }
     if (
       path === "/api/v1/notifications" ||
       path === "/api/v1/notifications/incomplete-assessments" ||
       path === "/api/v1/project-session"
     ) {
-      if (path === "/api/v1/notifications") notificationReads++;
       if (path.endsWith("/incomplete-assessments")) paginationReads++;
       const response = await api.fetch(
         new Request(request.url(), {
@@ -164,14 +173,13 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     await queue.getByRole("button", { name: "Back", exact: true }).click();
     await expect(queue.getByRole("link")).toHaveCount(25);
     const privateNotice = page.getByText(
-      "The private-owner-marker project settings changed.",
+      "private-owner-marker settings changed",
       { exact: true },
     );
     await expect(privateNotice).toBeVisible();
-    // Hold the child's decoded B session, then refresh the still-live A
-    // parent. Removing the old child in that commit must retire its callback.
-    // The child's own heading is absent while its page loads. The parent's
-    // notification list is removed in the same commit that unmounts the child.
+    // Hold the child's decoded B session while the parent refreshes as A.
+    // A failed background refresh removes the old child and notification list
+    // together when the error state commits. The stale callback must retire.
     await page.waitForLoadState("networkidle");
     await holdProjectSessionUntilUnmount(
       page,
@@ -189,6 +197,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     );
     role = "maintainer";
     const readsBeforeRefresh = notificationReads;
+    failingNotificationReads = 2;
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.waitForFunction(() => {
       const value = (
@@ -198,15 +207,20 @@ test("maintainers review incomplete assessments in private Inbox", async ({
       ).heldEditorSession;
       return value.removed && value.released;
     });
-    await expect(privateNotice).toBeVisible();
-    await expect(queue.getByRole("link")).toHaveCount(25);
+    await expect(
+      page.getByText("Inbox unavailable", { exact: true }),
+    ).toBeVisible();
+    await expect(privateNotice).toHaveCount(0);
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
         }),
     );
-    expect(notificationReads).toBe(readsBeforeRefresh + 1);
+    expect(notificationReads).toBe(readsBeforeRefresh + 2);
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(privateNotice).toBeVisible();
+    await expect(queue.getByRole("link")).toHaveCount(25);
     // A's accepted page response arrives after the cookie belongs to B.
     // This child must invalidate the parent, including A's other notices.
     holdQueue = true;

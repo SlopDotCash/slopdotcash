@@ -3,6 +3,7 @@ import {
   VALUE_RUBRIC_VERSION,
   VALUE_SYSTEM_PROMPT,
   validateValueAssessment,
+  valueAssessmentProblem,
 } from "../../src/lib/value-assessment";
 import type { ModelEnv } from "./models";
 import { binarySourceLimitations } from "./value-binary";
@@ -45,7 +46,8 @@ export async function assessValue(
   const result = await runValueInference(
     env,
     {
-      system: VALUE_SYSTEM_PROMPT + source.systemSuffix,
+      system:
+        VALUE_SYSTEM_PROMPT + source.systemSuffix + valueOutcomeRules(evidence),
       policy: `Project policy at ${policy.sha}:\n${policy.text}`,
       item: source.item,
     },
@@ -54,6 +56,7 @@ export async function assessValue(
       name: "slop_value_assessment",
       schema: VALUE_ASSESSMENT_SCHEMA,
       validate: (value) => validateEvidenceAssessment(value, evidence),
+      explain: (value) => explainEvidenceAssessment(value, evidence),
     },
     mayCall,
     budget,
@@ -70,6 +73,29 @@ export async function assessValue(
   };
 }
 
+/** The tier rules for this pull request's merge state, stated plainly so the
+ * model does not give a tier the validator must refuse. Operator decision,
+ * 18 November 2026. */
+export function valueOutcomeRules(evidence: ValueEvidence): string {
+  const merged = evidence.pull.merged_at !== null;
+  const closed =
+    evidence.pull.state === "closed" &&
+    Number.isFinite(
+      Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? ""),
+    );
+  const lines = [
+    merged
+      ? "This pull request was merged."
+      : `This pull request was not merged${closed ? "" : " and is still open"}. Set tier to null whatever its value; only its retained review findings may matter.`,
+    "If status is unresolved, set tier to null and give every review tier none.",
+  ];
+  if (!closed)
+    lines.push(
+      "Because the pull request is still open, give every review tier none.",
+    );
+  return `\n\nRules for this pull request:\n${lines.map((line) => `- ${line}`).join("\n")}`;
+}
+
 /** Receipt timestamps do not create a new source revision. */
 export function valueSourceDigest(
   evidence: ValueEvidence,
@@ -79,17 +105,8 @@ export function valueSourceDigest(
   return Promise.resolve(valueJsonDigest({ policy, evidence: sourceEvidence }));
 }
 
-export function validateEvidenceAssessment(
-  value: unknown,
-  evidence: ValueEvidence,
-) {
-  if (
-    evidence.indirectAcceptance ||
-    evidence.noChangePromotion ||
-    evidence.nativeMergeAcceptance
-  )
-    return null;
-  return validateValueAssessment(value, {
+function evidenceContext(evidence: ValueEvidence) {
+  return {
     evidenceUrls: new Set(evidence.evidenceUrls),
     relatedPullRequestUrls: new Set(
       evidence.relatedPullRequests.map((pull) => pull.url),
@@ -108,7 +125,31 @@ export function validateEvidenceAssessment(
       Number.isFinite(
         Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? ""),
       ),
-  });
+  };
+}
+
+/** Why a value assessment is refused against its evidence, as a fixed phrase
+ * that never carries reply text, or null when it is accepted. */
+export function explainEvidenceAssessment(
+  value: unknown,
+  evidence: ValueEvidence,
+): string | null {
+  if (evidence.indirectAcceptance)
+    return "the evidence is an indirect acceptance, which no reply can pass";
+  if (evidence.noChangePromotion)
+    return "the evidence is a no-change promotion, which no reply can pass";
+  if (evidence.nativeMergeAcceptance)
+    return "the evidence is a native merge acceptance, which no reply can pass";
+  return valueAssessmentProblem(value, evidenceContext(evidence));
+}
+
+export function validateEvidenceAssessment(
+  value: unknown,
+  evidence: ValueEvidence,
+) {
+  return explainEvidenceAssessment(value, evidence) === null
+    ? validateValueAssessment(value, evidenceContext(evidence))
+    : null;
 }
 
 export type ValueAssessmentResult =

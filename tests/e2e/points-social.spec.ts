@@ -1,7 +1,12 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { expectHeaderRow } from "../header-row";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -110,6 +115,9 @@ test("social membership preserves past points and discloses public connections w
       body: JSON.stringify(value),
     });
   });
+  await page.route(`${site}/api/v1/traces/me*`, (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
+  );
   await page.route(
     "https://avatars.githubusercontent.com/**",
     async (route) => {
@@ -137,10 +145,9 @@ test("social membership preserves past points and discloses public connections w
   await expect(
     accountPanel.getByText("@social-member", { exact: true }),
   ).toBeVisible();
-  await expect(accountButton).toContainText("15 pts");
-  await expect(accountPanel.getByText("15 pts", { exact: true })).toHaveCount(
-    0,
-  );
+  // The account menu shows no Points total (operator decision, 18 November 2026).
+  await expect(accountButton).not.toContainText("pts");
+  await expect(accountPanel).not.toContainText("pts");
   await expect(
     accountPanel.getByRole("link", { name: "View profile" }),
   ).toHaveAttribute("href", "/contributors/social-member");
@@ -195,7 +202,7 @@ test("social membership preserves past points and discloses public connections w
     page.getByRole("region", { name: "Wallets", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Email preferences", exact: true }),
+    page.getByRole("region", { name: "Email", exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/Telegram/i)).toHaveCount(0);
   await expect(page.getByRole("main")).not.toContainText("+10 points");
@@ -219,16 +226,13 @@ test("social membership preserves past points and discloses public connections w
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toBeVisible();
-  await expect(community.getByText("15 pts", { exact: true })).toBeVisible();
+  await expect(community).not.toContainText("pts");
   await community
     .getByRole("link", { name: "social-member", exact: true })
     .click();
   await expect(
-    page
-      .getByText("total points", { exact: true })
-      .locator("..")
-      .locator("strong"),
-  ).toHaveText("15");
+    page.getByRole("region", { name: "Slop Points", exact: true }),
+  ).not.toContainText("Total");
   await expect(
     page.getByRole("link", { name: "X · @social_member", exact: true }),
   ).toBeVisible();

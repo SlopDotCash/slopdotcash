@@ -10,7 +10,45 @@ export type RepositoryMergeActivity = {
   waitingCapped: boolean;
   mergedOutsideLast30Days: number;
   medianHoursToMerge: number | null;
+  /**
+   * Open outside pull requests, answered or not, for the intake cap
+   * (src/lib/intake-cap.mjs). Null or absent until the repository is read
+   * again after the count was added.
+   */
+  openOutside?: number | null;
+  openOutsideCapped?: boolean;
+  /**
+   * The project's wanted label and its open issues, oldest first (PRD
+   * section 5, src/lib/wanted-label.mjs). Absent when the project has no
+   * wanted label or the repository was not read since it was set.
+   */
+  wantedLabel?: string;
+  wantedIssues?: readonly WantedIssue[];
 };
+
+/** One open issue that carries a project's wanted label. */
+export type WantedIssue = {
+  number: number;
+  title: string;
+  url: string;
+  /** Open pull requests GitHub links as closing this issue. */
+  openPullRequests: number;
+};
+
+function isWantedIssue(value: unknown, repository: string): boolean {
+  const issue = value as WantedIssue;
+  return (
+    !!issue &&
+    Number.isSafeInteger(issue.number) &&
+    issue.number > 0 &&
+    typeof issue.title === "string" &&
+    typeof issue.url === "string" &&
+    issue.url.toLowerCase() ===
+      `https://github.com/${repository}/issues/${issue.number}`.toLowerCase() &&
+    Number.isSafeInteger(issue.openPullRequests) &&
+    issue.openPullRequests >= 0
+  );
+}
 
 export type MergeActivityIndex = Map<string, RepositoryMergeActivity[]>;
 
@@ -27,6 +65,17 @@ function isRow(value: unknown): value is RepositoryMergeActivity {
     count(row.waitingOutside) &&
     typeof row.waitingCapped === "boolean" &&
     count(row.mergedOutsideLast30Days) &&
+    (row.openOutside === undefined ||
+      row.openOutside === null ||
+      count(row.openOutside)) &&
+    (row.openOutsideCapped === undefined ||
+      typeof row.openOutsideCapped === "boolean") &&
+    ((row.wantedLabel === undefined && row.wantedIssues === undefined) ||
+      (typeof row.wantedLabel === "string" &&
+        Array.isArray(row.wantedIssues) &&
+        row.wantedIssues.every((issue) =>
+          isWantedIssue(issue, row.repository),
+        ))) &&
     (row.medianHoursToMerge === null ||
       (typeof row.medianHoursToMerge === "number" &&
         row.medianHoursToMerge >= 0))
@@ -159,4 +208,28 @@ export function mergeActivityCardLine(
   )
     parts.push(`median merge ${duration(busiest.medianHoursToMerge)}`);
   return parts.join(" · ");
+}
+
+/**
+ * The wanted issues of a project's repositories for the project page: only
+ * rows read with the project's current label, issues without an open closing
+ * pull request first, then by repository order and age.
+ */
+export function wantedIssues(
+  rows: readonly RepositoryMergeActivity[] | undefined,
+  label: string | null,
+  limit: number,
+): Array<WantedIssue & { repository: string }> {
+  if (label === null || !rows) return [];
+  const all = rows.flatMap((row) =>
+    row.wantedLabel === label && row.wantedIssues
+      ? row.wantedIssues.map((issue) => ({
+          ...issue,
+          repository: row.repository,
+        }))
+      : [],
+  );
+  const open = all.filter((issue) => issue.openPullRequests === 0);
+  const taken = all.filter((issue) => issue.openPullRequests > 0);
+  return [...open, ...taken].slice(0, limit);
 }

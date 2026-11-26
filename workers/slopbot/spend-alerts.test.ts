@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { handleNotifyRequest } from "../notify/handler";
 import { dispatchFailureAlert } from "./failure-alerts";
+import { recordCalls } from "./persistence";
 import { dispatchSpendAlert } from "./spend-alerts";
 import { reconcileValueBudget, reserveValueBudget } from "./value-budget";
 import { runValueInference } from "./value-inference";
@@ -26,6 +27,8 @@ function harness(rejectMail = false) {
     "0118_slopbot_zero_call_reconciliation.sql",
     "0120_slopbot_value_attempt_completion.sql",
     "0122_orbio_provider_failure_notices.sql",
+    "0133_slopbot_failure_notice_suppressions.sql",
+    "0135_slopbot_call_failure_details.sql",
   ]);
   const mail: string[] = [];
   const notify = {
@@ -331,20 +334,25 @@ test("alerts-only route retains unknown fallback costs without a reserve or dupl
     await dispatchSpendAlert(h.db, h.notify);
     await dispatchSpendAlert(h.db, h.notify);
     expect(h.mail).toHaveLength(1);
+    // The second Surplus step served the job, so the first failure is recorded
+    // without an email (operator decision, 17 November 2026).
+    const later = () => new Date(Date.now() + 5 * 60 * 1000);
     await Promise.all([
-      dispatchFailureAlert(h.db, h.notify),
-      dispatchFailureAlert(h.db, h.notify),
+      dispatchFailureAlert(h.db, h.notify, later),
+      dispatchFailureAlert(h.db, h.notify, later),
     ]);
-    await dispatchFailureAlert(h.db, h.notify);
-    expect(h.mail).toHaveLength(2);
-    expect(h.mail[1]).not.toContain(prompt.item);
-    expect(h.mail[1]).not.toContain("invalid JSON");
-    expect(h.mail[1]).not.toContain("local-only");
+    await dispatchFailureAlert(h.db, h.notify, later);
+    expect(h.mail).toHaveLength(1);
     expect(
       h.sqlite
         .query("SELECT outcome FROM slopbot_provider_failure_receipts")
         .all(),
-    ).toEqual([{ outcome: "accepted" }]);
+    ).toEqual([]);
+    expect(
+      h.sqlite
+        .query("SELECT reason FROM slopbot_provider_failure_suppressions")
+        .all(),
+    ).toEqual([{ reason: "served-by-fallback" }]);
   } finally {
     server.stop(true);
     h.sqlite.close();
@@ -588,6 +596,169 @@ test("Orbio failure queues one private operator notice while success sends none"
         .query("SELECT outcome FROM slopbot_provider_failure_receipts")
         .all(),
     ).toEqual([{ outcome: "accepted" }]);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a failure served by a later step, a repeat within six hours and an unsettled call send no mail", async () => {
+  const h = harness();
+  try {
+    const at = (iso: string) => () => new Date(iso);
+    const call = (
+      review: string,
+      step: number,
+      outcome: string,
+      failure: string | null,
+      createdAt: string,
+      model = "gpt-6.1-terra",
+    ) =>
+      h.sqlite
+        .prepare(`
+    INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,
+    input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at,failure)
+    VALUES (?,1,'triage',?,'surplus',?,?,0,0,0,0,'price',0,0,'estimated',?,?)
+  `)
+        .run(review, step, model, outcome, createdAt, failure);
+    const suppressions = () =>
+      h.sqlite
+        .query(
+          "SELECT call_id,reason FROM slopbot_provider_failure_suppressions ORDER BY call_id",
+        )
+        .all();
+
+    // Served by the next step of the same route: recorded, never mailed.
+    call(
+      "a",
+      1,
+      "failed",
+      "schema-invalid verdict",
+      "2026-11-17T10:00:00.000Z",
+    );
+    call("a", 2, "ok", null, "2026-11-17T10:00:01.000Z", "orbio-model");
+    // Not served: the first one is mailed.
+    call(
+      "b",
+      1,
+      "failed",
+      "schema-invalid verdict",
+      "2026-11-17T10:00:02.000Z",
+    );
+    // Same model and cause one hour later: recorded as a repeat.
+    call(
+      "c",
+      1,
+      "failed",
+      "schema-invalid verdict",
+      "2026-11-17T11:00:00.000Z",
+    );
+    // A different cause still mails.
+    call(
+      "d",
+      1,
+      "failed",
+      "provider returned HTTP 503",
+      "2026-11-17T11:00:01.000Z",
+    );
+    // Too recent: a later step of its route may still be recorded.
+    call(
+      "e",
+      1,
+      "failed",
+      "provider returned HTTP 402",
+      "2026-11-17T11:59:30.000Z",
+    );
+
+    const noon = at("2026-11-17T12:00:00.000Z");
+    await dispatchFailureAlert(h.db, h.notify, noon);
+    expect(h.mail).toHaveLength(1);
+    expect(h.mail[0]).toContain("schema-invalid verdict");
+    await dispatchFailureAlert(h.db, h.notify, noon);
+    expect(h.mail).toHaveLength(2);
+    expect(h.mail[1]).toContain("provider returned HTTP 503");
+    await dispatchFailureAlert(h.db, h.notify, noon);
+    expect(h.mail).toHaveLength(2);
+    expect(suppressions()).toEqual([
+      { call_id: 1, reason: "served-by-fallback" },
+      { call_id: 4, reason: "repeat-within-6h" },
+    ]);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT call_id FROM slopbot_provider_failure_notices WHERE claimed_at IS NULL",
+        )
+        .all(),
+    ).toEqual([{ call_id: 6 }]);
+
+    await dispatchFailureAlert(h.db, h.notify, at("2026-11-17T12:05:00.000Z"));
+    expect(h.mail).toHaveLength(3);
+    expect(h.mail[2]).toContain("provider returned HTTP 402");
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a Surplus spending denial is mailed even when Orbio served the job", async () => {
+  const h = harness();
+  try {
+    for (const [step, provider, outcome, failure] of [
+      [1, "surplus", "failed", "provider budget exhausted"],
+      [2, "orbio", "ok", null],
+    ] as const)
+      h.sqlite
+        .prepare(`
+    INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,
+    input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at,failure)
+    VALUES ('job',1,'triage',?,?,'claude-sonnet-5.5',?,0,0,0,0,'price',0,0,'estimated','2026-11-17T10:00:00.000Z',?)
+  `)
+        .run(step, provider, outcome, failure);
+    await dispatchFailureAlert(h.db, h.notify);
+    expect(h.mail).toHaveLength(1);
+    expect(h.mail[0]).toContain("provider budget was exhausted");
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a refused call stores which part failed beside its cost row", async () => {
+  const h = harness();
+  try {
+    const base = {
+      provider: "surplus" as const,
+      requestedModel: "claude-sonnet-5.5",
+      servedModel: "claude-sonnet-5.5",
+      priceKey: "surplus/claude-sonnet-5.5",
+      usage: { input: 1, cacheWrite: 0, cacheRead: 0, output: 1 },
+      providerCostMicroUsd: 1,
+      providerRequestId: null,
+    };
+    await recordCalls(h.db, "detail-review", 1, "triage", [
+      {
+        ...base,
+        routeStep: 1,
+        outcome: "failed",
+        failure: "schema-invalid verdict",
+        failureDetail: "missing required field summary",
+      },
+      { ...base, routeStep: 2, outcome: "failed", failure: "max_tokens" },
+      { ...base, routeStep: 3, outcome: "ok", failure: null },
+    ]);
+    const rows = h.sqlite
+      .prepare(
+        `SELECT c.route_step, c.failure, d.detail FROM slopbot_costs c
+         LEFT JOIN slopbot_call_failure_details d ON d.call_id = c.id
+         WHERE c.review_key = 'detail-review' ORDER BY c.route_step`,
+      )
+      .all();
+    expect(rows).toEqual([
+      {
+        route_step: 1,
+        failure: "schema-invalid verdict",
+        detail: "missing required field summary",
+      },
+      { route_step: 2, failure: "max_tokens", detail: null },
+      { route_step: 3, failure: null, detail: null },
+    ]);
   } finally {
     h.sqlite.close();
   }

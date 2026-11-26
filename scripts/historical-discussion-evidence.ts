@@ -121,17 +121,19 @@ function incomingReferences(
   return timeline;
 }
 
+export interface ValueReferenceDiscussionSource {
+  repository: string;
+  repositoryNodeId: string;
+  id: string;
+  number: number;
+  url: string;
+  headSha: string;
+  mergedAt: string;
+}
+
 export function validateHistoricalDiscussion(
   value: unknown,
-  expected: {
-    repository: string;
-    repositoryNodeId: string;
-    id: string;
-    number: number;
-    url: string;
-    headSha: string;
-    mergedAt: string;
-  },
+  expected: ValueReferenceDiscussionSource,
   pull: Pull,
 ): CompleteValueReferenceDiscussion | null {
   const repository = record(record(value)?.repository);

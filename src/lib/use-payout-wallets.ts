@@ -252,7 +252,7 @@ export function usePayoutWallets(): PayoutWallet[] {
             );
             if (!account)
               throw new Error(
-                "Your wallet did not return a Solana account that can sign messages.",
+                "Wallet has no Solana account that signs messages.",
               );
             const address = account.address;
             const signMessage = async (message: Uint8Array) => {
@@ -279,7 +279,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                 )
               )
                 throw new Error(
-                  "Your wallet changed the message. Use a wallet that signs it exactly.",
+                  "Your wallet changed the message. Use another wallet.",
                 );
               return Uint8Array.from(result.signature);
             };
@@ -302,7 +302,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                         !current.features.includes("solana:signTransaction")
                       )
                         throw new Error(
-                          "The wallet account or network changed. Connect and review again.",
+                          "Wallet or network changed. Reconnect and review.",
                         );
                       const feature = (
                         wallet as WalletWithFeatures<SolanaSignTransactionFeature>
@@ -345,7 +345,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                         )
                       )
                         throw new Error(
-                          "The wallet account or network changed. Connect and review again.",
+                          "Wallet or network changed. Reconnect and review.",
                         );
                       const feature = (
                         wallet as WalletWithFeatures<SolanaSignAndSendTransactionFeature>
@@ -369,7 +369,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                       });
                       if (result?.signature.length !== 64)
                         throw new Error(
-                          "The wallet did not return a transaction signature. Check wallet activity before another attempt.",
+                          "No signature returned. Check wallet activity.",
                         );
                       return result.signature;
                     },

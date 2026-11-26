@@ -7,6 +7,9 @@
  * reinstatement path; ordinary publication does not request reinstatement.
  */
 
+import { backlogOutOfRotation } from "../../src/lib/backlog-rule.mjs";
+import { type IntakeCount, intakePaused } from "../../src/lib/intake-cap.mjs";
+import { listedThisMonth } from "../../src/lib/pool-funding";
 import type {
   ProjectEnforcement,
   ProjectRecord,
@@ -98,6 +101,16 @@ export type SkillPublicationDependencies = {
     project: ProjectRecord,
     templateSha256: string,
   ): Promise<VettingClearance>;
+  /**
+   * The stored open pull request counts behind `GET /api/v1/merge-activity`.
+   * Discovery leaves out an active project whose owner set an intake cap
+   * while a recent count is at or above it (`intakePaused`), and a project
+   * the backlog rule takes out of rotation (`backlogOutOfRotation`). Absent,
+   * null or a failed read leaves out nothing, so an outage never empties
+   * discovery.
+   */
+  intakeCounts?(): Promise<Map<string, IntakeCount[]> | null>;
+  now?: () => Date;
 };
 
 /** Paths the generated publication defines, plus readable aliases. */
@@ -178,14 +191,28 @@ function listed(
   );
 }
 
+/** Null when the counts cannot be read: no project is left out by them. */
+async function readIntakeCounts(
+  deps: SkillPublicationDependencies,
+): Promise<Map<string, IntakeCount[]> | null> {
+  try {
+    return (await deps.intakeCounts?.()) ?? null;
+  } catch {
+    console.error("project discovery intake counts unavailable");
+    return null;
+  }
+}
+
 /** The routing index the bootstrap skill matches a repository origin against. */
 async function discovery(
   deps: SkillPublicationDependencies,
 ): Promise<Response> {
-  const [all, records] = await Promise.all([
+  const [all, records, intake] = await Promise.all([
     deps.listProjects(),
     deps.listEnforcements(),
+    readIntakeCounts(deps),
   ]);
+  const now = deps.now?.() ?? new Date();
   const template = await deps.loadTemplate();
   // Paused projects may still be cleared (legacy exemption) and may serve
   // skill bytes for inspection, but the bootstrap skill and installer only
@@ -194,6 +221,9 @@ async function discovery(
     (project) =>
       project.status === "active" &&
       listed(project, records) &&
+      listedThisMonth(project.manifest, now) &&
+      !intakePaused(project.manifest, intake?.get(project.id), now) &&
+      !backlogOutOfRotation(project.manifest, intake?.get(project.id), now) &&
       publishesGeneratedSkills(project.manifest),
   );
   const clearances = await Promise.all(

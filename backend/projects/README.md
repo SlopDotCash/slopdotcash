@@ -76,9 +76,43 @@ answers HTTP 410 for a restricted project.
 
 Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private trace API.
 
+In Settings, open **Repositories**, choose **Change integration branch**, and select a live GitHub branch. Review and publish the change. The same revision can include edits to the contribution rules.
+
+For the underlying request, commit an updated
+`.github/slop-project.json` to that branch. The declaration must name the
+registered project, repository, steward, terms revision, and new branch.
+Send a same-origin JSON `PUT /api/v1/projects/:id` from the signed-in GitHub
+repository administrator's Slop.cash session. Use the current registry
+revision and the exact GitHub branch head.
+
+```json
+{
+  "expectedRevision": 8,
+  "integrationBranch": {
+    "name": "vibestack",
+    "commitSha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "reason": "The maintainers moved integration to vibestack."
+}
+```
+
+An optional `contribution` object updates the full contribution instructions
+in the same revision. Slop verifies the administrator and repository through
+the current Slopbot installation, reads the declaration at the exact commit,
+and checks that commit still heads the requested branch. Reload after a
+conflict. An active project must still clear the existing admission check
+at publication. The revision preserves project status, repository identity,
+terms, funding, and previous revisions. Verify the public project and both
+generated skill manifests after publication.
+
 Removal checks the current GitHub authority against the stored repository,
 including on retries. It uses the ordinary revision and enforcement fences,
 changes only status and listing tier, and never invokes setup activation.
+While the project's own Quarantine or Ban is in force, removal returns 409
+`project_restricted`, checked before an already-removed retry and again in the
+guarded append. The restriction's paused, retired revision is not a removal,
+because reinstatement lists the project again from the revision the
+restriction opened on.
 Retired projects publish no skills and cannot reactivate through setup checks.
 The registry API keeps their manifests for historical validation; discovery
 readers exclude the retired tier. Cancellation competes atomically with both
@@ -92,13 +126,36 @@ serves these public artifacts from the current D1 revision:
 
 | Path | Content |
 |---|---|
-| `/.well-known/slop/projects.json` | Repository-to-project routing for every project that publishes skills |
+| `/.well-known/slop/projects.json` | Repository-to-project routing for active, cleared projects that publish skills and have an eligible reward |
 | `/projects/:id/terms.json` | Steward, authority and terms of the current revision |
 | `/projects/:id/skill.md` (alias `SKILL.md`) | Generated contributor skill |
 | `/projects/:id/review-skill.md` (alias `review/SKILL.md`) | Generated reviewer skill |
 | `/projects/:id/[review-]{mission,codex,claude,claude-code,manual}.md` | Workflow and per-client install guides |
 | `/projects/:id/[review-]skill-manifest.json` | Template revision, registry binding, guide renderer and archive routing |
 | `/projects/:id/downloads/<skill>.skill` and `.skill.sha256` | Deterministic skill archive and checksum |
+
+Discovery applies `listedThisMonth` from `src/lib/pool-funding.ts`, the same
+registry reward rule the home page and /sponsors use (PRD section 9). The
+current UTC month must have a positive configured amount, an open security
+program, or an external prize share. The response is `no-store` and direct
+links to per-project artifacts follow their existing access rules.
+
+Discovery also reads the stored open pull request counts
+(`readIntakeCounts` in `merge-activity.ts`) and leaves out an active project
+that is over its owner's intake cap (`intakePaused` in
+`src/lib/intake-cap.mjs`; PRD section 5, operator decision of 17 November
+2026). A count that cannot be read, was never read or is older than three
+days pauses nothing.
+
+From 1 December 2026 discovery also leaves out an active monthly-pool project
+the backlog rule takes out of rotation (`backlogOutOfRotation` in
+`src/lib/backlog-rule.mjs`; PRD section 5, operator decision of 23 November
+2026): 50 or more outside pull requests waiting a week for a maintainer, or
+work waiting and no merge in 14 days, unless the owner marked it as catching
+up on reviews. `readIntakeCounts` carries the waiting count and last merge for
+it. The same rows decide nothing when none is recent. The scheduled Slopbot
+run sends the rule's owner notices (`backlog-notices.ts`) right after it
+refreshes merge activity.
 
 ## Self-service setup
 
@@ -168,6 +225,14 @@ and listing tier, then classifies the change (`src/lib/project-revision-changes.
   `escrow.deployments` record: this API reads no chain state, so it cannot
   verify the vault, and the funding page offers a deposit for every recorded
   vault. Owners use the separate vault setup route below.
+
+`reward.maintainerShare` is the owner's maintainer share in basis points of
+the monthly amount, 1 to 3000, or omitted for none (PRD section 6, operator
+decision of 18 November 2026). It changes through the same owner revision as
+the monthly amount and starts with the next UTC month: the server appends the
+previous share to `reward.maintainerShareHistory` as the share of every month
+through the open one. An owner revision that edits the history is refused,
+and so is a new project that submits one.
 
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub
@@ -508,6 +573,17 @@ the vault while it is confirmed; no revision, deployment or snapshot is
 written, and a replaced block answers plain `pending` again
 (`PROVISIONAL_VAULT_ANSWER` in `vault-setup.ts` turns this answer off). An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
+A register request answered `pending` is kept in `saved_vault_creations` with
+the account that made it (operator decision, 17 November 2026). Behind later
+project API requests, at most once a minute per isolate, the server repeats
+each due request through this same route as that account, so current access,
+restrictions, policy and finalized evidence are checked again; the appended
+revision's reason says Slop finished the saved registration. Checks run every
+2 minutes for 15 checks, then every 10 minutes. A request ends when the vault
+registers, when the creation is refused (`vault_creation_failed`,
+`vault_creation_invalid`, `vault_already_registered`), or after two days; any
+other refusal is recorded in `last_code` and asked again. At most three
+requests wait per project, and saving never changes the owner's answer.
 An owner with one current confirmed wallet on the selected network can review
 an existing vault and recover registration without a connected browser wallet.
 This path offers no creation transaction when no existing vault is found.

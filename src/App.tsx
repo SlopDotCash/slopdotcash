@@ -4,18 +4,26 @@ import {
   Check,
   ChevronRight,
   Clipboard,
+  ExternalLink,
+  Lock,
+  Pause,
   Plus,
+  RotateCcw,
+  Shield,
+  ShieldAlert,
+  ShieldQuestion,
 } from "lucide-react";
 import {
+  Fragment,
   lazy,
   type ReactNode,
   Suspense,
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { EscrowFunding } from "./EscrowFunding";
-import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import {
   hasProjectCardBounty,
@@ -26,26 +34,41 @@ import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import { ProjectWork } from "./ProjectWork";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
+import {
+  backlogJudged,
+  backlogNotice,
+  backlogRuleStarted,
+  backlogState,
+} from "./lib/backlog-rule.mjs";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
-  communityProjects,
   hasBountyOverview,
+  homeProjectDescription,
+  homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
 import {
-  loadMergeActivity,
-  mergeActivityCardLine,
-  mergeActivityLine,
-} from "./lib/merge-activity";
+  INTAKE_PAUSED_NOTICE,
+  intakeCap,
+  intakePaused,
+} from "./lib/intake-cap.mjs";
 import {
-  asShown,
+  maintainerShareCardLine,
+  maintainerShareNotice,
+} from "./lib/maintainer-share.mjs";
+import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
+import {
+  listedThisMonth,
+  listingPoolReward,
   loadPoolFunding,
   monthName,
   poolFundingStatus,
+  publicPoolReward,
 } from "./lib/pool-funding";
+import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
 import {
   findHistoricalProject,
   findProject,
@@ -70,17 +93,19 @@ import {
 } from "./Points";
 import {
   cycleLifecycleLabel,
-  EmptyState,
+  cycleLifecycleTone,
   ExternalLinkAnchor,
   formatCycleMonth,
-  formatDate,
   formatDateTime,
   formatMicroUsdc,
   monthlyPoolPointsOnly,
   NotFound,
+  ReviewBudget,
   RoutePageHeader,
-  reviewBudgetLabel,
+  Spinner,
+  StatusBadge,
 } from "./Presentation";
+import { SponsoredPoolsNotice } from "./SponsoredPoolsNotice";
 
 /**
  * Renders the GitHub-native Slop network across discovery, project,
@@ -130,6 +155,13 @@ const SecurityProgramPage = lazy(() =>
     default: module.SecurityProgramPage,
   })),
 );
+const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
+const ReportDepositPage = lazy(() => import("./ReportDepositPage"));
+const StandingDepositPage = lazy(() => import("./StandingDepositPage"));
+const RequestedReposPage = lazy(() => import("./RequestedRepos"));
+const RecordPage = lazy(() => import("./RecordPage"));
+const ReceiptsPage = lazy(() => import("./ReceiptsPage"));
+const RecordTermsPage = lazy(() => import("./RecordTermsPage"));
 const ProjectUpdatePage = lazy(() =>
   import("./ProjectProposalPage").then((module) => ({
     default: module.ProjectUpdatePage,
@@ -145,6 +177,21 @@ const HERO_ACTIONS = [
   "HACKING THE PLANET.",
   "BUILDING AGI.",
 ] as const;
+type HomeAudience = "contributor" | "maintainer";
+const HOME_AUDIENCES = {
+  contributor: {
+    heading: "MAKE MONEY",
+    accessibleHeading: "MAKE MONEY SHIPPING OPEN SOURCE.",
+    actions: HERO_ACTIONS,
+    skillPath: "/contribute/SKILL.md",
+  },
+  maintainer: {
+    heading: "SHIP FASTER.",
+    accessibleHeading: "SHIP FASTER. WITH CONTRIBUTORS.",
+    actions: ["WITH CONTRIBUTORS."],
+    skillPath: "/maintain/SKILL.md",
+  },
+} as const;
 const HERO_HOLD_MS = 2_400;
 const HERO_TYPE_MS = 55;
 const HERO_DELETE_MS = 30;
@@ -172,12 +219,36 @@ type PageRouteKind =
   | "admin"
   | "new-project"
   | "vetting-evidence"
-  | "security-cases";
+  | "security-cases"
+  | "requested"
+  | "record"
+  | "receipts"
+  | "standing-deposit"
+  | TermsRouteKind;
+/** Program terms pages and the privacy policy, each one fixed segment. */
+type TermsRouteKind =
+  | "referrals"
+  | "buyback"
+  | "october-allocation"
+  | "sponsored-pools"
+  | "privacy";
+const TERMS_ROUTES = new Set<string>([
+  "referrals",
+  "buyback",
+  "october-allocation",
+  "sponsored-pools",
+  "privacy",
+]);
+function isTermsRoute(kind: string): kind is TermsRouteKind {
+  return TERMS_ROUTES.has(kind);
+}
 type Route =
   | { kind: PageRouteKind }
   | { kind: ProjectRouteKind; projectId: string }
   | { kind: "cycle"; projectId: string; cycleId: string }
-  | { kind: "profile"; login: string };
+  | { kind: "profile"; login: string }
+  | { kind: "fee"; owner: string; repo: string; number: string }
+  | { kind: "report-deposit"; caseId: string };
 
 /**
  * Each page's data needs. `snapshot` loads the public snapshot. `registry`
@@ -228,6 +299,26 @@ const ROUTES: Record<
   "security-program": { snapshot: false, registry: "current" },
   cycle: { snapshot: true, registry: "cached" },
   profile: { snapshot: true, registry: "cached" },
+  // The registry names the repository; its numeric id never changes.
+  fee: { snapshot: false, registry: "cached" },
+  // The record names no project, so the page needs no registry.
+  "report-deposit": { snapshot: false, registry: "independent" },
+  // The signed-in contributor's own deposit; it names no project.
+  "standing-deposit": {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Standing deposit",
+  },
+  // Repositories not on Slop: the page reads no project registry.
+  requested: { snapshot: false, registry: "independent" },
+  // The public record pages read only /data/record.json.
+  record: { snapshot: false, registry: "independent" },
+  receipts: { snapshot: false, registry: "independent" },
+  referrals: { snapshot: false, registry: "independent" },
+  buyback: { snapshot: false, registry: "independent" },
+  "october-allocation": { snapshot: false, registry: "independent" },
+  "sponsored-pools": { snapshot: false, registry: "independent" },
+  privacy: { snapshot: false, registry: "independent" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -242,6 +333,15 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["how-it-works", "how-it-works"],
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
+  ["requested", "requested"],
+  ["record", "record"],
+  ["receipts", "receipts"],
+  ["deposit", "standing-deposit"],
+  ["referrals", "referrals"],
+  ["buyback", "buyback"],
+  ["october-allocation", "october-allocation"],
+  ["sponsored-pools", "sponsored-pools"],
+  ["privacy", "privacy"],
 ]);
 
 /** Project pages at /projects/<id>/<section>. */
@@ -283,6 +383,12 @@ function internalRoute(pathname: string): Route {
     return { kind: "profile", login: second };
   if (first === "cycles" && segments.length === 3)
     return { kind: "cycle", projectId: second, cycleId: third };
+  // The Inbox links a report's deposit at /fee/report/<caseId>.
+  if (first === "fee" && second === "report" && segments.length === 3)
+    return { kind: "report-deposit", caseId: third };
+  // Slopbot's fee comment links /fee/<owner>/<repo>/<number>.
+  if (first === "fee" && segments.length === 4)
+    return { kind: "fee", owner: second, repo: third, number: segments[3] };
   return { kind: "unknown" };
 }
 
@@ -355,9 +461,20 @@ function routeHead(route: Route): { title: string; path: string | null } {
   if (privateTitle) {
     return {
       title: pageTitle(privateTitle),
-      path: route.kind === "security-cases" ? "/security" : `/${route.kind}`,
+      path:
+        route.kind === "security-cases"
+          ? "/security"
+          : route.kind === "standing-deposit"
+            ? "/deposit"
+            : `/${route.kind}`,
     };
   }
+  // One page per pull request: titled, never indexed.
+  if (route.kind === "fee")
+    return { title: pageTitle("Submission fee"), path: null };
+  // One page per report: titled, never indexed.
+  if (route.kind === "report-deposit")
+    return { title: pageTitle("Report deposit"), path: null };
   if (route.kind === "profile") {
     return {
       title: pageTitle(route.login),
@@ -451,21 +568,40 @@ function Footer({ marketing }: { marketing: boolean }) {
             LinkedIn
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
+          <Link href="/requested">Requested repos</Link>
+          <Link href="/record">Record</Link>
+          <Link href="/receipts">Receipts</Link>
+          <Link href="/privacy">Privacy</Link>
         </nav>
       </div>
     </footer>
   );
 }
 
-function HeroHeading() {
+const HERO_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeToHeroMotion(onChange: () => void) {
+  const media = window.matchMedia(HERO_MOTION_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function getHeroReducedMotion() {
+  return window.matchMedia(HERO_MOTION_QUERY).matches;
+}
+
+function HeroTypewriter({
+  actions,
+}: {
+  actions: readonly [string, ...string[]];
+}) {
   const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
+  const [characters, setCharacters] = useState(actions[0].length);
   const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
     "holding",
   );
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = HERO_ACTIONS[index];
+    const target = actions[index];
     let delay = 1;
     let advance: () => void;
     if (phase === "holding") {
@@ -477,7 +613,7 @@ function HeroHeading() {
     } else if (phase === "deleting") {
       delay = HERO_GAP_MS;
       advance = () => {
-        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
+        setIndex((value) => (value + 1) % actions.length);
         setPhase("typing");
       };
     } else if (characters < target.length) {
@@ -488,21 +624,34 @@ function HeroHeading() {
     }
     const timer = window.setTimeout(advance, delay);
     return () => window.clearTimeout(timer);
-  }, [characters, index, phase]);
-  const action = HERO_ACTIONS[index];
+  }, [actions, characters, index, phase]);
+  return actions[index].slice(0, characters);
+}
+
+function HeroHeading({ audience }: { audience: HomeAudience }) {
+  const campaign = HOME_AUDIENCES[audience];
+  // Unmounting the typewriter cancels its timer and discards any partial phrase.
+  const reducedMotion = useSyncExternalStore(
+    subscribeToHeroMotion,
+    getHeroReducedMotion,
+  );
   return (
-    <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
+    <h1 aria-label={campaign.accessibleHeading}>
       <span aria-hidden="true" className="hero-message">
-        <span>MAKE MONEY</span>
+        <span>{campaign.heading}</span>
         <span className="hero-action">
-          {HERO_ACTIONS.map((candidate) => (
+          {campaign.actions.map((candidate) => (
             <span className="hero-switch-sizer" key={candidate}>
               {candidate}
               <span className="hero-typewriter-caret" />
             </span>
           ))}
           <span className="hero-typewriter">
-            {action.slice(0, characters)}
+            {reducedMotion ? (
+              campaign.actions[0]
+            ) : (
+              <HeroTypewriter actions={campaign.actions} />
+            )}
             <span className="hero-typewriter-caret" />
           </span>
         </span>
@@ -620,27 +769,88 @@ function compactPrizeLabel(label: string): string {
 }
 
 function bountyFundingLabel(terms: SecurityBountyTerms): string {
-  return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
+  return terms.funding.state === "pledged" ? "Pledged" : "Funded";
 }
 
-function ProjectCard({
-  project,
-  merge,
-}: {
-  project: ProjectDefinition;
-  merge?: string | null;
-}) {
+type HomeProject = ProjectDefinition &
+  Pick<ReturnType<typeof listingPoolReward>, "fundingTag" | "warning">;
+
+const fundingTagTone = {
+  Vaulted: "success",
+  Promised: "warning",
+  Configured: "neutral",
+} as const;
+
+function HomeReward({ project }: { project: HomeProject }) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
+  const pointsOnly = monthlyPoolPointsOnly(project.reward);
   const amount = bounty
     ? securityBountyAmountLabel(bounty)
-    : project.reward.kind === "monthly-pool"
-      ? monthlyPoolCapLabel(project)
-      : compactPrizeLabel(
-          project.reward.externalOpportunity?.advertisedAmountDisplay ??
-            "External",
-        );
+    : pointsOnly
+      ? "Points only"
+      : project.reward.kind === "monthly-pool"
+        ? project.fundingTag === "Vaulted"
+          ? monthlyPoolCapLabel(project)
+          : formatRewardCapDisplay(
+              project.reward.monthlyCapDisplay,
+              project.rewardAsset,
+            )
+        : "Points";
+  if (project.fundingTag) {
+    return (
+      <span className="project-monthly-reward">
+        <span className="project-monthly-amount">
+          <strong>{amount}</strong>{" "}
+          <span className="project-monthly-unit">/mo</span>
+        </span>
+        <StatusBadge
+          className="project-funding-tag"
+          tone={fundingTagTone[project.fundingTag]}
+        >
+          {project.fundingTag}
+        </StatusBadge>
+        {project.warning ? (
+          <span className="project-funding-warning">{project.warning}</span>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <>
+      <strong>{amount}</strong>
+      {bounty ? (
+        <span>
+          {bounty.eligibility === "critical-loss-of-funds"
+            ? "/ Critical"
+            : "/ Finding"}
+        </span>
+      ) : project.reward.kind === "external-prize-share" ? (
+        <span> + external prize</span>
+      ) : null}
+    </>
+  );
+}
+
+function HomeReviewBudget({ project }: { project: HomeProject }) {
+  const budget = project.reward.reviewBudget;
+  return budget?.fundingState === "committed" ? (
+    <small className="project-review-budget">
+      +{formatMicroUsdc(budget.committedMinor)} reviews
+    </small>
+  ) : null;
+}
+
+/** The owner's published maintainer share, only beside a shown monthly amount. */
+function HomeMaintainerShare({ project }: { project: HomeProject }) {
+  const line = monthlyPoolPointsOnly(project.reward)
+    ? null
+    : maintainerShareCardLine(project, new Date());
+  return line ? <small className="project-review-budget">{line}</small> : null;
+}
+
+function ProjectCard({ project }: { project: HomeProject }) {
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
@@ -649,111 +859,49 @@ function ProjectCard({
         <ArrowRight aria-hidden="true" />
       </div>
       <div className="project-card-content">
-        <p className="project-summary">{project.description}</p>
-        <p className="project-bounty">
-          <strong>{amount}</strong>
-          {bounty ? (
-            <span>
-              {bounty.eligibility === "critical-loss-of-funds"
-                ? "/ Critical"
-                : "/ Finding"}
-            </span>
-          ) : monthlyPoolPointsOnly(project.reward) ||
-            project.reward.kind === "external-prize-share" ? (
-            <span> + points</span>
-          ) : (
-            <span>/mo</span>
-          )}
+        <p className="project-summary">
+          {homeProjectDescription(project.description)}
         </p>
-        {bounty ? (
-          <small className="project-money-state">
-            {bountyFundingLabel(bounty)}
-          </small>
-        ) : monthlyPoolPointsOnly(project.reward) ? (
-          <small className="project-money-state">Points only</small>
-        ) : project.reward.kind === "monthly-pool" ? null : (
-          <small className="project-money-state">External prize</small>
-        )}
-        {project.reward.reviewBudget ? (
-          <small className="project-review-budget">
-            + {reviewBudgetLabel(project.reward.reviewBudget)}
-          </small>
-        ) : null}
-        {merge ? (
-          <small className="project-money-state project-merge-activity">
-            {merge}
-          </small>
-        ) : null}
+        <p className="project-bounty">
+          <HomeReward project={project} />
+        </p>
+        <HomeReviewBudget project={project} />
+        <HomeMaintainerShare project={project} />
       </div>
     </Link>
   );
 }
 
-function ProjectRow({
-  project,
-  merge,
-}: {
-  project: ProjectDefinition;
-  merge?: string | null;
-}) {
-  const bounty = hasProjectCardBounty(project)
-    ? project.securityBounty
-    : undefined;
-  const amount = bounty
-    ? `${securityBountyAmountLabel(bounty)} / ${bounty.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"} · ${bountyFundingLabel(bounty)}`
-    : monthlyPoolPointsOnly(project.reward)
-      ? "Points only"
-      : project.reward.kind === "monthly-pool"
-        ? `${monthlyPoolCapLabel(project)}/mo`
-        : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
-  return (
-    <li>
-      <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectImage lazy project={project} />
-        <span className="project-row-name">
-          <strong>{project.name}</strong>
-          <small>{project.description}</small>
-          {merge ? (
-            <small className="project-merge-activity">{merge}</small>
-          ) : null}
-        </span>
-        <span className="project-row-amount">{amount}</span>
-        <ChevronRight aria-hidden="true" />
-      </Link>
-    </li>
-  );
-}
-
 const COMMUNITY_PAGE_SIZE = 10;
 
-function CommunityProjects({
-  projects,
-  mergeLine,
-}: {
-  projects: ProjectDefinition[];
-  mergeLine: (project: ProjectDefinition) => string | null;
-}) {
+function CommunityProjects({ projects }: { projects: HomeProject[] }) {
   const [page, setPage] = useState(0);
-  if (projects.length === 0) return null;
   const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
+  if (pages === 0) return null;
   const current = Math.min(page, pages - 1);
-  const visible = projects.slice(
-    current * COMMUNITY_PAGE_SIZE,
-    (current + 1) * COMMUNITY_PAGE_SIZE,
-  );
+  const start = current * COMMUNITY_PAGE_SIZE;
   return (
-    <section
-      className="project-tier community-projects"
-      aria-labelledby="community-projects"
-    >
+    <section aria-labelledby="community-projects" className="project-tier">
       <h3 id="community-projects">Community</h3>
       <ul className="project-rows">
-        {visible.map((project) => (
-          <ProjectRow
-            key={project.id}
-            project={project}
-            merge={mergeLine(project)}
-          />
+        {projects.slice(start, start + COMMUNITY_PAGE_SIZE).map((project) => (
+          <li key={project.id}>
+            <Link className="project-row" href={`/projects/${project.slug}`}>
+              <ProjectImage lazy project={project} />
+              <span className="project-row-name">
+                <strong>{project.name}</strong>
+                <small>{homeProjectDescription(project.description)}</small>
+              </span>
+              <span className="project-row-amount">
+                <span>
+                  <HomeReward project={project} />
+                </span>
+                <HomeReviewBudget project={project} />
+                <HomeMaintainerShare project={project} />
+              </span>
+              <ChevronRight aria-hidden="true" />
+            </Link>
+          </li>
         ))}
       </ul>
       {pages > 1 ? (
@@ -767,7 +915,7 @@ function CommunityProjects({
           >
             <ArrowLeft aria-hidden="true" />
           </button>
-          <span>
+          <span aria-live="polite">
             {current + 1} / {pages}
           </span>
           <button
@@ -785,9 +933,10 @@ function CommunityProjects({
   );
 }
 
-function bootstrapAgentPrompt(): string {
+function bootstrapAgentPrompt(audience?: HomeAudience): string {
   const origin = window.location.origin.replace(/\/$/u, "");
-  return `Read ${origin}/SKILL.md and follow it.`;
+  const path = audience ? HOME_AUDIENCES[audience].skillPath : "/SKILL.md";
+  return `Read ${origin}${path} and follow it.`;
 }
 
 /** Published bounty terms come from the same registry as project discovery. */
@@ -812,9 +961,8 @@ function SecurityBounties() {
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
-          No paid security bounties are open.{" "}
-          <a href="#projects">Choose a project</a> to report a security issue
-          privately without a promised award.
+          No open bounties. <a href="#projects">Report privately</a> on any
+          project.
         </p>
       ) : (
         <div className="project-grid">
@@ -833,15 +981,19 @@ function SecurityBounties() {
               >
                 <div className="project-card-heading">
                   <ProjectImage lazy project={project} />
-                  <h3>{project.name}</h3>
+                  <h3>
+                    <span
+                      role="img"
+                      aria-label="Security bounty"
+                      title="Security bounty"
+                    >
+                      <Shield aria-hidden="true" size={22} />
+                    </span>{" "}
+                    {project.name}
+                  </h3>
                   <ArrowRight aria-hidden="true" />
                 </div>
                 <div className="project-card-content">
-                  <p className="project-summary">
-                    {terms.eligibility === "critical-loss-of-funds"
-                      ? `Find a critical security vulnerability in ${project.name}`
-                      : `Find a security vulnerability in ${project.name}`}
-                  </p>
                   <p className="project-bounty">
                     <strong>{securityBountyAmountLabel(terms)}</strong>
                     <span>
@@ -850,9 +1002,6 @@ function SecurityBounties() {
                         : "/ Finding"}
                     </span>
                   </p>
-                  <small className="project-money-state">
-                    {bountyFundingLabel(terms)}
-                  </small>
                 </div>
               </Link>
             );
@@ -864,15 +1013,18 @@ function SecurityBounties() {
 }
 
 function HomePage() {
-  const featuredProjects = homeProjects();
-  const listedCommunityProjects = communityProjects();
-  // One shared read of the daily merge activity (#1993) for every card.
-  const [merge] = usePublicResource(
-    true,
-    loadMergeActivity,
-    "Merge activity unavailable",
-  );
-  // One shared read of vault balances: only money in a vault is shown.
+  const audience: HomeAudience =
+    new URLSearchParams(window.location.search).get("audience") === "maintainer"
+      ? "maintainer"
+      : "contributor";
+  const selectAudience = (next: HomeAudience) => {
+    if (next === audience) return;
+    const destination = new URL(window.location.href);
+    if (next === "maintainer") destination.searchParams.set("audience", next);
+    else destination.searchParams.delete("audience");
+    window.history.pushState(window.history.state, "", destination);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -880,17 +1032,68 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  const shown = (project: ProjectDefinition) =>
-    asShown(project, fundingIndex, now);
-  const mergeLine = (project: ProjectDefinition) =>
-    project.status === "active" && merge.status === "ready"
-      ? mergeActivityCardLine(merge.index.get(project.id), now)
-      : null;
+  // A project over its owner's intake cap has paused new contributors, and
+  // a project the backlog rule takes out of rotation is left out too. The
+  // counts are read only when a project can be left out; while they load,
+  // and when they cannot be read, every project is listed.
+  const open = homeProjects(now);
+  const [merge] = usePublicResource(
+    open.some(
+      (project) =>
+        intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(now)),
+    ),
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const mergeIndex = merge.status === "ready" ? merge.index : null;
+  const fundingPending = funding.status === "loading";
+  const listedProjects = homeProjectOrder(
+    open
+      .filter(
+        (project) =>
+          !fundingPending &&
+          !intakePaused(project, mergeIndex?.get(project.id), now) &&
+          !backlogState(project, mergeIndex?.get(project.id), now)
+            .outOfRotation,
+      )
+      .map((project) => {
+        const {
+          project: shown,
+          fundingTag,
+          warning,
+        } = listingPoolReward(project, fundingIndex, now);
+        return { ...shown, fundingTag, warning };
+      }),
+  );
+  const featured = listedProjects.filter(
+    (project) => project.listingTier === "featured",
+  );
+  const community = listedProjects.filter(
+    (project) => project.listingTier === "community",
+  );
   return (
     <main>
+      <SponsoredPoolsNotice />
       <section className="hero shell">
-        <HeroHeading />
-        <InstallPanel />
+        <fieldset
+          aria-label="Choose your Slop journey"
+          className="home-audience-switch"
+        >
+          {(["contributor", "maintainer"] as const).map((option) => (
+            <button
+              aria-pressed={audience === option}
+              className="button"
+              key={option}
+              onClick={() => selectAudience(option)}
+              type="button"
+            >
+              {option === "contributor" ? "Contributor" : "Maintainer"}
+            </button>
+          ))}
+        </fieldset>
+        <HeroHeading audience={audience} key={audience} />
+        <InstallPanel audience={audience} />
       </section>
 
       <SecurityBounties />
@@ -901,39 +1104,20 @@ function HomePage() {
             <Plus aria-hidden="true" /> Add a project
           </Link>
         </div>
-        {featuredProjects.length + listedCommunityProjects.length === 0 ? (
+        {!fundingPending && listedProjects.length === 0 ? (
           <p className="project-tier-note">No projects yet.</p>
-        ) : (
-          <>
-            {featuredProjects.length > 0 ? (
-              <section
-                className="project-tier"
-                aria-labelledby="featured-projects"
-              >
-                <h3 id="featured-projects">Featured</h3>
-                <div className="project-grid">
-                  {featuredProjects.map((project) => (
-                    <ProjectCard
-                      key={project.id}
-                      project={shown(project)}
-                      merge={mergeLine(project)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <CommunityProjects
-              projects={listedCommunityProjects.map(shown)}
-              mergeLine={mergeLine}
-            />
-          </>
-        )}
-      </section>
-      <section
-        className="section shell home-leaderboard-section"
-        id="leaderboard"
-      >
-        <HomeStandings />
+        ) : null}
+        {featured.length > 0 ? (
+          <section aria-labelledby="featured-projects" className="project-tier">
+            <h3 id="featured-projects">Featured</h3>
+            <div className="project-grid">
+              {featured.map((project) => (
+                <ProjectCard key={project.id} project={project} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+        <CommunityProjects projects={community} />
       </section>
     </main>
   );
@@ -1004,9 +1188,11 @@ const AGENT_DEEP_LINKS: readonly {
 function AgentPromptBox({
   prompt,
   openIn = false,
+  skillUrl,
 }: {
   prompt: string;
   openIn?: boolean;
+  skillUrl?: string;
 }) {
   const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
@@ -1060,7 +1246,7 @@ function AgentPromptBox({
         <span>Open in</span>
         <ul>
           {AGENT_DEEP_LINKS.map((agent) => {
-            const href = agent.href(prompt, `${origin}/SKILL.md`);
+            const href = agent.href(prompt, skillUrl ?? `${origin}/SKILL.md`);
             const web = href.startsWith("https://");
             return (
               <li key={agent.name}>
@@ -1105,13 +1291,17 @@ function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   if (project.participation?.state === "permission-required") {
     return (
       <section className="section" id="start">
-        <h2>Permission required</h2>
         <p>
-          Contact{" "}
+          <span
+            role="img"
+            aria-label="Permission required"
+            title="Permission required"
+          >
+            <Lock aria-hidden="true" size={16} />
+          </span>{" "}
           <ExternalLinkAnchor href={project.steward.github.profileUrl}>
-            {project.steward.displayName}
-          </ExternalLinkAnchor>{" "}
-          about permission before contributing.
+            Ask {project.steward.displayName}
+          </ExternalLinkAnchor>
         </p>
       </section>
     );
@@ -1119,18 +1309,11 @@ function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   if (project.status === "paused") {
     return (
       <section className="section" id="start">
-        <h2>Project paused</h2>
-        <p>Do not install this project's skill or start work.</p>
         <p>
-          A paused project is not collected or scored. Its steward,{" "}
-          <ExternalLinkAnchor href={project.steward.github.profileUrl}>
-            {project.steward.displayName}
-          </ExternalLinkAnchor>
-          , can review its status and next steps on the project setup page.
-          Check back here for a change.{" "}
-          <Link href={`/projects/${project.slug}/manage`}>
-            Project owner: review setup
-          </Link>
+          <StatusBadge tone="warning" icon={<Pause />}>
+            Paused
+          </StatusBadge>{" "}
+          <Link href={`/projects/${project.slug}/manage`}>Owner setup</Link>
         </p>
       </section>
     );
@@ -1139,11 +1322,16 @@ function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   return <ProjectInstallPanel key={project.id} project={project} />;
 }
 
-function InstallPanel() {
+function InstallPanel({ audience }: { audience: HomeAudience }) {
+  const origin = window.location.origin.replace(/\/$/u, "");
   return (
     <div className="home-agent-setup">
-      <p className="hero-copy">Paste this into your coding agent.</p>
-      <AgentPromptBox openIn prompt={bootstrapAgentPrompt()} />
+      <p className="hero-copy">Paste into your agent.</p>
+      <AgentPromptBox
+        openIn
+        prompt={bootstrapAgentPrompt(audience)}
+        skillUrl={`${origin}${HOME_AUDIENCES[audience].skillPath}`}
+      />
     </div>
   );
 }
@@ -1156,6 +1344,21 @@ function InstallPanel() {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
+  const unlisted = !listedThisMonth(project, new Date());
+  const [merge] = usePublicResource(
+    project.status === "active" &&
+      (intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(new Date()))),
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const paused =
+    merge.status === "ready" &&
+    intakePaused(project, merge.index.get(project.id), new Date());
+  const outOfRotation =
+    merge.status === "ready" &&
+    backlogState(project, merge.index.get(project.id), new Date())
+      .outOfRotation;
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1192,23 +1395,30 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   return (
     <div id="start">
       <div className="install-heading">
-        <h2>Copy this into your agent.</h2>
+        <h2>Start</h2>
       </div>
       {ready ? null : (
         <p>
-          {eligibility === "loading"
-            ? "Checking project clearance…"
-            : eligibility === "blocked"
-              ? "This project is not cleared for agents. The prompt below picks only cleared projects."
-              : "Project clearance could not be checked. The prompt below picks only cleared projects."}
-          {eligibility === "blocked" ? (
+          {eligibility === "loading" ? (
+            <Spinner label="Checking project clearance" />
+          ) : eligibility === "blocked" && paused ? (
+            "This project has paused new contributors. The prompt below picks only listed projects."
+          ) : eligibility === "blocked" && outOfRotation ? (
+            "This project is out of rotation. The prompt below picks only listed projects."
+          ) : eligibility === "blocked" && unlisted ? (
+            <StatusBadge tone="warning">Not listed this month</StatusBadge>
+          ) : eligibility === "blocked" ? (
             <>
-              {" "}
-              <Link href={`/projects/${project.slug}/manage`}>
-                Project owner: review setup
-              </Link>
+              <StatusBadge tone="warning" icon={<ShieldAlert />}>
+                Not cleared
+              </StatusBadge>{" "}
+              <Link href={`/projects/${project.slug}/manage`}>Owner setup</Link>
             </>
-          ) : null}
+          ) : (
+            <StatusBadge icon={<ShieldQuestion />}>
+              Clearance unknown
+            </StatusBadge>
+          )}
         </p>
       )}
       <AgentPromptBox
@@ -1235,21 +1445,16 @@ function ProjectPaymentHistory({
     .filter((cycle) => cycle.projectId === project.id)
     .sort((left, right) => right.cycleId.localeCompare(left.cycleId));
   const externalPrize = project.reward.kind === "external-prize-share";
-  const direct = new Map<
-    string,
-    { amount: bigint; count: number; paidOn: string }
-  >();
+  const direct = new Map<string, { amount: bigint; count: number }>();
   for (const payment of directState.status === "ready"
     ? directState.transfers
     : []) {
     const month = direct.get(payment.contributionMonth) ?? {
       amount: 0n,
       count: 0,
-      paidOn: payment.blockTime,
     };
     month.amount += BigInt(payment.amountMicro);
     month.count += 1;
-    if (payment.blockTime > month.paidOn) month.paidOn = payment.blockTime;
     direct.set(payment.contributionMonth, month);
   }
   const directMonths = [...direct].sort(([left], [right]) =>
@@ -1272,38 +1477,36 @@ function ProjectPaymentHistory({
       </div>
       {directState.status === "error" && !externalPrize ? (
         <p role="status">
-          Direct payments unavailable.{" "}
+          Payments unavailable{" "}
           <button
-            className="button secondary-button button-small"
+            aria-label="Retry"
+            className="button secondary-button button-small icon-button"
+            title="Retry"
             type="button"
             onClick={retryDirect}
           >
-            Retry direct payments
+            <RotateCcw aria-hidden="true" size={15} />
           </button>
         </p>
       ) : null}
       {directLoading ? <p role="status">Loading direct payments…</p> : null}
       {(showHistory ? directMonths : directMonths.slice(0, 3)).map(
-        ([month, { amount, count, paidOn }]) => (
+        ([month, { amount, count }]) => (
           <p className="money-summary" key={month}>
-            <strong>{formatMicroUsdc(amount.toString())} paid directly</strong>
+            <strong>{formatMicroUsdc(amount.toString())}</strong>
             <span>
-              Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
-              {count} transfers ·{" "}
+              {formatCycleMonth(month)} · {count} transfers ·{" "}
               <ExternalLinkAnchor
                 href={`${browserDeployment.site}/api/v1/payments/projects/${project.id}/direct-transfers`}
+                label="Disclosure"
               >
-                Disclosure
+                <ExternalLink aria-hidden="true" size={15} />
               </ExternalLinkAnchor>
             </span>
           </p>
         ),
       )}
-      {cycles.length === 0 ? (
-        directLoading ? null : (
-          <EmptyState text="No cycles have closed yet." />
-        )
-      ) : (
+      {cycles.length === 0 ? null : (
         <div className="plain-table-wrap">
           <table className="plain-table">
             <caption className="visually-hidden">{project.name} cycles</caption>
@@ -1335,7 +1538,11 @@ function ProjectPaymentHistory({
                       <td>{formatMicroUsdc(cycle.reward.paidMinor)}</td>
                     </>
                   )}
-                  <td>{cycleLifecycleLabel(cycle)}</td>
+                  <td>
+                    <StatusBadge tone={cycleLifecycleTone(cycle)}>
+                      {cycleLifecycleLabel(cycle)}
+                    </StatusBadge>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1349,9 +1556,7 @@ function ProjectPaymentHistory({
           onClick={() => setShowHistory((value) => !value)}
           type="button"
         >
-          {showHistory
-            ? "Show recent history"
-            : `Show complete ${externalPrize ? "cycle" : "payment"} history`}
+          {showHistory ? "Show less" : "Show all"}
         </button>
       ) : null}
     </section>
@@ -1372,9 +1577,7 @@ function ProjectFundsAndAwards({
       className="project-funds-and-awards"
       aria-label="Funds and awards"
     >
-      {project.reward.kind === "external-prize-share" ? (
-        <p>The organizer pays this prize.</p>
-      ) : project.escrow ? (
+      {project.reward.kind !== "external-prize-share" && project.escrow ? (
         <>
           <EscrowFunding readOnly project={project} />
           <OwnerAwards
@@ -1434,8 +1637,9 @@ function ProjectRewardSummary({
   );
   const index = funding.status === "ready" ? funding.index : null;
   const now = new Date();
-  const project = asShown(registered, index, now);
+  const { project, promise } = publicPoolReward(registered, index, now);
   const status = poolFundingStatus(registered, index, now);
+  const shareNotice = maintainerShareNotice(registered, now);
   return (
     <div className="project-overview">
       <div className="project-state-summary">
@@ -1444,7 +1648,7 @@ function ProjectRewardSummary({
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
         ) : null}
-        {projectRewardSummaries(project).map((summary) => (
+        {projectRewardSummaries(project, promise !== null).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
               <>
@@ -1457,14 +1661,14 @@ function ProjectRewardSummary({
                     </ExternalLinkAnchor>
                   </>
                 ) : null}
-                {" monthly, split between contributors"}
+                {promise ? ` /mo · ${promise}` : " /mo"}
               </>
             ) : summary.kind === "security-bounty" ? (
               <>
                 {summary.amount}{" "}
                 {summary.eligibility === "critical-loss-of-funds"
-                  ? "per critical vulnerability that would result in loss of funds"
-                  : "per accepted security finding"}
+                  ? "/ critical finding"
+                  : "/ finding"}
                 {summary.status === "open"
                   ? null
                   : ` · bounty ${summary.status}`}
@@ -1473,19 +1677,79 @@ function ProjectRewardSummary({
                   : ""}
               </>
             ) : summary.kind === "external-prize" ? (
-              <>
-                {summary.amount
-                  ? `${compactPrizeLabel(summary.amount)} external prize pool`
-                  : "External prize"}{" "}
-                · organizer decides awards
-              </>
+              summary.amount ? (
+                `${compactPrizeLabel(summary.amount)} external prize`
+              ) : (
+                "External prize"
+              )
             ) : (
-              "Points only · no cash rewards"
+              "Points only"
             )}
           </p>
         ))}
+        {promise ? (
+          <p className="project-reward-status">
+            Promised by the project owner; Slop does not guarantee payment.
+          </p>
+        ) : null}
+        {shareNotice ? (
+          <p className="project-reward-status">{shareNotice}</p>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** #2295: the vault network, website and X account, each only when present. */
+function ProjectLinks({ project }: { project: ProjectDefinition }) {
+  const chains = projectChains(project);
+  const website = project.links.website;
+  const x = project.links.x;
+  const handle = xHandle(x);
+  const parts: { key: string; node: ReactNode }[] = [];
+  if (chains.length > 0)
+    parts.push({
+      key: "chain",
+      node: `Chain: ${chains
+        .map((chain) =>
+          chain.symbol ? `${chain.name} (${chain.symbol})` : chain.name,
+        )
+        .join(", ")}`,
+    });
+  if (website)
+    parts.push({
+      key: "website",
+      node: (
+        <>
+          Website:{" "}
+          <a href={website} target="_blank" rel="noopener noreferrer">
+            {websiteLabel(website)}
+          </a>
+        </>
+      ),
+    });
+  if (x && handle)
+    parts.push({
+      key: "x",
+      node: (
+        <>
+          X:{" "}
+          <a href={x} target="_blank" rel="noopener noreferrer">
+            @{handle}
+          </a>
+        </>
+      ),
+    });
+  if (parts.length === 0) return null;
+  return (
+    <p className="project-links-line">
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 ? " · " : null}
+          {part.node}
+        </Fragment>
+      ))}
+    </p>
   );
 }
 
@@ -1503,8 +1767,19 @@ function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
       <p className="project-merge-activity">Merge activity unavailable.</p>
     );
   // A repository not read yet shows nothing rather than an empty claim.
-  const line = mergeActivityLine(state.index.get(project.id), new Date());
-  return line ? <p className="project-merge-activity">{line}</p> : null;
+  const rows = state.index.get(project.id);
+  const now = new Date();
+  const line = mergeActivityLine(rows, now);
+  const backlog = backlogNotice(backlogState(project, rows, now));
+  return (
+    <>
+      {intakePaused(project, rows, now) ? (
+        <p className="project-reward-status">{INTAKE_PAUSED_NOTICE}</p>
+      ) : null}
+      {backlog ? <p className="project-reward-status">{backlog}</p> : null}
+      {line ? <p className="project-merge-activity">{line}</p> : null}
+    </>
+  );
 }
 
 function ProjectBountyIntroduction({
@@ -1521,6 +1796,7 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
+        <ProjectLinks project={project} />
         <Link
           className="button primary-button"
           href={`/projects/${project.slug}/security`}
@@ -1529,7 +1805,7 @@ function ProjectBountyIntroduction({
         </Link>
         <div id="start">
           <div className="install-heading">
-            <h2>Copy this into your agent.</h2>
+            <h2>Start</h2>
           </div>
           <AgentPromptBox openIn prompt={prompt} />
         </div>
@@ -1557,9 +1833,12 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectLinks project={project} />
           <ProjectMergeActivity project={project} />
-          {project.reward.reviewBudget ? (
-            <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
+          {project.reward.reviewBudget?.fundingState === "committed" ? (
+            <p>
+              <ReviewBudget reviewBudget={project.reward.reviewBudget} />
+            </p>
           ) : null}
           <ProjectParticipation project={project} />
         </div>
@@ -1622,7 +1901,11 @@ export function App() {
 }
 
 function AppContent({ route }: { route: Route }) {
-  useHashScroll(window.location.href);
+  const scrollLocation = new URL(window.location.href);
+  // Switching the homepage journey keeps the reader at the hero, even when
+  // the shared URL has an anchor for the project list or leaderboard.
+  if (route.kind === "home") scrollLocation.searchParams.delete("audience");
+  useHashScroll(window.location.href, scrollLocation.href);
   useDocumentHead(route);
   const { registry, snapshot } = ROUTES[route.kind];
   const staleRegistry = globalThis.__SLOP_PROJECT_REGISTRY_STALE__;
@@ -1719,7 +2002,6 @@ function AppContent({ route }: { route: Route }) {
     ) : (
       <main className="shell route-main">
         <h1>Project not found</h1>
-        <p>This project isn&apos;t listed.</p>
         <p>
           <Link href="/">See open projects</Link>
         </p>
@@ -1749,7 +2031,24 @@ function AppContent({ route }: { route: Route }) {
     ) : (
       <NotFound title="Project not found" />
     );
-  } else content = <NotFound />;
+  } else if (route.kind === "fee")
+    content = (
+      <SubmissionFeePage
+        key={`${route.owner}/${route.repo}/${route.number}`.toLowerCase()}
+        owner={route.owner}
+        repo={route.repo}
+        number={route.number}
+      />
+    );
+  else if (route.kind === "requested") content = <RequestedReposPage />;
+  else if (route.kind === "record") content = <RecordPage />;
+  else if (route.kind === "receipts") content = <ReceiptsPage />;
+  else if (isTermsRoute(route.kind))
+    content = <RecordTermsPage name={route.kind} />;
+  else if (route.kind === "report-deposit")
+    content = <ReportDepositPage key={route.caseId} caseId={route.caseId} />;
+  else if (route.kind === "standing-deposit") content = <StandingDepositPage />;
+  else content = <NotFound />;
   return (
     <>
       <Header />
@@ -1761,18 +2060,23 @@ function AppContent({ route }: { route: Route }) {
             className="shell registry-stale"
           >
             <p className="data-notice data-stale" role="status">
-              Projects may be outdated · updated{" "}
-              {formatDateTime(staleRegistry.syncedAt)}.
-              <button onClick={() => window.location.reload()} type="button">
-                Try again
+              <span className="pr-dot pr-bar-open" aria-hidden="true" />
+              Projects stale · {formatDateTime(staleRegistry.syncedAt)}
+              <button
+                aria-label="Try again"
+                onClick={() => window.location.reload()}
+                title="Try again"
+                type="button"
+              >
+                <RotateCcw aria-hidden="true" size={15} />
               </button>
             </p>
           </aside>
         ) : null}
         <Suspense
           fallback={
-            <main className="shell route-main" role="status">
-              Loading page…
+            <main className="shell route-main">
+              <Spinner label="Loading page" />
             </main>
           }
         >
