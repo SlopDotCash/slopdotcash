@@ -1653,13 +1653,11 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       const { world } = try Browser
       const stores = try tab()
       const opened = <A, E, R>(steps: A!E!R) => onPage(world, stores, steps)
-      const octoCookie = try opened(effect {
+      try opened(effect {
         try signedInAs(world, "octo")
         const request = { email: "octo@example.test", enabled: true, idempotencyKey: "octo-request-0001", securityEnabled: true }
         try call(emailVerification, { body: request }, { limitBytes: 4096, expectedActor: "7" })
-        const cookie = world.cookie()
         try (try BrowserSession).signOut()
-        return cookie
       })
       const token = world.sent.find((mail) => mail.githubId === "7")?.token ?? ""
       const first = try opened(effect {
@@ -1674,6 +1672,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const afterSignIn = try actions.get()
         return { captured, signedOutCheck, beforeSignIn: [beforeSignIn.kind, beforeSignIn.tokenValid, beforeSignIn.signedIn, beforeSignIn.boundActor], stored: storedBefore?.kind, afterSignIn: [afterSignIn.signedIn, afterSignIn.generation] }
       })
+      const octoCookie = world.cookie()
       const reloaded = try opened(effect {
         const link = try EmailLink
         const actions = try EmailActions
