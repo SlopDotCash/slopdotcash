@@ -7,6 +7,7 @@ import { graphqlClient, maxGraphqlRequestAttempts } from "../src/ingestion/graph
 import { collectSearchReferences } from "../src/collect/merged/census.vibe"
 import { commitLineLoader } from "../src/collect/merged/commits.vibe"
 import { collectMergedWork, confirmReviewCensus } from "../src/collect/merged/collection.vibe"
+import { hydratePullRequests, maxOpenPullRequestFiles } from "../src/collect/merged/hydrate.vibe"
 import { alterNextSearch, bulkCommits, closedAt, day, dropLast, fetcherOf, gatewayFailures, repeatFirst, requestsMatching, seeded, start, statisticsUnavailableAt } from "./support/u5/github.ts"
 
 effect function same(actual: unknown, expected: unknown) {
@@ -33,7 +34,7 @@ module availability {
   import { Response as WebResponse } from "miniflare"
   import type { Fetcher } from "@repo/platform/bindings"
 
-  interface Sent { readonly query?: string; readonly variables?: { readonly ids?: ReadonlyArray<string> } }
+  interface Sent { readonly query?: string; readonly variables?: { readonly ids?: ReadonlyArray<string>; readonly id?: string; readonly after?: string } }
 
   /** @throws {never} */
   export function stillUnavailable(inner: Fetcher, probes: Array<ReadonlyArray<string>>): Fetcher {
@@ -50,8 +51,81 @@ module availability {
       },
     }
   }
+
+  /** @throws {never} */
+  export function pagedFilesFetcher(specs: Readonly<Record<string, { readonly state: "OPEN" | "MERGED"; readonly number: number; readonly changedFiles: number }>>, moreFilesIds: Array<string>): Fetcher {
+    const rateLimit = { cost: 1, limit: 5000, remaining: 4000, resetAt: "2026-11-22T01:00:00.000Z" }
+    const empty = { totalCount: 0, pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] }
+    const pageOf = (total: number, page: number) => {
+      const offset = (page - 1) * 100
+      const count = Math.min(100, Math.max(0, total - offset))
+      return {
+        totalCount: total,
+        nodes: Array.from({ length: count }, (_, index) => ({ path: `src/file-${offset + index}.ts`, additions: 1, deletions: 0 })),
+        pageInfo: { hasNextPage: offset + count < total, endCursor: `files-page-${page}` },
+      }
+    }
+    const actor = { __typename: "User", id: "U_grace", login: "grace", avatarUrl: "https://avatars.example/grace", url: "https://github.com/grace" }
+    const sha = "a".repeat(40)
+    return {
+      fetch: async (request) => {
+        const sent = JSON.parse(await request.clone().text()) as Sent
+        const query = sent.query ?? ""
+        if (query.includes("LeaderboardMoreFiles")) {
+          const id = sent.variables?.id ?? ""
+          const spec = specs[id]
+          moreFilesIds.push(id)
+          const page = Number(String(sent.variables?.after ?? "").replace("files-page-", "")) + 1
+          return new WebResponse(JSON.stringify({
+            data: {
+              node: { state: spec?.state ?? "OPEN", isDraft: false, headRefOid: sha, files: pageOf(spec?.changedFiles ?? 0, page) },
+              rateLimit,
+            },
+          }), { status: 200, headers: { "content-type": "application/json" } }) as unknown as globalThis.Response
+        }
+        const ids = sent.variables?.ids ?? []
+        const nodes = ids.map((id) => {
+          const spec = specs[id]
+          const number = spec?.number ?? 1
+          const state = spec?.state ?? "OPEN"
+          const changedFiles = spec?.changedFiles ?? 1
+          return {
+            __typename: "PullRequest",
+            id,
+            state,
+            number,
+            title: `PR #${number}`,
+            url: `https://github.com/ada/widgets/pull/${number}`,
+            body: "body",
+            createdAt: "2026-11-15T00:00:00.000Z",
+            updatedAt: "2026-11-16T00:00:00.000Z",
+            lastEditedAt: null,
+            editor: null,
+            mergedAt: state === "MERGED" ? "2026-11-16T00:00:00.000Z" : null,
+            closedAt: state === "MERGED" ? "2026-11-16T00:00:00.000Z" : null,
+            isDraft: false,
+            headRefOid: sha,
+            reviewDecision: null,
+            reviewRequests: { totalCount: 0 },
+            author: actor,
+            additions: changedFiles,
+            deletions: 0,
+            changedFiles,
+            commits: { totalCount: 1 },
+            labels: { totalCount: 0, nodes: [] },
+            assignees: { totalCount: 0, nodes: [] },
+            comments: empty,
+            reviews: empty,
+            files: pageOf(changedFiles, 1),
+            closingIssuesReferences: empty,
+          }
+        })
+        return new WebResponse(JSON.stringify({ data: { nodes, rateLimit } }), { status: 200, headers: { "content-type": "application/json" } }) as unknown as globalThis.Response
+      },
+    }
+  }
 }
-import { stillUnavailable } from availability
+import { pagedFilesFetcher, stillUnavailable } from availability
 
 function actor(login: string) {
   return { id: `U_${login}`, login, avatarUrl: `https://avatars.example/${login}`, url: `https://github.com/${login}`, kind: "User" }
@@ -130,6 +204,33 @@ it.live('Collect merged work end to end (spec/points/census.md, "Story: Collect 
     held: order.map((nodeId) => ({ nodeId, reason: "NOT_FOUND", unavailableInMergedCensus: true })),
     outcomes: [world.ids.bulk],
     afterRepository: [1],
+  })
+
+  const moreFilesIds: string[] = []
+  const fileSpecs = {
+    PR_oversized_open: { state: "OPEN" as const, number: 83, changedFiles: maxOpenPullRequestFiles + 808 },
+    PR_bounded_open: { state: "OPEN" as const, number: 84, changedFiles: maxOpenPullRequestFiles },
+    PR_oversized_merged: { state: "MERGED" as const, number: 85, changedFiles: maxOpenPullRequestFiles + 150 },
+  }
+  const refOf = (id: string) => ({ id, kind: "PullRequest" as const, outcome: null, commitPage: null })
+  const pagedLayer = githubLayer(world, pagedFilesFetcher(fileSpecs, moreFilesIds))
+  const openHydrated = try Effect.provide(hydratePullRequests([refOf("PR_oversized_open"), refOf("PR_bounded_open")], "open", target(world), world.repositoryNodeId), pagedLayer)
+  const mergedHydrated = try Effect.provide(hydratePullRequests([refOf("PR_oversized_merged")], "merged", target(world), world.repositoryNodeId), pagedLayer)
+  try same({
+    open: openHydrated.map((pull) => ({ id: pull.id, changedFiles: pull.changedFiles, files: pull.files === null ? null : pull.files.length })),
+    merged: mergedHydrated.map((pull) => ({ id: pull.id, changedFiles: pull.changedFiles, files: pull.files === null ? null : pull.files.length })),
+    oversizedOpenMoreFiles: moreFilesIds.filter((id) => id === "PR_oversized_open").length,
+    boundedOpenMoreFiles: moreFilesIds.filter((id) => id === "PR_bounded_open").length,
+    oversizedMergedMoreFiles: moreFilesIds.filter((id) => id === "PR_oversized_merged").length,
+  }, {
+    open: [
+      { id: "PR_oversized_open", changedFiles: maxOpenPullRequestFiles + 808, files: null },
+      { id: "PR_bounded_open", changedFiles: maxOpenPullRequestFiles, files: maxOpenPullRequestFiles },
+    ],
+    merged: [{ id: "PR_oversized_merged", changedFiles: maxOpenPullRequestFiles + 150, files: maxOpenPullRequestFiles + 150 }],
+    oversizedOpenMoreFiles: 0,
+    boundedOpenMoreFiles: 2,
+    oversizedMergedMoreFiles: 4,
   })
 })
 

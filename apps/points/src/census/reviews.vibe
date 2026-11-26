@@ -168,10 +168,14 @@ function sourcesOf(error: unknown): ReadonlyArray<UnavailableSource> {
   return typeof error === "object" && error !== null && "sources" in error && Array.isArray(error.sources) ? error.sources as ReadonlyArray<UnavailableSource> : []
 }
 
-export effect function recollectedOnce<A, E, R>(generate: (recollection: Recollection) => A!E!R) {
+export type RecollectionCause = Exclude<RetryCause, "OtherFailure">
+
+export effect function recollectedOnce<A, E, R>(generate: (recollection: Recollection) => A!E!R, onRetry?: (cause: RecollectionCause) => void!!) {
   return generate({ attempt: 1, unavailableSources: [], allowJointHolds: false }) catch effect (error) => {
-    if (!recollects(1, causeOf(error))) throw error
-    try Console.error("[slop.cash] source census changed or a node became unavailable; recollecting once with the existing GraphQL budget")
+    const cause = causeOf(error)
+    if (!recollects(1, cause) || cause === "OtherFailure") throw error
+    if (onRetry !== undefined) try onRetry(cause)
+    else try Console.error(`[slop.cash] ${cause} caused a complete recollection with the existing GraphQL budget`)
     return try generate({ attempt: 2, unavailableSources: sourcesOf(error), allowJointHolds: true })
   }
 }

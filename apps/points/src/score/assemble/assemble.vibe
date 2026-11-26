@@ -107,8 +107,8 @@ function compareOpportunities(left: ScoreOpportunity, right: ScoreOpportunity) {
   return millisOf(right.occurredAt) - millisOf(left.occurredAt) || left.source.number - right.source.number || left.id.localeCompare(right.id)
 }
 
-function hasOpportunitySignal(pullRequest: PullRequestRecord, files: ReadonlyArray<{ readonly path: string; readonly additions: number; readonly deletions: number }>) {
-  if (isNearMaterialTestChange([...files]) || materialTestStats([...files]).additions > 0) return true
+function hasOpportunitySignal(pullRequest: PullRequestRecord, files: ReadonlyArray<{ readonly path: string; readonly additions: number; readonly deletions: number }> | null) {
+  if (files !== null && (isNearMaterialTestChange([...files]) || materialTestStats([...files]).additions > 0)) return true
   if (pullRequest.reviews.some((review) => review.author !== null && !isBot(review.author) && pullRequest.author !== null && !sameActor(review.author, pullRequest.author))) return true
   return pullRequest.commitCount >= 1 && pullRequest.changedFiles >= 1 && pullRequest.additions + pullRequest.deletions >= 20
 }
@@ -117,14 +117,14 @@ effect function openPullRequestOpportunities(registry: Registry, openPullRequest
   const opportunities: ScoreOpportunity[] = []
   for (const pullRequest of openPullRequests) {
     const files = pullRequest.files
-    if (pullRequest.mergedAt !== null || files === null) continue
+    if (pullRequest.mergedAt !== null) continue
     const repository = repositoryIdFromUrl(registry, pullRequest.url)
     if (repository === undefined) throw new AssemblyRefused({ message: `Cannot derive a target repository from URL: ${pullRequest.url}` })
     const title = boundedSourceTitle(pullRequest.title)
     const source = { id: pullRequest.id, kind: "pull-request", number: pullRequest.number, title, url: pullRequest.url }
     const author = pullRequest.author
     if (author !== null && !isBot(author) && !pullRequest.isDraft) {
-      if (isNearMaterialTestChange([...files])) {
+      if (files !== null && isNearMaterialTestChange([...files])) {
         opportunities.push({
           id: `${pullRequest.id}:opportunity:near-material-test`,
           actor: author,

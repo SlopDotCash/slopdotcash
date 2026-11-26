@@ -13,6 +13,7 @@ import {
 } from "./wire.vibe"
 
 export const maxTransientAttempts = 3
+export const maxOpenPullRequestFiles = 300
 
 export type ExpectedState = "closed" | "merged" | "open"
 
@@ -279,6 +280,10 @@ effect function parsedPull(node: PullRequestNode, path: string) {
 effect function completePull(parsed: { readonly pending: PendingPull; readonly state: string; readonly comments: PageState; readonly reviews: PageState; readonly files: PageState | null; readonly closing: PageState }) {
   const pull = try completeText(parsed.pending, parsed.comments, parsed.reviews, moreReviewsQuery)
   let filesState = parsed.files
+  if (parsed.state === "OPEN" && pull.record.changedFiles > maxOpenPullRequestFiles && filesState?.pageInfo.hasNextPage === true) {
+    pull.files = null
+    filesState = null
+  }
   while (filesState !== null && filesState.pageInfo.hasNextPage) {
     const after = filesState.pageInfo.endCursor
     if (after === null || after === "") throw new MergedRecordInvalid({ message: `PR #${pull.number} files cursor is missing` })
