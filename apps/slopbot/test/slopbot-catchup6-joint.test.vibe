@@ -3,8 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { Response as WebResponse } from "miniflare"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import type { GitHub } from "@repo/platform/github"
+import { type GitHub, github } from "@repo/platform/github"
 import { systemGit } from "@repo/platform/git"
+import { gitObjectId, textBytes } from "@repo/platform/git/bytes"
 import { outboundVia } from "@repo/platform/http"
 import { type Handler, internet } from "@repo/platform/testing/internet"
 import { asFetch } from "@repo/platform/testing/quotes"
@@ -13,10 +14,12 @@ import { type CensusOutcome, type ValueCensus, ValueInputs } from "@repo/ports/p
 import { historyOrigin, workUnitHistoryPath } from "@repo/ports/slopbot"
 import { rebindHistoricalStandaloneReview } from "../src/value/collect/closedReview.vibe"
 import { collectValueInputs } from "../src/value/collect/inputs.vibe"
+import { collectEvidence } from "../src/value/evidence/collect.vibe"
 import type { RegisteredRepository } from "../src/value/evidence/types.vibe"
 import { valueRubricVersion } from "../src/value/inference/assessment.vibe"
+import { loadValuePolicy, verifyCurrentValueSource } from "../src/value/inference/publish.vibe"
 import { prepareWorkUnitEvidence } from "../src/value/workUnits/prepare.vibe"
-import { type SourceBinding, type WorkUnitRecord, workUnitRecordVersion } from "../src/value/workUnits/record.vibe"
+import { type SourceBinding, type WorkUnitRecord, workUnitIdentity, workUnitRecordVersion, workUnitSourceBindings } from "../src/value/workUnits/record.vibe"
 import type { WorkUnitSource } from "../src/value/workUnits/types.vibe"
 import { historyIdentity } from "./support/collectWorld.vibe"
 import { type Seeded, acceptanceRecorder, githubOver, mergedAt, patchCommitPages, policyOf, repository, requested, seeded } from "./support/evidenceWorker.vibe"
@@ -104,12 +107,67 @@ effect function loaded(census: ValueCensus) {
   return read catch (error) => ({ kind: error._tag, message: error.message })
 }
 
-effect function collected(world: Seeded, feed: Feed, census: ValueCensus) {
-  const net = internet({ github: world.fake.handler, hosts: { [feedHost]: feedHandler(feed) } })
+effect function collected(world: Seeded, feed: Feed, census: ValueCensus, handler: Handler = world.fake.handler) {
+  const net = internet({ github: handler, hosts: { [feedHost]: feedHandler(feed) } })
   const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
-  const services = Layer.mergeAll(githubOver(world), Layer.provide(graphqlClient({ token: Redacted.make(world.token) }), outbound), acceptanceRecorder().layer)
+  const rest = handler === world.fake.handler ? githubOver(world) : githubOverHandler(world, handler)
+  const services = Layer.mergeAll(rest, Layer.provide(graphqlClient({ token: Redacted.make(world.token) }), outbound), acceptanceRecorder().layer)
   provide Layer.provide(collectValueInputs({ repositories: [policyOf(world)] }), Layer.mergeAll(services, outbound, webCrypto, systemGit, NodeServices.layer)) {
     return try loaded(census)
+  }
+}
+
+function githubOverHandler(world: Seeded, handler: Handler) {
+  const outbound = outboundVia({ fetch: async (request) => asFetch(handler)(request) })
+  return Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot-evidence" }), outbound)
+}
+
+const ordinaryPath = "src/ordinary-count.txt"
+const ordinaryLines = 1_600
+const ordinaryBefore = Array.from({ length: ordinaryLines }, (_, index) => `old ${index}\n`)
+const ordinaryAfter = Array.from({ length: ordinaryLines }, (_, index) => `new ${index}\n`)
+const ordinaryPatch = `@@ -1,${ordinaryLines} +1,${ordinaryLines} @@\n` + ordinaryBefore.map((line) => `-${line}`).join("") + ordinaryAfter.map((line) => `+${line}`).join("").slice(0, -1)
+
+function ordinaryCountHandler(world: Seeded, head: string, merge: string, omit: boolean): Handler {
+  const first = gitObjectId("blob", textBytes(ordinaryBefore.join("")))
+  const second = gitObjectId("blob", textBytes(ordinaryAfter.join("")))
+  const raw = `diff --git a/${ordinaryPath} b/${ordinaryPath}\nindex ${first}..${second} 100644\n--- a/${ordinaryPath}\n+++ b/${ordinaryPath}\n${ordinaryPatch}\n`
+  return async (request) => {
+    const path = new URL(request.url).pathname
+    if (path !== `/repos/${repository}/commits/${head}` && path !== `/repos/${repository}/commits/${merge}`) return world.fake.handler(request)
+    if (request.headers.get("accept") === "application/vnd.github.diff") return new WebResponse(raw)
+    const response = await world.fake.handler(request)
+    if (response.status !== 200) return response
+    const body = await response.json() as { readonly files: ReadonlyArray<Readonly<Record<string, unknown>>> }
+    const files = body.files.map(({ patch: _patch, ...file }) => omit && path.endsWith(head)
+      ? { ...file, sha: second, additions: 0, deletions: 0 }
+      : { ...file, sha: second, additions: ordinaryLines, deletions: ordinaryLines, patch: ordinaryPatch })
+    return WebResponse.json({ ...body, files, stats: { additions: ordinaryLines, deletions: ordinaryLines, total: 2 * ordinaryLines } })
+  }
+}
+
+effect function ordinaryRecord(world: Seeded, handler: Handler, number: number) {
+  provide githubOverHandler(world, handler), acceptanceRecorder().layer, noRetainedCopies, webCrypto {
+    const repositoryPolicy = policyOf(world)
+    const raw = try collectEvidence({ repository, number, policy: repositoryPolicy })
+    const evidence = try collectEvidence({ repository, number, policy: repositoryPolicy, negotiatedDiff: true })
+    const expected = `Incomplete commit ${evidence.pull.head.sha}`
+    try same(raw.limitations, [`${expected} additions`, `${expected} deletions`])
+    try same(evidence.limitations, [])
+    const policy = try loadValuePolicy(evidence.repositoryDatabaseId, evidence.pull.base.sha)
+    const source = { evidence, policy }
+    const prepared = try prepareWorkUnitEvidence([source], [repositoryPolicy])
+    try same(prepared.limitations, [])
+    try same(prepared.claims.map((claim) => claim.path), [ordinaryPath])
+    const sources = try workUnitSourceBindings(prepared, [repositoryPolicy])
+    const claimIds = prepared.claims.map((claim) => claim.id).sort()
+    const assessment = { status: "unresolved" as const, tier: null, rationale: "No separate value evidence", dimensions: { alignment: "unknown", impact: "unknown", complexity: "unknown", verification: "unknown", maintenance: "unknown", overlap: "unknown" }, evidenceUrls: [], relatedPullRequests: [], limitations: ["Value not established"], reviews: [] }
+    const checked = try verifyCurrentValueSource(evidence, { policySha: policy.sha, sourceDigest: sources[0]?.sourceDigest ?? "" }, [repositoryPolicy], { group: [source] })
+    try same(checked.evidence.commitAttribution, evidence.commitAttribution)
+    const unit = { claimIds, assessment }
+    return { ...recordOf(world, sources), sourceDigest: prepared.sourceDigest, claims: prepared.claims,
+      model: { provider: "surplus", requested: "gpt-6.1-sol", reported: "gpt-6.1-sol" },
+      units: [{ ...unit, workUnitId: workUnitIdentity(unit) }] } satisfies WorkUnitRecord
   }
 }
 
@@ -128,6 +186,27 @@ function jointOf(result: { readonly kind: string; readonly inputs?: { readonly j
 }
 
 describe('Recover complete history at a fixed sequence boundary (spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set")', () => {
+  it.live("retains the exact ordinary commit-count proof through joint publication readback and nightly collection", () => effect {
+    provide webCrypto {
+      const world = try seeded()
+      const git = world.fake.world
+      const base = try Effect.try(() => git.addCommit(repository, { author: "ada", files: { "CONTRIBUTING.md": policyText, [ordinaryPath]: ordinaryBefore.join("") } }))
+      const head = try Effect.try(() => git.addCommit(repository, { branch: "ordinary-count", parents: [base], author: "ada", files: { [ordinaryPath]: ordinaryAfter.join("") } }))
+      const merge = try Effect.try(() => git.addCommit(repository, { branch: "ordinary-count-accepted", parents: [base, head], author: "ada", files: { [ordinaryPath]: ordinaryAfter.join("") } }))
+      try Effect.try(() => git.setBranch(repository, "main", base))
+      try Effect.try(() => git.addPull({ repo: repository, number: 5, author: "ada", title: "Change selected source", createdAt: "2026-11-09T10:00:00Z", headSha: head, commits: [head], mergedAt, mergeCommit: merge, files: [{ path: ordinaryPath, status: "modified", additions: ordinaryLines, deletions: ordinaryLines, patch: ordinaryPatch }] }))
+      const handler = ordinaryCountHandler(world, head, merge, true)
+      const record = try ordinaryRecord(world, handler, 5)
+      const rows = try journalRows([record])
+      const feed: Feed = { joint: new Map([[5, rows]]), single: new Map() }
+      const outcome = try outcomeOf(world, 5)
+      const census: ValueCensus = { value: [outcome], attribution: [] }
+      const result = try collected(world, feed, census, handler)
+      try same({ raw: jointOf(result) }, { raw: [[outcome.id, "unresolved", false, rows[0]?.record_digest]] })
+      const noOmission = try collected(world, feed, census, ordinaryCountHandler(world, head, merge, false))
+      try same({ json: jointOf(noOmission) }, { json: [[outcome.id, "unresolved", false, rows[0]?.record_digest]] })
+    }
+  }, 90_000)
   it.live("a census source with a joint record is consumed and its member takes the joint decision, with no refusal", () => effect {
     provide webCrypto {
       const world = try seeded()
