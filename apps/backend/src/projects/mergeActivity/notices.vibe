@@ -1,0 +1,91 @@
+// spec/backend/backlogRule.md, "The owner hears once before the rule starts, again four days before dormancy, and once more the day the project leaves rotation"
+import { Effect } from "effect"
+import { hourOf, hourMs, isoAt, millisOf } from "@repo/platform/clock"
+import { D1, first, sql } from "@repo/platform/d1"
+import { type IntakeCount } from "@repo/ports/backend"
+import {
+  backlogRuleKeyPrefix,
+  inboxKind,
+  initial,
+  noticeDue,
+  noticeReason,
+  outDetail,
+  overLimit,
+  overLimitHeld,
+  previewDetail,
+  warningDetail,
+} from "../../../gen/backend__backlogRule.ts"
+import { projectCreator } from "../owner/records.vibe"
+import { counts } from "./intakeCounts.vibe"
+
+export interface NoticeCounts {
+  readonly attempted: number
+  readonly failed: number
+}
+
+schema ProjectNoticeFacts {
+  status: string | null
+  listingTier: string | null
+  catchUpUntil: string | null
+  stewardId: string | null
+  stewardType: string | null
+}
+
+function hoursOfIso(iso: string | null): number {
+  return iso === null ? 0 : hourOf(millisOf(iso))
+}
+
+function lastMergedIso(projectCounts: ReadonlyArray<IntakeCount>, hours: number): string {
+  const exact = projectCounts.find((count) => count.lastMergedAt !== null && hoursOfIso(count.lastMergedAt) === hours)
+  return exact?.lastMergedAt ?? isoAt(hours * hourMs)
+}
+
+export effect function sendBacklogNotices(at: number) {
+  return sendAllNotices(at) catch effect (error) => {
+    try Effect.logError("backlog rule notices failed", error)
+    return { attempted: 0, failed: 0 }
+  }
+}
+
+effect function sendAllNotices(at: number) {
+  const perProject = try counts()
+  let attempted = 0
+  let failed = 0
+  for (const [projectId, projectCounts] of perProject) {
+    const outcome = try sendProjectNotice(projectId, projectCounts, at)
+    attempted += outcome.attempted
+    failed += outcome.failed
+  }
+  return { attempted, failed } satisfies NoticeCounts
+}
+
+effect function sendProjectNotice(projectId: string, projectCounts: ReadonlyArray<IntakeCount>, at: number) {
+  return sendProjectNoticeInner(projectId, projectCounts, at) catch effect (error) => {
+    try Effect.logError(`backlog rule notice failed for ${projectId}`, error)
+    return { attempted: 1, failed: 1 }
+  }
+}
+
+effect function sendProjectNoticeInner(projectId: string, projectCounts: ReadonlyArray<IntakeCount>, at: number) {
+  const db = yield* D1
+  const facts = try first(ProjectNoticeFacts, sql`SELECT json_extract(manifest, '$.status') AS status, json_extract(manifest, '$.listingTier') AS listing_tier, json_extract(manifest, '$.slopbot.catchUpUntil') AS catch_up_until, json_extract(manifest, '$.steward.github.actorId') AS steward_id, json_extract(manifest, '$.steward.github.type') AS steward_type FROM projects WHERE id = ${projectId}`)
+  if (facts === undefined) return { attempted: 0, failed: 0 }
+  if (facts.status !== "active" || facts.listingTier !== "monthly") return { attempted: 0, failed: 0 }
+  const now = hourOf(at)
+  const until = hoursOfIso(facts.catchUpUntil)
+  const reads = projectCounts.map((count) => ({ read: true, waiting: count.waitingOutside, lastMergedAt: hoursOfIso(count.lastMergedAt), observedAt: hoursOfIso(count.observedAt) }))
+  const state = { ...initial, active: facts.status === "active", exempt: false, now, reads, catchingUp: until > now, catchUpUntil: until }
+  const kind = noticeDue(state)
+  if (kind === "none") return { attempted: 0, failed: 0 }
+  const lastMergedHours = reads.reduce((latest, read) => Math.max(latest, read.lastMergedAt), 0)
+  const lastMerged = lastMergedHours === 0 ? "none" : lastMergedIso(projectCounts, lastMergedHours)
+  const reason = overLimitHeld(reads, now) ? "backlog" : "dormant"
+  const key = kind === "preview" ? `${backlogRuleKeyPrefix}${projectId}:preview` : kind === "warn" ? `${backlogRuleKeyPrefix}${projectId}:warn:${lastMerged}` : `${backlogRuleKeyPrefix}${projectId}:out:${reason}:${lastMerged}`
+  const detail = kind === "preview" ? previewDetail(noticeReason(state)) : kind === "warn" ? warningDetail(String(Math.floor((now - lastMergedHours) / 24))) : outDetail(noticeReason(state), reason === "backlog" ? `fewer than ${overLimit} wait` : "a maintainer merges")
+  const creator = try projectCreator(projectId)
+  if (creator === undefined) return { attempted: 1, failed: 1 }
+  const recipient = facts.stewardType === "Organization" ? creator.github_id : (facts.stewardId ?? creator.github_id)
+  const atIso = isoAt(at)
+  try db.run(sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at) SELECT ${key}, ${recipient}, ${inboxKind}, ${projectId}, ${detail}, ${`/projects/${projectId}/manage`}, ${atIso}, ${atIso} WHERE typeof(${recipient}) = 'text' AND length(${recipient}) >= 1 AND length(${recipient}) <= 20 AND ${recipient} GLOB '[1-9]*' AND ${recipient} NOT GLOB '*[^0-9]*' ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
+  return { attempted: 1, failed: 0 }
+}
