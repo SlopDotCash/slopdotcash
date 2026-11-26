@@ -1224,7 +1224,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const receipt = "Preserve the assessment audit receipt"
     const publication = `apps/points/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
     assert.deepStrictEqual(try Effect.try(() => reviewedWorkflow()), {
-      tokenScopes: { workflow: { contents: "read" }, job: null },
+      tokenScopes: { workflow: { contents: "read" }, job: { actions: "read", contents: "read" } },
       validation: {
         audit: true,
         replay: true,

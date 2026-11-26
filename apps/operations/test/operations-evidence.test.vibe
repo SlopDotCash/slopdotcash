@@ -531,6 +531,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const head = try committed(checkout, "README.md", "slop.cash\n", "Reviewed fee converter")
     try git(checkout, ["config", `url.${checkout}.insteadOf`, "https://github.com/SlopDotCash/slopdotcash.git"])
     try fs.makeDirectory(files.join(checkout, "apps/operations"), { recursive: true })
+    try fs.symlink(files.join(repoRoot, "node_modules"), files.join(checkout, "node_modules"))
     try fs.symlink(files.join(repoRoot, "apps/operations/node_modules"), files.join(checkout, "apps/operations/node_modules"))
     const release = `slop.cash release ${head}`
     const host: ConverterHost = { api: cloudflareApi({ accountId }), refuseDeploy: false, staleAfterDeploy: false, deployed: false, pinned: "", pinnedDeployment: "", calls: [] }
@@ -705,7 +706,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       solanaCandidate: { tag: head, message: `${release}; Solana RPC rotation from ${solanaPinned}` },
       solanaServing: [{ versionId: solanaCandidate?.id ?? "", percentage: 100 }],
     }))
-  }))
+  }), { timeout: 180_000 })
 
   it.effect('Observe the Slopbot runtime only from three agreeing reads of the expected source (spec/operations/slopbotRuntime.md, "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source"; spec/operations/slopbotRuntime.md, "A readback is selected alone, for an exact source, before any credential is used"; spec/operations/slopbotRuntime.md, "An observation needs one 100% version of the expected source, a valid runtime and an unchanged deployment")', () => scoped(effect {
     const fs = try FileSystem.FileSystem

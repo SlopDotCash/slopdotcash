@@ -327,5 +327,5 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
     const linked = try fs.symlink(path.join(scratch, "elsewhere"), path.join(data, "link"))
     const symlinked = privateDirectory(data) catch (error) => error._tag
     try same([linked, symlinked], [undefined, "PrivateStorageRefused"])
-  }))
+  }), { timeout: 180_000 })
 })

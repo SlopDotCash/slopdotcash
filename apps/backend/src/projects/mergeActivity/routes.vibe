@@ -97,5 +97,4 @@ effect function answer() {
 
 export const MergeActivityRoutes = HttpRouter.addAll([
   HttpRouter.route("*", mergeActivity.path, answered(answer())),
-  HttpRouter.route("*", `${mergeActivity.path}/`, answered(answer())),
 ])

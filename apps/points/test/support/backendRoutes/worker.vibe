@@ -2,7 +2,7 @@
 import type { D1Database } from "@repo/platform/bindings"
 import { CallerLive } from "@repo/backend/caller"
 import { type BackendVars, backend, backendServices } from "@repo/backend/live"
-import { noEdgeCache } from "@repo/platform/cache"
+import { edgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { github } from "@repo/platform/github"
@@ -13,6 +13,7 @@ import { noticePorts } from "@repo/operations/live"
 import { type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { traceServices } from "@repo/contributor/live"
 import { contributorAudience } from "../../../src/live.vibe"
+import { workerCaches } from "./edgeCaches.ts"
 
 interface Env extends RoleVars, BackendVars, SecurityEnv {
   readonly SLOP_DB: D1Database
@@ -20,7 +21,7 @@ interface Env extends RoleVars, BackendVars, SecurityEnv {
 }
 
 function services(env: Env) {
-  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(env))
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, edgeCache(workerCaches()), rolesFrom(env))
   const reads = Layer.provide(github({ token: Redacted.make(env.SLOP_GITHUB_READ_TOKEN), userAgent: "slop-points-backend-routes" }), outbound)
   const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), base)
   // The trace API's bearer routes (wallet registration) verify contributor bearer tokens as the pages Worker does.
