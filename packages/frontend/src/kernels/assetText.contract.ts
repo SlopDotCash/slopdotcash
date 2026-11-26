@@ -71,7 +71,7 @@ export const paymentAmountsNameOnlyReviewedAssets = vectors<readonly [bigint, Pa
 export const paymentAmountsNameNativeCoins = vectors<readonly [bigint, PaymentAsset], string>([
     [[1_500_000_000_000_000_000n, { network: "base-mainnet", assetAddress: "0x0000000000000000000000000000000000000000", assetDecimals: 18 }], "1.5 ETH"],
     [[1_500_000_000n, { network: "solana-mainnet", assetAddress: "11111111111111111111111111111111", assetDecimals: 9 }], "1.5 SOL"],
-    [[1n, { network: "anvil", assetAddress: "0x0000000000000000000000000000000000000000", assetDecimals: 18 }], "0.000000000000000001 ETH"],
+      [[1_500_000n, { network: "base-mainnet", assetAddress: "0x0000000000000000000000000000000000000000", assetDecimals: 6 }], "1.5 token 0x0000…0000"],
   ], ([value, asset]) => formatAssetAmount(value, asset));
 
 export const networksShowTheirRecordedLabel = vectors<string, string>([
