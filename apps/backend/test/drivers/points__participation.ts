@@ -74,7 +74,7 @@ async function firstOf(query: string, actor: number): Promise<Record<string, unk
 
 async function memberRow(actor: number): Promise<{ readonly closed_at: string | null } | undefined> {
   const row = await firstOf("SELECT closed_at FROM points_members WHERE actor_id = ?", actor);
-  return row === undefined ? undefined : { closed_at: row.closed_at === null ? null : String(row.closed_at) };
+  return row === undefined ? undefined : { closed_at: typeof row.closed_at === "string" ? row.closed_at : null };
 }
 
 async function linkOf(actor: number): Promise<{ readonly x_id: string; readonly verified_at: string } | undefined> {

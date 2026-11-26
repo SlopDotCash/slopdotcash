@@ -502,13 +502,22 @@ named `slop-submission-fee`, has no `workers.dev` address, no preview URLs
 and no routes, exactly the two crons `*/5 * * * *` (deposits) and
 `7 * * * *` (rates), and one D1 binding `SUBMISSION_FEE_DB` to the
 production `slop-private` database; no resolver key or keyed endpoint name
-may appear among its plain variables. Its settings must parse completely
+(EVM or Solana, including `RPC_URL_SUBMISSION_FEE_SOLANA` and
+`SUBMISSION_FEE_SOLANA_RESOLVER_SEED`) may appear among its plain variables.
+Its settings must parse completely
 (as `dry_run` when the mode is `off`, which reads no chain and loads no key),
 and its mode must be `off` or the mode they parse to; anything else, which
-`FeeUnknown` stands for, is refused. Live mode also needs a contract address and a start block for every
+`FeeUnknown` stands for, is refused. When the reviewed Slopbot configuration is
+checked beside it, Slopbot's `SUBMISSION_FEE_MODE === "live"` must match the
+published submission-fee terms' `switchedOn` flag. The Solana ledger has its own
+switch (`SUBMISSION_FEE_SOLANA_MODE`): `live` must match the published Solana
+switch, and any Solana mode other than `off` requires valid lamport limits, the
+published Solana program ID and start slot, and `RPC_URL_SUBMISSION_FEE_SOLANA`
+(plus `SUBMISSION_FEE_SOLANA_RESOLVER_SEED` in `live` mode). Live mode also
+needs a contract address and a start block for every
 network of the published terms, and a Worker secret inventory, read by name
-only, that holds `SUBMISSION_FEE_RESOLVER_KEY` and nothing beyond it and the
-two optional keyed endpoints. `dry_run` and `off` need neither key nor
+only, that holds `SUBMISSION_FEE_RESOLVER_KEY` and nothing beyond it, the
+two optional keyed EVM endpoints and the two optional Solana secrets. `dry_run` and `off` need neither key nor
 contracts. Binding the optional endpoints from `PAYMENT_RPC_URLS` before the
 deploy, the tagged deploy and the active-tag readback are the shell's, as for
 every service; a refusal fails the service and leaves the release partially

@@ -9,6 +9,6 @@ globalThis.fetch = (input, init) => {
   const url = new URL(input instanceof Request ? input.url : input);
   const target: unknown = typeof redirects === "object" && redirects !== null ? Reflect.get(redirects, url.origin) : undefined;
   if (typeof target !== "string") return original(input, init);
-  const moved = new URL(`${url.pathname}${url.search}`, target);
-  return original(requested === undefined ? moved : new Request(moved, requested), init);
+  const moved = new globalThis.URL(`${url.pathname}${url.search}`, target);
+  return original(requested === undefined ? moved : new globalThis.Request(moved, requested), init);
 };

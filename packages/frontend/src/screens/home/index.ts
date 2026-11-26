@@ -1,6 +1,6 @@
 // spec/app/index.md, "Story: Open a page by its address"
 export { AgentPrompt, type AgentPromptProps } from "./AgentPrompt.tsx";
-export { agentLinks, bootstrapPrompt, siteOrigin } from "./agentLinks.ts";
+export { agentLinks, bootstrapPrompt, projectSkillPath, siteOrigin } from "./agentLinks.ts";
 export { journeyAddress, journeyOf } from "./audience.ts";
 export { CampaignHeading } from "./CampaignHeading.tsx";
 export { HomePage, type HomePageProps, type HomeReads, HomeView } from "./HomePage.tsx";

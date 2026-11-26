@@ -43,11 +43,11 @@ const observed = async (): Promise<LinkRegistry> => {
   const registry = await runtime.runPromise(names());
   const actors = new Map([...ids].map(([model, id]) => [id, model]));
   const ours = registry.keys.filter((key) => key.endsWith(suffix()));
-  const record = (key: string) => registry.reservations[`$${key}`]!;
+  const record = (key: string) => registry.reservations[`$${key}`];
   return {
     reservations: Object.fromEntries(ours.map((key) => [`$${original(key)}`, { actor: actors.get(record(key).actor)!, text: original(record(key).text) } satisfies CodeRecord])),
-    active: Object.fromEntries(registry.actors.filter((id) => actors.has(id)).map((id) => [`$${actors.get(id)}`, original(registry.active[`$${id}`]!)])),
-    held: Object.fromEntries(registry.actors.filter((id) => actors.has(id)).map((id) => [`$${actors.get(id)}`, registry.held[`$${id}`]!.map(original)])),
+    active: Object.fromEntries(registry.actors.filter((id) => actors.has(id)).map((id) => [`$${actors.get(id)}`, original(registry.active[`$${id}`])])),
+    held: Object.fromEntries(registry.actors.filter((id) => actors.has(id)).map((id) => [`$${actors.get(id)}`, registry.held[`$${id}`].map(original)])),
     keys: ours.map(original),
     actors: registry.actors.filter((id) => actors.has(id)).map((id) => actors.get(id)!),
   };

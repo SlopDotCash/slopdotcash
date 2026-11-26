@@ -8,6 +8,7 @@ lemma storedKindsReadBackAsThemselves()
   ensures isStoredKind("security_case") && storedKind(kindOfStored("security_case")) == "security_case"
   ensures isStoredKind("wallet_changed") && storedKind(kindOfStored("wallet_changed")) == "wallet_changed"
   ensures isStoredKind("slopbot_scam_review") && storedKind(kindOfStored("slopbot_scam_review")) == "slopbot_scam_review"
+  ensures isStoredKind("trace_licensing_available") && storedKind(kindOfStored("trace_licensing_available")) == "trace_licensing_available"
   ensures !isStoredKind("admin_application") && !isStoredKind("")
 {
 }

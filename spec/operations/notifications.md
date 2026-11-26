@@ -48,7 +48,7 @@ import email as E from "../backend/email"
 type Kind = ApplicationApproved | ApplicationRejected | ProjectRevision | AwardReserved | PaymentPaid | PayoutHeld
   | WalletChanged | ProjectQuarantined | ProjectBanned | ReinstatementRequested | ProjectReinstated | ReinstatementDenied
   | ReinstatementReview | PayoutException | SecurityCase | ProjectReady | ProjectScanFailed | ProjectInstallationLost
-  | SecurityReportReceived | SlopbotAppealReview | SlopbotScamReview
+  | SecurityReportReceived | SlopbotAppealReview | SlopbotScamReview | TraceLicensingAvailable
 type Channel = NoEmail | SecurityOutbox | ActivityOutbox
 type Template = CaseTemplate | ReceiptTemplate | ActivityTemplate
 type DeliveryState = NotQueued | Queued | Retrying | Sending | ProviderAccepted | Delivered | Bounced | Suppressed
@@ -429,8 +429,8 @@ never reveals why private mail was withheld. Whether an exhausted row bound a de
 its destination digest, which a claim keeps, so it reads whether any of its
 attempts bound one. Only case notices show an acknowledgment time.
 
-The stored kinds are the 21 of `Kind`. A Slopbot appeal review whose appeal
-or points dispute has since been resolved is shown as resolved, the 22nd
+The stored kinds are the 22 of `Kind`. A Slopbot appeal review whose appeal
+or points dispute has since been resolved is shown as resolved, the 23rd
 kind the Inbox parser accepts; titles and links stay a presentation table.
 Which moderator and steward rows a viewer may list or open is the
 [moderator and steward Inbox](./moderation.md).

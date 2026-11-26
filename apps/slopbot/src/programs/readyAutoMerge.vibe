@@ -1,0 +1,292 @@
+// spec/slopbot/readyLabel.md, "The pilot workflow merges only on Slop's own repository when switched on, into the registered integration branch, and never touches `.github/`"
+import { usageFailure } from "@repo/platform/program"
+import {
+  type AutoMergeCandidate,
+  autoMergeAllowed,
+  autoMergeEventPageLimit,
+  autoMergeFilePageLimit,
+  autoMergeListPageLimit,
+  autoMergeReviewPageLimit,
+  autoMergeWillWrite,
+  maxAutoMergesPerRun,
+  pilotRepository,
+  pilotRepositoryId,
+  readyLabelName,
+} from "../../gen/slopbot__readyLabel.effect.vibe"
+import {
+  type ParseResult,
+  type ParsedPull,
+  mergeComment,
+  mergeabilityProblem,
+  parseLabelEventTime,
+  parseLabelledPullNumbers,
+  parsePermissionWrites,
+  parsePullPayload,
+  parseRegisteredIntegrationBranch,
+  parseRepositoryMeta,
+  parseReviewSummary,
+  parseWorkflowPathProblem,
+  projectFilePath,
+} from "../ready/autoMergeRules.ts"
+
+export error AutoMergeSkip { reason: string }
+export error AutoMergeStartFailed { message: string }
+export error DryRunWriteRefused { message: string }
+export error AutoMergeHttpFailed { message: string }
+
+export type ApiMethod = "GET" | "PUT" | "POST"
+
+export interface ApiResponse {
+  readonly status: number
+  readonly data: unknown
+}
+
+export type AutoMergeApi = (method: ApiMethod, path: string, body?: unknown) => ApiResponse!(DryRunWriteRefused | AutoMergeHttpFailed)
+
+export type AutoMergeOutcome =
+  | { readonly number: number; readonly action: "merged" | "would-merge"; readonly detail: string }
+  | { readonly number: number; readonly action: "skipped"; readonly detail: string }
+
+export interface RunOptions {
+  readonly api: AutoMergeApi
+  readonly repository: string
+  readonly enabled: string | undefined
+  readonly dryRun: boolean
+  readonly log?: (line: string) => void!!
+}
+
+const requestTimeoutMs = 20_000
+const githubApiAuthority = "https://api.github.com"
+
+effect function unwrap<T>(result: ParseResult<T>) {
+  if (!result.ok) throw new AutoMergeSkip({ reason: result.reason })
+  return result.value
+}
+
+effect function readJson(api: AutoMergeApi, path: string, what: string) {
+  const response = try api("GET", path)
+  if (response.status !== 200) throw new AutoMergeSkip({ reason: `${what} could not be read (HTTP ${response.status})` })
+  return response.data
+}
+
+effect function readPages(api: AutoMergeApi, path: string, what: string, maxPages: number) {
+  const items: unknown[] = []
+  const joiner = path.includes("?") ? "&" : "?"
+  for (let page = 1; ; page++) {
+    if (page > maxPages) throw new AutoMergeSkip({ reason: `${what} is too long to read in full` })
+    const data = try readJson(api, `${path}${joiner}per_page=100&page=${page}`, what)
+    if (!Array.isArray(data)) throw new AutoMergeSkip({ reason: `${what} is unreadable` })
+    items.push(...data)
+    if (data.length < 100) return items
+  }
+}
+
+effect function requireMergeable(pull: ParsedPull, defaultBranch: string) {
+  const problem = mergeabilityProblem(pull, defaultBranch)
+  if (problem !== null) throw new AutoMergeSkip({ reason: problem })
+}
+
+effect function requireIntegrationBranch(api: AutoMergeApi, repository: string, baseRef: string, known: Map<string, boolean>) {
+  let registered = known.get(baseRef)
+  if (registered === undefined) {
+    const data = try readJson(api, `/repos/${repository}/contents/${projectFilePath}?ref=${encodeURIComponent(baseRef)}`, `${projectFilePath} on ${baseRef}`)
+    registered = try unwrap(parseRegisteredIntegrationBranch(data, repository, baseRef))
+    known.set(baseRef, registered)
+  }
+  if (!registered) throw new AutoMergeSkip({ reason: `${baseRef} is not the project's registered integration branch` })
+}
+
+effect function standingApprovers(api: AutoMergeApi, repository: string, pull: ParsedPull, labelledAt: number) {
+  const reviews = try readPages(api, `/repos/${repository}/pulls/${pull.number}/reviews`, "the reviews", autoMergeReviewPageLimit)
+  const summary = try unwrap(parseReviewSummary(reviews, pull.headSha, pull.authorId, labelledAt))
+  for (const review of summary.requests) {
+    const data = try readJson(api, `/repos/${repository}/collaborators/${encodeURIComponent(review.login)}/permission`, `the permission of ${review.login}`)
+    if (try unwrap(parsePermissionWrites(data, review))) throw new AutoMergeSkip({ reason: `${review.login} has an open change request` })
+  }
+  const approvers: string[] = []
+  for (const review of summary.approvals) {
+    const data = try readJson(api, `/repos/${repository}/collaborators/${encodeURIComponent(review.login)}/permission`, `the permission of ${review.login}`)
+    if (try unwrap(parsePermissionWrites(data, review))) approvers.push(review.login)
+  }
+  if (approvers.length === 0) throw new AutoMergeSkip({ reason: "no approval at its head commit is from an account with write access" })
+  if (!summary.headSeenBeforeLabel) throw new AutoMergeSkip({ reason: "the ready label is older than every review of its head commit" })
+  return approvers.sort()
+}
+
+effect function requireNoWorkflowPaths(api: AutoMergeApi, repository: string, pull: ParsedPull) {
+  if (pull.changedFiles < 1) throw new AutoMergeSkip({ reason: "it changes no file" })
+  if (pull.changedFiles > autoMergeFilePageLimit * 100) throw new AutoMergeSkip({ reason: "it changes too many files to check" })
+  const files = try readPages(api, `/repos/${repository}/pulls/${pull.number}/files`, "the changed files", autoMergeFilePageLimit)
+  const problem = try unwrap(parseWorkflowPathProblem(files, pull.changedFiles))
+  if (problem !== null) throw new AutoMergeSkip({ reason: problem })
+}
+
+effect function consider(
+  api: AutoMergeApi,
+  repository: string,
+  defaultBranch: string,
+  number: number,
+  enabled: string | undefined,
+  dryRun: boolean,
+  mergesSoFar: number,
+  branches: Map<string, boolean>,
+) {
+  const path = `/repos/${repository}/pulls/${number}`
+  const pull = try unwrap(parsePullPayload(try readJson(api, path, "the pull request")))
+  if (pull.number !== number) throw new AutoMergeSkip({ reason: "the pull request is unreadable" })
+  try requireMergeable(pull, defaultBranch)
+  try requireIntegrationBranch(api, repository, pull.baseRef, branches)
+  const events = try readPages(api, `/repos/${repository}/issues/${number}/events`, "the event history", autoMergeEventPageLimit)
+  const label = try unwrap(parseLabelEventTime(events))
+  const approvers = try standingApprovers(api, repository, pull, label.labelledAt)
+  try requireNoWorkflowPaths(api, repository, pull)
+  const again = try unwrap(parsePullPayload(try readJson(api, path, "the pull request")))
+  if (again.headSha !== pull.headSha || again.baseRef !== pull.baseRef) throw new AutoMergeSkip({ reason: "its head or base changed during the checks" })
+  try requireMergeable(again, defaultBranch)
+  const candidate: AutoMergeCandidate = {
+    switchOn: enabled === "on",
+    dryRun,
+    mergesSoFar,
+    prOpen: pull.state === "open" && !pull.merged,
+    prDraft: pull.draft,
+    prLabelled: pull.labels.includes(readyLabelName),
+    sameRepo: pull.baseRepositoryId === pilotRepositoryId,
+    baseRef: pull.baseRef,
+    defaultBranch,
+    registeredIntegrationBranch: branches.get(pull.baseRef) === true,
+    prMergeable: pull.mergeable === true,
+    prClean: pull.mergeableState === "clean",
+    labelSource: label.labelSource,
+    forcePushedAfterLabel: label.forcePushedAfterLabel,
+    headReviewedBeforeLabel: true,
+    writerChangeRequested: false,
+    writerApprovalCount: approvers.length,
+    fileCount: pull.changedFiles,
+    filesComplete: true,
+    touchesGithub: false,
+    recheckSameHeadAndBase: again.headSha === pull.headSha && again.baseRef === pull.baseRef,
+    recheckOpen: again.state === "open" && !again.merged,
+    recheckDraft: again.draft,
+    recheckLabelled: again.labels.includes(readyLabelName),
+    recheckMergeable: again.mergeable === true,
+    recheckClean: again.mergeableState === "clean",
+  }
+  if (!autoMergeAllowed(candidate)) throw new AutoMergeSkip({ reason: "the pull request did not pass verification" })
+  const detail = `head ${pull.headSha} into ${pull.baseRef}, approved by ${approvers.join(", ")}`
+  if (!autoMergeWillWrite(candidate)) return { number, action: "would-merge", detail } satisfies AutoMergeOutcome
+  const merge = try api("PUT", `${path}/merge`, { sha: pull.headSha, merge_method: "merge" })
+  const merged = merge.data !== null && typeof merge.data === "object" && !Array.isArray(merge.data) && (merge.data as { readonly merged?: unknown }).merged === true
+  if (merge.status !== 200 || !merged) throw new AutoMergeSkip({ reason: `GitHub refused the merge (HTTP ${merge.status})` })
+  const comment = try api("POST", `/repos/${repository}/issues/${number}/comments`, { body: mergeComment(pull.headSha, approvers) })
+  return {
+    number,
+    action: "merged",
+    detail: comment.status === 201 ? detail : `${detail}; the comment was not posted (HTTP ${comment.status})`,
+  } satisfies AutoMergeOutcome
+}
+
+effect function startInputs(api: AutoMergeApi, repository: string) {
+  const repo = try unwrap(parseRepositoryMeta(try readJson(api, `/repos/${repository}`, "the repository"), repository))
+  const issues = try readPages(
+    api,
+    `/repos/${repository}/issues?state=open&labels=${encodeURIComponent(readyLabelName)}&sort=created&direction=asc`,
+    "the labelled pull requests",
+    autoMergeListPageLimit,
+  )
+  const numbers = try unwrap(parseLabelledPullNumbers(issues))
+  return { defaultBranch: repo.defaultBranch, numbers }
+}
+
+export effect function runReadyAutoMerge(options: RunOptions) {
+  const log = options.log ?? ((line: string) => Console.log(line))
+  const { api, repository, enabled, dryRun } = options
+  if (repository !== pilotRepository) throw new AutoMergeStartFailed({ message: `The pilot covers ${pilotRepository} only` })
+  if (!dryRun && enabled !== "on") {
+    try log("SLOPBOT_AUTO_MERGE is not on; nothing was read or merged.")
+    return [] as ReadonlyArray<AutoMergeOutcome>
+  }
+  const started = startInputs(api, repository) catch effect (error) => {
+    const detail = error._tag === "AutoMergeSkip" ? error.reason : error.message
+    throw new AutoMergeStartFailed({ message: `Ready auto-merge could not start: ${detail}` })
+  }
+  const outcomes: AutoMergeOutcome[] = []
+  const branches = new Map<string, boolean>()
+  let merges = 0
+  for (const number of started.numbers) {
+    let outcome: AutoMergeOutcome
+    if (merges >= maxAutoMergesPerRun) {
+      outcome = { number, action: "skipped", detail: `this run already reached its limit of ${maxAutoMergesPerRun}` }
+    } else {
+      const considered = consider(api, repository, started.defaultBranch, number, enabled, dryRun, merges, branches) catch (error) => ({
+        number,
+        action: "skipped" as const,
+        detail: error._tag === "AutoMergeSkip" ? error.reason : `a read failed (${error._tag})`,
+      })
+      outcome = considered
+      if (outcome.action !== "skipped") merges++
+    }
+    outcomes.push(outcome)
+    try log(`#${outcome.number} ${outcome.action}: ${outcome.detail}`)
+  }
+  const mergedCount = outcomes.filter((outcome) => outcome.action === "merged").length
+  try log(`${started.numbers.length} labelled pull request(s); ${mergedCount} merged${dryRun ? " (dry run, nothing written)" : ""}.`)
+  return outcomes as ReadonlyArray<AutoMergeOutcome>
+}
+
+export function githubAutoMergeApi(token: Redacted.Redacted<string>, dryRun: boolean, client: HttpClient.HttpClient, authority: string = githubApiAuthority): AutoMergeApi {
+  const base = authority.replace(/\/+$/u, "")
+  return (method, path, body) => effect {
+    if (dryRun && method !== "GET") throw new DryRunWriteRefused({ message: "A dry run never writes to GitHub" })
+    const headers: Record<string, string> = {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${Redacted.value(token)}`,
+      "user-agent": "slop-ready-auto-merge",
+      "x-github-api-version": "2022-11-28",
+    }
+    const baseRequest = HttpClientRequest.make(method)(`${base}${path}`, { headers })
+    const request = body === undefined ? baseRequest : HttpClientRequest.bodyJsonUnsafe(baseRequest, body)
+    return timeout(effect {
+      provide FetchHttpClient.RequestInit = { redirect: "error" } {
+        const response = try client.execute(request)
+        const text = response.text catch () => ""
+        const data = Effect.try(() => JSON.parse(text) as unknown) catch () => null
+        return { status: response.status, data } satisfies ApiResponse
+      }
+    }, Duration.millis(requestTimeoutMs)) catch effect (error) => {
+      throw new AutoMergeHttpFailed({ message: error._tag })
+    }
+  }
+}
+
+effect function optionalEnv(name: string) {
+  return Option.getOrUndefined(try Config.option(Config.String(name)))
+}
+
+export effect function readyAutoMergeCommand(args: ReadonlyArray<string>) {
+  const dryRun = args.includes("--dry-run")
+  const unknown = args.filter((arg) => arg !== "--dry-run")
+  if (unknown.length > 0) {
+    try Console.error(`Unknown argument: ${unknown[0]}`)
+    return usageFailure
+  }
+  const token = Option.getOrUndefined(try Config.option(Config.Redacted("GITHUB_TOKEN")))
+  if (token === undefined || Redacted.value(token).trim() === "") throw new AutoMergeStartFailed({ message: "GITHUB_TOKEN is required" })
+  const repository = (try optionalEnv("GITHUB_REPOSITORY")) ?? pilotRepository
+  const enabled = try optionalEnv("SLOPBOT_AUTO_MERGE")
+  const summaryPath = try optionalEnv("GITHUB_STEP_SUMMARY")
+  const client = try HttpClient.HttpClient
+  const lines: string[] = []
+  try runReadyAutoMerge({
+    api: githubAutoMergeApi(token, dryRun, client),
+    repository,
+    enabled,
+    dryRun,
+    log: (line) => effect {
+      try Console.log(line)
+      lines.push(line)
+    },
+  })
+  if (summaryPath !== undefined && summaryPath !== "") {
+    try (try FileSystem.FileSystem).writeFileString(summaryPath, `${lines.map((line) => `- ${line}`).join("\n")}\n`, { flag: "a" })
+  }
+}

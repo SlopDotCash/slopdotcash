@@ -2,7 +2,7 @@ name: Windows installer contract
 
 on:
   pull_request:
-    branches: [develop, vibestack, development, main]
+    branches: [develop, development, main]
     paths:
       - ".github/workflows/windows-installer.yml"
       - ".github/actions/setup/action.yml"

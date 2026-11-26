@@ -101,7 +101,7 @@ module node {
 }
 import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, skillAuthorityPython, treeFiles, urlPath } from node
 
-const frozenTemplateSha256 = "3d97b2c55cb56bb40502eb9ac13a75ff3d67b6aa8cc4b0bf0b745ab23caed2e4"
+const frozenTemplateSha256 = "36c76e40dfb65e3585019b982441385ef7669923f0fc7ffc391957cf8aca34ef"
 const pinnedCommit = "8660a61214a6427a4e66c540c7dc73d50cc7790b"
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
 const encoder = new TextEncoder()
@@ -392,7 +392,7 @@ const fixtureSkills = [
 ]
 
 const refusedGuides: ReadonlyArray<GuideRequest> = [
-  { artifactOrigin: "https://slop.cash/projects/a", client: "cursor", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "unknown-client", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
   { artifactOrigin: "https://slop.cash/projects/a", client: "codex", skillName: "Contribute", skillRepositoryPath: "skills/Contribute" },
   { artifactOrigin: "https://slop.cash/projects/a", client: "codex", skillName: "slop", skillRepositoryPath: "skills/other" },
   { artifactOrigin: "http://slop.cash/projects/a", client: "manual", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
@@ -452,7 +452,7 @@ function guideProject(id: string, contribution: boolean) {
 
 schema GuideRenderer { entrypoint: string; revision: string | null; revisionStatus: string; paths: ReadonlyArray<string>; arguments: ReadonlyArray<string> }
 schema GuideRecord { publicUrl: string; sha256: string; renderer: GuideRenderer }
-schema ManifestGuides { codex: GuideRecord; claude: GuideRecord; manual: GuideRecord }
+schema ManifestGuides { codex: GuideRecord; claude: GuideRecord; cursor: GuideRecord; hermes: GuideRecord; manual: GuideRecord }
 schema ArchiveRecord { sha256: string }
 schema SkillManifest { name: string; archive: ArchiveRecord; guides: ManifestGuides }
 
@@ -491,7 +491,7 @@ it.effect('A published project carries guides the bootstrap rebuilds from the fr
     const text = decoder.decode(servedFile(publication, `${prefix}skill-manifest.json`))
     const manifest = try orDie(Schema.decodeUnknownEffect(SkillManifest)(try orDie(Effect.try(() => JSON.parse(text)))))
     const archive = servedFile(publication, `downloads/${manifest.name}.skill`)
-    for (const [file, record] of [["codex.md", manifest.guides.codex], ["claude.md", manifest.guides.claude], ["manual.md", manifest.guides.manual]] as const) {
+    for (const [file, record] of [["codex.md", manifest.guides.codex], ["claude.md", manifest.guides.claude], ["cursor.md", manifest.guides.cursor], ["hermes.md", manifest.guides.hermes], ["manual.md", manifest.guides.manual]] as const) {
       const rebuilt = try orDie(Effect.try(() => runNode(repoRoot, [record.renderer.entrypoint, ...record.renderer.arguments], "")))
       const guide = decoder.decode(servedFile(publication, `${prefix}${file}`))
       checks.push({
@@ -500,17 +500,35 @@ it.effect('A published project carries guides the bootstrap rebuilds from the fr
         contract: [record.renderer.revision, record.renderer.revisionStatus, record.renderer.paths, record.publicUrl.endsWith(`/projects/slopdotcash/${prefix}${file}`)],
       })
     }
+    const skillPath = prefix === "" ? "SKILL.md" : "review/SKILL.md"
+    const encodedSkillUrl = encodeURIComponent(`https://slop.cash/projects/slopdotcash/${skillPath}`)
+    const encodedPrompt = encodeURIComponent(`Read https://slop.cash/projects/slopdotcash/${skillPath} and follow it.`)
+    const renderedSkill = decoder.decode(servedFile(publication, `${prefix}skill.md`))
+    const cursorGuide = decoder.decode(servedFile(publication, `${prefix}cursor.md`))
+    const hermesGuide = decoder.decode(servedFile(publication, `${prefix}hermes.md`))
     checks.push({
       checksum: decoder.decode(servedFile(publication, `downloads/${manifest.name}.skill.sha256`)) === `${sha256Hex(archive)}  ${manifest.name}.skill\n`,
       archive: manifest.archive.sha256 === sha256Hex(archive),
       claudeAlias: decoder.decode(servedFile(publication, `${prefix}claude-code.md`)) === decoder.decode(servedFile(publication, `${prefix}claude.md`)),
-      mission: decoder.decode(servedFile(publication, `${prefix}mission.md`)).startsWith(decoder.decode(servedFile(publication, `${prefix}skill.md`))),
+      mission: decoder.decode(servedFile(publication, `${prefix}mission.md`)).startsWith(renderedSkill),
+      cursorPath: cursorGuide.includes("${HOME}/.cursor/skills"),
+      hermesPath: hermesGuide.includes("${HERMES_HOME:-${HOME}/.hermes}/skills"),
+      desktopHandoff:
+        renderedSkill.includes(`claude://code/new?q=${encodedPrompt}`) &&
+        renderedSkill.includes(`codex://new?prompt=${encodedPrompt}`) &&
+        renderedSkill.includes(`cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(encodedPrompt)}`) &&
+        renderedSkill.includes(`antigravity://open?prompt=${encodedPrompt}`) &&
+        renderedSkill.includes(`hermes://skill/install?identifier=${encodedSkillUrl}`) &&
+        renderedSkill.includes(`openclaw://agent?message=${encodedPrompt}`) &&
+        renderedSkill.includes(`ghapp://session/new?prompt=${encodedPrompt}`) &&
+        renderedSkill.includes(`grokbot://app/v1/prompt?text=${encodedPrompt}`) &&
+        !renderedSkill.includes("{{SLOP_"),
     })
   }
   const tampered = new Map(fetched)
   tampered.set(`${templatePaths.reviewer}/SKILL.md`, encoder.encode("tampered\n"))
   const guide = { rebuilt: true, digest: true, contract: [pinnedCommit, "committed", [...guideRendererPaths], true] }
-  const artifact = { checksum: true, archive: true, claudeAlias: true, mission: true }
+  const artifact = { checksum: true, archive: true, claudeAlias: true, mission: true, cursorPath: true, hermesPath: true, desktopHandoff: true }
   try Effect.try(() => assert.deepStrictEqual(
     {
       paths: publication.kind === "published" ? [...publication.files.keys()] : publication.kind,
@@ -523,9 +541,9 @@ it.effect('A published project carries guides the bootstrap rebuilds from the fr
       paths: roles.flatMap((role) => {
         const prefix = role === "reviewer" ? "review-" : ""
         const name = generatedSkillName(role, "slopdotcash")
-        return [...["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "manual.md", "skill-manifest.json"].map((file) => `${prefix}${file}`), `downloads/${name}.skill`, `downloads/${name}.skill.sha256`]
+        return [...["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "cursor.md", "hermes.md", "manual.md", "skill-manifest.json"].map((file) => `${prefix}${file}`), `downloads/${name}.skill`, `downloads/${name}.skill.sha256`]
       }),
-      checks: [guide, guide, guide, artifact, guide, guide, guide, artifact],
+      checks: [guide, guide, guide, guide, guide, artifact, guide, guide, guide, guide, guide, artifact],
       unpublished: { kind: "unpublished" },
       tampered: { kind: "unavailable", problem: { reason: "templateFiles", role: "reviewer", failure: { kind: "digestMismatch", path: `${templatePaths.reviewer}/SKILL.md` } } },
       uncommitted: { kind: "unavailable", problem: { reason: "commitNotFullSha" } },
@@ -929,8 +947,9 @@ const carriedOutputs: Readonly<Record<string, string>> = {
   "protocol/points-v1.md": sha256Hex(utf8Bytes(pointsDocument("points-v1.md"))),
   "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
   "protocol/private-trace-v2.md": "70a886b5dbbdfaf69fafe5d9b3210e8a8eff7bfd4f2e31705fcec0ec2e436dfa",
+  "protocol/private-trace-v3.md": "088aae3e97656bf69c5dec03181eb5ffe04722bc8304a38f841fa6dd016e7261",
   "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
-  "skill-templates/skills/project-contributor-template/SKILL.md": "b2d6bd0d9fe25e8777eaee7de89401e1b6fb738eece46dc0899885cbadc16c21",
+  "skill-templates/skills/project-contributor-template/SKILL.md": "ee5e2a3f88c4f88f574f69825b272ceb2e716d0d20295b89b59c1a8abeb7f331",
   "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
   "skill-templates/skills/project-contributor-template/references/session-log.md": "0da3dd3a52e050df6d0399be72456c34a48980ec9ce954da6e02148a55d2bb00",
   "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "2a7b22d80fcfeb838b3dcf993eaf541fb4b252fbf63f599f7932b8251d70254a",
@@ -940,7 +959,7 @@ const carriedOutputs: Readonly<Record<string, string>> = {
   "skill-templates/skills/project-contributor-template/scripts/skill-authority.mjs": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
   "skill-templates/skills/project-contributor-template/scripts/terms-preflight.mjs": "1e9b2d54ccf2c6eb8f336094d56b7c29a7213804c2e3f524ee811614fe5afd99",
   "skill-templates/skills/project-contributor-template/scripts/wallet-claim.mjs": "970b46dc1b21c8848b0dffa3913b47522d60e89ce220479d01906203eb2dd32f",
-  "skill-templates/skills/project-reviewer-template/SKILL.md": "704905acdf0d69c7a1ae93f8e93a336e3b04d6bb6547896b3005847c9c4b8aa3",
+  "skill-templates/skills/project-reviewer-template/SKILL.md": "df96cbafa133e91427e0a66b28c160b22b633de156d7ad492d7d1dfae054e160",
 }
 
 const SiteBuilt = Layer.effect(SiteProgram, effect {
@@ -1041,18 +1060,23 @@ effect function statuses() {
 
 const privacyContract = "apps/contributor/docs/private-trace-v1.md"
 const versionTwoHeading = "\n## Private trace privacy contract v2\n"
+const versionThreeHeading = "\n## Private trace privacy contract v3\n"
 const versionOneOnly = ["50% of what the buyer pays"]
 const versionTwoTerms = ["# Private trace privacy contract v2", "Licensing is not available yet", "50% of what the buyer pays", "while the setting is on", "also store the terms version once consent records ship", "Retention is permanent", "[REDACTED:CREDENTIAL]"]
+const versionThreeTerms = ["# Private trace privacy contract v3", "Licensing is available from your account settings", "private-trace-v3", "OSI-approved licence", "[REDACTED:OUTSIDE_REPO]", "Retention is permanent", "[REDACTED:CREDENTIAL]"]
 const neitherVersion = ["## Cloudflare provisioning", "## Storage contract"]
 
 effect function privacyContracts() {
   const v1 = try outputText("protocol/private-trace-v1.md")
   const v2 = try outputText("protocol/private-trace-v2.md")
+  const v3 = try outputText("protocol/private-trace-v3.md")
   return {
     v1Lacks: [...versionOneOnly, ...neitherVersion].filter((term) => v1.includes(term)),
     v1Keeps: ["Retention is permanent", "No website or API"].filter((term) => !v1.includes(term)),
     v2Lacks: versionTwoTerms.filter((term) => !v2.includes(term)),
     v2Excludes: neitherVersion.filter((term) => v2.includes(term)),
+    v3Lacks: versionThreeTerms.filter((term) => !v3.includes(term)),
+    v3Excludes: neitherVersion.filter((term) => v3.includes(term)),
   }
 }
 
@@ -1060,6 +1084,12 @@ effect function withoutVersionTwo() {
   const { repository } = try SiteProgram
   const contract = try (try FileSystem.FileSystem).readFileString((try Path.Path).join(repository, privacyContract))
   try edited(privacyContract, utf8Bytes(contract.slice(0, contract.indexOf(versionTwoHeading) + 1)))
+}
+
+effect function withoutVersionThree() {
+  const { repository } = try SiteProgram
+  const contract = try (try FileSystem.FileSystem).readFileString((try Path.Path).join(repository, privacyContract))
+  try edited(privacyContract, utf8Bytes(contract.slice(0, contract.indexOf(versionThreeHeading) + 1)))
 }
 
 effect function edited(file: string, bytes: Uint8Array) {
@@ -1134,6 +1164,22 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
     const committedOutputs = try published()
     const committedStatuses = try statuses()
     const committedContracts = try privacyContracts()
+    const globalDesktopHandoff = (try.all [outputText("SKILL.md"), outputText("contribute/SKILL.md"), outputText("maintain/SKILL.md")]).every((text, index) => {
+      const path = globalSkills[index]?.path ?? ""
+      const skillUrl = `https://slop.cash/${path}`
+      const encodedUrl = encodeURIComponent(skillUrl)
+      const encodedPrompt = encodeURIComponent(`Read ${skillUrl} and follow it.`)
+      return text.includes(`claude://code/new?q=${encodedPrompt}`) &&
+        text.includes(`codex://new?prompt=${encodedPrompt}`) &&
+        text.includes(`cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(encodedPrompt)}`) &&
+        text.includes(`antigravity://open?prompt=${encodedPrompt}`) &&
+        text.includes(`hermes://skill/install?identifier=${encodedUrl}`) &&
+        text.includes(`openclaw://agent?message=${encodedPrompt}`) &&
+        text.includes(`ghapp://session/new?prompt=${encodedPrompt}`) &&
+        text.includes(`grokbot://app/v1/prompt?text=${encodedPrompt}`) &&
+        text.includes("opencode://") &&
+        text.includes("https://agent.meta.ai/chat")
+    })
 
     try appended("skills/project-reviewer-template/SKILL.md")
     try appended("skills/slop/SKILL.md")
@@ -1158,6 +1204,10 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
     const missingVersionTwoRun = try runSite()
     try restored()
 
+    try withoutVersionThree()
+    const missingVersionThreeRun = try runSite()
+    try restored()
+
     try edited("skills/slop-contributor/notes.md", utf8Bytes("a second file\n"))
     const twoFileRun = try runSite()
     const afterRefusals = try published()
@@ -1171,18 +1221,20 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
 
     const committed = ["committed", "committed", "committed"]
     try Effect.try(() => assert.deepStrictEqual(
-      { committedRun, committedOutputs, committedStatuses, committedContracts, editedRun, editedStatuses, untrackedRun, invalidEntryRun, invalidMaintainerRun, missingVersionTwoRun, twoFileRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs), sitemapWritten, repeatedCycleRun, unexpectedFieldRun, withoutRegistry },
+      { committedRun, committedOutputs, committedStatuses, committedContracts, globalDesktopHandoff, editedRun, editedStatuses, untrackedRun, invalidEntryRun, invalidMaintainerRun, missingVersionTwoRun, missingVersionThreeRun, twoFileRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs), sitemapWritten, repeatedCycleRun, unexpectedFieldRun, withoutRegistry },
       {
         committedRun: { code: 0, refusal: undefined },
         committedOutputs: expected,
         committedStatuses: { templates: "committed", renderer: "committed", manifest: "committed", skills: committed, llms: committed },
-        committedContracts: { v1Lacks: [], v1Keeps: [], v2Lacks: [], v2Excludes: [] },
+        committedContracts: { v1Lacks: [], v1Keeps: [], v2Lacks: [], v2Excludes: [], v3Lacks: [], v3Excludes: [] },
+        globalDesktopHandoff: true,
         editedRun: { code: 0, refusal: undefined },
         editedStatuses: { templates: "working-tree", renderer: "committed", manifest: "working-tree", skills: ["working-tree", "committed", "committed"], llms: ["working-tree", "committed", "committed"] },
         untrackedRun: { code: 1, refusal: "SiteRefused: [Slop] skill template skills/project-reviewer-template must be a bounded, tracked, exact file tree" },
         invalidEntryRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop" },
         invalidMaintainerRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop-maintainer" },
         missingVersionTwoRun: { code: 1, refusal: "SiteRefused: [Slop] required document section is missing: ## Private trace privacy contract v2" },
+        missingVersionThreeRun: { code: 1, refusal: "SiteRefused: [Slop] required document section is missing: ## Private trace privacy contract v3" },
         twoFileRun: { code: 1, refusal: "SiteRefused: [Slop] slop-contributor must remain one reviewable SKILL.md" },
         refusalsWroteNothing: true,
         sitemapWritten: { ran: { code: 0, refusal: undefined }, sitemap: expectedSitemap },
@@ -1565,7 +1617,7 @@ layer(Layer.merge(Running, webCrypto), { excludeTestServices: true, timeout: "30
     if (alphaRecord === undefined || pausedRecord === undefined) return try Effect.die(new Error("fixtures were not stored"))
     const alphaBytes = try served(alpha, alphaRecord, 1)
     try same(alphaBytes.actual, alphaBytes.wanted)
-    try same(alphaBytes.paths, ["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "manual.md", "skill-manifest.json", "downloads/contribute-to-alpha.skill", "downloads/contribute-to-alpha.skill.sha256", "review-skill.md", "review-mission.md", "review-codex.md", "review-claude.md", "review-claude-code.md", "review-manual.md", "review-skill-manifest.json", "downloads/review-alpha-contributions.skill", "downloads/review-alpha-contributions.skill.sha256"])
+    try same(alphaBytes.paths, ["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "cursor.md", "hermes.md", "manual.md", "skill-manifest.json", "downloads/contribute-to-alpha.skill", "downloads/contribute-to-alpha.skill.sha256", "review-skill.md", "review-mission.md", "review-codex.md", "review-claude.md", "review-claude-code.md", "review-cursor.md", "review-hermes.md", "review-manual.md", "review-skill-manifest.json", "downloads/review-alpha-contributions.skill", "downloads/review-alpha-contributions.skill.sha256"])
     const pausedBytes = try served(pausedTool, pausedRecord, 1)
     try same(pausedBytes.actual, pausedBytes.wanted)
     const aliases = try.all [call("/projects/alpha/SKILL.md"), call("/projects/alpha/review/SKILL.md")]

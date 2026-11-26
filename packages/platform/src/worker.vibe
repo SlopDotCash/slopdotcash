@@ -27,12 +27,12 @@ export effect function later<E, R>(program: void!E!R) {
   keepRunning(context, services, program)
 }
 
-export interface Job<R = any> {
+export interface Job<R = unknown> {
   readonly name: string
   readonly run: (controller: ScheduledController) => void!unknown!R
 }
 
-export type CronJobs<R = any> = Readonly<Record<string, ReadonlyArray<Job<R>>>>
+export type CronJobs<R = unknown> = Readonly<Record<string, ReadonlyArray<Job<R>>>>
 
 export error CronUnknown { cron: string }
 export error JobsFailed { cron: string; failed: ReadonlyArray<string> }

@@ -266,7 +266,7 @@ export effect function implementationCodeDigest() {
   const files = try Path.Path
   const program = try orDie(Effect.try(() => decodeURIComponent(new URL(import.meta.url).pathname)))
   const directory = files.dirname(program)
-  const sources = (try fs.readDirectory(directory)).filter((name) => name.endsWith(".vibe")).sort(compare)
+  const sources = (try fs.readDirectory(directory)).filter((name) => name.endsWith(".vibe") || name.endsWith(".js")).sort(compare)
   const digests: string[] = [try digestOfFile(program)]
   for (const name of sources) digests.push(try digestOfFile(files.join(directory, name)))
   let lock: string | null = null

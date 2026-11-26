@@ -6,6 +6,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { missingSubmissionEvidence } from "../src/review/evidence.ts"
 import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
@@ -264,5 +265,28 @@ layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       moved: { state: "open", closeRequests: 0, modelCalls: 0, penalties: [] },
       unexpected: [0, 0, 0],
     })
+  })
+
+  it.effect('A partial-execution note beside an inspectable artifact link supplies evidence while absence markers stay missing (spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require")', () => effect {
+    const policyDocs = [{ path: "CONTRIBUTING.md", text: guide, truncated: false }]
+    const link = "https://github.com/SlopDotCash/slopdotcash/actions/runs/123456"
+    const withResults = (value: string) => bodyOf("CHECK", ["- Change types: non-ui", `- Test results: ${value}`, proofOfChange, runtimeLogs])
+    const absence = ["n/a", "not applicable", "none", "tbd", "todo", "pending"].map((marker) => missingSubmissionEvidence(withResults(`${marker} ${link}`), policyDocs)?.fields ?? null)
+    try same(
+      {
+        notRunLinked: missingSubmissionEvidence(withResults(`not run locally; CI green ${link}`), policyDocs),
+        notTestedLinked: missingSubmissionEvidence(withResults(`not tested locally; CI green ${link}`), policyDocs),
+        notRunBare: missingSubmissionEvidence(withResults("not run"), policyDocs)?.fields ?? null,
+        notRunHostOnly: missingSubmissionEvidence(withResults("not run https://github.com"), policyDocs)?.fields ?? null,
+        absence,
+      },
+      {
+        notRunLinked: null,
+        notTestedLinked: null,
+        notRunBare: ["Test results"],
+        notRunHostOnly: ["Test results"],
+        absence: [["Test results"], ["Test results"], ["Test results"], ["Test results"], ["Test results"], ["Test results"]],
+      },
+    )
   })
 })

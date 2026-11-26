@@ -44,7 +44,7 @@ jobs:
     name: Trusted unsafe destination transition gate
     if: >-
       github.event.action != 'closed' &&
-      (github.event.pull_request.base.ref == 'develop' || github.event.pull_request.base.ref == 'development' || github.event.pull_request.base.ref == 'main')
+      (github.event.pull_request.base.ref == github.event.repository.default_branch || github.event.pull_request.base.ref == 'development' || github.event.pull_request.base.ref == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     concurrency:
@@ -125,7 +125,7 @@ jobs:
     name: Remove stale release-candidate label
     if: >-
       github.event.action == 'synchronize' &&
-      (github.event.pull_request.base.ref == 'development' || github.event.pull_request.base.ref == 'main')
+      (github.event.pull_request.base.ref == github.event.repository.default_branch || github.event.pull_request.base.ref == 'development' || github.event.pull_request.base.ref == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:

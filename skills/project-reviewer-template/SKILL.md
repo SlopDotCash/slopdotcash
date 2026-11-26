@@ -9,6 +9,39 @@ Review one PR in `{{SLOP_REPOSITORY}}` into `{{SLOP_INTEGRATION_BRANCH}}`. Slop
 generated this skill from its canonical reviewer template and the approved
 registry revision of project `{{SLOP_PROJECT_ID}}`.
 
+## Check your environment first
+
+Before starting a review, check whether you are running in a local coding agent
+(with a real local terminal, persistent checkout of `{{SLOP_REPOSITORY}}`,
+`git`, and an authenticated GitHub CLI `gh`) or in a browser web chat
+(`claude.ai`, `chatgpt.com`, `grok.com`, `meta.ai`, `gemini.google.com`,
+`perplexity.ai`, `kimi.ai`), mobile app, or ephemeral chat sandbox.
+
+- If you have a real local shell on the user's computer, skip this warning and
+  continue.
+- When running in a web chat or mobile app without local repository access and
+  authenticated `gh`, **stop immediately** before attempting broken steps or
+  asking for tokens or credentials. Explain concisely that exact-head PR
+  reviews for `{{SLOP_REPOSITORY}}` require a desktop coding agent with a local
+  terminal, `git`, and authenticated `gh` CLI (on mobile, tell the user to
+  switch to a desktop computer). Output the matching **desktop deeplink** for
+  the user's current app family first, followed by the other supported desktop
+  coding agents below and the copyable fallback prompt
+  `Read https://slop.cash/projects/{{SLOP_PROJECT_ID}}/review/SKILL.md and follow it.`:
+
+| If the user is in | Open in Desktop app | Desktop deeplink | Install |
+| --- | --- | --- | --- |
+| Claude web / mobile | Claude Code Desktop | `claude://code/new?q=Read%20https%3A%2F%2Fslop.cash%2Fprojects%2F{{SLOP_PROJECT_ID}}%2Freview%2FSKILL.md%20and%20follow%20it.` | `https://code.claude.com/` |
+| ChatGPT web / mobile | Codex Desktop | `codex://new?prompt=Read%20https%3A%2F%2Fslop.cash%2Fprojects%2F{{SLOP_PROJECT_ID}}%2Freview%2FSKILL.md%20and%20follow%20it.` | `https://chatgpt.com/codex` |
+| Cursor web / mobile | Cursor Desktop | `cursor://anysphere.cursor-deeplink/prompt?text=Read%2520https%253A%252F%252Fslop.cash%252Fprojects%252F{{SLOP_PROJECT_ID}}%252Freview%252FSKILL.md%2520and%2520follow%2520it.` | `https://cursor.com/` |
+| Antigravity / Gemini web / mobile | Antigravity Desktop | `antigravity://open?prompt=Read%20https%3A%2F%2Fslop.cash%2Fprojects%2F{{SLOP_PROJECT_ID}}%2Freview%2FSKILL.md%20and%20follow%20it.` | `https://antigravity.google/` |
+| Hermes web / mobile | Hermes Agent Desktop | `hermes://skill/install?identifier=https%3A%2F%2Fslop.cash%2Fprojects%2F{{SLOP_PROJECT_ID}}%2Freview%2FSKILL.md` | `https://hermes-agent.nousresearch.com/` |
+| OpenClaw web / mobile | OpenClaw Desktop | `openclaw://agent?message=Read%20https%3A%2F%2Fslop.cash%2Fprojects%2F{{SLOP_PROJECT_ID}}%2Freview%2FSKILL.md%20and%20follow%20it.` | `https://openclaw.ai/` |
+| GitHub / Copilot web | GitHub Copilot Desktop | `ghapp://session/new?prompt=Read%20https%3A%2F%2Fslop.cash%2Fprojects%2F{{SLOP_PROJECT_ID}}%2Freview%2FSKILL.md%20and%20follow%20it.` | `https://github.com/copilot` |
+| Grok web / mobile | Grok Bot Desktop | `grokbot://app/v1/prompt?text=Read%20https%3A%2F%2Fslop.cash%2Fprojects%2F{{SLOP_PROJECT_ID}}%2Freview%2FSKILL.md%20and%20follow%20it.` | `https://docs.x.ai/grok-bot` |
+| OpenCode web / mobile | OpenCode Desktop | `opencode://` (paste prompt after opening) | `https://opencode.ai/` |
+| Meta AI / Meta Muse web / mobile | Meta Muse Desktop | `https://agent.meta.ai/chat` (paste prompt after opening, or use a coding agent above) | `https://muse.ai/` |
+
 Read `project.json` in this skill directory. Its `contribution` object holds the
 maintainer-authored `approvedScope`, `supportedTasks`, `requiredTests`,
 `reviewExpectations`, `securityContact`, `closurePolicy` and `maintainerNotes`

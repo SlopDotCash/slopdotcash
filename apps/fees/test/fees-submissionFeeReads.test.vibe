@@ -4,13 +4,19 @@ import { SubmissionFeeRatesLive } from "@repo/backend/live"
 import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
 import { millisOf } from "@repo/platform/clock"
 import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { serve } from "@repo/platform/testing/chains"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
 import { area, pages } from "@repo/platform/worker"
 import { ReportDepositsLive } from "@repo/security/live"
 import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
 import { burnAddress, feeWallet, networkTerms, noToken } from "../gen/backend__submissionFeeTerms.ts"
 import { submissionFeeApi } from "../src/client/submissionFee.vibe"
 import { SubmissionFeeRoutes } from "../src/submissionFee/routes.vibe"
+import { type SolanaPayEnv, type SolanaPayOverrides, solanaSubmissionFeeDeployment } from "../src/submissionFee/solanaPay.vibe"
+import { SOLANA_SUBMISSION_FEE_MINT, associatedUsdcAccount } from "../src/submissionFee/solanaProgram.ts"
+import { createFakeSolanaLedger, solanaAddressFromHex, solanaFeeRpc } from "./support/solanaFeeFake.ts"
 import { journalDatabase } from "./support/journal.ts"
 import { same } from "./support/checks.vibe"
 
@@ -202,6 +208,65 @@ layer(Layer.empty, { excludeTestServices: true, timeout: "180 seconds" })((it) =
         malformed: { status: 404, cache: "no-store", body: { error: "not_found" } },
         extra: { status: 404, cache: served, body: { error: "not_found" } },
         mentionsProject: false,
+      },
+    )
+  }))
+
+  it.effect('POST /api/v1/submission-fee/solana stays 404 while switched off and prepares/checks Solana deposits when enabled via its deployment Layer (spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it")', () => Effect.scoped(effect {
+    const world = try opened("fees-submission-fee-reads-solana")
+    const owner = solanaAddressFromHex("55".repeat(32))
+    const resolver = solanaAddressFromHex("66".repeat(32))
+    const payer = solanaAddressFromHex("77".repeat(32))
+    const ledger = createFakeSolanaLedger(owner, resolver)
+    const payerAta = associatedUsdcAccount(payer, SOLANA_SUBMISSION_FEE_MINT) ?? ""
+    ledger.tokenAccounts.set(payerAta, { mint: SOLANA_SUBMISSION_FEE_MINT, owner: payer, amount: 5_000_000n, state: 1 })
+    const rpc = solanaFeeRpc(ledger)
+    const server = try acquireRelease(promise(() => serve(rpc)), (started) => promise(() => started.close()))
+    const fetchFn = asFetch(internet({ rpc: { [server.url]: rpc } }).handler)
+    try seed(world, [
+      sql`INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at) VALUES (5150, 1, 'acme', ${pullItem}, '2000000', '2026-12-05T10:00:00.000Z')`,
+      sql`INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at, paid_at, paid_network, paid_deposit_id) VALUES (5150, 2, 'acme', ${paidItem}, '2000000', '2026-12-05T10:00:00.000Z', '2026-12-05T10:05:00.000Z', 'base-mainnet', 1)`,
+    ])
+    effect function postSolana(body: unknown, payEnv?: SolanaPayEnv, overrides?: SolanaPayOverrides) {
+      const site = pages({
+        areas: [area({ name: "fees", api: submissionFeeApi, routes: SubmissionFeeRoutes, provides: Layer.empty })],
+        services: (env: Env) => Layer.mergeAll(
+          Layer.provideMerge(Layer.mergeAll(SubmissionFeeRatesLive, SubmissionFeeItemsLive, ReportDepositsLive), d1(env.SLOP_DB)),
+          world.clock.layer,
+          Layer.succeed(FetchHttpClient.Fetch, fetchFn),
+          FetchHttpClient.layer,
+          ...payEnv === undefined ? [] : [solanaSubmissionFeeDeployment(payEnv, overrides)],
+        ),
+        assets: "ASSETS",
+      })
+      const request = try orDie(Effect.try(() => new WebRequest(`${origin}/api/v1/submission-fee/solana`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } })))
+      const response = try promise(() => site.fetch(request as unknown as globalThis.Request, { SLOP_DB: world.db, ASSETS: assets }, context))
+      const bodyText = try promise(() => response.text())
+      const parsed: unknown = try orDie(Effect.try(() => JSON.parse(bodyText) as unknown))
+      return { status: response.status, body: parsed }
+    }
+    const offDefault = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1" })
+    const offLayer = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url })
+    const alreadyPaid = try postSolana({ step: "review", repositoryId: 5150, pullNumber: 2, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url }, { switchedOn: true })
+    const review = try postSolana({ step: "review", repositoryId: "5150", pullNumber: 1, wallet: payer, nonce: "1" }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url }, { switchedOn: true })
+    const checkSig = "4".repeat(87)
+    ledger.statuses.set(checkSig, { slot: ledger.slot, confirmationStatus: "finalized", err: null })
+    const check = try postSolana({ step: "check", repositoryId: 5150, pullNumber: 1, wallet: payer, nonce: "1", blockhash: ledger.blockhash, transactionId: checkSig }, { RPC_URL_SUBMISSION_FEE_SOLANA: server.url }, { switchedOn: true })
+    const reviewPlan = typeof review.body === "object" && review.body !== null && "plan" in review.body ? (review.body as { readonly plan: { readonly amount: string; readonly wallet: string; readonly nonce: string } }).plan : null
+    try same(
+      {
+        offDefault: offDefault.status,
+        offLayer: offLayer.status,
+        alreadyPaid: [alreadyPaid.status, typeof alreadyPaid.body === "object" && alreadyPaid.body !== null && "error" in alreadyPaid.body ? (alreadyPaid.body as { readonly error: string }).error : null],
+        review: [review.status, reviewPlan?.amount, reviewPlan?.wallet, reviewPlan?.nonce],
+        check: [check.status, check.body],
+      },
+      {
+        offDefault: 404,
+        offLayer: 404,
+        alreadyPaid: [422, "fee_already_paid"],
+        review: [200, "2000000", payer, "1"],
+        check: [200, { status: "finalized" }],
       },
     )
   }))

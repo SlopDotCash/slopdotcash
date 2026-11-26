@@ -116,7 +116,13 @@ function repositoryScan(security: Security, repository: number): Scan {
 
 function repositoryPaths(manifest: Json): ReadonlyMap<number, string> {
   const primary = primaryOf(manifest)
-  return new Map([[idOf(primary.githubId), primary.id], ...entries(manifest).slice(1).map((entry) => [idOf(typeof entry.githubId === "string" ? entry.githubId : ""), String(entry.id ?? "")] as const)])
+  return new Map([
+    [idOf(primary.githubId), primary.path],
+    ...entries(manifest).slice(1).map((entry) => [
+      idOf(typeof entry.githubId === "string" ? entry.githubId : ""),
+      currentPath(typeof entry.githubUrl === "string" ? entry.githubUrl : undefined) ?? String(entry.id ?? ""),
+    ] as const),
+  ])
 }
 
 function recordedScan(state: Registry, manifest: Json): Scan {

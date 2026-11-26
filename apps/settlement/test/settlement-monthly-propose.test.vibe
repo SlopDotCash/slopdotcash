@@ -2,7 +2,7 @@ import { assert, layer } from "@effect/vitest"
 import { Request as WebRequest } from "miniflare"
 import type { D1Database, ExecutionContext, SqlValue } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { d1, sql } from "@repo/platform/d1"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
 import { Caller, Unauthenticated } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
@@ -11,7 +11,7 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { worker } from "@repo/platform/worker"
 import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { ClosedMonth } from "@repo/ports/points"
-import { loadMonth, monthlyFacts } from "../src/monthly/store.vibe"
+import { loadMonth, monthlyFacts, proposalWrites } from "../src/monthly/store.vibe"
 import { monthlyCommitmentRoutes } from "../src/monthlyCommitment/publication.vibe"
 import { proposeMonth } from "../src/programs/proposeMonth.vibe"
 
@@ -491,6 +491,88 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       const refused = proposeMonth(["--cycle", "2026-11"]) catch (error) => error._tag
       const share = try maintainerShareOf(env, "churning")
       try same({ refused, share }, { refused: "ProposalsFailed", share: [] })
+    }
+  })
+
+  it.effect(`A busy month's maintainer decision record is stored in D1-sized parts, fails whole if a part is lost, and joins in sequence order (spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read")`, () => effect {
+    const { env } = try Journey
+    const maintainers = [person(2001, "maintainer-0"), person(2002, "maintainer-1"), person(2003, "maintainer-2"), person(2004, "maintainer-3")]
+    const busyShape: Shape = {
+      authority: { repositoryId: 801, repositoryNodeId: "R_busy" },
+      reward: { maintainerShare: 2000 },
+      repositories: [{ id: "acme/busy-repository-name" }],
+    }
+    const busy = try registered(env, "busy", "10000", {}, busyShape)
+    const ledgers = try ledgersOf({ busy: [{ githubId: "1001", login: "first", points: 1 }] })
+    const pulls = Array.from({ length: 1200 }, (_, index) => {
+      const decider = maintainers[index % maintainers.length]
+      return pull(30_000 + index, "2026-11-15T10:00:00.000Z", { mergedBy: decider, author: `outside-contributor-${index}` })
+    })
+    const busyAnswer: Answer = (variables) => {
+      const offset = variables.after === undefined || variables.after === null ? 0 : Number(variables.after)
+      const slice = pulls.slice(offset, offset + 200)
+      const next = offset + 200 < pulls.length ? String(offset + 200) : null
+      return page("R_busy", next, slice)
+    }
+    const encoder = new TextEncoder()
+    const statementBytes = (statement: Statement) => {
+      let total = encoder.encode(statement.text).length
+      for (const value of statement.params) total += encoder.encode(value === null ? "NULL" : String(value)).length
+      return total
+    }
+    provide services(env, [busy], ledgers, busyAnswer) {
+      try proposeMonth(["--cycle", "2026-11"])
+      const stored = try maintainerShareOf(env, "busy")
+      const shareText = stored[0]?.decisions ?? ""
+      const shareDigest = stored[0]?.decisions_sha256 ?? ""
+      const leftover = (try promise(() => env.SLOP_DB.prepare("SELECT COUNT(*) AS n FROM monthly_maintainer_share_parts").all())).results
+      const partsProject = try registered(env, "busy-parts", "10000", {}, busyShape)
+      const partsMonth = try loadMonth({ projectId: "busy-parts", period: 202611 as never })
+      const writes = try proposalWrites(
+        { projectId: "busy-parts", period: 202611 as never },
+        { ...partsMonth.state, phase: "Proposed", cap: [10000], proposedShares: [{ actor: 1001, amount: [8000] }, { actor: 2001, amount: [2000] }], shares: [{ actor: 1001, amount: [8000] }, { actor: 2001, amount: [2000] }], total: [10000] },
+        { number: 1, manifest: manifestOf("busy-parts", "10000", busyShape), manifestSha256: partsProject.manifestSha256 },
+        try sha256Hex("busy-parts-snapshot"),
+        new Map([[1001, "first"], [2001, "maintainer-0"]]),
+        { basisPoints: 2000, pool: [2000], text: shareText, sha256: shareDigest, rows: [{ actor: 2001, login: "maintainer-0", decisions: 300, amount: [2000] }] },
+      )
+      const maxBytes = Math.max(...writes.map(statementBytes))
+      const shareInsert = writes.find((statement) => statement.text.startsWith("INSERT INTO monthly_maintainer_shares"))?.text ?? ""
+      const firstPart = writes.findIndex((statement) => statement.text.includes("INSERT INTO monthly_maintainer_share_parts"))
+      const partStatements = writes.filter((statement) => statement.text.includes("INSERT INTO monthly_maintainer_share_parts"))
+      const db = try D1
+      const missingPartError = db.batch(writes.filter((_, index) => index !== firstPart)) catch (error) => error._tag
+      const basesAfterFailure = (try promise(() => env.SLOP_DB.prepare("SELECT COUNT(*) AS n FROM monthly_reward_bases WHERE project_id = 'busy-parts'").all())).results
+      try promise(() => env.SLOP_DB.prepare("PRAGMA reverse_unordered_selects = ON").run())
+      const reversed = [...writes.slice(0, firstPart), ...[...partStatements].reverse(), ...writes.slice(firstPart + partStatements.length)]
+      try db.batch(reversed)
+      try db.batch(writes)
+      try promise(() => env.SLOP_DB.prepare("PRAGMA reverse_unordered_selects = OFF").run())
+      const storedParts = try maintainerShareOf(env, "busy-parts")
+      const leftoverAfterParts = (try promise(() => env.SLOP_DB.prepare("SELECT COUNT(*) AS n FROM monthly_maintainer_share_parts").all())).results
+      try same({
+        oversized: encoder.encode(shareText).length > 200_000,
+        digestMatches: shareDigest === (try sha256Hex(shareText)),
+        partCount: partStatements.length > 4,
+        withinD1Limit: maxBytes <= 100_000,
+        orderedJoin: shareInsert.includes("group_concat(part, '' ORDER BY sequence)"),
+        leftover,
+        missingPartError,
+        basesAfterFailure,
+        reassembledExact: storedParts[0]?.decisions === shareText && storedParts[0]?.decisions_sha256 === shareDigest,
+        leftoverAfterParts,
+      }, {
+        oversized: true,
+        digestMatches: true,
+        partCount: true,
+        withinD1Limit: true,
+        orderedJoin: true,
+        leftover: [{ n: 0 }],
+        missingPartError: "ConstraintViolation",
+        basesAfterFailure: [{ n: 0 }],
+        reassembledExact: true,
+        leftoverAfterParts: [{ n: 0 }],
+      })
     }
   })
 })

@@ -747,9 +747,10 @@ const submissionFeeMaxMinor = 10_000_000n;
 
 function validateSubmissionFee(value: unknown, field: string): void {
   const fee = record(value, field);
-  const keys = Object.keys(fee).sort().join(",");
+  const keys = Object.keys(fee).filter((key) => key !== "standingDeposits").sort().join(",");
   if (keys !== "enabled" && keys !== "amountMinor,enabled") fail(`${field} has unexpected or missing fields`);
   if (typeof fee.enabled !== "boolean") fail(`${field}.enabled must be a boolean`);
+  if (fee.standingDeposits !== undefined && typeof fee.standingDeposits !== "boolean") fail(`${field}.standingDeposits must be a boolean`);
   if (fee.amountMinor !== undefined && (typeof fee.amountMinor !== "string" || !submissionFeeMinor.test(fee.amountMinor) || BigInt(fee.amountMinor) < submissionFeeMinMinor || BigInt(fee.amountMinor) > submissionFeeMaxMinor)) fail(`${field}.amountMinor must be a base-unit amount from ${submissionFeeMinMinor} to ${submissionFeeMaxMinor}`);
 }
 

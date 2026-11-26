@@ -174,12 +174,13 @@ function settingRecord(value: unknown) {
 
 export function submissionFeeSettingOf(value: unknown): SubmissionFeeSetting | null {
   const record = settingRecord(value)
-  const keys = record === undefined ? "" : Object.keys(record).sort().join(",")
+  const keys = record === undefined ? "" : Object.keys(record).filter((key) => key !== "standingDeposits").sort().join(",")
+  const standingValid = record?.standingDeposits === undefined || typeof record.standingDeposits === "boolean"
   const given = record?.amountMinor
   const wellFormed = typeof given === "string" && settingMinor.test(given) && Number.isSafeInteger(Number(given))
   const amount = feeSettingAmount({
     present: value !== undefined,
-    exactShape: (keys === "enabled" || keys === "amountMinor,enabled") && typeof record?.enabled === "boolean",
+    exactShape: (keys === "enabled" || keys === "amountMinor,enabled") && typeof record?.enabled === "boolean" && standingValid,
     enabled: record?.enabled === true,
     amountGiven: given !== undefined && given !== null,
     amountWellFormed: wellFormed,

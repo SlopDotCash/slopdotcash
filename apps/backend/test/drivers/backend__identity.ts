@@ -207,7 +207,7 @@ async function observe(): Promise<View> {
       mode: String(row.id).startsWith("flow_local_") ? "LocalHandoff" : "Production",
       status: statusOf(row.status),
       pkceStored: row.encrypted_pkce_verifier !== null,
-      github: { actor: Number(row.github_actor_id ?? 0), login: String(row.github_login ?? ""), nodeId: nodeOf(row.github_node_id) },
+      github: { actor: Number(row.github_actor_id ?? 0), login: typeof row.github_login === "string" ? row.github_login : "", nodeId: nodeOf(row.github_node_id) },
       createdAt: seconds(String(row.created_at)),
       expiresAt: seconds(String(row.expires_at)),
       bound: row.browser_binding_hash === digest(bindingOf(id)),
@@ -223,7 +223,7 @@ async function observe(): Promise<View> {
       createdAt: seconds(String(row.created_at)),
       expiresAt: seconds(String(row.expires_at)),
       consumed: row.consumed_at !== null,
-      consumedAt: row.consumed_at === null ? 0 : seconds(String(row.consumed_at)),
+      consumedAt: typeof row.consumed_at === "string" ? seconds(row.consumed_at) : 0,
     };
   });
   const windows = (await rows("SELECT key_hash, request_count, expires_at FROM identity_rate_limits")).flatMap((row): RateWindow[] => {

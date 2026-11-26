@@ -1,10 +1,10 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"
-import { type ChildProcessSpawner } from "effect/process"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each empty warmed page once and reads every other page itself"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"
+import type { ChildProcessSpawner } from "effect/process"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type Git } from "@repo/platform/git"
 import type { MergeRecipe } from "@repo/platform/git/evidence"
 import { GitHub } from "@repo/platform/github"
-import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AuthorRow, Graphql, type HistoryPage, type HistorySource, type JointPage, type LiveAnswer, type MemoSession, ValueFeedUnavailable as FeedOutage, auditSample, audited, sameFence, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
+import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AuthorRow, Graphql, type HistoryPage, type HistorySource, type LiveAnswer, type MemoSession, ValueFeedUnavailable as FeedOutage, auditSample, audited, sameFence, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
 import { type AttributionHold, type CensusOutcome, type HeldWorkUnit, type HistoricalClosedContext, type RetainedCommitCredit, type SourceDecision, type ValueActor, type ValueCensus, ValueEvidenceRefused, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
 import { WorkUnitHistoryRow } from "@repo/ports/slopbot"
@@ -25,17 +25,26 @@ import { type AttributionRecorder, attributionRecorder, recordingGitHub, recordi
 import { referenceDiscovery } from "./discussion.vibe"
 import { type JointDecision, type JointHistory, consumeJointMembers, heldJointDecision, jointActorIds, readWorkUnitHistory, soleCreditActor } from "./joint.vibe"
 import { hydrateValueMergeSource } from "./recovery.vibe"
-import { type ReadAhead, type WarmTarget, readAhead } from "./warmup.vibe"
+import { type ReadAhead, type WarmTarget, type WarmedPages, emptyJointPage, emptySinglePage, readAhead } from "./warmup.vibe"
+
+export const slowAttributionMs = 3 * 60 * 1000
+
+export interface AttributionLog {
+  readonly thresholdMs?: number
+  readonly write?: (line: string) => void
+}
 
 export interface AttributionMemo {
   readonly session: MemoSession
   readonly cutoffAt: string
+  readonly log?: AttributionLog
 }
 
 export interface ValueInputsOptions {
   readonly repositories: ReadonlyArray<RegisteredRepository>
   readonly discussionDeadlineMs?: number
   readonly memo?: AttributionMemo
+  readonly attributionLog?: AttributionLog
   readonly deferRetainedAttribution?: boolean
   readonly feedConcurrency?: number
 }
@@ -412,9 +421,52 @@ interface Attribution {
   readonly holds: AttributionHold[]
 }
 
+function formatMinutes(ms: number) {
+  return (ms / 60_000).toFixed(1)
+}
+
+effect function writeDiagnostic(log: AttributionLog | undefined, line: string) {
+  if (log?.write !== undefined) {
+    log.write(line)
+    return
+  }
+  try Console.error(line.endsWith("\n") ? line.slice(0, -1) : line)
+}
+
+effect function timedAttribution<A, E, R>(pull: string, log: AttributionLog | undefined, run: A!E!R, describe: (value: A) => string) {
+  return try scoped(effect {
+    const thresholdMs = log?.thresholdMs ?? slowAttributionMs
+    const startedAt = try Clock.currentTimeMillis
+    const watcher = thresholdMs > 0
+      ? try Effect.forkChild(Effect.flatMap(Effect.sleep(Duration.millis(thresholdMs)), () =>
+          writeDiagnostic(log, `[slop.cash] slow attribution still running: ${pull}, over ${formatMinutes(thresholdMs)} minutes\n`)))
+      : undefined
+    const value = try Effect.ensuring(run, watcher === undefined ? Effect.void : Fiber.interrupt(watcher))
+    const elapsed = (try Clock.currentTimeMillis) - startedAt
+    if (elapsed >= thresholdMs) {
+      try writeDiagnostic(log, `[slop.cash] slow attribution: ${pull} took ${formatMinutes(elapsed)} minutes, ${describe(value)}\n`)
+    }
+    return value
+  })
+}
+
+export function collectionMemoStatsLines(session: MemoSession): string {
+  const { reused, read } = session.commitLines.counts
+  const { stats } = session
+  const counts = `[slop.cash] collection memo: commit statistics ${reused} reused, ${read} read; attributions ${stats.reused} reused, ${stats.live} computed live, ${stats.audited} audited, ${stats.auditMismatches} audit mismatches, ${stats.fenceMisses} changed since the last collection\n`
+  if (session.notReusable.size === 0) return counts
+  const reasons = [...session.notReusable]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 20)
+    .map(([reason, count]) => `${count} x ${reason}`)
+    .join("; ")
+  return `${counts}[slop.cash] attributions not recorded for reuse: ${reasons}\n`
+}
+
 effect function attributions(run: Run, outcomes: ReadonlyArray<CensusOutcome>, owners: ReadonlyMap<string, string>) {
   const found: Attribution = { credits: [], holds: [] }
   const memo = run.options.memo
+  const log = memo?.log ?? run.options.attributionLog
   const eligible = new Map<string, ReadonlySet<string>>(outcomes.map((outcome) => [outcome.id, eligibleCommitShas(outcome, owners)] as const))
   const reusable = memo === undefined ? new Map<string, AttributionMemoEntry>() : try reusableEntries(run, memo, outcomes, eligible)
   const answers = new Map<string, AttributionAnswer>()
@@ -423,7 +475,13 @@ effect function attributions(run: Run, outcomes: ReadonlyArray<CensusOutcome>, o
       if (!reusable.has(outcome.id)) continue
       const sample = try auditSample(outcome.id, memo.cutoffAt)
       if (!audited(sample)) continue
-      const live = try liveAttribution(run, outcome, eligible.get(outcome.id) ?? new Set<string>())
+      const pull = `${repositoryOf(outcome.url)}#${outcome.number}`
+      const live = try timedAttribution(
+        pull,
+        log,
+        liveAttribution(run, outcome, eligible.get(outcome.id) ?? new Set<string>()),
+        (result) => (result.answer.kind === "hold" ? "audited, hold" : "audited"),
+      )
       answers.set(outcome.id, live.answer)
       if (try memo.session.audit(outcome.id, sample, live.recorded ?? { kind: "held" })) reusable.clear()
     }
@@ -433,25 +491,35 @@ effect function attributions(run: Run, outcomes: ReadonlyArray<CensusOutcome>, o
     const shas = eligible.get(outcome.id) ?? new Set<string>()
     let answer = answers.get(outcome.id)
     const entry = reusable.get(outcome.id)
-    if (answer === undefined && entry !== undefined && memo !== undefined) {
-      const sample = try auditSample(outcome.id, memo.cutoffAt)
-      if (memo.session.canReuse(outcome.id, sample)) {
-        const reused = try reusedAttribution(run, outcome, entry)
-        if (reused !== undefined) {
-          try memo.session.reuse(outcome.id, sample)
-          answer = reused
-        }
-      }
-    }
     if (answer === undefined) {
-      const live = try liveAttribution(run, outcome, shas)
-      answer = live.answer
-      if (memo !== undefined && shas.size > 0) memo.session.stats.live += 1
-      if (memo !== undefined && live.recorded !== undefined) try memo.session.computeLive(outcome.id, live.recorded)
+      const pull = `${repositoryOf(outcome.url)}#${outcome.number}`
+      const resolved = try timedAttribution(
+        pull,
+        log,
+        effect {
+          if (entry !== undefined && memo !== undefined) {
+            const sample = try auditSample(outcome.id, memo.cutoffAt)
+            if (memo.session.canReuse(outcome.id, sample)) {
+              const reused = try reusedAttribution(run, outcome, entry)
+              if (reused !== undefined) {
+                try memo.session.reuse(outcome.id, sample)
+                return { answer: reused, how: "reused from the memo" }
+              }
+            }
+          }
+          const live = try liveAttribution(run, outcome, shas)
+          if (memo !== undefined && shas.size > 0) memo.session.stats.live += 1
+          if (memo !== undefined && live.recorded !== undefined) try memo.session.computeLive(outcome.id, live.recorded)
+          return { answer: live.answer, how: "computed live" }
+        },
+        (result) => (result.answer.kind === "hold" ? `${result.how}, hold` : result.how),
+      )
+      answer = resolved.answer
     }
     if (answer.kind === "hold") found.holds.push({ sourceId: outcome.id, limitations: answer.limitations })
     else if (answer.kind === "authors") found.credits.push(...answer.credits)
   }
+  if (memo !== undefined) try writeDiagnostic(log, collectionMemoStatsLines(memo.session))
   return found
 }
 
@@ -472,7 +540,7 @@ function identityMatches(record: RecordIdentity, source: WorkUnitSource, reposit
     && (previous === undefined ? revision === null : revision !== null && revision.trim() !== "")
 }
 
-effect function valueDecision(repository: RegisteredRepository, source: WorkUnitSource, history: HistorySource, first: HistoryPage) {
+effect function valueDecision(repository: RegisteredRepository, source: WorkUnitSource, history: HistorySource, first: HistoryPage, reading: ReadAhead) {
   const rows: WorkUnitHistoryRow[] = []
   let previous: WorkUnitHistoryRow | undefined = undefined
   let latestJson: unknown = undefined
@@ -491,7 +559,7 @@ effect function valueDecision(repository: RegisteredRepository, source: WorkUnit
     }
     if (page.nextAfter === null) break
     if (page.records.length === 0 || page.nextAfter !== cursor) throw refused("Value history cursor did not advance")
-    page = try valueHistoryPage(history, source.evidence.pull.number, cursor, source.evidence.repositoryNodeId)
+    page = try reading.feedRead(valueHistoryPage(history, source.evidence.pull.number, cursor, source.evidence.repositoryNodeId))
   }
   const common = { history: rows, latestDigest: previous?.record_digest ?? null, implementationActorNodeIds: [...source.evidence.implementationActorNodeIds] }
   if (previous === undefined) return { ...common, status: "missing" as const }
@@ -519,24 +587,25 @@ effect function valueDecision(repository: RegisteredRepository, source: WorkUnit
 
 const missingDecision = { status: "missing" as const, history: [], latestDigest: null, implementationActorNodeIds: [] }
 
-effect function legacyDigestOf(run: Run, collected: WorkUnitSource) {
+effect function legacyDigestOf(run: Run, collected: WorkUnitSource, reading: ReadAhead) {
   const id = collected.evidence.pull.node_id
   const cached = run.legacy.get(id)
   if (cached !== undefined) return cached
   const { repository } = try registered(run, collected.evidence.repository)
   const history: HistorySource = { repository: repository.id, pinnedNodeId: repository.expectedNodeId }
-  const first = try valueHistoryPage(history, collected.evidence.pull.number, 0, collected.evidence.repositoryNodeId)
-  const latest = first.records.length === 0 && first.nextAfter === null ? null : (try valueDecision(repository, run.sources.get(id) ?? collected, history, first)).latestDigest
+  const first = try reading.feedRead(valueHistoryPage(history, collected.evidence.pull.number, 0, collected.evidence.repositoryNodeId))
+  const latest = first.records.length === 0 && first.nextAfter === null ? null : (try valueDecision(repository, run.sources.get(id) ?? collected, history, first, reading)).latestDigest
   run.legacy.set(id, latest)
   return latest
 }
 
-effect function jointRead(run: Run, outcome: CensusOutcome, repository: RegisteredRepository, history: HistorySource, identity: PublicRepository, warmed: JointPage | undefined) {
-  let first = warmed
+effect function jointRead(run: Run, outcome: CensusOutcome, repository: RegisteredRepository, history: HistorySource, identity: PublicRepository, ahead: WarmedPages | undefined, reading: ReadAhead) {
+  let pendingJoint = ahead?.joint
   const load = (after: number, through: number | null) => effect {
-    const page = after === 0 && through === null ? first : undefined
-    first = undefined
-    return page ?? try workUnitHistoryPage(history, outcome.number, after, through, identity.node_id)
+    const read = after === 0 && through === null && pendingJoint !== undefined ? try Deferred.await(pendingJoint) : undefined
+    pendingJoint = undefined
+    const empty = read !== undefined && emptyJointPage(read) ? read : undefined
+    return empty ?? try reading.feedRead(workUnitHistoryPage(history, outcome.number, after, through, identity.node_id))
   }
   return try readWorkUnitHistory(load, { projectId: repository.projectId, repositoryNodeId: identity.node_id, pullRequestNodeId: outcome.id }, run.options.repositories)
 }
@@ -546,7 +615,7 @@ effect function observe(run: Run, id: string, digest: string | null, changed: st
   run.observedGroups.set(id, digest)
 }
 
-effect function consumedGroup(run: Run, outcome: CensusOutcome, graph: JointHistory) {
+effect function consumedGroup(run: Run, outcome: CensusOutcome, graph: JointHistory, reading: ReadAhead) {
   const current = graph.current
   try observe(run, outcome.id, current?.row.record_digest ?? null, "Joint value history changed during snapshot collection")
   if (current === undefined) return false
@@ -571,7 +640,7 @@ effect function consumedGroup(run: Run, outcome: CensusOutcome, graph: JointHist
       for (const member of bindings) {
         const collected = try source(run, member.repository, member.pullRequestNumber, member.pullRequestNodeId, member.contextPaths ?? [], member.mergeRecipe)
         members.push(collected)
-        legacyDigests.set(member.pullRequestNodeId, try legacyDigestOf(run, collected))
+        legacyDigests.set(member.pullRequestNodeId, try legacyDigestOf(run, collected, reading))
       }
       decision = try consumeJointMembers(graph, members, legacyDigests, run.closedContexts?.get(outcome.id), run.options.repositories)
       if (decision.status === "assessed") try hydrateActors(run, jointActorIds(decision.evidence, decision.assessment))
@@ -586,13 +655,16 @@ effect function outcomeDecision(run: Run, outcome: CensusOutcome, position: numb
   const { repository, identity } = try registered(run, repositoryOf(outcome.url))
   const history: HistorySource = { repository: repository.id, pinnedNodeId: repository.expectedNodeId }
   const target: WarmTarget = { history, pull: outcome.number, repositoryNodeId: identity.node_id }
-  const graph = try jointRead(run, outcome, repository, history, identity, reading.takeJoint(position, target))
-  if (try consumedGroup(run, outcome, graph)) return undefined
-  let first = reading.takeSingle(position, target)
-  if (first === undefined) first = try valueHistoryPage(history, outcome.number, 0, identity.node_id)
+  const ahead = reading.take(position, target)
+  const graph = try jointRead(run, outcome, repository, history, identity, ahead, reading)
+  if (try consumedGroup(run, outcome, graph, reading)) return undefined
+  const warmedSingle = ahead === undefined ? undefined : try Deferred.await(ahead.single)
+  const first = warmedSingle !== undefined && emptySinglePage(warmedSingle)
+    ? warmedSingle
+    : try reading.feedRead(valueHistoryPage(history, outcome.number, 0, identity.node_id))
   if (first.records.length === 0 && first.nextAfter === null) return missingDecision
   const collected = try source(run, repository.id, outcome.number, outcome.id)
-  const decision = try valueDecision(repository, collected, history, first)
+  const decision = try valueDecision(repository, collected, history, first, reading)
   if (decision.status === "assessed") try hydrateActors(run, decision.implementationActorNodeIds)
   return decision
 }
@@ -642,14 +714,17 @@ effect function loaded(options: ValueInputsOptions, input: ValueCensus) {
   const recorder = () => run.recorder
   return try Effect.provide(provideService(provideService(effect {
     const found = try attributions(run, input.attribution, acceptedCommitOwners(census))
-    if (readsAhead(concurrency, input.value.length)) try reading.warm(try warmTargets(run, input.value))
     const valueDecisions: SourceDecision[] = []
-    for (const [index, outcome] of input.value.entries()) {
-      const decision = try Effect.tapError(outcomeDecision(run, outcome, index + 1, reading), () => Effect.ignore(reading.failed()))
-      try reading.decided()
-      if (decision !== undefined) valueDecisions.push({ sourceId: outcome.id, decision })
-    }
-    try reading.finished()
+    try scoped(effect {
+      if (readsAhead(concurrency, input.value.length)) try reading.start(try warmTargets(run, input.value))
+      try Effect.ensuring(effect {
+        for (const [index, outcome] of input.value.entries()) {
+          try reading.advance(index)
+          const decision = try outcomeDecision(run, outcome, index + 1, reading)
+          if (decision !== undefined) valueDecisions.push({ sourceId: outcome.id, decision })
+        }
+      }, reading.stop())
+    })
     return {
       valueDecisions,
       jointValueDecisions: [...run.jointDecisions].map(([sourceId, decision]) => ({ sourceId, decision })),
