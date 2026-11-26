@@ -78,6 +78,18 @@ export const referralAccruals = route({ method: "GET", path: "/api/v1/referrals/
 
 export const referralAccrualFile = route({ method: "GET", path: "/api/v1/referrals/accruals/:period", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: { browserSeconds: 300 } })
 
-export const referralAccount = route({ method: "GET", path: "/api/v1/referrals/me", access: "session", limitKib: 1, request: undefined, answer: ReferralAnswer, rejected: "rejected", cache: "private" })
+export const referralAccount = route({
+  method: "GET",
+  path: "/api/v1/referrals/me",
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: ReferralAnswer,
+  rejected: "rejected",
+  cache: "private",
+  refusalHeaders: { "cache-control": "private, no-store" },
+  unauthenticated: { status: 401, code: "sign_in_required", message: "" },
+  sessionExpired: { status: 401, code: "sign_in_required", message: "" },
+})
 
 export const referralApi: ReadonlyArray<AnyRoute> = [referralAccruals, referralAccrualFile, referralAccount]

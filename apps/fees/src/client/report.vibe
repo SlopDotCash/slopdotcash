@@ -140,6 +140,8 @@ export const feeConversionsRefusals = {
   forbidden: parity(getAdminFeeConversions.forbidden),
 }
 
+const privateNoStore = { "cache-control": "private, no-store" } as const
+
 export const feeConversions = route({
   method: "GET",
   path: feeConversionsPath,
@@ -149,6 +151,7 @@ export const feeConversions = route({
   answer: FeeConversionsReport,
   rejected: "forbidden",
   cache: "private",
+  refusalHeaders: privateNoStore,
   unauthenticated: feeConversionsRefusals.unauthorized,
   sessionExpired: feeConversionsRefusals.unauthorized,
   actorMismatch: feeConversionsRefusals.actorChanged,
@@ -156,6 +159,6 @@ export const feeConversions = route({
 
 const otherMethods: ReadonlyArray<Method> = ["POST", "PUT", "DELETE"]
 
-export const otherFeeConversionMethods = otherMethods.map((method) => route({ method, path: feeConversionsPath, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "private" }))
+export const otherFeeConversionMethods = otherMethods.map((method) => route({ method, path: feeConversionsPath, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "private", refusalHeaders: privateNoStore }))
 
 export const reportApi: ReadonlyArray<AnyRoute> = [feeConversions, ...otherFeeConversionMethods]

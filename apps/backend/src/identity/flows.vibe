@@ -88,7 +88,7 @@ export effect function publicGate() {
   return url.host === new URL((try IdentitySettings).publicOrigin).host ? undefined : bare(bodyRows.notFoundNoStore)
 }
 
-effect function originGate() {
+export effect function originGate() {
   const origin = (try HttpServerRequest.HttpServerRequest).headers.origin
   return origin !== undefined && !(try IdentitySettings).browserOrigins.has(origin) ? bare(startRows.originForbiddenNoStore) : undefined
 }

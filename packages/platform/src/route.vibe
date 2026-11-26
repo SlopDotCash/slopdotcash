@@ -49,6 +49,10 @@ export interface Route<B, A, X extends Access = Access> {
   readonly actorMismatch?: Refusal
   readonly unauthenticated?: Refusal
   readonly sessionExpired?: Refusal
+  readonly refusalHeaders?: Readonly<Record<string, string>>
+  readonly originForbidden?: Refusal
+  readonly corsOrigin?: Refusal
+  readonly strictCors?: true
 }
 
 export type AnyRoute = Route<unknown, unknown, Access>

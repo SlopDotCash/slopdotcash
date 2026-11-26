@@ -56,14 +56,23 @@ export function isNotificationEventKey(value: unknown): value is string {
   return typeof value === "string" && value.length >= 8 && value.length <= 300 && /^[a-z-]+:[\x21-\x7e]+$/u.test(value)
 }
 
-export const listNotices = route({ method: "GET", path: "/api/v1/notifications", access: "session", limitKib: 1, request: undefined, answer: NotificationsPage, rejected: "invalid_request", cache: "private" })
-export const markNoticesRead = route({ method: "POST", path: "/api/v1/notifications/read", access: "sessionWrite", limitKib: 32, request: MarkRequest, answer: Marked, rejected: "invalid_request", cache: "private" })
-export const acknowledgeCaseNotice = route({ method: "POST", path: "/api/v1/security-cases/:id/acknowledge", access: "sessionWrite", limitKib: 64, request: AcknowledgeRequest, answer: Acknowledged, rejected: "not_found", cache: "private" })
-export const openScamReview = route({ method: "GET", path: `${scamReviewPrefix}*`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "private" })
-export const openAppealReview = route({ method: "GET", path: `${appealPrefix}*`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "private" })
+const privateNoStore = { "cache-control": "private, no-store" } as const
+const securityHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" } as const
+const inboxSessionRefusals = {
+  refusalHeaders: privateNoStore,
+  originForbidden: { status: 403, code: "origin_forbidden", message: "" },
+  unauthenticated: { status: 401, code: "not_signed_in", message: "" },
+  sessionExpired: { status: 401, code: "not_signed_in", message: "" },
+} as const
+
+export const listNotices = route({ method: "GET", path: "/api/v1/notifications", access: "session", limitKib: 1, request: undefined, answer: NotificationsPage, rejected: "invalid_request", cache: "private", ...inboxSessionRefusals })
+export const markNoticesRead = route({ method: "POST", path: "/api/v1/notifications/read", access: "sessionWrite", limitKib: 32, request: MarkRequest, answer: Marked, rejected: "invalid_request", cache: "private", ...inboxSessionRefusals })
+export const acknowledgeCaseNotice = route({ method: "POST", path: "/api/v1/security-cases/:id/acknowledge", access: "sessionWrite", limitKib: 64, request: AcknowledgeRequest, answer: Acknowledged, rejected: "not_found", cache: "private", refusalHeaders: securityHeaders })
+export const openScamReview = route({ method: "GET", path: `${scamReviewPrefix}*`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "private", ...inboxSessionRefusals })
+export const openAppealReview = route({ method: "GET", path: `${appealPrefix}*`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "private", ...inboxSessionRefusals })
 
 function refusedMethods(path: `/${string}`, methods: ReadonlyArray<Method>) {
-  return methods.map((method) => route({ method, path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "private" }))
+  return methods.map((method) => route({ method, path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "private", refusalHeaders: privateNoStore }))
 }
 
 export const otherInboxMethods = [
