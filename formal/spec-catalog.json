@@ -23598,7 +23598,7 @@
     },
     {
       "path": "spec/security/reportDeposit.md",
-      "sha256": "63c7661999583c881ccdce53d1d891f41f8991fc5f0a31f328573ec3544c2ab7",
+      "sha256": "6fa8749476b03fce76d945a3bf137250c6966afa38a0c5641fd5c1a3f7b95d5c",
       "module": "security__reportDeposit",
       "stories": [
         {
@@ -23682,12 +23682,19 @@
             "release",
             "stepReleaseOnlyWhenTurnedOff",
             "sometimesReleased",
-            "sometimesReleasedAndScreened"
+            "sometimesReleasedAndScreened",
+            "ClaimTry",
+            "ClaimNotice",
+            "noClaimTry",
+            "claimNoticeAfter",
+            "lawFailedClaimTryIsNotRecorded",
+            "lawEndedClaimTryIsRecorded",
+            "lawRecordedClaimTryIsFinal"
           ]
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / A paid deposit is sent back on a first response and kept only after a keeping close stood seven days",
-          "line": 211,
+          "line": 240,
           "definitions": [
             "DepositFacts",
             "Due",
@@ -23723,7 +23730,7 @@
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / Simulation samples",
-          "line": 312,
+          "line": 341,
           "definitions": [
             "byValues",
             "exemptValues",
@@ -23739,6 +23746,8 @@
             "baseFacts",
             "factsValues",
             "nowMsValues",
+            "noticeValues",
+            "resultValues",
             "weight_pay",
             "weight_advance",
             "weight_decideOutcome",
@@ -23780,7 +23789,7 @@
     },
     {
       "path": "spec/security/reportNotices.md",
-      "sha256": "b4c1970195ec854c006ccb942bc6423ec62d89e8b08058ad05ac770f86222921",
+      "sha256": "be3ce022767179e235bae1091c17e10c1c4641490040e6cdbe1a2c3a4601c6aa",
       "module": "security__reportNotices",
       "stories": [
         {
@@ -23789,15 +23798,15 @@
         },
         {
           "heading": "Story: Keep the report text private",
-          "line": 138
+          "line": 139
         },
         {
           "heading": "Story: Exclusions inform advice without deciding",
-          "line": 179
+          "line": 180
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt",
-          "line": 225
+          "line": 226
         }
       ],
       "rules": [
@@ -23845,7 +23854,7 @@
         },
         {
           "heading": "Story: Receive the report with its Inbox receipt and route it to the owners / An intake outage keeps every received case and its receipt notice",
-          "line": 116,
+          "line": 117,
           "definitions": [
             "canObserveAvailability",
             "observeAvailability",
@@ -23856,7 +23865,7 @@
         },
         {
           "heading": "Story: Keep the report text private / Report bodies stay out of every record and never reach a public issue",
-          "line": 140,
+          "line": 141,
           "definitions": [
             "digestOf",
             "lawDigestNamesStoredBytes",
@@ -23874,7 +23883,7 @@
         },
         {
           "heading": "Story: Exclusions inform advice without deciding / The receipt-time exclusion context reaches screening, assessment and appeal triage",
-          "line": 181,
+          "line": 182,
           "definitions": [
             "canClaimScreening",
             "claimScreening",
@@ -23901,7 +23910,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Created and reconciled copies bind the earliest canonical GHSA",
-          "line": 227,
+          "line": 228,
           "definitions": [
             "canClaimSend",
             "claimSend",
@@ -23929,7 +23938,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A verified GitHub receipt links only the retained case",
-          "line": 274,
+          "line": 275,
           "definitions": [
             "canReadReceipt",
             "readReceipt",
@@ -23947,7 +23956,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A legacy direct report is received only from a checked GitHub receipt",
-          "line": 308,
+          "line": 309,
           "definitions": [
             "directTerms",
             "canReceiveDirect",
@@ -23959,7 +23968,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Simulation samples",
-          "line": 347,
+          "line": 348,
           "definitions": [
             "bodyValues",
             "digestOfValues",
@@ -24032,27 +24041,27 @@
         },
         {
           "target": "./screening.md",
-          "line": 183
-        },
-        {
-          "target": "./assessment.md",
-          "line": 183
-        },
-        {
-          "target": "./cases.md",
           "line": 184
         },
         {
-          "target": "./journey.md",
+          "target": "./assessment.md",
+          "line": 184
+        },
+        {
+          "target": "./cases.md",
           "line": 185
         },
         {
-          "target": "./terms.md",
+          "target": "./journey.md",
           "line": 186
         },
         {
+          "target": "./terms.md",
+          "line": 187
+        },
+        {
           "target": "./forwarding.md",
-          "line": 230
+          "line": 231
         }
       ]
     },
