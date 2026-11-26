@@ -92,6 +92,20 @@ let config: SolanaEscrowConfig;
 let project: (typeof PROJECTS)[number];
 let unrelatedTransaction = "";
 
+async function expectFinalized(signature: string) {
+  await expect
+    .poll(
+      async () => {
+        const { value } = await connection.getSignatureStatuses([signature], {
+          searchTransactionHistory: true,
+        });
+        return value[0];
+      },
+      { timeout: 60_000 },
+    )
+    .toMatchObject({ confirmationStatus: "finalized", err: null });
+}
+
 test.skip(
   process.env.SLOP_E2E_SOLANA_VAULT !== "1",
   "Requires the explicit local Solana validator workflow run.",
@@ -411,6 +425,8 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   diagnostics,
   page,
 }, info) => {
+  // This flow waits for finalized deposit, withdrawal, and award transactions.
+  test.setTimeout(300_000);
   // The two funding rejections, asserted through apiRejections below.
   diagnostics.allow(
     /^(?:console Failed to load resource: the server responded with a status of 422 .* at |422 POST )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/solana-funding$/u,
@@ -511,7 +527,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       });
     },
   );
-  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await page.goto("/projects/eliza/manage", { waitUntil: "domcontentloaded" });
   const actions = page.getByRole("region", {
     name: "Fund or withdraw · Solana Devnet (test)",
     exact: true,
@@ -522,28 +538,25 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       .click();
   // Review and pending show the exact addresses without a click.
   const expectFullAddresses = async () => {
-    for (const [label, address] of [
-      ["vault address", deployment.vault],
-      ["token address", deployment.asset],
-    ]) {
-      const identifier = actions.locator(".compact-identifier").filter({
-        has: page.getByLabel(`Show full ${label}`, { exact: true }),
-      });
-      await expect(identifier).toHaveAttribute("open", "");
-      await expect(
-        identifier.getByText(address, { exact: true }),
-      ).toBeVisible();
+    const details = actions.locator(".vault-contract-details");
+    await expect(details).toHaveAttribute("open", "");
+    for (const address of [deployment.vault, deployment.asset]) {
+      await expect(details.getByText(address, { exact: true })).toBeVisible();
     }
   };
   await connect();
-  await actions.getByLabel("Amount", { exact: true }).fill("101");
-  await actions.getByRole("button", { name: "Review", exact: true }).click();
+  await actions.getByLabel("Token amount", { exact: true }).fill("101");
+  await actions
+    .getByRole("button", { name: "Review deposit", exact: true })
+    .click();
   await expect(actions.getByRole("alert")).toContainText("balance is too low");
-  await actions.getByLabel("Amount", { exact: true }).fill("10");
-  await actions.getByRole("button", { name: "Review", exact: true }).click();
+  await actions.getByLabel("Token amount", { exact: true }).fill("10");
+  await actions
+    .getByRole("button", { name: "Review deposit", exact: true })
+    .click();
   await expect(
     actions.getByRole("region", { name: "Review vault action" }),
-  ).toContainText("Refundable only to the owner");
+  ).toContainText("Depositors have no refund right.");
   await expectFullAddresses();
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({
@@ -551,19 +564,25 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     fullPage: true,
   });
   reject = true;
-  await actions.getByRole("button", { name: "Deposit", exact: true }).click();
+  await actions
+    .getByRole("button", { name: "Confirm deposit in wallet", exact: true })
+    .click();
   await expect(actions.getByRole("alert")).toContainText("You declined");
   expect(sends).toHaveLength(0);
   reject = false;
   interrupted = true;
-  await actions.getByRole("button", { name: "Deposit", exact: true }).click();
-  await expect(actions.getByRole("alert")).toContainText("Result unclear");
-  await page.reload({ waitUntil: "networkidle" });
+  await actions
+    .getByRole("button", { name: "Confirm deposit in wallet", exact: true })
+    .click();
+  await expect(actions.getByRole("alert")).toContainText(
+    "wallet result is unclear",
+  );
+  await page.reload({ waitUntil: "domcontentloaded" });
   await connect();
   await expectFullAddresses();
   await expect(
     actions.getByRole("button", {
-      name: "Deposit",
+      name: "Confirm deposit in wallet",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -573,20 +592,22 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(actions.getByRole("status")).toContainText("Finalizing");
+  await expect(actions.getByRole("status")).toContainText(
+    "Waiting for finalized chain evidence.",
+  );
   expect(sends).toHaveLength(1);
   await page.screenshot({
     path: info.outputPath("solana-unknown-signature-pending.png"),
     fullPage: true,
   });
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await connect();
   const recovery = actions.getByLabel("Transaction signature", { exact: true });
   await expect(recovery).toHaveValue("1".repeat(64));
   await expect(recovery).toBeEditable();
   await expect(
     actions.getByRole("button", {
-      name: "Deposit",
+      name: "Confirm deposit in wallet",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -636,7 +657,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     delete value.hashSource;
     sessionStorage.setItem(key, JSON.stringify(value));
   }, pendingKey);
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await connect();
   await expect(recovery).toHaveValue("1".repeat(64));
   await expect(recovery).toBeEditable();
@@ -648,13 +669,13 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     value.hashSource = "unrecognized";
     sessionStorage.setItem(key, JSON.stringify(value));
   }, pendingKey);
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await expect(actions.getByRole("alert")).toContainText(
-    "Saved request unreadable",
+    "The saved transaction cannot be read.",
   );
   await expect(
     actions.getByRole("button", {
-      name: "Deposit",
+      name: "Confirm deposit in wallet",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -662,7 +683,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     key: pendingKey,
     value: retained,
   });
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await connect();
   await expect(recovery).toHaveValue("1".repeat(64));
   await recovery.focus();
@@ -686,7 +707,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   } finally {
     await restoreText();
   }
-  await connection.confirmTransaction(unrelatedTransaction, "finalized");
+  await expectFinalized(unrelatedTransaction);
   await recovery.fill(unrelatedTransaction);
   await recovery.press("Tab");
   const checkTransaction = actions.getByRole("button", {
@@ -701,25 +722,29 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await actions
     .getByLabel("Transaction signature", { exact: true })
     .fill(sends[0]);
-  await connection.confirmTransaction(sends[0], "finalized");
+  await expectFinalized(sends[0]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(actions.getByRole("status")).toContainText("Deposited");
+  await expect(actions.getByRole("status")).toContainText("Deposit verified");
   // A depositor's wallet is offered no withdrawal; the owner's wallet is.
   await expect(
-    actions.getByRole("radio", { name: "Deposit", exact: true }),
+    actions.getByRole("radio", { name: "Deposit tokens", exact: true }),
   ).toBeChecked();
   await expect(
-    actions.getByRole("radio", { name: "Withdraw", exact: true }),
+    actions.getByRole("radio", { name: "Withdraw free funds", exact: true }),
   ).toHaveCount(0);
   selected = owner;
   interrupted = false;
   await actions.getByRole("button", { name: "Choose another wallet" }).click();
   await connect();
-  await actions.getByRole("radio", { name: "Withdraw", exact: true }).check();
-  await actions.getByLabel("Amount", { exact: true }).fill("5");
-  await actions.getByRole("button", { name: "Review", exact: true }).click();
+  await actions
+    .getByRole("radio", { name: "Withdraw free funds", exact: true })
+    .check();
+  await actions.getByLabel("Token amount", { exact: true }).fill("5");
+  await actions
+    .getByRole("button", { name: "Review withdrawal", exact: true })
+    .click();
   await expect(
     actions.getByRole("region", { name: "Review vault action" }),
   ).toContainText("4.9");
@@ -728,13 +753,14 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     path: info.outputPath("solana-withdrawal-review.png"),
     fullPage: true,
   });
-  await actions.getByRole("button", { name: "Withdraw", exact: true }).click();
-  await expect.poll(() => sends.length).toBe(2);
-  await connection.confirmTransaction(sends[1], "finalized");
   await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
+    .getByRole("button", { name: "Confirm withdrawal in wallet", exact: true })
     .click();
-  await expect(actions.getByRole("status")).toContainText("Withdrawn");
+  await expect.poll(() => sends.length).toBe(2);
+  await expectFinalized(sends[1]);
+  await expect(actions.getByRole("status")).toContainText(
+    "Withdrawal verified",
+  );
   const account = await spl.getAccount(
     connection,
     spl.getAssociatedTokenAddressSync(
@@ -860,7 +886,12 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   expect(sends).toHaveLength(3);
   review.available = false;
   await page.reload({ waitUntil: "networkidle" });
-  await connectOwner();
+  const reconnectOwner = ownerActions.getByRole("button", {
+    name: "Connect Local Solana wallet",
+    exact: true,
+  });
+  await expect(reconnectOwner).toBeVisible({ timeout: 45_000 });
+  await reconnectOwner.click();
   expect(review.reads).toBe(1);
   await expect(
     ownerActions.getByRole("button", {
@@ -877,7 +908,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await ownerActions
     .getByLabel("Transaction hash", { exact: true })
     .fill(sends[2]);
-  await connection.confirmTransaction(sends[2], "finalized");
+  await expectFinalized(sends[2]);
   await ownerActions
     .getByRole("button", { name: "Check commitment", exact: true })
     .click();
@@ -1157,7 +1188,7 @@ async function ownerSetupWorkflow(
         failedRequests.push(`${response.status()} ${response.url()}`);
     });
     await page.goto(`${origin}/projects/${project.slug}/manage`, {
-      waitUntil: "networkidle",
+      waitUntil: "domcontentloaded",
     });
     if (bounty) await openProjectSecuritySettings(page);
     const setup = page.getByRole("region", {
@@ -1177,17 +1208,14 @@ async function ownerSetupWorkflow(
       await setup
         .getByRole("button", { name: "Connect Local Solana wallet" })
         .click();
-      const monthly = setup.getByRole("switch", {
-        name: "Auto-pay monthly",
+      const monthly = setup.getByRole("combobox", {
+        name: "Automatic monthly payment",
         exact: true,
       });
-      if (bounty) await expect(monthly).toHaveCount(0);
-      else {
-        await expect(monthly).toBeChecked();
-        if (!automatic) {
-          await monthly.click();
-          await expect(monthly).not.toBeChecked();
-        }
+      await expect(monthly).toHaveValue("on");
+      if (!automatic) {
+        await monthly.selectOption("off");
+        await expect(monthly).toHaveValue("off");
       }
       // Capture the reply in a route: Chrome can drop a streamed body before
       // response.json() reads it through DevTools.
@@ -1206,9 +1234,14 @@ async function ownerSetupWorkflow(
         browserReview ??= body.review;
         await route.fulfill({ response, json: body });
       });
-      await setup.getByRole("button", { name: "Review", exact: true }).click();
+      await setup
+        .getByRole("button", { name: "Review vault creation", exact: true })
+        .click();
       await expect(
-        setup.getByRole("button", { name: "Create vault", exact: true }),
+        setup.getByRole("button", {
+          name: "Create vault in wallet",
+          exact: true,
+        }),
       ).toBeEnabled();
       await page.unroute(reviewUrl);
       if (!browserReview)
@@ -1243,14 +1276,14 @@ async function ownerSetupWorkflow(
         });
       }
       await setup
-        .getByRole("button", { name: "Create vault", exact: true })
+        .getByRole("button", { name: "Create vault in wallet", exact: true })
         .click();
       await expect(setup.getByRole("alert")).toContainText(
         "Transport interrupted",
       );
       expect(sends).toHaveLength(1);
     }
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "domcontentloaded" });
     if (bounty) await openProjectSecuritySettings(page);
     if (!bounty) {
       const edited = structuredClone(target);
@@ -1279,13 +1312,15 @@ async function ownerSetupWorkflow(
       expect(mismatch.status()).toBe(422);
     } else {
       await setup
-        .getByLabel("Transaction signature", { exact: true })
+        .getByLabel("Creation transaction signature", { exact: true })
         .fill(deployment.deploymentTransaction);
-      await setup.getByRole("button", { name: "Check", exact: true }).click();
+      await setup
+        .getByRole("button", { name: "Check vault registration", exact: true })
+        .click();
       await expect(setup.getByRole("alert")).toContainText("does not match");
     }
     wrongSignature = false;
-    await connection.confirmTransaction(sends[0], "finalized");
+    await expectFinalized(sends[0]);
     // A new infrastructure pin must not strand an already finalized creation
     // under an earlier reviewed domain. The account alone is not a review.
     const newDomain = hash("slop-browser-new-domain").toString("hex");
@@ -1336,7 +1371,7 @@ async function ownerSetupWorkflow(
     const retainedSignature = await connection.sendRawTransaction(
       retainedTransaction.serialize(),
     );
-    await connection.confirmTransaction(retainedSignature, "finalized");
+    await expectFinalized(retainedSignature);
     const retainedDeployment = {
       ...deployment,
       projectPda: retainedPlan.projectPda,
@@ -1378,13 +1413,15 @@ async function ownerSetupWorkflow(
     });
     if (bounty) {
       await api(`project-vaults/${project.id}`, registration);
-      await page.reload({ waitUntil: "networkidle" });
+      await page.reload({ waitUntil: "domcontentloaded" });
       await openProjectSecuritySettings(page);
     } else {
       await setup
-        .getByLabel("Transaction signature", { exact: true })
+        .getByLabel("Creation transaction signature", { exact: true })
         .fill(sends[0]);
-      await setup.getByRole("button", { name: "Check", exact: true }).click();
+      await setup
+        .getByRole("button", { name: "Check vault registration", exact: true })
+        .click();
       await expect(setup).toHaveCount(0);
     }
     if (!bounty) {
@@ -1519,13 +1556,16 @@ async function ownerSetupWorkflow(
     await funding
       .getByRole("button", { name: "Connect Local Solana wallet" })
       .click();
-    await funding.getByLabel("Amount", { exact: true }).fill("10");
-    await funding.getByRole("button", { name: "Review", exact: true }).click();
-    await funding.getByRole("button", { name: "Deposit", exact: true }).click();
+    await funding.getByLabel("Token amount", { exact: true }).fill("10");
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding
+      .getByRole("button", { name: "Confirm deposit in wallet", exact: true })
+      .click();
     await expect.poll(() => sends.length).toBe(2);
-    await connection.confirmTransaction(sends[1], "finalized");
-    await funding.getByRole("button", { name: /Check/ }).click();
-    await expect(funding).toContainText("Deposited");
+    await expectFinalized(sends[1]);
+    await expect(funding.getByRole("status")).toContainText("Deposit verified");
     expect(
       (
         await spl.getAccount(
@@ -1601,16 +1641,16 @@ async function ownerSetupWorkflow(
       });
       await page.getByRole("button", { name: "Refresh bounty funds" }).click();
       await expect(funds.getByRole("alert")).toContainText("Stale");
-      await expect(funding).toContainText("Deposited");
+      await expect(funding).toContainText("Deposit verified");
       await expect(
-        funding.getByRole("radio", { name: "Deposit", exact: true }),
+        funding.getByRole("radio", { name: "Deposit tokens", exact: true }),
       ).toHaveCount(0);
       await funding
-        .getByRole("radio", { name: "Withdraw", exact: true })
+        .getByRole("radio", { name: "Withdraw free funds", exact: true })
         .check();
       await expect(
         funding.getByRole("button", {
-          name: "Review",
+          name: "Review withdrawal",
           exact: true,
         }),
       ).toBeEnabled();
@@ -1641,27 +1681,28 @@ async function ownerSetupWorkflow(
         await spl.getAccount(connection, donorAccount, "finalized")
       ).amount;
       await funding
-        .getByRole("radio", { name: "Withdraw", exact: true })
+        .getByRole("radio", { name: "Withdraw free funds", exact: true })
         .check();
-      await funding.getByLabel("Amount", { exact: true }).fill("0.500001");
       await funding
-        .getByRole("button", { name: "Review", exact: true })
+        .getByLabel("Token amount", { exact: true })
+        .fill("0.500001");
+      await funding
+        .getByRole("button", { name: "Review withdrawal", exact: true })
         .click();
       await expect(
         funding.getByRole("region", { name: "Review vault action" }),
       ).toContainText("0.49");
       await funding
         .getByRole("button", {
-          name: "Withdraw",
+          name: "Confirm withdrawal in wallet",
           exact: true,
         })
         .click();
       await expect.poll(() => sends.length).toBe(3);
-      await connection.confirmTransaction(sends[2], "finalized");
-      await funding
-        .getByRole("button", { name: "Check transaction", exact: true })
-        .click();
-      await expect(funding.getByRole("status")).toContainText("Withdrawn");
+      await expectFinalized(sends[2]);
+      await expect(funding.getByRole("status")).toContainText(
+        "Withdrawal verified",
+      );
       expect(
         (await spl.getAccount(connection, donorAccount, "finalized")).amount -
           beforeWithdrawal,

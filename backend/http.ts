@@ -128,14 +128,15 @@ type ApiErrorOptions = {
 
 /**
  * True when the database refused or lost a query for a reason that passes by
- * itself: it was overloaded, restarting, importing or unreachable. A failed
- * statement, such as a constraint or a missing column, is never one of these.
+ * itself: it was overloaded, locked, restarting, importing or unreachable. A
+ * failed statement, such as a constraint or a missing column, is never one of
+ * these. SQLite contention arrives as `database is locked: SQLITE_BUSY`.
  */
 export function databaseTemporarilyUnavailable(caught: unknown): boolean {
   return (
     caught instanceof Error &&
     /^D1_[A-Z_]+/u.test(caught.message) &&
-    /overloaded|queued for too long|network connection lost|exceeded timeout|to be reset|D1_RESET_DO|reset because its code was updated|transient issue|long-running import|currently importing/iu.test(
+    /overloaded|queued for too long|network connection lost|exceeded timeout|to be reset|D1_RESET_DO|reset because its code was updated|transient issue|long-running import|currently importing|database is locked: SQLITE_BUSY/iu.test(
       caught.message,
     )
   );

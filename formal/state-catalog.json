@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "c76bc14351ceff9c485d70f2c9cf9c6748464989c2ad779d0b2b859442db6fed",
+  "inventorySha256": "5331450b6592a81127c0c28bd4304bc2f28cc7bbbdb39b68f1638dbb04f1cafe",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -151,7 +151,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2927,
+      "line": 2933,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -189,7 +189,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 3131,
+      "line": 3137,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -474,21 +474,27 @@
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 167,
+      "line": 172,
       "name": "AttemptState",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
-      "models": ["formal/models/api/api_security_queue.qnt"],
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "line": 175,
+      "line": 180,
       "name": "reason",
       "kind": "string-union",
       "values": ["daily-limit", "none-eligible", "not-started"],
-      "models": ["formal/models/api/api_security_queue.qnt"],
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "daily-limit",
         "none-eligible",
@@ -2405,6 +2411,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0153_security_advisory_states.sql",
+      "line": 11,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["closed", "draft", "published", "triage"],
+      "models": ["formal/models/api/api_security_advisory_state.qnt"],
+      "lexicallyUnmentionedValues": ["closed", "draft", "published", "triage"],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -3167,7 +3183,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 255,
+      "line": 256,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -3186,7 +3202,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 574,
+      "line": 575,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -3205,7 +3221,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1455,
+      "line": 1466,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -3475,7 +3491,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 388,
+      "line": 389,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -3504,7 +3520,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1191,
+      "line": 1192,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3533,7 +3549,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1206,
+      "line": 1207,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3562,7 +3578,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1208,
+      "line": 1209,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -3591,7 +3607,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1224,
+      "line": 1225,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -3620,7 +3636,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1263,
+      "line": 1264,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -3677,7 +3693,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1627,
+      "line": 1634,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -3706,7 +3722,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1875,
+      "line": 1882,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -5149,7 +5165,7 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "line": 48,
+      "line": 49,
       "name": "state",
       "kind": "string-union",
       "values": ["clear", "pending", "strike", "watch"],
@@ -5159,7 +5175,7 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "line": 265,
+      "line": 297,
       "name": "reason",
       "kind": "string-union",
       "values": ["expired", "strike", "withdrawn"],

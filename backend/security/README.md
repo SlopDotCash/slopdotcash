@@ -348,6 +348,15 @@ missing or wrong, the API returns its ordinary not-found answer. Other
 methods with the right token answer 405, as the other operator routes do.
 Every answer has `cache-control: no-store`.
 
+The same job's `POST` first imports the GitHub private reports of active
+projects with a security program (`importGithubReports` in `handler.ts`; PRD
+section 8, operator decision of 25 November 2026): the maintainer's import
+under the automatic journal actor, at most five programs a run. It then writes the week's reminders (`owner-reminders.ts`;
+PRD section 8, operator decision of 25 November 2026): one Inbox notice a week
+to each reviewer of a project whose reports have waited more than seven days,
+with the count and the oldest date only. The event key carries the ISO week,
+so a repeat inside the week writes nothing.
+
 "Open" means a verified case with `receipt_state` `received` or `triaging`
 that does not wait for its deposit (`report-deposit-hold.ts`).
 `needs-information` waits on the reporter and every other state records a
