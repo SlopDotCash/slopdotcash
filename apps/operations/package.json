@@ -24,6 +24,10 @@
       "types": "./.vibe/declarations/src/workers/notify.d.vibe.ts",
       "default": "./src/workers/notify.vibe"
     },
+    "./qualificationStorage": {
+      "types": "./.vibe/declarations/src/qualification/storage.d.vibe.ts",
+      "default": "./src/qualification/storage.vibe"
+    },
     "./recoveryFixture": {
       "types": "./.vibe/declarations/src/qualification/recovery/fixture.d.vibe.ts",
       "default": "./src/qualification/recovery/fixture.vibe"

@@ -1,0 +1,93 @@
+// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"
+import type { ControlPlane } from "./recovery/account.vibe"
+
+schema Database { readonly uuid: string; readonly name: string }
+schema Bucket { readonly name: string; readonly creation_date: string }
+schema QueueEntry { readonly queue_id: string; readonly queue_name: string }
+
+interface StorageNames {
+  readonly databases: ReadonlyArray<string>
+  readonly buckets: ReadonlyArray<string>
+  readonly queues: ReadonlyArray<string>
+}
+
+export interface OwnedQualificationStorage {
+  readonly databases: Database[]
+  readonly buckets: Bucket[]
+  readonly queues: QueueEntry[]
+}
+
+const uuidPattern = /^[a-f0-9-]{36}$/u
+const hex32 = /^[a-f0-9]{32}$/u
+
+effect function decoded<S extends Schema.Top, E>(schema: S, value: unknown, step: string, refused: (message: string) => E) {
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw refused(`${step}: the answer has an unexpected shape`)
+  }
+}
+
+export effect function provisionQualificationStorage<E>(control: ControlPlane.Shape, names: StorageNames, owned: OwnedQualificationStorage, uncertain: Set<string>, refused: (message: string) => E) {
+  for (const name of names.databases) {
+    const existing = try decoded(Schema.Array(Database), try control.call("databases", "GET", `d1/database?name=${name}`), "databases", refused)
+    if (existing.length > 0) throw refused("Qualification database already exists")
+    uncertain.add(name)
+    const created = try decoded(Database, try control.call("create database", "POST", "d1/database", { name }), "create database", refused)
+    if (created.name !== name || !uuidPattern.test(created.uuid)) throw refused("Unexpected database identity")
+    owned.databases.push({ uuid: created.uuid, name: created.name })
+    uncertain.delete(name)
+  }
+  for (const name of names.buckets) {
+    if ((try control.find("bucket", `r2/buckets/${name}`)) !== undefined) throw refused("Qualification bucket already exists")
+    uncertain.add(name)
+    const created = try decoded(Bucket, try control.call("create bucket", "POST", "r2/buckets", { name }), "create bucket", refused)
+    if (created.name !== name || created.creation_date === "") throw refused("Unexpected bucket identity")
+    owned.buckets.push({ name: created.name, creation_date: created.creation_date })
+    uncertain.delete(name)
+  }
+  for (const name of names.queues) {
+    const existing = try decoded(Schema.Array(QueueEntry), try control.call("queues", "GET", `queues?name=${name}`), "queues", refused)
+    if (existing.some((queue) => queue.queue_name === name)) throw refused("Qualification queue already exists")
+    uncertain.add(name)
+    const created = try decoded(QueueEntry, try control.call("create queue", "POST", "queues", { queue_name: name }), "create queue", refused)
+    if (created.queue_name !== name || !hex32.test(created.queue_id)) throw refused("Unexpected queue identity")
+    owned.queues.push({ queue_id: created.queue_id, queue_name: created.queue_name })
+    uncertain.delete(name)
+  }
+}
+
+export effect function removeQualificationStorage<E>(control: ControlPlane.Shape, names: StorageNames, owned: OwnedQualificationStorage, refused: (message: string) => E) {
+  effect function remove(step: string, path: string) {
+    try control.call(step, "DELETE", path)
+    if ((try control.find("absence", path)) !== undefined) throw refused("Owned fixture still exists after deletion")
+  }
+
+  let errors = 0
+  for (const queue of owned.queues.toReversed()) {
+    const path = `queues/${queue.queue_id}`
+    const result = try exit(effect {
+      const current = try decoded(QueueEntry, try control.call("queue", "GET", path), "queue", refused)
+      if (current.queue_id !== queue.queue_id || current.queue_name !== queue.queue_name || !names.queues.includes(current.queue_name)) throw refused("Queue ownership changed")
+      try remove("remove queue", path)
+    })
+    if (Exit.isFailure(result)) errors += 1
+  }
+  for (const database of owned.databases) {
+    const path = `d1/database/${database.uuid}`
+    const result = try exit(effect {
+      const current = try decoded(Database, try control.call("database", "GET", path), "database", refused)
+      if (current.uuid !== database.uuid || current.name !== database.name || !names.databases.includes(current.name)) throw refused("Database ownership changed")
+      try remove("remove database", path)
+    })
+    if (Exit.isFailure(result)) errors += 1
+  }
+  for (const bucket of owned.buckets) {
+    const path = `r2/buckets/${bucket.name}`
+    const result = try exit(effect {
+      const current = try decoded(Bucket, try control.call("bucket", "GET", path), "bucket", refused)
+      if (current.name !== bucket.name || current.creation_date !== bucket.creation_date || !names.buckets.includes(current.name)) throw refused("Bucket ownership changed")
+      try remove("remove bucket", path)
+    })
+    if (Exit.isFailure(result)) errors += 1
+  }
+  return errors
+}

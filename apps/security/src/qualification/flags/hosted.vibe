@@ -1,14 +1,12 @@
 // spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
 import { sha256Hex } from "@repo/platform/crypto"
 import { ControlPlane, ControlRefused, type Method, controlPlane } from "@repo/operations/controlPlane"
+import { type OwnedQualificationStorage, provisionQualificationStorage, removeQualificationStorage } from "@repo/operations/qualificationStorage"
 import { Cloudflare, ToolFailed, cloudflare, pinnedWrangler } from "@repo/operations/wrangler"
 import { type FlagNames, FlagsRefused, bucketBinding, databaseBinding, flagNames, flagsSchema, queueBinding, runtimeVars } from "./plan.vibe"
 
 export error FlagsFailed { stage: string; report: string }
 
-schema Database { readonly uuid: string; readonly name: string }
-schema Bucket { readonly name: string; readonly creation_date: string }
-schema QueueEntry { readonly queue_id: string; readonly queue_name: string }
 schema Subdomain { readonly enabled: boolean; readonly previews_enabled: boolean }
 schema Managed { readonly enabled: boolean }
 schema CustomDomain { readonly domain?: string }
@@ -25,7 +23,6 @@ schema Settings { readonly bindings: ReadonlyArray<Binding> }
 
 const QueryResults = Schema.Array(Schema.Struct({ success: Schema.Boolean, results: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)) }))
 const bindingFields = ["type", "name", "id", "bucket_name", "queue_name", "text"] as const
-const uuidPattern = /^[a-f0-9-]{36}$/u
 const hex32 = /^[a-f0-9]{32}$/u
 const commandSeconds = 180
 const deploySeconds = 120
@@ -39,10 +36,7 @@ export interface SafeFailure {
   readonly cloudflareCodes: ReadonlyArray<number>
 }
 
-export interface Owned {
-  readonly databases: Database[]
-  readonly queues: QueueEntry[]
-  readonly buckets: Bucket[]
+export interface Owned extends OwnedQualificationStorage {
   worker: boolean
 }
 
@@ -113,37 +107,6 @@ effect function requireAbsent(path: string) {
   if ((try (try ControlPlane).find("absence", path)) !== undefined) throw refused("Owned fixture still exists after deletion")
 }
 
-effect function provisionFixtureResources(run: string, names: FlagNames, owned: Owned, uncertain: Set<string>) {
-  const control = try ControlPlane
-  if ((try control.find("worker", `workers/scripts/${run}/settings`)) !== undefined) throw refused("Qualification Worker already exists")
-  for (const name of names.databases) {
-    const existing = try decoded(Schema.Array(Database), try control.call("databases", "GET", `d1/database?name=${name}`), "databases")
-    if (existing.length > 0) throw refused("Qualification database already exists")
-    uncertain.add(name)
-    const created = try decoded(Database, try control.call("create database", "POST", "d1/database", { name }), "create database")
-    if (created.name !== name || !uuidPattern.test(created.uuid)) throw refused("Unexpected database identity")
-    owned.databases.push({ uuid: created.uuid, name: created.name })
-    uncertain.delete(name)
-  }
-  for (const name of names.buckets) {
-    if ((try control.find("bucket", `r2/buckets/${name}`)) !== undefined) throw refused("Qualification bucket already exists")
-    uncertain.add(name)
-    const created = try decoded(Bucket, try control.call("create bucket", "POST", "r2/buckets", { name }), "create bucket")
-    if (created.name !== name || created.creation_date === "") throw refused("Unexpected bucket identity")
-    owned.buckets.push({ name: created.name, creation_date: created.creation_date })
-    uncertain.delete(name)
-  }
-  for (const name of names.queues) {
-    const existing = try decoded(Schema.Array(QueueEntry), try control.call("queues", "GET", `queues?name=${name}`), "queues")
-    if (existing.some((queue) => queue.queue_name === name)) throw refused("Qualification queue already exists")
-    uncertain.add(name)
-    const created = try decoded(QueueEntry, try control.call("create queue", "POST", "queues", { queue_name: name }), "create queue")
-    if (created.queue_name !== name || !hex32.test(created.queue_id)) throw refused("Unexpected queue identity")
-    owned.queues.push({ queue_id: created.queue_id, queue_name: created.queue_name })
-    uncertain.delete(name)
-  }
-}
-
 effect function writeFixtureConfig(input: FlagsRun & { readonly root: string; readonly workspace: string }, names: FlagNames, owned: Owned, report: FlagsReport) {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
@@ -184,36 +147,6 @@ effect function writeFixtureConfig(input: FlagsRun & { readonly root: string; re
   const file = files.join(input.workspace, "wrangler.json")
   try fs.writeFileString(file, JSON.stringify(config), { mode: 0o600 })
   return file
-}
-
-effect function deleteOwnedStorage(names: FlagNames, owned: Owned) {
-  const control = try ControlPlane
-  let errors = 0
-  for (const queue of owned.queues.toReversed()) {
-    errors += try attempted(effect {
-      const current = try decoded(QueueEntry, try control.call("queue", "GET", `queues/${queue.queue_id}`), "queue")
-      if (current.queue_name !== queue.queue_name || !names.queues.includes(current.queue_name)) throw refused("Queue ownership changed")
-      try control.call("remove queue", "DELETE", `queues/${queue.queue_id}`)
-      try requireAbsent(`queues/${queue.queue_id}`)
-    })
-  }
-  for (const database of owned.databases) {
-    errors += try attempted(effect {
-      const current = try decoded(Database, try control.call("database", "GET", `d1/database/${database.uuid}`), "database")
-      if (current.uuid !== database.uuid || current.name !== database.name || !names.databases.includes(current.name)) throw refused("Database ownership changed")
-      try control.call("remove database", "DELETE", `d1/database/${database.uuid}`)
-      try requireAbsent(`d1/database/${database.uuid}`)
-    })
-  }
-  for (const bucket of owned.buckets) {
-    errors += try attempted(effect {
-      const current = try decoded(Bucket, try control.call("bucket", "GET", `r2/buckets/${bucket.name}`), "bucket")
-      if (current.name !== bucket.name || current.creation_date !== bucket.creation_date || !names.buckets.includes(current.name)) throw refused("Bucket ownership changed")
-      try control.call("remove bucket", "DELETE", `r2/buckets/${bucket.name}`)
-      try requireAbsent(`r2/buckets/${bucket.name}`)
-    })
-  }
-  return errors
 }
 
 export effect function flagsQualification(input: FlagsRun & { readonly root: string; readonly workspace: string }) {
@@ -372,14 +305,15 @@ export effect function flagsQualification(input: FlagsRun & { readonly root: str
         owned.worker = false
       })
     }
-    errors += try deleteOwnedStorage(names, owned)
+    errors += try removeQualificationStorage(control, names, owned, refused)
     report.fixtureResources = owned
     report.workerVersion = workerVersion ?? null
     report.cleanup = { complete: errors === 0 && uncertain.size === 0, failedOperations: errors, unresolvedCreations: [...uncertain] }
   }
 
   effect function qualified() {
-    try provisionFixtureResources(run, names, owned, uncertain)
+    if ((try control.find("worker", `workers/scripts/${run}/settings`)) !== undefined) throw refused("Qualification Worker already exists")
+    try provisionQualificationStorage(control, names, owned, uncertain, refused)
     const config = try writeFixtureConfig(input, names, owned, report)
     for (const database of owned.databases) try wrangler("schema", ["d1", "migrations", "apply", database.name, "--remote", "--config", config], migrationSeconds, true)
     stage = "deploy-worker"

@@ -23,7 +23,7 @@ interface Boundary {
   readonly cloudflare: Cloudflare.Shape
 }
 
-function cloudflareBoundary(failing?: string): Boundary {
+function cloudflareBoundary({ failing, mismatchedQueue }: { readonly failing?: string; readonly mismatchedQueue?: string } = {}): Boundary {
   const calls: string[] = []
   const tools: string[] = []
   const present = new Map<string, unknown>()
@@ -54,7 +54,8 @@ function cloudflareBoundary(failing?: string): Boundary {
         return bucket
       }
       const queue = { queue_id: created.toString(16).padStart(32, "0"), queue_name: named.queue_name, consumers: [] }
-      present.set(`queues/${queue.queue_id}`, queue)
+      const readable = named.queue_name === mismatchedQueue ? { ...queue, queue_id: "f".repeat(32) } : queue
+      present.set(`queues/${queue.queue_id}`, readable)
       return queue
     },
     find: (_step: string, path: string) => effect {
@@ -185,8 +186,10 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto, FetchHttpClient.l
     const run = "slop-vet-flags-12-1"
     const unbuilt = cloudflareBoundary()
     const failedBuild = try qualified(unbuilt, run)
-    const uncertain = cloudflareBoundary(`${run}-failed`)
+    const uncertain = cloudflareBoundary({ failing: `${run}-failed` })
     const failedQueue = try qualified(uncertain, run)
+    const mismatched = cloudflareBoundary({ mismatchedQueue: `${run}-failed` })
+    const mismatchedCleanup = try qualified(mismatched, run)
     const database = "00000000-0000-0000-0000-000000000001"
     const work = (3).toString(16).padStart(32, "0")
     const failed = (4).toString(16).padStart(32, "0")
@@ -206,6 +209,7 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto, FetchHttpClient.l
       {
         unbuilt: { calls: unbuilt.calls, tools: unbuilt.tools, failure: failedBuild.failure, cleanup: failedBuild.cleanup, success: failedBuild.success, hosted: failedBuild.hosted, productionTouched: failedBuild.productionTouched },
         uncertain: { calls: uncertain.calls, tools: uncertain.tools, failure: failedQueue.failure, cleanup: failedQueue.cleanup, success: failedQueue.success },
+        mismatched: { calls: mismatched.calls, tools: mismatched.tools, cleanup: mismatchedCleanup.cleanup, success: mismatchedCleanup.success },
       },
       {
         unbuilt: {
@@ -222,6 +226,12 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto, FetchHttpClient.l
           tools: [],
           failure: { stage: "prepare-resources", kind: "ControlRefused", reason: "create queue", status: 500, cloudflareCodes: [10000] },
           cleanup: { complete: false, failedOperations: 0, unresolvedCreations: [`${run}-failed`] },
+          success: false,
+        },
+        mismatched: {
+          calls: [...provisioned, `GET queues/${failed}`, ...removed(`queues/${work}`), ...removed(`d1/database/${database}`), ...removed(`r2/buckets/${run}-source`)],
+          tools: [],
+          cleanup: { complete: false, failedOperations: 1, unresolvedCreations: [] },
           success: false,
         },
       },

@@ -1,11 +1,9 @@
 // spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"
 import { Cloudflare, ToolFailed } from "../../release/wrangler/cloudflare.vibe"
+import { type OwnedQualificationStorage, provisionQualificationStorage, removeQualificationStorage } from "../storage.vibe"
 import { ControlPlane, ControlRefused, type Method } from "./account.vibe"
 import { type Names, RecoveryRefused, bucketBindings, databaseBindings, protectedWorkflow, qualificationAccounts, qualificationMigrations, qualificationSchema, queueBinding, runtimeVars } from "./plan.vibe"
 
-schema Database { readonly uuid: string; readonly name: string }
-schema Bucket { readonly name: string; readonly creation_date: string }
-schema QueueEntry { readonly queue_id: string; readonly queue_name: string }
 schema ScriptEntry { readonly id: string }
 schema Subdomain { readonly enabled: boolean; readonly previews_enabled: boolean }
 schema Managed { readonly enabled: boolean }
@@ -41,10 +39,7 @@ export interface SafeFailure {
   readonly cloudflareCodes: ReadonlyArray<number>
 }
 
-export interface Owned {
-  readonly databases: Database[]
-  readonly queues: QueueEntry[]
-  readonly buckets: Bucket[]
+export interface Owned extends OwnedQualificationStorage {
   worker: boolean
 }
 
@@ -76,7 +71,6 @@ export interface Hosted {
   readonly workspace: string
 }
 
-const uuidPattern = /^[a-f0-9-]{36}$/u
 const hex32 = /^[a-f0-9]{32}$/u
 const commandSeconds = 180
 const cycleSeconds = 240
@@ -129,38 +123,6 @@ effect function requireAbsent(control: ControlPlane.Shape, path: string) {
   if ((try control.find("absence", path)) !== undefined) throw refused("Owned fixture still exists after deletion")
 }
 
-effect function provisionResources(control: ControlPlane.Shape, run: string, names: Names, owned: Owned, uncertain: Set<string>) {
-  const api = (step: string, method: Method, path: string, body?: unknown) => control.call(step, method, path, body)
-  const scripts = try decoded(Schema.Array(ScriptEntry), try api("workers", "GET", "workers/scripts"), "workers")
-  if (scripts.some((script) => script.id === run)) throw refused("Qualification Worker already exists")
-  for (const name of names.databases) {
-    const existing = try decoded(Schema.Array(Database), try api("databases", "GET", `d1/database?name=${name}`), "databases")
-    if (existing.length > 0) throw refused("Qualification database already exists")
-    uncertain.add(name)
-    const created = try decoded(Database, try api("create database", "POST", "d1/database", { name }), "create database")
-    if (created.name !== name || !uuidPattern.test(created.uuid)) throw refused("Unexpected database identity")
-    owned.databases.push({ uuid: created.uuid, name: created.name })
-    uncertain.delete(name)
-  }
-  for (const name of names.buckets) {
-    if ((try control.find("bucket", `r2/buckets/${name}`)) !== undefined) throw refused("Qualification bucket already exists")
-    uncertain.add(name)
-    const created = try decoded(Bucket, try api("create bucket", "POST", "r2/buckets", { name }), "create bucket")
-    if (created.name !== name || created.creation_date === "") throw refused("Unexpected bucket identity")
-    owned.buckets.push({ name: created.name, creation_date: created.creation_date })
-    uncertain.delete(name)
-  }
-  for (const name of names.queues) {
-    const existing = try decoded(Schema.Array(QueueEntry), try api("queues", "GET", `queues?name=${name}`), "queues")
-    if (existing.some((queue) => queue.queue_name === name)) throw refused("Qualification queue already exists")
-    uncertain.add(name)
-    const created = try decoded(QueueEntry, try api("create queue", "POST", "queues", { queue_name: name }), "create queue")
-    if (created.queue_name !== name || !hex32.test(created.queue_id)) throw refused("Unexpected queue identity")
-    owned.queues.push({ queue_id: created.queue_id, queue_name: created.queue_name })
-    uncertain.delete(name)
-  }
-}
-
 effect function writeWranglerConfig(hosted: Hosted, accountId: string, owned: Owned) {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
@@ -192,36 +154,6 @@ effect function writeWranglerConfig(hosted: Hosted, accountId: string, owned: Ow
   const file = files.join(hosted.workspace, "wrangler.json")
   try fs.writeFileString(file, JSON.stringify(config), { mode: 0o600 })
   return file
-}
-
-effect function removeOwnedStorage(control: ControlPlane.Shape, names: Names, owned: Owned) {
-  const api = (step: string, method: Method, path: string, body?: unknown) => control.call(step, method, path, body)
-  let errors = 0
-  for (const queue of owned.queues.toReversed()) {
-    errors += try attempted(effect {
-      const current = try decoded(QueueEntry, try api("queue", "GET", `queues/${queue.queue_id}`), "queue")
-      if (current.queue_name !== queue.queue_name || !names.queues.includes(current.queue_name)) throw refused("Queue ownership changed")
-      try api("remove queue", "DELETE", `queues/${queue.queue_id}`)
-      try requireAbsent(control, `queues/${queue.queue_id}`)
-    })
-  }
-  for (const database of owned.databases) {
-    errors += try attempted(effect {
-      const current = try decoded(Database, try api("database", "GET", `d1/database/${database.uuid}`), "database")
-      if (current.uuid !== database.uuid || current.name !== database.name || !names.databases.includes(current.name)) throw refused("Database ownership changed")
-      try api("remove database", "DELETE", `d1/database/${database.uuid}`)
-      try requireAbsent(control, `d1/database/${database.uuid}`)
-    })
-  }
-  for (const bucket of owned.buckets) {
-    errors += try attempted(effect {
-      const current = try decoded(Bucket, try api("bucket", "GET", `r2/buckets/${bucket.name}`), "bucket")
-      if (current.name !== bucket.name || current.creation_date !== bucket.creation_date || !names.buckets.includes(current.name)) throw refused("Bucket ownership changed")
-      try api("remove bucket", "DELETE", `r2/buckets/${bucket.name}`)
-      try requireAbsent(control, `r2/buckets/${bucket.name}`)
-    })
-  }
-  return errors
 }
 
 export effect function hostedQualification(hosted: Hosted) {
@@ -369,14 +301,16 @@ export effect function hostedQualification(hosted: Hosted) {
         owned.worker = false
       })
     }
-    errors += try removeOwnedStorage(control, names, owned)
+    errors += try removeQualificationStorage(control, names, owned, refused)
     report.fixtureResources = owned
     report.workerVersion = workerVersion ?? null
     report.cleanup = { complete: errors === 0 && uncertain.size === 0, failedOperations: errors, unresolvedCreations: [...uncertain] }
   }
 
   effect function qualified() {
-    try provisionResources(control, run, names, owned, uncertain)
+    const scripts = try decoded(Schema.Array(ScriptEntry), try api("workers", "GET", "workers/scripts"), "workers")
+    if (scripts.some((script) => script.id === run)) throw refused("Qualification Worker already exists")
+    try provisionQualificationStorage(control, names, owned, uncertain, refused)
     const config = try writeWranglerConfig(hosted, control.accountId, owned)
     for (const database of owned.databases) try cloudflare.wrangler("schema", { args: ["d1", "migrations", "apply", database.name, "--remote", "--config", config], cwd: hosted.workspace, seconds: migrationSeconds, quiet: true })
     stage = "deploy-worker"
