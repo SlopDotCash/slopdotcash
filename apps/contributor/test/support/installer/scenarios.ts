@@ -857,7 +857,10 @@ function sourceAnswer(path: string, body: string, claim: unknown): unknown {
     case "/v1/oauth/poll": return { assertion, assertionType: "SlopIdentity", expiresAt: later, status: "complete" };
     case "/api/v1/auth/session": return { token: transportToken, tokenType: "Bearer", expiresAt: later };
     case "/api/v1/runs": return { clientRunId: "run_test", serverRunId: "server_test", state: "awaiting_trace" };
-    case "/api/v1/runs/server_test/trace-intents": return { ...JSON.parse(body), expiresAt: later, serverRunId: "server_test", uploadUrl: "https://api.slop.cash/trace-upload" };
+    case "/api/v1/runs/server_test/trace-intents": {
+      const { contentType, sha256, sizeBytes } = JSON.parse(body) as { readonly contentType: string; readonly sha256: string; readonly sizeBytes: number };
+      return { contentType, sha256, sizeBytes, expiresAt: later, serverRunId: "server_test", uploadUrl: "https://api.slop.cash/trace-upload" };
+    }
     case "/trace-upload": return { clientRunId: "run_test", serverRunId: "server_test", sizeBytes: Buffer.byteLength(trace), state: "trace_uploaded", traceObjectId: `sha256:${traceSha256}`, traceSha256 };
     case "/api/v1/runs/server_test/finalize": return { clientRunId: "run_test", serverRunId: "server_test", state: "finalized", traceObjectId: `sha256:${traceSha256}`, traceSha256 };
     case "/api/v1/wallet-claims": return claim;

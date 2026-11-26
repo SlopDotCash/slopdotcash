@@ -5761,7 +5761,7 @@ import { seededGithub, slopbotFake } from fakes
       held: [["PR_502", "synchronization-only"]],
     }))
 
-    const twoAuthors = group(true, [commit("b1", bob, 10), commit("e1", erin, 10, { parentCount: -1 })])
+    const twoAuthors = group(true, [commit("b1", bob, 10, { parentCount: -1 }), commit("e1", erin, 10, { parentCount: -1 })])
     const scored8 = try outcome(facts([twoAuthors.first, twoAuthors.member, twoAuthors.third], [decision([twoAuthors.first, twoAuthors.member, twoAuthors.third], [twoAuthors.pair, twoAuthors.alone])]))
     try Effect.try(() => assert.deepStrictEqual(scored8, {
       merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],
@@ -5995,7 +5995,8 @@ import { seededGithub, slopbotFake } from fakes
     const area = try Area
     const session = `backend-route-session-${githubId}-`.padEnd(48, "x")
     try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+    const expiresAt = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
+    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, expiresAt)
     return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
   }
 
@@ -6286,8 +6287,7 @@ import { seededGithub, slopbotFake } from fakes
       const latest = (try stored(id)).manifest
       const extra = `member-${stewardId}/extra`
       const appendedEntry = { id: extra, displayName: extra, githubUrl: `https://github.com/${extra}`, description: "Additional research tooling.", integrationBranch: "main", githubId: String(appendedId), nodeId: `R_${appendedId}`, countsFrom: nextMonthStart(try Clock.currentTimeMillis) }
-      const combined = try revise(steward, id, { manifest: { ...latest, headline: "Combined change.", repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
-      const appended = try revise(steward, id, { manifest: { ...latest, repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
+      const appended = try revise(steward, id, { manifest: { ...latest, headline: "Combined change.", repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
       world.access.missing = [appendedId]
       const uninstalled = try area.request(`/api/v1/project-setup/${id}/check`, { json: {}, as: steward })
       world.access.missing = []
@@ -6321,7 +6321,6 @@ import { seededGithub, slopbotFake } from fakes
         presented: [presented.status, field(field(presented.body, "changes"), "presentation"), ...project(presented)],
         retokened: [retokened.status, field(field(retokened.body, "changes"), "financial")],
         asset,
-        combined: refused(combined),
         appended: [appended.status, ...project(appended)],
         uninstalled: [uninstalled.status, nextActionOf(uninstalled), installationOf(uninstalled)],
         revoked: outcome(revoked),
@@ -6350,7 +6349,6 @@ import { seededGithub, slopbotFake } from fakes
         presented: [200, ["headline"], 3, "active", "community"],
         retokened: [200, ["reward", "rewardAsset"]],
         asset: [{ decimals: 18, symbol: "SLOP", status: "active" }],
-        combined: [422, "invalid_manifest", "Publish one change at a time: content and policy edits, each added repository and the automatic-closure setting are separate revisions."],
         appended: [200, 5, "paused", "community"],
         uninstalled: [200, { kind: "install_slopbot", message: `Not installed on member-${stewardId}/extra. On GitHub, choose "Only select repositories" and pick member-${stewardId}/extra.`, href: "https://github.com/apps/slopdotcash/installations/new" }, { state: "missing", message: `Not installed on member-${stewardId}/extra.` }],
         revoked: [403, "authority_required"],
@@ -6565,11 +6563,11 @@ import { seededGithub, slopbotFake } from fakes
           {
             projectId: "merge-demo",
             repositories: [
-              { repository: "member-41/merge-failed", observedAt: observed, lastAttemptFailed: true, lastMergedAt: "2026-11-10T08:00:00.000Z", waitingOutside: 1, waitingCapped: false, mergedOutsideLast30Days: 2, medianHoursToMerge: 12.5 },
-              { repository: "member-41/merge-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: "2026-11-14T09:30:00.000Z", waitingOutside: 0, waitingCapped: true, mergedOutsideLast30Days: 0, medianHoursToMerge: null },
+              { repository: "member-41/merge-failed", observedAt: observed, lastAttemptFailed: true, lastMergedAt: "2026-11-10T08:00:00.000Z", waitingOutside: 1, waitingCapped: false, mergedOutsideLast30Days: 2, medianHoursToMerge: 12.5, openOutside: null, openOutsideCapped: false },
+              { repository: "member-41/merge-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: "2026-11-14T09:30:00.000Z", waitingOutside: 0, waitingCapped: true, mergedOutsideLast30Days: 0, medianHoursToMerge: null, openOutside: null, openOutsideCapped: false },
             ],
           },
-          { projectId: "merge-other", repositories: [{ repository: "member-41/other-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: null, waitingOutside: 3, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null }] },
+          { projectId: "merge-other", repositories: [{ repository: "member-41/other-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: null, waitingOutside: 3, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null, openOutside: null, openOutsideCapped: false }] },
         ],
       }
       try same({

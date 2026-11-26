@@ -62,7 +62,7 @@ export effect function listedById(repositoryId: string) {
 }
 
 export effect function listedByKeys(keys: ReadonlyArray<string>) {
-  const found = try allChunked(ListedRow, keys, (chunk) => sql`SELECT project_id FROM project_repositories WHERE repository_key IN (${list(chunk)})`)
+  const found = try allChunked(ListedRow, keys, (chunk) => sql`SELECT project_id FROM project_repositories WHERE repository_key IN ${list(chunk)}`)
   return [...new Set(found.map((row) => row.project_id))]
 }
 

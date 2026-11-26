@@ -28,6 +28,9 @@ const groupOf = (role: Role): TemplateGroup => ({
 const fetched = new Map(roles.flatMap((role) => templateFiles.map(({ path, bytes }) => [`${templatePaths[role]}/${path}`, bytes] as const)));
 
 const rendererSources = rendererSourcePaths.map((path) => ({ path, sha256: sha256Hex(encoder.encode(path)) }));
+const contributorGroup = groupOf("contributor");
+const reviewerGroup = groupOf("reviewer");
+const fixedTemplateSha256 = templateSha256({ contributor: contributorGroup, reviewer: reviewerGroup, rendererSources, acceptedRevisions });
 
 const projectIdOf = (text: string) => {
   const core = text.toLowerCase().replace(/[^a-z0-9-]/gu, "").slice(0, 41);
@@ -50,16 +53,14 @@ const inputs = Arbitrary.schema(
 ).pipe(
   Arbitrary.map(({ id, text, revision, manifestSeed, commitSeed, revisionStatus, rendererStatus, generatedAt }): PublicationInput => {
     const projectId = projectIdOf(id);
-    const contributor = groupOf("contributor");
-    const reviewer = groupOf("reviewer");
     const index: TemplateIndex = {
       schemaVersion: "1",
       repository: sourceRepository,
       commit: sha256Hex(encoder.encode(commitSeed)).slice(0, 40),
-      templateSha256: templateSha256({ contributor, reviewer, rendererSources, acceptedRevisions }),
+      templateSha256: fixedTemplateSha256,
       revisionStatus,
-      contributor,
-      reviewer,
+      contributor: contributorGroup,
+      reviewer: reviewerGroup,
       renderer: { paths: [...rendererSourcePaths], sources: rendererSources, revisionStatus: rendererStatus },
       acceptedRevisions: [...acceptedRevisions],
     };
