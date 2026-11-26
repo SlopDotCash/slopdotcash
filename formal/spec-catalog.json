@@ -17049,7 +17049,7 @@
     },
     {
       "path": "spec/points/assessmentAudit.md",
-      "sha256": "7f259e70a758d102457c764eb106d031a67c67f7afe086c64f039f5b47bcc8b4",
+      "sha256": "85eaf19606c15cccd4e714fba07ec068362aac47a14a8ace3760fec18041d317",
       "module": "points__assessmentAudit",
       "stories": [
         {
@@ -17090,12 +17090,13 @@
             "applyRequestedValues",
             "jointCountValues",
             "legacyCountValues",
+            "requireNoActiveValues",
             "byValues"
           ]
         },
         {
           "heading": "Story: Audit the assessments of a historical scope before owner review / An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence",
-          "line": 99,
+          "line": 109,
           "definitions": [
             "emptyLegacyClosureAccounted",
             "canObserveEmptyLegacyClosure",
@@ -17109,7 +17110,7 @@
         },
         {
           "heading": "Story: Audit the assessments of a historical scope before owner review / A closed review and a removed accepted merge bind only from exact public evidence",
-          "line": 134,
+          "line": 144,
           "definitions": [
             "ClosureEvidence",
             "RemovedMergeEvidence",
@@ -17135,7 +17136,7 @@
         },
         {
           "heading": "Story: Audit the assessments of a historical scope before owner review / A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback",
-          "line": 194,
+          "line": 204,
           "definitions": [
             "canStageReview",
             "stageReview",
@@ -35534,7 +35535,7 @@
     },
     {
       "path": "spec/slopbot/submissionFeeGate.md",
-      "sha256": "8528277be3db140897c232947d01e0521128076a120b4f8e3934c75179c989a5",
+      "sha256": "9b66906c6f673f5cd63301e2c7331ab3af0a2a162cf94624e700e9f0e172682e",
       "module": "slopbot__submissionFeeGate",
       "stories": [
         {
@@ -35628,9 +35629,12 @@
           "line": 219,
           "definitions": [
             "FeeDecision",
+            "keptDeadline",
             "settlementFor",
             "canRefreshPaid",
             "refreshPaid",
+            "canReopenKept",
+            "reopenKept",
             "canDeferCheck",
             "deferCheck",
             "canObservePaid",
@@ -35643,11 +35647,13 @@
             "stepOnlyAPaidFeeQueuesTheReview",
             "lawMergedIsRefundDue",
             "lawKeptOnlyAfterTheWait",
+            "lawOpenAppealHoldsClosedFee",
             "lawOpenRefundOnlyAfterTheWait",
             "LabelEvent",
             "ClosingIssue",
             "LabelScan",
             "labelOnAt",
+            "keepMarkAt",
             "invitedOf",
             "keepMarkedOf",
             "lawInvitedWorkIsKeptOnlyOnTheMark",
@@ -35665,7 +35671,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / A withdrawn payment asks again",
-          "line": 349,
+          "line": 373,
           "definitions": [
             "canObserveWithdrawn",
             "observeWithdrawn",
@@ -35678,7 +35684,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Due checks are claimed before they are sent, 20 every five minutes",
-          "line": 374,
+          "line": 398,
           "definitions": [
             "feeDispatchBatch",
             "feeDispatchSeconds",
@@ -35691,7 +35697,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Simulation samples cover every mode, exemption, setting and pull request state",
-          "line": 404,
+          "line": 428,
           "definitions": [
             "liveFacts",
             "factsValues",
