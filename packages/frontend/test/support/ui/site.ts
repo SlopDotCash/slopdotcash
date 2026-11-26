@@ -3,7 +3,7 @@ import type * as PointsTestingModule from "@repo/points/testing";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type Handler, type WorkerOptions, bundle, migrate, startWorker, storage, workerOptions } from "@repo/platform/testing";
+import { type Handler, type WorkerOptions, bundle, database, migrate, startWorker, storage, workerOptions } from "@repo/platform/testing";
 import { type Anvil, anvil, forward } from "@repo/platform/testing/chains";
 import { githubFake } from "@repo/platform/testing/github";
 import { internet } from "@repo/platform/testing/internet";
@@ -207,7 +207,7 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
     site: (request) => mf.dispatchFetch(request),
     identity: (request) => mf.dispatchFetch(request),
     github,
-    rows: async (text, params) => (await (await mf.getD1Database("SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
+    rows: async (text, params) => (await (await database(mf, "SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
     verifications,
     deployed: () => deployed,
     deploy: async (deployment) => {
