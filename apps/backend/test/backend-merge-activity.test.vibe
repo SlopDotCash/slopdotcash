@@ -30,6 +30,7 @@ service World {
 error MigrationFailed { file: string }
 
 schema Failure { project_id: string; repository: string; failure: string }
+schema Notice { event_key: string; recipient_github_id: string; kind: string; subject: string; detail: string; action_path: string}
 schema Latest { revision: number }
 
 function iso(hours: number) {
@@ -65,8 +66,8 @@ effect function populate(fake: GitHubFake) {
   }))
 }
 
-function manifest(id: string, status: string, paths: ReadonlyArray<string>) {
-  return JSON.stringify({ id, status, listingTier: "community", repositories: paths.map((path) => ({ id: path, githubUrl: `https://github.com/${path}` })) })
+function manifest(id: string, status: string, paths: ReadonlyArray<string>, tier = "community") {
+  return JSON.stringify({ id, status, listingTier: tier, repositories: paths.map((path) => ({ id: path, githubUrl: `https://github.com/${path}` })) })
 }
 
 const Started = Layer.effect(World, effect {
@@ -89,8 +90,8 @@ const Shell = Layer.unwrap(effect {
   return Layer.mergeAll(d1(db), http, app)
 })
 
-effect function project(id: string, status: string, paths: ReadonlyArray<string>) {
-  const text = try orDie(Effect.try(() => manifest(id, status, paths)))
+effect function project(id: string, status: string, paths: ReadonlyArray<string>, tier = "community") {
+  const text = try orDie(Effect.try(() => manifest(id, status, paths, tier)))
   const [latest] = try rows(Latest, sql`SELECT coalesce(max(revision), 0) AS revision FROM project_revisions WHERE project_id = ${id}`)
   const revision = (latest?.revision ?? 0) + 1
   const digest = String(revision).padStart(64, "a")
@@ -136,7 +137,7 @@ function answerOf(projects: ReadonlyArray<{ readonly projectId: string; readonly
 }
 
 layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Merge activity refresh with a failed read keeps last values with their date (spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not")', () => effect {
+  it.effect('Merge activity refresh with a failed read keeps last values with their date (spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"; spec/backend/backlogRule.md, "The owner hears once before the rule starts, again four days before dormancy, and once more the day the project leaves rotation"', () => effect {
     const { fake } = try World
     const db = try D1
     try project("alpha", "active", [`${owner}/alpha`])
@@ -210,5 +211,41 @@ layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: 
       rest: { read: 1, failed: 1, graphql: 2, beta: false },
       restMany: many,
     }))
+  const previewGamma = {
+    event_key: "backlog-rule:gamma:preview",
+    recipient_github_id: "1",
+    kind: "project_revision",
+    subject: "gamma",
+    detail: "From 1 December 2026, a project with 50 or more outside pull requests waiting a week for a maintainer, or no merge in 14 days while outside pull requests wait, leaves the home page, /sponsors and agent discovery until that is fixed. Your project would leave today: 50 or more outside pull requests are waiting for a maintainer. You can mark it as catching up on reviews for up to fourteen days from its settings.",
+    action_path: "/projects/gamma/manage",
+  }
+  const outGamma = {
+    event_key: "backlog-rule:gamma:out:backlog:2026-11-20T00:00:00.000Z",
+    recipient_github_id: "1",
+    kind: "project_revision",
+    subject: "gamma",
+    detail: "Your project left the home page, /sponsors and agent discovery: 50 or more outside pull requests are waiting for a maintainer. It returns by itself once fewer than 50 wait. You can mark it as catching up on reviews for up to fourteen days from its settings. Accepted work still records points.",
+    action_path: "/projects/gamma/manage",
+  }
+  const warnDelta = {
+    event_key: "backlog-rule:delta:warn:2026-11-21T00:00:00.000Z",
+    recipient_github_id: "1",
+    kind: "project_revision",
+    subject: "delta",
+    detail: "No pull request has been merged in 11 days while outside pull requests wait. After 14 days the project leaves the home page, /sponsors and agent discovery until a maintainer merges. You can mark it as catching up on reviews for up to fourteen days from its settings.",
+    action_path: "/projects/delta/manage",
+  }
+  try project("gamma", "active", [`${owner}/gamma`], "monthly")
+  try project("delta", "active", [`${owner}/delta`], "monthly")
+  try db.run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, open_outside, waiting_outside) VALUES ('gamma', 'slop-test/gamma', '2026-11-30T12:00:00.000Z', '2026-11-30T12:00:00.000Z', NULL, '2026-11-20T00:00:00.000Z', 55, 52), ('delta', 'slop-test/delta', '2026-11-30T12:00:00.000Z', '2026-11-30T12:00:00.000Z', NULL, '2026-11-21T00:00:00.000Z', 3, 1)`)
+  try refreshed(268 * hour)
+  const previewNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
+  try Effect.try(() => assert.deepStrictEqual(previewNotices, [previewGamma]))
+  try refreshed(0)
+  const previewAgainNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
+  try Effect.try(() => assert.deepStrictEqual(previewAgainNotices, [previewGamma]))
+  try refreshed(48 * hour)
+  const outNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
+  try Effect.try(() => assert.deepStrictEqual(outNotices, [warnDelta, outGamma, previewGamma]))
   })
 })
