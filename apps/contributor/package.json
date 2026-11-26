@@ -26,7 +26,6 @@
     "@repo/operations": "workspace:*",
     "@repo/platform": "workspace:*",
     "@repo/ports": "workspace:*",
-    "@repo/security": "workspace:*",
     "effect": "4.1.1",
     "vibelang-runtime": "0.0.13"
   },

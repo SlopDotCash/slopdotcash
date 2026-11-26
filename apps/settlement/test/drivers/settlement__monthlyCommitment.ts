@@ -59,7 +59,7 @@ const seed = async (w: World) => {
   w.seeded = true;
 };
 
-const signedFor = (w: World, event: Event & { readonly root: string }, by: string): SignedPlan => {
+const signedFor = (w: World, event: Event & { readonly root: string }): SignedPlan => {
   const view = w.view;
   const month = w.funded;
   const leaves = (month?.leaves ?? []).filter((leaf) => w.family === "SolanaV3" || !(view?.consumed ?? []).includes(leaf.source));
@@ -100,7 +100,7 @@ const dispatch = async (event: Event, by: string) => {
   }
   const context = { family: w.family, funded: storedMonth(w), authority: addressOf(w.view?.authority ?? "attester") };
   const sent: Event = event.type === "observe" ? { type: "observe", view: translatedView(event.view) } : event.type === "observeFacts" ? { type: "observeFacts", facts: { ...event.facts, snapshotDigest: sha(event.facts.snapshotDigest) } } : event;
-  const signed = event.type === "signEvm" || event.type === "signSolana" ? await signature(signedFor(w, event, by), by) : undefined;
+  const signed = event.type === "signEvm" || event.type === "signSolana" ? await signature(signedFor(w, event), by) : undefined;
   const verdict = await outcome(runJournal(keyOf(w), context, { events: [sent], by: addressOf(by), signed }), runtime);
   if (verdict !== "accepted") return verdict;
   if (event.type === "observe") {
@@ -139,7 +139,7 @@ export const driver: Driver<ReturnType<typeof view>> & AsyncDisposable = {
     world = { projectId: `commitment-g${generation}`, family: "EvmV2", funded: undefined, view: undefined, facts: undefined, seeded: false };
     clock.set(1796342400 * 1000);
   },
-  dispatch: (_key, event: Event, by) => dispatch(event, String(by ?? "")),
+  dispatch: (_key, event: Event, by) => dispatch(event, typeof by === "string" ? by : ""),
   observe: async () => view(await observed()),
   [Symbol.asyncDispose]: async () => {
     await runtime.dispose();

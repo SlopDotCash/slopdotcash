@@ -3,13 +3,9 @@ import { recordRegistryDeposits } from "../deposits/record.vibe"
 import type { NetworkKey } from "../kernels/networks.ts"
 import { coordinateMonthlyPayments } from "../monthly/coordinator.vibe"
 import { type ExecutorBindings, type ServedVault, releaseAuthorized, runPaymentDispatch } from "../payments/dispatch.vibe"
-import { vaultAsset } from "../payments/ledger.vibe"
 import { reconcileFailedAttempts, recoverUncertainAttempts } from "../payments/recovery.vibe"
-import { failureTag } from "../payments/terms.vibe"
-import { paymentDeploymentOf } from "../scan/index.vibe"
+import { servedVaults } from "../payments/served.vibe"
 import { runSecurityPayments } from "../securityScope/engine.vibe"
-import type { RegisteredDeployment } from "../vault/deployments.vibe"
-import { PaymentRpc } from "../vault/rpc.vibe"
 import { syncRegistryVaults } from "../vault/sync.vibe"
 import { runMonthlyCommitments } from "./commitments.vibe"
 import { isolated, reported } from "./steps.vibe"
@@ -23,22 +19,6 @@ export interface PaymentsRun {
   readonly networks: ReadonlyArray<NetworkKey>
   readonly securityNetworks: ReadonlyArray<NetworkKey>
   readonly executors: ExecutorBindings
-}
-
-export effect function servedVaults(deployments: ReadonlyArray<RegisteredDeployment>, failures: string[]) {
-  const rpc = try PaymentRpc
-  const served: ServedVault[] = []
-  for (const registered of deployments) {
-    const deployment = paymentDeploymentOf(registered, rpc)
-    if (deployment === undefined) {
-      failures.push(`${registered.network} ${registered.vault}: RPC configuration unavailable`)
-      continue
-    }
-    const asset = vaultAsset(deployment) catch (error) => failureTag(error)
-    if (typeof asset === "string") failures.push(`${registered.network} ${registered.vault}: ${asset}`)
-    else served.push({ deployment, asset })
-  }
-  return served
 }
 
 effect function coordinated() {

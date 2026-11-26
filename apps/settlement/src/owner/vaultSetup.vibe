@@ -27,7 +27,7 @@ import { refreshDeployment } from "../vault/refresh.vibe"
 import { type RegistryPart, type SaveDetails, type VaultSession, identityOf, modelNetwork, openSession, registrationOf } from "../vault/store.vibe"
 import { PaymentNetworks } from "./networks.vibe"
 import { registryProjectDigest } from "./ownerInstructions.ts"
-import { DeploymentUnverified, reviewedDeployment, verifiedDeployment } from "./solanaDeployment.vibe"
+import { reviewedDeployment, verifiedDeployment } from "./solanaDeployment.vibe"
 import { WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
 
 export service CreationSources {
@@ -158,6 +158,10 @@ effect function currentAuthority(project: VaultProject, actor: VaultActor) {
   if (read.installation !== "Installed") throw refused(rows.slopbotRequired, slopbotMessage)
   if (read.permission !== "PermissionVerified") throw refused(rows.authorityRequired, deniedMessage)
   return read
+}
+
+function isRetired(project: VaultProject): boolean {
+  return project.view.listingTier === "Retired" || project.view.retirement !== "NotRetired" || project.terms.manifest.listingTier === "retired"
 }
 
 effect function participationOpen(project: VaultProject, actor: VaultActor) {
@@ -315,8 +319,6 @@ effect function creatorOf(actor: VaultActor, input: VaultSetupInput, terms: Term
 type Verified =
   | { readonly kind: "pending"; readonly provisional: JsonObject | undefined }
   | { readonly kind: "verified"; readonly record: JsonObject; readonly deployment: ReviewedDeployment; readonly decimals: number }
-
-type Attempt<A> = { readonly kind: "skip" } | { readonly kind: "mismatch"; readonly message: string } | { readonly kind: "done"; readonly value: A }
 
 function skipped(error: { readonly _tag: string }): boolean {
   return ["DeploymentMismatch", "DeploymentUnverified", "PolicyInvalid", "RpcMalformed", "RpcRefused", "WrongChain", "GenesisPinMissing"].includes(error._tag)
@@ -810,6 +812,7 @@ function creationId(network: string, transactionId: string | undefined): string 
 
 export effect function registerBegun(context: RegisterContext) {
   const { project, input, session, requestId } = context
+  if (isRetired(project)) throw refused(rows.projectRestrictedRequestReinstatementBeforeSetting, "A removed project cannot be changed.")
   const begun = requestRow(try session.current(), requestId)
   if (begun.phase !== "ReadyRegistration" && begun.phase !== "RequestDone") return try existingAnswer(context, begun)
   if (begun.result === "RegistrationConflict") throw refused(rows.vaultAlreadyRegistered)
@@ -862,6 +865,7 @@ effect function reviewStep(project: VaultProject, actor: VaultActor, input: Vaul
 
 export effect function ownerVaultPost(projectId: string, actor: VaultActor, body: VaultSetupBody) {
   const project = try admitted(projectId, actor)
+  if (isRetired(project)) throw refused(rows.projectRestrictedRequestReinstatementBeforeSetting, "A removed project cannot be changed.")
   const input = try inputOf(body)
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision <= 0) throw refused(rows.invalidRequestInvalidExpectedRevision)
   if (input.step === "review") return try reviewStep(project, actor, input)
@@ -894,7 +898,7 @@ effect function bountyRead(projectId: string, actor: VaultActor) {
   const project = try loadProject(projectId)
   try currentAuthority(project, actor)
   const restrictions = try Restrictions
-  const canSetup = !(try restrictions.project(projectId)).restricted && !(try restrictions.account(actor.githubId)).banned && !(try restrictions.account(project.view.stewardGithubId)).banned
+  const canSetup = !isRetired(project) && !(try restrictions.project(projectId)).restricted && !(try restrictions.account(actor.githubId)).banned && !(try restrictions.account(project.view.stewardGithubId)).banned
   const program = programTermsOf(project.terms)
   const open = canSetup && deploymentsOf(project.terms, "security-bounty").length === 0 && (try PaymentNetworks).served.length > 0
   const networks = open ? try setupNetworks(project, "security-bounty") : []

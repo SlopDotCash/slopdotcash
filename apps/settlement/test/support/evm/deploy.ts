@@ -114,7 +114,11 @@ export async function escrowStack(chain: Anvil): Promise<EscrowStack> {
     const quantity = (value: bigint) => `0x${value.toString(16)}`;
     const head = async () => BigInt(hexText(await chain.rpc("eth_blockNumber"), "eth_blockNumber"));
     const receiptOf = async (hash: Hex): Promise<Receipt> => {
-      const found = await chain.rpc("eth_getTransactionReceipt", [hash]);
+      let found = await chain.rpc("eth_getTransactionReceipt", [hash]);
+      if (!isRecord(found)) {
+        await chain.rpc("evm_mine");
+        found = await chain.rpc("eth_getTransactionReceipt", [hash]);
+      }
       if (!isRecord(found)) throw new Error(`no receipt for ${hash}`);
       return { transactionHash: hash, blockNumber: BigInt(hexText(found.blockNumber, "receipt block")), status: found.status === "0x1" ? "success" : "reverted", contractAddress: undefined };
     };

@@ -124,7 +124,7 @@ async function escrowOn(chain: Anvil, out: string): Promise<Escrow> {
 
 const Started = Layer.effect(Fixture, effect {
   const opened = try acquireRelease(promise(() => journalDatabase("fees-claims")), (database) => promise(() => database[Symbol.asyncDispose]()))
-  const chain = try acquireRelease(promise(() => anvil({ chainId: 1 })), (started) => promise(() => started.close()))
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 1, finalityDepth: 2 })), (started) => promise(() => started.close()))
   const built = try acquireRelease(promise(() => forgeBuild(contracts, sources)), (output) => promise(() => output.close()))
   const escrow = try promise(() => escrowOn(chain, built.out))
   const quotes = quotesFake()
@@ -269,7 +269,7 @@ effect function act(from: (escrow: Escrow) => Account, to: (escrow: Escrow) => A
 
 effect function finalize() {
   const { escrow } = try Fixture
-  try promise(() => escrow.chain.mine(65))
+  try promise(() => escrow.chain.mine(2))
 }
 
 effect function automine(on: boolean) {
@@ -283,7 +283,7 @@ effect function ahead(sends: ReadonlyArray<Ahead>) {
   const { escrow } = try Fixture
   for (const [index, send] of sends.entries()) {
     const priority = 50_000_000_000 - index * 5_000_000_000
-    try promise(() => escrow.chain.rpc("eth_sendTransaction", [{ from: send.from(escrow).address, to: send.to(escrow), data: send.data, gas: toHex(300_000n), maxPriorityFeePerGas: toHex(priority), maxFeePerGas: toHex(500_000_000_000n) }]))
+    try promise(() => escrow.chain.rpc("eth_sendTransaction", [{ from: send.from(escrow).address, to: send.to(escrow), data: send.data, gas: toHex(500_000n), maxPriorityFeePerGas: toHex(priority), maxFeePerGas: toHex(500_000_000_000n) }]))
   }
   try promise(() => escrow.chain.mine(1))
 }

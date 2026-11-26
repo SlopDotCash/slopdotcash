@@ -35,8 +35,8 @@ const signing = {
 const curves = ["ed25519", "ed25519ph", "ed25519ctx", "secp256k1", "schnorr", "p256"]
 const signs = curves.flatMap((object) => ["sign", "keygen", "getPublicKey"].map((property) => ({ object, property, message: custody })))
 // The attester, keeper and fee-wallet keys, and the referral root poster, each with its own entry.
-const keys = ["apps/settlement/src/signer/**", "apps/fees/src/signer/**", "apps/settlement/src/workers/{attester,keeper}.*", "apps/settlement/src/keeper/{signer,solana}.*", "apps/fees/src/workers/feeConverter.*"]
-const poster = ["apps/settlement/src/signer/rootPoster*", "apps/settlement/src/programs/referralRoots.*"]
+const keys = ["apps/settlement/src/signer/**", "apps/fees/src/signer/**", "apps/settlement/src/workers/{attester,keeper}.*", "apps/settlement/src/keeper/{signer,solana}.*", "apps/fees/src/workers/feeConverter.*", "apps/fees/src/workers/submissionFee.*"]
+const poster = ["apps/settlement/src/signer/rootPoster*", "apps/settlement/src/programs/referralRoots.*", "apps/settlement/src/workers/referralAccrual.*"]
 const imports = {
   patterns: [
     // A package, its subpaths and its family: zustand/middleware, redux-saga, @angular/core.
@@ -127,7 +127,6 @@ const commented = {
   "apps/points/test/support/u5/github.ts": 2,
   "apps/security/src/client/reportDeposit.ts": 5,
   "apps/settlement/src/reserveRelease/store.vibe": 1,
-  "apps/settlement/src/signer/recoveryBinding.vibe": 3,
   "apps/settlement/test/drivers/settlement__vaultSnapshots.ts": 1,
   "apps/settlement/test/support/binding/worker.vibe": 1,
   "packages/contracts/test/drivers/contracts__evmEscrow.ts": 7,

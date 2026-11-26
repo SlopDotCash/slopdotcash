@@ -492,6 +492,7 @@ effect function observe(instance: Instance, journal: Journal, names: Names, even
       balance: holding.asset === "NativeAsset" ? undefined : holding.balance,
       vault: holding.vault > 0 ? try named(names, "vault", holding.vault, event) : undefined,
       vaultObserved: holding.vaultObserved,
+      accrued: holding.accrued,
       ...scale === undefined ? {} : { scale },
       ...previous?.rawBalance === undefined ? {} : { rawBalance: previous.rawBalance },
     })

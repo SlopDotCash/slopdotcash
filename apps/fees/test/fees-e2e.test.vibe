@@ -36,8 +36,8 @@ const BundledLive = Layer.effect(Bundled, effect {
 })
 
 const FeeWorldLive = Layer.effect(FeeWorld, effect {
-  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
-  const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663 })), (started) => promise(() => started.close()))
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, finalityDepth: 2 })), (started) => promise(() => started.close()))
+  const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663, finalityDepth: 2 })), (started) => promise(() => started.close()))
   const built = try acquireRelease(promise(() => fixtureBuild()), (output) => promise(() => output.close()))
   const base = try promise(() => feeTokens(chain, built.out, circleUsdc.base as Address))
   try promise(() => finalize(chain))

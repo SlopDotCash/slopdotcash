@@ -1,52 +1,33 @@
 // spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"; spec/settlement/signer.md, "Both possible winners stay retained"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"
 import { ed25519 } from "@noble/curves/ed25519.js"
 import { hexToBytes } from "@noble/hashes/utils.js"
-import { type Account, type Address, type LatestBlockhash, MAX_TRANSACTION_BYTES, SolanaRpc, address, addressOf, base64Decode, base64Encode, isSignature, publicKey as publicKeyOf, solanaRpc } from "@repo/platform/chain/solana"
+import { type Account, type Address, type LatestBlockhash, MAX_TRANSACTION_BYTES, SolanaRpc, address, addressOf, base64Decode, base64Encode, publicKey as publicKeyOf, solanaRpc } from "@repo/platform/chain/solana"
 import { nowSeconds } from "@repo/platform/clock"
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
 import { sha256Hex, utf8 } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
 import { type Stack, canRetireReverted, initial as unbound } from "../../gen/settlement__signer.effect.vibe"
-import { type AwardAccount, type BindingAccount, type ProjectAccount, decodeAward, decodeBinding, decodeProject } from "../chain/solana/accounts.ts"
+import { type AwardAccount, type BindingAccount, type ProjectAccount, decodeAward, decodeBinding } from "../chain/solana/accounts.ts"
 import { type Digest, type U64, digest, i64, u64 } from "../chain/solana/bytes.ts"
 import { bindingMessage } from "../chain/solana/messages.ts"
 import { awardAddress, awardId, bindingAddress } from "../chain/solana/pda.ts"
+import { SolanaReadRefused, type SolanaStatus, broadcastSolana as broadcastSolanaRaw, finalizedAccount, finalizedProject as finalizedProjectRaw, statusOf as statusOfRaw } from "../chain/solana/reads.vibe"
 import { completesPrepared, transactionId, unsignedTransaction, withSignature } from "../chain/solana/transactions.ts"
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { NETWORKS, type NetworkKey } from "../kernels/networks.ts"
 import { type BindingRecord, type Step, advance, attemptOf, fresh, loadBinding, withAttempt, withAuthority } from "../journal/bindings.vibe"
 import { type Entries, within } from "../journal/journal.vibe"
 import { DeploymentUnverified, type VerifiedDeployment, verifiedDeployment } from "../owner/solanaDeployment.vibe"
+import { SolanaPin } from "../vault/pins.vibe"
 import type { SolanaDeployment } from "../vault/policy.vibe"
 import { type PaymentTables, paymentWalletMessage } from "./binding.vibe"
 import { AttemptHeld, DeploymentRefused, NotActivated, SIGNER_STACKS, SignerUnavailable, activation, signerStack } from "./evm.vibe"
 import type { IntentKind } from "./intents.ts"
 import type { SignerScope } from "./privateScope.vibe"
 
-export const solanaSignerMarker = "slop-signer:solana-identity-attester"
+export { SolanaPin, type SolanaStatus, finalizedAccount }
 
-export schema SolanaPin {
-  readonly network: string
-  readonly chain: "solana"
-  readonly projectId: string
-  readonly vault: string
-  readonly asset: string
-  readonly owner: string
-  readonly identityAuthority: string
-  readonly feeRecipient: string
-  readonly programId: string
-  readonly projectPda: string
-  readonly networkDomain: string
-  readonly upgradeAuthority: string | null
-  readonly rotationAuthority: string
-  readonly rotationDelaySeconds: string
-  readonly bindingDelaySeconds: string
-  readonly deploymentTransaction: string
-  readonly sourceCommit: string
-  readonly codeSha256: string
-  readonly genesisHash: string
-  readonly payoutPolicy?: "ordinary" | "security-bounty"
-}
+export const solanaSignerMarker = "slop-signer:solana-identity-attester"
 
 const Pins = Schema.Array(SolanaPin)
 const RpcUrls = Schema.Record(Schema.String, Schema.String)
@@ -166,47 +147,25 @@ export effect function identitySigner(reviewed: ReviewedSolana, project: Project
   return key
 }
 
-export effect function finalizedAccount(at: Address) {
-  return try (try SolanaRpc).account(at, "finalized")
-}
-
 export effect function finalizedProject(verified: VerifiedDeployment) {
-  const decoded = decodeProject(try finalizedAccount(verified.project), verified.program)
-  if (decoded.kind !== "decoded") throw new AttemptHeld({ reason: "Project missing" })
-  return decoded.value
-}
-
-export interface SolanaStatus {
-  readonly failed: boolean
-  readonly finalized: boolean
-  readonly slot: number
+  return finalizedProjectRaw(verified) catch effect (error) => match (error) {
+    when SolanaReadRefused: throw new AttemptHeld({ reason: error.reason });
+    default: throw error;
+  }
 }
 
 export effect function statusOf(signature: string) {
-  if (!isSignature(signature)) throw new AttemptHeld({ reason: "Invalid transaction signature" })
-  const [status] = try (try SolanaRpc).signatureStatuses([signature])
-  if (status === undefined) return undefined
-  return { failed: status.err, finalized: status.confirmationStatus === "finalized", slot: status.slot } satisfies SolanaStatus
-}
-
-effect function observed(signature: string) {
-  const status = try statusOf(signature)
-  if (status?.failed === true) throw new AttemptHeld({ reason: "Existing transaction failed; reconcile before retry" })
-  return status !== undefined
+  return statusOfRaw(signature) catch effect (error) => match (error) {
+    when SolanaReadRefused: throw new AttemptHeld({ reason: error.reason });
+    default: throw error;
+  }
 }
 
 export effect function broadcastSolana<E, R>(attempt: { readonly transactionId: string; readonly raw: string }, beforeBroadcast: () => void!E!R) {
-  if (try observed(attempt.transactionId)) return attempt.transactionId
-  try beforeBroadcast()
-  const wire = base64Decode(attempt.raw)
-  if (wire === undefined) throw new AttemptHeld({ reason: "Journaled transaction is malformed" })
-  const sent = (try SolanaRpc).sendRaw(wire, { skipPreflight: false, maxRetries: 3 }) catch effect (error) => {
-    const landed = observed(attempt.transactionId) catch () => false
-    if (!landed) throw error
-    return attempt.transactionId
+  return broadcastSolanaRaw(attempt, beforeBroadcast) catch effect (error) => match (error) {
+    when SolanaReadRefused: throw new AttemptHeld({ reason: error.reason });
+    default: throw error;
   }
-  if (sent !== attempt.transactionId) throw new AttemptHeld({ reason: "Broadcast signature mismatch" })
-  return attempt.transactionId
 }
 
 export schema BindingRequest {
@@ -435,6 +394,8 @@ export effect function prepareSolanaBinding(scope: SignerScope, request: Binding
       if (status !== undefined && !status.finalized) throw held("Existing transaction failed; reconcile before retry")
       const height = try (try SolanaRpc).blockHeight("finalized")
       if (status === undefined && height <= existing.lastValidBlockHeight) return prepared(existing)
+      const refreshedAward = decodeAward(try finalizedAccount(awardAddress(verified.program, verified.project, context.obligation)), verified.program)
+      if (refreshedAward.kind !== "decoded" || refreshedAward.value.paid) throw held("Paid outside known attempt; finalized receipt reconciliation required")
       const current = try bindingAt(verified, context.bindingAddress)
       outcome = { block: status?.slot ?? height, landed: current !== undefined && current.destination === context.destination && current.claimDigest === context.claimDigest }
       expired = existing

@@ -7,8 +7,8 @@ import { type EvmNetwork, exactNumber, parsedType2, wholeBig } from "../evm/abi.
 import { type Broadcast, baseFee, broadcast } from "../evm/client.vibe"
 import { type KyberSettings, nativeValue } from "../kyber/route.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
-import { type EvmSigned, FeeWallet, SignRefused } from "../signer/feeWallet.vibe"
-import type { EvmReplacement, FirstEvmIntent, PreparationAttempt } from "../signer/intents.ts"
+import { type EvmSigned, FeeWallet, SignRefused } from "../wallet/service.vibe"
+import type { EvmReplacement, FirstEvmIntent, PreparationAttempt } from "../wallet/intents.ts"
 import { megaweiCeiling, weiOfMegawei } from "../kernels/verified.vibe"
 
 export interface ReplacementInput {

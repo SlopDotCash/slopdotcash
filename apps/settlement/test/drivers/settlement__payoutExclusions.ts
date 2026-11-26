@@ -88,7 +88,7 @@ export const driver: Driver & AsyncDisposable = {
       await previous.mf.dispose();
     }
   },
-  dispatch: (_key, event: Event, by) => dispatch(event, String(by ?? "")),
+  dispatch: (_key, event: Event, by) => dispatch(event, typeof by === "string" ? by : ""),
   observe: () => observed(),
   [Symbol.asyncDispose]: async () => {
     if (world !== undefined) {

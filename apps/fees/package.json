@@ -4,8 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": "./src/client/index.vibe",
-    "./live": "./src/live.vibe"
+    "./client": {
+      "types": "./.vibe/declarations/src/client/index.d.vibe.ts",
+      "default": "./src/client/index.vibe"
+    },
+    "./live": {
+      "types": "./.vibe/declarations/src/live.d.vibe.ts",
+      "default": "./src/live.vibe"
+    }
   },
   "scripts": {
     "build": "vite build",

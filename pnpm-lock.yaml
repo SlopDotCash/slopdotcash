@@ -472,9 +472,6 @@ importers:
       '@repo/ports':
         specifier: workspace:*
         version: link:../../packages/ports
-      '@repo/security':
-        specifier: workspace:*
-        version: link:../security
       effect:
         specifier: 4.1.1
         version: 4.1.1
@@ -765,9 +762,6 @@ importers:
       '@repo/security':
         specifier: workspace:*
         version: link:../security
-      '@scure/base':
-        specifier: 'catalog:'
-        version: 1.2.6
       effect:
         specifier: 4.1.1
         version: 4.1.1
@@ -781,9 +775,6 @@ importers:
       '@effect/vitest':
         specifier: 4.1.1
         version: 4.1.1(effect@4.1.1)(vitest@5.1.0)
-      '@repo/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6

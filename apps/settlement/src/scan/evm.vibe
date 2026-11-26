@@ -6,7 +6,7 @@ import { EVENT_TOPICS, decodeEscrowLogs } from "../chain/evm/events.ts"
 import type { RegisteredDeployment } from "../vault/deployments.vibe"
 import { PaymentRpc } from "../vault/rpc.vibe"
 import { type EvmScanSession, openEvmScan, storedBlock } from "./evmStore.vibe"
-import { type IndexOutcome, PaymentIndexer, type ScanEvent, ScanRefused } from "./index.vibe"
+import { type IndexOutcome, PaymentIndexer, ScanRefused } from "./index.vibe"
 
 export type EvmScanDeployment = Extract<RegisteredDeployment, { family: "evm" }>
 

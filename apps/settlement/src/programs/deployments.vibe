@@ -1,8 +1,7 @@
 // spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import { mainnetExecution, reviewedActivation } from "../../gen/settlement__signer.effect.vibe"
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
-import { PinnedDeployment, SIGNER_STACKS } from "../signer/evm.vibe"
-import { SolanaPin } from "../signer/solana.vibe"
+import { PinnedDeployment, SIGNER_STACKS, SolanaPin } from "../vault/pins.vibe"
 
 export error DeploymentsRefused { message: string }
 

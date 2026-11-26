@@ -53,7 +53,7 @@ export async function referralChain(postSpacing = 0n, timestamp?: number): Promi
     const response = await upstream(request);
     if (!body.includes('"eth_maxPriorityFeePerGas"')) return response;
     const sent: unknown = JSON.parse(body);
-    const list: ReadonlyArray<unknown> = Array.isArray(sent) ? sent : [sent];
+    const list: readonly unknown[] = Array.isArray(sent) ? sent : [sent];
     const ids = new Set(list.filter((call): call is { readonly method: string; readonly id?: unknown } => typeof call === "object" && call !== null && "method" in call && call.method === "eth_maxPriorityFeePerGas").map((call) => call.id));
     if (ids.size === 0) return response;
     const reply: unknown = JSON.parse(await response.text());

@@ -1,5 +1,5 @@
 // spec/settlement/referralAccrual.md, "Filed records, first-use wallet pins and exact roots commit atomically"; spec/settlement/referralAccrual.md, "A complete immutable source snapshot is filed in ordinal-month order"; spec/settlement/referralAccrual.md, "Verified token units and approved reactivation precede dry-run accrual"
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import { Cause, type Effect, Exit, Layer, ManagedRuntime } from "effect";
 import type { D1Database } from "@repo/platform/bindings";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";

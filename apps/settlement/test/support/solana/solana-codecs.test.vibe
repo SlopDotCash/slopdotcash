@@ -1,13 +1,12 @@
 import { assert, layer } from "@effect/vitest"
 import { type Address, type Blockhash, SYSTEM_PROGRAM, SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
-import idlJson from "../../../../../packages/contracts/solana/idl/slop_escrow.json" with { type: "json" }
 import { PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE, MONTH_PLEDGE_SIZE, decodeMonthPledge, decodeProject } from "../../../src/chain/solana/accounts.ts"
 import { u32le, u64le, type U64 } from "../../../src/chain/solana/bytes.ts"
 import { PLEDGE_REFUSALS, expirePledgeInstruction, pledgeMonthInstructions } from "../../../src/chain/solana/instructions.ts"
 import { keyBytes, monthAddress, monthPledgeAddress } from "../../../src/chain/solana/pda.ts"
 import { compileLegacy } from "../../../src/chain/solana/transactions.ts"
 import { outbound } from "@repo/platform/http"
-import { type Deployment, type Scenario, escrowDeployment, expectedParity, nativeMonth, pledgeMonth, tokenProjects, transactionParity } from "./escrow.ts"
+import { type Deployment, type EscrowIdl, type EscrowIdlEntry, type Scenario, escrowDeployment, escrowIdl, expectedParity, nativeMonth, pledgeMonth, tokenProjects, transactionParity } from "./escrow.ts"
 
 service Escrow {
   readonly deployment: Deployment
@@ -32,19 +31,7 @@ effect function observed(scenario: Scenario) {
   }
 }
 
-interface IdlEntry {
-  readonly name: string
-  readonly discriminator: ReadonlyArray<number>
-  readonly accounts?: ReadonlyArray<{ readonly name: string; readonly writable?: boolean; readonly signer?: boolean }>
-}
-
-interface Idl {
-  readonly address: string
-  readonly instructions: ReadonlyArray<IdlEntry>
-  readonly accounts: ReadonlyArray<IdlEntry>
-}
-
-function entry(entries: ReadonlyArray<IdlEntry>, name: string): IdlEntry {
+function entry(entries: ReadonlyArray<EscrowIdlEntry>, name: string): EscrowIdlEntry {
   return entries.find((candidate) => candidate.name === name) ?? { name, discriminator: [] }
 }
 
@@ -62,10 +49,10 @@ effect function journey(run: (deployment: Deployment) => Promise<Scenario>) {
 }
 
 layer(Layer.mergeAll(Started, outbound), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('An attested month is admitted, its leaves commit or release, a co-signed wallet binding pays, the owner pledges the current month at its own pledge account, a 332- or 340-byte project reads the same, and every transaction finalizes as the exact codec bytes (spec/contracts/solanaEscrow.md, "The pre-pledge build\'s 332-byte project grows to the current layout with no open pledges"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project\'s network"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => journey(nativeMonth))
+  it.effect('An attested month is admitted, its leaves commit or release, a co-signed wallet binding pays, the owner pledges the current month at its own pledge account, a 332- or 340-byte project reads the same, and every transaction finalizes as the exact codec bytes (spec/contracts/solanaEscrow.md, "The pre-pledge build\'s 332-byte project grows to the current layout with no open pledges"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project\'s network"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => journey(nativeMonth), 300_000)
 
   it.effect('Pledge and expiry instructions carry the program\'s discriminators and account order, one pledge account per project and month, twelve pledges fit one legacy transaction, a 340-byte project reports its open pledges, and a MonthPledge with a bad flag is refused (spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"; spec/contracts/solanaEscrow.md, "Anyone closes an open pledge once its period is committed or the period\'s window has closed"; spec/contracts/solanaEscrow.md, "The pre-pledge build\'s 332-byte project grows to the current layout with no open pledges")', () => effect {
-    const program: Idl = idlJson
+    const program: EscrowIdl = try Effect.try(() => escrowIdl())
     const id = program.address as Address
     const project = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin" as Address
     const owner = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS" as Address
@@ -115,5 +102,5 @@ layer(Layer.mergeAll(Started, outbound), { excludeTestServices: true, timeout: "
     })
   })
 
-  it.effect('A classic SPL award pays into the wallet\'s new token account, an admitted Token-2022 project takes deposits, and the refused Token-2022 mint starts no project (spec/contracts/solanaEscrow.md, "A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner"; spec/contracts/solanaEscrow.md, "Anyone pays a matured obligation to its actor\'s latest unvetoed binding"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order")', () => journey(tokenProjects))
+  it.effect('A classic SPL award pays into the wallet\'s new token account, an admitted Token-2022 project takes deposits, and the refused Token-2022 mint starts no project (spec/contracts/solanaEscrow.md, "A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner"; spec/contracts/solanaEscrow.md, "Anyone pays a matured obligation to its actor\'s latest unvetoed binding"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order")', () => journey(tokenProjects), 300_000)
 })

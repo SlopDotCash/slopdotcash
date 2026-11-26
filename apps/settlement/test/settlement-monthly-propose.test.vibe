@@ -423,12 +423,74 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
         decisions: [[["acme/app", "acme/lib"], [["acme/app", 1, "anna"], ["acme/app", 2, "ben"], ["acme/app", 3, "ben"], ["acme/app", 6, "cara"], ["acme/lib", 1, "anna"]]]],
         shareRows: [{ github_user_id: "11", github_login: "anna", decisions: 2, gross_base: "101" }, { github_user_id: "12", github_login: "ben", decisions: 2, gross_base: "100" }],
         plainManifest: [manifestOf("plain", "1000", plainShape)],
-        askedFirst: ["https://api.github.com/graphql app:", "https://api.github.com/graphql app:c1", "https://api.github.com/graphql lib:", "https://api.github.com/graphql flaky:"],
+        askedFirst: [
+          "https://api.github.com/graphql app:",
+          "https://api.github.com/graphql app:c1",
+          "https://api.github.com/graphql app:",
+          "https://api.github.com/graphql lib:",
+          "https://api.github.com/graphql lib:",
+          "https://api.github.com/graphql flaky:",
+        ],
         again: [["flaky", "1000", 1], ["plain", "1000", 1], ["shared", "1005", 3]],
-        askedAgain: ["https://api.github.com/graphql flaky:"],
+        askedAgain: ["https://api.github.com/graphql flaky:", "https://api.github.com/graphql flaky:"],
         flaky: [[["1001", "1000"]], [[1000, "0"]], []],
         plainShare: [],
       })
+    }
+  })
+
+  it.effect('A pull request updated while the maintainer decision read runs is still counted, and a read that never settles is refused (spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read")', () => effect {
+    const { env } = try Journey
+    const ana = person(21, "ana")
+    const ben = person(22, "ben")
+    const cal = person(23, "cal")
+    const moving = try registered(env, "moving", "1000", {}, { authority: { repositoryId: 701, repositoryNodeId: "R_moving" }, reward: { maintainerShare: 2000 }, repositories: [{ id: "acme/moving" }] })
+    const churning = try registered(env, "churning", "1000", {}, { authority: { repositoryId: 702, repositoryNodeId: "R_churning" }, reward: { maintainerShare: 2000 }, repositories: [{ id: "acme/churning" }] })
+    const ledgers = try ledgersOf({
+      moving: [{ githubId: "1001", login: "first", points: 1 }],
+      churning: [{ githubId: "1001", login: "first", points: 1 }],
+    })
+    const nodes = [
+      pull(30, "2026-11-25T00:00:00.000Z", { mergedBy: ana }),
+      pull(31, "2026-11-24T00:00:00.000Z", { mergedBy: ana }),
+      pull(32, "2026-11-23T00:00:00.000Z", { closer: ben }),
+      pull(33, "2026-11-22T00:00:00.000Z", { mergedBy: cal }),
+      pull(34, "2026-10-20T00:00:00.000Z", { mergedBy: ana }),
+    ]
+    let served = 0
+    const movingAnswer: Answer = (variables) => {
+      const list = [...nodes].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.number - left.number)
+      const after = variables.after ?? null
+      const start = after === null ? 0 : list.findIndex((node) => {
+        const [cursorTime = "", cursorNum = "0"] = after.split("|")
+        return node.updatedAt < cursorTime || (node.updatedAt === cursorTime && node.number < Number(cursorNum))
+      })
+      const slice = start < 0 ? [] : list.slice(start, start + 2)
+      served += 1
+      if (served === 1 && nodes[2] !== undefined) nodes[2] = { ...nodes[2], updatedAt: "2026-12-01T09:00:00.000Z" }
+      const last = slice.at(-1)
+      return page("R_moving", start >= 0 && start + 2 < list.length && last !== undefined ? `${last.updatedAt}|${last.number}` : null, slice)
+    }
+    let minute = 0
+    const churningAnswer: Answer = () => {
+      minute += 1
+      return page("R_churning", null, [pull(40, "2026-11-20T00:00:00.000Z", { mergedBy: ana, updated: `2026-12-01T09:${String(minute).padStart(2, "0")}:00.000Z` })])
+    }
+    provide services(env, [moving], ledgers, movingAnswer) {
+      try proposeMonth(["--cycle", "2026-11"])
+      const share = try maintainerShareOf(env, "moving")
+      const records = try orDie(Effect.try(() => share.map((row) => JSON.parse(row.decisions) as DecisionText)))
+      try same(records.map((record) => record.decisions.map((entry) => [entry.number, entry.login])), [[
+        [30, "ana"],
+        [31, "ana"],
+        [32, "ben"],
+        [33, "cal"],
+      ]])
+    }
+    provide services(env, [churning], ledgers, churningAnswer) {
+      const refused = proposeMonth(["--cycle", "2026-11"]) catch (error) => error._tag
+      const share = try maintainerShareOf(env, "churning")
+      try same({ refused, share }, { refused: "ProposalsFailed", share: [] })
     }
   })
 })

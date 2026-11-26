@@ -5,14 +5,29 @@
   "type": "module",
   "exports": {
     "./chain/*": "./src/chain/*.ts",
-    "./client": "./src/client/index.vibe",
+    "./client": {
+      "types": "./.vibe/declarations/src/client/index.d.vibe.ts",
+      "default": "./src/client/index.vibe"
+    },
     "./kernels/*": "./src/kernels/*.ts",
-    "./live": "./src/live.vibe",
+    "./live": {
+      "types": "./.vibe/declarations/src/live.d.vibe.ts",
+      "default": "./src/live.vibe"
+    },
     "./testing/evm": "./test/support/evm/deploy.ts",
     "./owner/ownerInstructions": "./src/owner/ownerInstructions.ts",
-    "./owner/solanaDeployment": "./src/owner/solanaDeployment.vibe",
-    "./vault/evmTotals": "./src/vault/evmTotals.vibe",
-    "./vault/policy": "./src/vault/policy.vibe"
+    "./owner/solanaDeployment": {
+      "types": "./.vibe/declarations/src/owner/solanaDeployment.d.vibe.ts",
+      "default": "./src/owner/solanaDeployment.vibe"
+    },
+    "./vault/evmTotals": {
+      "types": "./.vibe/declarations/src/vault/evmTotals.d.vibe.ts",
+      "default": "./src/vault/evmTotals.vibe"
+    },
+    "./vault/policy": {
+      "types": "./.vibe/declarations/src/vault/policy.d.vibe.ts",
+      "default": "./src/vault/policy.vibe"
+    }
   },
   "scripts": {
     "build": "vite build",
@@ -29,14 +44,12 @@
     "@repo/points": "workspace:*",
     "@repo/ports": "workspace:*",
     "@repo/security": "workspace:*",
-    "@scure/base": "catalog:",
     "effect": "4.1.1",
     "vibelang-runtime": "0.0.13",
     "viem": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "4.1.1",
-    "@repo/contracts": "workspace:*",
     "@types/node": "catalog:",
     "miniflare": "5.20261113.0-beta",
     "typescript": "catalog:",

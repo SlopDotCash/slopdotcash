@@ -358,4 +358,24 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       })
     }
   })
+
+  it.effect('Refuse vault setup review and registration on a retired project (spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer")', () => effect {
+    const world = try World
+    provide world.clock.layer, world.layer {
+      const project = "vault-setup-retired"
+      try listed(project)
+      const current = world.projects.get(project)
+      if (current === undefined) return try die(new Error("project missing"))
+      world.projects.set(project, {
+        view: { ...current.view, listingTier: "Retired", retirement: "OwnerRemoved" },
+        manifest: { ...current.manifest, listingTier: "retired" },
+      })
+      const reviewAnswer = ownerVaultPost(project, OWNER, try body(project, "review")) catch (error) => error instanceof Refused ? { status: error.status, code: error.code } : tagOf(error)
+      const registerAnswer = ownerVaultPost(project, OWNER, try body(project, "register", `0x${"a".repeat(64)}`)) catch (error) => error instanceof Refused ? { status: error.status, code: error.code } : tagOf(error)
+      try same({ reviewAnswer, registerAnswer }, {
+        reviewAnswer: { status: 409, code: "project_restricted" },
+        registerAnswer: { status: 409, code: "project_restricted" },
+      })
+    }
+  })
 })

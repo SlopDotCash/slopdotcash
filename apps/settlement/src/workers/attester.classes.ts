@@ -1,4 +1,3 @@
-/// <reference path="../../../../packages/platform/src/cloudflare.d.ts" />
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Both possible winners stay retained"
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Effect } from "effect";
@@ -7,7 +6,7 @@ import { durableJournal } from "@repo/platform/journal";
 import { worker } from "@repo/platform/worker";
 import { adoptKeyValue } from "../journal/journal.vibe";
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts";
-import { type AttesterObjectEnv, attesterRoutes, attesterScheduled, attesterServices } from "../jobs/attesterRoutes.vibe";
+import { type AttesterObjectEnv, attesterRoutes, attesterScheduled, attesterServices } from "../signer/attesterRoutes.vibe";
 
 interface JournalStub {
   fetch(request: Request): Promise<Response>;

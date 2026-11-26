@@ -9,7 +9,7 @@ import { type Address, SYSTEM_PROGRAM, addressOf, base58Encode, base64Decode, ba
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { decoded, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
-import { fileJournal } from "@repo/platform/journal"
+import { type Journal, fileJournal } from "@repo/platform/journal"
 import { type StartedWorker, bundle, scheduled, startWorker } from "@repo/platform/testing"
 import { type Account, anvil, forward, refuseMainnet, rpcFaults, serve } from "@repo/platform/testing/chains"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
@@ -192,7 +192,7 @@ effect function keeperRun(text: string, execute = true) {
   }
 }
 
-effect function journal<A>(read: A!unknown!any) {
+effect function journal<A>(read: A!unknown!Journal) {
   const { journalPath } = try Bench
   provide fileJournal(journalPath) {
     return try orDie(read)
@@ -896,7 +896,7 @@ effect function solanaRun(perRun: number) {
   }
 }
 
-effect function solanaJournal<A>(read: A!unknown!any) {
+effect function solanaJournal<A>(read: A!unknown!Journal) {
   const { journalPath } = try SolanaBench
   provide fileJournal(journalPath) {
     try orDie(openKeeperStore())

@@ -49,9 +49,10 @@ export type DecodedLog =
   | { readonly kind: "unrecognized"; readonly at: LogPosition; readonly topic: Hex | undefined }
   | { readonly kind: "malformed"; readonly at: LogPosition; readonly topic: Hex | undefined; readonly reason: Malformation };
 
-class Rejected {
+class Rejected extends Error {
   readonly reason: Malformation;
   constructor(reason: Malformation) {
+    super(reason);
     this.reason = reason;
   }
 }

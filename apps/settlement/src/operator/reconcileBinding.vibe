@@ -1,0 +1,117 @@
+// spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
+import { randomId } from "@repo/platform/crypto"
+import { D1 } from "@repo/platform/d1"
+import { handle, refuse } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { Audit } from "@repo/ports/security"
+import { RecoveryAnswer, type RecoveryRequest, reconcileBindingRoute } from "../client/operator.vibe"
+import { postOperatorWalletBindingsReconcile as answers } from "../client/refusals.vibe"
+
+export error RecoveryRefused { code: "invalid_request" | "binding_recovery_unavailable" | "binding_recovery_pending_or_rejected" }
+export error RecoveryUnavailable
+
+export interface RecoveryInput {
+  readonly network: string
+  readonly vault: string
+  readonly originalTransactionId: string
+  readonly winnerTransactionId: string
+}
+
+const recoveryKeys = "network,originalTransactionId,vault,winnerTransactionId"
+const networkPattern = /^[a-z][a-z0-9-]{1,63}$/u
+const vaultPattern = /^0x[0-9a-fA-F]{40}$/u
+const hashPattern = /^0x[0-9a-fA-F]{64}$/u
+
+export function isRecoveryInput(value: unknown): value is RecoveryInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const item = value as Record<string, unknown>
+  const { network, vault, originalTransactionId, winnerTransactionId } = item
+  return Object.keys(item).sort().join(",") === recoveryKeys
+    && typeof network === "string" && networkPattern.test(network)
+    && typeof vault === "string" && vaultPattern.test(vault)
+    && typeof originalTransactionId === "string" && hashPattern.test(originalTransactionId)
+    && typeof winnerTransactionId === "string" && hashPattern.test(winnerTransactionId)
+}
+
+export function reasonAccepted(reason: unknown): reason is string {
+  return typeof reason === "string" && reason.trim().length >= 8 && reason.length <= 500
+}
+
+export service BindingRecovery {
+  reconcile(request: RecoveryRequest): RecoveryAnswer!(RecoveryRefused | RecoveryUnavailable)
+}
+
+export interface RecoveryEntrypoint {
+  reconcile(request: RecoveryRequest): Promise<unknown>
+}
+
+export interface RecoveryBindings {
+  readonly BINDING_RECOVERY?: RecoveryEntrypoint
+  readonly BINDING_RECOVERY_ETHEREUM?: RecoveryEntrypoint
+  readonly BINDING_RECOVERY_ROBINHOOD?: RecoveryEntrypoint
+}
+
+function entrypointFor(env: RecoveryBindings, network: string): RecoveryEntrypoint | undefined {
+  if (network === "base-mainnet") return env.BINDING_RECOVERY
+  if (network === "ethereum") return env.BINDING_RECOVERY_ETHEREUM
+  if (network === "robinhood-mainnet") return env.BINDING_RECOVERY_ROBINHOOD
+  return undefined
+}
+
+export function bindingRecovery(env: RecoveryBindings) {
+  return Layer.succeed(BindingRecovery, {
+    reconcile: (request) => effect {
+      const entrypoint = entrypointFor(env, request.network)
+      if (entrypoint === undefined) throw new RecoveryRefused({ code: "binding_recovery_unavailable" })
+      const answered = try tryPromise({ try: () => entrypoint.reconcile(request), catch: () => new RecoveryUnavailable() })
+      return Schema.decodeUnknownEffect(RecoveryAnswer)(answered, { onExcessProperty: "error" }) catch effect () => { throw new RecoveryUnavailable() }
+    },
+  } satisfies BindingRecovery.Shape)
+}
+
+interface AuditBase {
+  readonly actorGithubId: string
+  readonly target: string
+  readonly requestId: string
+  readonly details: { readonly [key: string]: string }
+}
+
+function refusal(answer: { readonly status: number; readonly error: string; readonly message: string }) {
+  return refuse(answer.status, answer.error, answer.message)
+}
+
+effect function audited(base: AuditBase, action: string, extra: { readonly [key: string]: string }) {
+  const statements = try (try Audit).statements({ actorGithubId: base.actorGithubId, action, target: base.target, requestId: base.requestId, details: { ...base.details, ...extra } })
+  try (try D1).batch(statements)
+}
+
+effect function unknownOutcome(base: AuditBase) {
+  try audited(base, "wallet_binding.reconciliation_unknown", {})
+  throw refusal(answers.recoveryUnavailable)
+}
+
+effect function refusedOutcome(base: AuditBase) {
+  try audited(base, "wallet_binding.reconciliation_refused", {})
+  throw refusal(answers.recoveryPendingOrRejected)
+}
+
+export const ReconcileBindingRoutes = handle(reconcileBindingRoute, (input) => effect {
+  if ((try HttpServerRequest.HttpServerRequest).headers.authorization !== undefined) throw refusal(answers.forbidden)
+  if (!(try (try Roles).has(input.actor.githubId, "operator"))) throw refusal(answers.forbiddenOperatorAccessIsRequired)
+  const { scope, reason, ...binding } = input.body
+  if ((scope !== "ordinary" && scope !== "security-bounty") || !isRecoveryInput(binding) || !reasonAccepted(reason)) throw refusal(answers.invalidRequestAnExactBindingWinner)
+  const requestId = try randomId()
+  const base = {
+    actorGithubId: input.actor.githubId,
+    target: `binding:${binding.originalTransactionId.toLowerCase()}`,
+    requestId,
+    details: { scope, reason, network: binding.network, vault: binding.vault, winnerTransactionId: binding.winnerTransactionId },
+  } satisfies AuditBase
+  try audited(base, "wallet_binding.reconciliation_requested", {})
+  const answer = (try BindingRecovery).reconcile({ scope, reason, auditRequestId: requestId, ...binding }) catch effect (error) => match (error) {
+    when RecoveryUnavailable: try unknownOutcome(base);
+    default: try refusedOutcome(base);
+  }
+  try audited(base, "wallet_binding.reconciled", { state: answer.state })
+  return answer
+})

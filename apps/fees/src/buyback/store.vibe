@@ -104,6 +104,7 @@ interface SendRow {
   readonly amount: number
   readonly takeAmount: number
   readonly quote: string
+  readonly balance: string | null
   readonly signed: SignedFacts
   readonly gasId: string
   readonly now: string
@@ -111,7 +112,7 @@ interface SendRow {
 
 function sendRow(entry: SendRow): Statement {
   const evm = entry.network !== "solana"
-  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, quote, approval_tx_id, tx_id, raw_tx, evm_nonce, state, created_at, updated_at, submitted_at, native_gas_id) VALUES (${entry.kind}, ${entry.id}, ${entry.runId}, ${entry.network}, 'live', ${entry.wallet}, ${entry.token}, ${robinhoodUsdg}, ${String(entry.amount)}, 'debridge', ${String(entry.takeAmount)}, ${entry.kind === "bridge" ? String(entry.takeAmount) : null}, ${entry.amount}, ${entry.quote}, ${entry.kind === "approval" ? entry.signed.txId : null}, ${entry.signed.txId}, ${entry.signed.rawTx}, ${evm ? entry.signed.nonce : null}, 'submitted', ${entry.now}, ${entry.now}, ${entry.now}, ${entry.gasId})`
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, quote, token_balance_before, approval_tx_id, tx_id, raw_tx, evm_nonce, state, created_at, updated_at, submitted_at, native_gas_id) VALUES (${entry.kind}, ${entry.id}, ${entry.runId}, ${entry.network}, 'live', ${entry.wallet}, ${entry.token}, ${robinhoodUsdg}, ${String(entry.amount)}, 'debridge', ${String(entry.takeAmount)}, ${entry.kind === "bridge" ? String(entry.takeAmount) : null}, ${entry.amount}, ${entry.quote}, ${entry.balance}, ${entry.kind === "approval" ? entry.signed.txId : null}, ${entry.signed.txId}, ${entry.signed.rawTx}, ${evm ? entry.signed.nonce : null}, 'submitted', ${entry.now}, ${entry.now}, ${entry.now}, ${entry.gasId})`
 }
 
 interface Outcome {
@@ -188,7 +189,7 @@ effect function writesFor(loaded: Loaded, leg: Leg, event: Event, next: Buyback,
       const gasId = `fee-gas-${try randomId()}`
       return [
         W.reserve(reservation(network, gasId, wallet, runId, signed, now)),
-        sendRow({ kind: approval ? "approval" : "bridge", id: try randomId(), runId, network, wallet, token, amount: request.amount, takeAmount: request.takeAmount, quote: terms === undefined ? facts.summary ?? "{}" : JSON.stringify(terms), signed, gasId, now }),
+        sendRow({ kind: approval ? "approval" : "bridge", id: try randomId(), runId, network, wallet, token, amount: request.amount, takeAmount: request.takeAmount, quote: terms === undefined ? facts.summary ?? "{}" : JSON.stringify(terms), balance: facts.balance ?? null, signed, gasId, now }),
       ]
     }
     case "settleApproval": {

@@ -118,9 +118,7 @@ effect function gitOutput(args: ReadonlyArray<string>) {
   const output = scoped(effect {
     const spawner = try ChildProcessSpawner.ChildProcessSpawner
     const handle = try spawner.spawn(ChildProcess.make("git", args, { stdin: "ignore", stderr: "ignore" }))
-    const decoder = new TextDecoder()
-    let text = ""
-    for try (const chunk of handle.stdout) text += decoder.decode(chunk, { stream: true })
+    const text = try Stream.mkString(Stream.decodeText(handle.stdout))
     return Number(try handle.exitCode) === 0 ? text.trim() : undefined
   })
   return output catch () => undefined

@@ -68,7 +68,6 @@ const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pa
 const distributorAbi = parseAbi(["function postRoot(uint256 index, bytes32 root, uint256 newTotal)", "function voidRoot(uint256 index)"])
 const dollarAbi = parseAbi(["function mint(address to, uint256 amount)"])
 const scanLimit = 1_000_000n
-const miningStep = 100_000
 const chainNow = "2027-01-01T03:00:00.000Z"
 const keep: Rewrite = (_method, result) => result
 
@@ -229,27 +228,41 @@ function answer(id: unknown, body: Readonly<Record<string, unknown>>) {
   return new WebResponse(JSON.stringify({ jsonrpc: "2.0", id, ...body }), { headers: { "content-type": "application/json" } })
 }
 
-effect function relay(upstream: string, request: WebRequest, spans: Array<readonly [bigint, bigint]>, rewrite: Rewrite) {
+effect function relay(upstream: string, request: WebRequest, spans: Array<readonly [bigint, bigint]>, rewrite: Rewrite, tipShift?: { readonly realTip: bigint; readonly virtualTip: bigint }) {
   const text = try promise(() => request.text())
   const call = try orDie(Effect.try(() => JSON.parse(text) as unknown))
   const method = String(field(call, "method"))
   const params = field(call, "params")
+  let forwarded = text
   if (method === "eth_getLogs" && Array.isArray(params)) {
     const filter: unknown = params[0]
     const from = try orDie(Effect.try(() => BigInt(String(field(filter, "fromBlock")))))
     const to = try orDie(Effect.try(() => BigInt(String(field(filter, "toBlock")))))
     spans.push([from, to])
     if (to - from + 1n > scanLimit) return answer(field(call, "id"), { error: { code: -32005, message: "query exceeds max block range 1000000" } })
+    if (tipShift !== undefined) {
+      if (from > tipShift.realTip) return answer(field(call, "id"), { result: [] })
+      if (to > tipShift.realTip && isRecord(filter)) {
+        const clamped = { ...filter, toBlock: `0x${tipShift.realTip.toString(16)}` }
+        forwarded = JSON.stringify({ ...(isRecord(call) ? call : {}), params: [clamped, ...params.slice(1)] })
+      }
+    }
   }
-  const upstreamAnswer = try promise(() => webFetch(upstream, { method: "POST", headers: { "content-type": "application/json" }, body: text }))
+  const virtualHex = tipShift === undefined ? undefined : `0x${tipShift.virtualTip.toString(16)}`
+  const shiftedLatest = tipShift !== undefined && method === "eth_getBlockByNumber" && Array.isArray(params) && (params[0] === "latest" || params[0] === virtualHex)
+  if (shiftedLatest && Array.isArray(params) && params[0] === virtualHex) {
+    forwarded = JSON.stringify({ ...(isRecord(call) ? call : {}), params: ["latest", ...params.slice(1)] })
+  }
+  const upstreamAnswer = try promise(() => webFetch(upstream, { method: "POST", headers: { "content-type": "application/json" }, body: forwarded }))
   const body: unknown = try promise(() => upstreamAnswer.json())
   if (!isRecord(body) || !("result" in body)) return passed(body)
-  return answer(body.id, { result: rewrite(method, body.result) })
+  const result = shiftedLatest && isRecord(body.result) && virtualHex !== undefined ? { ...body.result, number: virtualHex } : body.result
+  return answer(body.id, { result: rewrite(method, result) })
 }
 
-effect function rangeLimited(chain: Anvil, rewrite: Rewrite = keep) {
+effect function rangeLimited(chain: Anvil, rewrite: Rewrite = keep, tipShift?: { readonly realTip: bigint; readonly virtualTip: bigint }) {
   const spans: Array<readonly [bigint, bigint]> = []
-  const opened = try served((request) => runPromise(relay(chain.url, request, spans, rewrite)))
+  const opened = try served((request) => runPromise(relay(chain.url, request, spans, rewrite, tipShift)))
   return { url: opened.url, spans } satisfies Fixture
 }
 
@@ -275,10 +288,6 @@ effect function transact(chain: Anvil, from: `0x${string}`, to: string, data: `0
   const receipt = try promise(() => chain.transact({ from, to: to as `0x${string}`, data }))
   if (receipt.status !== "success") return try die(new Error(`${data.slice(0, 10)} reverted in ${receipt.transactionHash}`))
   return receipt
-}
-
-effect function mined(chain: Anvil, blocks: number) {
-  for (let left = blocks; left > 0; left -= miningStep) try promise(() => chain.mine(Math.min(left, miningStep)))
 }
 
 effect function headOf(chain: Anvil) {
@@ -455,10 +464,10 @@ layer(Layer.mergeAll(ChainStarted, webCrypto, outbound), { excludeTestServices: 
 
   it.effect('A scan over more than one million blocks is split and reads every block once (spec/settlement/referralWatch.md, "Log scans cover every block from deployment to the observed tip once, in ranges of at most one million blocks")', () => effect {
     const bench = try Chain
-    try mined(bench.chain, 1_000_001)
-    const limited = try rangeLimited(bench.chain)
+    const realTip = try headOf(bench.chain)
+    const tip = realTip + 1_000_001n
+    const limited = try rangeLimited(bench.chain, keep, { realTip, virtualTip: tip })
     const setup = try chainSetup(bench, limited.url)
-    const tip = try headOf(bench.chain)
     const result = try outcome(setup, bench.site.origin, chainNow)
     const first = bench.deploymentBlock
     const pages = [[first, first + scanLimit - 1n], [first + scanLimit, tip]]

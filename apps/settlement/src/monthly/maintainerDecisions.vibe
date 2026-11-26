@@ -40,6 +40,7 @@ export const decisionsQuery = `query($owner: String!, $name: String!, $first: In
 
 const pageSize = 50
 const maxPages = 400
+const catchUpPasses = 5
 const maintainerAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"])
 const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
 const deletionWindowMs = deletionWindowSeconds * 1000
@@ -211,36 +212,50 @@ effect function repositoryDecisions(github: GitHub.Shape, month: DecisionMonth, 
   if (owner === undefined || owner === "" || name === undefined || name === "" || rest.length > 0) throw unread(`Repository ${repository.id} is not owner/name`)
   const from = periodStartSeconds(month.period) * 1000
   const to = periodEndSeconds(month.period) * 1000
-  const found: Found[] = []
-  const seen = new Set<number>()
-  let after: string | null = null
-  for (let read = 0; ; read += 1) {
-    if (read >= maxPages) throw unread(`Repository ${repository.id} has more closed pull requests than one read covers`)
-    const listed: RepositoryPage = (try page(github, { owner, name, first: pageSize, after })).repository
-    if (repository.nodeId !== undefined && listed.id !== repository.nodeId) throw unread(`Repository ${repository.id} is not the registered repository`)
-    let older = false
-    for (const node of listed.pullRequests.nodes) {
-      if ((try instant(node.updatedAt, "update time")) < from) {
-        older = true
-        break
+  const found = new Map<number, Found>()
+  const versions = new Map<number, number>()
+  let floor = from
+  for (let pass = 0; ; pass += 1) {
+    if (pass > catchUpPasses) throw unread(`Repository ${repository.id} kept changing during the read`)
+    let newest: number | undefined = undefined
+    let changed = false
+    let after: string | null = null
+    for (let read = 0; ; read += 1) {
+      if (read >= maxPages) throw unread(`Repository ${repository.id} has more closed pull requests than one read covers`)
+      const listed: RepositoryPage = (try page(github, { owner, name, first: pageSize, after })).repository
+      if (repository.nodeId !== undefined && listed.id !== repository.nodeId) throw unread(`Repository ${repository.id} is not the registered repository`)
+      let older = false
+      for (const node of listed.pullRequests.nodes) {
+        const updatedAt = try instant(node.updatedAt, "update time")
+        if (updatedAt < floor) {
+          older = true
+          break
+        }
+        if (newest === undefined || updatedAt > newest) newest = updatedAt
+        if (!Number.isSafeInteger(node.number) || node.number <= 0) throw unread("GitHub returned an invalid pull request number")
+        if (versions.get(node.number) === updatedAt) continue
+        versions.set(node.number, updatedAt)
+        found.delete(node.number)
+        changed = true
+        const merged = node.mergedAt !== null
+        const decidedAt = try instant(merged ? node.mergedAt : node.closedAt, "decision time")
+        if (decidedAt < from || decidedAt >= to) continue
+        const { decision, account } = try judged(node, merged, repository.id, index, month.period)
+        if (account === undefined) continue
+        found.set(node.number, {
+          file: { repository: repository.id, number: node.number, outcome: merged ? "merged" : "closed", decidedAt: try isoAt(decidedAt), author: account.author, githubUserId: account.githubUserId, nodeId: account.nodeId, login: account.login },
+          decision,
+        })
       }
-      const merged = node.mergedAt !== null
-      const decidedAt = try instant(merged ? node.mergedAt : node.closedAt, "decision time")
-      if (decidedAt < from || decidedAt >= to) continue
-      const { decision, account } = try judged(node, merged, repository.id, index, month.period)
-      if (account === undefined || seen.has(node.number)) continue
-      seen.add(node.number)
-      found.push({
-        file: { repository: repository.id, number: node.number, outcome: merged ? "merged" : "closed", decidedAt: try isoAt(decidedAt), author: account.author, githubUserId: account.githubUserId, nodeId: account.nodeId, login: account.login },
-        decision,
-      })
+      const info: PageInfo = listed.pullRequests.pageInfo
+      if (older || !info.hasNextPage) break
+      if (info.endCursor === null) throw unread("GitHub returned no next page")
+      after = info.endCursor
     }
-    const info: PageInfo = listed.pullRequests.pageInfo
-    if (older || !info.hasNextPage) break
-    if (info.endCursor === null) throw unread("GitHub returned no next page")
-    after = info.endCursor
+    if (pass > 0 && !changed) break
+    if (newest !== undefined && newest > floor) floor = newest
   }
-  return found
+  return [...found.values()]
 }
 
 effect function collected(github: GitHub.Shape, month: DecisionMonth) {
