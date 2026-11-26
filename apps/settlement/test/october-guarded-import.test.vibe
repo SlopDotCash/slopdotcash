@@ -1,0 +1,137 @@
+// spec/settlement/octoberImport.md, "Planning computes the packet and writes nothing"; spec/settlement/octoberImport.md, "An apply run writes only under the reviewed digest, current main and the production lock"; spec/settlement/octoberImport.md, "A proposal already written is never added to or replaced"
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { D1, d1, first, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { canAutoFreeze, canFinalize } from "../gen/settlement__monthly.effect.vibe"
+import { fromAmount } from "../src/kernels/amounts.ts"
+import { isPeriod } from "../src/kernels/calendar.ts"
+import { ordinaryFeeBase } from "../src/kernels/fees.ts"
+import { loadedMonth } from "../src/monthly/owner.vibe"
+import type { MonthFacts } from "../src/monthly/store.vibe"
+import { executeOctober, octoberStatements } from "../src/october/import.vibe"
+import type { compileOctoberElizaProposal } from "../src/october/plan.ts"
+
+const now = "2026-11-25T00:00:00.000Z"
+const later = "2026-11-26T00:00:00.000Z"
+const asset = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+const vault = "11111111111111111111111111111111"
+const manifest = JSON.stringify({
+  id: "eliza", status: "active",
+  reward: { kind: "monthly-pool", monthlyCapMinor: "1000000000", rewardStartAt: "2026-07-07T00:00:00.000Z" },
+  escrow: { chain: "solana", effectiveCycle: "2026-10", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "solana-mainnet", vault, asset }] },
+})
+function awardsFixture() {
+  const awards: ReturnType<typeof compileOctoberElizaProposal>["proposal"]["awards"] = []
+  let feeBase = 0n
+  for (let index = 0n; index < 79n; index++) {
+    const actor = String(1000n + index)
+    const gross = 1_000_000_000n / 79n + (index < 1_000_000_000n % 79n ? 1n : 0n)
+    const fee = ordinaryFeeBase(gross)
+    feeBase += fee
+    awards.push({
+      githubUserId: actor, login: `fixture-${actor}`, grossBase: gross.toString(),
+      feeBase: fee.toString(), netBase: (gross - fee).toString(), sourceDigest: actor.padStart(64, "0"),
+    })
+  }
+  return { awards, feeBase }
+}
+
+const { awards, feeBase } = awardsFixture()
+const proposal = {
+  id: "eliza",
+  period: "2026-10",
+  through: "2026-11-01T00:00:00.000Z",
+  revision: 1,
+  manifestSha256: "1".repeat(64),
+  sourceSnapshotSha256: "2".repeat(64),
+  pointsBatch: "3".repeat(64),
+  enforcementGeneration: 0,
+  network: "solana-mainnet",
+  vault,
+  asset: "USDC",
+  assetAddress: asset,
+  decimals: 6,
+  grossBase: "1000000000",
+  feeBase: feeBase.toString(),
+  netBase: (1_000_000_000n - feeBase).toString(),
+  awards,
+} satisfies ReturnType<typeof compileOctoberElizaProposal>["proposal"]
+
+schema Count { n: number }
+service OctoberTest { db: D1Database }
+
+const Started = Layer.effect(OctoberTest, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "october-proposal" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file}: ${failed.error}`))
+  return { db: try promise(() => database(mf, "SLOP_DB")) }
+})
+
+effect function seed() {
+  const db = try D1
+  try db.run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('eliza', 1, ${manifest}, ${proposal.manifestSha256}, 'fixture', ${now})`)
+  try db.run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('eliza', 'active', 1, ${manifest}, ${proposal.manifestSha256}, ${now}, ${now})`)
+  try db.run(sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${proposal.pointsBatch}, ${now}, '[]', 0)`)
+}
+
+effect function count() {
+  const headers = try first(Count, sql`SELECT count(*) AS n FROM monthly_reward_bases WHERE project_id='eliza' AND period='2026-10'`)
+  const awards = try first(Count, sql`SELECT count(*) AS n FROM monthly_reward_base_rows WHERE project_id='eliza' AND period='2026-10'`)
+  return [headers?.n, awards?.n]
+}
+
+effect function observed(outcome: string, expected: string, expectedCount: readonly number[]) {
+  const rows = try count()
+  try Effect.sync(() => assert.deepEqual([outcome, rows], [expected, expectedCount]))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect(`The exact October proposal is atomic, has a read-only preview and replays without writes (spec/settlement/octoberImport.md, "A proposal already written is never added to or replaced")`, () => effect {
+    const { db } = try OctoberTest
+    provide d1(db), settableClock(Date.parse(now)).layer {
+      const database = try D1
+      try seed()
+      const plan = octoberStatements(proposal, manifest, now, [sql`1`])
+      try observed(try executeOctober(plan, false, () => effect {}), "preview", [0, 0])
+      const laterBatch = sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${"a".repeat(64)}, ${later}, '[]', 0)`
+      const refusal = executeOctober(plan, true, () => effect { try database.run(laterBatch) }) catch () => "refused"
+      try observed(refusal, "refused", [0, 0])
+      const current = octoberStatements({ ...proposal, pointsBatch: "a".repeat(64) }, manifest, now, [sql`1`])
+      try database.run(sql`CREATE TRIGGER october_fixture_ignores_second BEFORE INSERT ON monthly_reward_base_rows WHEN NEW.github_user_id = '1078' BEGIN SELECT RAISE(IGNORE); END`)
+      const missing = executeOctober(current, true, () => effect {}) catch () => "refused"
+      try observed(missing, "refused", [0, 0])
+      try database.run(sql`DROP TRIGGER october_fixture_ignores_second`)
+      const applied = try executeOctober(current, true, () => effect {})
+      try observed(applied, "applied", [1, 79])
+      const period = 202610
+      if (!isPeriod(period)) return try die(new Error("invalid test month"))
+      const facts = {
+        current: { number: 1, manifest, manifestSha256: proposal.manifestSha256 },
+        served: new Set([proposal.network]),
+        eligibility: { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false, retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true },
+      } satisfies MonthFacts
+      const consumed = try loadedMonth({ projectId: "eliza", period }, facts)
+      try Effect.sync(() => {
+        assert.equal(consumed.state.phase, "Proposed")
+        assert.equal(consumed.state.proposedShares.length, 79)
+        assert.equal(fromAmount(consumed.state.total), 1_000_000_000n)
+        assert.equal(consumed.state.revision.vault, vault)
+        assert.equal(consumed.state.revision.asset, asset)
+        assert.deepEqual(consumed.rows.proposed.map((row) => [row.github_user_id, row.github_login, row.gross_base, row.source_digest]),
+          awards.map((row) => [row.githubUserId, row.login, row.grossBase, row.sourceDigest]))
+        assert.equal(canFinalize(consumed.state, 0, { actor: 2, role: "RepositoryAdmin", banned: false, revision: 1 }), true)
+        assert.equal(canAutoFreeze(consumed.state), false)
+      })
+      try database.run(sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${"b".repeat(64)}, ${"2026-11-27T00:00:00.000Z"}, '[]', 0)`)
+      const repeated = try executeOctober(current, true, () => effect {})
+      try observed(repeated, "already-imported", [1, 79])
+      const different = octoberStatements({ ...proposal, sourceSnapshotSha256: "f".repeat(64) }, manifest, now, [])
+      const replaced = executeOctober(different, true, () => effect {}) catch () => "refused"
+      try observed(replaced, "refused", [1, 79])
+    }
+  })
+})
