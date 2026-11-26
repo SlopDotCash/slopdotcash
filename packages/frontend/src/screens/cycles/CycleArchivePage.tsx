@@ -4,6 +4,7 @@ import { Alert, Button, DataState, Label, PageHeader, Select, Spinner, Status } 
 import { CalendarDays } from "lucide-react";
 import type { Effect } from "effect";
 import { snapshotStale } from "../../../gen/frontend__snapshotCache.ts";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import type { RegistryBoot } from "../../reads/registry.vibe";
 import type { Shown } from "../home/listing.ts";
@@ -12,7 +13,7 @@ import { formatDate, formatMonth, projectName, VaultPaymentHistory } from "../pr
 import { type ProjectRuntime, projectReads, projectRuntime } from "../projects/reads.vibe";
 import { contributorReads, contributorRuntime, registryBoot } from "../points/reads.vibe";
 import { useQuery, writeQuery } from "../points/query.ts";
-import { type Settled, useOnce } from "../security/program/hooks.ts";
+import { retryOnce, type Settled, useOnce } from "../../app/hooks.ts";
 import { nextBoundary, staleFrom, useBoundary } from "./boundary.ts";
 import { usdcText } from "./CycleAmountHistory.tsx";
 import { archiveOrder, archiveView, type FilterKey, filterLabels, filterQuery, requestedFilter, selected } from "./filters.ts";
@@ -21,7 +22,7 @@ import { cycleLifecyclePresentation, cycleStateLabel, percentText } from "./labe
 type ProjectSection = Effect.Success<ReturnType<typeof projectReads>>;
 type ContributorSection = Effect.Success<ReturnType<typeof contributorReads>>;
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-8 px-4 py-12";
+const pageClass = pageShellClass("lg", "8", "py-12");
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 
 /** @throws {never} */
@@ -157,11 +158,11 @@ function bootOf(read: Settled<RegistryBoot>): RegistryBoot | undefined {
   return read.status === "done" && read.value.error === undefined ? read.value : undefined;
 }
 
-/** `/cycles`: every published payment cycle, newest first, filtered by project, month and state; finalized vault payments above them. */
 export function CycleArchivePage({ runtime }: PageProps) {
   const section = projectRuntime(runtime);
+  const contributor = contributorRuntime(runtime);
   const sectionReads = useOnce(section, "reads", () => projectReads());
-  const reads = useOnce(contributorRuntime(runtime), "reads", () => contributorReads());
+  const reads = useOnce(contributor, "reads", () => contributorReads());
   const registry = useOnce(section, "registry", () => registryBoot());
   return (
     <main className={pageClass}>
@@ -169,7 +170,14 @@ export function CycleArchivePage({ runtime }: PageProps) {
       {sectionReads.status === "done" && reads.status === "done" ? (
         <Loaded runtime={section} section={sectionReads.value} reads={reads.value} boot={bootOf(registry)} />
       ) : (
-        <DataState status={sectionReads.status === "failed" || reads.status === "failed" ? "Failed" : "Loading"} onRetry={() => location.reload()} />
+        <DataState
+          status={sectionReads.status === "failed" || reads.status === "failed" ? "Failed" : "Loading"}
+          onRetry={() => {
+            retryOnce(section, "reads");
+            retryOnce(contributor, "reads");
+            retryOnce(section, "registry");
+          }}
+        />
       )}
     </main>
   );

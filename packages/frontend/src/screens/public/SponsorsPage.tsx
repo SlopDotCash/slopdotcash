@@ -4,6 +4,7 @@ import { DataState, Disclosure, ExternalLink, PageHeader } from "@repo/ui";
 import { ArrowRight, HandCoins } from "lucide-react";
 import type { ReactNode } from "react";
 import { reviewBudgetShown } from "../../../gen/frontend__views.ts";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { useSession } from "../../app/useSession.ts";
 import { formatRewardMinor, networkLabel } from "../../kernels/assetText.ts";
@@ -79,7 +80,7 @@ function SponsorCard({ project, mergeLine, networkPays }: { project: ListedProje
 export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live, branch }: SponsorsViewProps) {
   const listed = projects.value ?? [];
   return (
-    <main className="mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-10 px-4 py-8">
+    <main className={pageShellClass("lg", "10")}>
       <PageHeader title="Fund a project" icon={<HandCoins className="size-6 text-primary" />} />
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
@@ -151,6 +152,16 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
           <li>
             <a className={link} href="/cycles">
               Cycle archive
+            </a>
+          </li>
+          <li>
+            <a className={link} href="/record">
+              Public record
+            </a>
+          </li>
+          <li>
+            <a className={link} href="/receipts">
+              Receipts
             </a>
           </li>
         </ul>

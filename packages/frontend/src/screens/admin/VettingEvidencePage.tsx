@@ -2,7 +2,6 @@
 import { Alert, Button, Disclosure, Field, Input, PageHeader, Spinner } from "@repo/ui";
 import { LockKeyhole, TriangleAlert } from "lucide-react";
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import type { PageProps } from "../../app/pages.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { SignInPanel } from "../../app/SignInPanel.tsx";
@@ -121,8 +120,8 @@ export function VettingEvidencePage({ runtime }: PageProps) {
     setOpen(false);
   };
   const edit = () => {
-    flushSync(() => setOpen(true));
-    assessmentInput.current?.focus();
+    setOpen(true);
+    requestAnimationFrame(() => assessmentInput.current?.focus());
   };
   return (
     <Frame>

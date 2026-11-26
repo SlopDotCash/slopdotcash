@@ -75,10 +75,15 @@ function transactionOf(value: unknown): SolanaLockTransaction | undefined {
 
 function currentOf(value: unknown): ReadonlyArray<{ readonly period: number; readonly amountMinor: string; readonly open: boolean }> | undefined {
   if (!Array.isArray(value)) return undefined
-  const rows = value.map(recordOf)
-  return rows.every((row) => row !== undefined && typeof row.period === "number" && isChainMonth(row.period) && typeof row.amountMinor === "string" && canonical.test(row.amountMinor) && typeof row.open === "boolean")
-    ? rows as unknown as ReadonlyArray<{ readonly period: number; readonly amountMinor: string; readonly open: boolean }>
-    : undefined
+  const out: Array<{ readonly period: number; readonly amountMinor: string; readonly open: boolean }> = []
+  for (const item of value) {
+    const row = recordOf(item)
+    if (row === undefined || typeof row.period !== "number" || !isChainMonth(row.period) || typeof row.amountMinor !== "string" || !canonical.test(row.amountMinor) || typeof row.open !== "boolean") {
+      return undefined
+    }
+    out.push({ period: row.period, amountMinor: row.amountMinor, open: row.open })
+  }
+  return out
 }
 
 function decimalsOf(value: unknown): number | undefined {

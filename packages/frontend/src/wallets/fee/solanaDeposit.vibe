@@ -1,0 +1,199 @@
+// spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"
+import { boundedJson } from "../../platform/bounded.vibe"
+import { type SolanaConnection, solanaSignAndSend } from "../core/solana.vibe"
+import { decodeBase64Bytes, encodeBase58Bytes, randomUint64String } from "./solanaFeeHelpers.ts"
+
+export const SOLANA_FEE_PATH = "/api/v1/submission-fee/solana"
+export const SOLANA_MAINNET_CHAIN = "solana:mainnet"
+export const SOLANA_FEE_RENT_LAMPORTS = "2500000"
+
+export interface SolanaFeeWay {
+  readonly network: string
+  readonly programId: string
+  readonly token: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly amount: string
+  readonly minimumAccepted: string
+  readonly keptTo: string
+  readonly kind: "stable"
+}
+
+export interface SolanaFeeSubject {
+  readonly repositoryId: string
+  readonly pullNumber: number
+  readonly item: string
+}
+
+export interface SolanaFeePlan {
+  readonly wallet: string
+  readonly nonce: string
+  readonly amount: string
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+  readonly rentLamports: string
+  readonly deposit: string
+}
+
+export interface SolanaReclaimPlan {
+  readonly wallet: string
+  readonly deposit: string
+  readonly mint: string
+  readonly amount: string
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+}
+
+export type SolanaFeeStatus = "pending" | "failed" | "finalized"
+
+export error SolanaFeeError {
+  readonly message: string
+}
+
+const ReviewPlanSchema = Schema.Struct({
+  blockhash: Schema.String,
+  lastValidBlockHeight: Schema.Number,
+  transaction: Schema.String,
+  networkFeeLamports: Schema.String,
+  deposit: Schema.optional(Schema.String),
+  mint: Schema.optional(Schema.String),
+  amount: Schema.optional(Schema.String),
+  rentLamports: Schema.optional(Schema.String),
+})
+
+const StatusSchema = Schema.Struct({
+  status: Schema.Literals(["pending", "failed", "finalized"]),
+})
+
+effect function postSolanaFee(body: Readonly<Record<string, unknown>>) {
+  const response = HttpClient.post(SOLANA_FEE_PATH, {
+    headers: { "content-type": "application/json" },
+    body: HttpBody.text(JSON.stringify(body), "application/json"),
+  }) catch effect () => {
+    throw new SolanaFeeError({ message: "The Solana fee service did not answer. Try again." })
+  }
+  const value = boundedJson(response, 16_384, "Solana fee response") catch effect () => {
+    throw new SolanaFeeError({ message: "The fee service returned an invalid response." })
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new SolanaFeeError({ message: "The fee service returned an invalid response." })
+  }
+  if (response.status === 409 && "error" in value && value.error === "nonce_used") {
+    return { nonceUsed: true as const, value }
+  }
+  if (response.status < 200 || response.status >= 300) {
+    if (response.status === 422 && "message" in value && typeof value.message === "string") {
+      throw new SolanaFeeError({ message: value.message })
+    }
+    if (response.status === 404) {
+      throw new SolanaFeeError({ message: "Paying on Solana is not available for this fee." })
+    }
+    throw new SolanaFeeError({ message: "The Solana fee service did not answer. Try again." })
+  }
+  return { nonceUsed: false as const, value }
+}
+
+export effect function reviewSolanaFee(subject: SolanaFeeSubject, way: SolanaFeeWay, wallet: string) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const nonce = randomUint64String()
+    const reply = try postSolanaFee({
+      action: "review",
+      repositoryId: subject.repositoryId,
+      pullNumber: subject.pullNumber,
+      network: way.network,
+      wallet,
+      nonce,
+    })
+    if (reply.nonceUsed) continue
+    const plan = Schema.decodeUnknownEffect(ReviewPlanSchema)(reply.value) catch effect () => {
+      throw new SolanaFeeError({ message: "The fee review response is invalid." })
+    }
+    return {
+      wallet,
+      nonce,
+      amount: way.amount,
+      blockhash: plan.blockhash,
+      lastValidBlockHeight: plan.lastValidBlockHeight,
+      transaction: plan.transaction,
+      networkFeeLamports: plan.networkFeeLamports,
+      rentLamports: plan.rentLamports ?? SOLANA_FEE_RENT_LAMPORTS,
+      deposit: plan.deposit ?? "",
+    } satisfies SolanaFeePlan
+  }
+  throw new SolanaFeeError({ message: "Could not allocate an unused Solana deposit nonce. Try again." })
+}
+
+export effect function sendSolanaFee(connection: SolanaConnection, plan: SolanaFeePlan) {
+  const wire = decodeBase64Bytes(plan.transaction)
+  const signature = try solanaSignAndSend(connection, SOLANA_MAINNET_CHAIN, wire, Effect.void)
+  return encodeBase58Bytes(signature)
+}
+
+export effect function checkSolanaFee(subject: SolanaFeeSubject, way: SolanaFeeWay, wallet: string, nonce: string, signature: string | null) {
+  const reply = try postSolanaFee({
+    action: "status",
+    repositoryId: subject.repositoryId,
+    pullNumber: subject.pullNumber,
+    network: way.network,
+    wallet,
+    nonce,
+    ...(signature === null ? {} : { signature }),
+  })
+  if (reply.nonceUsed) throw new SolanaFeeError({ message: "The fee status response is invalid." })
+  const decoded = Schema.decodeUnknownEffect(StatusSchema)(reply.value) catch effect () => {
+    throw new SolanaFeeError({ message: "The fee status response is invalid." })
+  }
+  return decoded.status
+}
+
+export effect function reviewSolanaReclaim(subject: SolanaFeeSubject, way: SolanaFeeWay, wallet: string, deposit: string) {
+  const reply = try postSolanaFee({
+    action: "reclaim-review",
+    repositoryId: subject.repositoryId,
+    pullNumber: subject.pullNumber,
+    network: way.network,
+    wallet,
+    deposit,
+  })
+  if (reply.nonceUsed) throw new SolanaFeeError({ message: "The reclaim review response is invalid." })
+  const plan = Schema.decodeUnknownEffect(ReviewPlanSchema)(reply.value) catch effect () => {
+    throw new SolanaFeeError({ message: "The reclaim review response is invalid." })
+  }
+  return {
+    wallet,
+    deposit: plan.deposit ?? deposit,
+    mint: plan.mint ?? way.token,
+    amount: plan.amount ?? way.amount,
+    blockhash: plan.blockhash,
+    lastValidBlockHeight: plan.lastValidBlockHeight,
+    transaction: plan.transaction,
+    networkFeeLamports: plan.networkFeeLamports,
+  } satisfies SolanaReclaimPlan
+}
+
+export effect function sendSolanaReclaim(connection: SolanaConnection, plan: SolanaReclaimPlan) {
+  const wire = decodeBase64Bytes(plan.transaction)
+  const signature = try solanaSignAndSend(connection, SOLANA_MAINNET_CHAIN, wire, Effect.void)
+  return encodeBase58Bytes(signature)
+}
+
+export effect function checkSolanaReclaim(subject: SolanaFeeSubject, way: SolanaFeeWay, wallet: string, deposit: string, signature: string | null) {
+  const reply = try postSolanaFee({
+    action: "reclaim-status",
+    repositoryId: subject.repositoryId,
+    pullNumber: subject.pullNumber,
+    network: way.network,
+    wallet,
+    deposit,
+    ...(signature === null ? {} : { signature }),
+  })
+  if (reply.nonceUsed) throw new SolanaFeeError({ message: "The reclaim status response is invalid." })
+  const decoded = Schema.decodeUnknownEffect(StatusSchema)(reply.value) catch effect () => {
+    throw new SolanaFeeError({ message: "The reclaim status response is invalid." })
+  }
+  return decoded.status
+}

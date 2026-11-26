@@ -37,6 +37,7 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
   const [notice, setNotice] = useState("");
 
   const settle = async <E,>(work: Effect.Effect<BindingView, E, ConsentServices>) => {
+    if (busy) return;
     setBusy(true);
     setProblem("");
     const exit = await consent.runPromiseExit(work);

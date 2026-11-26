@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { formatDateTime } from "../../app/format.ts";
 import { NotFoundHead } from "../../app/notFoundHead.ts";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import { type ProfileActor, resolveProfileActor } from "../../projections/profile.ts";
 import { findHistoricalProject, findProjectByRepositoryId, type RegistryBoot } from "../../reads/registry.vibe";
@@ -17,7 +18,7 @@ import type { Shown } from "../home/listing.ts";
 import { useShownRead } from "../projects/hooks.ts";
 import { formatMonth, projectName } from "../projects/index.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "../projects/reads.vibe";
-import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
+import { retryOnce, type Settled, useMounted, useNow, useOnce } from "../../app/hooks.ts";
 import { nextBoundary, useBoundary } from "../cycles/boundary.ts";
 import { pointsText } from "../cycles/labels.ts";
 import { useStandingHistory } from "../points/hooks.ts";
@@ -38,7 +39,7 @@ export type ProfilePageProps = PageProps & {
 type ProjectSection = Effect.Success<ReturnType<typeof projectReads>>;
 type ContributorSection = Effect.Success<ReturnType<typeof contributorReads>>;
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-10 px-4 py-12";
+const pageClass = pageShellClass("lg", "10", "py-12");
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 const failed: ReadonlySet<ReadStatus> = new Set(["Failed", "Invalid", "Unavailable", "Denied", "Cancelled"]);
 const pending: ReadonlySet<ReadStatus> = new Set(["Idle", "Loading"]);
@@ -291,7 +292,7 @@ function Snapshot({ props, section, sectionReads, reads, boot, product, tier, fo
     () => (snapshot === undefined ? undefined : snapshotStandings(snapshot, repositoryRegistry(boot), projectTerms(boot), cycles.value?.cycles ?? [])),
     [snapshot, repositoryRegistry, projectTerms, boot, cycles.value],
   );
-  const nowMs = Date.now();
+  const nowMs = useNow();
   useBoundary(section, nextBoundary(nowMs, (cycles.value?.cycles ?? []).map((cycle) => (cycle.state === "review" && cycle.reviewEndsAt ? Date.parse(cycle.reviewEndsAt) : undefined))));
   if (snapshot === undefined) return <Unverified login={route.login} status={boardStatus(work)} onRetry={onRetry} />;
   const status = boardStatus(work);
@@ -321,7 +322,18 @@ function Sections({ props, section, contributor }: { props: ProfilePageProps; se
   const login = props.route.login;
   if (registry.status === "running" || sectionReads.status === "running" || reads.status === "running" || site.status === "running") return <Unverified login={login} status="Loading" />;
   if (registry.status === "failed" || sectionReads.status === "failed" || reads.status === "failed" || site.status === "failed" || registry.value.error !== undefined) {
-    return <Unverified login={login} status="Failed" onRetry={() => location.reload()} />;
+    return (
+      <Unverified
+        login={login}
+        status="Failed"
+        onRetry={() => {
+          retryOnce(section, "registry");
+          retryOnce(section, "reads");
+          retryOnce(contributor, "reads");
+          retryOnce(contributor, "origin");
+        }}
+      />
+    );
   }
   return (
     <Snapshot

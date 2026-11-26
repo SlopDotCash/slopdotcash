@@ -5,6 +5,7 @@ import { Alert, Button, PageHeader, Spinner } from "@repo/ui";
 import type { Layer } from "effect";
 import { ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import { networkLabel } from "../../kernels/assetText.ts";
 import { amountText } from "../../wallets/fee/feeCalls.ts";
@@ -13,7 +14,7 @@ import type { FeePay, FeeSetup, FeeWay } from "./payFlow.vibe";
 import { type FeeRuntime, feeRuntime } from "./runtime.vibe";
 import { useOpened, usePay } from "./usePay.ts";
 
-const page = "mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-8";
+const page = pageShellClass("md", "8");
 const section = "flex flex-col gap-3";
 const heading = "text-xl font-semibold text-foreground";
 

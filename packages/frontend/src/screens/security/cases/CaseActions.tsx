@@ -17,6 +17,7 @@ function CheckReceipt({ onCheck }: { onCheck: () => ReturnType<ActionFormProps["
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const check = () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     void onCheck().then((sent) => {
@@ -37,7 +38,7 @@ function CheckReceipt({ onCheck }: { onCheck: () => ReturnType<ActionFormProps["
 /** The actions the case allows its viewer, one form shown at a time, common decisions first; a claimed link's receipt check stands apart. */
 export function CaseActions({ record, onSend }: CaseActionsProps) {
   const actions = orderedActions(record, disclosureRelevant(record));
-  const [selected, setSelected] = useState(actions[0] ?? "");
+  const [selected, setSelected] = useState("");
   const active = actions.includes(selected) ? selected : (actions[0] ?? "");
   const receipt = record.allowedActions.includes("check-receipt") ? <CheckReceipt key={record.revision} onCheck={() => onSend("check-receipt", {}, null)} /> : null;
   if (active === "") return receipt;

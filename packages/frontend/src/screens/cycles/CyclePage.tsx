@@ -6,6 +6,7 @@ import { CalendarDays, CircleAlert, History } from "lucide-react";
 import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import { formatDateTime } from "../../app/format.ts";
 import { NotFoundHead } from "../../app/notFoundHead.ts";
@@ -41,7 +42,7 @@ export type CyclePageProps = PageProps & {
 type ProjectSection = Effect.Success<ReturnType<typeof projectReads>>;
 type ContributorSection = Effect.Success<ReturnType<typeof contributorReads>>;
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-8 px-4 py-12";
+const pageClass = pageShellClass("lg", "8", "py-12");
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/u;
 

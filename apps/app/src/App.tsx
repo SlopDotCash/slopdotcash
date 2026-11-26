@@ -1,5 +1,5 @@
 // spec/app/index.md, "Story: Open a page by its address"; spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"; spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host"; spec/frontend/requestedRepos.md, "Story: See requested repos, flag one, renew or withdraw it"
-import { useNotFoundMounted } from "@repo/frontend/app";
+import { extraRouteHead, extraRouteOf, useAddress, useNotFoundMounted } from "@repo/frontend/app";
 import { CONTACT_EMAIL, CONTACT_MAILTO, SOURCE_REPOSITORY } from "@repo/frontend/platform/site";
 import type { RegistryBoot } from "@repo/frontend/reads/registry";
 import { Alert, Button, cn, ExternalLink, focusRing, Logo, NotFound, PageHeader, shell, SiteFooter, SiteHeader } from "@repo/ui";
@@ -75,13 +75,16 @@ function Head({ head }: { head: DocumentHead | undefined }) {
  */
 export function App({ runtime, hostname, content, account, registry }: AppProps) {
   const { state, cause } = useMachine(runtime);
+  const address = useAddress();
   const route = state && state.opened > 0 ? state.route : undefined;
 
   if (cause) return <Alert variant="destructive" className="m-6">Slop could not load.</Alert>;
   if (!route) return <main aria-busy="true" className="min-h-dvh" />;
 
   const home = route.kind === "Home";
-  const head = documentHead(route, undefined);
+  const base = typeof location === "undefined" ? "https://slop.cash" : location.origin;
+  const extra = route.kind === "Unknown" ? extraRouteOf(URL.parse(address, base)?.pathname ?? "/") : undefined;
+  const head = extra !== undefined ? extraRouteHead(extra) : documentHead(route, undefined);
   return (
     <div className="flex min-h-dvh flex-col">
       {head === undefined && registry ? registry((boot) => <Head head={documentHead(route, boot)} />) : <Head head={head} />}
@@ -91,7 +94,11 @@ export function App({ runtime, hostname, content, account, registry }: AppProps)
         account={account ?? <Button asChild variant="inverse" size="sm" className="max-md:h-11"><a href="/login">Log in</a></Button>}
       />
       <div id="main" className="flex flex-1 flex-col">
-        {route.kind === "Unknown" ? <NotFound className={page} /> : (content ?? headingOnly)(route, framing(route.kind === "Home" ? undefined : headings[route.kind](route)))}
+        {route.kind === "Unknown" && extra === undefined ? (
+          <NotFound className={page} />
+        ) : (
+          (content ?? headingOnly)(route, framing(route.kind === "Home" || route.kind === "Unknown" ? undefined : headings[route.kind](route)))
+        )}
       </div>
       <SiteFooter compact={!home} brand={<Logo variant="inverse" size={home ? "xl" : "lg"} />}>
         <ExternalLink href={SOURCE_REPOSITORY}>GitHub</ExternalLink>
@@ -99,6 +106,9 @@ export function App({ runtime, hostname, content, account, registry }: AppProps)
         <ExternalLink href="https://www.linkedin.com/company/slop-cash">LinkedIn</ExternalLink>
         <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
         <a href="/requested">Requested repos</a>
+        <a href="/record">Record</a>
+        <a href="/receipts">Receipts</a>
+        <a href="/privacy">Privacy</a>
       </SiteFooter>
     </div>
   );

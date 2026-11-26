@@ -12,6 +12,7 @@ import { type PromiseFacts, promiseWarning } from "../../../gen/frontend__projec
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { type WantedRead, wantedListed } from "../../../gen/frontend__views.ts";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
+import { backlogCatchUpUntil, evaluateBacklogRule } from "../../kernels/backlogRule.ts";
 import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
 import type { NetworkPays } from "../public/funding.ts";
 import { bootstrapPrompt, siteOrigin } from "../home/agentLinks.ts";
@@ -130,8 +131,16 @@ export function mergeIndexValid(index: MergeIndex): boolean {
   );
 }
 
-/** Whether the project is held at its intake cap by the merge activity read; a pending or failed read holds nothing. @throws {never} */
+export function projectBacklogOutOfRotation(project: Pick<ShownProject, "id" | "status" | "record">, merge: Shown<MergeIndex>, nowMs: number): boolean {
+  const catchUpUntil = backlogCatchUpUntil(project.record);
+  if (catchUpUntil !== null && Date.parse(catchUpUntil) > nowMs) return true;
+  if (merge.status !== "Current" && merge.status !== "Stale") return false;
+  if (project.status !== "active") return false;
+  return evaluateBacklogRule(merge.value?.get(project.id) ?? [], catchUpUntil, nowMs).outOfRotation;
+}
+
 export function projectHeld(project: Pick<ShownProject, "id" | "status" | "record">, merge: Shown<MergeIndex>, nowMs: number): boolean {
+  if (projectBacklogOutOfRotation(project, merge, nowMs)) return true;
   if (merge.status !== "Current" && merge.status !== "Stale") return false;
   const { active, intakeCap } = slopbotSettings(project);
   return intakeHeld(intakeCap, active, (merge.value?.get(project.id) ?? []).map(storedCount), Math.floor(nowMs / hourMs));

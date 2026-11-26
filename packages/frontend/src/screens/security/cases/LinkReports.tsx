@@ -47,21 +47,23 @@ function FormError({ message }: { message: string | null }) {
 }
 
 function DirectVerifyForm({ projects, onVerify, onUnavailable }: { projects: ReadonlyArray<ProgramChoice>; onVerify: LinkReportsViewProps["onVerify"]; onUnavailable: () => void }) {
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [selectedProjectId, setProjectId] = useState("");
   const [advisory, setAdvisory] = useState("");
   const [key, setKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (projects.length === 0) return <p className="text-muted-foreground">No programs yet</p>;
+  const projectId = projects.some((project) => project.id === selectedProjectId) ? selectedProjectId : (projects[0]?.id ?? "");
   const chosen = projects.find((project) => project.id === projectId);
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError(null);
     void onVerify(projectId, advisory, key).then((sent) => {
+      setBusy(false);
       setKey(sent.key);
       if (sent.error === null) return;
-      setBusy(false);
       setError(sent.error);
       if (sent.unavailable) onUnavailable();
     });
@@ -84,17 +86,19 @@ function DirectVerifyForm({ projects, onVerify, onUnavailable }: { projects: Rea
 const blankRecord = (projectId: string): RecordRequest => ({ projectId, advisory: "", reporterGithubId: "", reporterGithubLogin: "", receivedAt: "", confirmation: false });
 
 function RecordForm({ projects, onRecord }: { projects: ReadonlyArray<ProgramChoice>; onRecord: LinkReportsViewProps["onRecord"] }) {
-  const [request, setRequest] = useState(() => blankRecord(projects[0]?.id ?? ""));
+  const [request, setRequest] = useState(() => blankRecord(""));
   const [key, setKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const confirmId = useId();
-  const set = (patch: Partial<RecordRequest>) => setRequest({ ...request, ...patch });
+  const projectId = projects.some((project) => project.id === request.projectId) ? request.projectId : (projects[0]?.id ?? "");
+  const set = (patch: Partial<RecordRequest>) => setRequest((prev) => ({ ...prev, ...patch }));
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError(null);
-    void onRecord(request, key).then((sent) => {
+    void onRecord({ ...request, projectId }, key).then((sent) => {
       setBusy(false);
       setKey(sent.key);
       setError(sent.error);
@@ -102,7 +106,7 @@ function RecordForm({ projects, onRecord }: { projects: ReadonlyArray<ProgramCho
   };
   return (
     <form className="flex flex-col gap-4" onSubmit={submit}>
-      <ProjectField projects={projects} value={request.projectId} onChange={(projectId) => set({ projectId })} />
+      <ProjectField projects={projects} value={projectId} onChange={(nextProjectId) => set({ projectId: nextProjectId })} />
       <Field label="GitHub advisory ID">
         <Input autoComplete="off" required spellCheck={false} value={request.advisory} onChange={(event) => set({ advisory: event.target.value })} />
       </Field>
@@ -128,11 +132,13 @@ function RecordForm({ projects, onRecord }: { projects: ReadonlyArray<ProgramCho
 }
 
 function ImportReports({ projects, onImport }: { projects: ReadonlyArray<ProgramChoice>; onImport: LinkReportsViewProps["onImport"] }) {
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [selectedProjectId, setProjectId] = useState("");
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState<ImportNote>({ note: null, error: null });
+  const projectId = projects.some((project) => project.id === selectedProjectId) ? selectedProjectId : (projects[0]?.id ?? "");
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setShown({ note: null, error: null });
     void onImport(projectId).then((done) => {

@@ -1,0 +1,179 @@
+// spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"
+import { formatSlopAmount, standingDepositItem } from "../../kernels/standingDepositItem.ts"
+import { boundedJson } from "../../platform/bounded.vibe"
+
+export { formatSlopAmount, standingDepositItem }
+
+export const STANDING_DEPOSIT_NETWORK = "robinhood-mainnet"
+export const STANDING_DEPOSIT_CONTRACT = "0x446604d5c3Cc99c60CCE3d5C4357BC60f5b45993"
+export const STANDING_DEPOSIT_SLOP_TOKEN = "0xfeb4E36FA4a2A494FF25ae4a63491e4c584A67AE"
+export const STANDING_DEPOSIT_BURN_ADDRESS = "0x000000000000000000000000000000000000dEaD"
+export const STANDING_DEPOSIT_RECLAIM_DAYS = 365
+export const STANDING_DEPOSIT_STRIKE_WINDOW_DAYS = 21
+export const STANDING_DEPOSIT_STRIKE_GRACE_HOURS = 48
+export const STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS = 21
+export const STANDING_DEPOSIT_OPEN_CAP = 10
+export const STANDING_DEPOSIT_COVER_DAYS = 340
+export const STANDING_DEPOSIT_API = "/api/v1/standing-deposit"
+export const STANDING_DEPOSIT_WITHDRAW_API = "/api/v1/standing-deposit/withdraw"
+export const STANDING_DEPOSIT_PAGE = "/deposit"
+
+const StandingCoverSchema = Schema.Struct({
+  repository: Schema.String,
+  pullNumber: Schema.Number,
+  state: Schema.Literals(["watch", "pending", "clear", "strike"]),
+  open: Schema.Boolean,
+})
+
+const StandingDueWaySchema = Schema.Struct({
+  network: Schema.String,
+  contract: Schema.String,
+  token: Schema.String,
+  symbol: Schema.String,
+  decimals: Schema.Number,
+  kind: Schema.Literals(["stable", "slop"]),
+  amount: Schema.String,
+  keptTo: Schema.String,
+})
+
+const StandingPaidSchema = Schema.Struct({
+  network: Schema.String,
+  depositId: Schema.String,
+  token: Schema.String,
+  symbol: Schema.String,
+  decimals: Schema.Number,
+  kind: Schema.Literals(["stable", "slop"]),
+  amount: Schema.String,
+  payer: Schema.String,
+  transaction: Schema.String,
+  at: Schema.String,
+  finalized: Schema.Boolean,
+})
+
+const StandingDepositRowSchema = Schema.Struct({
+  round: Schema.Number,
+  item: Schema.String,
+  amount: Schema.String,
+  askedAt: Schema.NullOr(Schema.String),
+  due: Schema.Array(StandingDueWaySchema),
+  paid: Schema.NullOr(StandingPaidSchema),
+  outcome: Schema.NullOr(Schema.Literals(["refunded", "kept", "refund_due", "kept_due"])),
+  outcomeAt: Schema.NullOr(Schema.String),
+  resolveTransaction: Schema.NullOr(Schema.String),
+  withdrawRequestedAt: Schema.NullOr(Schema.String),
+  outcomeReason: Schema.NullOr(Schema.Literals(["withdrawn", "expired", "strike"])),
+})
+
+const StandingDepositPayloadSchema = Schema.Struct({
+  schema: Schema.Literal("slop-standing-deposit-v1"),
+  deployed: Schema.Boolean,
+  contract: Schema.optional(Schema.NullOr(Schema.String)),
+  quote: Schema.NullOr(Schema.String),
+  deposit: Schema.NullOr(StandingDepositRowSchema),
+  covers: Schema.Array(StandingCoverSchema),
+})
+
+export type StandingCover = Schema.Schema.Type<typeof StandingCoverSchema>
+export type StandingDueWay = Schema.Schema.Type<typeof StandingDueWaySchema>
+export type StandingDepositRow = Schema.Schema.Type<typeof StandingDepositRowSchema>
+export type StandingDepositRecord = Schema.Schema.Type<typeof StandingDepositPayloadSchema>
+
+export error StandingDepositError {
+  readonly message: string
+}
+
+const sameAddress = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+export type StandingPhase =
+  | { readonly phase: "covering"; readonly coverEndsAt: Date }
+  | { readonly phase: "waiting"; readonly asked: boolean; readonly coverEndedAt: Date; readonly dueBackAt: Date }
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export function standingDepositPhase(row: StandingDepositRow, nowMs: number): StandingPhase | null {
+  if (row.paid === null || row.outcome !== null) return null
+  const paidMs = Date.parse(row.paid.at)
+  if (Number.isNaN(paidMs)) return null
+  const coverEndsMs = paidMs + STANDING_DEPOSIT_COVER_DAYS * DAY_MS
+  const withdrawMs = row.withdrawRequestedAt ? Date.parse(row.withdrawRequestedAt) : Number.NaN
+  if (!Number.isNaN(withdrawMs)) {
+    return {
+      phase: "waiting",
+      asked: true,
+      coverEndedAt: new Date(withdrawMs),
+      dueBackAt: new Date(withdrawMs + STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS * DAY_MS),
+    }
+  }
+  if (nowMs >= coverEndsMs) {
+    return {
+      phase: "waiting",
+      asked: false,
+      coverEndedAt: new Date(coverEndsMs),
+      dueBackAt: new Date(coverEndsMs + STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS * DAY_MS),
+    }
+  }
+  return { phase: "covering", coverEndsAt: new Date(coverEndsMs) }
+}
+
+function verifyStandingRecord(record: StandingDepositRecord, githubId: string): boolean {
+  if (record.deployed) {
+    if (typeof record.contract !== "string" || !sameAddress(record.contract, STANDING_DEPOSIT_CONTRACT)) return false
+  }
+  const row = record.deposit
+  if (row === null) return true
+  if (row.round < 1 || !Number.isSafeInteger(row.round)) return false
+  if (row.item.toLowerCase() !== standingDepositItem(githubId, row.round)) return false
+  for (const way of row.due) {
+    if (
+      way.network !== STANDING_DEPOSIT_NETWORK ||
+      way.kind !== "slop" ||
+      !sameAddress(way.contract, STANDING_DEPOSIT_CONTRACT) ||
+      !sameAddress(way.token, STANDING_DEPOSIT_SLOP_TOKEN) ||
+      !sameAddress(way.keptTo, STANDING_DEPOSIT_BURN_ADDRESS)
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+effect function requestStandingDeposit(path: string, method: "GET" | "POST", githubId: string) {
+  const response = (method === "POST"
+    ? HttpClient.post(path, {
+        headers: { "content-type": "application/json", "x-slop-expected-github-id": githubId },
+        body: HttpBody.text("{}", "application/json"),
+      })
+    : HttpClient.get(path, {
+        headers: { "x-slop-expected-github-id": githubId },
+      })) catch effect () => {
+    throw new StandingDepositError({ message: "The standing deposit is unavailable. Try again." })
+  }
+  const body = boundedJson(response, 65_536, "standing deposit") catch effect () => {
+    throw new StandingDepositError({ message: "The standing deposit is unavailable. Try again." })
+  }
+  if (response.status < 200 || response.status >= 300) {
+    const message = typeof body === "object" && body !== null && "message" in body && typeof body.message === "string" && body.message !== "Internal error"
+      ? body.message
+      : "The standing deposit is unavailable. Try again."
+    throw new StandingDepositError({ message })
+  }
+  const decoded = Schema.decodeUnknownEffect(StandingDepositPayloadSchema)(body) catch effect () => {
+    throw new StandingDepositError({ message: "The standing deposit record could not be checked against Slop's published addresses. Do not pay from this page." })
+  }
+  if (!verifyStandingRecord(decoded, githubId)) {
+    throw new StandingDepositError({ message: "The standing deposit record could not be checked against Slop's published addresses. Do not pay from this page." })
+  }
+  return decoded
+}
+
+export effect function loadStandingDeposit(githubId: string) {
+  return try requestStandingDeposit(STANDING_DEPOSIT_API, "GET", githubId)
+}
+
+export effect function requestNewStandingDeposit(githubId: string) {
+  return try requestStandingDeposit(STANDING_DEPOSIT_API, "POST", githubId)
+}
+
+export effect function withdrawStandingDeposit(githubId: string) {
+  return try requestStandingDeposit(STANDING_DEPOSIT_WITHDRAW_API, "POST", githubId)
+}

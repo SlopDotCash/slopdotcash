@@ -3,6 +3,7 @@ import { parseRepoInput, pitchText, repoInputRule, repoPathRule, repoUrl, validR
 import { Alert, Button, CopyButton, EmptyState, ExternalLink, Field, Input, PageHeader, Spinner, StatusIcon, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
 import { Flag } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import { SignInPanel } from "../../app/SignInPanel.tsx";
 import type { SessionView } from "../../session/session.vibe";
 import { formatDate } from "../projects/summary.ts";
@@ -204,7 +205,7 @@ export function RequestedRepos({ view, origin, flag, session, signInHref, onAct,
   const signedIn = view.page.actor !== "";
   const busy = view.page.pending !== 0;
   return (
-    <main className="mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-8 px-4 py-8">
+    <main className={pageShellClass("lg", "8")}>
       <PageHeader
         title="Requested repos"
         icon={<Flag className="size-6 text-primary" />}

@@ -6,7 +6,7 @@ import { audienceChanges, type HomeAudience } from "../../../gen/frontend__prese
 import type { PoolRead } from "../../../gen/frontend__projections.ts";
 import { pageOrigin } from "../../platform/environment.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
-import { useAddress } from "../../app/useAddress.ts";
+import { navigateWithin, useAddress } from "../../app/useAddress.ts";
 import { journeyAddress, journeyOf, journeys } from "./audience.ts";
 import { CampaignHeading } from "./CampaignHeading.tsx";
 import { CommunityRows } from "./CommunityRows.tsx";
@@ -15,6 +15,7 @@ import { homeSections, type ListedProject, type Shown } from "./listing.ts";
 import { ListedRead, ProjectGrid, sectionHeading, sectionTitle, tierNote, tierTitle } from "./ProjectCards.tsx";
 import { copyText } from "./prompt.vibe";
 import { SecurityOffers } from "./SecurityOffers.tsx";
+import { SponsoredPoolsNotice } from "./SponsoredPoolsNotice.tsx";
 
 export interface HomeReads {
   readonly projects: Shown<ReadonlyArray<ListedProject>>;
@@ -85,18 +86,20 @@ function Projects({ projects, funding }: HomeReads) {
   );
 }
 
-/** The home page: the journey switch, its campaign and agent setup, then security offers and projects. */
 export function HomeView({ projects, funding, origin, journey, onJourney, onCopy }: HomeViewProps) {
   return (
-    <main className={cn(shell, "flex-1")}>
-      <section className="flex flex-col items-start pt-12 pb-18 lg:pt-13 lg:pb-23 xl:pt-18 xl:pb-32">
-        <JourneySwitch journey={journey} onJourney={onJourney} />
-        <CampaignHeading key={`heading ${journey}`} journey={journey} />
-        <InstallPanel key={`install ${journey}`} journey={journey} origin={origin} onCopy={onCopy} />
-      </section>
-      <SecurityOffers projects={projects} />
-      <Projects projects={projects} funding={funding} />
-    </main>
+    <>
+      <SponsoredPoolsNotice />
+      <main className={cn(shell, "flex-1")}>
+        <section className="flex flex-col items-start pt-12 pb-18 lg:pt-13 lg:pb-23 xl:pt-18 xl:pb-32">
+          <JourneySwitch journey={journey} onJourney={onJourney} />
+          <CampaignHeading key={`heading ${journey}`} journey={journey} />
+          <InstallPanel key={`install ${journey}`} journey={journey} origin={origin} onCopy={onCopy} />
+        </section>
+        <SecurityOffers projects={projects} />
+        <Projects projects={projects} funding={funding} />
+      </main>
+    </>
   );
 }
 
@@ -108,8 +111,7 @@ export function HomePage({ runtime, ...reads }: HomePageProps) {
   const journey = journeyOf(new URL(useAddress(), "https://slop.invalid"));
   const onJourney = (chosen: HomeAudience) => {
     if (!audienceChanges(journey, chosen)) return;
-    history.pushState(history.state, "", journeyAddress(new URL(location.href), chosen));
-    dispatchEvent(new PopStateEvent("popstate"));
+    navigateWithin(journeyAddress(new URL(location.href), chosen).toString());
   };
   return <HomeView {...reads} origin={pageOrigin()} journey={journey} onJourney={onJourney} onCopy={(text) => runtime.runPromise(copyText(text))} />;
 }

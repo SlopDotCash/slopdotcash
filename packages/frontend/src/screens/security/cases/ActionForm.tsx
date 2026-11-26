@@ -129,6 +129,7 @@ export function ActionForm({ action, record, onSend }: ActionFormProps) {
   if (spec === null) return null;
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
     const built = actionFields(action, spec, values);
     if (!built.ok) return setError(built.message);
     setBusy(true);

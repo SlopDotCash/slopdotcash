@@ -101,14 +101,18 @@ function services(env: Served) {
 
 type Provided = Layer.Success<ReturnType<typeof services>> | Execution
 
-function closed<A extends Area<never, any>>(areas: ReadonlyArray<A>, unmet: [Exclude<Needs<A>, Gives<A> | Provided>] extends [never] ? "closed" : Exclude<Needs<A>, Gives<A> | Provided>) {
+function closed<A extends Area<never, unknown>>(areas: ReadonlyArray<A>, unmet: [Exclude<Needs<A>, Gives<A> | Provided>] extends [never] ? "closed" : Exclude<Needs<A>, Gives<A> | Provided>) {
   return { areas, unmet }
 }
 
 const unmatchedApi = area({
   name: "unmatchedApi",
   api: [],
-  routes: HttpRouter.add("*", "/api/v1/*", Effect.succeed(json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }))),
+  routes: HttpRouter.add("*", "/api/v1/*", effect {
+    const path = URL.parse((try HttpServerRequest.HttpServerRequest).originalUrl)?.pathname ?? ""
+    const headers = path.startsWith("/api/v1/traces") ? { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } : undefined
+    return json({ error: "not_found" }, 404, headers)
+  }),
   provides: Layer.empty,
 })
 

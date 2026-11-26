@@ -25,13 +25,21 @@ function payoutException(n: Notice): NoticePresentation {
 const appeal = (dispute: string, contribution: string) => (n: Notice) =>
   n.eventKey.startsWith(disputeKey) ? present(dispute, "Open Points review") : present(contribution, "Open appeal on GitHub");
 
+function projectRevision(n: Notice): NoticePresentation {
+  if (n.eventKey.startsWith("security-queue:")) return present(`${n.subject} reports are waiting`, "Open Inbox");
+  if (n.eventKey.startsWith("backlog-rule:")) {
+    return present(n.eventKey.includes(":out:") ? `${n.subject} is out of rotation` : `${n.subject}: backlog notice`, "Open settings");
+  }
+  return present(`${n.subject} settings changed`, "Open project");
+}
+
 const presentations: Readonly<Record<NotificationKind, (n: Notice) => NoticePresentation>> = {
   application_approved: (n) => present(`${n.subject} added`, "Open project"),
   application_rejected: (n) => present(`${n.subject} not added`, "Add a project"),
   project_ready: (n) => present(`${n.subject} is open`, "Open project"),
   project_scan_failed: (n) => present(`${n.subject} scan failed`, "Open project"),
   project_installation_lost: (n) => present(`${n.subject}: reinstall Slopbot`, "Open project"),
-  project_revision: (n) => present(`${n.subject} settings changed`, "Open project"),
+  project_revision: projectRevision,
   award_reserved: (n) => present(`${n.subject} award reserved`, "Open payouts"),
   payment_paid: (n) => present(`${n.subject} payment paid`, "Open payouts"),
   payout_held: (n) => present(`${n.subject} payout held`, "Open payouts"),

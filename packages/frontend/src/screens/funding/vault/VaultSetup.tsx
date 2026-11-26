@@ -499,6 +499,7 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
     else if (view === "Waiting") setNotice(provisionalMessages.waiting);
   };
   const act = async <A, E>(work: Effect.Effect<A, E, SetupServices>, then?: (value: A) => void) => {
+    if (busy) return;
     setBusy(true);
     onBusy(true);
     setError("");
@@ -594,6 +595,7 @@ export function OwnerVaultSetup({ project, purpose = "ordinary", account, github
   const flow = vault.state?.creation;
   const saved = useSettled(runtime, `saved-creation:${flow?.slot.identity ?? ""}`, () => savedCreation());
   const act = async <A, E>(work: Effect.Effect<A, E, SetupServices>, then?: (value: A) => void) => {
+    if (busy) return;
     setBusy(true);
     setError("");
     setNotice("");

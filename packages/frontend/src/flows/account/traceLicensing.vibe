@@ -1,0 +1,88 @@
+// spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"
+import { boundedJson } from "../../platform/bounded.vibe"
+
+export const TRACES_ME_API = "/api/v1/traces/me"
+export const TRACE_LICENSING_API = "/api/v1/traces/licensing"
+export const TRACE_LICENCES_API = "/api/v1/traces/licences"
+
+export const TraceTermsVersionSchema = Schema.Literals(["private-trace-v1", "private-trace-v2", "private-trace-v3"])
+export type TraceTermsVersion = Schema.Schema.Type<typeof TraceTermsVersionSchema>
+
+const TraceSettingSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  since: Schema.NullOr(Schema.String),
+  confirmedTermsVersion: Schema.NullOr(TraceTermsVersionSchema),
+})
+
+const TraceRowSchema = Schema.Struct({
+  runId: Schema.String,
+  finalizedAt: Schema.String,
+  projectId: Schema.String,
+  provider: Schema.String,
+  model: Schema.String,
+  termsVersion: TraceTermsVersionSchema,
+  licence: Schema.Literals(["none", "licensed", "withdrawn"]),
+})
+
+const TraceListingSchema = Schema.Struct({
+  setting: TraceSettingSchema,
+  totals: Schema.Struct({
+    traces: Schema.Number,
+    licensed: Schema.Number,
+    eligible: Schema.Number,
+  }),
+  traces: Schema.Array(TraceRowSchema),
+  nextCursor: Schema.NullOr(Schema.String),
+})
+
+export type TraceSetting = Schema.Schema.Type<typeof TraceSettingSchema>
+export type TraceRow = Schema.Schema.Type<typeof TraceRowSchema>
+export type TraceListing = Schema.Schema.Type<typeof TraceListingSchema>
+
+export error TraceLicensingError {
+  readonly message: string
+}
+
+export effect function loadTraceListing(githubId: string, cursor?: string) {
+  const path = cursor ? `${TRACES_ME_API}?cursor=${encodeURIComponent(cursor)}` : TRACES_ME_API
+  const response = HttpClient.get(path, {
+    headers: { "x-slop-expected-github-id": githubId },
+  }) catch effect () => {
+    throw new TraceLicensingError({ message: "Your trace licensing settings could not be loaded. Retry." })
+  }
+  const body = boundedJson(response, 131_072, "Trace licensing") catch effect () => {
+    throw new TraceLicensingError({ message: "Your trace licensing settings could not be read. Retry." })
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new TraceLicensingError({ message: "Your trace licensing settings could not be loaded. Retry." })
+  }
+  return Schema.decodeUnknownEffect(TraceListingSchema)(body) catch effect () => {
+    throw new TraceLicensingError({ message: "The server returned an unexpected trace licensing response." })
+  }
+}
+
+export effect function setTraceLicensing(githubId: string, enabled: boolean, termsVersion: TraceTermsVersion = "private-trace-v3") {
+  const response = HttpClient.post(TRACE_LICENSING_API, {
+    headers: { "content-type": "application/json", "x-slop-expected-github-id": githubId },
+    body: HttpBody.text(JSON.stringify({ enabled, termsVersion }), "application/json"),
+  }) catch effect () => {
+    throw new TraceLicensingError({ message: "Could not save your trace licensing preference. Retry." })
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new TraceLicensingError({ message: "Could not save your trace licensing preference. Retry." })
+  }
+  return try loadTraceListing(githubId)
+}
+
+export effect function updateTraceLicences(githubId: string, action: "opt-in" | "withdraw", runIds?: ReadonlyArray<string>) {
+  const response = HttpClient.post(TRACE_LICENCES_API, {
+    headers: { "content-type": "application/json", "x-slop-expected-github-id": githubId },
+    body: HttpBody.text(JSON.stringify({ action, ...(runIds === undefined ? {} : { runIds }) }), "application/json"),
+  }) catch effect () => {
+    throw new TraceLicensingError({ message: "Could not update trace licences. Retry." })
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new TraceLicensingError({ message: "Could not update trace licences. Retry." })
+  }
+  return try loadTraceListing(githubId)
+}

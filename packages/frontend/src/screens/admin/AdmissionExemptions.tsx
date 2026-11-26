@@ -82,10 +82,10 @@ export type AdmissionExemptionsProps = ExemptionContext & {
   onSaved: (revoked: boolean) => void;
 };
 
-/** The exemption form of the project, or of one chosen repository of a project with more than one; a grant always names the revision and repository it covers. */
 export function AdmissionExemptions({ exemptions, onSaved, ...context }: AdmissionExemptionsProps) {
   const repositories = context.project.repositories;
-  const [repository, setRepository] = useState(repositories?.[0]?.id ?? "");
+  const [selectedRepository, setRepository] = useState("");
+  const repository = repositories?.some((entry) => entry.id === selectedRepository) ? selectedRepository : (repositories?.[0]?.id ?? "");
   const githubId = repositories?.find((entry) => entry.id === repository)?.githubId;
   const active = exemptions.find((exemption) => exemption.revokedAt === null && (repositories === undefined || exemption.repositoryId === githubId));
   const repositoryField =
