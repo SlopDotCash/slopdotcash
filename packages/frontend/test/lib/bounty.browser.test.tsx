@@ -211,7 +211,7 @@ const historyBytes = new TextEncoder().encode("slop bounty history check");
 const otherSignature = base58Encode(new Uint8Array(64).fill(7));
 
 async function solanaPayer() {
-  const keys = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+  const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey));
   const sign = async (message: Uint8Array) => new Uint8Array(await crypto.subtle.sign("Ed25519", keys.privateKey, Uint8Array.from(message)));
   const address = base58Encode(raw);
@@ -238,7 +238,7 @@ function solanaWallet(payer: Awaited<ReturnType<typeof solanaPayer>>, afterSend:
     chains: ["solana:mainnet"],
     accounts: [account],
     features: {
-      "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+      "standard:connect": { version: "1.0.0", connect: () => Promise.resolve({ accounts: [account] }) },
       "solana:signAndSendTransaction": {
         version: "1.0.0",
         supportedTransactionVersions: ["legacy"],

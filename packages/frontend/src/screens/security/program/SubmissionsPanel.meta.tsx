@@ -36,7 +36,7 @@ export const meta: ComponentMeta<SubmissionsPanelProps> = {
     },
     // spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"
     Empty: async () => {
-      await expect(screen.getByText("You have no private reports yet.")).toBeTruthy();
+      await expect(screen.getByText("No reports")).toBeTruthy();
     },
   },
 };

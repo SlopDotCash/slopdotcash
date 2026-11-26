@@ -18,8 +18,8 @@ import type { Shown } from "../home/listing.ts";
 import { useShownRead } from "../projects/hooks.ts";
 import { formatMonth, projectName } from "../projects/index.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "../projects/reads.vibe";
-import { retryOnce, type Settled, useMounted, useNow, useOnce } from "../../app/hooks.ts";
-import { nextBoundary, useBoundary } from "../cycles/boundary.ts";
+import { retryOnce, type Settled, useMounted, useOnce } from "../../app/hooks.ts";
+import { useBoundaryTime } from "../cycles/boundary.ts";
 import { pointsText } from "../cycles/labels.ts";
 import { useStandingHistory } from "../points/hooks.ts";
 import { type ContributorRuntime, contributorReads, contributorRuntime, origin, registryBoot } from "../points/reads.vibe";
@@ -292,8 +292,7 @@ function Snapshot({ props, section, sectionReads, reads, boot, product, tier, fo
     () => (snapshot === undefined ? undefined : snapshotStandings(snapshot, repositoryRegistry(boot), projectTerms(boot), cycles.value?.cycles ?? [])),
     [snapshot, repositoryRegistry, projectTerms, boot, cycles.value],
   );
-  const nowMs = useNow();
-  useBoundary(section, nextBoundary(nowMs, (cycles.value?.cycles ?? []).map((cycle) => (cycle.state === "review" && cycle.reviewEndsAt ? Date.parse(cycle.reviewEndsAt) : undefined))));
+  const nowMs = useBoundaryTime(section, (cycles.value?.cycles ?? []).map((cycle) => (cycle.state === "review" && cycle.reviewEndsAt ? Date.parse(cycle.reviewEndsAt) : undefined)));
   if (snapshot === undefined) return <Unverified login={route.login} status={boardStatus(work)} onRetry={onRetry} />;
   const status = boardStatus(work);
   const board: Board = { login: route.login, boot, snapshot, standings, section: sectionReads, reads, product, tier, nowMs };

@@ -69,37 +69,21 @@ export type CreationSummary = {
 };
 
 export type VaultSetupProps = {
-  /** Which vault is set up: the project's rewards or its security bounty. */
   purpose: SetupPurpose;
-  /** Where the setup options stand. */
   read: "loading" | "signIn" | "ready";
-  /** The sign-in address that returns here. */
   loginHref: string;
-  /** The networks a vault may be created on now. */
   networks: readonly string[];
-  /** The chosen network. */
   network: string;
-  /** The wallets the browser offers for the chosen network. */
   wallets: readonly WalletOption[];
-  /** The connected wallet's address. */
   address?: string;
-  /** The connected wallet is confirmed in the account for this network. */
   claimed: boolean;
-  /** Exactly one confirmed wallet could recover an existing vault without reconnecting. */
   recoverable: boolean;
-  /** The automatic monthly payment chosen for the new vault. */
   automatic: boolean;
-  /** The project's monthly cap as it reads. */
   capDisplay: string;
-  /** The reviewed creation, or the saved one while it waits. */
   summary?: CreationSummary;
-  /** The reviewed vault already exists, so only its creation transaction is recovered. */
   existing?: boolean;
-  /** A saved creation waits for registration, with its transaction when one is known. */
   pending?: { readonly hash: string; readonly unclear: boolean };
-  /** The saved request cannot be read. */
   unreadable?: boolean;
-  /** The owner's deposit form for the included vault, shown under the pending creation. */
   funding?: ReactNode;
   error?: string;
   notice?: string;
@@ -152,7 +136,6 @@ function Summary({ purpose, summary }: { purpose: SetupPurpose; summary: Creatio
   );
 }
 
-/** The owner's wallet creates and owns the vault: choose the network, connect a confirmed wallet, review, create, then the creation is registered once final. */
 export function VaultSetup(props: VaultSetupProps) {
   const { purpose, read, loginHref, networks, network, wallets, address, claimed, recoverable, automatic, capDisplay, summary, existing = false, pending, unreadable = false, funding, error, notice, busy = false } = props;
   const bounty = purpose === "security-bounty";
@@ -347,17 +330,11 @@ function useSetupOffers(runtime: SetupRuntime): ReadonlyArray<WalletOffer> {
 }
 
 export type ProvisionalDepositProps = {
-  /** The included vault the owner may fund before it is registered. */
   deployment: ProvisionalDeployment;
-  /** The EVM wallets the browser offers. */
   wallets: readonly WalletOption[];
-  /** The connected owner wallet's address. */
   address?: string;
-  /** The token amount as typed. */
   amount: string;
-  /** The reviewed deposit, read at the latest block: its step is an exact approval, an allowance reset, one request that approves and deposits, or the deposit. */
   review?: TransferReview;
-  /** A saved deposit or token approval waits for its chain check, with its transaction hash when one is known; `sent` is false when the wallet's answer was unclear. */
   pending?: { readonly action: string; readonly hash: string; readonly sent: boolean };
   error?: string;
   notice?: string;
@@ -369,11 +346,9 @@ export type ProvisionalDepositProps = {
   onDeposit: () => void;
   onCheck: () => void;
   onEnterHash: (candidate: string) => void;
-  /** Clears a saved request the wallet never answered with a hash, after the owner confirmed in wallet activity that nothing was sent. */
   onConfirmUnsent?: () => void;
 };
 
-/** The owner's deposit into a vault whose creation is included but not final: it counts only once the vault is registered and the deposit is final. */
 export function ProvisionalDeposit({ deployment, wallets, address, amount, review, pending, error, notice, busy = false, onConnect, onChooseAnother, onAmount, onReview, onDeposit, onCheck, onEnterHash, onConfirmUnsent }: ProvisionalDepositProps) {
   const formatted = (value: bigint) => formatAssetAmount(value, { network: deployment.network, assetAddress: deployment.asset, assetDecimals: review?.decimals ?? 0 });
   const step = review === undefined ? "send" : stepOf(review);
@@ -460,11 +435,8 @@ type OwnerProvisionalDepositProps = {
   runtime: SetupRuntime;
   deployment: ProvisionalDeployment;
   offers: ReadonlyArray<WalletOffer>;
-  /** The setup's own wallet when it is the vault owner's, so the form needs no second connection. */
   connected?: EvmConnection;
-  /** True while a wallet or chain request of this form runs, so the registration check waits for it. */
   onBusy: (busy: boolean) => void;
-  /** Called once the deposit is verified on the finalized chain, so registration is asked again soon. */
   onFinalized: () => void;
 };
 
@@ -498,18 +470,19 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
     else if (view === "DepositFailed") setNotice(provisionalMessages.depositFailed);
     else if (view === "Waiting") setNotice(provisionalMessages.waiting);
   };
-  const act = async <A, E>(work: Effect.Effect<A, E, SetupServices>, then?: (value: A) => void) => {
+  const act = <A, E>(work: Effect.Effect<A, E, SetupServices>, then?: (value: A) => void): void => {
     if (busy) return;
     setBusy(true);
     onBusy(true);
     setError("");
     setNotice("");
-    const done = await run(runtime, work);
-    setBusy(false);
-    onBusy(false);
-    setReads((count) => count + 1);
-    if (done.ok) then?.(done.value);
-    else setError(done.message);
+    void run(runtime, work).then((done) => {
+      setBusy(false);
+      onBusy(false);
+      setReads((count) => count + 1);
+      if (done.ok) then?.(done.value);
+      else setError(done.message);
+    });
   };
   const plan = saved.status === "done" ? saved.value : undefined;
   const watchKey = wallet && plan?.sent && !busy ? `provisional-watch:${plan.action}:${plan.hash}` : "provisional-watch:idle";
@@ -557,21 +530,14 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
 const live = new Set(["Awaiting", "Sent", "Unclear"]);
 
 export type OwnerVaultSetupProps = {
-  /** The project whose vault is set up. */
   project: FundingProject;
-  /** The rewards vault, or the security bounty's own. */
   purpose?: SetupPurpose;
-  /** The signed-in account's GitHub id as a number. */
   account: number;
-  /** The signed-in account's GitHub id. */
   githubId: string;
-  /** The sign-in address that returns here. */
   loginHref: string;
-  /** Called once the vault is registered, with the server's notice, so the project is read again. */
   onRegistered: (notice: string | undefined) => void;
 };
 
-/** Vault setup for the project's current maintainer, from the saved creation when one waits. */
 export function OwnerVaultSetup({ project, purpose = "ordinary", account, githubId, loginHref, onRegistered }: OwnerVaultSetupProps) {
   const reward = project.reward;
   const runtime = setupRuntime({ projectId: project.id, purpose, rewardAsset: reward.asset?.address, rewardDecimals: reward.asset?.decimals, monthlyCapMinor: reward.monthlyCapMinor ?? "0", monthlyCapDisplay: reward.monthlyCapDisplay ?? "" });
@@ -587,22 +553,23 @@ export function OwnerVaultSetup({ project, purpose = "ordinary", account, github
   const [wallet, setWallet] = useState<SetupConnection>();
   const [review, setReview] = useState<ReviewedCreation>();
   const [provisional, setProvisional] = useState<ProvisionalDeployment>();
-  const shownProvisional = useRef<ProvisionalDeployment | undefined>(undefined);
-  const fundingBusy = useRef(false);
+  const shownProvisionalRef = useRef<ProvisionalDeployment | undefined>(undefined);
+  const fundingBusyRef = useRef(false);
   const [cleared, setCleared] = useState(0);
   const load = useSettled(runtime, `setup:${account}:${reload}`, () => loadSetup(account, githubId));
   const unreadable = useSettled(runtime, `unreadable-creation:${cleared}`, () => unreadableCreation());
   const flow = vault.state?.creation;
   const saved = useSettled(runtime, `saved-creation:${flow?.slot.identity ?? ""}`, () => savedCreation());
-  const act = async <A, E>(work: Effect.Effect<A, E, SetupServices>, then?: (value: A) => void) => {
+  const act = <A, E>(work: Effect.Effect<A, E, SetupServices>, then?: (value: A) => void): void => {
     if (busy) return;
     setBusy(true);
     setError("");
     setNotice("");
-    const done = await run(runtime, work);
-    setBusy(false);
-    if (done.ok) then?.(done.value);
-    else setError(done.message);
+    void run(runtime, work).then((done) => {
+      setBusy(false);
+      if (done.ok) then?.(done.value);
+      else setError(done.message);
+    });
   };
   const registration = (shown: Registration | undefined, ownerAsked: boolean, network: string) => {
     if (shown === undefined) return;
@@ -612,11 +579,11 @@ export function OwnerVaultSetup({ project, purpose = "ordinary", account, github
       return;
     }
     const included = provisionalDeploymentOf(shown.provisional, plan, hash);
-    const before = shownProvisional.current;
+    const before = shownProvisionalRef.current;
     if (before && !included) setNotice(setupMessages.dropped);
     else if (included && (!before || ownerAsked)) setNotice(includedMessage(networkLabel(network)));
     else if (ownerAsked) setNotice(setupMessages.notFinal);
-    shownProvisional.current = included;
+    shownProvisionalRef.current = included;
     setProvisional(included);
   };
   const pending = flow !== undefined && live.has(flow.phase) && flow.slotOwner === account;
@@ -670,10 +637,10 @@ export function OwnerVaultSetup({ project, purpose = "ordinary", account, github
             offers={offers}
             connected={wallet?.family === "evm" && wallet.address.toLowerCase() === provisional.owner ? wallet.evm : undefined}
             onBusy={(running) => {
-              fundingBusy.current = running;
+              fundingBusyRef.current = running;
               void run(runtime, setupEditing(running));
             }}
-            onFinalized={() => void run(runtime, Effect.andThen(setupEditing(fundingBusy.current), askRegistrationSoon())).then((done) => done.ok && registration(done.value.registration, false, provisional.network))}
+            onFinalized={() => void run(runtime, Effect.andThen(setupEditing(fundingBusyRef.current), askRegistrationSoon())).then((done) => done.ok && registration(done.value.registration, false, provisional.network))}
           />
         ) : null
       }

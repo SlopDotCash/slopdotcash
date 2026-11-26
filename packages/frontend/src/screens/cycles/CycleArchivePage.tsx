@@ -14,7 +14,7 @@ import { type ProjectRuntime, projectReads, projectRuntime } from "../projects/r
 import { contributorReads, contributorRuntime, registryBoot } from "../points/reads.vibe";
 import { useQuery, writeQuery } from "../points/query.ts";
 import { retryOnce, type Settled, useOnce } from "../../app/hooks.ts";
-import { nextBoundary, staleFrom, useBoundary } from "./boundary.ts";
+import { staleFrom, useBoundaryTime } from "./boundary.ts";
 import { usdcText } from "./CycleAmountHistory.tsx";
 import { archiveOrder, archiveView, type FilterKey, filterLabels, filterQuery, requestedFilter, selected } from "./filters.ts";
 import { cycleLifecyclePresentation, cycleStateLabel, percentText } from "./labels.ts";
@@ -139,9 +139,8 @@ function IndexState({ cycles, nowMs }: { cycles: Shown<CycleIndex>; nowMs: numbe
 function Loaded({ runtime, section, reads, boot }: { runtime: ProjectRuntime; section: ProjectSection; reads: ContributorSection; boot: RegistryBoot | undefined }) {
   const cycles = useShownRead(section.cycles, "index");
   const payments = useShownRead(reads.vault, "all");
-  const nowMs = Date.now();
   const reviewEnds = (cycles.value?.cycles ?? []).map((cycle) => (cycle.state === "review" && cycle.reviewEndsAt ? Date.parse(cycle.reviewEndsAt) : undefined));
-  useBoundary(runtime, nextBoundary(nowMs, [cycles.value ? staleFrom(cycles.value.generatedAt) : undefined, ...reviewEnds]));
+  const nowMs = useBoundaryTime(runtime, [cycles.value ? staleFrom(cycles.value.generatedAt) : undefined, ...reviewEnds]);
   return (
     <>
       <Header>

@@ -63,7 +63,7 @@ export type ClaimFormProps = {
 };
 
 export function ClaimForm({ runtime, owner, projects, onCreated }: ClaimFormProps) {
-  const [selectedProjectId, setProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [advisory, setAdvisory] = useState("");
   const [key, setKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -86,7 +86,7 @@ export function ClaimForm({ runtime, owner, projects, onCreated }: ClaimFormProp
       onCreated(result.value.case);
     });
   };
-  return <ClaimFormView projects={projects} projectId={projectId} advisory={advisory} busy={busy} error={error} onProject={setProjectId} onAdvisory={setAdvisory} onSubmit={submit} />;
+  return <ClaimFormView projects={projects} projectId={projectId} advisory={advisory} busy={busy} error={error} onProject={setSelectedProjectId} onAdvisory={setAdvisory} onSubmit={submit} />;
 }
 
 /** `#security-link`: where a reporter links a report filed on GitHub. */

@@ -155,19 +155,20 @@ export function useAction<R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const running = useRef(false);
+  const runningRef = useRef(false);
 
-  const act = async <A, E>(work: Effect.Effect<A, E, R>, then?: (value: A) => void) => {
-    if (running.current) return;
-    running.current = true;
+  const act = <A, E>(work: Effect.Effect<A, E, R>, then?: (value: A) => void): void => {
+    if (runningRef.current) return;
+    runningRef.current = true;
     setBusy(true);
     setError("");
     setNotice("");
-    const done = await run(runtime, work, fallback);
-    running.current = false;
-    setBusy(false);
-    if (done.ok) then?.(done.value);
-    else setError(done.message);
+    void run(runtime, work, fallback).then((done) => {
+      runningRef.current = false;
+      setBusy(false);
+      if (done.ok) then?.(done.value);
+      else setError(done.message);
+    });
   };
 
   return { busy, error, notice, setNotice, act };

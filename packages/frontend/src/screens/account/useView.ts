@@ -48,7 +48,7 @@ function storeFor<A, R, E>(runtime: ManagedRuntime.ManagedRuntime<R, E>, watch: 
       };
     },
   };
-  byWatch.set(watch, store as Store<unknown>);
+  byWatch.set(watch, store);
   return store;
 }
 

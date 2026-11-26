@@ -108,7 +108,7 @@ export function AutomaticMonthlyPayment({ project, deployment, period, account, 
   const describe = (setting: MonthlySetting) =>
     setting.enabled ? `On · ${decimals === undefined ? setting.cap.toString() : formatAssetAmount(setting.cap, { network: deployment.network, assetAddress: deployment.asset, assetDecimals: decimals })}/mo` : "Off";
   const pendingTarget = saved.status === "done" ? saved.value : undefined;
-  const reward = { kind: project.reward.kind, chain: project.reward.chain ?? "", monthlyCapMinor: project.reward.monthlyCapMinor ?? "0", asset: project.reward.asset ?? null };
+  const reward = { kind: project.reward.kind, chain: project.reward.chain ?? "", monthlyCapMinor: project.reward.monthlyCapMinor ?? "0", cycleCaps: project.reward.cycleCaps, asset: project.reward.asset ?? null };
   const signLabel = !review ? "" : !review.target.enabled ? "Turn off" : review.current.enabled ? "Update cap" : "Turn on";
   const verified = (result: SettingChecked) => {
     setChecked(result);

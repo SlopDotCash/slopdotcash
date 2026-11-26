@@ -20,7 +20,7 @@ export function AppealTriage({ record, busy, error, onRetry }: RetryProps) {
         <Spinner size="sm" label="Slopbot is drafting a resolution…" />
       ) : triage.state === "complete" ? (
         <>
-          <p className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Status title="Drafted resolution" presentation={badge(triage.proposedOutcome === "return" ? "Return" : "Uphold")} />
             {confidence === null ? null : (
               <>
@@ -28,7 +28,7 @@ export function AppealTriage({ record, busy, error, onRetry }: RetryProps) {
               </>
             )}
             <Status presentation={badge("Moderator decides")} />
-          </p>
+          </div>
           {triage.escalationReasons.length === 0 ? null : <p>{triage.escalationReasons.map((reason) => escalationLabels[reason] ?? reason).join("; ")}</p>}
           <p>{triage.rationale}</p>
         </>

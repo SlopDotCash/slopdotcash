@@ -32,7 +32,7 @@ function page() {
   const fakeOf = (provider: number): Fake => {
     const found = fakes.get(provider);
     if (found !== undefined) return found;
-    const made: Fake = { provider: { request: async () => [] } };
+    const made: Fake = { provider: { request: () => Promise.resolve([]) } };
     fakes.set(provider, made);
     return made;
   };

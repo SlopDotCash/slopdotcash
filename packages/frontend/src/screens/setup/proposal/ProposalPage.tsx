@@ -4,7 +4,6 @@ import { Alert, Button, cn, PageHeader, shell, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { useNow } from "../../../app/hooks.ts";
 import type { PageProps } from "../../../app/pages.ts";
 import type { PageRuntime, SessionShown } from "../../../app/runtime.vibe";
@@ -105,7 +104,7 @@ type ProposalFormProps = Omit<ProposalPageProps, "route"> & {
 
 function ProposalForm({ runtime, store, view, shown, pendingApplications, setupStatus }: ProposalFormProps) {
   const [submission, setSubmission] = useState<Submission>({ status: "idle" });
-  const inFlight = useRef(false);
+  const inFlightRef = useRef(false);
   const session = shown.view;
   const actor = session.status === "signedIn" ? session.session : undefined;
   const loginHref = loginHrefFor(shown, signInReturn);
@@ -128,12 +127,21 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
   const nowMs = useNow();
   const { manifest, bounty } = draftManifest({ proposal: p, actor, valid, now: new Date(nowMs).toISOString() });
 
+  const pendingFocusRef = useRef<(() => void) | null>(null);
+  const mainRef = (node: HTMLElement | null) => {
+    if (node === null || pendingFocusRef.current === null) return;
+    const runFocus = pendingFocusRef.current;
+    pendingFocusRef.current = null;
+    runFocus();
+  };
   const update = (change: (current: Wizard) => Wizard) => store.update(change);
   const change = (field: Exclude<ProposalField, "repository">, value: string) => update((current) => withField(current, field, value, branchesOf(current.proposal, lookup)));
   const focusOn = (field: ProposalField) => {
     const owner = stepOfField(field) ?? step;
-    flushSync(() => update((current) => ({ ...current, step: owner })));
-    focusField(owner === 0 && p.repositoryNumericId === "" ? "repository" : field);
+    const target = owner === 0 && p.repositoryNumericId === "" ? "repository" : field;
+    if (owner === step) return focusField(target);
+    pendingFocusRef.current = () => focusField(target);
+    update((current) => ({ ...current, step: owner }));
   };
   const goTo = (index: StepIndex) => {
     if (index > step || index === lastStep) {
@@ -144,23 +152,24 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
       }
     }
     if (index === lastStep && step !== lastStep) void runtime.runPromise(refreshSession());
-    flushSync(() => update((current) => ({ ...current, step: index })));
-    focusHeading();
+    if (index === step) return focusHeading();
+    pendingFocusRef.current = focusHeading;
+    update((current) => ({ ...current, step: index }));
   };
   const clearReferrer = () => update((current) => ({ ...current, referrer: null }));
 
   const submit = async () => {
-    if (inFlight.current) return;
+    if (inFlightRef.current) return;
     if (!valid) return goTo(lastStep);
     if (actor === undefined) return void runtime.runPromise(refreshSession());
     const submitted = draftPayload(saved);
-    inFlight.current = true;
+    inFlightRef.current = true;
     setSubmission({ status: "submitting" });
     const funding = fundingOf(p);
     const exit = await runtime.runPromiseExit(
       createFromSetup({ manifest, referrer: saved.referrer, monthlyAmount: funding.mode === "monthly" ? funding.monthlyAmount.trim() : null, bountyAmount: p.fundingMode === "bounty" ? p.monthlyPool.trim() : null, actor: actor.githubId }),
     );
-    inFlight.current = false;
+    inFlightRef.current = false;
     if (Exit.isSuccess(exit)) {
       if (draftPayload(store.get().wizard) === submitted) clearReferrer();
       return setSubmission({ status: "created", projectId: exit.value.project.id, actorId: actor.githubId, setup: exit.value.setup, referrer: saved.referrer });
@@ -211,7 +220,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
   );
 
   return (
-    <main className={page}>
+    <main ref={mainRef} className={page}>
       <nav aria-label="Breadcrumb" className="mb-3 text-ui leading-page font-semibold">
         <a href="/" className="text-muted-foreground underline underline-offset-4 hover:text-foreground">
           Projects

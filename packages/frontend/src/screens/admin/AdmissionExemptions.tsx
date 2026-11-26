@@ -30,18 +30,18 @@ function ExemptionForm({ runtime, actorId, project, onAccessLost, exemption, rep
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef(false);
+  const inFlightRef = useRef(false);
   const revoke = exemption !== undefined;
   const complete = confirmed && reason.trim().length >= minimumExemptionReason && decisionReference.trim() !== "";
   const save = async () => {
-    if (inFlight.current) return;
+    if (inFlightRef.current) return;
     const decision = { reason, decisionReference, confirmed };
     const work = exemption ? revokeAdmissionExemption(actorId, exemption.id, decision) : grantAdmissionExemption(actorId, { projectId: project.id, revision: project.revision, ...(repository === undefined ? {} : { repository }) }, decision);
-    inFlight.current = true;
+    inFlightRef.current = true;
     setBusy(true);
     setError(null);
     const acted = await act(runtime, work, (failure) => failure._tag !== "VettingIncomplete" && isAdminActionAccessLoss(failure), "The exemption could not be confirmed.");
-    inFlight.current = false;
+    inFlightRef.current = false;
     setBusy(false);
     if (acted.ok) return onSaved();
     setError(acted.message);
@@ -84,14 +84,14 @@ export type AdmissionExemptionsProps = ExemptionContext & {
 
 export function AdmissionExemptions({ exemptions, onSaved, ...context }: AdmissionExemptionsProps) {
   const repositories = context.project.repositories;
-  const [selectedRepository, setRepository] = useState("");
+  const [selectedRepository, setSelectedRepository] = useState("");
   const repository = repositories?.some((entry) => entry.id === selectedRepository) ? selectedRepository : (repositories?.[0]?.id ?? "");
   const githubId = repositories?.find((entry) => entry.id === repository)?.githubId;
   const active = exemptions.find((exemption) => exemption.revokedAt === null && (repositories === undefined || exemption.repositoryId === githubId));
   const repositoryField =
     repositories === undefined ? undefined : (
       <Field label="Repository">
-        <Select value={repository} onChange={(event) => setRepository(event.target.value)}>
+        <Select value={repository} onChange={(event) => setSelectedRepository(event.target.value)}>
           {repositories.map((entry) => (
             <option key={entry.id} value={entry.id}>
               {entry.id}

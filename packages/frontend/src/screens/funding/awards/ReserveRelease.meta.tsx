@@ -43,10 +43,10 @@ export const meta: ComponentMeta<ReserveReleaseProps> = {
     Unclear: async () => {
       onEnterHash.mockClear();
       onConfirmUnsent.mockClear();
-      await userEvent.type(screen.getByRole("textbox", { name: "Transaction hash" }), walletHash);
-      await userEvent.click(screen.getByRole("button", { name: "Check transaction" }));
       await userEvent.click(screen.getByRole("button", { name: "Nothing was sent?" }));
       await userEvent.click(screen.getByRole("button", { name: "Not sent — clear" }));
+      await userEvent.type(screen.getByRole("textbox", { name: "Transaction hash" }), walletHash);
+      await userEvent.click(screen.getByRole("button", { name: "Check transaction" }));
       await expect([onEnterHash.mock.calls, onConfirmUnsent.mock.calls.length]).toEqual([[[walletHash]], 1]);
     },
   },

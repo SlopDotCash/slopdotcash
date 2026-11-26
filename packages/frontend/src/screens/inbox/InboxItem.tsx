@@ -1,18 +1,18 @@
 // spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"
 import type { InboxNotice, NotificationsPage } from "@repo/operations/client";
 import { Button, EmptyState, ListItem, cn } from "@repo/ui";
-import { Bell, Check, CircleDollarSign, FolderGit2, Inbox, Lock, type LucideIcon, MailWarning, ShieldCheck, Wallet } from "lucide-react";
+import { Bell, Check, CircleDollarSign, FolderGit2, Inbox, Lock, MailWarning, ShieldCheck, Wallet } from "lucide-react";
 import { formatDateTime } from "../../app/format.ts";
 import { awaitsAcknowledgment, unreadKeys } from "../../flows/account/inbox.vibe";
 import { emailDeliveryLabel, noticePresentation } from "../../projections/notices.ts";
 
-function iconOf(kind: InboxNotice["kind"]): LucideIcon {
-  if (kind.startsWith("security_")) return Lock;
-  if (kind.startsWith("slopbot_")) return ShieldCheck;
-  if (kind === "wallet_changed") return Wallet;
-  if (kind.startsWith("payment_") || kind.startsWith("payout_") || kind === "award_reserved") return CircleDollarSign;
-  if (kind.startsWith("project_") || kind.startsWith("application_") || kind.startsWith("reinstatement_")) return FolderGit2;
-  return Bell;
+function NoticeIcon({ kind }: { kind: InboxNotice["kind"] }) {
+  if (kind.startsWith("security_")) return <Lock aria-hidden className="size-5" />;
+  if (kind.startsWith("slopbot_")) return <ShieldCheck aria-hidden className="size-5" />;
+  if (kind === "wallet_changed") return <Wallet aria-hidden className="size-5" />;
+  if (kind.startsWith("payment_") || kind.startsWith("payout_") || kind === "award_reserved") return <CircleDollarSign aria-hidden className="size-5" />;
+  if (kind.startsWith("project_") || kind.startsWith("application_") || kind.startsWith("reinstatement_")) return <FolderGit2 aria-hidden className="size-5" />;
+  return <Bell aria-hidden className="size-5" />;
 }
 
 const troubledDelivery = { failed: "text-destructive", uncertain: "text-warn" } as const;
@@ -39,12 +39,11 @@ export type InboxItemProps = {
 export function InboxItem({ notice, busy = false, onMark, onAcknowledge }: InboxItemProps) {
   const unread = notice.readAt === null;
   const { title, action } = noticePresentation(notice);
-  const Icon = iconOf(notice.kind);
   return (
     <ListItem
       leading={
         <span className="inline-flex rounded-md bg-info/10 p-2 text-info">
-          <Icon aria-hidden className="size-5" />
+          <NoticeIcon kind={notice.kind} />
         </span>
       }
       title={

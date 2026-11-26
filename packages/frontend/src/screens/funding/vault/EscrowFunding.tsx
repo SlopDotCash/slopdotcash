@@ -6,6 +6,7 @@ import { Hourglass } from "lucide-react";
 import { useState } from "react";
 import { type Coverage, fundersView, lessThanOneMonthText, monthsCovered, type PoolFacts, publicFunding } from "../../../../gen/frontend__projections.ts";
 import { useMachine as useRead } from "../../../../gen/frontend__requests.react.ts";
+import { useNow } from "../../../app/hooks.ts";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { useAddress } from "../../../app/useAddress.ts";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
@@ -115,6 +116,7 @@ type DeploymentProps = {
   project: FundingProject;
   deployment: FundingDeployment;
   period: string;
+  now: Period;
   account: number;
   githubId: string;
   loginHref: string;
@@ -126,7 +128,7 @@ type DeploymentProps = {
 };
 
 /** One registered vault's wallet actions, with its month lock card sharing the wallet connected there. */
-function DeploymentFunding({ project, deployment, period, account, githubId, loginHref, pool, row, totals, onFinalized, onLocked }: DeploymentProps) {
+function DeploymentFunding({ project, deployment, period, now, account, githubId, loginHref, pool, row, totals, onFinalized, onLocked }: DeploymentProps) {
   const [wallet, setWallet] = useState<Connection>();
   const monthlyPool = project.reward.kind === "monthly-pool";
   const pledgeSupport = row?.openPledgedGross !== undefined && row.openPledgedGross !== null;
@@ -143,7 +145,7 @@ function DeploymentFunding({ project, deployment, period, account, githubId, log
           free={snapshot.freeBalance === null ? null : BigInt(snapshot.freeBalance)}
           decimals={snapshot.assetDecimals}
           wallet={wallet}
-          monthlyMinor={monthlyCapAt(project, periodContaining(Math.floor(Date.now() / 1000)))}
+          monthlyMinor={monthlyCapAt(project, now)}
           onLocked={onLocked}
         />
       ) : null}
@@ -159,10 +161,11 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
   const shownTotals = useTotals(totals, project.id);
   const shown = useSession(runtime);
   const address = useAddress();
+  const nowMs = useNow();
   const [revision, setRevision] = useState(0);
   const [registrationNotice, setRegistrationNotice] = useState("");
   if (listing !== undefined && deployments.length === 0) return null;
-  const period = periodOf(Date.now());
+  const period = periodOf(nowMs);
   const account = shown ? viewActor(shown.view) : 0;
   const githubId = shown?.view.status === "signedIn" ? shown.view.session.githubId : "";
   const loginHref = shown ? loginHrefFor(shown, address) : "";
@@ -175,7 +178,7 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
     refresh();
     setRevision((count) => count + 1);
   };
-  const now = periodContaining(Math.floor(Date.now() / 1000));
+  const now = periodContaining(Math.floor(nowMs / 1000));
   const snapshots = shownTotals?.snapshots ?? [];
   const covered = listing === undefined || shownTotals === undefined ? undefined : coverageText(publicCoverage(project, snapshots, listing.networkPays, now));
   const fundable =
@@ -230,6 +233,7 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
                   project={project}
                   deployment={deployment}
                   period={period}
+                  now={now}
                   account={account}
                   githubId={githubId}
                   loginHref={loginHref}

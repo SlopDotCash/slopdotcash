@@ -3,6 +3,7 @@ import { Alert, Button, cn, sectionTitle } from "@repo/ui";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { useMachine as useMonthly } from "../../../../gen/frontend__ownerMonthly.react.ts";
+import { useNow } from "../../../app/hooks.ts";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { useAddress } from "../../../app/useAddress.ts";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
@@ -44,7 +45,7 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
   const followed = useFollowedMonth(runtime, account, githubId);
   const view = useMonthView(runtime);
   const monthly = useMonthly(runtime);
-  const { busy, error, act } = useAwardAction(runtime);
+  const { busy, error, act, actAsync } = useAwardAction(runtime);
   const [selected, setSelected] = useState<string>();
   const [savedActor, setSavedActor] = useState<string>();
   const [reserved, setReserved] = useState<Checked>();
@@ -83,7 +84,10 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
             manageHref={registered ? `/projects/${project.slug}/manage#vault-monthly-${registered.network}-${registered.vault}` : undefined}
             paymentsDisabled={paymentsDisabled}
             savedActor={savedActor}
-            onSave={(change) => ownerAct(saveAllocation(change.githubUserId, change.grossBase, change.cut, change.reason), setSavedActor)}
+            onSave={(change) => {
+              setSavedActor(undefined);
+              return actAsync(saveAllocation(change.githubUserId, change.grossBase, change.cut, change.reason), setSavedActor);
+            }}
             onFinalize={() => ownerAct(finalizeAwards())}
             onAutomaticChange={(automatic) => ownerAct(setAutomatic(automatic))}
             onReserve={(githubUserId) => {
@@ -128,7 +132,8 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
 export function OwnerAwards({ runtime, project, awardMonths, networkPays }: OwnerAwardsProps) {
   const shown = useSession(runtime);
   const address = useAddress();
-  const bounds = monthBounds(project.id, awardMonths, Date.now());
+  const nowMs = useNow();
+  const bounds = monthBounds(project.id, awardMonths, nowMs);
   const saved = savedCommitmentMonths(sessionSlots(), project.id, monthsBetween(bounds.first, bounds.start));
   const [opened, setOpened] = useState(saved.length > 0);
   const [period, setPeriod] = useState(bounds.start);

@@ -15,6 +15,7 @@ const SharedPool = Schema.Struct({
   reward: Schema.Struct({
     kind: Schema.Literals(["monthly-pool"]),
     monthlyCapMinor: Schema.String,
+    cycleCaps: Schema.optional(Schema.Array(Schema.Struct({ cycleId: Schema.String, monthlyCapMinor: Schema.String }))),
     maintainerShare: Schema.optional(Schema.Number),
     maintainerShareHistory: Schema.optional(Schema.Array(Schema.Struct({ throughCycle: Schema.String, basisPoints: Schema.Number }))),
   }),
@@ -37,7 +38,8 @@ function periodName(period: number): string {
 /** A registry project's maintainer share in the UTC month of `now`: the history entry that covers the month, else the setting, and the setting from the next month. @throws {RangeError} */
 export function publishedShare(project: RegistryProject, now: Date): ShareShown {
   const decoded = decodePool(project);
-  const period = parsePeriod(now.toISOString().slice(0, 7));
+  const month = now.toISOString().slice(0, 7);
+  const period = parsePeriod(month);
   if (period === undefined) return { tag: "NoShare" };
   const reward = Result.isSuccess(decoded) ? decoded.success.reward : undefined;
   const setting = reward?.maintainerShare ?? 0;
@@ -46,7 +48,8 @@ export function publishedShare(project: RegistryProject, now: Date): ShareShown 
     return throughMonth === undefined ? [] : [{ throughMonth, basisPoints: entry.basisPoints }];
   });
   const thisMonth = monthShareOf(history, setting, period);
-  const amount = reward === undefined ? undefined : parseBaseUnits(reward.monthlyCapMinor);
+  const capText = reward?.cycleCaps?.find((cap) => cap.cycleId === month)?.monthlyCapMinor ?? reward?.monthlyCapMinor;
+  const amount = capText === undefined ? undefined : parseBaseUnits(capText);
   return shareShown(reward !== undefined, amount !== undefined && amount > 0n, thisMonth, setting, period);
 }
 

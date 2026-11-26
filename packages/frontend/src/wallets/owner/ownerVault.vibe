@@ -134,7 +134,7 @@ export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: Va
     throw new VaultRefused({ notice, message: noticeMessages[notice] })
   }
 
-  effect function asActor<A>(depositOnly: (state: OwnerVault) => boolean, guard: (state: OwnerVault, owner: number) => boolean, event: Parameters<Machine.Shape["send"]>[0]) {
+  effect function asActor(depositOnly: (state: OwnerVault) => boolean, guard: (state: OwnerVault, owner: number) => boolean, event: Parameters<Machine.Shape["send"]>[0]) {
     const state = try machine.get()
     if (!guard(state, actor(state))) throw new VaultRefused({ notice: state.notice, message: refusalOf(state, depositOnly(state)) })
     if (!(try sent(event, actor(state)))) throw new VaultRefused({ notice: state.notice, message: slotChangedMessage })
