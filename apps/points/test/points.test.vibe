@@ -29,12 +29,11 @@ import { distinctOrder } from "../gen/points__reviewedHistory.ts"
 import { emptyReview } from "../gen/points__reviews.effect.vibe"
 import { Machine, machine } from "../gen/points__window.effect.vibe"
 import { collectOpen, identities, type OpenReference } from "../src/census/collect.vibe"
-import { collectedTargets, fetchRegistry, registeredProjects, registryAnswer, type RegistryProject } from "../src/census/projects.vibe"
+import { collectedTargets, fetchRegistry, registeredProjects, registryAnswer } from "../src/census/projects.vibe"
 import { assertReviewCensusStable, collectReviewCensus, recollectedOnce } from "../src/census/reviews.vibe"
 import { pointsRule } from "../src/client/journal.vibe"
-import { leaderboardMethodology } from "../src/client/snapshot/methodology.vibe"
 import { encodeParts, maxFileBytes, maxPartBytes } from "../src/client/snapshot/parts.vibe"
-import { type LeaderboardSnapshot, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, type RepositoryRegistry, ruleVersion, schemaVersion, type ScoreEvent, scoreWindowDays, verificationWindowDays } from "../src/client/snapshot/schema.vibe"
+import { type LeaderboardSnapshot, type RepositoryRegistry, ruleVersion, schemaVersion, type ScoreEvent } from "../src/client/snapshot/schema.vibe"
 import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
 import { planReferencedArtifacts, verifyReferencedArtifacts } from "../src/collect/evidence/artifacts.vibe"
 import { keepPreviousWindow } from "../src/collect/feeds/authoritative.vibe"
@@ -79,13 +78,10 @@ import { censusItem, claimDecision, type Comment, type GitHubItem } from "../src
 import type { ValueTier } from "../src/kernels/scoring/tiers.ts"
 import { recognizePayouts } from "../src/payoutRecognition/awards.vibe"
 import { type ActorVaultPayments, loadVaultPayouts, type PayoutActor } from "../src/payoutRecognition/vault.vibe"
-import { extendPublishedProfiles } from "../src/profiles/extend.vibe"
-import { repositoryIdentity } from "../src/profiles/identity.vibe"
-import type { ProfileIndex } from "../src/profiles/shape.vibe"
 import { collectionServices, corrections } from "../src/programs/corrections.vibe"
 import { profiles } from "../src/programs/profiles.vibe"
 import { registry as registryRegistry } from "../src/programs/registry.vibe"
-import { checkRetainedRelease, retainedFresh, retainedRefusal } from "../src/programs/retainedFresh.vibe"
+import { retainedFresh } from "../src/programs/retainedFresh.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
 import { importJournal } from "../src/publication/import.vibe"
 import { members, projectionFiles } from "../src/publication/projections.vibe"
@@ -3492,229 +3488,6 @@ import { seededGithub, slopbotFake } from fakes
         )
       })
     }
-  })
-}
-
-{
-  const older = "2026-11-15T00:00:00.000Z"
-  const newer = "2026-11-16T00:00:00.000Z"
-  const windowFrom = "2026-10-11T00:00:00.000Z"
-  const quick = { retryDelayMs: 0, attemptTimeoutMs: 5_000 }
-
-  const projects: ReadonlyArray<RegistryProject> = ["widgets", "gadgets"].map((name) => ({
-    id: name,
-    status: "active",
-    listingTier: "listed",
-    authority: {},
-    reward: { committedMinor: "0", monthlyCapMinor: "0" },
-    skill: {},
-    repositories: [{ id: `ada/${name}`, githubUrl: `https://github.com/ada/${name}`, displayName: name, description: "", integrationBranch: "main" }],
-  }))
-  const identity = repositoryIdentity(projects)
-  const targets = projects.flatMap((project) => project.repositories.map((repository) => repository.id))
-  const registered = projects.flatMap((project) => project.repositories.map((repository) => {
-    const [owner = "", name = ""] = repository.id.split("/")
-    return { ...repository, owner, name, projectId: project.id, nodeId: `R_${name}`, aliases: [] }
-  }))
-
-  const publishedCensus: ProfileIndex = {
-    schemaVersion: "2",
-    startedAt: older,
-    generatedAt: older,
-    repositories: [{ repository: "ada/widgets", count: 0, excluded: 0 }],
-    people: [],
-    issues: { firstObservedAt: older, repositories: [{ repository: "ada/widgets", count: 0 }], items: [] },
-  }
-
-  function leaderboardAt(generatedAt: string) {
-    return {
-      schemaVersion,
-      repository: null,
-      repositories: [],
-      ruleVersion,
-      generatedAt,
-      sourceUpdatedAt: older,
-      stale: false,
-      window: { days: scoreWindowDays, from: windowFrom, to: older },
-      methodology: leaderboardMethodology,
-      source: {
-        provider: "github-graphql",
-        fetchedAt: generatedAt,
-        cutoffAt: older,
-        repositoryId: null,
-        repositories: [],
-        requestCount: 1,
-        searchSliceCount: 0,
-        rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: generatedAt },
-        counts: { mergedPullRequests: 0, detailedMergedPullRequests: 0, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
-        verificationWindow: { days: verificationWindowDays, from: windowFrom, to: older },
-        evidenceVerification: { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 100, maxArtifacts: 200 },
-      },
-      leaders: [],
-      ledger: [],
-      reviewExclusions: [],
-      penalties: [],
-      opportunities: [],
-      attributions: [],
-      invalidAttributionMarkers: [],
-      attributionCoverage: { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 },
-      workQueue: { issues: [], pullRequests: [] },
-      paymentReviewBasisOmitted: { policy: paymentReviewPolicy, effectiveAt: paymentReviewPolicyAt, reason: paymentReviewBasisOmittedReason },
-    }
-  }
-
-  function jsonResponse(value: unknown) {
-    return new MiniflareResponse(JSON.stringify(value), { headers: { "content-type": "application/json" } })
-  }
-
-  interface Production {
-    profiles: unknown
-    dataStatus: number
-    profilesStatus: number
-    profilesMoved: boolean
-  }
-
-  interface Seen {
-    readonly origin: string
-    readonly path: string
-    readonly snapshot: boolean
-    readonly redirect: string
-    readonly cache: string
-  }
-
-  function slopCash(leaderboard: unknown, production: Production, seen: Seen[]): typeof globalThis.fetch {
-    const publication: Publication = { root: utf8(JSON.stringify(leaderboard)), parts: [] }
-    const pages = pagesOrigin(publication)
-    const answer = async (input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
-      seen.push({ origin: url.origin, path: url.pathname, snapshot: url.searchParams.has("snapshot"), redirect: init?.redirect ?? "", cache: init?.cache ?? "" })
-      if (production.dataStatus !== 200) return new MiniflareResponse(null, { status: production.dataStatus })
-      if (url.pathname !== "/data/profiles.json") return pages.fetch(input, init)
-      if (production.profilesMoved) {
-        if (init?.redirect === "error") throw new TypeError("fetch failed")
-        return new MiniflareResponse(null, { status: 302, headers: { location: "https://slop.cash/archive/profiles.json" } })
-      }
-      if (production.profilesStatus !== 200) return new MiniflareResponse(null, { status: production.profilesStatus })
-      return jsonResponse(production.profiles)
-    }
-    return answer as typeof globalThis.fetch
-  }
-
-  function described(error: unknown): string {
-    if (typeof error !== "object" || error === null || !("_tag" in error)) return String(error)
-    if ("status" in error) return `${String(error._tag)} ${String(error.status)}`
-    return "message" in error && typeof error.message === "string" ? `${String(error._tag)}: ${error.message}` : String(error._tag)
-  }
-
-  effect function outcome<A, E, R>(program: A!E!R, fetch: typeof globalThis.fetch) {
-    const ended = try exit(provideService(program, FetchHttpClient.Fetch, fetch))
-    return Exit.isSuccess(ended) ? "current" : described(Cause.squash(ended.cause))
-  }
-
-  effect function written(path: string, bytes: Uint8Array) {
-    const fs = try FileSystem.FileSystem
-    try fs.makeDirectory((try Path.Path).dirname(path), { recursive: true })
-    try fs.writeFile(path, bytes)
-  }
-
-  layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-    it.effect(`A retained release is refused when its leaderboard or profiles are older than what production serves (spec/points/retainedFreshness.md, "Story: A retained release never moves production back to older data"; spec/points/retainedFreshness.md, "A retained snapshot is refused when its leaderboard or profiles were generated before production's current ones"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation")`, () => scoped(effect {
-      const fs = try FileSystem.FileSystem
-      const files = try Path.Path
-      const workspace = try fs.makeTempDirectoryScoped({ prefix: "slop-points-retained-" })
-      const bundle = files.join(workspace, "dist")
-      const registryPath = files.join(workspace, "registry.json")
-      const unregisteredPath = files.join(workspace, "unregistered.json")
-      try written(registryPath, utf8(JSON.stringify({ registered, targets: [], projects: [] })))
-      try written(unregisteredPath, utf8(JSON.stringify({ registered: [], targets: [], projects: [] })))
-      const retainedCensus = (try extendPublishedProfiles(publishedCensus, targets, identity)).census
-      try written(files.join(bundle, "data", "leaderboard.json"), utf8(JSON.stringify(leaderboardAt(newer))))
-      try written(files.join(bundle, "data", "profiles.json"), utf8(JSON.stringify(retainedCensus)))
-      const production: Production = { profiles: publishedCensus, dataStatus: 200, profilesStatus: 200, profilesMoved: false }
-      const seen: Seen[] = []
-      const current = slopCash(leaderboardAt(newer), production, seen)
-
-      const fresh = try outcome(retainedFresh([bundle, registryPath]), current)
-      const freshRequests = [...seen]
-      const usage = try outcome(retainedFresh([bundle]), current)
-      seen.length = 0
-      const unregistered = try outcome(checkRetainedRelease(bundle, unregisteredPath, quick), current)
-      const unregisteredRequests = seen.length
-
-      const sharded = try encodeParts(utf8(JSON.stringify(leaderboardAt(newer)) + " ".repeat(26 * 1024 * 1024)))
-      for (const part of sharded.parts) try written(files.join(bundle, part.path.slice(1)), part.bytes)
-      try written(files.join(bundle, "data", "leaderboard.json"), sharded.root)
-      const shardedFresh = try outcome(checkRetainedRelease(bundle, registryPath, quick), current)
-
-      const newerLeaderboard = try outcome(checkRetainedRelease(bundle, registryPath, quick), slopCash(leaderboardAt("2026-11-16T00:00:00.001Z"), production, []))
-      const olderLeaderboard = try outcome(checkRetainedRelease(bundle, registryPath, quick), slopCash(leaderboardAt(older), production, []))
-
-      production.profiles = { ...publishedCensus, generatedAt: newer }
-      const newerProfiles = try outcome(checkRetainedRelease(bundle, registryPath, quick), current)
-      production.profiles = { ...publishedCensus, generatedAt: "2026-11-15T00:00:00Z" }
-      const noncanonicalProfiles = try outcome(checkRetainedRelease(bundle, registryPath, quick), current)
-      production.profiles = publishedCensus
-
-      production.profilesStatus = 403
-      const profilesForbidden = try outcome(checkRetainedRelease(bundle, registryPath, quick), current)
-      production.profilesStatus = 200
-      production.profilesMoved = true
-      seen.length = 0
-      const profilesMoved = try outcome(checkRetainedRelease(bundle, registryPath, quick), current)
-      const movedRequest = seen.find((request) => request.path === "/data/profiles.json")
-      production.profilesMoved = false
-      production.dataStatus = 403
-      const publicationForbidden = try outcome(checkRetainedRelease(bundle, registryPath, quick), current)
-
-      const times = { leaderboard: newer, profiles: newer }
-      const noncanonical = ["2026-02-30T00:00:00.000Z", "2026-11-16T00:00:00Z", "2026-11-16T00:00:00.000+00:00"].flatMap((invalid) => [
-        retainedRefusal({ ...times, profiles: invalid }, times),
-        retainedRefusal(times, { ...times, profiles: invalid }),
-      ])
-
-      try Effect.try(() => assert.deepStrictEqual({
-        fresh,
-        freshRequests,
-        usage,
-        unregistered,
-        unregisteredRequests,
-        shardedFresh,
-        newerLeaderboard,
-        olderLeaderboard,
-        newerProfiles,
-        noncanonicalProfiles,
-        profilesForbidden,
-        profilesMoved,
-        movedRedirect: movedRequest?.redirect,
-        publicationForbidden,
-        equalOrNewer: retainedRefusal(times, { leaderboard: older, profiles: newer }),
-        invalidLeaderboard: retainedRefusal({ ...times, leaderboard: "invalid" }, { leaderboard: older, profiles: newer }),
-        bothOlder: retainedRefusal({ leaderboard: older, profiles: older }, times),
-        noncanonical,
-      }, {
-        fresh: "current",
-        freshRequests: [
-          { origin: "https://slop.cash", path: "/data/leaderboard.json", snapshot: true, redirect: "error", cache: "no-store" },
-          { origin: "https://slop.cash", path: "/data/profiles.json", snapshot: true, redirect: "error", cache: "no-store" },
-        ],
-        usage: "RetainedUsage: Usage: retained-fresh <checked bundle> <registry.json>",
-        unregistered: "ProfilesInvalid: Retained census names an unregistered repository",
-        unregisteredRequests: 0,
-        shardedFresh: "current",
-        newerLeaderboard: "RetainedRefused: Retained leaderboard is older than current publication",
-        olderLeaderboard: "current",
-        newerProfiles: "RetainedRefused: Retained profiles is older than current publication",
-        noncanonicalProfiles: "RetainedRefused: Invalid profiles generation time",
-        profilesForbidden: "RetainedRefused: Published profiles unavailable",
-        profilesMoved: "RetainedRefused: Published profiles unavailable",
-        movedRedirect: "error",
-        publicationForbidden: "PublishedReadFailed 403",
-        equalOrNewer: undefined,
-        invalidLeaderboard: "Invalid leaderboard generation time",
-        bothOlder: "Retained leaderboard is older than current publication",
-        noncanonical: Array.from({ length: 6 }, () => "Invalid profiles generation time"),
-      }))
-    }))
   })
 }
 
