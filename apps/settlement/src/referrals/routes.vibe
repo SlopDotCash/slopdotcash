@@ -4,7 +4,7 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { Caller, answerSubtree, answered } from "@repo/platform/http"
 import { type FileAnswer, type FileMode, type Method, type StoredFile, answerFiles } from "../../gen/settlement__referralFiles.effect.vibe"
 import { claimCacheStale } from "../../gen/settlement__referralPublication.effect.vibe"
-import { type AccrualIndexEntry, ReferralAccount, referralAccount, referralAccruals } from "../client/referrals.vibe"
+import { type AccrualIndexEntry, type ReferralAccount, ReferralAccountSchema, referralAccount, referralAccruals } from "../client/referrals.vibe"
 import { type Period, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
 import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
 import { type ClaimEpoch, type ClaimSnapshot, decodeSnapshot } from "./claimCache.vibe"
@@ -83,7 +83,7 @@ const fileModes: Record<FileRow["mode"], FileMode> = { dry_run: "DryRunFile", li
 const hidden = { enabled: false } as const
 
 const decodeFiled = Schema.decodeUnknownEffect(Schema.fromJsonString(FiledReferrers))
-const verifiedAccount = Schema.decodeUnknownEffect(ReferralAccount)
+const verifiedAccount = Schema.decodeUnknownEffect(ReferralAccountSchema)
 
 function methodOf(method: string): Method {
   if (method === "GET") return "GetMethod"
