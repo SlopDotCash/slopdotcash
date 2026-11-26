@@ -173,7 +173,8 @@ export type Op =
   | { readonly kind: "scanner"; readonly method: Method; readonly path: string; readonly body: string }
   | { readonly kind: "object"; readonly bucket: Bucket; readonly key: string; readonly text: string }
   | { readonly kind: "vault"; readonly projectId: string; readonly purpose: VaultPurpose }
-  | { readonly kind: "backendRpc" }
+  | { readonly kind: "backendRpc"; readonly enabled: boolean }
+  | { readonly kind: "bindPayout"; readonly githubId: string; readonly vault: string }
   | { readonly kind: "finalize"; readonly chainId: number }
   | { readonly kind: "branch"; readonly repository: string; readonly name: string; readonly files: Readonly<Record<string, string | null>> }
   | { readonly kind: "github"; readonly login: string }
@@ -238,6 +239,7 @@ export interface Results {
   readonly object: null;
   readonly vault: Deployed;
   readonly backendRpc: null;
+  readonly bindPayout: null;
   readonly finalize: number;
   readonly branch: string;
   readonly github: null;

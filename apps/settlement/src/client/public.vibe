@@ -89,6 +89,8 @@ export schema AccountWallet {
 
 export schema DeliveryState = "needs_wallet" | "ready" | "submitted" | "held" | "paid"
 
+export schema EvmPayoutBindingStatus = "pending" | "finalized" | "unavailable"
+
 export schema AccountPayment {
   readonly id: string
   readonly vault: string
@@ -103,6 +105,7 @@ export schema AccountPayment {
   readonly transactionId: string | null
   readonly submittedTransactionId: string | null
   readonly deliveryState: DeliveryState
+  readonly bindingStatus?: EvmPayoutBindingStatus
   readonly netBase: string
 }
 
