@@ -6572,9 +6572,9 @@
     },
     {
       "path": "src/ProjectLeaderboard.tsx",
-      "sha256": "41c3c0c843c6df1709e45b9634b2543edcb8f554d2a99883e12667983a99178b",
+      "sha256": "474b27edcdd5639e0a6a8b8fa49138fe5f0047db34b080775b410db487928673",
       "models": ["formal/models/ui/ui_record_display.qnt"],
-      "candidateLines": [],
+      "candidateLines": [65],
       "review": "mapped-abstraction",
       "statelessReason": "Pure rendering of the supplied cycle allocation and reviewer rows. Scoring/projection math has separate domain coverage."
     },
@@ -7740,13 +7740,14 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "40630d5cdcb82501004ddb7ab970f828759bb3d664bfcedc1506e1549c4dca71",
+      "sha256": "4ce73d4dea444ad4a60996fc268babeb525c227ed143e171726e59114437b308",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
       "candidateLines": [
-        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 328, 411, 428
+        15, 21, 202, 204, 206, 218, 242, 257, 278, 279, 329, 386, 387, 388, 472,
+        489
       ],
       "review": "mapped-abstraction"
     },

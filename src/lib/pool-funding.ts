@@ -5,6 +5,7 @@ import {
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { monthlyAmountDisplay } from "./project-schema.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
+import { monthlyPoolUnfunded } from "./reward-amount";
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 
 /**
@@ -326,6 +327,66 @@ export function poolFunded(
   now: Date,
 ): boolean {
   return poolFundingStatus(project, index, now).state === "funded";
+}
+
+/**
+ * Whether one cycle's standings may show money. The open cycle follows the
+ * vault, the only funding mode: a pledged registry row with no committed
+ * instrument is funded when its vault holds the month's amount. A closed
+ * cycle keeps the legacy basis it was recorded under.
+ */
+export function cyclePoolFunded(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  cycleId: string,
+  now: Date,
+): boolean {
+  if (project.reward.kind !== "monthly-pool") return false;
+  return cycleId === utcMonth(now)
+    ? poolFunded(project, index, now)
+    : !monthlyPoolUnfunded(project.reward);
+}
+
+/**
+ * The free funds of the project's recorded vaults on paying networks, in the
+ * vault asset's base units, or null when none has a balance on record.
+ */
+export function payingVaultFreeMinor(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+): string | null {
+  if (index === null) return null;
+  const recorded = payingVaultKeys(project);
+  const read = (index.get(project.id) ?? []).filter(
+    (vault) =>
+      vault.freeBalance !== null &&
+      BASE_UNITS.test(vault.freeBalance) &&
+      recorded.has(vaultKey(vault.network, vault.vault)),
+  );
+  if (read.length === 0) return null;
+  return read
+    .reduce((sum, vault) => sum + BigInt(vault.freeBalance as string), 0n)
+    .toString();
+}
+
+/**
+ * The funded amount shown by one cycle's meter, in the reward asset's base
+ * units. An open cycle shows its on-chain pledge when pledge-locked or its
+ * recorded paying vaults' free funds; a closed cycle keeps the legacy
+ * committed amount it was recorded under.
+ */
+export function cyclePoolFundedMinor(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  cycleId: string,
+  now: Date,
+): string {
+  if (project.reward.kind !== "monthly-pool") return "0";
+  if (cycleId !== utcMonth(now)) return project.reward.committedMinor;
+  const status = poolFundingStatus(project, index, now);
+  if (status.state === "funded" && status.locked)
+    return status.owedMinor.toString();
+  return payingVaultFreeMinor(project, index) ?? project.reward.committedMinor;
 }
 
 /**
