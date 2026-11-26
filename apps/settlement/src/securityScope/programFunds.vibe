@@ -1,6 +1,6 @@
 // spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
 import { millisOf } from "@repo/platform/clock"
-import { D1, RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import { type D1, RowMismatch, first, rows, sql } from "@repo/platform/d1"
 import { type AwardAssetTerms, type ProgramDeployment, type ProgramFundsRead, type ProgramTerms, SecurityProgramFunds } from "@repo/ports/security"
 import { NETWORKS, defaultAsset, isNetworkKey } from "../kernels/networks.ts"
 

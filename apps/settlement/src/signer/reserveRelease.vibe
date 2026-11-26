@@ -10,7 +10,7 @@ import { type Period, parsePeriod } from "../kernels/calendar.ts"
 import { ordinaryScope, within } from "../journal/journal.vibe"
 import { ApprovalRefused, type ApprovalRequest, ReleaseApprover } from "../reserveRelease/release.vibe"
 import { release } from "../reserveRelease/store.vibe"
-import { AttesterConfig, type Deployment, authorityInForce, onChain, preflight, reviewedDeployment } from "./evm.vibe"
+import { type AttesterConfig, type Deployment, authorityInForce, onChain, preflight, reviewedDeployment } from "./evm.vibe"
 import { signEscrowDigest } from "./monthlyRoot.vibe"
 
 schema ApprovalRecord {

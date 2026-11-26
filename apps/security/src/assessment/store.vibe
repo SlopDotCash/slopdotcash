@@ -1,7 +1,7 @@
 // spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
-import { RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
+import { type RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
 import { Refused } from "@repo/platform/http"
 import { StorageFailure } from "@repo/platform/r2"
 import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"

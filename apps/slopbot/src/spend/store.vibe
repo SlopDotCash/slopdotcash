@@ -2,7 +2,7 @@
 import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
 import { type NonEmpty, RowMismatch, type Statement, decoded, list, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type CostRow, type FailureKind, type FailureNotice, NotAState, type Provider, type Receipt, type Spend, type Suppression, apply, claimedTop, decodeState, interval, monthTotal, repeatSeconds, settleSeconds } from "../../gen/slopbot__spendAlerts.effect.vibe"
+import { type CostRow, type FailureKind, type FailureNotice, type NotAState, type Provider, type Receipt, type Spend, type Suppression, apply, claimedTop, decodeState, interval, monthTotal, repeatSeconds, settleSeconds } from "../../gen/slopbot__spendAlerts.effect.vibe"
 import { budgetExhausted } from "../route/route.vibe"
 
 schema LedgerRow {

@@ -1,10 +1,10 @@
 // spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "A dispute still unresolved seven days after filing escalates without a lease"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"; spec/points/journal.md, "Undecided policy is refused: an upheld dispute appends no correction"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
-import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { type Notice, Notices } from "@repo/ports/operations"
-import { type Availability, type Dispute, type Escalation, type Event, type RecordView, NotAState, apply, decodeState, initial } from "../../gen/points__disputes.effect.vibe"
+import { type Availability, type Dispute, type Escalation, type Event, type RecordView, type NotAState, apply, decodeState, initial } from "../../gen/points__disputes.effect.vibe"
 import { resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
 import { type Retained, RevisionRow, retained, revisionRow } from "./records.vibe"
 

@@ -11,7 +11,7 @@ import { EvmDirectRails, type EvmDirectRail, evmRecoveryState, evmTransactions, 
 import { type Alongside, type Claims, type Facts, type Journal, type StoredRetirement, commit, currentIntent, decided, directModel, generationOf, highestReservedNonce, intentModel, journalFor, retirementOf, storedWallet } from "./journal.vibe"
 import { consentPayment, preparePayment, verifyPayment } from "./routes.vibe"
 import { type IssuedPlan, type SolanaDirectRail, SolanaDirectRails, consentSolanaPayment, isSolanaNetwork, issuedPlans, prepareSolanaPayment, prepareSolanaPlan, verifySolanaPayment, walletFence, walletOfIntent } from "./solana.vibe"
-import { RecoverySignature, RecoverySignatureInvalid, retireSolanaPlans } from "./solanaRecovery.vibe"
+import { type RecoverySignature, RecoverySignatureInvalid, retireSolanaPlans } from "./solanaRecovery.vibe"
 
 module limbs {
   /** @throws {never} */

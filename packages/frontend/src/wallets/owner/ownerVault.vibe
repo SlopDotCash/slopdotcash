@@ -2,7 +2,7 @@
 import { toAmount } from "@repo/settlement/kernels/amounts"
 import type { PoolFacts } from "../../../gen/frontend__projections.ts"
 import { type VaultLocks, lockedFundsText } from "../../../gen/frontend__vaultLocks.ts"
-import { type Answer, type Flow, Machine, type Notice, type Origin, type OwnerVault, type Target, actor, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canReviewDeposit, canSend, canSetTabHidden, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, resumed, server, tab, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
+import { type Answer, type Flow, type Machine, type Notice, type Origin, type OwnerVault, type Target, actor, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canReviewDeposit, canSend, canSetTabHidden, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, resumed, server, tab, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { SlotStorage } from "../core/slots.ts"
@@ -73,7 +73,7 @@ export function startFor(registered: boolean): OwnerVault {
 }
 
 export interface OwnerVaultPage {
-  readonly machine: Machine.Shape
+  readonly machine: Effect.Success<ReturnType<typeof machineOver>>
   follow(account: number): OwnerVault!!
   review(target: Target, withdrawal: bigint, pool: PoolFacts, locks: VaultLocks, promiseRefusal: string): OwnerVault!VaultRefused
   reviewDeposit(): OwnerVault!VaultRefused

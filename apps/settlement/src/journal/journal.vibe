@@ -1,6 +1,6 @@
 // spec/settlement/signer.md, "Both possible winners stay retained"; spec/settlement/signer.md, "One binding consent spends at most one nonce per vault and actor"
 import type { DurableObjectStorage } from "@repo/platform/bindings"
-import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { type RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { Journal, JournalFailure, type SqlTx } from "@repo/platform/journal"
 
 export error JournalValueInvalid { key: string }

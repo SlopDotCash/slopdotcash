@@ -1,5 +1,5 @@
 // spec/frontend/snapshotCache.md, "Each subscriber receives a unique current read binding"; spec/frontend/snapshotCache.md, "Deferred disposal cancels transport only after the last matching consumer leaves"; spec/frontend/snapshotCache.md, "A stale response can update only its still-owned view and never replace the current cache"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"
-import { type Cache, type Event, Machine, initial, machineOver, pendingRead, readEntry, retryRead, snapshotCacheFresh, snapshotRetryDelayMs, snapshotStale, snapshotStaleAfterMs } from "../../gen/frontend__snapshotCache.effect.vibe"
+import { type Cache, type Event, initial, machineOver, pendingRead, readEntry, retryRead, snapshotCacheFresh, snapshotRetryDelayMs, snapshotStale, snapshotStaleAfterMs } from "../../gen/frontend__snapshotCache.effect.vibe"
 import { untilTime } from "../platform/clock.vibe"
 
 interface Transport<K, T, E> {
@@ -12,7 +12,7 @@ interface Transport<K, T, E> {
 type Plan<K, T, E> = { readonly kind: "hit"; readonly value: T } | { readonly kind: "bound"; readonly read: number; readonly lease: number; readonly transport: Transport<K, T, E> }
 
 export interface SharedSnapshot<K, T, E> {
-  readonly machine: Machine.Shape
+  readonly machine: Effect.Success<ReturnType<typeof machineOver>>
   consumer(): number
   read(consumer: number, key: K, force: boolean): T!E
   shown(consumer: number): (T | undefined)!!

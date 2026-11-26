@@ -1,7 +1,7 @@
 // spec/slopbot/closure.md, "A decision is recorded once and keeps its scope, verdicts and outcome"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"
 import { millisOf } from "@repo/platform/clock"
 import { rows, sql } from "@repo/platform/d1"
-import { type Closure, type Event, type GateObservation, type ReopenEvidence, type ReviewIdentity, Machine, initial, machineOver } from "../../gen/slopbot__closure.effect.vibe"
+import { type Closure, type Event, type GateObservation, type ReopenEvidence, type ReviewIdentity, type Machine, initial, machineOver } from "../../gen/slopbot__closure.effect.vibe"
 
 export interface ClosureRecord {
   readonly machine: Machine.Shape

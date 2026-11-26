@@ -3,7 +3,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { isoAt } from "@repo/platform/clock"
 import { Git } from "@repo/platform/git"
 import { githubApi, githubJson } from "@repo/platform/github"
-import { type GitObjectKind, type GitQuery, type GitRead, type LocalObject, type LocalReads, Machine, canCrash, initial, machineOver, maxTreeEntries } from "../../gen/points__localGitObjects.effect.vibe"
+import { type GitObjectKind, type GitQuery, type GitRead, type LocalObject, type LocalReads, type Machine, canCrash, initial, machineOver, maxTreeEntries } from "../../gen/points__localGitObjects.effect.vibe"
 
 export interface LocalGitStats {
   readonly served: number

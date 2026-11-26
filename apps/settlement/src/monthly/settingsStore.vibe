@@ -2,7 +2,7 @@
 import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Change, type Event, type Settings, type SettingsAuthority, NotAState, apply, decodeState, initial } from "../../gen/settlement__monthlySettings.effect.vibe"
+import { type Change, type Event, type Settings, type SettingsAuthority, type NotAState, apply, decodeState, initial } from "../../gen/settlement__monthlySettings.effect.vibe"
 import { type CurrentRevision, ManifestInvalid, MonthlyFacts, ProjectChanged, actorClear, revisionFence } from "./store.vibe"
 
 schema SettingRow { readonly sequence: number; readonly automatic: number; readonly actor_id: string }

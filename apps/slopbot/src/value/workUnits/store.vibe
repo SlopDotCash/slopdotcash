@@ -4,7 +4,7 @@ import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform
 import { parsedJson as parsedText, sha256Of } from "@repo/platform/git/bytes"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import type { Evidence as GroupEvidence, JointRecord, Journal, SourceKind } from "../../../gen/slopbot__workUnits.effect.vibe"
-import { NotAState, apply, decodeState } from "../../../gen/slopbot__workUnits.effect.vibe"
+import { type NotAState, apply, decodeState } from "../../../gen/slopbot__workUnits.effect.vibe"
 import { InstallationRow, installationOf } from "../../installation/store.vibe"
 import { StoredRecord, workUnitAssessmentKey } from "../history/read.vibe"
 import { JournalBytesInvalid, type PublicationBinding, RecordNotAppended, activeInstallationGuard, appendValueRecord, sourceKey } from "../history/store.vibe"

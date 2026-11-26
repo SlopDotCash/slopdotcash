@@ -13,7 +13,7 @@ import { type ReporterFlag, fileFlag, grantExemption, projectFlag, revokeExempti
 import { getProjectFlagsById, postAdminVettingExemptions, postAdminVettingExemptionsByIdRevoke, postProjectFlagsById, postProjectFlagsByIdWithdraw } from "../client/refusals.vibe"
 import { automaticScan, freshScanReason } from "../admission/refresh.vibe"
 import { type ProjectEvent, ProjectEvents, ProjectRefused, projectClearance, repositoryClearances } from "./port.vibe"
-import { ManifestAuthority, ManifestRepository, idOf } from "./replay.vibe"
+import { type ManifestAuthority, type ManifestRepository, idOf } from "./replay.vibe"
 import { withRetainedEvidence } from "./retained.vibe"
 import { type FlagRow, jsonOf } from "./rows.vibe"
 import { flaggerStanding, maintainerOf } from "./standing.vibe"

@@ -21,7 +21,7 @@ import { bindRetained, collectedSource, refused, relevantOriginals, sourceEviden
 import { nativeOriginalWithSyncMerges, originalContributorFollowupProof } from "../value/corrections/followup.vibe"
 import { octoberOriginalContributorProof } from "../value/corrections/original.vibe"
 import { octoberOriginalContributorPartsProof, octoberOriginalContributorUnitProof } from "../value/corrections/units.vibe"
-import { Evidence, type RegisteredRepository, findRepository } from "../value/evidence/types.vibe"
+import { type Evidence, type RegisteredRepository, findRepository } from "../value/evidence/types.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
 import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
 import type { WorkUnitSource } from "../value/workUnits/types.vibe"

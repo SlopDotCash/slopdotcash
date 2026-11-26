@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { D1, type D1Error, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
 import { type SolanaDeposits, type SolanaRun, Rejected as SolanaRejected, apply as applySolana, idleRun as idleSolanaRun, initial as solanaStart } from "../../gen/settlement__solanaVaultDeposits.effect.vibe"
-import { type Event as EvmEvent, type EvmDeposits, type Run, type VaultPurpose, Rejected as EvmRejected, apply as applyEvm, initial as evmStart, runOf, validDepositRow, withRun } from "../../gen/settlement__vaultDeposits.effect.vibe"
+import { type Event as EvmEvent, type EvmDeposits, type Run, type VaultPurpose, type Rejected as EvmRejected, apply as applyEvm, initial as evmStart, runOf, validDepositRow, withRun } from "../../gen/settlement__vaultDeposits.effect.vibe"
 import { toAmount } from "../kernels/amounts.ts"
 import { type Chain, type NetworkKey, chainFamily, maxBaseUnitsForChain } from "../kernels/networks.ts"
 

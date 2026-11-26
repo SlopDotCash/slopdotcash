@@ -1,8 +1,8 @@
 // spec/slopbot/installation.md, "An older or tied change cannot revive a removed or suspended installation"; spec/slopbot/installation.md, "Every Slopbot effect requires an active installation"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"
 import { isoNow } from "@repo/platform/clock"
-import { type NonEmpty, RowMismatch, type Statement, decoded, first, list, sql } from "@repo/platform/d1"
+import { type NonEmpty, type RowMismatch, type Statement, decoded, first, list, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type InstallEvent, type Installation, NotAState, active, applies, apply, canDeliver, decodeState, initial } from "../../gen/slopbot__installation.effect.vibe"
+import { type InstallEvent, type Installation, type NotAState, active, applies, apply, canDeliver, decodeState, initial } from "../../gen/slopbot__installation.effect.vibe"
 import { lostNotices } from "./notices.vibe"
 
 export schema InstallationRow {

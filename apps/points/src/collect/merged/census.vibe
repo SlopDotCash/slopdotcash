@@ -4,7 +4,7 @@ import { type SearchStats, collectSearch, searchRange } from "../../ingestion/se
 import { collectReviewCensus, type ReviewCensus } from "../../census/reviews.vibe"
 import { type CommitLineLoader, completeOutcomeCommits } from "./commits.vibe"
 import { selectDetailed } from "./detailSelection.ts"
-import { ActorNode, MergedRecordInvalid, type MergedOutcome, type NodeReference, type OutcomeCommitIdentity, OutcomeCommitConnection, type ReferenceKind, actorOf, commitSha, decoded, outcomeCommitsOf, preflightQuery, searchReferencesQuery } from "./wire.vibe"
+import { type ActorNode, MergedRecordInvalid, type MergedOutcome, type NodeReference, type OutcomeCommitIdentity, type OutcomeCommitConnection, type ReferenceKind, actorOf, commitSha, decoded, outcomeCommitsOf, preflightQuery, searchReferencesQuery } from "./wire.vibe"
 
 export type SearchQualifier = "closed" | "merged"
 export type KindQualifier = "is:issue is:closed" | "is:pr is:merged" | "is:pr is:closed is:unmerged"

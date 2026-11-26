@@ -1,5 +1,5 @@
 // spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/census.md, "Collection starts only for a collected project and never moves its window back"; spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"
-import { type Census, type Item, type ItemKind, Machine, type Page, type ProjectView, canFinish, canRecordCountChange, collected, decodeState, initial, machineOver } from "../../gen/points__census.effect.vibe"
+import { type Census, type Item, type ItemKind, type Machine, type Page, type ProjectView, canFinish, canRecordCountChange, collected, decodeState, initial, machineOver } from "../../gen/points__census.effect.vibe"
 import { Graphql, type GraphqlFailure, ensureEstimatedBudget, estimateFirstPageDetailCost, graphqlPageSize } from "../ingestion/graphql.vibe"
 import { type GitHubItem, censusItem } from "../kernels/scoring/selection.ts"
 
