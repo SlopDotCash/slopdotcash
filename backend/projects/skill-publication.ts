@@ -7,6 +7,7 @@
  * reinstatement path; ordinary publication does not request reinstatement.
  */
 
+import { backlogOutOfRotation } from "../../src/lib/backlog-rule.mjs";
 import { type IntakeCount, intakePaused } from "../../src/lib/intake-cap.mjs";
 import { listedThisMonth } from "../../src/lib/pool-funding";
 import type {
@@ -103,8 +104,10 @@ export type SkillPublicationDependencies = {
   /**
    * The stored open pull request counts behind `GET /api/v1/merge-activity`.
    * Discovery leaves out an active project whose owner set an intake cap
-   * while a recent count is at or above it (`intakePaused`). Absent, null or
-   * a failed read pauses nothing, so an outage never empties discovery.
+   * while a recent count is at or above it (`intakePaused`), and a project
+   * the backlog rule takes out of rotation (`backlogOutOfRotation`). Absent,
+   * null or a failed read leaves out nothing, so an outage never empties
+   * discovery.
    */
   intakeCounts?(): Promise<Map<string, IntakeCount[]> | null>;
   now?: () => Date;
@@ -188,7 +191,7 @@ function listed(
   );
 }
 
-/** Null when the counts cannot be read: no project is paused by its cap. */
+/** Null when the counts cannot be read: no project is left out by them. */
 async function readIntakeCounts(
   deps: SkillPublicationDependencies,
 ): Promise<Map<string, IntakeCount[]> | null> {
@@ -220,6 +223,7 @@ async function discovery(
       listed(project, records) &&
       listedThisMonth(project.manifest, now) &&
       !intakePaused(project.manifest, intake?.get(project.id), now) &&
+      !backlogOutOfRotation(project.manifest, intake?.get(project.id), now) &&
       publishesGeneratedSkills(project.manifest),
   );
   const clearances = await Promise.all(

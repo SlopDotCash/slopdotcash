@@ -59,6 +59,49 @@ export type HistoricalIntakeFailure = HistoricalIntakeProgress & {
   messageSha256: string | null;
   sourceReadRefusal?: GitHubSourceReadRefusal;
 };
+export type HistoricalIntakeTerminalFailure = Omit<
+  HistoricalIntakeFailure,
+  "event" | "sourceReadRefusal"
+>;
+
+export const INTAKE_DIAGNOSTIC_HEADER = "x-slop-intake-diagnostics";
+export const INTAKE_TERMINAL_V1 = "terminal-v1";
+
+export function terminalIntakeFailure({
+  stage,
+  sourceIndex,
+  sourceCount,
+  errorName,
+  httpStatus,
+  messageSha256,
+}: HistoricalIntakeFailure): HistoricalIntakeTerminalFailure {
+  return {
+    stage,
+    sourceIndex,
+    sourceCount,
+    errorName,
+    httpStatus,
+    messageSha256,
+  };
+}
+
+export function projectTerminalIntakeFailure(
+  value: unknown,
+): HistoricalIntakeTerminalFailure | null {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Object.keys(value).sort().join() !==
+      "errorName,httpStatus,messageSha256,sourceCount,sourceIndex,stage"
+  )
+    return null;
+  const projected = projectHistoricalIntakeFailure({
+    ...value,
+    event: "historical-intake-failure",
+  });
+  return projected ? terminalIntakeFailure(projected) : null;
+}
+
 const stages = new Set<string>(HISTORICAL_INTAKE_STAGES);
 const sourceReadCategories = new Set([
   "primary-rate-limit",
@@ -196,6 +239,7 @@ export async function withHistoricalIntakeDiagnostics<T>(
     observe: (progress: HistoricalIntakeProgress) => void,
   ) => Promise<T>,
   log: (safe: string) => void = (safe) => console.error(safe),
+  retainFailure?: (failure: HistoricalIntakeFailure) => void,
 ): Promise<T> {
   let progress: HistoricalIntakeProgress = {
     stage: "envelope",
@@ -209,7 +253,10 @@ export async function withHistoricalIntakeDiagnostics<T>(
   } catch (error) {
     try {
       const safe = await historicalIntakeFailure(progress, error);
-      if (safe) log(JSON.stringify(safe));
+      if (safe) {
+        retainFailure?.(safe);
+        log(JSON.stringify(safe));
+      }
     } catch {
       /* Original failure remains authoritative. */
     }

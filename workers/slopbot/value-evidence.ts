@@ -245,6 +245,7 @@ export interface RelatedPullRequestTimelineNode {
   };
 }
 
+// attribution-rules: begin reference-discovery
 export function valueReferenceTimelineRequest(
   repository: string,
   number: number,
@@ -556,6 +557,7 @@ export async function collectValueReferenceEvidence(
       related.limitations.push(`Incomplete ${name}: ${actual}/${expected}`);
   return { pull, ...related };
 }
+// attribution-rules: end reference-discovery
 /** True when `id` names the repository or one of its aliases, ignoring case. */
 export function namesRepository(
   repository: Pick<TargetRepository, "id" | "aliases">,
@@ -651,6 +653,16 @@ export async function pullCommits(
   return complete;
 }
 
+interface HistoricalAllocationAcceptance {
+  repositoryNodeId: string;
+  pullRequestNodeId: string;
+  headSha: string;
+  acceptedSha: string;
+  mergedAt: string;
+  baseSha: string;
+  baseRef: string;
+}
+
 export async function collectValueEvidence(
   client: EvidenceClient,
   repository: string,
@@ -658,6 +670,7 @@ export async function collectValueEvidence(
   repositoryPolicy: TargetRepository | null = findRegisteredRepositoryById(
     repository,
   ),
+  historicalAllocationAcceptance?: HistoricalAllocationAcceptance,
 ): Promise<ValueEvidence> {
   if (
     !/^[\w.-]+\/[\w.-]+$/u.test(repository) ||
@@ -1081,6 +1094,25 @@ export async function collectValueEvidence(
     // Unavailable or malformed Git objects never establish a duplicate.
   }
   if (noChangePromotion) limitations.push(NO_CHANGE_PROMOTION_CONTEXT);
+  // The historical allocation collector reconstructs implementation from a
+  // directly accepted PR on any base. A verified merge on an older branch is
+  // not missing evidence merely because the current integration branch moved.
+  if (
+    historicalAllocationAcceptance &&
+    (repositoryPolicy === null ||
+      historicalAllocationAcceptance.repositoryNodeId !==
+        repositoryIdentity.node_id ||
+      historicalAllocationAcceptance.pullRequestNodeId !== pull.node_id ||
+      historicalAllocationAcceptance.headSha !== pull.head.sha ||
+      historicalAllocationAcceptance.acceptedSha !== pull.merge_commit_sha ||
+      historicalAllocationAcceptance.acceptedSha !== mergeCommitEvidence?.sha ||
+      historicalAllocationAcceptance.mergedAt !== pull.merged_at ||
+      historicalAllocationAcceptance.baseSha !== pull.base.sha ||
+      historicalAllocationAcceptance.baseRef !== pull.base.ref ||
+      indirect.acceptance !== null ||
+      pull.state !== "closed")
+  )
+    throw new Error("Historical allocation acceptance changed");
   if (
     noChangePromotion === null &&
     pull.merged_at !== null &&
@@ -1104,9 +1136,10 @@ export async function collectValueEvidence(
         pull.base.sha,
       );
     } catch {
-      limitations.push(
-        "Historical integration branch authority is unavailable or ambiguous",
-      );
+      if (historicalAllocationAcceptance === undefined)
+        limitations.push(
+          "Historical integration branch authority is unavailable or ambiguous",
+        );
     }
   }
   if (

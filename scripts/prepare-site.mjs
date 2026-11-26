@@ -30,6 +30,7 @@ import {
 import { sha256Hex as sha256 } from "./sha256.mjs";
 import { pythonCommand } from "./skill-python.mjs";
 import { skillSourceMatchesCommit } from "./skill-source-matches-commit.mjs";
+import { scannerInputs } from "./vetting-runner-equivalence.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
@@ -162,6 +163,22 @@ const privateTraceContract = documentSection(
 writeFileSync(
   join(publicProtocolRoot, "private-trace-v1.md"),
   `# Private trace privacy contract v1\n\n${privateTraceContract.replace(/^### /gmu, "## ")}\n`,
+);
+const privateTraceContractV2 = documentSection(
+  join(repositoryRoot, "backend", "trace", "README.md"),
+  "## Private trace privacy contract v2",
+);
+writeFileSync(
+  join(publicProtocolRoot, "private-trace-v2.md"),
+  `# Private trace privacy contract v2\n\n${privateTraceContractV2.replace(/^### /gmu, "## ")}\n`,
+);
+const privateTraceContractV3 = documentSection(
+  join(repositoryRoot, "backend", "trace", "README.md"),
+  "## Private trace privacy contract v3",
+);
+writeFileSync(
+  join(publicProtocolRoot, "private-trace-v3.md"),
+  `# Private trace privacy contract v3\n\n${privateTraceContractV3.replace(/^### /gmu, "## ")}\n`,
 );
 const pointsRules = documentSection(
   join(repositoryRoot, "docs", "slop-product-requirements.md"),
@@ -428,6 +445,25 @@ writeFileSync(
         revisionStatus: rendererMatchesCommit ? "committed" : "working-tree",
       },
       acceptedRevisions: ACCEPTED_SKILL_REVISIONS,
+    },
+    null,
+    2,
+  )}\n`,
+);
+
+/**
+ * The files a production scan runs, at this commit. The outside scheduler
+ * reads it to start a scan behind a later merge only when that merge touches
+ * none of them, the same rule the controller applies with a checkout
+ * (operator decision, 23 November 2026, PRD section 8).
+ */
+writeFileSync(
+  join(publicRoot, "scanner-inputs.json"),
+  `${JSON.stringify(
+    {
+      schemaVersion: "1",
+      commit,
+      files: [...scannerInputs(repositoryRoot)].sort(),
     },
     null,
     2,

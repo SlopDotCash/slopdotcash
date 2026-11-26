@@ -151,8 +151,14 @@ export async function readReservedAwards(
   return [...awards.values()];
 }
 
-/** True only for the exact bearer token of a configured, long enough secret. */
-function authorized(request: Request, token: string | undefined): boolean {
+/**
+ * True only for the exact bearer token of a configured, long enough secret.
+ * Shared by the private operator routes; each has its own secret.
+ */
+export function bearerTokenAuthorized(
+  request: Request,
+  token: string | undefined,
+): boolean {
   const presented = request.headers.get("authorization") ?? "";
   const configured =
     typeof token === "string" && token.length >= MINIMUM_FEED_TOKEN_LENGTH;
@@ -184,7 +190,7 @@ export async function handleReservedAwardsFeed(
     url.pathname !== `${RESERVED_AWARDS_PATH}/`
   )
     return null;
-  if (!authorized(request, deps.token)) return null;
+  if (!bearerTokenAuthorized(request, deps.token)) return null;
   if (request.method !== "GET" && request.method !== "HEAD")
     return json(
       405,

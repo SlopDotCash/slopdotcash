@@ -7,12 +7,14 @@ import anchor from "@coral-xyz/anchor";
 import {
   AuthorityType,
   createAccount,
+  createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   createMint,
   createSetAuthorityInstruction,
   createTransferInstruction,
   freezeAccount,
   getAccount,
+  getAssociatedTokenAddressSync,
   mintTo,
   setAuthority,
   TOKEN_PROGRAM_ID,
@@ -2390,6 +2392,77 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
   );
 });
 
+// The payment keeper resumes an admitted month once per scheduled run. Without its
+// per-run bound the executor settles one leaf per call, so every remaining leaf costs one
+// keeper run and the owner's direct commits stay blocked for that long.
+test("an admitted month settles all remaining leaves in one keeper run bounded by perRun", async () => {
+  const { stranger, period } = await monthlyPeriod();
+  await freshProject("monthly-keeper-bound", 200_000_000n);
+  // The executor reads only finalized accounts, including this newly created project.
+  await provider.connection.confirmTransaction(
+    await program.methods
+      .setMonthlyCommitment(bn(200_000_000), true)
+      .accountsStrict({ owner: payer.publicKey, project })
+      .rpc(),
+    "finalized",
+  );
+  const entries = entriesOf(
+    ["bound-a", "bound-b", "bound-c", "bound-d", "bound-e"],
+    701,
+  );
+  const frozenAt = String(await chainTime());
+  const { total, environment, authorization } = await monthlyExecutor(
+    stranger,
+    period,
+    entries,
+    frozenAt,
+    "monthly-keeper-bound",
+  );
+  const finalized = (signatures) =>
+    Promise.all(
+      signatures.map((signature) =>
+        provider.connection.confirmTransaction(signature, "finalized"),
+      ),
+    );
+  const admitted = await submitSolanaMonthly(environment, authorization);
+  await finalized([admitted.transactionId]);
+  const read = () => program.account.project.fetch(project);
+  assert.equal((await read()).monthlyOutstanding.toString(), total);
+  // The keeper's call without a bound: one leaf for this run.
+  const unbounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+  );
+  assert.equal(unbounded.transactionIds.length, 1);
+  await finalized(unbounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "100000000");
+  await assert.rejects(
+    commit("while-outstanding", 999, 1),
+    /MonthlyOutstanding/,
+  );
+  // The keeper's perRun bound: every remaining leaf in the next run.
+  const bounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+    10,
+  );
+  assert.equal(bounded.transactionIds.length, entries.length - 1);
+  await finalized(bounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "0");
+  assert.deepEqual(
+    await submitSolanaMonthly(environment, authorization, false, 10),
+    { transactionId: null, alreadyCommitted: true },
+  );
+  for (const entry of entries) {
+    const obligation = await program.account.obligation.fetch(awardAt(entry));
+    assert.equal(obligation.actorId.toString(), entry.githubUserId);
+    assert.equal(obligation.gross.toString(), entry.grossMicro);
+  }
+  await commit("after-keeper-month", 999, 1);
+});
+
 // The monthly gate tests share a funded payer that is neither owner nor attester, the one
 // recordable period, and entries whose source digests equal the ones `commit` derives.
 async function monthlyPeriod() {
@@ -3513,7 +3586,12 @@ test("vault totals refuse a vault holding less than free, reserved and accrued f
   );
 });
 
-async function verifyClosedPayout(changedPreOwner) {
+// mode: `closed` (open before, closed after), `changed-owner` (its owner changed before
+// the payout and back for it) or `created` (created, paid, emptied and closed in one
+// transaction, so it is in neither token balance list).
+async function verifyClosedPayout(mode) {
+  const changedPreOwner = mode === "changed-owner";
+  const created = mode === "created";
   await ensureConfig(program);
   const closingRecipient = Keypair.generate();
   const priorOwner = Keypair.generate();
@@ -3530,12 +3608,14 @@ async function verifyClosedPayout(changedPreOwner) {
     closingMint,
     payer.publicKey,
   );
-  const closingDestination = await createAccount(
-    provider.connection,
-    payer,
-    closingMint,
-    closingRecipient.publicKey,
-  );
+  const closingDestination = created
+    ? getAssociatedTokenAddressSync(closingMint, closingRecipient.publicKey)
+    : await createAccount(
+        provider.connection,
+        payer,
+        closingMint,
+        closingRecipient.publicKey,
+      );
   await mintTo(
     provider.connection,
     payer,
@@ -3547,7 +3627,7 @@ async function verifyClosedPayout(changedPreOwner) {
   const closingProject = pda(
     seed("project"),
     key(payer.publicKey),
-    Buffer.from(hash(`closed-account:${changedPreOwner}:${RUN}`)),
+    Buffer.from(hash(`closed-account:${mode}:${RUN}`)),
     purposeSeed(),
   );
   const closingVault = pda(seed("vault"), key(closingProject));
@@ -3578,7 +3658,7 @@ async function verifyClosedPayout(changedPreOwner) {
   );
   await program.methods
     .initialize(
-      hash(`closed-account:${changedPreOwner}:${RUN}`),
+      hash(`closed-account:${mode}:${RUN}`),
       network,
       authority.publicKey,
       feeOwner.publicKey,
@@ -3655,6 +3735,16 @@ async function verifyClosedPayout(changedPreOwner) {
   const signature = await sendAndConfirmTransaction(
     provider.connection,
     new Transaction().add(
+      ...(created
+        ? [
+            createAssociatedTokenAccountIdempotentInstruction(
+              payer.publicKey,
+              closingDestination,
+              closingRecipient.publicKey,
+              closingMint,
+            ),
+          ]
+        : []),
       ...(changedPreOwner
         ? [
             createSetAuthorityInstruction(
@@ -3709,7 +3799,9 @@ async function verifyClosedPayout(changedPreOwner) {
     transaction.meta.preTokenBalances.find(
       (entry) => entry.accountIndex === destinationIndex,
     )?.owner,
-    (changedPreOwner ? priorOwner : closingRecipient).publicKey.toBase58(),
+    created
+      ? undefined
+      : (changedPreOwner ? priorOwner : closingRecipient).publicKey.toBase58(),
   );
   const [payment] = escrowInvocations(
     transaction,
@@ -3738,14 +3830,16 @@ async function verifyClosedPayout(changedPreOwner) {
     kind: "paid",
     obligationId: closingAward.toString("hex"),
   });
-  if (changedPreOwner)
-    await assert.rejects(verified, /Payout account balance missing/);
-  else
-    assert.equal(
-      (await verified).destination,
-      closingRecipient.publicKey.toBase58(),
-    );
+  // The program paid only the bound wallet's associated account, so each shape names
+  // that wallet whatever the token balance lists hold.
+  assert.equal(
+    (await verified).destination,
+    closingRecipient.publicKey.toBase58(),
+  );
 }
-for (const changedPreOwner of [false, true])
-  test(`payment verification ${changedPreOwner ? "refuses a different pre-owner on a closed payout account" : "handles a destination token account closed in the payout transaction"}`, () =>
-    verifyClosedPayout(changedPreOwner));
+for (const [mode, name] of [
+  ["closed", "a destination token account closed in the payout transaction"],
+  ["changed-owner", "a closed payout account whose owner changed before it"],
+  ["created", "a payout account created and closed in the payout transaction"],
+])
+  test(`payment verification handles ${name}`, () => verifyClosedPayout(mode));

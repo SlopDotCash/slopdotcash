@@ -5,15 +5,24 @@
 // @source workers/slopbot/penalties.ts
 // One appeal and one immutable debit. Reversal restores eligibility/history;
 // this has no authority to change already-funded awards or to send money.
+// `siblingHold` abstracts another finding appeal of the same debit that is
+// denied, awaits a moderator, or has an unanswered deny draft
+// (`siblingAppealHold`): the appellant cannot then uphold this one alone.
 module bot_appeal {
   var s: { phase: str, draft: str, due: bool, debitActive: bool,
-    resolution: str, resolver: str, published: bool }
+    resolution: str, resolver: str, published: bool, siblingHold: bool }
   action init = s' = { phase: "absent", draft: "none", due: false,
-    debitActive: true, resolution: "none", resolver: "none", published: false }
+    debitActive: true, resolution: "none", resolver: "none", published: false,
+    siblingHold: false }
   action open = all { s.phase == "absent", s' = s.with("phase", "triage") }
   action recordDraft(draft) = all {
     s.phase == "triage", s.draft == "none", draft.in(Set("uphold", "deny")),
     s' = s.with("draft", draft),
+  }
+  // A sibling appeal is denied, escalated or drafted deny while this one is
+  // open; the hold never lifts for this appeal.
+  action siblingHolds = all {
+    s.phase.in(Set("triage", "escalated")), s' = s.with("siblingHold", true),
   }
   action deadline = all { s.phase == "triage", s' = s.with("due", true) }
   action escalate = all { s.phase == "triage", s' = s.with("phase", "escalated") }
@@ -23,6 +32,7 @@ module bot_appeal {
     (s.phase == "escalated") implies by == "moderator",
     (by == "appellant") implies (s.draft != "none" and
       decision == (if (s.draft == "uphold") "upheld" else "denied")),
+    (by == "appellant" and decision == "upheld") implies not(s.siblingHold),
     s' = s.with("phase", "resolved").with("resolution", decision).with("resolver", by)
       .with("debitActive", decision != "upheld"),
   }
@@ -39,13 +49,16 @@ module bot_appeal {
     nondet draft = Set("uphold", "deny").oneOf()
     nondet by = Set("appellant", "maintainer", "moderator").oneOf()
     nondet decision = Set("upheld", "denied").oneOf()
-    any { open, recordDraft(draft), deadline, escalate, resolve(by, decision),
+    any { open, recordDraft(draft), siblingHolds, deadline, escalate,
+      resolve(by, decision),
       maintainerReopen, publish, replay }
   }
   val invariant = all {
     s.published implies s.phase == "resolved",
     s.resolution == "upheld" implies not(s.debitActive),
     s.phase != "resolved" implies s.resolution == "none",
+    (s.resolver == "appellant" and s.resolution == "upheld")
+      implies not(s.siblingHold),
   }
   run appealReversalTest = init.then(open).then(recordDraft("uphold"))
     .then(resolve("appellant", "upheld")).then(publish).then(replay)
@@ -54,6 +67,11 @@ module bot_appeal {
     .then(resolve("moderator", "denied")).expect(s.debitActive and s.resolver == "moderator")
   run escalatedCommandNeedsModeratorTest = init.then(open).then(escalate)
     .expect(s.phase == "escalated").then(resolve("maintainer", "upheld").fail())
+  run siblingHoldNeedsModeratorTest = init.then(open).then(recordDraft("uphold"))
+    .then(siblingHolds).then(resolve("appellant", "upheld").fail())
+  run siblingHoldModeratorUpholdTest = init.then(open).then(recordDraft("uphold"))
+    .then(siblingHolds).then(escalate).then(resolve("moderator", "upheld"))
+    .expect(not(s.debitActive) and s.resolver == "moderator")
   run independentMaintainerReopenTest = init.then(open).then(escalate).then(maintainerReopen)
     .expect(s.resolver == "maintainer" and s.resolution == "upheld" and not(s.debitActive))
 }

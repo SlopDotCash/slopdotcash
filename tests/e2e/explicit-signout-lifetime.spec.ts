@@ -4,6 +4,7 @@ import type { Page, Route } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
+  EMPTY_TRACE_LISTING,
   escapeRegExp,
   expect,
   servePublicProjectReads,
@@ -164,6 +165,8 @@ async function serve(page: Page) {
       return route.fulfill({ json: { transfers: [], totalMicro: "0" } });
     if (path === "/api/v1/referrals/me")
       return route.fulfill({ json: { enabled: false } });
+    if (path === "/api/v1/traces/me")
+      return route.fulfill({ json: EMPTY_TRACE_LISTING });
     throw new Error(
       `Unexpected signout fixture request: ${request.method()} ${path}`,
     );

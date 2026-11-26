@@ -21,6 +21,7 @@ import {
   type EscrowDeployment,
   maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
+import { ASI_NOVEMBER_CLOSEOUT } from "../../src/lib/payments/asi-november-closeout";
 import {
   type MonthlyAwardState,
   type PaymentAsset,
@@ -75,6 +76,14 @@ import {
   otherOpenPledges,
   pledgeKeepsMonth,
 } from "./month-pledges";
+
+/**
+ * MONTH_PLEDGED_SQL for the allocation change insert, with its numbered
+ * parameters: project ?9, period ?2, and the paying vault's network ?18 and
+ * address ?19, both null when no pledge can keep the month.
+ */
+const PLEDGED_MONTH_SQL =
+  "EXISTS(SELECT 1 FROM vault_month_pledges WHERE project_id=?9 AND network=?18 AND vault=?19 AND period=?2 AND amount<>'0')";
 
 /** The project bound as ?1 is not retired, read from its current manifest. */
 const NOT_RETIRED_SQL =
@@ -177,6 +186,7 @@ interface StoredBase {
   manifestSha256: string;
   sourceSnapshotSha256: string;
   capBase: string;
+  earlyCloseAt: string | null;
   rows: MonthlyBaseRow[];
 }
 
@@ -207,6 +217,16 @@ async function loadBase(
       "proposal_incomplete",
       "This month's proposed allocation is incomplete.",
     );
+  const closeout = ASI_NOVEMBER_CLOSEOUT;
+  const early =
+    projectId === closeout.projectId && period === closeout.period
+      ? await db
+          .prepare(
+            "SELECT early_close_at FROM monthly_reward_bases WHERE project_id=? AND period=?",
+          )
+          .bind(projectId, period)
+          .first<{ early_close_at: string | null }>()
+      : null;
   return {
     projectId,
     period,
@@ -214,6 +234,7 @@ async function loadBase(
     manifestSha256: base.manifest_sha256,
     sourceSnapshotSha256: base.source_snapshot_sha256,
     capBase: base.cap_base,
+    earlyCloseAt: early?.early_close_at ?? null,
     rows,
   };
 }
@@ -461,14 +482,28 @@ async function freezeMonthlyPeriod(
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   const { project, deployment } = input;
   const period = assertPeriod(input.period);
-  if (input.now.getTime() < periodEnd(period).getTime())
+  const monthOpen = input.now < periodEnd(period);
+  const earlyCloseout = ASI_NOVEMBER_CLOSEOUT;
+  const earlyBase =
+    monthOpen &&
+    input.trigger === "owner" &&
+    project.id === earlyCloseout.projectId &&
+    period === earlyCloseout.period &&
+    input.now.getTime() >= Date.parse(earlyCloseout.cutoff)
+      ? await loadBase(db, project.id, period)
+      : null;
+  if (
+    monthOpen &&
+    (earlyBase?.earlyCloseAt !== earlyCloseout.cutoff ||
+      earlyBase.capBase !== earlyCloseout.grossBase)
+  )
     throw new MonthlyPaymentError(
       409,
       "month_open",
       "This month has not closed.",
     );
   if (await loadRun(db, project.id, period)) return "already-frozen";
-  const base = await loadBase(db, project.id, period);
+  const base = earlyBase ?? (await loadBase(db, project.id, period));
   if (!base)
     throw new MonthlyPaymentError(
       404,
@@ -948,6 +983,7 @@ export interface MonthlyOwnerView {
   asset: (PaymentAsset & { symbol: string | null }) | null;
   proposal: {
     capBase: string;
+    earlyCloseAt?: string;
     allocationSequence: number;
     allocations: MonthlyAllocation[];
     /** The newest cut below a proposed amount; finalize waits 24 hours after it. */
@@ -1096,6 +1132,7 @@ export function monthlyOwnerService(deps: {
       );
       proposal = {
         capBase: base.capBase,
+        ...(base.earlyCloseAt ? { earlyCloseAt: base.earlyCloseAt } : {}),
         allocationSequence: sequence,
         allocations: currentAllocations(base.rows, changes),
         latestCutAt: await latestCutAt(deps.db, project.id, period),
@@ -1248,6 +1285,12 @@ export function monthlyOwnerService(deps: {
           "proposal_unavailable",
           "No allocation has been proposed for this month.",
         );
+      if (base.earlyCloseAt)
+        throw new MonthlyPaymentError(
+          409,
+          "closeout_allocations_fixed",
+          "This month uses the exact reviewed closeout allocations.",
+        );
       const { changes, sequence } = await loadChanges(
         deps.db,
         project.id,
@@ -1303,7 +1346,25 @@ export function monthlyOwnerService(deps: {
         );
       const noticeDeadline =
         isCut && cutoff ? new Date(cutoff.getTime() - CUT_NOTICE_MS) : null;
-      const automatic = await automaticMonthlyPayment(deps.db, project.id);
+      // A month pledged on chain in the vault that pays it freezes at the
+      // cutoff whatever the default says (operator decision, 15 November
+      // 2026), so its changes close as an automatic month's do. The statement
+      // checks the stored pledge again at execution time.
+      const served = servedDeployment(project.manifest, deps.networks());
+      const pledgeScope = pledgeKeepsMonth(!!served, project.manifest)
+        ? served
+        : null;
+      const pledged = async () =>
+        !!pledgeScope &&
+        (await monthPledged(deps.db, {
+          projectId: project.id,
+          network: pledgeScope.network,
+          vault: pledgeScope.vault,
+          period,
+        }));
+      const automatic =
+        (await automaticMonthlyPayment(deps.db, project.id)) ||
+        (await pledged());
       // Proposal reads may cross the cutoff. Use the write's time, after
       // those reads, for both eligibility and the recorded change.
       const changedAt = deps.now();
@@ -1316,7 +1377,7 @@ export function monthlyOwnerService(deps: {
         new MonthlyPaymentError(
           409,
           "cut_notice_window",
-          `A contributor gets 24 hours of notice before a cut takes effect. With automatic finalization on, cuts close at ${utcMinute(noticeDeadline as Date)}, 24 hours before the cutoff.`,
+          `A contributor gets 24 hours of notice before a cut takes effect. Because this month freezes at the cutoff, cuts close at ${utcMinute(noticeDeadline as Date)}, 24 hours before the cutoff.`,
         );
       if (isCut && automatic && noticePassed && !cutoffPassed)
         throw cutNotice();
@@ -1329,7 +1390,10 @@ export function monthlyOwnerService(deps: {
         // The registry version used for owner authorization must also remain
         // current when this statement executes.
         // A cut also needs the notice window open when automatic
-        // finalization is on, by both clocks, at execution time.
+        // finalization is on, by both clocks, at execution time. A month
+        // pledged in the paying vault takes both automatic conditions, the
+        // pledge read again here; the clause comes last because the ban
+        // query's positional parameter takes the next number (?11).
         const insert = deps.db
           .prepare(
             `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at)
@@ -1340,7 +1404,11 @@ export function monthlyOwnerService(deps: {
                AND EXISTS(SELECT 1 FROM projects WHERE id=?12 AND revision=?13 AND manifest_sha256=?14)
                AND (?15=0 OR ?16 IS NULL
                  OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=?9 ORDER BY sequence DESC LIMIT 1),1)=0
-                 OR (?17=0 AND strftime('%Y-%m-%dT%H:%M:%fZ','now')<?16))`,
+                 OR (?17=0 AND strftime('%Y-%m-%dT%H:%M:%fZ','now')<?16))
+               AND (NOT ${PLEDGED_MONTH_SQL}
+                 OR ((?8=0 AND (?10 IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ','now')<?10))
+                   AND (?15=0 OR ?16 IS NULL
+                     OR (?17=0 AND strftime('%Y-%m-%dT%H:%M:%fZ','now')<?16))))`,
           )
           .bind(
             project.id,
@@ -1360,6 +1428,8 @@ export function monthlyOwnerService(deps: {
             Number(isCut),
             noticeDeadline?.toISOString() ?? null,
             Number(noticePassed),
+            pledgeScope?.network ?? null,
+            pledgeScope?.vault ?? null,
           );
         // A cut's record and its notice commit only with the change row.
         const results = !isCut
@@ -1422,7 +1492,8 @@ export function monthlyOwnerService(deps: {
         await assertMonthlyParticipation(deps.db, actor.githubId);
         if (
           cutoff !== null &&
-          (await automaticMonthlyPayment(deps.db, project.id))
+          ((await automaticMonthlyPayment(deps.db, project.id)) ||
+            (await pledged()))
         ) {
           // A cut refused only by the notice window, before the cutoff.
           if (isCut && !cutoffPassed && Date.now() < cutoff.getTime())

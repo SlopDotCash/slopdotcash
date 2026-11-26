@@ -21,22 +21,34 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  backlogDate,
+  backlogState,
+  backlogStatusLine,
+  catchUpEnd,
+  catchUpOfferedEnd,
+  catchUpStartAllowed,
+} from "./lib/backlog-rule.mjs";
 import { INTAKE_CAP_LIMITS } from "./lib/intake-cap.mjs";
 import {
   MAINTAINER_SHARE_LIMITS,
   maintainerShareLabel,
 } from "./lib/maintainer-share.mjs";
+import { loadMergeActivity } from "./lib/merge-activity";
 import {
   type ProjectDraftStore,
   useProjectDraftSave,
   useProjectDraftStore,
 } from "./lib/project-draft-store";
+import { REPORT_DEPOSIT_SETTING_HINT } from "./lib/report-deposit-page";
+import { reportDepositOn } from "./lib/security-report-deposit.mjs";
 import {
   protectedPathProblem,
   READY_LABEL_DEFAULTS,
   READY_LABEL_LIMITS,
   type ReadyLabelSettings,
 } from "./lib/slopbot-ready.mjs";
+import { standingDepositsAccepted } from "./lib/standing-deposit.mjs";
 import { SUBMISSION_FEE_SWITCHED_ON } from "./lib/submission-fee.mjs";
 import {
   SUBMISSION_FEE_HINT,
@@ -46,6 +58,9 @@ import {
   submissionFeeAmountText,
   submissionFeeSetting,
 } from "./lib/submission-fee-setting.mjs";
+import { reportDepositSetup } from "./lib/submission-fee-setup";
+import { usePublicResource } from "./lib/use-public-resource";
+import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
 import { RewardAssetFields } from "./RewardAssetFields";
@@ -206,6 +221,10 @@ const EMPTY_PROPOSAL = {
   automaticClosure: "true",
   // On for every new project that takes contributions (PRD section 5).
   submissionFee: "true",
+  // On for every new project that takes contributions (PRD section 5).
+  wantedIssues: "true",
+  // On for every project unless its owner turns it off (PRD section 8).
+  reportDeposit: "true",
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
@@ -726,13 +745,15 @@ function submissionFeeSummary(
 }
 
 /**
- * The refundable submission fee (PRD section 5). The amount field appears
- * only where the owner can set it, on the settings page.
+ * The refundable submission fee (PRD section 5). The amount field and the
+ * standing deposit choice appear only where the owner can set them, on the
+ * settings page.
  */
 function SubmissionFeeFields({
   value,
   onChange,
   amount,
+  standing,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -741,6 +762,8 @@ function SubmissionFeeFields({
     onChange: (value: string) => void;
     error: string | undefined;
   };
+  /** Accept standing deposits (PRD section 5); absent on the new-project form. */
+  standing?: { value: string; onChange: (value: string) => void };
 }) {
   return (
     <div>
@@ -770,6 +793,86 @@ function SubmissionFeeFields({
           value={amount.value}
         />
       ) : null}
+      {standing && value === "true" ? (
+        <label className="checkbox-field">
+          <input
+            checked={standing.value === "true"}
+            name="standingDeposits"
+            onChange={(event) =>
+              standing.onChange(String(event.currentTarget.checked))
+            }
+            type="checkbox"
+          />{" "}
+          Accept standing deposits
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The refundable SLOP deposit on a private report (PRD section 8). Checked
+ * unless the project turned it off.
+ */
+function ReportDepositField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [{ switchedOn }] = useState(reportDepositSetup);
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="report-deposit-hint"
+          checked={value === "true"}
+          name="reportDeposit"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        Ask reporters for a refundable SLOP deposit
+      </label>
+      <p className="field-hint" id="report-deposit-hint">
+        {REPORT_DEPOSIT_SETTING_HINT}
+        {switchedOn
+          ? ""
+          : " Slop has not switched the deposit on yet; this choice applies once it does."}
+      </p>
+    </div>
+  );
+}
+
+function wantedIssuesSummary(on: boolean | undefined): string {
+  return on === true ? `On: ${WANTED_LABEL}` : "Off";
+}
+
+/** Wanted issues (PRD section 5): one standard label, created by Slopbot. */
+function WantedIssuesField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="wanted-issues-hint"
+          checked={value === "true"}
+          name="wantedIssues"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        List the issues you most want done
+      </label>
+      <p className="field-hint" id="wanted-issues-hint">
+        Slopbot creates the <code>{WANTED_LABEL}</code> label. Put it on 3 to 5
+        issues; they are listed first on your project page and contributor
+        agents start with them.
+      </p>
     </div>
   );
 }
@@ -1582,16 +1685,23 @@ function ProjectProposalForm({
       // A listing that is only a security program takes no contributions,
       // so it carries neither closure consent nor a submission fee.
       ...(p.fundingMode !== "bounty" &&
-      (p.automaticClosure === "true" || p.submissionFee === "true")
+      (p.automaticClosure === "true" ||
+        p.submissionFee === "true" ||
+        p.wantedIssues === "true")
         ? {
             slopbot: {
               automaticClosure: p.automaticClosure === "true",
               ...(p.submissionFee === "true"
                 ? { submissionFee: { enabled: true } }
                 : {}),
+              ...(p.wantedIssues === "true" ? { wantedIssues: true } : {}),
             },
           }
         : {}),
+      // Absent means on; only an owner who turned it off records the setting.
+      ...(p.reportDeposit === "true"
+        ? {}
+        : { security: { reportDeposit: false } }),
       // Optional funding: none, or one asset on one network with its vault
       // policy. The server verifies the asset and stores its decimals.
       ...rewardFields(
@@ -1998,8 +2108,16 @@ function ProjectProposalForm({
                   onChange={set("submissionFee")}
                   value={p.submissionFee}
                 />
+                <WantedIssuesField
+                  onChange={set("wantedIssues")}
+                  value={p.wantedIssues}
+                />
               </>
             )}
+            <ReportDepositField
+              onChange={set("reportDeposit")}
+              value={p.reportDeposit}
+            />
             {p.copyrightModel !== "unknown" || p.inboundMode !== "unknown" ? (
               <section className="setup-legal" aria-label="Saved legal terms">
                 <ChoiceField
@@ -2210,8 +2328,20 @@ function ProjectProposalForm({
                         <AutoCloseMark on={p.submissionFee === "true"} />
                       </dd>
                     </div>
+                    <div>
+                      <dt>Wanted issues</dt>
+                      <dd>
+                        <AutoCloseMark on={p.wantedIssues === "true"} />
+                      </dd>
+                    </div>
                   </>
                 )}
+                <div>
+                  <dt>Report deposit</dt>
+                  <dd>
+                    <AutoCloseMark on={p.reportDeposit === "true"} />
+                  </dd>
+                </div>
                 {bounty || p.fundingMode === "monthly" ? (
                   <div>
                     <dt>{bounty ? "Private bounty" : "Monthly funding"}</dt>
@@ -2379,6 +2509,64 @@ function intakeCapDraft(text: string): {
       };
 }
 
+function catchUpSummary(until: string | undefined, now: Date): string {
+  return until !== undefined && Date.parse(until) > now.getTime()
+    ? `Until ${backlogDate(until)}`
+    : "Off";
+}
+
+/**
+ * Catching up on reviews (PRD section 5, backlog rule): the project's backlog
+ * state in one line and one checkbox. A new pause ends 14 days ahead; it
+ * starts at most once per UTC month and can end early.
+ */
+function CatchUpField({
+  project,
+  value,
+  onChange,
+}: {
+  project: ProjectDefinition;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const now = new Date();
+  const [merge] = usePublicResource(
+    project.status === "active",
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const running = catchUpEnd(project, now);
+  const allowed = running !== null || catchUpStartAllowed(project, now);
+  const line =
+    merge.status === "ready"
+      ? backlogStatusLine(
+          backlogState(project, merge.index.get(project.id), now),
+        )
+      : null;
+  return (
+    <div>
+      {line ? (
+        <p className="field-hint" id="catch-up-state">
+          {line}
+        </p>
+      ) : null}
+      <label className="checkbox-field">
+        <input
+          aria-describedby={line ? "catch-up-state" : undefined}
+          checked={value === "true"}
+          disabled={!allowed}
+          name="catchingUp"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        {allowed
+          ? `Catching up on reviews until ${backlogDate(running ?? catchUpOfferedEnd(now))}`
+          : "Catching up on reviews (already used this month)"}
+      </label>
+    </div>
+  );
+}
+
 function intakeCapSummary(cap: number | undefined): string {
   return cap === undefined
     ? "Off"
@@ -2411,7 +2599,13 @@ type UpdateDraft = ReadyDraft & {
   submissionFee: string;
   /** The stablecoin amount as typed, for example "2" or "2.50". */
   submissionFeeAmount: string;
+  /** "true" unless the owner refuses standing deposits. */
+  standingDeposits: string;
+  wantedIssues: string;
+  reportDeposit: string;
   intakeCap: string;
+  /** "true" while catching up on reviews (backlog rule). */
+  catchingUp: string;
   headline: string;
   goal: string;
   website: string;
@@ -2441,7 +2635,11 @@ const DRAFT_FIELDS = [
   "readyProtectedPaths",
   "submissionFee",
   "submissionFeeAmount",
+  "standingDeposits",
+  "wantedIssues",
+  "reportDeposit",
   "intakeCap",
+  "catchingUp",
   "headline",
   "goal",
   "website",
@@ -2635,6 +2833,19 @@ function ProjectUpdateForm({
   const [repositoryLookup, setRepositoryLookup] = useState<
     { state: "idle" | "loading" } | { state: "error"; message: string }
   >({ state: "idle" });
+  const [branchChoices, setBranchChoices] = useState<
+    | { state: "idle" | "loading" }
+    | { state: "error"; message: string }
+    | {
+        state: "ready";
+        choices: ReadonlyArray<{ name: string; commitSha: string }>;
+      }
+  >({ state: "idle" });
+  const [branchName, setBranchName] = useState("");
+  const branchChange =
+    branchChoices.state === "ready"
+      ? branchChoices.choices.find((entry) => entry.name === branchName)
+      : undefined;
   const repositoryLookupController = useRef<AbortController | null>(null);
   useEffect(
     () => () => {
@@ -2664,6 +2875,35 @@ function ProjectUpdateForm({
     };
   }, [project.id, reload]);
   const current = base?.project ?? project;
+  const integrationBranch = current.repositories[0].integrationBranch;
+  async function loadIntegrationBranches() {
+    setBranchName("");
+    setBranchChoices({ state: "loading" });
+    try {
+      const path = new URL(current.repositories[0].githubUrl).pathname.replace(
+        /^\/|\/$/gu,
+        "",
+      );
+      const facts = await lookupGitHubRepository(
+        path,
+        AbortSignal.timeout(15000),
+      );
+      if (
+        facts.numericId !== current.authority.repositoryId ||
+        facts.nodeId !== current.authority.repositoryNodeId
+      )
+        throw new Error("GitHub returned a different repository.");
+      const choices = Object.entries(facts.branchCommits ?? {})
+        .filter(([name]) => name !== integrationBranch)
+        .map(([name, commitSha]) => ({ name, commitSha }));
+      setBranchChoices({ state: "ready", choices });
+    } catch (error) {
+      setBranchChoices({
+        state: "error",
+        message: errorMessage(error, "Cannot load integration branches."),
+      });
+    }
+  }
   const bountyOnly = hasBountyOverview(current);
   const reward = current.reward;
   const monthly = reward.kind === "monthly-pool";
@@ -2695,7 +2935,12 @@ function ProjectUpdateForm({
     submissionFeeAmount: submissionFeeAmountText(
       currentFee?.amountMinor ?? SUBMISSION_FEE_SETTING_LIMITS.defaultMinor,
     ),
+    standingDeposits: String(currentFee?.standingDeposits !== false),
+    wantedIssues: String(current.slopbot?.wantedIssues === true),
+    // On unless the project turned it off; absent is on.
+    reportDeposit: String(reportDepositOn(current)),
     intakeCap: String(current.slopbot?.intakeCap ?? ""),
+    catchingUp: String(catchUpEnd(current, new Date()) !== null),
     headline: current.headline,
     image: current.image ?? "",
     goal: current.description,
@@ -2842,11 +3087,24 @@ function ProjectUpdateForm({
   const intake = intakeCapDraft(value.intakeCap);
   // An invalid entry keeps the published number until it is corrected.
   const nextIntakeCap = intake.error ? current.slopbot?.intakeCap : intake.cap;
+  // Catching up keeps a running pause's end, or offers 14 days from today;
+  // unticking ends a running pause. An ended pause keeps its stored end.
+  const catchUpNow = new Date();
+  const runningCatchUp = catchUpEnd(current, catchUpNow);
+  const nextCatchUpUntil =
+    value.catchingUp === "true"
+      ? (runningCatchUp ??
+        (catchUpStartAllowed(current, catchUpNow)
+          ? catchUpOfferedEnd(catchUpNow)
+          : current.slopbot?.catchUpUntil))
+      : runningCatchUp === null
+        ? current.slopbot?.catchUpUntil
+        : undefined;
   const feeOn = value.submissionFee === "true";
   const feeAmount = submissionFeeAmountDraft(value.submissionFeeAmount);
   // Off keeps the owner's last amount so turning it back on restores it. An
   // invalid amount keeps the published setting until it is corrected.
-  const nextFee: SubmissionFeeSetting | undefined = feeOn
+  const feeChoice: SubmissionFeeSetting | undefined = feeOn
     ? feeAmount.error !== undefined ||
       (currentFee?.enabled === true &&
         (currentFee.amountMinor ??
@@ -2856,6 +3114,18 @@ function ProjectUpdateForm({
     : currentFee?.enabled === true
       ? { ...currentFee, enabled: false }
       : currentFee;
+  // Standing deposits are refused only by `standingDeposits: false`; an
+  // accepting setting stores nothing for them.
+  let nextFee = feeChoice;
+  if (nextFee !== undefined || value.standingDeposits !== "true") {
+    const { standingDeposits: _refused, ...fee } = nextFee ?? {
+      enabled: false,
+    };
+    nextFee =
+      value.standingDeposits === "true"
+        ? fee
+        : { ...fee, standingDeposits: false };
+  }
   const share = maintainerShareDraft(value.maintainerShare);
   const errors: Record<string, string | undefined> = {
     ...(readyOn ? ready.errors : {}),
@@ -2989,7 +3259,9 @@ function ProjectUpdateForm({
       value.automaticClosure === "true" ||
       nextReady !== undefined ||
       nextIntakeCap !== undefined ||
-      nextFee !== undefined
+      nextCatchUpUntil !== undefined ||
+      nextFee !== undefined ||
+      value.wantedIssues === "true"
         ? {
             slopbot: {
               automaticClosure: value.automaticClosure === "true",
@@ -2997,10 +3269,27 @@ function ProjectUpdateForm({
               ...(nextIntakeCap !== undefined
                 ? { intakeCap: nextIntakeCap }
                 : {}),
+              ...(nextCatchUpUntil !== undefined
+                ? { catchUpUntil: nextCatchUpUntil }
+                : {}),
+              // Only the server writes the history; it is sent back as is.
+              ...(source.slopbot?.catchUpHistory !== undefined
+                ? { catchUpHistory: source.slopbot.catchUpHistory }
+                : {}),
               ...(nextFee ? { submissionFee: nextFee } : {}),
+              ...(value.wantedIssues === "true" ? { wantedIssues: true } : {}),
             },
           }
         : {}),
+      // A project that never set it keeps no setting while it stays on.
+      ...((value.reportDeposit === "true") === reportDepositOn(source)
+        ? {}
+        : {
+            security: {
+              ...source.security,
+              reportDeposit: value.reportDeposit === "true",
+            },
+          }),
       image: value.image || undefined,
       headline: value.headline.trim(),
       description: value.goal.trim(),
@@ -3020,11 +3309,19 @@ function ProjectUpdateForm({
     } as unknown as ProjectDefinition;
   })();
   const changes = classifyRevisionChanges(current, next);
+  const branchProblem =
+    branchChange &&
+    (changes.presentation.length > 0 ||
+      changes.financial.length > 0 ||
+      changes.executable.some((field) => field !== "contribution"))
+      ? "Save the other settings before changing the integration branch."
+      : undefined;
   const changed =
+    branchChange !== undefined ||
     changes.presentation.length +
       changes.executable.length +
       changes.financial.length >
-    0;
+      0;
   // An added repository always needs its own scan, cleared project or not.
   const executableCleared = scanCleared && addedRepositories.length === 0;
   const fundingText = (minor: string, digits: number, symbol: string) =>
@@ -3057,10 +3354,34 @@ function ProjectUpdateForm({
       after: intakeCapSummary(next.slopbot?.intakeCap),
     },
     {
+      field: "catchUp",
+      label: "Catching up on reviews",
+      before: catchUpSummary(current.slopbot?.catchUpUntil, catchUpNow),
+      after: catchUpSummary(next.slopbot?.catchUpUntil, catchUpNow),
+    },
+    {
       field: "submissionFee",
       label: "Submission fee",
       before: submissionFeeSummary(current.slopbot?.submissionFee),
       after: submissionFeeSummary(next.slopbot?.submissionFee),
+    },
+    {
+      field: "standingDeposits",
+      label: "Standing deposits",
+      before: standingDepositsAccepted(current) ? "Accepted" : "Refused",
+      after: standingDepositsAccepted(next) ? "Accepted" : "Refused",
+    },
+    {
+      field: "wantedIssues",
+      label: "Wanted issues",
+      before: wantedIssuesSummary(current.slopbot?.wantedIssues),
+      after: wantedIssuesSummary(next.slopbot?.wantedIssues),
+    },
+    {
+      field: "reportDeposit",
+      label: "Report deposit",
+      before: reportDepositOn(current) ? "On" : "Off",
+      after: reportDepositOn(next) ? "On" : "Off",
     },
     ...(current.image !== next.image
       ? [
@@ -3072,6 +3393,12 @@ function ProjectUpdateForm({
           },
         ]
       : []),
+    {
+      field: "integrationBranch",
+      label: "Integration branch",
+      before: integrationBranch,
+      after: branchChange?.name ?? integrationBranch,
+    },
     {
       field: "repositories",
       label: "Repositories",
@@ -3156,7 +3483,8 @@ function ProjectUpdateForm({
         ]
       : []),
   ].filter((change) => change.before !== change.after);
-  const valid = Object.values(errors).every((error) => !error);
+  const valid =
+    !branchProblem && Object.values(errors).every((error) => !error);
   const shown = (field: string) => (attempted ? errors[field] : undefined);
   async function publish() {
     if (!mounted.current || publishInFlight.current) return;
@@ -3186,17 +3514,32 @@ function ProjectUpdateForm({
     try {
       await requireEditorActor(actorId);
       if (!mounted.current) return;
-      const result = await publishProjectRevision(
-        project.id,
-        next,
-        base.revision,
-        "",
-        !bountyOnly && choice.mode === "monthly" && changes.financial.length > 0
-          ? value.monthlyAmount.trim()
-          : null,
-        null,
-        actorId,
-      );
+      const result = branchChange
+        ? await projectApiRequest<RevisionResult>(
+            "PUT",
+            `projects/${encodeURIComponent(project.id)}`,
+            {
+              expectedRevision: base.revision,
+              integrationBranch: branchChange,
+              ...(changes.executable.includes("contribution")
+                ? { contribution: next.contribution }
+                : {}),
+            },
+            { expectedActorGithubId: actorId },
+          )
+        : await publishProjectRevision(
+            project.id,
+            next,
+            base.revision,
+            "",
+            !bountyOnly &&
+              choice.mode === "monthly" &&
+              changes.financial.length > 0
+              ? value.monthlyAmount.trim()
+              : null,
+            null,
+            actorId,
+          );
       if (!mounted.current) return;
       await requireEditorActor(actorId);
       if (!mounted.current) return;
@@ -3207,6 +3550,10 @@ function ProjectUpdateForm({
         project: result.project.manifest,
       });
       setSubmission({ state: "published", result });
+      if (branchChange) {
+        setBranchName("");
+        setBranchChoices({ state: "idle" });
+      }
       // Edits typed while the request was in flight are not part of what was
       // published; keep them as the new draft, rebased on the new revision.
       // Only clear when nothing changed since the request went out.
@@ -3238,6 +3585,13 @@ function ProjectUpdateForm({
       if (editorAccessLost(failure)) {
         onAccessLost();
         return;
+      }
+      if (
+        failure instanceof ProjectApiError &&
+        failure.code === "branch_head_changed"
+      ) {
+        setBranchName("");
+        setBranchChoices({ state: "idle" });
       }
       setSubmission({
         state: "error",
@@ -3387,8 +3741,15 @@ function ProjectUpdateForm({
   const changeEffect = (field: string): ChangeEffect =>
     field === "vault" || field === "monthly" || field === "maintainerShare"
       ? "next-month"
-      : ["slopbot", "image", "headline", "description"].includes(field) ||
-          executableCleared
+      : [
+            "slopbot",
+            "catchUp",
+            "reportDeposit",
+            "image",
+            "headline",
+            "description",
+            "integrationBranch",
+          ].includes(field) || executableCleared
         ? "live"
         : "rescan";
   const effectChip = (effect: ChangeEffect) =>
@@ -3520,9 +3881,23 @@ function ProjectUpdateForm({
               value: value.submissionFeeAmount,
             }}
             onChange={set("submissionFee")}
+            standing={{
+              onChange: set("standingDeposits"),
+              value: value.standingDeposits,
+            }}
             value={value.submissionFee}
           />
         )}
+        {bountyOnly ? null : (
+          <WantedIssuesField
+            onChange={set("wantedIssues")}
+            value={value.wantedIssues}
+          />
+        )}
+        <ReportDepositField
+          onChange={set("reportDeposit")}
+          value={value.reportDeposit}
+        />
         <details className="proposal-advanced">
           <summary>Contribution rules</summary>
           <TextField
@@ -3546,6 +3921,13 @@ function ProjectUpdateForm({
             onChange={set("intakeCap")}
             value={value.intakeCap}
           />
+          {current.reward.kind === "monthly-pool" ? (
+            <CatchUpField
+              onChange={set("catchingUp")}
+              project={current}
+              value={value.catchingUp}
+            />
+          ) : null}
           <details className="proposal-skill-rules">
             <summary>More rules</summary>
             {SKILL_RULE_FIELDS.map((field) => (
@@ -3565,9 +3947,15 @@ function ProjectUpdateForm({
         <details className="proposal-advanced">
           <summary>Repositories</summary>
           <ul>
-            {current.repositories.map((entry) => (
+            {current.repositories.map((entry, index) => (
               <li key={entry.id}>
                 {entry.id}
+                {index === 0 ? (
+                  <small className="field-hint">
+                    {" "}
+                    Integration branch <code>{integrationBranch}</code>
+                  </small>
+                ) : null}
                 {entry.countsFrom ? (
                   <>
                     {" "}
@@ -3620,6 +4008,46 @@ function ProjectUpdateForm({
               </li>
             ))}
           </ul>
+          <button
+            className="button secondary-button"
+            disabled={
+              base === null ||
+              branchChoices.state === "loading" ||
+              submission.state === "publishing"
+            }
+            onClick={() => void loadIntegrationBranches()}
+            type="button"
+          >
+            {branchChoices.state === "loading"
+              ? "Loading branches…"
+              : branchChoices.state === "ready"
+                ? "Refresh integration branches"
+                : "Change integration branch"}
+          </button>
+          {branchChoices.state === "ready" &&
+          branchChoices.choices.length > 0 ? (
+            <SelectField
+              disabled={submission.state === "publishing"}
+              error={branchProblem}
+              label="New integration branch"
+              name="integrationBranch"
+              onChange={setBranchName}
+              options={[
+                ["", `Keep ${integrationBranch}`],
+                ...branchChoices.choices.map(({ name }): [string, string] => [
+                  name,
+                  name,
+                ]),
+              ]}
+              value={branchName}
+            />
+          ) : branchChoices.state === "error" ? (
+            <p className="field-error" role="alert">
+              {branchChoices.message}
+            </p>
+          ) : branchChoices.state === "ready" ? (
+            <p role="status">No other branch head is available.</p>
+          ) : null}
           <TextField
             error={
               repositoryLookup.state === "error"

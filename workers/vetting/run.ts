@@ -55,6 +55,7 @@ import {
 } from "./publication-journal";
 import {
   acquireQueuedAssessment,
+  failureLabel,
   type QueueConnection,
   QueuedAcquisitionRefusal,
   readPendingAssessments,
@@ -195,9 +196,11 @@ async function signedRequest(
     timeoutMs: 30_000,
   });
 }
-/** A retry for a step that threw. It names the error, never the message,
- * which can carry source or provider text. A bound policy refusal takes the
- * incomplete-publication path; outages and changed inputs remain retryable.
+/** A retry for a step that threw. It names the error class, the failed
+ * acquisition read with its HTTP status, or one of the scanner's own fixed
+ * sentences, never another message, which can carry source or provider text.
+ * A bound policy refusal takes the incomplete-publication path; outages and
+ * changed inputs remain retryable.
  */
 function retry(
   assessmentId: string,
@@ -208,7 +211,7 @@ function retry(
     assessmentId,
     state: "retry",
     step,
-    reason: error instanceof Error ? error.name : "unknown",
+    reason: failureLabel(error),
   };
 }
 

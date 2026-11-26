@@ -50,11 +50,13 @@ function fixture() {
   let installation: "installed" | "suspended" | "missing" = "installed";
   let repositoryId = 123456789;
   let afterAccess: (() => void) | undefined;
+  const failing = new Set<string>();
   const repositoryAccess = async (
-    _repository: unknown,
+    repository: { path: string },
     actor: typeof MAINTAINER,
   ): Promise<RepositoryAccess> => {
-    if (unavailable) throw new Error("Synthetic provider outage");
+    if (unavailable || failing.has(repository.path))
+      throw new Error("Synthetic provider outage");
     afterAccess?.();
     if (installation === "missing") return { installation };
     if (installation === "suspended")
@@ -139,6 +141,7 @@ function fixture() {
     installation: (value: typeof installation) => (installation = value),
     replaceRepository: () => (repositoryId = 987654320),
     duringAccess: (callback: () => void) => (afterAccess = callback),
+    failFor: (path: string) => failing.add(path),
   };
 }
 
@@ -259,6 +262,56 @@ test("a later completed assessment resolves an exhausted sibling's retained sour
   f.sqlite.close();
 });
 
+test("an exhausted assessment with no earlier source gap still appears until a later assessment completes", async () => {
+  const f = fixture();
+  // Times follow the fixture clock: a finish is refused once the lease has
+  // passed real time.
+  const at = f.at(1);
+  const received = f.at().toISOString();
+  // The delivery's evidence was always complete, so no finish ever records a
+  // source gap before the digest's paid attempts run out: the run that finds
+  // them exhausted ends attempts-exhausted, terminal but not an assessment.
+  f.sqlite.run(
+    "INSERT INTO slopbot_deliveries(delivery_id,event,received_at) VALUES('delivery-one','pull_request',?)",
+    [received],
+  );
+  f.sqlite.run(
+    "INSERT INTO slopbot_value_requests(delivery_id,installation_id,repository_id,owner,repo,pull_request_number,received_at) VALUES('delivery-one',1,123456789,'example','repo',7,?)",
+    [received],
+  );
+  const claim = await claimValueRequest(f.db, "delivery-one", at);
+  if (!claim) throw new Error("Fixture claim refused");
+  await finishValueRequest(f.db, claim, "attempts-exhausted", null, at);
+  expect(
+    f.sqlite
+      .query(
+        "SELECT incomplete_since FROM slopbot_value_processing WHERE delivery_id='delivery-one'",
+      )
+      .get(),
+  ).toEqual({ incomplete_since: at.toISOString() });
+  const value = await f.list();
+  expect(value.items).toEqual([
+    {
+      projectId: "incomplete",
+      projectName: "Project incomplete",
+      repository: "example/repo",
+      pullRequest: 7,
+      since: at.toISOString(),
+      retryAt: null,
+      running: false,
+    },
+  ]);
+  expect((await f.list(ADMIN)).items).toEqual(value.items);
+  // A later delivery that completes a real assessment resolves the entry.
+  await f.seed("new-source", 7, f.at(2).toISOString());
+  const resolvedAt = f.at(3);
+  const completed = await claimValueRequest(f.db, "new-source", resolvedAt);
+  if (!completed) throw new Error("Completed claim refused");
+  await finishValueRequest(f.db, completed, "published", null, resolvedAt);
+  expect((await f.list()).items).toEqual([]);
+  f.sqlite.close();
+});
+
 test("private queue pagination preserves numeric PR ordering without dropping entries", async () => {
   const f = fixture();
   for (let number = 1; number <= 27; number++)
@@ -322,4 +375,58 @@ test("an inaccessible or replaced repository is unavailable, never a successful 
     expect((await f.list(ADMIN)).items).toHaveLength(1);
     f.sqlite.close();
   }
+});
+
+test("one repository that cannot be checked hides only its own rows", async () => {
+  const f = fixture();
+  await f.seed();
+  // A second listed project whose repository is gone from GitHub.
+  const gone = applicationManifest("gone", "gone/repo");
+  Object.assign(gone.authority as object, { repositoryId: "222222222" });
+  Object.assign(gone.rewardAsset as object, {
+    chainId: "1",
+    cluster: null,
+    decimals: 6,
+    verifiedAt: AT,
+  });
+  const manifest = JSON.stringify(gone);
+  const hash = createHash("sha256").update(manifest).digest("hex");
+  f.sqlite.run(
+    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('gone',1,?,?,'Fixture',?)",
+    [manifest, hash, AT],
+  );
+  f.sqlite.run(
+    "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('gone','paused',1,?,?,?,?)",
+    [manifest, hash, AT, AT],
+  );
+  f.sqlite.run(
+    "INSERT INTO project_repositories(repository_key,project_id) VALUES('gone/repo','gone')",
+  );
+  const received = f.at().toISOString();
+  f.sqlite.run(
+    "INSERT INTO slopbot_deliveries(delivery_id,event,received_at) VALUES('gone-one','pull_request',?)",
+    [received],
+  );
+  f.sqlite.run(
+    "INSERT INTO slopbot_value_requests(delivery_id,installation_id,repository_id,owner,repo,pull_request_number,received_at) VALUES('gone-one',1,?,'gone','repo',3,?)",
+    [222222222, received],
+  );
+  const claim = await claimValueRequest(f.db, "gone-one", new Date(received));
+  if (!claim) throw new Error("Fixture claim refused");
+  await finishValueRequest(
+    f.db,
+    claim,
+    "source-incomplete",
+    new Date(Date.parse(received) + 3_600_000),
+    new Date(received),
+  );
+  // The fixture's reader answers only for example/repo; gone/repo fails.
+  f.failFor("gone/repo");
+  const maintainer = await f.list();
+  expect(maintainer.items.map((item) => item.repository)).toEqual([
+    "example/repo",
+  ]);
+  expect((await f.list(OTHER)).items).toEqual([]);
+  expect((await f.list(ADMIN)).items).toHaveLength(2);
+  f.sqlite.close();
 });

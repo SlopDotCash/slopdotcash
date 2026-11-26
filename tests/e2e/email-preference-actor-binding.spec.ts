@@ -9,7 +9,7 @@
  */
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { escapeRegExp, expect, test } from "./fixtures";
+import { EMPTY_TRACE_LISTING, escapeRegExp, expect, test } from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -152,6 +152,9 @@ test("failed preflight never enables an email switch that writes to a new accoun
   );
   await page.route(`${site}/api/v1/referrals/me`, (route) =>
     route.fulfill({ json: { enabled: false } }),
+  );
+  await page.route(`${site}/api/v1/traces/me*`, (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
   );
 
   await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });

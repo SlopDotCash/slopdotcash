@@ -2,6 +2,11 @@
 // that behaves like the SubmissionDeposits contract: deposits are read,
 // judged and marked paid; what Slopbot's row says is due is sent once.
 import { describe, expect, test } from "bun:test";
+import { reportDepositItem } from "../../src/lib/security-report-deposit.mjs";
+import {
+  STANDING_DEPOSIT_LEDGER,
+  standingDepositItem,
+} from "../../src/lib/standing-deposit.mjs";
 import {
   SUBMISSION_FEE_BURN,
   SUBMISSION_FEE_KEPT_TO,
@@ -9,7 +14,12 @@ import {
   submissionFeeItem,
 } from "../../src/lib/submission-fee.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { NetworkConfig, SubmissionFeeConfig } from "./config";
+import { D1BuybackStore } from "../fee-converter/buyback-store";
+import {
+  type NetworkConfig,
+  parseConfig,
+  type SubmissionFeeConfig,
+} from "./config";
 import {
   type ChainDeposit,
   type ChainEvent,
@@ -23,6 +33,7 @@ import {
   PayoutFailedError,
   type ProbeResult,
   runNetwork,
+  SendConflictError,
   type SendEntry,
   SendRevertedError,
   type SendRow,
@@ -1594,5 +1605,1117 @@ describe("SLOP deposits on Robinhood Chain", () => {
       { id: 1, refund: false },
       { id: 2, refund: true },
     ]);
+  });
+});
+
+// A private security report's deposit (operator decision, 21 November 2026):
+// SLOP on Robinhood Chain, kept to the burn address, named by the report's
+// row in `security_report_deposits`. The backend writes that row and what is
+// due; the Worker marks it paid and sends what it says.
+describe("report deposits", () => {
+  const RC = "robinhood-mainnet";
+  const rc: NetworkConfig = { ...network, network: RC, chainId: 4663 };
+  const SLOP = (SUBMISSION_FEE_TOKENS[RC].slop as string).toLowerCase();
+  const USDG = (SUBMISSION_FEE_TOKENS[RC].usdg as string).toLowerCase();
+  const BURN = SUBMISSION_FEE_BURN.toLowerCase();
+  const DUE = `395${"0".repeat(18)}`;
+  const A = "sc_00000000000000000000000000000a01";
+  const B = "sc_00000000000000000000000000000b02";
+
+  function reports() {
+    const t = setup();
+    t.chain.id = 4663;
+    const run = (mode: "dry_run" | "live" = "live") =>
+      runNetwork({ ...t.deps(mode), network: rc });
+    const askReport = (caseId: string, mode = "asked") =>
+      t.sqlite
+        .query(
+          "INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at) VALUES (?, 'acme', ?, ?, ?, '78.908929', ?)",
+        )
+        .run(caseId, reportDepositItem(caseId), mode, DUE, START);
+    const decideReport = (caseId: string, outcome: string, reason: string) =>
+      t.sqlite
+        .query(
+          "UPDATE security_report_deposits SET outcome = ?, outcome_reason = ?, outcome_at = ? WHERE case_id = ?",
+        )
+        .run(outcome, reason, START, caseId);
+    const report = (caseId: string) =>
+      t.sqlite
+        .query(
+          "SELECT mode, paid_at, paid_network, paid_deposit_id, outcome, outcome_reason, outcome_at FROM security_report_deposits WHERE case_id = ?",
+        )
+        .get(caseId) as Record<string, unknown>;
+    const payReport = (
+      id: number,
+      caseId: string,
+      block: number,
+      overrides: Partial<ChainDeposit> = {},
+    ) =>
+      // The pull number is unused: the item is the report's.
+      t.chain.pay(id, 1, block, {
+        item: reportDepositItem(caseId),
+        token: SLOP,
+        amount: DUE,
+        keptTo: BURN,
+        ...overrides,
+      });
+    const deposit = (id: number) =>
+      t.sqlite
+        .query(
+          "SELECT * FROM submission_fee_deposits WHERE network = ? AND deposit_id = ?",
+        )
+        .get(RC, id) as Record<string, unknown> | null;
+    /** Moves the head and the finalized block past everything so far. */
+    const finalize = () => {
+      t.chain.latest += 20;
+      t.chain.finalized = t.chain.latest;
+    };
+    /** Mines the newest signed send and finalizes it. */
+    const settle = () => {
+      t.chain.mine(t.chain.signed.at(-1)?.rawTx as string, t.chain.latest + 1);
+      finalize();
+    };
+    return {
+      ...t,
+      run,
+      askReport,
+      decideReport,
+      report,
+      payReport,
+      deposit,
+      finalize,
+      settle,
+    };
+  }
+  /** Report `caseId` paid by deposit `id`, accepted and finalized. */
+  async function paidReport(
+    t: ReturnType<typeof reports>,
+    id: number,
+    caseId: string,
+  ) {
+    t.askReport(caseId);
+    t.payReport(id, caseId, t.chain.latest + 1);
+    t.finalize();
+    await t.run();
+    expect(t.deposit(id)).toMatchObject({ accepted: 1, state: "open" });
+    expect(t.report(caseId).paid_deposit_id).toBe(id);
+  }
+
+  test("a confirmed deposit marks its report paid before it is finalized", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.chain.latest = 112;
+    expect(await t.run()).toMatchObject({ recorded: 0, paid: 0 });
+    expect(t.report(A).paid_at).toBe(null);
+    t.chain.latest = 113;
+    expect(await t.run()).toMatchObject({ recorded: 1, judged: 1, paid: 1 });
+    expect(t.deposit(1)).toMatchObject({
+      item: reportDepositItem(A),
+      // A report's deposit names no pull request.
+      repository_id: null,
+      pull_number: null,
+      token: SLOP,
+      amount: DUE,
+      kept_to: BURN,
+      finalized_at: null,
+      accepted: 1,
+      reject_reason: null,
+      state: "open",
+    });
+    expect(t.report(A)).toMatchObject({
+      paid_at: "2026-12-01T12:00:00.000Z",
+      paid_network: RC,
+      paid_deposit_id: 1,
+      outcome: null,
+    });
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_report_paid",
+      network: RC,
+      depositId: 1,
+    });
+    // Finalization keeps the judgement and the time it was first seen paid.
+    t.clock.at += 60_000;
+    t.chain.finalized = 113;
+    expect(await t.run()).toMatchObject({ send: "none" });
+    expect(t.deposit(1)).toMatchObject({
+      accepted: 1,
+      finalized_at: "2026-12-01T12:01:00.000Z",
+    });
+    expect(t.report(A).paid_at).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  test("a deposit reorganised away stops paying its report, which waits again", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.chain.latest = 113;
+    await t.run();
+    expect(t.report(A).paid_deposit_id).toBe(1);
+    t.chain.reorgOut(1);
+    await t.run();
+    expect(t.deposit(1)).toBe(null);
+    expect(t.report(A)).toMatchObject({
+      paid_at: null,
+      paid_network: null,
+      paid_deposit_id: null,
+      outcome: null,
+    });
+    // A later deposit pays it.
+    t.payReport(2, A, 115);
+    t.chain.latest = 118;
+    expect(await t.run()).toMatchObject({ paid: 1 });
+    expect(t.report(A).paid_deposit_id).toBe(2);
+  });
+
+  test("a reorganised deposit found only at finalization also stops paying", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.chain.latest = 113;
+    await t.run();
+    t.chain.reorgOut(1);
+    // The next run already sees the block finalized, without the deposit.
+    t.chain.latest = 130;
+    t.chain.finalized = 130;
+    await t.run();
+    expect(t.deposit(1)).toBe(null);
+    expect(t.report(A).paid_deposit_id).toBe(null);
+  });
+
+  test("a deposit id that returns with other contents is judged again", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.askReport(B);
+    t.payReport(1, A, 110);
+    t.chain.latest = 113;
+    await t.run();
+    // After a reorganisation deposit 1 is a short one for the other report.
+    t.chain.reorgOut(1);
+    t.payReport(1, B, 111, { amount: (BigInt(DUE) - 1n).toString() });
+    t.finalize();
+    await t.run();
+    expect(t.report(A).paid_deposit_id).toBe(null);
+    expect(t.report(B).paid_deposit_id).toBe(null);
+    expect(t.deposit(1)).toMatchObject({
+      item: reportDepositItem(B),
+      accepted: 0,
+      reject_reason: "amount_below_due",
+    });
+  });
+
+  test("a decided report keeps its paid mark when its unfinalized deposit is reorganised away", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.chain.latest = 113;
+    await t.run();
+    t.decideReport(A, "refund_due", "responded");
+    t.chain.reorgOut(1);
+    await t.run();
+    // The same rule as a pull request's row: only an undecided row is cleared.
+    expect(t.report(A)).toMatchObject({
+      paid_deposit_id: 1,
+      outcome: "refund_due",
+    });
+    expect(t.chain.signed).toEqual([]);
+  });
+
+  test("every deposit that does not meet the terms is refused and refunded, never kept", async () => {
+    const t = reports();
+    for (const caseId of [A, B]) t.askReport(caseId);
+    const short = (BigInt(DUE) - 1n).toString();
+    t.payReport(1, A, 110, { amount: short });
+    t.payReport(2, A, 110, { keptTo: FEE_WALLET });
+    t.payReport(3, A, 110, { token: USDG, amount: "5000000", keptTo: BURN });
+    t.payReport(4, B, 110, {
+      token: USDG,
+      amount: "5000000",
+      keptTo: FEE_WALLET,
+    });
+    t.finalize();
+    expect(await t.run()).toMatchObject({ judged: 4, paid: 0, send: "sent" });
+    expect(
+      [1, 2, 3, 4].map((id) => [
+        t.deposit(id)?.accepted,
+        t.deposit(id)?.reject_reason,
+      ]),
+    ).toEqual([
+      [0, "amount_below_due"],
+      [0, "wrong_kept_to"],
+      [0, "report_token_not_slop"],
+      [0, "report_token_not_slop"],
+    ]);
+    for (const caseId of [A, B])
+      expect(t.report(caseId)).toMatchObject({ paid_at: null, outcome: null });
+    // A row edited to name a refused deposit and say kept changes nothing.
+    t.sqlite.exec(
+      `UPDATE security_report_deposits SET paid_network = '${RC}', paid_deposit_id = 2, outcome = 'kept_due' WHERE case_id = '${A}'`,
+    );
+    t.settle();
+    await t.run();
+    expect(t.chain.signed.flatMap((tx) => tx.entries)).toEqual(
+      [1, 2, 3, 4].map((id) => ({ id, refund: true })),
+    );
+    for (const id of [1, 2, 3, 4])
+      expect(t.deposit(id)?.state).toBe("refunded");
+  });
+
+  test("on Base a deposit naming a report is refused and refunded", async () => {
+    const t = setup();
+    t.sqlite
+      .query(
+        "INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at) VALUES (?, 'acme', ?, 'asked', ?, '78.908929', ?)",
+      )
+      .run(A, reportDepositItem(A), DUE, START);
+    t.chain.pay(1, 1, 110, { item: reportDepositItem(A), amount: "5000000" });
+    t.chain.latest = 130;
+    t.chain.finalized = 130;
+    expect(await t.run()).toMatchObject({ judged: 1, paid: 0, send: "sent" });
+    expect(t.deposit(1)).toMatchObject({
+      accepted: 0,
+      reject_reason: "report_wrong_network",
+      repository_id: null,
+    });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    expect(
+      t.sqlite
+        .query("SELECT paid_at FROM security_report_deposits WHERE case_id = ?")
+        .get(A),
+    ).toEqual({ paid_at: null });
+  });
+
+  test("a deposit naming a recorded row waits a day like any unknown item, then is refunded", async () => {
+    const t = reports();
+    // Record-only mode wrote the row: it asks for nothing.
+    t.askReport(A, "recorded");
+    t.payReport(1, A, 110);
+    t.finalize();
+    expect(await t.run()).toMatchObject({ judged: 0, paid: 0, send: "none" });
+    expect(t.deposit(1)).toMatchObject({ accepted: null, state: "open" });
+    // Even a recorded row edited to say kept is not a reason to keep.
+    t.sqlite.exec(
+      `UPDATE security_report_deposits SET paid_network = '${RC}', paid_deposit_id = 1, outcome = 'kept_due' WHERE case_id = '${A}'`,
+    );
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ judged: 1, paid: 0, send: "sent" });
+    expect(t.deposit(1)).toMatchObject({
+      accepted: 0,
+      reject_reason: "unknown_item",
+    });
+    expect(t.chain.signed.map((tx) => tx.entries)).toEqual([
+      [{ id: 1, refund: true }],
+    ]);
+    expect(t.report(A).mode).toBe("recorded");
+  });
+
+  test("a deposit for a report nobody asked a deposit for is refunded after the day", async () => {
+    const t = reports();
+    t.payReport(1, "sc_no_row_for_this_report", 110);
+    t.finalize();
+    expect(await t.run()).toMatchObject({ judged: 0, send: "none" });
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ judged: 1, send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+  });
+
+  test("the row arriving inside that day makes the deposit count", async () => {
+    const t = reports();
+    t.payReport(1, A, 110);
+    t.finalize();
+    await t.run();
+    t.askReport(A);
+    t.clock.at += 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ paid: 1 });
+    expect(t.report(A).paid_deposit_id).toBe(1);
+  });
+
+  test("a row turned back to recorded while its deposit is being judged is not marked paid", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.finalize();
+    // The backend withdraws the request between the Worker's read of the
+    // row and its write.
+    const real = t.store.reportByHash.bind(t.store);
+    t.store.reportByHash = async (item) => {
+      const row = await real(item);
+      t.sqlite.exec(
+        `UPDATE security_report_deposits SET mode = 'recorded' WHERE case_id = '${A}'`,
+      );
+      return row;
+    };
+    expect(await t.run()).toMatchObject({ judged: 0, paid: 0, send: "none" });
+    t.store.reportByHash = real;
+    expect(t.report(A)).toMatchObject({ mode: "recorded", paid_at: null });
+    expect(t.deposit(1)?.accepted).toBe(null);
+    // From then on it is an unknown item: sent back after the day.
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ judged: 1, paid: 0, send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    expect(t.report(A).paid_at).toBe(null);
+  });
+
+  test("another token naming a report is refused at once and never resolved", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110, { token: `0x${"9".repeat(40)}` });
+    t.finalize();
+    t.decideReport(A, "refund_due", "responded");
+    for (let run = 0; run < 3; run += 1) {
+      expect(await t.run()).toMatchObject({ send: "none", parked: 0 });
+      t.clock.at += 40 * 24 * 60 * 60 * 1000;
+    }
+    expect(t.deposit(1)).toMatchObject({
+      accepted: 0,
+      reject_reason: "token_not_accepted",
+      state: "open",
+    });
+    expect(t.chain.simulations).toBe(0);
+    expect(t.sends()).toEqual([]);
+    expect(t.report(A).paid_at).toBe(null);
+  });
+
+  test("only the first of two deposits pays a report; the second is refunded even when the report is kept", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.payReport(2, A, 110, { payer: `0x${"b".repeat(40)}` });
+    t.finalize();
+    await t.run();
+    expect(t.report(A).paid_deposit_id).toBe(1);
+    await t.run();
+    expect(t.deposit(2)).toMatchObject({
+      accepted: 0,
+      reject_reason: "item_already_paid",
+    });
+    t.decideReport(A, "kept_due", "spam");
+    await t.run();
+    t.settle();
+    await t.run();
+    t.settle();
+    await t.run();
+    expect(t.chain.signed.flatMap((tx) => tx.entries)).toEqual([
+      { id: 2, refund: true },
+      { id: 1, refund: false },
+    ]);
+    expect(t.deposit(1)?.state).toBe("kept");
+    expect(t.deposit(2)?.state).toBe("refunded");
+  });
+
+  test("a run that died between marking paid and recording the judgement recovers", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.payReport(1, A, 110);
+    t.chain.latest = 113;
+    const real = t.store.setJudgement.bind(t.store);
+    t.store.setJudgement = async () => {
+      throw new Error("died");
+    };
+    await expect(t.run()).rejects.toThrow("died");
+    expect(t.report(A).paid_deposit_id).toBe(1);
+    expect(t.deposit(1)?.accepted).toBe(null);
+    t.store.setJudgement = real;
+    t.clock.at += 300_000;
+    await t.run();
+    expect(t.deposit(1)?.accepted).toBe(1);
+    expect(t.report(A).paid_at).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  test("nothing is sent while the report is undecided, or before its deposit is finalized", async () => {
+    const t = reports();
+    await paidReport(t, 1, A);
+    for (let run = 0; run < 2; run += 1)
+      expect(await t.run()).toMatchObject({ send: "none" });
+    t.askReport(B);
+    t.payReport(2, B, t.chain.latest + 1);
+    t.chain.latest += 3;
+    await t.run();
+    expect(t.report(B).paid_deposit_id).toBe(2);
+    t.decideReport(B, "kept_due", "spam");
+    expect(await t.run()).toMatchObject({ send: "none" });
+    expect(t.deposit(2)).toMatchObject({ state: "open", finalized_at: null });
+    expect(t.chain.signed).toEqual([]);
+    expect(t.sends()).toEqual([]);
+  });
+
+  test("a response sends the deposit back, and the report row gets the final outcome and time", async () => {
+    const t = reports();
+    await paidReport(t, 1, A);
+    t.decideReport(A, "refund_due", "responded");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.deposit(1)?.state).toBe("refund_due");
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    // Until the chain's own finalized event, the row keeps what is due.
+    expect(t.report(A).outcome).toBe("refund_due");
+    t.settle();
+    expect(await t.run()).toMatchObject({ resolved: 1, send: "none" });
+    expect(t.deposit(1)).toMatchObject({
+      state: "refunded",
+      resolve_tx: t.chain.signed[0].txId,
+    });
+    expect(t.report(A)).toMatchObject({
+      outcome: "refunded",
+      // The backend's reason stays.
+      outcome_reason: "responded",
+      paid_deposit_id: 1,
+    });
+    expect(t.report(A).outcome_at).toBe(t.deposit(1)?.resolved_at);
+    expect(await t.run()).toMatchObject({ send: "none" });
+    expect(t.chain.signed).toHaveLength(1);
+  });
+
+  test("a deposit is kept only when the row it paid says kept_due, and it is burned, not income", async () => {
+    const t = reports();
+    await paidReport(t, 1, A);
+    t.decideReport(A, "kept_due", "duplicate");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: false }]);
+    t.settle();
+    await t.run();
+    expect(t.deposit(1)).toMatchObject({ state: "kept", kept_to: BURN });
+    expect(t.report(A)).toMatchObject({
+      outcome: "kept",
+      outcome_reason: "duplicate",
+    });
+    expect(t.report(A).outcome_at).toBe(t.deposit(1)?.resolved_at);
+    // The fee converter counts kept fees sent to the fee wallet. This one
+    // went to the burn address.
+    const income = new D1BuybackStore(t.db as never);
+    for (const token of [SLOP, USDG])
+      expect(
+        await income.feeIncome(
+          "robinhood",
+          token,
+          FEE_WALLET,
+          "2026-11-12T00:00:00.000Z",
+        ),
+      ).toBe(0n);
+  });
+
+  test("a reclaim by the payer is recorded as sent back", async () => {
+    const t = reports();
+    await paidReport(t, 1, A);
+    t.decideReport(A, "kept_due", "spam");
+    // The payer took it back from the contract first.
+    t.chain.reclaim(1, t.chain.latest + 1);
+    expect(await t.run()).toMatchObject({ send: "none" });
+    expect(t.chain.signed).toEqual([]);
+    t.finalize();
+    await t.run();
+    expect(t.deposit(1)?.state).toBe("reclaimed");
+    expect(t.report(A).outcome).toBe("refunded");
+  });
+
+  test("a Resolved event without its proven transfer is not recorded", async () => {
+    const t = reports();
+    await paidReport(t, 1, A);
+    t.decideReport(A, "kept_due", "spam");
+    await t.run();
+    t.settle();
+    t.chain.transfersProven = false;
+    await expect(t.run()).rejects.toThrow("transfer not proven");
+    expect(t.deposit(1)?.state).toBe("kept_due");
+    expect(t.report(A).outcome).toBe("kept_due");
+  });
+
+  test("a report's deposit and a pull request's fee settle in one batch, each on its own row", async () => {
+    const t = reports();
+    await paidReport(t, 1, A);
+    await paidReport(t, 2, B);
+    for (const pull of [7, 8]) t.ask(pull);
+    t.chain.pay(3, 7, t.chain.latest + 1, { token: USDG });
+    t.chain.pay(4, 8, t.chain.latest + 1, { token: USDG });
+    t.finalize();
+    expect(await t.run()).toMatchObject({ paid: 2, send: "none" });
+    expect(t.deposit(3)).toMatchObject({ repository_id: REPOSITORY });
+    t.decideReport(A, "refund_due", "silent");
+    t.decideReport(B, "kept_due", "out-of-scope");
+    t.decide(7, "kept_due");
+    t.decide(8, "refund_due");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([
+      { id: 1, refund: true },
+      { id: 2, refund: false },
+      { id: 3, refund: false },
+      { id: 4, refund: true },
+    ]);
+    t.settle();
+    expect(await t.run()).toMatchObject({ resolved: 4 });
+    expect([1, 2, 3, 4].map((id) => t.deposit(id)?.state)).toEqual([
+      "refunded",
+      "kept",
+      "kept",
+      "refunded",
+    ]);
+    expect(t.report(A).outcome).toBe("refunded");
+    expect(t.report(B).outcome).toBe("kept");
+    const pulls = t.sqlite
+      .query(
+        "SELECT pull_number, outcome FROM submission_fee_items ORDER BY pull_number",
+      )
+      .all();
+    expect(pulls).toEqual([
+      { pull_number: 7, outcome: "kept" },
+      { pull_number: 8, outcome: "refunded" },
+    ]);
+    // Only the pull request's stablecoin fee is fee income.
+    const income = new D1BuybackStore(t.db as never);
+    expect(
+      await income.feeIncome(
+        "robinhood",
+        USDG,
+        FEE_WALLET,
+        "2026-11-12T00:00:00.000Z",
+      ),
+    ).toBe(2_000_000n);
+    expect(
+      await income.feeIncome(
+        "robinhood",
+        SLOP,
+        FEE_WALLET,
+        "2026-11-12T00:00:00.000Z",
+      ),
+    ).toBe(0n);
+  });
+
+  test("a dry run lists a report's refund and keep and signs nothing", async () => {
+    const t = reports();
+    t.askReport(A);
+    t.askReport(B);
+    t.payReport(1, A, 110);
+    t.payReport(2, B, 110);
+    t.finalize();
+    expect(await t.run("dry_run")).toMatchObject({ paid: 2, send: "none" });
+    t.decideReport(A, "refund_due", "turned-off");
+    t.decideReport(B, "kept_due", "spam");
+    expect(await t.run("dry_run")).toMatchObject({ send: "recorded" });
+    expect(t.sends()[0]).toMatchObject({
+      mode: "dry_run",
+      deposits: '[{"id":1,"refund":true},{"id":2,"refund":false}]',
+      raw_tx: null,
+    });
+    expect(t.chain.signed).toEqual([]);
+    expect(t.report(B).outcome).toBe("kept_due");
+  });
+
+  test("a parked report deposit does not hold up the ones behind it", async () => {
+    const t = reports();
+    await paidReport(t, 1, A);
+    await paidReport(t, 2, B);
+    t.decideReport(A, "refund_due", "responded");
+    t.decideReport(B, "refund_due", "responded");
+    t.chain.unpayable.add(1);
+    expect(await t.run()).toMatchObject({ send: "sent", parked: 1 });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 2, refund: true }]);
+    expect(t.deposit(1)).toMatchObject({ state: "refund_due", accepted: 1 });
+    expect(t.report(A).outcome).toBe("refund_due");
+  });
+
+  test("without the reports table pull request deposits work as before", async () => {
+    const t = setup();
+    t.sqlite.exec("DROP TABLE security_report_deposits");
+    t.ask(7);
+    t.ask(8);
+    t.chain.pay(1, 7, 110);
+    t.chain.pay(2, 8, 110);
+    // A SLOP deposit that names a report: just an unknown item here.
+    t.chain.pay(3, 1, 110, { item: reportDepositItem(A) });
+    t.chain.latest = 113;
+    expect(await t.run()).toMatchObject({ recorded: 3, paid: 2 });
+    t.chain.reorgOut(2);
+    await t.run();
+    expect(t.deposit(2)).toBe(null);
+    expect(t.item(8).paid_deposit_id).toBe(null);
+    t.chain.latest = 130;
+    t.chain.finalized = 130;
+    t.decide(7, "kept_due");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: false }]);
+    t.chain.mine(t.chain.signed[0].rawTx, 140);
+    t.chain.latest = 150;
+    t.chain.finalized = 150;
+    expect(await t.run()).toMatchObject({ resolved: 1 });
+    expect(t.item(7).outcome).toBe("kept");
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ judged: 1, send: "sent" });
+    expect(t.deposit(3)).toMatchObject({
+      accepted: 0,
+      reject_reason: "unknown_item",
+    });
+    expect(t.chain.signed[1].entries).toEqual([{ id: 3, refund: true }]);
+  });
+});
+
+// The standing deposit (operator decision, 23 November 2026; PRD section 5):
+// a second SubmissionDeposits contract on Robinhood Chain, read as its own
+// ledger. Its deposits pay rows in `standing_deposits` only; Slopbot decides
+// what is due on a row, and the Worker sends what it says.
+describe("standing deposits", () => {
+  const RC = "robinhood-mainnet";
+  const LEDGER = STANDING_DEPOSIT_LEDGER;
+  const STANDING_CONTRACT = `0x${"d".repeat(40)}`;
+  const standingNet: NetworkConfig = {
+    ...network,
+    network: LEDGER,
+    chain: RC,
+    chainId: 4663,
+    contract: STANDING_CONTRACT,
+  };
+  const rc: NetworkConfig = { ...network, network: RC, chainId: 4663 };
+  const SLOP = (SUBMISSION_FEE_TOKENS[RC].slop as string).toLowerCase();
+  const USDG = (SUBMISSION_FEE_TOKENS[RC].usdg as string).toLowerCase();
+  const BURN = SUBMISSION_FEE_BURN.toLowerCase();
+  const DUE = `790${"0".repeat(18)}`;
+  const ALICE = 9001;
+  const BOB = 9002;
+
+  function standing() {
+    const t = setup();
+    t.chain.id = 4663;
+    const run = (mode: "dry_run" | "live" = "live", siblings?: string[]) =>
+      runNetwork({ ...t.deps(mode), network: standingNet, siblings });
+    const ask = (githubId: number, round = 1, slopAmount = DUE) =>
+      t.sqlite
+        .query(
+          "INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at) VALUES (?, ?, ?, ?, ?, '78.908929', ?)",
+        )
+        .run(
+          `sd_${String(githubId).padStart(8, "0")}_${round}`,
+          githubId,
+          round,
+          standingDepositItem(githubId, round),
+          slopAmount,
+          START,
+        );
+    const row = (githubId: number, round = 1) =>
+      t.sqlite
+        .query(
+          "SELECT paid_at, paid_network, paid_deposit_id, cancelled_at, outcome, outcome_reason, outcome_at FROM standing_deposits WHERE github_id = ? AND round = ?",
+        )
+        .get(githubId, round) as Record<string, unknown>;
+    const decide = (
+      githubId: number,
+      outcome: string,
+      reason: string,
+      round = 1,
+    ) =>
+      t.sqlite
+        .query(
+          "UPDATE standing_deposits SET outcome = ?, outcome_reason = ?, outcome_at = ?, strike_repository_id = ?, strike_pull_number = ? WHERE github_id = ? AND round = ?",
+        )
+        .run(
+          outcome,
+          reason,
+          START,
+          reason === "strike" ? REPOSITORY : null,
+          reason === "strike" ? 12 : null,
+          githubId,
+          round,
+        );
+    const pay = (
+      id: number,
+      githubId: number,
+      block: number,
+      overrides: Partial<ChainDeposit> = {},
+      round = 1,
+    ) =>
+      t.chain.pay(id, 1, block, {
+        item: standingDepositItem(githubId, round),
+        token: SLOP,
+        amount: DUE,
+        keptTo: BURN,
+        ...overrides,
+      });
+    const deposit = (id: number, ledger: string = LEDGER) =>
+      t.sqlite
+        .query(
+          "SELECT * FROM submission_fee_deposits WHERE network = ? AND deposit_id = ?",
+        )
+        .get(ledger, id) as Record<string, unknown> | null;
+    const finalize = () => {
+      t.chain.latest += 20;
+      t.chain.finalized = t.chain.latest;
+    };
+    const settle = () => {
+      t.chain.mine(t.chain.signed.at(-1)?.rawTx as string, t.chain.latest + 1);
+      finalize();
+    };
+    return { ...t, run, ask, row, decide, pay, deposit, finalize, settle };
+  }
+
+  test("an accepted deposit marks its row paid, before finality, on the standing ledger only", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.chain.latest = 113;
+    expect(await t.run()).toMatchObject({ recorded: 1, judged: 1, paid: 1 });
+    expect(t.deposit(1)).toMatchObject({
+      item: standingDepositItem(ALICE, 1),
+      repository_id: null,
+      pull_number: null,
+      accepted: 1,
+      state: "open",
+      finalized_at: null,
+    });
+    expect(t.row(ALICE)).toMatchObject({
+      paid_at: "2026-12-01T12:00:00.000Z",
+      paid_network: LEDGER,
+      paid_deposit_id: 1,
+      outcome: null,
+    });
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_standing_paid",
+      network: LEDGER,
+      depositId: 1,
+    });
+    // Its cursor is its own.
+    t.finalize();
+    await t.run();
+    const cursor = t.sqlite
+      .query("SELECT network FROM submission_fee_cursors")
+      .all();
+    expect(cursor).toEqual([{ network: LEDGER }]);
+    expect(t.deposit(1)?.finalized_at).not.toBe(null);
+  });
+
+  test("the per pull request contract never pays a standing row", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    // The same deposit read by the Robinhood Chain fee ledger.
+    const fee = () => runNetwork({ ...t.deps(), network: rc });
+    expect(await fee()).toMatchObject({ recorded: 1, judged: 0, paid: 0 });
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await fee()).toMatchObject({ judged: 1, send: "sent" });
+    expect(t.deposit(1, RC)).toMatchObject({
+      accepted: 0,
+      reject_reason: "unknown_item",
+    });
+    expect(t.row(ALICE).paid_at).toBe(null);
+  });
+
+  test("every deposit that does not meet the terms is refused and sent back, never kept", async () => {
+    const t = standing();
+    for (const id of [ALICE, BOB]) t.ask(id);
+    t.ask(3, 1);
+    t.sqlite.exec(
+      `UPDATE standing_deposits SET cancelled_at = '${START}' WHERE github_id = 3`,
+    );
+    t.pay(1, ALICE, 110, { token: USDG, amount: "10000000" });
+    t.pay(2, ALICE, 110, { keptTo: FEE_WALLET });
+    t.pay(3, ALICE, 110, { amount: (BigInt(DUE) - 1n).toString() });
+    t.pay(4, 3, 110);
+    t.pay(5, BOB, 110);
+    t.pay(6, BOB, 110, { payer: `0x${"b".repeat(40)}` });
+    t.finalize();
+    // A dry run judges and signs nothing.
+    await t.run("dry_run");
+    const reasons = [1, 2, 3, 4, 5, 6].map((id) => {
+      const row = t.deposit(id);
+      return [row?.accepted, row?.reject_reason];
+    });
+    expect(reasons).toEqual([
+      [0, "standing_token_not_slop"],
+      [0, "wrong_kept_to"],
+      [0, "amount_below_due"],
+      [0, "standing_cancelled"],
+      [1, null],
+      [0, "item_already_paid"],
+    ]);
+    expect(t.row(ALICE).paid_at).toBe(null);
+    expect(t.row(3)).toMatchObject({ paid_at: null, cancelled_at: START });
+    expect(t.row(BOB).paid_deposit_id).toBe(5);
+    // Even a row edited to say kept never keeps a refused deposit.
+    t.decide(BOB, "kept_due", "strike");
+    t.sqlite.exec(
+      `UPDATE standing_deposits SET paid_deposit_id = 6 WHERE github_id = ${BOB}`,
+    );
+    await t.run();
+    expect(t.chain.signed.flatMap((tx) => tx.entries)).toEqual([
+      { id: 1, refund: true },
+      { id: 2, refund: true },
+      { id: 3, refund: true },
+      { id: 4, refund: true },
+      { id: 6, refund: true },
+    ]);
+  });
+
+  test("a deposit of another token is refused at once and never resolved", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110, { token: `0x${"9".repeat(40)}` });
+    t.finalize();
+    for (let run = 0; run < 2; run += 1) {
+      expect(await t.run()).toMatchObject({ send: "none" });
+      t.clock.at += 40 * 24 * 60 * 60 * 1000;
+    }
+    expect(t.deposit(1)).toMatchObject({
+      accepted: 0,
+      reject_reason: "token_not_accepted",
+    });
+    expect(t.chain.simulations).toBe(0);
+  });
+
+  test("a deposit for an item no row has waits a day, then is sent back", async () => {
+    const t = standing();
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    expect(await t.run()).toMatchObject({ judged: 0, send: "none" });
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ judged: 1, send: "sent" });
+    expect(t.deposit(1)?.reject_reason).toBe("unknown_item");
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+  });
+
+  test("kept only when the row it paid says kept_due, then the row reads kept", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    await t.run();
+    expect(await t.run()).toMatchObject({ send: "none" });
+    t.decide(ALICE, "kept_due", "strike");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: false }]);
+    expect(t.row(ALICE).outcome).toBe("kept_due");
+    t.settle();
+    expect(await t.run()).toMatchObject({ resolved: 1 });
+    expect(t.deposit(1)).toMatchObject({ state: "kept", kept_to: BURN });
+    expect(t.row(ALICE)).toMatchObject({
+      outcome: "kept",
+      outcome_reason: "strike",
+    });
+    expect(t.row(ALICE).outcome_at).toBe(t.deposit(1)?.resolved_at);
+  });
+
+  test("refund_due sends it back, and the row reads refunded with its reason", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    await t.run();
+    t.decide(ALICE, "refund_due", "withdrawn");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    t.settle();
+    await t.run();
+    expect(t.deposit(1)?.state).toBe("refunded");
+    expect(t.row(ALICE)).toMatchObject({
+      outcome: "refunded",
+      outcome_reason: "withdrawn",
+    });
+  });
+
+  test("a deposit reorganised away before finality stops paying its row", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.chain.latest = 113;
+    await t.run();
+    expect(t.row(ALICE).paid_deposit_id).toBe(1);
+    t.chain.reorgOut(1);
+    await t.run();
+    expect(t.deposit(1)).toBe(null);
+    expect(t.row(ALICE)).toMatchObject({
+      paid_at: null,
+      paid_network: null,
+      paid_deposit_id: null,
+    });
+  });
+
+  describe("one key on one chain", () => {
+    test("a ledger waits while its sibling on the same chain has a send in flight", async () => {
+      const t = standing();
+      // The Robinhood Chain fee ledger has a live send in flight.
+      t.sqlite
+        .query(
+          "INSERT INTO submission_fee_sends (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, created_at, updated_at) VALUES ('sfs_inflight01', ?, 'live', ?, '[{\"id\":1,\"refund\":true}]', ?, ?, '0x02ffffffff', 0, '400', 'submitted', ?, ?)",
+        )
+        .run(RC, CONTRACT, RESOLVER, `0x${"e".repeat(64)}`, START, START);
+      t.ask(ALICE);
+      t.pay(1, ALICE, 110);
+      t.finalize();
+      await t.run("live", [RC]);
+      t.decide(ALICE, "refund_due", "withdrawn");
+      expect(await t.run("live", [RC])).toMatchObject({
+        send: "sibling_in_flight",
+      });
+      expect(t.chain.signed).toEqual([]);
+      // A dry run records the list; nothing is signed either way.
+      expect(await t.run("dry_run", [RC])).toMatchObject({ send: "recorded" });
+      // Once the sibling's send is settled, this ledger sends.
+      t.sqlite.exec(
+        "UPDATE submission_fee_sends SET state = 'finalized', block_number = 1, finalized_at = updated_at WHERE id = 'sfs_inflight01'",
+      );
+      expect(await t.run("live", [RC])).toMatchObject({ send: "sent" });
+      expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    });
+
+    test("the insert itself refuses a send while a sibling holds one, and the day's limit is shared", async () => {
+      const t = standing();
+      const row = (
+        id: string,
+        ledger: string,
+        tx: string,
+        wei = "400",
+        state: SendRow["state"] = "submitted",
+      ): SendRow => ({
+        id,
+        network: ledger,
+        mode: "live",
+        contract: ledger === RC ? CONTRACT : STANDING_CONTRACT,
+        deposits: [{ id: 1, refund: true }],
+        resolver: RESOLVER,
+        txId: `0x${tx.repeat(64)}`,
+        rawTx: "0x02ffffffff",
+        evmNonce: 0,
+        maximumNativeWei: wei,
+        state,
+        reason: state === "failed" ? "resolve transaction reverted" : null,
+        blockNumber: null,
+        createdAt: START,
+        updatedAt: START,
+        finalizedAt: null,
+      });
+      const limits = network.gas;
+      await t.store.insertSend(row("sfs_ledger_a01", RC, "a"), limits, [
+        LEDGER,
+      ]);
+      // A run that read no open sibling before signing still loses here.
+      await expect(
+        t.store.insertSend(row("sfs_ledger_b01", LEDGER, "b"), limits, [RC]),
+      ).rejects.toBeInstanceOf(SendConflictError);
+      t.sqlite.exec(
+        "UPDATE submission_fee_sends SET state = 'finalized', block_number = 1, finalized_at = updated_at WHERE id = 'sfs_ledger_a01'",
+      );
+      // 400 spent today on the shared key; 1,000 more stays inside 2,500.
+      await expect(
+        t.store.assertGasBudget(LEDGER, "1000", limits, new Date(START), [RC]),
+      ).resolves.toBeUndefined();
+      // A failed send still spent its reserve against the day's limit.
+      await t.store.insertSend(
+        row("sfs_spent_c01", RC, "c", "1500", "failed"),
+        { perTransactionWei: "2000", perDayWei: "5000" },
+      );
+      await expect(
+        t.store.assertGasBudget(LEDGER, "1000", limits, new Date(START), [RC]),
+      ).rejects.toBeInstanceOf(GasBudgetError);
+      // Without siblings each ledger counts only its own spend, as before.
+      await expect(
+        t.store.assertGasBudget(LEDGER, "1000", limits, new Date(START)),
+      ).resolves.toBeUndefined();
+    });
+
+    test("the run names the other ledgers on the same chain as siblings", async () => {
+      const t = standing();
+      const fee = new Chain();
+      fee.id = 4663;
+      t.sqlite
+        .query(
+          "INSERT INTO submission_fee_sends (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, created_at, updated_at) VALUES ('sfs_inflight01', ?, 'live', ?, '[{\"id\":1,\"refund\":true}]', ?, ?, '0x02ffffffff', 0, '400', 'submitted', ?, ?)",
+        )
+        .run(RC, CONTRACT, RESOLVER, `0x${"e".repeat(64)}`, START, START);
+      fee.mempool.add("0x02ffffffff");
+      t.ask(ALICE);
+      t.pay(1, ALICE, 110);
+      t.finalize();
+      const three = (config: SubmissionFeeConfig): SubmissionFeeConfig => ({
+        ...config,
+        unset: [],
+        networks: [network, rc, standingNet],
+      });
+      const live = {
+        ...env("live", t.db),
+        SUBMISSION_FEE_RESOLVER_KEY: `0x${"1".repeat(64)}`,
+      };
+      const chainFor = (config: NetworkConfig) =>
+        config.network === LEDGER ? t.chain : fee;
+      await runDeposits(live, () => new Date(t.clock.at), {
+        config: three,
+        chain: chainFor,
+        log: () => {},
+      });
+      expect(t.row(ALICE).paid_deposit_id).toBe(1);
+      t.decide(ALICE, "refund_due", "withdrawn");
+      const result = await runDeposits(live, () => new Date(t.clock.at), {
+        config: three,
+        chain: chainFor,
+        log: () => {},
+      });
+      expect(result).toMatchObject({
+        status: "ran",
+        networks: [
+          { network: NETWORK },
+          { network: RC, send: "in_flight" },
+          { network: LEDGER, send: "sibling_in_flight" },
+        ],
+      });
+      expect(t.chain.signed).toEqual([]);
+    });
+  });
+});
+
+describe("the standing ledger in the configuration", () => {
+  const gas = {
+    SUBMISSION_FEE_MODE: "dry_run",
+    SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "1000",
+    SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI: "2500",
+  };
+  const DEPLOYED = `0x${"D".repeat(40)}`;
+
+  test("the recorded deployment is the third ledger; a missing or half-recorded one leaves the two fee ledgers as before", () => {
+    const config = parseConfig(gas);
+    expect(config.networks.map((n) => n.network)).toEqual([
+      "base-mainnet",
+      "robinhood-mainnet",
+      STANDING_DEPOSIT_LEDGER,
+    ]);
+    expect(config.networks[2]).toMatchObject({
+      chain: "robinhood-mainnet",
+      contract: "0x446604d5c3cc99c60cce3d5c4357bc60f5b45993",
+      startBlock: 122128533,
+    });
+    expect(config.unset).toEqual([]);
+    const fees = config.networks.slice(0, 2);
+    for (const half of [
+      { contract: null, startBlock: null },
+      { contract: DEPLOYED, startBlock: null },
+      { contract: null, startBlock: 5 },
+      { contract: "0x1234", startBlock: 5 },
+    ])
+      expect(parseConfig(gas, half).networks).toEqual(fees);
+  });
+
+  test("once recorded it is a third ledger on the Robinhood Chain tables", () => {
+    const before = parseConfig(gas, { contract: null, startBlock: null });
+    const config = parseConfig(gas, { contract: DEPLOYED, startBlock: 5 });
+    expect(config.networks.slice(0, 2)).toEqual(before.networks);
+    const fee = before.networks[1];
+    expect(fee).toMatchObject({
+      network: "robinhood-mainnet",
+      chain: "robinhood-mainnet",
+    });
+    expect(config.networks[2]).toEqual({
+      ...fee,
+      network: STANDING_DEPOSIT_LEDGER,
+      chain: "robinhood-mainnet",
+      contract: DEPLOYED.toLowerCase(),
+      startBlock: 5,
+    });
+    expect(
+      parseConfig(
+        { ...gas, RPC_URL_SUBMISSION_FEE_ROBINHOOD: "https://rpc.example" },
+        { contract: DEPLOYED, startBlock: 5 },
+      ).networks[2].rpcUrl,
+    ).toBe("https://rpc.example");
+  });
+
+  test("the standing contract cannot be a fee contract", () => {
+    const fee = parseConfig(gas).networks[1].contract;
+    expect(() => parseConfig(gas, { contract: fee, startBlock: 5 })).toThrow(
+      "must differ",
+    );
   });
 });

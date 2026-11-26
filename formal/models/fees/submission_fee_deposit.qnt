@@ -19,7 +19,9 @@
 // deposit, one pull request, one other deposit that may have paid it first
 // (`otherPaid`). The send journal is a separate model
 // (submission_fee_send); here `resolve` is a mined resolver transaction.
-// The public reads serve `paid` and `outcome` and change nothing.
+// The public reads serve `paid` and `outcome` and change nothing. A deposit
+// that names a private security report instead of a pull request is the
+// separate model submission_fee_report_deposit.
 module submission_fee_deposit {
   var s: { chain: str, counts: bool, known: bool, confirmed: bool, final: bool,
     row: str, accepted: int, asked: bool, otherPaid: bool, paid: bool,

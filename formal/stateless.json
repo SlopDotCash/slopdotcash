@@ -103,6 +103,7 @@
   "src/lib/wallets.ts": "Pure address validation, equality, byte conversion and shortened display. No claim storage, consent or authorization mutation; actual wallet registration/binding remains modeled and is not exempted.",
   "src/lib/web-analytics.mjs": "Pure production-host predicate and deterministic HTML transform over supplied bytes. Owns no storage, clock, request or cross-call state. Its exact output and refusal behavior are exercised by the Function and release/evidence callers; raw-manifest binding and publication remain caller responsibilities.",
   "workers/fee-converter/d1.ts": "Type declarations of the minimal D1 statement surface; no runtime code or state transition.",
+  "workers/fee-converter/provider-failure.ts": "Pure diagnostic projection of allowlisted provider, stage and method fields with a bounded HTTP status. No network, journal, signing or workflow state transition.",
   "workers/fee-converter/solana-route-types.ts": "Type declarations of the route expectation and account observation records; no runtime code or state transition.",
   "workers/fee-converter/verified-arithmetic.ts": "Pure bigint rounding, slippage, remaining-cap, rescaling, spendable balance and gas/impact arithmetic. No quote fetch, signing, journal or payment state; those transitions remain fee conversion models.",
   "workers/identity/wrangler.staging.toml": "Literal staging identity bindings and separate limiter namespaces with staging environment. No own state transition; same identity/admission models apply, while live deployment wiring remains separately verified.",
@@ -125,5 +126,12 @@
   "wrangler.toml": "Static Pages bindings, environment constants and isolated preview declarations. No executable transition; API composition and service release models describe consumers. This configuration is not evidence of hosted binding availability.",
   "scripts/quint-verification-step.mjs": "Pure exact-source selector for the independently reviewed owner delayed-input verification entry point. Returns fixed step/proof-kind metadata only after the complete pinned model hash matches; no own transition, storage, I/O or runtime behavior.",
   "scripts/formal-report.mjs": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO.",
-  "workers/slopbot/value-reference-query.ts": "Pure classification of one fixed source-discovery query and its explicit public missing-item envelope; retains no state, performs no I/O and grants no source or payment credit."
+  "workers/slopbot/value-reference-query.ts": "Pure classification of one fixed source-discovery query and its explicit public missing-item envelope; retains no state, performs no I/O and grants no source or payment credit.",
+  "src/record-terms/buyback.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/october-allocation.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/privacy.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/referrals.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/sponsored-pools.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/terms.ts": "Type declaration of one terms page; no runtime code or state transition.",
+  "src/RecordTermsPage.tsx": "Pure render of the fixed terms page named by the route; no state, effect, I/O, timer or transition. Routing is modeled in ui_navigation."
 }

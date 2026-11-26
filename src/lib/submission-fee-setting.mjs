@@ -32,7 +32,7 @@ export const SUBMISSION_FEE_DECIMALS = 6;
 
 /** One plain sentence for the owner's settings page and the project form. */
 export const SUBMISSION_FEE_HINT =
-  "Slopbot reviews an outside contributor's pull request once a refundable fee is deposited. A merge sends the fee back, and so does 14 days without a maintainer decision. A pull request closed without a merge keeps it. Contributors can pay in SLOP at half the price instead.";
+  "Slopbot reviews an outside contributor's pull request once a refundable fee is deposited. A merge sends the fee back, and so does 14 days without a maintainer decision. A pull request closed without a merge keeps it, unless it answers a slop-wanted issue and you do not add slop-keep-fee. Contributors can pay in SLOP at half the price instead.";
 
 const MINOR = /^[1-9][0-9]{0,15}$/u;
 
@@ -60,11 +60,18 @@ export function submissionFeeAmountText(minor) {
 export function assertSubmissionFeeSetting(value, field) {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new TypeError(`${field} must be an object`);
-  const keys = Object.keys(value).sort().join(",");
+  const keys = Object.keys(value)
+    .filter((key) => key !== "standingDeposits")
+    .sort()
+    .join(",");
   if (keys !== "enabled" && keys !== "amountMinor,enabled")
     throw new TypeError(`${field} has unexpected or missing fields`);
   if (typeof value.enabled !== "boolean")
     throw new TypeError(`${field}.enabled must be a boolean`);
+  // The standing deposit (operator decision, 23 November 2026): stored only
+  // as `false`, when the owner refuses standing deposits. Absent is on.
+  if (value.standingDeposits !== undefined && value.standingDeposits !== false)
+    throw new TypeError(`${field}.standingDeposits must be false when present`);
   if (value.amountMinor === undefined) return;
   if (
     typeof value.amountMinor !== "string" ||

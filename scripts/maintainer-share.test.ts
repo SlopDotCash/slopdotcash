@@ -302,7 +302,11 @@ function pull(number: number, fields: PullNode): PullNode {
     authorAssociation: "CONTRIBUTOR",
     author: { __typename: "User", login: "outside-author" },
     mergedBy: null,
+    isCrossRepository: true,
+    headRepository: { id: "R_fork" },
+    headRepositoryOwner: { login: "outside-author" },
     timelineItems: { nodes: [] },
+    refDeletions: { nodes: [] },
     ...fields,
   };
 }
@@ -429,6 +433,63 @@ test("the read counts only outside pull requests merged or closed in the month b
       throw new Error("GitHub maintainer decision read failed: HTTP 502");
     }),
   ).rejects.toThrow("HTTP 502");
+});
+
+test("a close caused by deleting the head branch or fork is not a maintainer decision", async () => {
+  const project = sharedProject(2000);
+  const at = "2026-09-10T12:00:00Z";
+  const deletion = (login: string, when = at) => ({
+    refDeletions: { nodes: [{ createdAt: when, actor: { login } }] },
+  });
+  const nodes: PullNode[] = [
+    // Another account owns the fork and deletes the branch: GitHub records
+    // that account as the closer.
+    pull(30, {
+      headRepositoryOwner: { login: "Fork-Owner" },
+      ...closedBy(user(44, "fork-owner"), at),
+    }),
+    // The deleting account is a member of the organization that owns the
+    // fork, so only the branch deletion beside the close identifies it.
+    pull(31, {
+      headRepositoryOwner: { login: "some-org" },
+      ...closedBy(user(45, "org-member"), at),
+      ...deletion("org-member", "2026-09-10T12:00:01Z"),
+    }),
+    // The fork is gone, so nothing shows who could close it.
+    pull(32, {
+      headRepository: null,
+      headRepositoryOwner: null,
+      ...closedBy(user(46, "gone-fork"), at),
+    }),
+    // A maintainer's close still counts, also when the contributor deletes
+    // the branch later.
+    pull(33, {
+      ...closedBy(user(22, "ben"), at),
+      ...deletion("outside-author", "2026-09-12T09:00:00Z"),
+    }),
+    // A merge is decided by an account with write access.
+    pull(34, {
+      headRepository: null,
+      headRepositoryOwner: null,
+      ...mergedBy(user(11, "ana")),
+    }),
+  ];
+  const collected = await collectMaintainerDecisions(
+    project,
+    SEPTEMBER,
+    async () => ({
+      repository: {
+        id: project.authority.repositoryNodeId,
+        pullRequests: { pageInfo: { hasNextPage: false }, nodes },
+      },
+    }),
+  );
+  expect(
+    collected.decisions.map((entry) => [entry.number, entry.login]),
+  ).toEqual([
+    [33, "ben"],
+    [34, "ana"],
+  ]);
 });
 
 test("a pull request updated while the read runs still counts", async () => {
@@ -767,6 +828,104 @@ test("a month with a maintainer share distributes exactly its amount and stores 
     expect(() =>
       sqlite.exec("DELETE FROM monthly_maintainer_share_rows"),
     ).toThrow();
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a busy month's decision record is stored exactly through statements within D1's limit", () => {
+  // D1 refuses a statement over 100 KB, and the import is one transaction:
+  // one oversized statement would leave every project in the file unstored.
+  // elizaOS/eliza merged about 3,900 scored pull requests in 30 days of the
+  // public ledger; 1,200 decisions make a record of about 250 KB.
+  const ids = ["1001", "1002", "1003", "1004"];
+  const decisionBytes = maintainerDecisionBytes(
+    record(
+      Array.from({ length: 1200 }, (_, index) =>
+        decision(30_000 + index, ids[index % 4], `maintainer-${index % 4}`),
+      ),
+    ),
+  );
+  expect(decisionBytes.length).toBeGreaterThan(200_000);
+  const policyBytes = Buffer.from(JSON.stringify(sharedProject(2000)));
+  const base = buildMonthlyBase(
+    { projectId: "eliza", period: SEPTEMBER, generatedAt: GENERATED_AT },
+    snapshotBytes,
+    policyBytes,
+    decisionBytes,
+  );
+  const sql = monthlyBasesSql(
+    {
+      period: SEPTEMBER,
+      skipped: [],
+      bases: [{ ...base, manifest: policyBytes.toString() }],
+    },
+    "2026-10-01T00:11:00.000Z",
+  );
+  const statements = sql.trimEnd().split("\n");
+  expect(
+    Math.max(...statements.map((line) => Buffer.byteLength(line))),
+  ).toBeLessThanOrEqual(100_000);
+  // SQLite orders group_concat's input only by an ORDER BY inside the
+  // aggregate; the order of a subquery it reads from is not promised.
+  expect(
+    statements.find((line) =>
+      line.startsWith("INSERT INTO monthly_maintainer_shares("),
+    ),
+  ).toContain("group_concat(part,'' ORDER BY sequence)");
+
+  const { sqlite } = sqliteD1(
+    readdirSync("migrations")
+      .filter((name) => name.endsWith(".sql"))
+      .sort(),
+  );
+  // One transaction, like the D1 import. Statement by statement, because
+  // Bun's exec of several statements raises only the last one's error.
+  const apply = (lines: string[]) => {
+    sqlite.exec("BEGIN");
+    try {
+      for (const line of lines) sqlite.run(line);
+      sqlite.exec("COMMIT");
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  };
+  try {
+    // A lost part stores nothing: the share statement fails the import.
+    const first = statements.findIndex((line) => line.includes("_parts("));
+    expect(() =>
+      apply(statements.filter((_, index) => index !== first)),
+    ).toThrow("NOT NULL");
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM monthly_reward_bases").get(),
+    ).toEqual({ n: 0 });
+    // Parts written in reverse and scanned in reverse still join in order.
+    sqlite.exec("PRAGMA reverse_unordered_selects=ON");
+    const parts = statements.filter((line) => line.includes("_parts("));
+    apply([
+      ...statements.slice(0, first),
+      ...parts.toReversed(),
+      ...statements.slice(first + parts.length),
+    ]);
+    apply(statements);
+    expect(
+      sqlite
+        .query(
+          "SELECT decisions,decisions_sha256 digest FROM monthly_maintainer_shares",
+        )
+        .all(),
+    ).toEqual([
+      {
+        decisions: new TextDecoder().decode(decisionBytes),
+        digest: base.maintainerShare?.decisionsSha256 ?? "",
+      },
+    ]);
+    expect(
+      sqlite
+        .query("SELECT COUNT(*) n FROM monthly_maintainer_share_parts")
+        .get(),
+    ).toEqual({ n: 0 });
   } finally {
     sqlite.close();
   }

@@ -17,6 +17,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { maintainerShareBasisPoints } from "../src/lib/maintainer-share.mjs";
+import type { ASI_NOVEMBER_CLOSEOUT } from "../src/lib/payments/asi-november-closeout";
 import { buildEscrowCycle } from "../src/lib/payments/escrow-cycle";
 import {
   type MonthlyBase,
@@ -62,6 +63,7 @@ export interface MonthlyMaintainerShare {
 
 export type MonthlyBaseWithShare = MonthlyBase & {
   maintainerShare?: MonthlyMaintainerShare;
+  earlyCloseAt?: typeof ASI_NOVEMBER_CLOSEOUT.cutoff;
 };
 
 export interface MonthlyBasesResult {
@@ -264,6 +266,28 @@ export async function prepareMonthlyBases(options: {
 const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 /**
+ * Text cut at code points into parts of at most 50 KB once quoted, so each
+ * part's statement stays under D1's 100 KB statement limit.
+ */
+function recordParts(text: string): string[] {
+  const parts: string[] = [];
+  let part = "";
+  let bytes = 0;
+  for (const character of text) {
+    const size = character === "'" ? 2 : Buffer.byteLength(character);
+    if (bytes + size > 50_000) {
+      parts.push(part);
+      part = "";
+      bytes = 0;
+    }
+    part += character;
+    bytes += size;
+  }
+  parts.push(part);
+  return parts;
+}
+
+/**
  * Idempotent SQL: the proposal row is inserted once per project month, and
  * each recipient row only next to the exact proposal digest already stored.
  * A file is applied as one D1 import, which rolls back on failure.
@@ -274,19 +298,24 @@ export function monthlyBasesSql(
 ): string {
   const statements: string[] = [];
   for (const base of result.bases) {
+    const key = `project_id=${quote(base.projectId)} AND period=${quote(base.period)}`;
+    const header = `${key} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)} AND cap_base=${quote(base.capBase)}`;
+    const closeAt = base.earlyCloseAt ? quote(base.earlyCloseAt) : null;
+    const closeoutColumn = closeAt === null ? "" : ",early_close_at";
+    const closeoutValue = closeAt === null ? "" : `,${closeAt}`;
+    const closeoutBinding =
+      closeAt === null ? "" : ` AND early_close_at=${closeAt}`;
+    const stored = `EXISTS(SELECT 1 FROM monthly_reward_bases WHERE ${header}${closeoutBinding})`;
+    const columns = [
+      base.projectId,
+      base.period,
+      base.manifest,
+      base.manifestSha256,
+      base.sourceSnapshotSha256,
+      base.capBase,
+    ].map(quote);
     statements.push(
-      `INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES(${[
-        base.projectId,
-        base.period,
-        base.manifest,
-        base.manifestSha256,
-        base.sourceSnapshotSha256,
-        base.capBase,
-      ]
-        .map(quote)
-        .join(
-          ",",
-        )},${base.rows.length},${quote(createdAt)}) ON CONFLICT(project_id,period) DO NOTHING;`,
+      `INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at${closeoutColumn}) VALUES(${columns.join(",")},${base.rows.length},${quote(createdAt)}${closeoutValue}) ON CONFLICT(project_id,period) DO NOTHING;`,
     );
     for (const row of base.rows)
       statements.push(
@@ -301,15 +330,26 @@ export function monthlyBasesSql(
           .map(quote)
           .join(
             ",",
-          )} WHERE EXISTS(SELECT 1 FROM monthly_reward_bases WHERE project_id=${quote(base.projectId)} AND period=${quote(base.period)} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)}) ON CONFLICT(project_id,period,github_user_id) DO NOTHING;`,
+          )} WHERE ${stored} ON CONFLICT(project_id,period,github_user_id) DO NOTHING;`,
       );
-    // The maintainer share is stored only beside the exact proposal it was
-    // computed for, and like the proposal it is written once.
     const share = base.maintainerShare;
     if (share) {
-      const stored = `EXISTS(SELECT 1 FROM monthly_reward_bases WHERE project_id=${quote(base.projectId)} AND period=${quote(base.period)} AND source_snapshot_sha256=${quote(base.sourceSnapshotSha256)} AND manifest_sha256=${quote(base.manifestSha256)})`;
+      // A busy month's decision record is larger than one statement D1
+      // accepts, so its exact text is staged in parts. A missing part leaves
+      // the record NULL and fails the import. The order belongs inside
+      // group_concat: SQLite does not promise the order of its input
+      // otherwise.
+      const parts = recordParts(share.decisions);
       statements.push(
-        `INSERT INTO monthly_maintainer_shares(project_id,period,basis_points,pool_base,decisions,decisions_sha256,created_at) SELECT ${[base.projectId, base.period].map(quote).join(",")},${share.basisPoints},${[share.poolBase, share.decisions, share.decisionsSha256, createdAt].map(quote).join(",")} WHERE ${stored} ON CONFLICT(project_id,period) DO NOTHING;`,
+        `DELETE FROM monthly_maintainer_share_parts WHERE ${key};`,
+      );
+      for (const [sequence, part] of parts.entries())
+        statements.push(
+          `INSERT INTO monthly_maintainer_share_parts(project_id,period,sequence,part) VALUES(${quote(base.projectId)},${quote(base.period)},${sequence},${quote(part)});`,
+        );
+      statements.push(
+        `INSERT INTO monthly_maintainer_shares(project_id,period,basis_points,pool_base,decisions,decisions_sha256,created_at) SELECT ${[base.projectId, base.period].map(quote).join(",")},${share.basisPoints},${quote(share.poolBase)},(SELECT CASE WHEN COUNT(*)=${parts.length} THEN group_concat(part,'' ORDER BY sequence) END FROM monthly_maintainer_share_parts WHERE ${key}),${[share.decisionsSha256, createdAt].map(quote).join(",")} WHERE ${stored} ON CONFLICT(project_id,period) DO NOTHING;`,
+        `DELETE FROM monthly_maintainer_share_parts WHERE ${key};`,
       );
       for (const row of share.rows)
         statements.push(

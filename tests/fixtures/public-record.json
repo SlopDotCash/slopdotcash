@@ -1,0 +1,216 @@
+{
+  "builtAt": "2026-11-23T08:12:00.000Z",
+  "money": {
+    "transfers": 72,
+    "paidUsdc": 6004.977346,
+    "allocatedUsdc": 15011.127482,
+    "unclaimedUsdc": 8983.665670999999,
+    "platformFeeCollected": false,
+    "pools": [
+      {
+        "projectId": "asi",
+        "month": "2026-08",
+        "status": "sent-outside-verified-flow",
+        "network": "solana-mainnet",
+        "asset": "USDC",
+        "capUsdc": 5000,
+        "allocatedUsdc": 5011.127493,
+        "paidUsdc": 1785.267199,
+        "transfers": 19,
+        "rows": 26,
+        "paidRows": 19,
+        "unclaimedRows": 7,
+        "unclaimedUsdc": 3225.860294,
+        "heldRows": 0,
+        "heldUsdc": 0,
+        "unmatched": 0,
+        "platformFee": null,
+        "firstAt": "2026-09-12T00:42:26Z",
+        "lastAt": "2026-09-12T00:57:12Z",
+        "exampleSignature": "3AE8idRMcSm9GE11WJTNqQvpvZZgQxJtdQ29SkrP62bXhHriewKL5Sx9sn4g4uHpvbFK3fNXuBxoSyg78Ci6DaFa",
+        "file": "asi-2026-08-direct-payments.json"
+      },
+      {
+        "projectId": "eliza",
+        "month": "2026-08",
+        "status": "sent-outside-verified-flow",
+        "network": "solana-mainnet",
+        "asset": "USDC",
+        "capUsdc": 10000,
+        "allocatedUsdc": 9999.999989,
+        "paidUsdc": 4219.710147,
+        "transfers": 53,
+        "rows": 108,
+        "paidRows": 53,
+        "unclaimedRows": 33,
+        "unclaimedUsdc": 5757.805377,
+        "heldRows": 22,
+        "heldUsdc": 22.484468,
+        "unmatched": 0,
+        "platformFee": null,
+        "firstAt": "2026-09-11T17:12:54Z",
+        "lastAt": "2026-09-11T17:27:17Z",
+        "exampleSignature": "XJGEmhbY3sWFtLoHSXXPhnWohFcDcgRDbo7f1fiTerd1HPwDYH3JuYCDSL2j8XbCfzrCL7hnJrKgFBu47bMf2GE",
+        "file": "eliza-2026-08-direct-payments.json"
+      }
+    ],
+    "settlements": []
+  },
+  "months": [
+    {
+      "month": "2026-09",
+      "counts": {
+        "merged": 1542,
+        "reviews": 2686,
+        "calendarMerged": 1388,
+        "calendarReviews": 2233
+      },
+      "uniqueContributors": 44,
+      "pools": [
+        {
+          "projectId": "asi",
+          "month": "2026-09",
+          "files": ["proposal.json"],
+          "status": "proposed",
+          "generatedAt": "2026-10-01T05:52:22.205Z",
+          "approvedAt": null,
+          "reviewEndsAt": "2026-10-15T05:52:22.205Z",
+          "capUsdc": 0,
+          "contributors": 18,
+          "settlement": null
+        },
+        {
+          "projectId": "eliza",
+          "month": "2026-09",
+          "files": ["proposal.json"],
+          "status": "proposed",
+          "generatedAt": "2026-10-01T05:52:22.205Z",
+          "approvedAt": null,
+          "reviewEndsAt": "2026-10-15T05:52:22.205Z",
+          "capUsdc": 0,
+          "contributors": 41,
+          "settlement": null
+        }
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "id": "asi",
+      "name": "ASI",
+      "status": "active",
+      "kind": "monthly-pool",
+      "capDisplay": "$250",
+      "chain": "robinhood",
+      "paymentMode": "disabled",
+      "fundingState": "pledged",
+      "committedMinor": "0",
+      "feeBasisPoints": 200,
+      "authority": "verified",
+      "repository": "https://github.com/SlopDotCash/asi",
+      "prize": null
+    },
+    {
+      "id": "bountix",
+      "name": "Bountix",
+      "status": "active",
+      "kind": "monthly-pool",
+      "capDisplay": "$0",
+      "chain": "base",
+      "paymentMode": "disabled",
+      "fundingState": "pledged",
+      "committedMinor": "0",
+      "feeBasisPoints": 100,
+      "authority": "unverified",
+      "repository": "https://github.com/salsabila2507/bountix-base",
+      "prize": null
+    },
+    {
+      "id": "bruhos",
+      "name": "bruhOS",
+      "status": "active",
+      "kind": "monthly-pool",
+      "capDisplay": "$1,000",
+      "chain": "solana",
+      "paymentMode": "disabled",
+      "fundingState": "pledged",
+      "committedMinor": "0",
+      "feeBasisPoints": 200,
+      "authority": "unverified",
+      "repository": "https://github.com/bruhosdotai/bruhOS",
+      "prize": null
+    }
+  ],
+  "proposal": {
+    "projectId": "eliza",
+    "cycleId": "2026-07",
+    "status": "proposed",
+    "allocations": 20,
+    "capUsdc": 10000,
+    "suggestedUsdc": 10000,
+    "approvedUsdc": 0,
+    "generatedAt": "2026-08-21T02:59:01.753Z",
+    "reviewEndsAt": "2026-09-04T02:59:01.753Z",
+    "approvedAt": null
+  },
+  "receipts": {
+    "builtAt": "2026-11-23T08:12:00.000Z",
+    "items": [
+      {
+        "anchor": "feed-2026-10",
+        "url": "https://slop.cash/receipts#feed-2026-10",
+        "projectId": "feed",
+        "project": "Feed",
+        "month": "2026-10",
+        "network": "solana-mainnet",
+        "networkName": "Solana",
+        "asset": "USDC",
+        "assetAddress": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "stable": true,
+        "contributors": 1,
+        "total": "107.56",
+        "fee": "2.20",
+        "feeExact": true,
+        "recipients": [
+          {
+            "login": "SYMBaiEX",
+            "received": "107.56",
+            "transactions": [
+              {
+                "id": "WSeFs2SjX1HzzZo6G7WLnEqcANskQ76BeJkHJx3tHbZEEqTjaC7pa4UChroTJzAUVeEzyzWAp332m3kQWGFM4C6",
+                "url": "https://explorer.solana.com/tx/WSeFs2SjX1HzzZo6G7WLnEqcANskQ76BeJkHJx3tHbZEEqTjaC7pa4UChroTJzAUVeEzyzWAp332m3kQWGFM4C6"
+              }
+            ]
+          }
+        ],
+        "own": {
+          "payments": 1,
+          "total": "382.44"
+        },
+        "privateRecords": false,
+        "reserved": null,
+        "firstSentAt": "2026-11-18T04:10:16.706Z",
+        "lastSentAt": "2026-11-18T04:10:16.706Z",
+        "publishedAt": "2026-11-18T07:56:00.116Z",
+        "merges": {
+          "windowDays": 30,
+          "asOf": "2026-11-18T07:56:00.116Z",
+          "repositories": [
+            {
+              "repository": "feedforagents/feed",
+              "mergedOutside": 175,
+              "medianHours": 70.4
+            }
+          ]
+        }
+      }
+    ],
+    "confirmed": []
+  },
+  "sources": {
+    "projects": [],
+    "projectSource": "registry",
+    "disclosures": [],
+    "cycles": []
+  }
+}

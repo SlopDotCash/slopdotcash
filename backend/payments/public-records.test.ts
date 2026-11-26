@@ -167,7 +167,7 @@ test("public vault payments retain the recorded work month and net asset amount 
     f.payment(4, { actor: "999" });
     f.sqlite
       .query(
-        "INSERT INTO monthly_reward_bases VALUES('project','2026-11','{}',?,?, '10000',1,?)",
+        "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES('project','2026-11','{}',?,?, '10000',1,?)",
       )
       .run("a".repeat(64), "b".repeat(64), when);
     f.sqlite
@@ -244,7 +244,7 @@ test("a paid month stays linked when the chain fee is the legacy floor and the m
     });
     f.sqlite
       .query(
-        "INSERT INTO monthly_reward_bases VALUES('project','2026-11','{}',?,?, '698',2,?)",
+        "INSERT INTO monthly_reward_bases(project_id,period,manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at) VALUES('project','2026-11','{}',?,?, '698',2,?)",
       )
       .run("a".repeat(64), "b".repeat(64), when);
     f.sqlite

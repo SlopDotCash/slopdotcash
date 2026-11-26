@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { notificationTitle } from "../../src/lib/notifications";
 import { type PointRevision, pointRevisionId } from "../../src/lib/points";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
@@ -729,6 +730,91 @@ test("a final decision creates one new unread notice after the receipt was read"
       )
       .get(),
   ).toEqual({ n: 1 });
+});
+
+test("the intake receipt keeps its own kind after the decision notice lands", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "Review a manual award.",
+    })
+  ).json();
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "Independent review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  // The receipt reads as filed from the moment it lands, not only once
+  // the decision arrives.
+  const beforeDecision = await handleNotificationsApi(
+    new Request("https://slop.cash/api/v1/notifications"),
+    {
+      db: h.db,
+      now: () => new Date(NOW),
+      sessionActor: async () => owner,
+    },
+  );
+  if (!beforeDecision) throw new Error("Notification route missing");
+  const beforeInbox = await beforeDecision.json();
+  const filedReceipt = beforeInbox.notifications.find(
+    (n: { eventKey: string }) => !n.eventKey.endsWith(":resolved"),
+  );
+  expect(notificationTitle(filedReceipt)).toBe("Points dispute filed");
+  const decision = {
+    action: "uphold",
+    reason: "Append a date correction; keep the recorded award.",
+  };
+  expect((await h.call(`/${created.id}`, decision, otherToken)).status).toBe(
+    200,
+  );
+  const inboxFor = async (
+    actor: { githubId: string; githubLogin: string },
+    moderatorGithubIds?: ReadonlySet<string>,
+  ) => {
+    const response = await handleNotificationsApi(
+      new Request("https://slop.cash/api/v1/notifications"),
+      {
+        db: h.db,
+        now: () => new Date(NOW),
+        sessionActor: async () => actor,
+        moderatorGithubIds,
+      },
+    );
+    if (!response) throw new Error("Notification route missing");
+    return response.json();
+  };
+  // The receipt and the final decision are separate events (events.ts):
+  // the appellant's receipt stays a receipt, only the decision notice
+  // and the moderator's queue row read as resolved. The receipt also
+  // keeps its own title: it is a filing receipt, not a queue row that
+  // is still waiting for a decision.
+  const appellant = await inboxFor(owner);
+  expect(appellant.notifications).toHaveLength(2);
+  const receipt = appellant.notifications.find(
+    (n: { eventKey: string }) => !n.eventKey.endsWith(":resolved"),
+  );
+  expect(receipt.kind).toBe("slopbot_appeal_review");
+  expect(receipt.pointsDisputeReceipt).toBe(true);
+  expect(notificationTitle(receipt)).toBe("Points dispute filed");
+  const final = appellant.notifications.find((n: { eventKey: string }) =>
+    n.eventKey.endsWith(":resolved"),
+  );
+  expect(final.kind).toBe("slopbot_appeal_resolved");
+  expect(final.pointsDisputeReceipt).toBeUndefined();
+  expect(notificationTitle(final)).toBe("Points dispute resolved");
+  const moderatorInbox = await inboxFor(
+    moderator,
+    new Set([moderator.githubId]),
+  );
+  const queueRow = moderatorInbox.notifications.find(
+    (n: { eventKey: string }) => !n.eventKey.endsWith(":resolved"),
+  );
+  expect(queueRow.kind).toBe("slopbot_appeal_resolved");
+  expect(queueRow.pointsDisputeReceipt).toBeUndefined();
+  expect(notificationTitle(queueRow)).toBe("Points dispute resolved");
 });
 
 test("racing moderator decisions retain one result, reason and final notice", async () => {

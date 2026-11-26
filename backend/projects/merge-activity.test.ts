@@ -24,6 +24,9 @@ function d1() {
   sqlite.exec(
     readFileSync("migrations/0134_merge_activity_open_outside.sql", "utf8"),
   );
+  sqlite.exec(
+    readFileSync("migrations/0144_merge_activity_wanted_issues.sql", "utf8"),
+  );
   const prepare = (sql: string) => {
     let values: unknown[] = [];
     const statement = {
@@ -317,8 +320,14 @@ describe("merge activity", () => {
       openOutside: 3,
       openOutsideCapped: false,
     });
+    // The backlog rule reads the waiting count and the last merge too.
     expect((await readIntakeCounts(db)).get("asi")).toEqual([
-      { openOutside: 3, observedAt: NOW.toISOString() },
+      {
+        openOutside: 3,
+        waitingOutside: 1,
+        lastMergedAt: daysAgo(1),
+        observedAt: NOW.toISOString(),
+      },
     ]);
   });
 
@@ -382,7 +391,16 @@ describe("merge activity", () => {
       openOutside: null,
       openOutsideCapped: false,
     });
-    expect((await readIntakeCounts(db)).size).toBe(0);
+    // No open count pauses nothing by the intake cap; the waiting count
+    // still serves the backlog rule.
+    expect((await readIntakeCounts(db)).get("asi")).toEqual([
+      {
+        openOutside: null,
+        waitingOutside: 0,
+        lastMergedAt: null,
+        observedAt: NOW.toISOString(),
+      },
+    ]);
   });
 
   test("a project with an intake cap is read again at the next hourly run", async () => {
@@ -573,5 +591,241 @@ describe("merge activity", () => {
       ((await (response as Response).json()) as { projects: unknown[] })
         .projects,
     ).toEqual([]);
+  });
+});
+
+/** The fixture project with wanted issues turned on (PRD section 5). */
+function wantedProject() {
+  const original = project("active");
+  return assertProjectDefinition({
+    ...original,
+    slopbot: { automaticClosure: false, wantedIssues: true },
+  });
+}
+
+/**
+ * The ordinary fake GitHub plus the wanted-issue query: issue 7 is free, 9
+ * already has an open closing pull request. `labels` records each label read.
+ */
+function githubWithWanted(labels: string[]): Fetch {
+  const base = github();
+  return async (url, init) => {
+    const body = JSON.parse(String(init.body)) as {
+      query: string;
+      variables: { label?: string };
+    };
+    if (!body.query.includes("labels:[$label]")) return base(url, init);
+    labels.push(String(body.variables.label));
+    return Response.json({
+      data: {
+        repository: {
+          issues: {
+            nodes: [
+              {
+                number: 7,
+                title: "Port the baseline to JAX 0.6",
+                url: "https://github.com/SlopDotCash/asi/issues/7",
+                closedByPullRequestsReferences: { totalCount: 0 },
+              },
+              {
+                number: 9,
+                title: "Seed-controlled comparison for PPO",
+                url: "https://github.com/SlopDotCash/asi/issues/9",
+                closedByPullRequestsReferences: { totalCount: 1 },
+              },
+            ],
+          },
+        },
+      },
+    });
+  };
+}
+
+describe("wanted issues", () => {
+  test("a project without wanted issues reads no label and creates none", async () => {
+    const { db, sqlite } = d1();
+    const labels: string[] = [];
+    const ensured: string[] = [];
+    await refreshMergeActivity(
+      db,
+      [project("active")],
+      async () => "token",
+      githubWithWanted(labels),
+      NOW,
+      async (repository) => {
+        ensured.push(repository);
+        return true;
+      },
+    );
+    expect(labels).toEqual([]);
+    expect(ensured).toEqual([]);
+    expect(
+      sqlite
+        .query(
+          "SELECT wanted_label, wanted_issues, wanted_label_ready FROM repository_merge_activity",
+        )
+        .get(),
+    ).toEqual({
+      wanted_label: null,
+      wanted_issues: null,
+      wanted_label_ready: null,
+    });
+  });
+
+  test("the read lists labelled issues, creates the label once and serves the list", async () => {
+    const { db, sqlite } = d1();
+    const labels: string[] = [];
+    const ensured: string[] = [];
+    const ensure = async (repository: string, label: string) => {
+      ensured.push(`${repository}:${label}`);
+      return true;
+    };
+    await refreshMergeActivity(
+      db,
+      [wantedProject()],
+      async () => "token",
+      githubWithWanted(labels),
+      NOW,
+      ensure,
+    );
+    expect(labels).toEqual(["slop-wanted"]);
+    expect(ensured).toEqual(["SlopDotCash/asi:slop-wanted"]);
+    const response = await handleMergeActivityApi(
+      new Request("https://slop.cash/api/v1/merge-activity"),
+      { db },
+    );
+    const body = (await response?.json()) as {
+      projects: Array<{ repositories: Array<Record<string, unknown>> }>;
+    };
+    expect(body.projects[0].repositories[0]).toMatchObject({
+      wantedLabel: "slop-wanted",
+      wantedIssues: [
+        {
+          number: 7,
+          title: "Port the baseline to JAX 0.6",
+          url: "https://github.com/SlopDotCash/asi/issues/7",
+          openPullRequests: 0,
+        },
+        {
+          number: 9,
+          title: "Seed-controlled comparison for PPO",
+          url: "https://github.com/SlopDotCash/asi/issues/9",
+          openPullRequests: 1,
+        },
+      ],
+    });
+    // Six hours later the list is read again; the label is not checked again.
+    await refreshMergeActivity(
+      db,
+      [wantedProject()],
+      async () => "token",
+      githubWithWanted(labels),
+      new Date(NOW.getTime() + 6 * 60 * 60 * 1000),
+      ensure,
+    );
+    expect(labels).toEqual(["slop-wanted", "slop-wanted"]);
+    expect(ensured).toEqual(["SlopDotCash/asi:slop-wanted"]);
+    expect(
+      sqlite
+        .query("SELECT wanted_label_ready FROM repository_merge_activity")
+        .get(),
+    ).toEqual({ wanted_label_ready: "slop-wanted" });
+  });
+
+  test("a label that cannot be created keeps the list and is tried at the next read", async () => {
+    const { db, sqlite } = d1();
+    const labels: string[] = [];
+    let attempts = 0;
+    const failing = async () => {
+      attempts += 1;
+      throw new Error("github-500");
+    };
+    await refreshMergeActivity(
+      db,
+      [wantedProject()],
+      async () => "token",
+      githubWithWanted(labels),
+      NOW,
+      failing,
+    );
+    expect(
+      sqlite
+        .query(
+          "SELECT failure, wanted_label, wanted_label_ready FROM repository_merge_activity",
+        )
+        .get(),
+    ).toEqual({
+      failure: null,
+      wanted_label: "slop-wanted",
+      wanted_label_ready: null,
+    });
+    await refreshMergeActivity(
+      db,
+      [wantedProject()],
+      async () => "token",
+      githubWithWanted(labels),
+      new Date(NOW.getTime() + 6 * 60 * 60 * 1000),
+      failing,
+    );
+    expect(attempts).toBe(2);
+  });
+
+  test("turning wanted issues on reads the repository at the next run", async () => {
+    const { db } = d1();
+    const labels: string[] = [];
+    await refreshMergeActivity(
+      db,
+      [project("active")],
+      async () => "token",
+      githubWithWanted(labels),
+      NOW,
+    );
+    // An hour later an ordinary repository is not due for 20 hours, but the
+    // owner just turned wanted issues on.
+    await refreshMergeActivity(
+      db,
+      [wantedProject()],
+      async () => "token",
+      githubWithWanted(labels),
+      new Date(NOW.getTime() + 60 * 60 * 1000),
+    );
+    expect(labels).toEqual(["slop-wanted"]);
+  });
+
+  test("an issue URL outside the repository fails the read instead of being stored", async () => {
+    const { db, sqlite } = d1();
+    const base = githubWithWanted([]);
+    const foreign: Fetch = async (url, init) => {
+      const body = JSON.parse(String(init.body)) as { query: string };
+      if (!body.query.includes("labels:[$label]")) return base(url, init);
+      return Response.json({
+        data: {
+          repository: {
+            issues: {
+              nodes: [
+                {
+                  number: 7,
+                  title: "Elsewhere",
+                  url: "https://github.com/someone/else/issues/7",
+                  closedByPullRequestsReferences: { totalCount: 0 },
+                },
+              ],
+            },
+          },
+        },
+      });
+    };
+    await refreshMergeActivity(
+      db,
+      [wantedProject()],
+      async () => "token",
+      foreign,
+      NOW,
+    );
+    expect(
+      sqlite
+        .query("SELECT failure, wanted_issues FROM repository_merge_activity")
+        .get(),
+    ).toEqual({ failure: "github-wanted-issue-invalid", wanted_issues: null });
   });
 });

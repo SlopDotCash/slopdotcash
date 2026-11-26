@@ -38,6 +38,8 @@ import {
   reviewItem,
 } from "./review";
 import { dispatchSpendAlert } from "./spend-alerts";
+import { checkStandingDeposits } from "./standing-deposit";
+import { hasSlopParticipationFooter } from "./submission-evidence";
 import {
   dispatchFeeChecks,
   feeCheckWanted,
@@ -53,7 +55,9 @@ import { valueHistory } from "./value-journal";
 import { recordValueRequest } from "./value-requests";
 import { workUnitHistory } from "./value-work-unit-journal";
 
-type Queue = { send(body: Job): Promise<void> };
+type Queue = {
+  send(body: Job, options?: { delaySeconds: number }): Promise<void>;
+};
 type Env = Omit<ValueConsumerEnv, "SLOPBOT_DB"> & {
   SLOPBOT_DB: store.D1TransactionalDatabase<store.D1QueryStatement>;
   SLOPBOT_WEBHOOK_SECRET: string;
@@ -111,7 +115,7 @@ type Payload = {
   };
   sender?: { id: number; type: string };
   issue?: ReopenItem & { number: number; pull_request?: unknown };
-  pull_request?: ReopenItem & { number: number };
+  pull_request?: ReopenItem & { number: number; body?: string | null };
   comment?: { body: string; id?: number };
 };
 
@@ -573,7 +577,17 @@ export default {
             status: 202,
           });
         }
-        await env.SLOPBOT_QUEUE.send(job);
+        const awaitsReceipt =
+          env.SLOPBOT_EVIDENCE_CLOSURE_ENABLED === "true" &&
+          job.kind === "review" &&
+          event === "pull_request" &&
+          payload.action === "opened" &&
+          typeof payload.pull_request?.body === "string" &&
+          hasSlopParticipationFooter(payload.pull_request.body);
+        await env.SLOPBOT_QUEUE.send(
+          job,
+          awaitsReceipt ? { delaySeconds: 60 } : undefined,
+        );
       }
       await store.completeDelivery(env.SLOPBOT_DB, deliveryId);
       return new Response(
@@ -601,6 +615,7 @@ export default {
       dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchReadyChecks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchFeeChecks(env, env.SLOPBOT_QUEUE),
+      checkStandingDeposits(env),
       processPendingPointsDisputes(env),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY

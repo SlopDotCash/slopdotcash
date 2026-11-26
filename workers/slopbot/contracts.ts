@@ -24,10 +24,7 @@ export const UNIVERSAL_CATEGORIES: ReadonlySet<Category> = new Set([
   "duplicate",
 ]);
 // These categories never close, whatever the repository configures.
-export const NEVER_CLOSE: ReadonlySet<Category> = new Set([
-  "none",
-  "missing_evidence",
-]);
+export const NEVER_CLOSE: ReadonlySet<Category> = new Set(["none"]);
 
 // The only categories a security-only review acts on, while contributor work
 // on a paused, flagged or removed project is stopped (PRD section 5).
@@ -56,7 +53,7 @@ const DEFAULT_CATEGORIES: RepositoryConfig["categories"] = {
   duplicate: "close",
   out_of_scope: "label",
   busywork: "close",
-  missing_evidence: "label",
+  missing_evidence: "close",
   gaming: "close",
   low_quality: "label",
 };

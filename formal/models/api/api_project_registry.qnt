@@ -10,9 +10,9 @@
 // @source backend/projects/github-lookup.ts
 // @source backend/projects/skill-publication.ts
 module api_project_registry {
-  var s: {revision: int, history: List[int], installed: bool, authority: bool, clearance: bool, restricted: bool,
+  var s: {revision: int, history: List[int], branch: int, installed: bool, authority: bool, clearance: bool, restricted: bool,
     enforcement: int, createGeneration:int, active: bool, authorizedWrite: bool, funding: bool}
-  action init = s' = {revision: 0, history: List(), installed: false, authority: false, clearance: false,
+  action init = s' = {revision: 0, history: List(), branch: 0, installed: false, authority: false, clearance: false,
     restricted: false, enforcement: 0, createGeneration:-1, active: false, authorizedWrite: false, funding: false}
   action install = s' = s.with("installed", true)
   action authorize = all { s.installed, s' = s.with("authority", true) }
@@ -28,12 +28,28 @@ module api_project_registry {
       .with("active", s.installed and s.clearance and not(s.restricted)).with("authorizedWrite", true) }
   action restrict = all { s.enforcement < 2, s' = s.with("enforcement", s.enforcement + 1).with("restricted", true).with("active", false) }
   action fund = s' = s.with("funding", true)
+  action moveBranch(expected: int, generation: int, target: int, reviewed: bool): bool = all {
+    s.installed, s.authority, reviewed, not(s.restricted), not(s.active) or s.clearance,
+    target != s.branch, expected == s.revision, generation == s.enforcement,
+    s.revision > 0, s.revision < 3,
+    s' = s.with("branch", target).with("revision", s.revision + 1)
+      .with("history", s.history.append(s.revision + 1)).with("authorizedWrite", true)
+  }
   action step = { nondet expected = 0.to(3).oneOf(); nondet generation = 0.to(2).oneOf()
-    any { install, authorize, prepareCreate, create, clear, revise(expected,generation), restrict, fund, s' = s } }
+    nondet target = Set(0, 1).oneOf(); nondet reviewed = Set(true, false).oneOf()
+    any { moveBranch(expected,generation,target,reviewed), install, authorize, prepareCreate, create, clear, revise(expected,generation), restrict, fund, s' = s } }
   val invariant = all { s.revision == s.history.length(), s.history.indices().forall(i => s.history.nth(i) == i + 1),
     s.active implies (s.installed and s.clearance and not(s.restricted) and s.authorizedWrite) }
   run unfundedActivationTest = init.then(install).then(prepareCreate).then(authorize).then(create).then(clear).then(revise(1,0)).expect(s.active and not(s.funding))
   run restrictionRaceTest = init.then(install).then(prepareCreate).then(authorize).then(create).then(clear).then(restrict).expect(not(s.active) and s.enforcement == 1)
   run restrictionBeforeCreationRefusesTest=init.then(install).then(prepareCreate).then(authorize).then(restrict)
     .expect(s.revision==0 and s.history==List()).then(create.fail())
+  run reviewedBranchChangePreservesActiveAndFundingTest = init.then(install).then(prepareCreate)
+    .then(authorize).then(create).then(clear).then(revise(1,0)).then(fund)
+    .then(moveBranch(2,0,1,true))
+    .expect(s.branch == 1 and s.active and s.funding and s.history == List(1,2,3))
+  run unreviewedBranchChangeRefusesTest = init.then(install).then(prepareCreate)
+    .then(authorize).then(create)
+    .expect(s.branch == 0 and s.history == List(1))
+    .then(moveBranch(1,0,1,false).fail())
 }
