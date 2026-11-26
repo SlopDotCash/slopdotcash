@@ -2,7 +2,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { addAbortListener } from "node:events";
 import fs from "node:fs";
-import { availableParallelism } from "node:os";
+import os, { availableParallelism } from "node:os";
 import path from "node:path";
 
 // --- running tools -------------------------------------------------------------
@@ -259,13 +259,33 @@ function signal(child: ChildProcess, name: NodeJS.Signals, table: number[][] = [
 
 /** How each tool still running is ended: an interrupted check ends them and what they started before it ends itself, and so does one that exits. A tool is asked to end, so that one that is a check ends its own tools; a shell command is killed. */
 const ending = new Map<ChildProcess, NodeJS.Signals>();
+const tempDirs = new Set<string>();
 const endAll = () => {
   polling?.abort();
   const table = ending.size ? processes() : [];
   for (const [child, name] of ending) signal(child, name, table);
+  for (const dir of tempDirs) {
+    tempDirs.delete(dir);
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
 };
 process.once("exit", endAll);
 for (const name of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(name, () => { endAll(); process.kill(process.pid, name); });
+
+export function makeTempDir(prefix: string, parent = os.tmpdir()): string {
+  const dir = fs.mkdtempSync(path.join(parent, prefix));
+  tempDirs.add(dir);
+  return dir;
+}
+
+export function untrackTempDir(dir: string): void {
+  tempDirs.delete(dir);
+}
+
+export function removeTempDir(dir: string): void {
+  tempDirs.delete(dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
 
 function endsWithTheCheck(child: ChildProcess, name: NodeJS.Signals) {
   ending.set(child, name);
@@ -310,15 +330,21 @@ function releaseSlot() {
   busy--;
 }
 
-/**
- * Run a program to the end, once fewer than SLOTS are running, and return what it wrote. One that cannot be started
- * is an error; one that writes too much, runs too long or is killed by a signal is stopped, and `stopped` says so.
- */
-export async function exec(exe: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv, input?: string, cancellation?: AbortSignal, priority: Priority = 1): Promise<{ status: number; stdout: string; stderr: string; stopped?: string }> {
+export async function withSlot<T>(fn: () => Promise<T>, cancellation?: AbortSignal, priority: Priority = 1): Promise<{ canceled: true } | { canceled: false; value: T }> {
+  if (cancellation?.aborted) return { canceled: true };
+  if (busy < SLOTS) busy++;
+  else if (!await waitForSlot(cancellation, priority)) return { canceled: true };
+  try {
+    if (cancellation?.aborted) return { canceled: true };
+    return { canceled: false, value: await fn() };
+  } finally {
+    releaseSlot();
+  }
+}
+
+export async function execWithinSlot(exe: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv, input?: string, cancellation?: AbortSignal): Promise<{ status: number; stdout: string; stderr: string; stopped?: string }> {
   const canceled = { status: -1, stdout: "", stderr: "", stopped: "proof work was canceled after simulation failed" };
   if (cancellation?.aborted) return canceled;
-  if (busy < SLOTS) busy++;
-  else if (!await waitForSlot(cancellation, priority)) return canceled;
   // On Windows anything but an .exe (an npm .cmd shim, or a name on the PATH) needs a shell, which reads each argument quoted for cmd.exe.
   const shell = WINDOWS && !/\.exe$/i.test(exe);
   const quote = (a: string) => (shell && (a === "" || /[\s"&|<>^%()!,;=]/.test(a)) ? `"${a.replace(/"/g, '""')}"` : a);
@@ -327,7 +353,6 @@ export async function exec(exe: string, args: string[], cwd: string, env?: NodeJ
   let unwatch: (() => void) | undefined;
   let unabort: Disposable | undefined;
   try {
-    if (cancellation?.aborted) return canceled;
     return await new Promise((resolve, reject) => {
       const child = spawn(quote(exe), args.map(quote), { cwd, env, shell, detached: !WINDOWS });
       endsWithTheCheck(child, "SIGTERM");
@@ -397,8 +422,16 @@ export async function exec(exe: string, args: string[], cwd: string, env?: NodeJ
   } finally {
     unabort?.[Symbol.dispose]();
     unwatch?.();
-    releaseSlot();
   }
+}
+
+/**
+ * Run a program to the end, once fewer than SLOTS are running, and return what it wrote. One that cannot be started
+ * is an error; one that writes too much, runs too long or is killed by a signal is stopped, and `stopped` says so.
+ */
+export async function exec(exe: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv, input?: string, cancellation?: AbortSignal, priority: Priority = 1): Promise<{ status: number; stdout: string; stderr: string; stopped?: string }> {
+  const result = await withSlot(() => execWithinSlot(exe, args, cwd, env, input, cancellation), cancellation, priority);
+  return result.canceled ? { status: -1, stdout: "", stderr: "", stopped: "proof work was canceled after simulation failed" } : result.value;
 }
 
 /** A shell command in a process group of its own, so that stopping it stops what it started too; `stop` waits until it has closed. */

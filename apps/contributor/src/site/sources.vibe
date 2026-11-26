@@ -62,11 +62,11 @@ export effect function utf8Text(bytes: Uint8Array, what: string) {
 effect function collected<E>(stream: Stream.Stream<Uint8Array, E>) {
   const chunks: Uint8Array[] = []
   let size = 0
-  for try (const chunk of stream) {
+  try Stream.runForEach(stream, (chunk) => effect {
     size += chunk.length
     if (size > outputLimit) throw refused("a build command wrote more output than the site build reads")
     chunks.push(chunk)
-  }
+  })
   return concatenated(chunks)
 }
 

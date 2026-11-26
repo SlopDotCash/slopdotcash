@@ -12,7 +12,8 @@ import type { Registry } from "../src/qualification/escrow/registry.ts"
 
 const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
-const sources = ["src/ProjectEscrow.sol", "vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol", "integration/TestDollar.sol"]
+const testContracts = new URL("./support", import.meta.url).pathname
+const sources = ["src/ProjectEscrow.sol", "vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol"]
 const projectId = `0x${"5a".repeat(32)}`
 const sourceDigest = `0x${"7c".repeat(32)}`
 const actor = 18_633_264n
@@ -30,7 +31,7 @@ const testAbi = [
 ] as const satisfies Abi
 
 schema DeployedBytecode {
-  readonly deployedBytecode: { readonly object: string; readonly immutableReferences: Record<string, ReadonlyArray<{ readonly start: number; readonly length: number }>> }
+  readonly deployedBytecode: { readonly object: string; readonly immutableReferences?: Record<string, ReadonlyArray<{ readonly start: number; readonly length: number }>> }
 }
 
 service Escrow {
@@ -61,7 +62,7 @@ effect function reviewedCodeSha(path: string, self: string) {
   const code = hexBytes(artifact.deployedBytecode.object.toLowerCase())
   const address = hexBytes(self.toLowerCase())
   if (code === undefined || address === undefined) return try die(new Error(`${path} has no runtime code`))
-  for (const references of Object.values(artifact.deployedBytecode.immutableReferences)) {
+  for (const references of Object.values(artifact.deployedBytecode.immutableReferences ?? {})) {
     for (const reference of references) code.set(address, reference.start + reference.length - address.length)
   }
   return try sha256Hex(code)
@@ -70,6 +71,7 @@ effect function reviewedCodeSha(path: string, self: string) {
 const Started = Layer.effect(Escrow, effect {
   const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
   const built = try acquireRelease(promise(() => forgeBuild(contracts, sources)), (output) => promise(() => output.close()))
+  const builtToken = try acquireRelease(promise(() => forgeBuild(testContracts, ["TestUsdc.sol"])), (output) => promise(() => output.close()))
   const [owner, registrar, identity, upgrader, destination] = chain.accounts
   if (owner === undefined || registrar === undefined || identity === undefined || upgrader === undefined || destination === undefined) return try die(new Error("anvil has too few accounts"))
   const artifact = (file: string, name: string) => `${built.out}/${file}/${name}.json`
@@ -77,7 +79,7 @@ const Started = Layer.effect(Escrow, effect {
   const factoryImplementation = text(try promise(() => deploy(chain, artifact("ProjectEscrow.sol", "EscrowFactory"), [], registrar.address)))
   const initialize = try encodeCall(factoryAbi, "initialize", [registrar.address, "0x0000000000000000000000000000000000000fee", identity.address, 0n, upgrader.address, implementation])
   const factory = text(try promise(() => deploy(chain, artifact("ERC1967Proxy.sol", "ERC1967Proxy"), [factoryImplementation, initialize], registrar.address)))
-  const dollar = try promise(() => deploy(chain, artifact("TestDollar.sol", "TestDollar"), [], registrar.address))
+  const dollar = text(try promise(() => deploy(chain, `${builtToken.out}/TestUsdc.sol/TestUsdc.json`, [], registrar.address)))
   const dollarCode = try promise(() => chain.rpc("eth_getCode", [dollar, "latest"]))
   try promise(() => chain.rpc("anvil_setCode", [usdc, dollarCode]))
   const create = try encodeCall(factoryAbi, "create", [projectId, usdc, 0])

@@ -16,7 +16,7 @@ export const theSigningPayloadLeavesOutOnlyTheSignature = contract({
   run: signingPayload,
   deterministic: true,
   invariant: (receipt, payload) => {
-    const signed: { readonly run: Record<string, unknown> } = JSON.parse(payload);
+    const signed = JSON.parse(payload) as { readonly run: Record<string, unknown> };
     const marker = markerOf(receipt);
     return Object.keys(signed).join(",") === PAYLOAD_KEYS
       && Object.keys(signed.run).join(",") === Object.keys(marker.run).filter((key) => key !== "device_signature").join(",");
@@ -28,7 +28,7 @@ const Disclosure = Schema.Struct({ policyRevision: Schema.Literals(["r1", "r2"])
 const Instant = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4 }));
 const Joins = Schema.Struct({
   sameProject: Schema.Boolean,
-  legacy: Schema.Boolean,
+  v1Schema: Schema.Boolean,
   acknowledged: Schema.Boolean,
   acknowledgement: Disclosure,
   startedAt: Instant,
@@ -43,7 +43,7 @@ export const aJoinedReceiptMeetsItsPolicy = contract({
   input: Arbitrary.schema(Joins).pipe(Arbitrary.map((join): Join => ({ ...join, acknowledgement: { ...join.acknowledgement }, disclosed: { ...join.disclosed }, bindings: join.bindings.map((binding) => ({ disclosure: { ...binding.disclosure }, activatedAt: binding.activatedAt })) }))),
   run: policyJoin,
   deterministic: true,
-  invariant: (join, verdict) => verdict !== "Joined" || (join.sameProject && (join.legacy
+  invariant: (join, verdict) => verdict !== "Joined" || (join.sameProject && (join.v1Schema
     ? !join.active || join.completedAt < join.activatedAt
     : join.acknowledged && (join.active
       ? join.activatedAt <= join.startedAt

@@ -226,7 +226,8 @@ async function ready(url: string, runner: Runner): Promise<string> {
     if (isRecord(version)) {
       if (version["solana-core"] !== SOLANA_TEST_VERSION) throw new Error(`The validator reported version ${String(version["solana-core"])}, not ${SOLANA_TEST_VERSION}`);
       const genesis = await rpc(url, "getGenesisHash").catch(() => undefined);
-      if (typeof genesis === "string" && isPublicKey(genesis)) return genesis;
+      const slot = await rpc(url, "getSlot", [{ commitment: "confirmed" }]).catch(() => undefined);
+      if (typeof genesis === "string" && isPublicKey(genesis) && typeof slot === "number" && slot >= 1) return genesis;
     }
     await sleep(250);
   }

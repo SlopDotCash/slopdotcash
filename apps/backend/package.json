@@ -4,16 +4,34 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./caller": "./src/caller/live.vibe",
-    "./client": "./src/client/index.vibe",
+    "./caller": {
+      "types": "./.vibe/declarations/src/caller/live.d.vibe.ts",
+      "default": "./src/caller/live.vibe"
+    },
+    "./client": {
+      "types": "./.vibe/declarations/src/client/index.d.vibe.ts",
+      "default": "./src/client/index.vibe"
+    },
     "./legacy": "./src/projects/store/legacy.ts",
-    "./live": "./src/live.vibe",
+    "./live": {
+      "types": "./.vibe/declarations/src/live.d.vibe.ts",
+      "default": "./src/live.vibe"
+    },
     "./nodeId": "./src/projects/nodeId.ts",
     "./owner/classify": "./src/projects/owner/classify.ts",
-    "./points": "./src/accounts/routes/index.vibe",
-    "./ports": "./src/ports.vibe",
+    "./points": {
+      "types": "./.vibe/declarations/src/accounts/routes/index.d.vibe.ts",
+      "default": "./src/accounts/routes/index.vibe"
+    },
+    "./ports": {
+      "types": "./.vibe/declarations/src/ports.d.vibe.ts",
+      "default": "./src/ports.vibe"
+    },
     "./projects/definition": "./src/projects/owner/definition.ts",
-    "./projects/store": "./src/projects/store/store.vibe",
+    "./projects/store": {
+      "types": "./.vibe/declarations/src/projects/store/store.d.vibe.ts",
+      "default": "./src/projects/store/store.vibe"
+    },
     "./revisionChanges": "./src/projects/owner/revisionChanges.ts",
     "./tables": "./src/tables.ts"
   },

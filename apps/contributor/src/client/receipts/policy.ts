@@ -15,7 +15,7 @@ export interface PinnedBinding {
 
 export interface Join {
   sameProject: boolean;
-  legacy: boolean;
+  v1Schema: boolean;
   acknowledged: boolean;
   acknowledgement: Disclosure;
   startedAt: number;
@@ -62,12 +62,12 @@ export function pinnedIndex(bindings: PinnedBinding[], policyRevision: string): 
 
 export function policyJoin(j: Join): JoinVerdict {
   //@ ensures \result === "Joined" ==> j.sameProject
-  //@ ensures \result === "Joined" && j.legacy && j.active ==> j.completedAt < j.activatedAt
-  //@ ensures \result === "Joined" && !j.legacy ==> j.acknowledged
-  //@ ensures \result === "Joined" && !j.legacy && !j.active ==> sameDisclosure(j.acknowledgement, j.disclosed)
-  //@ ensures \result === "Joined" && !j.legacy && j.active ==> j.activatedAt <= j.startedAt
+  //@ ensures \result === "Joined" && j.v1Schema && j.active ==> j.completedAt < j.activatedAt
+  //@ ensures \result === "Joined" && !j.v1Schema ==> j.acknowledged
+  //@ ensures \result === "Joined" && !j.v1Schema && !j.active ==> sameDisclosure(j.acknowledgement, j.disclosed)
+  //@ ensures \result === "Joined" && !j.v1Schema && j.active ==> j.activatedAt <= j.startedAt
   if (!j.sameProject) return "OtherProject";
-  if (j.legacy) {
+  if (j.v1Schema) {
     if (j.active && j.completedAt >= j.activatedAt) return "LegacyAfterActivation";
     return "Joined";
   }

@@ -3,7 +3,7 @@ import { boundedBytes } from "@repo/platform/browser"
 import { affectedOf, changedFiles } from "../coverage/scope.vibe"
 import { isAncestor } from "../run/heads.vibe"
 import { buildManifestOf, productionOrigin } from "./capture.vibe"
-import { AgentClientRecords, AgentWorkflow } from "./records.schema.vibe"
+import { AgentClientRecords, type AgentWorkflow } from "./records.schema.vibe"
 
 export error AgentClientsRefused { message: string }
 

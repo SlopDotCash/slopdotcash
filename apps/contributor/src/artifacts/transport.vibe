@@ -1,7 +1,7 @@
 // spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
 import { sha256Hex } from "@repo/platform/crypto"
 import { manualRedirects } from "@repo/platform/github"
-import { type Artifact, type Event, Machine, initial, carriesCredential, machineOver } from "../../gen/contributor__artifactTransport.effect.vibe"
+import { type Artifact, type Event, type Machine, initial, carriesCredential, machineOver } from "../../gen/contributor__artifactTransport.effect.vibe"
 import { readLimit, transientHttpStatus } from "./limits.ts"
 import { type Expectation, type Received, incompleteDocumentDetail, judgeBody } from "./media.ts"
 import { carriesGitHubCredential, trustedDownloadUrl } from "./policy.ts"
@@ -77,15 +77,13 @@ effect function prefix(response: HttpClientResponse.HttpClientResponse, limit: n
   const chunks: Uint8Array[] = []
   let size = 0
   let ended = true
-  for try (const chunk of response.stream) {
+  try Stream.runDrain(Stream.takeUntil(Stream.map(response.stream, (chunk) => {
     const kept = chunk.subarray(0, limit - size)
     chunks.push(kept)
     size += kept.byteLength
-    if (size >= limit) {
-      ended = false
-      break
-    }
-  }
+    if (size >= limit) ended = false
+    return ended
+  }), (more) => !more))
   const bytes = new Uint8Array(size)
   let offset = 0
   for (const chunk of chunks) {

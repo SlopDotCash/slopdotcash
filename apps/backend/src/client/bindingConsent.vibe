@@ -1,12 +1,20 @@
 // spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"
 import { type AnyRoute, route } from "@repo/platform/route"
 
-const loose = Schema.optionalKey(Schema.Unknown)
+const AnyField = Schema.Unknown
 
-export const ConsentFields = Schema.Struct({ claimId: loose, network: loose, vault: loose, expectedVersion: loose, expiresAt: loose, signature: loose })
-export type ConsentFields = typeof ConsentFields.Type
-export const SolanaBindFields = Schema.Struct({ obligationId: loose, transaction: loose })
-export type SolanaBindFields = typeof SolanaBindFields.Type
+export schema ConsentFields {
+  readonly claimId?: AnyField
+  readonly network?: AnyField
+  readonly vault?: AnyField
+  readonly expectedVersion?: AnyField
+  readonly expiresAt?: AnyField
+  readonly signature?: AnyField
+}
+export schema SolanaBindFields {
+  readonly obligationId?: AnyField
+  readonly transaction?: AnyField
+}
 
 export schema TypedFieldView {
   readonly name: string

@@ -19,14 +19,12 @@ const Resources = Schema.Struct({
   script_runtime: Schema.optionalKey(Raw),
 })
 
-const Version = Schema.Struct({
-  id: Schema.String,
-  number: Schema.Number,
-  annotations: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  resources: Schema.optionalKey(Resources),
-})
-
-type Version = typeof Version.Type
+schema Version {
+  readonly id: string
+  readonly number: number
+  readonly annotations?: Record<string, string>
+  readonly resources?: Resources
+}
 
 schema Split {
   readonly version_id: string
