@@ -16,11 +16,10 @@ const monorepo = 'CONTRIBUTING.md, "The monorepo"'
 const banned = ["redux", "react-redux", "zustand", "mobx", "jotai", "recoil", "valtio", "xstate", "vue", "svelte", "jest"]
 const scopes = ["reduxjs", "angular", "xstate", "vue", "sveltejs", "jest"]
 // Each workspace package's `exports` beyond its root: "@repo/design-system/theme.css", "@repo/backend/live". A directory
-// without a package.json is no workspace package (pnpm-workspace.yaml). A subpath pattern such as "./kernels/*" names
-// one file per match: its `*` stands for one path segment.
+// without a package.json is no workspace package (pnpm-workspace.yaml). Node export wildcards also match nested subpaths.
 const exported = ["apps", "packages"].flatMap((parent) => readdirSync(parent).filter((dir) => existsSync(`${parent}/${dir}/package.json`)).flatMap((dir) => {
   const { name, exports = {} } = JSON.parse(readFileSync(`${parent}/${dir}/package.json`, "utf8"))
-  return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+"))
+  return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+(?:/[^/]+)*"))
 }))
 // Files copied byte for byte from development and pinned by SHA-256 in frozen.json: records, never linted or rewritten.
 const frozen = JSON.parse(readFileSync(`${import.meta.dirname}/frozen.json`, "utf8")).ignore
@@ -103,7 +102,44 @@ const effects = {
     return { ...Object.fromEntries(Object.entries(scheduling).map(([selector, message]) => [selector, (node) => found.push({ node, message })])), "Program:exit": (node) => excess(context, node, found, "scheduled") }
   },
 }
-const code = { rules: { comments, effects } }
+const redeclarations = {
+  meta: { schema: [] },
+  create(context) {
+    return {
+      "Program:exit"() {
+        for (const scope of context.sourceCode.scopeManager.scopes) {
+          for (const variable of scope.variables) {
+            let type = false
+            let value = variable.eslintImplicitGlobalSetting === "readonly" || variable.eslintImplicitGlobalSetting === "writable"
+            for (const definition of variable.defs) {
+              if ((definition.isTypeDefinition && type) || (definition.isVariableDefinition && value)) {
+                context.report({ node: definition.name, message: "'{{name}}' is already defined in this namespace.", data: { name: variable.name } })
+              }
+              type ||= definition.isTypeDefinition
+              value ||= definition.isVariableDefinition
+            }
+          }
+        }
+      },
+    }
+  },
+}
+const warningComments = {
+  meta: { schema: [] },
+  create(context) {
+    return {
+      Program() {
+        for (const comment of context.sourceCode.getAllComments()) {
+          const marker = /\b(?:todo|fixme|legacy|deprecated)\b/iu.exec(comment.value)?.[0]
+          if (marker !== undefined && !cited.test(comment.value)) {
+            context.report({ loc: comment.loc, message: "Unexpected '{{marker}}' comment.", data: { marker } })
+          }
+        }
+      },
+    }
+  },
+}
+const code = { rules: { comments, effects, redeclarations, warningComments } }
 const own = ["apps/**", "packages/**"]
 const commented = {
   "apps/app/src/App.tsx": 4,
@@ -492,8 +528,12 @@ export default defineConfig(
     },
   },
   { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(tseslint.parser) } },
-  { files: ["{apps,packages}/**/*.{vibe,vibex}"], languageOptions: { parser: guarded(vibelang) } },
-  { files: own, plugins: { code }, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
+  {
+    files: ["{apps,packages}/**/*.{vibe,vibex}"],
+    languageOptions: { parser: guarded(vibelang) },
+    rules: { "no-redeclare": "off", "code/redeclarations": "error" },
+  },
+  { files: own, plugins: { code }, rules: { "no-console": "error", "no-warning-comments": "off", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }], "code/warningComments": "error" } },
   { files: ["packages/ui/src/components/**"], ignores: ["**/*.meta.tsx"], rules: { "code/comments": ["error", { jsdoc: true, left: commented }] } },
 )
 
