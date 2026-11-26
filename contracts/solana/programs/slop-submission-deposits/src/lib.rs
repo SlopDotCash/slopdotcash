@@ -30,7 +30,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, TransferChecked};
 
 // A local placeholder. The owner generates the program address before the verifiable build
 // (docs/submission-deposits-solana-deploy-runbook.md); nobody holds a key for this one.
-declare_id!("HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t");
+declare_id!("4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7");
 
 /// Longest reclaim delay `initialize` accepts, so a payer is never stranded for longer.
 pub const MAX_RECLAIM_DELAY: i64 = 365 * 86_400;
