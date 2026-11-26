@@ -50,15 +50,15 @@ export function accountRuntime(page: PageRuntime): AccountRuntime {
 export effect function watchEmail(show: (panel: EmailPanel) => void!!) {
   const email = try EmailPreferences
   fork refreshedOnFocus(email)
-  for try (const panel of email.changes) try show(panel)
+  try Stream.runForEach(email.changes, show)
 }
 
 export effect function watchWallets(show: (panel: WalletPanel) => void!!) {
-  for try (const panel of (try PayoutWallets).changes) try show(panel)
+  try Stream.runForEach((try PayoutWallets).changes, show)
 }
 
 export effect function watchOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
-  for try (const offers of (try WalletChoice).offers) try show(offers)
+  try Stream.runForEach((try WalletChoice).offers, show)
 }
 
 export effect function reloadEmail() {

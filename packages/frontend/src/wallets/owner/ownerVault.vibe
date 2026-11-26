@@ -2,7 +2,7 @@
 import { toAmount } from "@repo/settlement/kernels/amounts"
 import type { PoolFacts } from "../../../gen/frontend__projections.ts"
 import { type VaultLocks, lockedFundsText } from "../../../gen/frontend__vaultLocks.ts"
-import { type Answer, type Flow, Machine, type Notice, type Origin, type OwnerVault, type Target, actor, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canReviewDeposit, canSend, canSetTabHidden, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, resumed, server, tab, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
+import { type Answer, type Event, type Flow, type NotAnEvent, type Notice, type Origin, type OwnerVault, type Rejected, type Target, actor, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canReviewDeposit, canSend, canSetTabHidden, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, resumed, server, tab, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { SlotStorage } from "../core/slots.ts"
@@ -72,8 +72,15 @@ export function startFor(registered: boolean): OwnerVault {
   return registered ? { ...initial, creation: { ...idleFlow, phase: "Done" } } : initial
 }
 
+export interface OwnerVaultMachine {
+  readonly changes: Stream.Stream<OwnerVault>
+  get(): OwnerVault!!
+  send(event: Event, by: number, isCurrent?: (state: OwnerVault) => boolean): OwnerVault!Rejected
+  receive(input: unknown, by: number): OwnerVault!(NotAnEvent | Rejected)
+}
+
 export interface OwnerVaultPage {
-  readonly machine: Machine.Shape
+  readonly machine: OwnerVaultMachine
   follow(account: number): OwnerVault!!
   review(target: Target, withdrawal: bigint, pool: PoolFacts, locks: VaultLocks, promiseRefusal: string): OwnerVault!VaultRefused
   reviewDeposit(): OwnerVault!VaultRefused
@@ -126,7 +133,7 @@ export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: Va
 
   const machine = try machineOver(load, keep)
 
-  effect function sent(event: Parameters<Machine.Shape["send"]>[0], by: number) {
+  effect function sent(event: Event, by: number) {
     return try keptOrChanged(Effect.ignore(machine.send(event, by)))
   }
 
@@ -134,7 +141,7 @@ export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: Va
     throw new VaultRefused({ notice, message: noticeMessages[notice] })
   }
 
-  effect function asActor(depositOnly: (state: OwnerVault) => boolean, guard: (state: OwnerVault, owner: number) => boolean, event: Parameters<Machine.Shape["send"]>[0]) {
+  effect function asActor(depositOnly: (state: OwnerVault) => boolean, guard: (state: OwnerVault, owner: number) => boolean, event: Event) {
     const state = try machine.get()
     if (!guard(state, actor(state))) throw new VaultRefused({ notice: state.notice, message: refusalOf(state, depositOnly(state)) })
     if (!(try sent(event, actor(state)))) throw new VaultRefused({ notice: state.notice, message: slotChangedMessage })

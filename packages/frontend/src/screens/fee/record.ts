@@ -113,7 +113,7 @@ export function feeRepository(route: FeeRoute, boot: RegistryBoot): FeeRepositor
   const named = `${route.owner}/${route.repo}`.toLowerCase();
   const project: RegistryProject | undefined = findHistoricalProjectByRepositoryId(boot, named);
   const repositories = Array.isArray(project?.repositories) ? project.repositories.map(recordOf) : [];
-  const index = repositories.findIndex((repository) => [repository?.id, ...(Array.isArray(repository?.aliases) ? repository.aliases : [])].some((name) => typeof name === "string" && name.toLowerCase() === named));
+  const index = repositories.findIndex((repository) => [repository?.id, ...(Array.isArray(repository?.aliases) ? (repository.aliases as ReadonlyArray<unknown>) : [])].some((name) => typeof name === "string" && name.toLowerCase() === named));
   const repository = repositories[index];
   if (project === undefined || repository === undefined) return undefined;
   const repositoryId = index === 0 ? recordOf(project.authority)?.repositoryId : repository.githubId;

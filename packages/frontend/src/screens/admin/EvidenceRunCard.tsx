@@ -76,7 +76,7 @@ export function EvidenceRunCard({ run, retentionBoundary, policyVersion, selecte
             <li key={object.sha256}>
               <button
                 type="button"
-                aria-label={`Select ${object.label}, ${object.sha256.slice(0, 12)}`}
+                title={`Select ${object.label}, ${object.sha256.slice(0, 12)}`}
                 aria-pressed={selected === object.sha256}
                 onClick={() => onSelect(object.sha256)}
                 className="flex min-h-12 w-full items-center justify-between gap-3 rounded-md border border-border px-4 py-2 text-left hover:bg-accent aria-pressed:border-primary"

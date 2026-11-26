@@ -31,7 +31,7 @@ export const meta: ComponentMeta<JoinPointsProps> = {
     // spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"
     Waiting: async () => {
       onStart.mockClear();
-      await userEvent.click(screen.getByRole("button", { name: "Waiting for GitHub…" }));
+      await expect(screen.getByRole("button", { name: "Waiting for GitHub…" })).toHaveAttribute("aria-disabled", "true");
       await expect(onStart).not.toHaveBeenCalled();
     },
     // spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"

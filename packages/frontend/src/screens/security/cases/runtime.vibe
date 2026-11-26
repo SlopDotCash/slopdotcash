@@ -198,11 +198,11 @@ export function casesRuntime(page: PageRuntime): CasesRuntime {
 }
 
 export effect function watchCases(show: (shown: Loaded<CaseList>) => void!!) {
-  for try (const shown of (try CaseDesk).lists) try show(shown)
+  try Stream.runForEach((try CaseDesk).lists, show)
 }
 
 export effect function watchCase(show: (shown: DetailShown) => void!!) {
-  for try (const shown of (try CaseDesk).details) try show(shown)
+  try Stream.runForEach((try CaseDesk).details, show)
 }
 
 export effect function loadCases(owner: string) {

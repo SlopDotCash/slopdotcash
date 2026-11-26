@@ -1,5 +1,6 @@
 //@ backend dafny
 // spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- referenced in Dafny //@ ensures contract
 import { type PoolFacts, type PromiseFacts, poolDisplay, promiseWarning } from "../../gen/frontend__projections.ts";
 
 /** Whether some recorded paying vault has neither a read free balance nor pledge support: every one while the read is not current, none when the project records none. @throws {never} */

@@ -33,7 +33,7 @@ export function paymentsRuntime(page: PageRuntime): PaymentsRuntime {
 
 export effect function watchOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
   const choice = try WalletChoice
-  for try (const offers of choice.offers) try show(offers)
+  try Stream.runForEach(choice.offers, show)
 }
 
 effect function seenOf(record: SecurityCase) {

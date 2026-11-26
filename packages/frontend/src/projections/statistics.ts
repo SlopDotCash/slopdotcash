@@ -21,6 +21,8 @@ export interface MergeActivityRow {
 
 const dayMs = 86_400_000;
 
+const unavailableModel = (value: string): boolean => isUnavailableModelIdentifier(value);
+
 /** @throws {never} */
 function instant(iso: string): number {
   const millis = Date.parse(iso);
@@ -397,7 +399,7 @@ export function summarizeModelOutcomes(snapshot: Pick<LeaderboardSnapshot, "attr
   let declarationsWithoutExactModel = 0;
 
   for (const attribution of snapshot.attributions) {
-    if (isUnavailableModelIdentifier(attribution.model)) {
+    if (unavailableModel(attribution.model)) {
       declarationsWithoutExactModel += 1;
       continue;
     }

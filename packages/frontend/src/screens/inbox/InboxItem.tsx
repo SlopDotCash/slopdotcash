@@ -70,7 +70,7 @@ export function InboxItem({ notice, busy = false, onMark, onAcknowledge }: Inbox
         <>
           {awaitsAcknowledgment(notice) ? (
             <Button size="sm" variant="outline" disabled={busy} aria-label={`Acknowledge: ${title}`} onClick={() => onAcknowledge(notice)}>
-              Ack
+              Acknowledge
             </Button>
           ) : null}
           {unread ? (

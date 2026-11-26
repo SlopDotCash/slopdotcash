@@ -100,16 +100,17 @@ effect function leave() {
 effect function followSession(attempt: SignInAttempt.Shape) {
   const session = try Session
   let resumed = (try Deployment).localBackendOrigin === undefined
-  for try (const view of session.changes) {
+  try Stream.runForEachWhile(session.changes, (view) => effect {
     if (view.status === "signedIn") {
       try leave()
-      break
+      return false
     }
     if (view.status === "signedOut" && !resumed) {
       resumed = true
       try attempt.resume()
     }
-  }
+    return true
+  })
 }
 
 export type LoginRuntime = ReturnType<typeof makeLoginRuntime>
@@ -132,7 +133,7 @@ export effect function watchSignIn(show: (state: SignInState) => void!!) {
   const attempt = try SignInAttempt
   try (try BrowserSession).saveReturn(currentAddress().search)
   fork followSession(attempt)
-  for try (const state of attempt.changes) try show(state)
+  try Stream.runForEach(attempt.changes, show)
 }
 
 export effect function startSignIn(reopen: boolean, target: SignInWindow) {

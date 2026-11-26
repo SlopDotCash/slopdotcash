@@ -143,7 +143,7 @@ export const reportCompose = Layer.effect(ReportCompose, effect {
 })
 
 export effect function watchCompose(show: (view: ComposeView | undefined) => void!!) {
-  for try (const view of (try ReportCompose).changes) try show(view)
+  try Stream.runForEach((try ReportCompose).changes, show)
 }
 
 export effect function followCompose(projectId: string) {

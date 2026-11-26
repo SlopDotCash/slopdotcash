@@ -115,11 +115,11 @@ const advisoryStateLabels: Readonly<Record<string, string>> = {
 const closingReceipts = new Set(["duplicate", "out-of-scope", "rejected"]);
 
 function Receipt({ record }: { record: SecurityCase }) {
-  const advisoryState = record.advisory?.state ? advisoryStateLabels[record.advisory.state] : undefined;
+  const advisoryState = record.advisory?.githubState ? advisoryStateLabels[record.advisory.githubState] : undefined;
   const closeOnGithub =
     record.advisory !== null &&
     record.advisory !== undefined &&
-    (record.advisory.state === "triage" || record.advisory.state === "draft") &&
+    (record.advisory.githubState === "triage" || record.advisory.githubState === "draft") &&
     closingReceipts.has(record.receiptState ?? "") &&
     record.viewerRoles.some((role) => role === "owner" || role === "triager" || role === "maintainer");
   return (

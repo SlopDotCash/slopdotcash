@@ -1,5 +1,4 @@
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
-import type * as PointsTestingModule from "@repo/points/testing";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,7 +71,36 @@ type Canned =
   | { readonly kind: "json"; readonly status: number; readonly body: unknown }
   | { readonly kind: "bytes"; readonly status: number; readonly bytes: Uint8Array; readonly contentType: string };
 
-type PointsTesting = typeof PointsTestingModule;
+interface D1Handle {
+  prepare(text: string): {
+    bind(...params: ReadonlyArray<string | number | null>): {
+      all<T>(): Promise<{ readonly results: ReadonlyArray<T> }>;
+    };
+  };
+}
+
+interface PublishedFile {
+  readonly path: string;
+  readonly bytes: Uint8Array;
+}
+
+interface PublishedFixture {
+  readonly registry: Published["registry"];
+  readonly files: ReadonlyArray<PublishedFile>;
+  readonly transport: {
+    readonly root: Uint8Array;
+    readonly parts: ReadonlyArray<PublishedFile>;
+  };
+  readonly leaderboard: {
+    readonly snapshot: {
+      readonly leaders: ReadonlyArray<{ readonly actor: Published["leaders"][number] }>;
+    };
+  };
+}
+
+interface PointsTesting {
+  readonly publishedFixture: () => Promise<PublishedFixture>;
+}
 
 interface Session {
   readonly context: BrowserContext;
@@ -207,7 +235,10 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
     site: (request) => mf.dispatchFetch(request),
     identity: (request) => mf.dispatchFetch(request),
     github,
-    rows: async (text, params) => (await (await mf.getD1Database("SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
+    rows: async (text, params) => {
+      const db = (await mf.getD1Database("SLOP_DB", "worker")) as unknown as D1Handle;
+      return (await db.prepare(text).bind(...params).all<Row>()).results;
+    },
     verifications,
     deployed: () => deployed,
     deploy: async (deployment) => {
@@ -726,7 +757,7 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return page().evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
     case "reveal":
       await locate(page(), op.target).first().scrollIntoViewIfNeeded();
-      await page().evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await page().evaluate(() => document.fonts.ready.then(() => undefined));
       return null;
     case "back":
       await page().goBack({ waitUntil: "load" });

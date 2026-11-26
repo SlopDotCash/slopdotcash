@@ -1,13 +1,13 @@
 // spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Verification candidates merge atomically with current storage"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"
 import { randomId } from "@repo/platform/crypto"
-import { type Candidate, type CheckOutcome, type Event, Machine, type Plan, type Prompt, Rejected, type Slot, type Surface, type WalletResult, blocksSend, canCheck, canDepart, canMount, canReserve, conflicts, entry, initial, machineOver, noCandidate, noEntries, noEntry, noPlan, plan, validPlan, view } from "../../../gen/frontend__directBountyPrompt.effect.vibe"
+import { type Candidate, type CheckOutcome, type Event, type NotAnEvent, type Plan, type Prompt, type Rejected, type Slot, type Surface, type WalletResult, blocksSend, canCheck, canDepart, canMount, canReserve, conflicts, entry, initial, machineOver, noCandidate, noEntries, noEntry, noPlan, plan, validPlan, view } from "../../../gen/frontend__directBountyPrompt.effect.vibe"
 import type { Attempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { modelNumber } from "../../flows/security/private.vibe"
 import { storageKeys } from "../../platform/storage.vibe"
 import { actorNumber } from "../../session/session.vibe"
 import { type EvmConnection, type EvmTransaction, connectEvm, estimateGas, evmAccount, evmChainId, evmRequest, sendTransaction, switchChain } from "../core/evm.vibe"
 import { type SlotStorage, readSlotText, slotWritable, writeSlotText } from "../core/slots.ts"
-import { type Authority, BountyRefused, type PaymentCase, evmPaymentAuthority, paymentMessages, refused, sameActor, sessionActor } from "./paymentCase.vibe"
+import { type Authority, type BountyRefused, type PaymentCase, evmPaymentAuthority, paymentMessages, refused, sameActor, sessionActor } from "./paymentCase.vibe"
 import { type DirectTransaction, type Journal, type JournalEntry, type JournalRead, attemptEntry, entryAttempt, isEvmHash, journalText, nonceNumber, quantityOf, readJournal, sameAddress, sameAttempt, transactionBytes, transactionOf, transactionOfBytes } from "./records.ts"
 
 export type { DirectTransaction, Slot, Surface }
@@ -66,8 +66,15 @@ export interface HashInputs {
   readonly second?: string
 }
 
+export interface DirectPromptMachine {
+  readonly changes: Stream.Stream<Prompt>
+  get(): Prompt!!
+  send(event: Event, by: number, isCurrent?: (state: Prompt) => boolean): CheckOutcome!Rejected
+  receive(input: unknown, by: number): CheckOutcome!(NotAnEvent | Rejected)
+}
+
 export interface DirectPrompt {
-  readonly machine: Machine.Shape
+  readonly machine: DirectPromptMachine
   written(event: Event, by: number): (CheckOutcome | undefined)!Rejected
   journalNow(payer: string): JournalRead
 }
@@ -116,7 +123,8 @@ export effect function directPromptOver(storage: SlotStorage | undefined, key: s
   }
 
   effect function keep(next: Prompt) {
-    if (next.opened) {
+    const previous = try Ref.get(local)
+    if (previous.opened && next.opened) {
       const read = journalNow(next.scope.payer)
       const journal: Record<string, JournalEntry> = read.kind === "read" ? { ...read.journal } : {}
       let changed = false

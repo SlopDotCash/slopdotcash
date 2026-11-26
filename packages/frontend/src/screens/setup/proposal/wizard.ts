@@ -65,7 +65,7 @@ export function wizardStore(initial: string | null, search: string, saver: Draft
 }
 
 function loaderOf(runtime: PageRuntime, search: string): Loader {
-  const opened = pages.get(runtime) ?? { store: undefined, listeners: new Set(), loaders: new Map() };
+  const opened: Opened = pages.get(runtime) ?? { store: undefined, listeners: new Set(), loaders: new Map() };
   pages.set(runtime, opened);
   const known = opened.loaders.get(search);
   if (known) return known;
