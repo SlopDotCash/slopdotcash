@@ -245,12 +245,21 @@ when the steward is an Organization, under the Inbox kind
 `project_revision`, with event keys under `backlog-rule:`:
 `backlog-rule:<project>:preview` once, before 1 December 2026, when the
 project would leave on the current figures;
-`backlog-rule:<project>:warn:<last merge>` once when dormancy is four days
-away; and one notice each time the project leaves rotation, keyed as
-`backlog-rule:<project>:out:<backlog | dormant>:<last merge or none>`.
+`backlog-rule:<project>:warn:<last merge ISO instant or none>` once
+when dormancy is four days away; and one notice each time the project
+leaves rotation, keyed as `backlog-rule:<project>:out:<backlog |
+dormant>:<last merge ISO instant or none>`.
 The scheduled Slopbot run sends them right after it refreshes merge
-activity; a failure to send never fails that read. The Slopbot sender 
-itself is a later change. No notice names a contributor or an amount.
+activity; a failure to send never fails that read. No notice names a
+contributor or an amount.
+
+At most one notice is due for a project in a run: the preview before
+the rule starts when the project would leave, the out notice when it
+has left rotation, otherwise the warning when dormancy is four days
+away. The preview says the project would leave on 1 December 2026 and
+that the owner can mark a catch-up; the warning says how many days have
+passed since the last merge; the out notice says why the project left
+and how it returns.
 
 ```quint
 pure val inboxKind = "project_revision"
@@ -262,6 +271,18 @@ pure def lawNoticeSentOnce(s: Backlog, key: str): bool =
 pure def lawPreviewBeforeStart(s: Backlog, key: str): bool =
   (s.now < startsAtHours and wouldLeave(s) and not(s.sentKeys.contains(key))) implies canSendNotice(s, key, schedule)
 pure def sometimesNoticeSent(s: Backlog): bool = s.sentKeys.size() > 0
+pure def noticeDue(s: Backlog): str =
+  if (s.now < startsAtHours and wouldLeave(s)) "preview"
+  else if (outOfRotation(s)) "out"
+  else if (dormantWarningDue(s.reads, s.now)) "warn"
+  else "none"
+pure def noticeReason(s: Backlog): str =
+  if (overLimitHeld(s.reads, s.now)) "50 or more outside pull requests are waiting for a maintainer"
+  else if (dormantHeld(s.reads, s.now)) "no merge in 14 days while outside pull requests wait"
+  else "the backlog rule"
+pure def previewDetail(reason: str): str =  "From 1 December 2026, a project with 50 or more outside pull requests waiting a week for a maintainer, or no merge in 14 days while outside pull requests wait, leaves the home page, /sponsors and agent discovery until that is fixed. Your project would leave today: " + reason + ". You can mark it as catching up on reviews for up to fourteen days from its settings."
+pure def warningDetail(daysSinceMerge: str): str =  "No pull request has been merged in " + daysSinceMerge + " days while outside pull requests wait. After 14 days the project leaves the home page, /sponsors and agent discovery until a maintainer merges. You can mark it as catching up on reviews for up to fourteen days from its settings."
+pure def outDetail(reason: str, returns: str): str =  "Your project left the home page, /sponsors and agent discovery: " + reason + ". It returns by itself once " + returns + ". You can mark it as catching up on reviews for up to fourteen days from its settings. Accepted work still records points."
 pure val readsValues = Set(List(unreadRead, unreadRead),
   List({ read: true, waiting: 50, lastMergedAt: 498800, observedAt: 498911 }, unreadRead),
   List({ read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }, { read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }),
@@ -281,7 +302,7 @@ pure val lastStartMonthValues = Set(0, 202611, 202612)
 pure val nowMonthValues = Set(202611, 202612)
 pure val repositoryValues = Set(0, 1)
 pure val historyValues = Set(List(), List(498912))
-pure val keyValues = Set("backlog-rule:example:preview", "backlog-rule:example:warn:498800", "backlog-rule:example:out:backlog:498800")
+pure val keyValues = Set("backlog-rule:example:preview", "backlog-rule:example:warn:2026-11-25T08:00:00.000Z", "backlog-rule:example:out:backlog:2026-11-25T08:00:00.000Z")
 pure val byValues = Set(owner, registry, schedule, browserReader, discoveryServer, slopbot)
 pure val weight_storeRead = 3
 pure val weight_startCatchUp = 2
