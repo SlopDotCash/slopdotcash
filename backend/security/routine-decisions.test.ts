@@ -590,6 +590,170 @@ describe("routine decisions on private reports", () => {
     ]);
   });
 
+  test("earlier reports exclude only routine proof-clock holds and no-proof closes, keeping human decisions eligible", async () => {
+    const t = fixture();
+    const onClock = await t.report(ALICE, "Vault drain without proof");
+    const timedOut = await t.report(BOB, "Bridge check without proof");
+    const humanRejected = await t.report(CAROL, "Deposit skips the cap check");
+    const humanOutOfScope = await t.report(
+      REPORTERS[3],
+      "Withdraw rounding leaves dust in the vault",
+    );
+    const humanAsked = await t.report(
+      REPORTERS[4],
+      "Anyone can flip the fee switch",
+    );
+    const missing = () => [
+      answer({ proof: "missing", missing: ["runnable-proof"] }),
+      answer({ proof: "missing", missing: ["runnable-proof"] }),
+    ];
+    t.answers.set("Vault drain without proof", missing);
+    t.answers.set("Bridge check without proof", missing);
+    await t.pass();
+    await t.pass();
+    expect(t.caseRow(onClock.caseId).receipt_state).toBe("needs-information");
+    expect(t.caseRow(timedOut.caseId).receipt_state).toBe("needs-information");
+
+    // Let timedOut's 14-day routine proof clock expire into no-proof-received,
+    // while keeping onClock held on its own fresh routine proof clock.
+    t.advance(15 * DAY);
+    // Keep onClock still on a fresh clock by creating a fresh proof-clock case
+    // after advancing time.
+    const freshClock = await t.report(
+      REPORTERS[5],
+      "Oracle check without proof",
+    );
+    t.answers.set("Oracle check without proof", missing);
+    await t.pass();
+    expect(t.caseRow(timedOut.caseId).receipt_state).toBe("rejected");
+    expect(t.caseRow(onClock.caseId).receipt_state).toBe("rejected");
+    expect(t.caseRow(freshClock.caseId).receipt_state).toBe(
+      "needs-information",
+    );
+
+    // Human decisions remain eligible duplicate targets so reworded refiles
+    // of human-rejected or out-of-scope findings still close as duplicates.
+    for (const [caseId, outcome] of [
+      [humanRejected.caseId, "rejected"],
+      [humanOutOfScope.caseId, "out-of-scope"],
+    ] as const) {
+      const decided = await t.act(OWNER, caseId, {
+        action: "decide",
+        outcome,
+        severity: "low",
+        loss: "not-verified",
+        inScope: false,
+        relatedParty: false,
+        reason: "Reviewed by the owner: this report does not qualify.",
+      });
+      expect(decided.status).toBe(200);
+    }
+    const appealedHuman = await t.act(REPORTERS[3], humanOutOfScope.caseId, {
+      action: "appeal",
+      reason: "The dust is a real loss of covered funds for each user.",
+    });
+    expect(appealedHuman.status).toBe(200);
+    expect(t.caseRow(humanOutOfScope.caseId).receipt_state).toBe("disputed");
+
+    const ownerAsked = await t.act(OWNER, humanAsked.caseId, {
+      action: "request-information",
+      reason: "Which deployment did you test the fee switch on?",
+    });
+    expect(ownerAsked.status).toBe(200);
+    expect(t.caseRow(humanAsked.caseId)).toMatchObject({
+      receipt_state: "needs-information",
+      next_action_due_at: null,
+    });
+
+    // A later report with proof sees human-decided and human-asked earlier
+    // cases, never cases held on the routine proof clock or closed for no proof.
+    let offeredIds: string[] = [];
+    const refileWithProof = await t.report(
+      ALICE,
+      "Bridge check with runnable proof attached",
+    );
+    t.answers.set("Bridge check with runnable proof attached", (input) => {
+      offeredIds = input.earlierReports.map((entry) => entry.id);
+      return [answer(), answer()];
+    });
+    await t.pass();
+    expect(offeredIds).not.toContain(freshClock.caseId);
+    expect(offeredIds).not.toContain(timedOut.caseId);
+    expect(offeredIds).not.toContain(onClock.caseId);
+    expect(offeredIds).toContain(humanRejected.caseId);
+    expect(offeredIds).toContain(humanOutOfScope.caseId);
+    expect(offeredIds).toContain(humanAsked.caseId);
+    expect(t.caseRow(refileWithProof.caseId).receipt_state).toBe("triaging");
+
+    // A reworded refile of a human-rejected report still closes as a duplicate.
+    const rewordedRejected = await t.report(
+      BOB,
+      "Deposit cap bypass with runnable test",
+    );
+    t.answers.set("Deposit cap bypass with runnable test", (input) => {
+      expect(input.earlierReports.map((entry) => entry.id)).toContain(
+        humanRejected.caseId,
+      );
+      return [
+        answer({ duplicateOfCaseId: humanRejected.caseId }),
+        answer({ duplicateOfCaseId: humanRejected.caseId }),
+      ];
+    });
+    await t.pass();
+    expect(t.caseRow(rewordedRejected.caseId)).toMatchObject({
+      receipt_state: "duplicate",
+      duplicate_of: humanRejected.caseId,
+    });
+
+    // Appealing a routine no-proof close returns it to the owner (triaging),
+    // and revising a proof-clock case leaves the clock: both become eligible again.
+    const appealNoProof = await t.act(BOB, timedOut.caseId, {
+      action: "appeal",
+      reason: "Proof was included in the reproduction section of the report.",
+    });
+    expect(appealNoProof.status).toBe(200);
+    expect(t.caseRow(timedOut.caseId).receipt_state).toBe("triaging");
+
+    const stored = await t.call(
+      REPORTERS[5],
+      "GET",
+      `security-submissions/${freshClock.submissionId}`,
+    );
+    const revised = await t.call(
+      REPORTERS[5],
+      "POST",
+      `security-submissions/${freshClock.submissionId}/report`,
+      {
+        expectedRevision: stored.body.submission?.intake.revision,
+        report: {
+          summary: "Oracle check with runnable proof added",
+          description:
+            "forge test --match-test testOracleFreshness reproduces the drain.",
+        },
+      },
+    );
+    expect(revised.status).toBe(200);
+    await t.pass();
+
+    let afterRecoveryIds: string[] = [];
+    const laterAfterRecovery = await t.report(
+      CAROL,
+      "Fresh report checking recovered duplicate candidates",
+    );
+    t.answers.set(
+      "Fresh report checking recovered duplicate candidates",
+      (input) => {
+        afterRecoveryIds = input.earlierReports.map((entry) => entry.id);
+        return [answer(), answer()];
+      },
+    );
+    await t.pass();
+    expect(afterRecoveryIds).toContain(timedOut.caseId);
+    expect(afterRecoveryIds).toContain(freshClock.caseId);
+    expect(afterRecoveryIds).not.toContain(onClock.caseId);
+    expect(t.caseRow(laterAfterRecovery.caseId).receipt_state).toBe("triaging");
+  });
+
   test("a report without proof waits 14 days for a new version and closes only when none arrives", async () => {
     const t = fixture();
     const silent = await t.report(

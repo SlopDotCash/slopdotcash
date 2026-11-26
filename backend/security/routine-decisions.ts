@@ -421,7 +421,13 @@ async function earlierSameDigest(
   return match?.id ?? null;
 }
 
-/** Slopbot's own summaries of earlier reports; never another report's text. */
+/**
+ * Slopbot's own summaries of earlier reports; never another report's text.
+ * Excludes earlier reports still waiting on the routine pass's own proof clock
+ * or closed by the routine pass as `no-proof-received`, so a refile with proof
+ * is not closed as a duplicate of a report that never had proof. Human
+ * decisions remain eligible duplicate targets.
+ */
 async function earlierReports(
   deps: RoutineDependencies,
   row: CaseRow,
@@ -436,11 +442,29 @@ async function earlierReports(
          FROM security_cases c
         WHERE c.project_id = ?1 AND c.id <> ?2
           AND c.submission_state = 'verified'
+          AND NOT (c.receipt_state = 'needs-information' AND c.next_action IS ?5)
+          AND NOT (
+            c.receipt_state = 'rejected'
+            AND c.technical_decider_github_id IS NULL
+            AND EXISTS (
+              SELECT 1 FROM security_routine_decisions d
+               WHERE d.case_id = c.id
+                 AND d.mode = 'live'
+                 AND d.outcome = 'no-proof-received'
+                 AND d.applied = 1
+            )
+          )
           AND (c.received_at < ?3 OR (c.received_at = ?3 AND c.rowid <
             (SELECT rowid FROM security_cases WHERE id = ?2)))
         ORDER BY c.received_at DESC, c.rowid DESC LIMIT ?4`,
     )
-    .bind(row.project_id, row.id, row.received_at, EARLIER_REPORT_LIMIT)
+    .bind(
+      row.project_id,
+      row.id,
+      row.received_at,
+      EARLIER_REPORT_LIMIT,
+      ROUTINE_PROOF_NEXT_ACTION,
+    )
     .all<{ id: string; summary: string | null }>();
   return (result.results ?? [])
     .filter((entry): entry is { id: string; summary: string } =>

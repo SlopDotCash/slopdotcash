@@ -1290,11 +1290,11 @@
     },
     {
       "path": "backend/security/routine-decisions.ts",
-      "sha256": "e382df9bdad0c3be659e745d2cfc5b6c2e4abfaad465a402f82f4ab617259197",
+      "sha256": "c6bcf21d742794c84fe3fbf954d0f47af7e90697ceafcc53b5d6705e59f960e0",
       "models": ["formal/models/api/api_security_routine_decisions.qnt"],
       "candidateLines": [
-        163, 331, 382, 416, 433, 580, 584, 629, 645, 647, 680, 693, 780, 834,
-        926, 928, 937, 985, 1088
+        163, 331, 382, 416, 439, 604, 608, 653, 669, 671, 704, 717, 804, 858,
+        950, 952, 961, 1009, 1112
       ],
       "review": "mapped-abstraction"
     },
@@ -12276,7 +12276,7 @@
     },
     {
       "path": "formal/models/api/api_security_routine_decisions.qnt",
-      "sha256": "13e2a44b8c6964aa6efde0d4fb7bddaeddc1a5d2c8ce9955da1e0ff2bff61039",
+      "sha256": "5fcedaae4c18224df43d9711574f2e918cc1808a7e909db045808636569d7926",
       "sources": [
         "backend/security/case-store.ts",
         "backend/security/handler.ts",
@@ -12286,6 +12286,7 @@
       ],
       "scenarios": [
         "agreedLineClosesTest",
+        "appealedNoProofEarlierIsCallTargetAgainTest",
         "appealedReportIsNeverReadAgainTest",
         "dryRunChangesNothingTest",
         "dryRunDecidesOnceTest",
@@ -12297,15 +12298,20 @@
         "lossStopsCloseTest",
         "newVersionIsReadAgainTest",
         "newVersionStopsClockTest",
+        "noProofClosedEarlierIsNoCallTargetTest",
+        "noProofClosedEarlierLeavesReportOpenTest",
         "noProofClosesAfterClockTest",
         "noProofWaitsForClockTest",
         "oneCallAloneDoesNotCloseTest",
         "personRequestHasNoClockTest",
+        "proofClockEarlierIsNoCallTargetTest",
         "proofFileIsProofTest",
         "proofFileRevisionGoesToOwnerTest",
         "proofFileStopsTheClockTest",
+        "revisedEarlierIsCallTargetAgainTest",
         "routineAppealIsOnceTest",
-        "routineAppealReturnsToOwnerTest"
+        "routineAppealReturnsToOwnerTest",
+        "sameBytesStillCloseTest"
       ]
     },
     {
