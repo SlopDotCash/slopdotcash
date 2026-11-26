@@ -297,10 +297,11 @@ export function HowItWorksPage() {
                 from an outside contributor with a link to its pay page on
                 slop.cash, and holds its review until the fee is recorded. The
                 fee is {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000} USDC
-                on Base or {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000}{" "}
-                USDG on Robinhood Chain unless the owner set another amount, or
-                the same fee in SLOP on Robinhood Chain at half the price. It is
-                a deposit: a merge sends it back, and so do{" "}
+                on Base or Solana, or{" "}
+                {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000} USDG on
+                Robinhood Chain, unless the owner set another amount, or the
+                same fee in SLOP on Robinhood Chain at half the price. It is a
+                deposit: a merge sends it back, and so do{" "}
                 {SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days without a maintainer
                 decision. A pull request closed without a merge for{" "}
                 {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days keeps it: a

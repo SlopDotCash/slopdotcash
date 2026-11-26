@@ -17,7 +17,11 @@ import {
   solanaReclaimMessage,
 } from "../../src/lib/solana-fee-deposit";
 import {
+  SUBMISSION_FEE_CONTRACTS,
+  SUBMISSION_FEE_KEPT_TO,
   SUBMISSION_FEE_SOLANA_RENT_LAMPORTS,
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
+  SUBMISSION_FEE_TOKENS,
   submissionFeeItem,
   submissionFeeOptions,
 } from "../../src/lib/submission-fee.mjs";
@@ -130,10 +134,32 @@ test("Solana is listed only once the program is published and switched on, and t
   const { tables, chain } = harness();
   const options = (terms: Parameters<typeof submissionFeeOptions>[3]) =>
     submissionFeeOptions("2000000", [], NOW, terms);
-  // The published tables: the program is published, Solana is switched off,
-  // nothing offered.
-  expect(options({}).some((entry) => entry.network === NETWORK)).toBe(false);
-  expect(publishedSolanaWay("2000000")).toBeNull();
+  // The published tables: the program is published and Solana is switched
+  // on (26 November 2026), so the one Solana way is offered.
+  expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(true);
+  expect(options({}).filter((entry) => entry.network === NETWORK)).toEqual([
+    {
+      network: NETWORK,
+      chainId: null,
+      contract: SUBMISSION_FEE_CONTRACTS[NETWORK],
+      token: SUBMISSION_FEE_TOKENS[NETWORK].usdc as string,
+      symbol: "USDC",
+      decimals: 6,
+      amount: "2000000",
+      minimumAccepted: "2000000",
+      keptTo: SUBMISSION_FEE_KEPT_TO[NETWORK],
+    },
+  ]);
+  expect(publishedSolanaWay("2000000")?.programId).toBe(
+    SUBMISSION_FEE_CONTRACTS[NETWORK] as string,
+  );
+  // Switched off, the same published tables offer nothing.
+  expect(
+    options({ solanaOn: false }).some((entry) => entry.network === NETWORK),
+  ).toBe(false);
+  expect(
+    publishedSolanaWay("2000000", { ...PUBLISHED_FEE_TABLES, solanaOn: false }),
+  ).toBeNull();
   // A program without the switch, and the switch without a program.
   expect(
     options({ ...tables, solanaOn: false }).some(
@@ -187,7 +213,12 @@ test("Solana is listed only once the program is published and switched on, and t
     "robinhood-mainnet",
   ]);
   // A page that does not offer Solana leaves the entry out.
-  expect(read(listed, PUBLISHED_FEE_TABLES).solana).toBeNull();
+  expect(
+    read(listed, { ...PUBLISHED_FEE_TABLES, solanaOn: false }).solana,
+  ).toBeNull();
+  // The published tables offer Solana, so a record that names another
+  // program than the published one is refused whole.
+  expect(() => read(listed, PUBLISHED_FEE_TABLES)).toThrow(FeeRecordError);
   // Any field that differs from the tables refuses the whole record.
   for (const change of [
     { contract: fakeAddress(1) },
@@ -581,9 +612,13 @@ test("Slopbot's comment names Solana only once the pay page takes it", () => {
     stableMinor: "2000000",
     ways: feeWays("2000000", [], NOW),
   };
-  // As deployed: the program id published, Solana switched off.
-  expect(solanaFeeOffered()).toBe(false);
-  expect(feeNeededComment(facts)).not.toContain("Solana");
+  // As deployed: the program id published and Solana switched on.
+  expect(solanaFeeOffered()).toBe(true);
+  expect(feeNeededComment(facts)).toContain(
+    "The pay page also takes 2 USDC on Solana.",
+  );
+  // Switched off, the comment says nothing of it.
+  expect(feeNeededComment({ ...facts, solana: false })).not.toContain("Solana");
   // A published program alone, or the switch alone, offers nothing.
   expect(solanaFeeOffered({ "solana-mainnet": fakeAddress(200) }, false)).toBe(
     false,

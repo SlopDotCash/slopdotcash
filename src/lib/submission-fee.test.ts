@@ -679,13 +679,31 @@ describe("the ways to pay", () => {
     expect(before.map((option) => [option.network, option.symbol])).toEqual([
       [BASE, "USDC"],
       [RC, "USDG"],
+      // Solana is switched on since 26 November 2026, in USDC only.
+      ["solana-mainnet", "USDC"],
+    ]);
+    // With Solana switched off the same tables list the EVM ways alone.
+    expect(
+      submissionFeeOptions("2000000", [], AT, { solanaOn: false }).map(
+        (option) => [option.network, option.symbol],
+      ),
+    ).toEqual([
+      [BASE, "USDC"],
+      [RC, "USDG"],
     ]);
     const options = submissionFeeOptions("2000000", RATES, AT);
     expect(options.map((option) => option.symbol)).toEqual([
       "USDC",
       "USDG",
       "SLOP",
+      "USDC",
     ]);
+    // SLOP stays payable on Robinhood Chain only.
+    expect(
+      options
+        .filter((option) => option.symbol === "SLOP")
+        .map((option) => option.network),
+    ).toEqual([RC]);
     expect(options[0]).toEqual({
       network: BASE,
       chainId: 8453,
@@ -725,17 +743,36 @@ describe("the ways to pay", () => {
       // The slot of the Solana program's `initialize` transaction.
       "solana-mainnet": 474211652,
     });
-    // The Solana program is deployed and published, and still not offered:
-    // the published tables list no Solana way while Solana is switched off.
+    // The Solana program is deployed, published and offered: the published
+    // tables list its one way, 2 USDC to the fee wallet, with no chain id.
     expect(SUBMISSION_FEE_CONTRACTS["solana-mainnet"]).toBe(
       "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
     );
     expect(
-      submissionFeeOptions("2000000", [], AT).some(
+      submissionFeeOptions("2000000", [], AT).filter(
+        (option) => option.network === "solana-mainnet",
+      ),
+    ).toEqual([
+      {
+        network: "solana-mainnet",
+        chainId: null,
+        contract: SUBMISSION_FEE_CONTRACTS["solana-mainnet"],
+        token: SUBMISSION_FEE_TOKENS["solana-mainnet"].usdc as string,
+        symbol: "USDC",
+        decimals: 6,
+        amount: "2000000",
+        minimumAccepted: "2000000",
+        keptTo: SUBMISSION_FEE_KEPT_TO["solana-mainnet"],
+      },
+    ]);
+    // Switched off, it is not listed, whatever the program id says.
+    expect(
+      submissionFeeOptions("2000000", [], AT, { solanaOn: false }).some(
         (option) => option.network === "solana-mainnet",
       ),
     ).toBe(false);
-    // A network without a contract is listed with none.
+    // A network without a contract is listed with none; Solana without a
+    // program is not listed at all.
     expect(
       submissionFeeOptions("2000000", [], AT, {
         contracts: { [BASE]: null, [RC]: null },

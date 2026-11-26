@@ -150,6 +150,19 @@ test("an unpaid pull request lists each way to pay what was asked", async () => 
         minimumAccepted: "110000000000000000000",
         keptTo: SUBMISSION_FEE_BURN,
       },
+      // Solana, switched on 26 November 2026: USDC only, no chain id, and
+      // the program id where the EVM rows carry a contract.
+      {
+        network: "solana-mainnet",
+        chainId: null,
+        contract: SUBMISSION_FEE_CONTRACTS["solana-mainnet"],
+        token: SUBMISSION_FEE_TOKENS["solana-mainnet"].usdc,
+        symbol: "USDC",
+        decimals: 6,
+        amount: "3000000",
+        minimumAccepted: "3000000",
+        keptTo: SUBMISSION_FEE_KEPT_TO["solana-mainnet"],
+      },
     ],
     paid: null,
     outcome: null,

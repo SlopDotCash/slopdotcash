@@ -49,7 +49,7 @@ export const SUBMISSION_FEE_CONTRACTS = {
   "robinhood-mainnet": "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
   // The `slop-submission-deposits` program id, deployed 26 November 2026 and
   // not upgradeable (`contracts/DEPLOY-MAINNET.md`, "Submission fee deposit
-  // program on Solana"). Publishing it switches nothing on: nothing offers,
+  // program on Solana"). Publishing it switched nothing on: nothing offers,
   // reads or sends on Solana while `SUBMISSION_FEE_SOLANA_SWITCHED_ON` is
   // false and `SUBMISSION_FEE_SOLANA_MODE` is `off`.
   "solana-mainnet": "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
@@ -59,9 +59,10 @@ export const SUBMISSION_FEE_CONTRACTS = {
  * `SUBMISSION_FEE_SOLANA_MODE` in `workers/submission-fee/wrangler.toml` is
  * `live`. While it is false no page, comment or API lists Solana as a way to
  * pay, whatever the program id says. A test holds the two together; change
- * them in the same reviewed change.
+ * them in the same reviewed change. True since 26 November 2026 (operator
+ * decision): USDC on Solana is offered; SLOP stays on Robinhood Chain only.
  */
-export const SUBMISSION_FEE_SOLANA_SWITCHED_ON = false;
+export const SUBMISSION_FEE_SOLANA_SWITCHED_ON = true;
 /**
  * A Solana deposit is read at this commitment only, for marking a pull
  * request paid as much as for settling: there is no earlier "confirmed"

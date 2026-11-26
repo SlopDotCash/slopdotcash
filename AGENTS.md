@@ -137,8 +137,13 @@ alias only.
     never the program's owner. The program was deployed on Solana mainnet
     on 26 November 2026 and its upgrade authority removed (operator
     decision; `contracts/DEPLOY-MAINNET.md`). `SUBMISSION_FEE_SOLANA_MODE`
-    is `off`, the fee is not offered on Solana, and the Worker holds no
-    Solana endpoint or resolver secret yet.
+    is `live` since 26 November 2026 (operator decision), changed together
+    with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`: the fee is offered in USDC on
+    Solana, and SLOP stays payable on Robinhood Chain only. The Worker's
+    endpoint and resolver secrets are set, and a record-only pass against
+    mainnet from Cloudflare read the program without error that day. A kept
+    (not refunded) deposit and a real pull request payment have not yet been
+    exercised on mainnet.
     Operator decision of 23 November 2026: it also resolves standing deposits
     in a second deployment of the same contract on Robinhood Chain (PRD
     section 6, FEE-08), with the same two outcomes, for the row Slopbot marked.

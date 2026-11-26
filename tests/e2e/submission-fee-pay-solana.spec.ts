@@ -1,10 +1,10 @@
 /**
  * The Solana way to pay on the contributor pay page (operator decision,
  * 25 November 2026; PRD section 6, "Submission fee deposits", "Solana, off
- * chain"). No deployed bundle offers it: the program id is not published and
- * Solana is switched off. The tests set both through the browser-test
- * build's seam and pay with a wallet whose one request the test reads and
- * signs with a fixture key. The API that prepares the transaction is served
+ * chain"). The program id is published and Solana is switched on since
+ * 26 November 2026. The payment tests name a fixture program through the
+ * browser-test build's seam and pay with a wallet whose one request the test
+ * reads and signs with a fixture key. The API that prepares the transaction is served
  * here from the same message builder the page checks it against.
  */
 import { createHash } from "node:crypto";
@@ -176,17 +176,26 @@ test.beforeEach(({ diagnostics }) => {
   diagnostics.allowPreviewApiMisses();
 });
 
-test("no deployed bundle offers Solana, and the page then says nothing of it", async ({
+test("the published tables offer Solana, and a bundle with Solana switched off says nothing of it", async ({
   page,
 }) => {
   // The deployed tables themselves; a change to them must change this test.
-  // The program id is published and Solana is still switched off.
+  // The program id is published and Solana is switched on (26 November 2026).
   expect(SUBMISSION_FEE_CONTRACTS[NETWORK]).toBe(
     "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
   );
-  expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(false);
-  await switchFeeOn(page);
-  await serveFeeRecord(page, REPOSITORY, 7, () => feeRecord(REPOSITORY, 7));
+  expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(true);
+  expect(
+    feeRecord(REPOSITORY, 7)
+      .due.filter((entry) => entry.network === NETWORK)
+      .map((entry) => [entry.symbol, entry.contract]),
+  ).toEqual([["USDC", "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7"]]);
+  // Switched off through the test seam: what such a bundle shows.
+  const off = { solanaOn: false } satisfies SubmissionFeeTerms;
+  await switchFeeOn(page, off);
+  await serveFeeRecord(page, REPOSITORY, 7, () =>
+    feeRecord(REPOSITORY, 7, off),
+  );
   await page.goto(PAGE, { waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { name: "Fee due" })).toBeVisible();
   await expect(page.getByText("Solana", { exact: false })).toHaveCount(0);
@@ -195,6 +204,24 @@ test("no deployed bundle offers Solana, and the page then says nothing of it", a
     page.getByRole("heading", { name: "Pay from a wallet" }),
   ).toBeVisible();
   await expect(page.getByText("Solana", { exact: false })).toHaveCount(0);
+});
+
+test("the published tables list 2 USDC on Solana and name the published program", async ({
+  page,
+}) => {
+  await switchFeeOn(page);
+  await serveFeeRecord(page, REPOSITORY, 7, () => feeRecord(REPOSITORY, 7));
+  await page.goto(PAGE, { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "2 USDC on Solana" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "What happens to a deposit" }),
+  ).toContainText("4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7");
+  // SLOP stays payable on Robinhood Chain only.
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "SLOP on Solana" }),
+  ).toHaveCount(0);
 });
 
 test("a contributor pays 2 USDC on Solana with one wallet request the page built itself", async ({
