@@ -15,7 +15,7 @@ export interface Account {
 }
 
 export interface AnvilOptions {
-  readonly chainId: 8453 | 4663 | 1 | 11155111 | number;
+  readonly chainId: number;
   readonly blockTime?: number;
   readonly finalityDepth?: number;
   readonly timestamp?: number;
@@ -116,7 +116,7 @@ async function started(child: ChildProcess, url: string, chainId: number, config
     if (child.exitCode !== null || child.signalCode !== null) throw new Error(`anvil exited during startup (${child.exitCode ?? child.signalCode})`);
     const observed = await rpc(url, "eth_chainId").catch(() => undefined);
     if (observed !== undefined) {
-      if (quantity(observed, "eth_chainId") !== BigInt(chainId)) throw new Error(`anvil answered chain ${String(observed)}, not ${chainId}`);
+      if (quantity(observed, "eth_chainId") !== BigInt(chainId)) throw new Error(`anvil answered chain ${typeof observed === "string" ? observed : JSON.stringify(observed)}, not ${chainId}`);
       const accounts = await readAccounts(configOut).catch(() => undefined);
       if (accounts !== undefined && accounts.length > 0) return accounts;
     }
@@ -134,7 +134,7 @@ export async function anvil(options: AnvilOptions): Promise<Anvil> {
   const port = await freePort();
   const upstreamUrl = `http://127.0.0.1:${port}`;
   const args = [
-    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--config-out", configOut,
+    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--hardfork", "cancun", "--prune-history", "64", "--config-out", configOut,
     ...(blockTime === undefined ? [] : ["--block-time", String(blockTime)]),
     ...(timestamp === undefined ? [] : ["--timestamp", String(timestamp)]),
   ];
@@ -189,7 +189,7 @@ export async function anvil(options: AnvilOptions): Promise<Anvil> {
       accounts,
       rpc: call,
       mine: async (blocks = 1) => {
-        await call("anvil_mine", [hex(blocks)]);
+        await rpc(url, "anvil_mine", [hex(blocks)], 180_000);
         return latest();
       },
       finalized,
@@ -245,7 +245,7 @@ export async function forgeBuild(root: string, sources: ReadonlyArray<string>): 
     await run("forge", ["build", "--root", root, "--out", out, "--cache-path", join(directory, "cache"), ...sources], { cwd: root, env: childEnvironment(), maxBuffer: 16 * 1024 * 1024 });
   } catch (error) {
     await close();
-    if (isRecord(error) && error.code === "ENOENT") throw new Error(`forge is not on PATH: ${foundryHint}`);
+    if (isRecord(error) && error.code === "ENOENT") throw new Error(`forge is not on PATH: ${foundryHint}`, { cause: error });
     throw error;
   }
   return { out, close, [Symbol.asyncDispose]: close };

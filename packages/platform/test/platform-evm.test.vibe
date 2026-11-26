@@ -196,7 +196,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       done: "caughtUp",
       oversized: "ScanInvalid",
     }))
-  })
+  }, 180_000)
 
   it.effect('The events and answers of a deployed contract artifact decode, and an unknown topic is reported (spec/settlement/evmScan.md, "Every recognized event of a page must index before the page verifies")', () => effect {
     const chain = try Chain

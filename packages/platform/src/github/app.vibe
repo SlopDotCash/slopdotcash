@@ -1,6 +1,6 @@
 // spec/slopbot/installation.md, "Every Slopbot effect requires an active installation"; spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"
 import { base64url, rs256Sign, utf8 } from "../crypto.vibe"
-import { type Exchange, GitHub, decoded, defaultTimeoutMs, exchanged, githubApi, githubJson, githubWith, manualRedirects, parsed } from "./client.vibe"
+import { type Exchange, type GitHub, decoded, defaultTimeoutMs, exchanged, githubApi, githubJson, githubWith, manualRedirects, parsed } from "./client.vibe"
 import { type GitHubFailure, GitHubMalformed, GitHubUnavailable } from "./errors.vibe"
 
 const jwtBackdateSeconds = 60

@@ -34,35 +34,34 @@ const visible = (labels: CopyLabels, status: CopyStatus) => (status === "Copied"
  */
 export function CopyButton({ text, onCopy = (value) => navigator.clipboard.writeText(value), label = "Copy", variant = "icon", labels, tone = "quiet", restAfter = 2000, disabled, className, ...props }: CopyButtonProps) {
   const [state, send] = useReducer(step, initial);
-  const mounted = useRef(true);
-  const resting = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  const restingRef = useRef<AbortController | null>(null);
   const failed = state.status === "CopyFailed";
   const copied = state.status === "Copied";
   const iconOnly = variant === "icon" && !labels;
 
   const bindRoot = useCallback((node: HTMLSpanElement | null) => {
-    mounted.current = node !== null;
-    if (node === null) resting.current?.abort();
+    mountedRef.current = node !== null;
+    if (node === null) restingRef.current?.abort();
   }, []);
 
-  // spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"; "Success settles back to ready; failure stays until the next attempt"
   const press = async () => {
     if (!enabled(state, { type: "copy" })) return;
-    resting.current?.abort();
-    resting.current = null;
+    restingRef.current?.abort();
+    restingRef.current = null;
     send({ type: "copy" });
     const written = await Promise.resolve(text).then(onCopy).then(() => true, () => false);
-    if (!mounted.current) return;
+    if (!mountedRef.current) return;
     send({ type: "answer", written });
     const next = step(step(state, { type: "copy" }), { type: "answer", written });
     if (!canRest(next)) return;
     const controller = new AbortController();
-    resting.current = controller;
+    restingRef.current = controller;
     const timer = AbortSignal.timeout(restAfter);
     timer.addEventListener(
       "abort",
       () => {
-        if (!controller.signal.aborted && mounted.current) send({ type: "rest" });
+        if (!controller.signal.aborted && mountedRef.current) send({ type: "rest" });
       },
       { once: true, signal: controller.signal },
     );
