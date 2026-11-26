@@ -47,8 +47,10 @@ import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { handleReferralClaims } from "../../../backend/referrals/claims";
 import { handleReferralCode } from "../../../backend/referrals/codes";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
+import { handleRepoRequests } from "../../../backend/referrals/repo-requests";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
+import type { SecurityApiDependencies } from "../../../backend/security/case-store";
 import { defaultDirectPaymentConfiguration } from "../../../backend/security/direct-payments";
 import {
   githubAdvisoryClient,
@@ -56,23 +58,35 @@ import {
   githubAppReportingReader,
   githubInstallationCheck,
 } from "../../../backend/security/github-advisories";
-import { handleSecurityApi } from "../../../backend/security/handler";
+import {
+  handleSecurityApi,
+  importGithubReports,
+} from "../../../backend/security/handler";
 import {
   githubIntakeOAuth,
   type IntakeConfig,
 } from "../../../backend/security/intake-grant";
+import { handleSecurityQueue } from "../../../backend/security/operator-queue";
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
 import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
+import {
+  handleSecurityReadKey,
+  securityReadKeyActor,
+} from "../../../backend/security/read-key";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
+import { reportDepositMode } from "../../../backend/security/report-deposit";
+import { analysisDependencies } from "../../../backend/security/report-intake";
 import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
+import { handleStandingDeposit } from "../../../backend/standing-deposit/handler";
 import { handleSubmissionFeeApi } from "../../../backend/submission-fee/handler";
 import {
   CloudflareTracePersistence,
   privateIntakeStatus,
 } from "../../../backend/trace/cloudflare-persistence";
 import { handleTraceApi } from "../../../backend/trace/handler";
+import { handleTraceLicensing } from "../../../backend/trace-licensing/handler";
 import { githubFlaggerStanding } from "../../../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -377,7 +391,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       ? { ...config, genesisHash: env.SLOP_LOCAL_SOLANA_GENESIS }
       : config;
   };
-  const securityResponse = await handleSecurityApi(request, {
+  const securityDependencies: SecurityApiDependencies = {
     db,
     directPayments: directPaymentConfig,
     // A separate key namespace; contributor trace APIs never read reports.
@@ -385,7 +399,11 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     reportIntakeEnabled: env.SLOP_PRIVATE_INTAKE_MODE === "on",
     now,
     randomId,
-    sessionActor,
+    // A personal read-only key stands in for the session on GET reads under
+    // security-cases and security-submissions only (PRD section 8).
+    sessionActor: async (request) =>
+      (await sessionActor(request)) ??
+      (await securityReadKeyActor(request, db, now())),
     reportingRead: app
       ? githubAppReportingReader(app)
       : async () => ({ kind: "unavailable" }),
@@ -410,7 +428,21 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       mode: routineMode(env.SECURITY_ROUTINE_DECISIONS),
       adminGithubIds,
     },
+    reportDeposit: {
+      mode: reportDepositMode(env.SECURITY_REPORT_DEPOSIT),
+      adminGithubIds,
+    },
+  };
+  const securityReadKey = await handleSecurityReadKey(request, {
+    db,
+    sessionActor,
+    now,
   });
+  if (securityReadKey !== null) return securityReadKey;
+  const securityResponse = await handleSecurityApi(
+    request,
+    securityDependencies,
+  );
   if (securityResponse !== null) return securityResponse;
   const evidenceResponse = await evidence.handle(request);
   if (evidenceResponse !== null) return evidenceResponse;
@@ -435,7 +467,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       flaggerAuthority(
         await readRepositoryAccess(repositoryAccess, manifest, actor),
         actor,
-        manifest.repositories[0].id,
+        manifest.repositories[0],
       ),
     sessionActor,
     moderatorGithubIds: operatorGithubIds,
@@ -493,6 +525,28 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralCode !== null) return referralCode;
+  const standingDeposit = await handleStandingDeposit(request, {
+    db,
+    sessionActor,
+    now,
+    randomId,
+  });
+  if (standingDeposit !== null) return standingDeposit;
+  const traceLicensing = await handleTraceLicensing(request, {
+    db,
+    sessionActor,
+    now,
+  });
+  if (traceLicensing !== null) return traceLicensing;
+  const repoRequests = await handleRepoRequests(request, {
+    db,
+    sessionActor,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    projects: projectPersistence,
+    github: { fetch: send, token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin },
+    now,
+  });
+  if (repoRequests !== null) return repoRequests;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
   const mergeActivity = await handleMergeActivityApi(request, { db });
@@ -518,6 +572,14 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (protectedPointMonths !== null) return protectedPointMonths;
+  // The same rule and secret as the reserved-awards feed, for the job that
+  // retries missing or failed report analyses with the full time limit.
+  const securityQueue = await handleSecurityQueue(request, {
+    token: env.OPERATOR_FEED_TOKEN,
+    analysis: analysisDependencies(securityDependencies),
+    importReports: () => importGithubReports(securityDependencies),
+  });
+  if (securityQueue !== null) return securityQueue;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,

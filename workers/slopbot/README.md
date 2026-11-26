@@ -52,10 +52,11 @@ only after their line counts match the accepted file metadata.
    IDs skip; database errors retry. Registry checks repeat before inference and
    GitHub writes.
 3. **Context.** The consumer takes an installation token and re-reads the
-   repository, the item, optional `.github/slopbot.json`, and `AGENTS.md`,
-   `CONTRIBUTING.md` and `README.md` from the default branch tip. PR content
-   comes from an immutable comparison of the current GitHub-selected target
-   branch and PR head, with the target repository ID verified. Missing
+   repository and the item. It reads optional `.github/slopbot.json` from the
+   default branch tip. For a PR, it reads `AGENTS.md`, `CONTRIBUTING.md` and
+   `README.md` at the current GitHub-selected target branch commit used in the
+   immutable comparison with the PR head. It verifies the target repository ID.
+   For an issue, it reads the guides from the default branch tip. Missing
    comparisons and invalid target identities retry. Missing binary or large
    patches, the text budget, and the 300-file comparison limit produce a
    limited advisory review (comment only; no label, hold, close or penalty).
@@ -133,8 +134,10 @@ only after their line counts match the accepted file metadata.
 9. **Appeals.** `/slopbot appeal` from the author, or any reopen, blocks
    re-closing that revision (`appeals.ts`). Escalation to a moderator (label
    `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A repeat
-   appeal of a finding on an item whose earlier appeal was denied is always
-   escalated (value disputes excepted). A maintainer reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
+   appeal of a finding on an item whose earlier appeal was denied, awaits a
+   moderator, or has an unanswered deny draft is always escalated, at triage
+   and again before the appellant accepts an uphold draft (value disputes
+   excepted). A maintainer reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
    binding and late-close races.
 
 For an ordinary PR value assessment, an affected author, implementation actor,
@@ -221,6 +224,13 @@ to GitHub, uses no monthly review and is recorded as skipped with the reason
 own pull request is not refused, and a count that was never read or is older
 than three days refuses nothing. Value assessment and scoring are unchanged.
 
+The backlog rule (operator decision, 23 November 2026; PRD section 5,
+`src/lib/backlog-rule.mjs`) changes listing only, never reviews: Slopbot keeps
+reviewing a project that is out of rotation. After each scheduled merge
+activity run, `sendBacklogNotices` (`backend/projects/backlog-notices.ts`)
+writes the rule's owner Inbox notices from the stored rows; a failure there
+never fails the merge activity read.
+
 A project owner may turn on wanted issues (operator decision, 21 November
 2026; PRD section 5, `src/lib/wanted-label.mjs`). Every project uses the one
 label `slop-wanted`. The scheduled merge activity job
@@ -291,7 +301,13 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
 - **Outcome.** The same job sets `outcome` on a paid, undecided row only:
   `refund_due` when the pull request is merged or still open 14 days after
   `paid_at`; `kept_due` when it has been closed without a merge for 7 days,
-  counted from the later of the close and `paid_at`. A `closed` or `reopened`
+  counted from the later of the close and `paid_at`. A pull request that
+  closes an issue of its own repository labelled `slop-wanted` before the
+  pull request was opened is invited work: closed without a merge, it is
+  `refund_due` after the same 7 days unless a maintainer has added the label
+  `slop-keep-fee`, which Slopbot creates on the repository when such a pull
+  request closes. An unreadable link decides nothing and is read again within
+  a day. A `closed` or `reopened`
   event queues the check at once; otherwise a paid pull request is read again
   within a day. The Worker sends what is due and writes `refunded` or `kept`.
 - **Taken back.** When the owner turns the setting off, or the author gains
@@ -312,6 +328,42 @@ published in `src/lib/submission-fee.mjs`, the fee does nothing in any mode.
 Slopbot never closes a pull request for an unpaid fee, an unpaid pull request
 never gets `slopbot:ready`, and a maintainer can review and merge without it.
 Value assessment and scoring never read the fee.
+
+### Standing deposit
+
+Operator decision, 23 November 2026 (PRD section 5, "Standing deposit"; rules
+in `src/lib/standing-deposit.mjs`). A contributor may post one SLOP deposit
+from `https://slop.cash/deposit` instead of a fee on each pull request.
+
+- **Cover (`live` only, where the fee applies).** Before it asks, and for an
+  ask that is still unpaid, the gate checks the author's current paid deposit
+  (no outcome, not cancelled, not withdrawn, under 340 days old), the owner's
+  `slopbot.submissionFee.standingDeposits` (absent is on), fewer than 10 open
+  covered pull requests, and a merged pull request by the author on the
+  project's registered repositories: one GitHub search with the installation
+  token, whose positive answer is kept a day in
+  `standing_deposit_merged_authors`. A failed search is no, so the fee is
+  asked. A covered pull request gets a row in `standing_deposit_covers`
+  (window from the later of opening and payment), the fee comment with its
+  own text, the label `slopbot:deposit-covered`, and the review runs. An
+  unpaid ask is taken back first (gate reason `standing-deposit`); a paid fee
+  is never released. The asking comment points regular contributors to the
+  page. Nothing can be covered until the Worker records a paid deposit, which
+  needs the standing contract deployed.
+- **Watch (`checkStandingDeposits`, every scheduled run, any mode).** Each due
+  cover's pull request is read: merged, closed, `closed_at`, and
+  `slop-keep-fee`. Closed without a merge inside the 21-day window and
+  labelled is `pending` from the moment Slopbot first sees both; still so 48
+  hours later it is a `strike`, final and never read again. Removing the
+  label or reopening clears it. Past the window without a strike it is
+  `clear`; a clear cover is read again only to see it close, so it stops
+  counting toward the cap. A read that fails decides nothing and is retried.
+- **Decide.** For each paid deposit with no outcome, after the covers are
+  read: a strike makes it `kept_due` (the first strike's pull request is
+  recorded); 21 days after the withdrawal request, or after 340 days from
+  payment (reason `expired`), with every cover clear, it is `refund_due`. The
+  outcome is written once. The submission-fee Worker sends what is due.
+
 
 The ways to pay in the comment come from `submissionFeeOptions` in
 `src/lib/submission-fee.mjs`, the same rule the Worker judges a deposit by:

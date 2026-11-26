@@ -10,7 +10,8 @@
  * a failed quote, route or price left behind.
  */
 
-import { FeeCapTooLowError } from "viem";
+import { FeeCapTooLowError, HttpRequestError } from "viem";
+import { EvmRpcUnavailable } from "../../contracts/evm/adapter";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import type {
   BuybackChainClient,
@@ -18,6 +19,10 @@ import type {
   BuybackSummary,
 } from "./buyback";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
+import {
+  type ProviderFailure,
+  sanitizeProviderFailure,
+} from "./provider-failure";
 import {
   acceptableMinimum,
   remainingBudget,
@@ -358,6 +363,59 @@ export function message(error: unknown): string {
       .trim()
       .slice(0, 400) || "unknown error"
   );
+}
+
+const noted = new WeakMap<Error, ProviderFailure>();
+
+/** Keep the original exception and its retry/status semantics. */
+export function noteProviderFailure<T>(error: T, input: ProviderFailure): T {
+  const failure = sanitizeProviderFailure(input);
+  if (failure && error instanceof Error) noted.set(error, failure);
+  return error;
+}
+
+export function providerFailure(error: unknown): ProviderFailure | undefined {
+  for (
+    let depth = 0;
+    depth < 8 && error instanceof Error;
+    depth++, error = error.cause
+  ) {
+    const failure = noted.get(error);
+    if (failure) return failure;
+    if (
+      error instanceof HttpRequestError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      const body = error.body;
+      return sanitizeProviderFailure({
+        provider: "evm-rpc",
+        stage: "rpc-response",
+        method: body && !Array.isArray(body) ? body.method : undefined,
+        httpStatus: error.status,
+      });
+    }
+    if (error instanceof EvmRpcUnavailable) {
+      const status = /^RPC HTTP failure: (\d{3})$/u.exec(error.message)?.[1];
+      if (status)
+        return sanitizeProviderFailure({
+          provider: "evm-rpc",
+          stage: "deployment-check",
+          httpStatus: Number(status),
+        });
+    }
+  }
+}
+
+export function providerErrorLog(error: unknown) {
+  const failure = providerFailure(error);
+  if (!failure) return { error: message(error) };
+  const label =
+    failure.stage === "response-json" && failure.provider !== "kyberswap"
+      ? "unparseable response"
+      : failure.httpStatus === undefined
+        ? "provider request failed"
+        : `HTTP ${failure.httpStatus}`;
+  return { error: label, providerFailure: failure };
 }
 
 export function impactWithin(quote: Quote, limits: Limits): boolean {
@@ -845,7 +903,7 @@ export async function runNetwork(
           event: "fee_conversion_error",
           network: config.network,
           token,
-          error: message(error),
+          ...providerErrorLog(error),
         });
       }
     }
@@ -906,17 +964,23 @@ async function claimVaultFees(
         value = quote.amountOut;
       }
       const quoteValueMicro = exactQuoteMicro(value);
+      if (quoteValueMicro === null || value < limits.minValueMicro) {
+        report("fee_claim_skipped", {
+          amount,
+          reason:
+            quoteValueMicro === null
+              ? "claim value exceeds safe integer accounting"
+              : "below the minimum conversion value",
+        });
+        continue;
+      }
       const cost = await fees.claimCostMicro(vault);
       const reason =
-        quoteValueMicro === null
-          ? "claim value exceeds safe integer accounting"
-          : cost === null
-            ? "claim network fee could not be priced"
-            : value < limits.minValueMicro
-              ? "below the minimum conversion value"
-              : value < cost * limits.gasMultiple
-                ? "below the gas-cost multiple"
-                : null;
+        cost === null
+          ? "claim network fee could not be priced"
+          : value < cost * limits.gasMultiple
+            ? "below the gas-cost multiple"
+            : null;
       if (reason) {
         report("fee_claim_skipped", { amount, reason });
         continue;
@@ -986,7 +1050,7 @@ async function claimVaultFees(
           reason: `claim: ${message(error)}`,
           updatedAt: deps.now().toISOString(),
         });
-      report("fee_claim_error", { error: message(error) });
+      report("fee_claim_error", providerErrorLog(error));
     }
   }
   return claimed;

@@ -25,6 +25,13 @@ SLOP_PRIVATE_INTAKE_MODE = "on"
 # pass would decide and changes no case and notifies nobody. Moving to live
 # needs its own reviewed change after the dry-run counts are read.
 SECURITY_ROUTINE_DECISIONS = "live"
+# The refundable SLOP deposit on a private report (PRD section 8, "Report
+# deposit"; operator decision of 21 November 2026): off, dry_run or live; any
+# other value is off. dry_run records which reports would have been asked and
+# holds nothing. Live since 21 November 2026 (operator decision; record-only
+# earlier that day). Change it only together with REPORT_DEPOSIT_SWITCHED_ON in
+# src/lib/security-report-deposit.mjs.
+SECURITY_REPORT_DEPOSIT = "live"
 
 [[d1_databases]]
 binding = "SLOP_DB"

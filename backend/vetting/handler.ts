@@ -399,16 +399,18 @@ async function grantExemption(
       "The project changed. Review its current revision.",
     );
   // An exemption covers one immutable repository (default: the first).
-  const repositoryId =
+  const listed =
     typeof body.repository === "string"
-      ? listedRepository(project.manifest, body.repository)
-      : project.manifest.repositories[0].id;
-  if (repositoryId === null)
+      ? (findListedRepository(project.manifest.repositories, body.repository)
+          ?.repository ?? null)
+      : project.manifest.repositories[0];
+  if (listed === null)
     fail(
       422,
       "repository_not_listed",
       "The project's current revision does not list this repository",
     );
+  const repositoryId = listed.id;
   const identity = repositoryIdentity(project.manifest, repositoryId);
   if (identity === null)
     fail(
@@ -444,7 +446,7 @@ async function grantExemption(
       repositoryId,
       maintainer,
     )) as AccessCheck;
-    const authority = setupAuthority(checked, maintainer, repositoryId);
+    const authority = setupAuthority(checked, maintainer, listed);
     if (authority.state === "retry") {
       unavailable = authority.message;
       continue;

@@ -101,6 +101,38 @@ export interface ReviewExclusion {
   reviewer?: GitHubActor;
 }
 
+/**
+ * A credited value-review allocation whose ledger event is omitted because
+ * the review was submitted before the current scoring window: a value
+ * score event outside the window is not publishable in the ledger. The
+ * entry carries the allocation the credited loop computed (reviewer,
+ * submission time, share in score thirds, and its assessment decision
+ * binding), alongside the `review-credit-outside-window` exclusion the
+ * snapshot also publishes for the same review. Points materializes an
+ * award from the entry when the journal holds no earlier award for the
+ * review, so a first generation that is already late records the share
+ * the policy guarantees ("keeps its slot and share"); an existing award
+ * is kept untouched.
+ */
+export interface OmittedReviewCredit {
+  /** The ID the omitted ledger event would have carried. */
+  id: string;
+  reviewId: string;
+  pullRequestId: string;
+  pullRequestNumber: number;
+  repository: RepositoryId;
+  reviewer: GitHubActor;
+  /** The allocated share, in score thirds; always positive. */
+  scoreThirds: number;
+  /** The review's submission time; the materialized award's occurrence. */
+  submittedAt: string;
+  url: string;
+  scoreDecisionSourceId: string;
+  scoreDecisionAt?: string;
+  /** The reason the omitted ledger event would have carried. */
+  reason: string;
+}
+
 export interface PullRequestRecord {
   id: string;
   number: number;
@@ -162,6 +194,10 @@ export type MergedPullRequestReviewRecord = Pick<
 export interface MergedPullRequestOutcome {
   /** Exact source head; older saved inputs can omit it but cannot use valuations. */
   headRefOid?: string;
+  /** A changed single-commit submission whose separate acceptance marker has no tree delta. */
+  emptyAcceptanceMarker?: true;
+  /** Nonempty one-parent acceptance emitted by GitHub, used only to recognize copies. */
+  acceptedOrdinaryCommitOid?: string;
   id: string;
   number: number;
   title: string;
@@ -614,6 +650,13 @@ export interface HeldWorkUnit {
   unavailableNodeIds: string[];
 }
 
+/** A verified implementation unit that includes this pull request's claims. */
+export interface ReviewedImplementationUnit {
+  recordDigest: string;
+  workUnitId: string;
+  groupId: string;
+}
+
 export interface LeaderboardSourceMetadata {
   provider: "github-graphql";
   fetchedAt: string;
@@ -685,6 +728,8 @@ export interface LeaderboardSnapshot {
     pullRequestNumber: number;
     status: string;
     recordDigest: string | null;
+    /** Standalone review assessment when implementation credit is held. */
+    reviewAssessmentDigest?: string;
     /** Complete current primary-commit attribution, independent of valuation. */
     verifiedImplementationActorNodeIds?: string[];
     /** Source-verified allocation; this never changes the PR's value tier. */
@@ -698,7 +743,32 @@ export interface LeaderboardSnapshot {
       }[];
     };
   }[];
+  /** Exact claim membership and overlap from verified joint assessment history. */
+  reviewedImplementationUnits?: {
+    repository: RepositoryId;
+    pullRequestId: string;
+    units: ReviewedImplementationUnit[];
+  }[];
+  /**
+   * Explicit supersessions declared by assessed joint records: the
+   * successor record names the solo assessments (`legacyPredecessors`)
+   * and earlier joint assessments (`supersedes`) it replaces. Points
+   * retires a predecessor's credit only through this relation, never
+   * from a source's mere absence or context presence. Absent from older
+   * snapshots and when no assessed joint record replaces a published
+   * predecessor.
+   */
+  valueAssessmentSupersessions?: {
+    predecessorDigest: string;
+    successorDigest: string;
+  }[];
   reviewExclusions?: ReviewExclusion[];
+  /**
+   * Credited review allocations omitted from the ledger because their
+   * submission predates the scoring window. Absent when no allocation
+   * was omitted, and from snapshots published before this field existed.
+   */
+  omittedReviewCredits?: OmittedReviewCredit[];
   /** Unreversed debits; absent from snapshots published before penalties. */
   penalties?: PublishedPenalty[];
   penaltyHistory?: PenaltyHistoryRecord[];
@@ -763,6 +833,15 @@ export interface LeaderboardInput {
    * these safe source limitations are internal collection evidence, not a value.
    */
   implementationAttributionHolds?: ReadonlyMap<string, readonly string[]>;
+  /** Exact native digests of complete submitted and accepted implementation. */
+  acceptedImplementationDigests?: ReadonlyMap<string, string>;
+  /** Exact repository and change keys tied to earlier positive ordinary awards. */
+  previousImplementationDigests?: ReadonlySet<string>;
+  /** Repository and exact accepted SHA, owned by an earlier positive ordinary
+   * award outside the rolling window. Apply only to unassessed implementation. */
+  previousAcceptedOrdinaryOwners?: ReadonlyMap<string, string>;
+  /** An earlier possible match has incomplete native acceptance evidence. */
+  unresolvedImplementationSources?: ReadonlySet<string>;
   /** Trusted journal decisions verified against fresh complete source evidence. */
   valueDecisions?: ReadonlyMap<
     string,

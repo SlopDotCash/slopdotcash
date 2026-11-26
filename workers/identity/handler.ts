@@ -14,6 +14,7 @@ import {
   identityPublicOrigin,
   isIdentityAudience,
   OAUTH_FLOW_TTL_SECONDS,
+  type OAuthFlow,
   POINTS_AUDIENCE,
   POLL_AFTER_SECONDS,
 } from "./contracts";
@@ -147,6 +148,39 @@ function clearStateCookie(headers: Headers): void {
   );
 }
 
+/**
+ * A website sign-in flow is bound to the browser that started it. The start
+ * response sets a random secret as an HttpOnly cookie on the identity origin
+ * and stores only its SHA-256 on the flow. Authorization, callback and poll
+ * each refuse a website flow without that cookie, so a sign-in link completed
+ * in any other browser never yields a session for whoever started the flow.
+ * The cookie name carries the flow id, so concurrent flows in one browser do
+ * not overwrite each other. SameSite=None keeps the binding usable from the
+ * cross-site product origins (slop.tech, eliza.army) where browsers allow it;
+ * the exact per-flow hash match, not SameSite, is what enforces the binding.
+ */
+const BROWSER_BINDING_COOKIE = "__Host-slop_oauth_bind_";
+const BROWSER_MISMATCH_TITLE = "Sign-in not started here";
+const BROWSER_MISMATCH_MESSAGE =
+  "This sign-in link was started in a different browser. Start sign-in again from Slop.";
+
+function browserBindingCookie(flowId: string, value: string, maxAge: number) {
+  return `${BROWSER_BINDING_COOKIE}${flowId}=${value}; Path=/; Max-Age=${maxAge}; Secure; HttpOnly; SameSite=None`;
+}
+
+/** Website flows only. Terminal and local development flows have no browser to bind. */
+function requiresBrowserBinding(flow: OAuthFlow): boolean {
+  return flow.audience === POINTS_AUDIENCE && localFlowOrigin(flow.id) === null;
+}
+
+async function browserBound(request: Request, flow: OAuthFlow) {
+  if (!requiresBrowserBinding(flow)) return true;
+  const secret = cookieValue(request, `${BROWSER_BINDING_COOKIE}${flow.id}`);
+  if (typeof flow.browserBindingHash !== "string" || !validCapability(secret))
+    return false;
+  return constantTimeEqual(await sha256Hex(secret), flow.browserBindingHash);
+}
+
 function validFlowId(value: unknown): value is string {
   return (
     typeof value === "string" && /^flow_[A-Za-z0-9_-]{20,64}$/u.test(value)
@@ -184,6 +218,12 @@ async function startFlow(
   ) {
     fail(400, "invalid_request", "Invalid identity audience");
   }
+  // A website flow must start in an allowed browser page, which receives the
+  // binding cookie. Disallowed origins were refused before dispatch.
+  const bindBrowser = !local && body.audience === POINTS_AUDIENCE;
+  if (bindBrowser && !request.headers.get("origin"))
+    fail(403, "origin_required", "Website sign-in must start from Slop");
+  const browserBinding = bindBrowser ? deps.randomToken(32) : null;
   const returnUrl = local ? new URL(body.returnOrigin as string) : null;
   const flowId = returnUrl
     ? `flow_local_${returnUrl.hostname === "127.0.0.1" ? "i" : "l"}_${returnUrl.port}_${deps.randomToken(24)}`
@@ -210,6 +250,8 @@ async function startFlow(
     status: "pending",
     githubActorId: null,
     githubLogin: null,
+    browserBindingHash:
+      browserBinding === null ? null : await sha256Hex(browserBinding),
     createdAt: createdAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
     callbackCompletedAt: null,
@@ -220,13 +262,19 @@ async function startFlow(
   const authorizationUrl = new URL("/v1/oauth/authorize", publicOriginOf(deps));
   authorizationUrl.searchParams.set("flow_id", flowId);
   authorizationUrl.searchParams.set("state", state);
-  return json(201, {
+  const response = json(201, {
     flowId,
     authorizationUrl: authorizationUrl.toString(),
     pollCapability,
     expiresAt: expiresAt.toISOString(),
     pollAfterSeconds: POLL_AFTER_SECONDS,
   });
+  if (browserBinding !== null)
+    response.headers.append(
+      "set-cookie",
+      browserBindingCookie(flowId, browserBinding, OAUTH_FLOW_TTL_SECONDS),
+    );
+  return response;
 }
 
 async function authorizeBrowser(
@@ -251,6 +299,13 @@ async function authorizeBrowser(
   ) {
     fail(410, "flow_expired", "Authorization flow is unavailable");
   }
+  if (!(await browserBound(request, flow)))
+    return html(
+      403,
+      BROWSER_MISMATCH_TITLE,
+      BROWSER_MISMATCH_MESSAGE,
+      siteOf(deps),
+    );
   const verifier = await decryptPkceVerifier(
     flow.encryptedPkceVerifier,
     flow.pkceIv,
@@ -313,6 +368,17 @@ async function oauthCallback(
       410,
       "Sign-in expired",
       "Start sign-in again from Slop or your terminal.",
+      siteOf(deps),
+    );
+  }
+  if (!(await browserBound(request, flow))) {
+    // Authorization already checked the binding in this browser; a callback
+    // without it ends the flow so its starter never receives an assertion.
+    await deps.persistence.failCallback(flow.id);
+    return html(
+      403,
+      BROWSER_MISMATCH_TITLE,
+      BROWSER_MISMATCH_MESSAGE,
       siteOf(deps),
     );
   }
@@ -427,6 +493,8 @@ async function pollFlow(
       "wrong_flow",
       "This authorization belongs to another sign-in mode",
     );
+  if (!(await browserBound(request, flow)))
+    fail(403, "browser_mismatch", "This sign-in belongs to another browser");
   if (flow.status === "pending" || flow.status === "callback_processing") {
     const response = json(202, {
       status: "pending",
@@ -500,12 +568,15 @@ async function pollFlow(
     deps.now().toISOString(),
   );
   if (!issued) fail(410, "flow_consumed", "Identity flow was already consumed");
-  return json(200, {
+  const response = json(200, {
     status: "complete",
     assertion,
     assertionType: "SlopIdentity",
     expiresAt: storedAssertion.expiresAt,
   });
+  if (requiresBrowserBinding(flow))
+    response.headers.append("set-cookie", browserBindingCookie(flow.id, "", 0));
+  return response;
 }
 
 async function consumeAssertion(
@@ -625,6 +696,8 @@ export function identityBrowserResponse(
     return response;
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
+  // Website start and poll carry the browser binding cookie.
+  headers.set("access-control-allow-credentials", "true");
   headers.append("vary", "Origin");
   return new Response(response.body, {
     status: response.status,

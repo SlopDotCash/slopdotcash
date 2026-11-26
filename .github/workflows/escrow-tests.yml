@@ -230,13 +230,16 @@ jobs:
         if: github.event_name != 'pull_request'
       - name: Load deployed public ledger for browser checks
         if: github.event_name != 'pull_request'
+        env:
+          SLOP_API_ORIGIN: https://slop.cash
         run: |
           set -euo pipefail
+          bun run projects:sync
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
           trap 'rm -f "$ledger_file"' EXIT
           bun scripts/download-leaderboard.ts \
-            https://slop.cash/data/leaderboard.json "$ledger_file"
+            "$SLOP_API_ORIGIN/data/leaderboard.json" "$ledger_file"
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
@@ -362,13 +365,16 @@ jobs:
           retention-days: 30
       - run: bunx playwright install --with-deps chromium
       - name: Load deployed public ledger for browser checks
+        env:
+          SLOP_API_ORIGIN: https://slop.cash
         run: |
           set -euo pipefail
+          bun run projects:sync
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
           trap 'rm -f "$ledger_file"' EXIT
           bun scripts/download-leaderboard.ts \
-            https://slop.cash/data/leaderboard.json "$ledger_file"
+            "$SLOP_API_ORIGIN/data/leaderboard.json" "$ledger_file"
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json

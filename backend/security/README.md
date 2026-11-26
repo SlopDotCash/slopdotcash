@@ -255,7 +255,7 @@ records one decision per case revision:
 
 | Decision | Rule | Case change in `live` |
 |---|---|---|
-| `duplicate` | Same report digest as an earlier case of the program (no model call), or both calls name the same earlier case | `receipt_state: duplicate`, `duplicate_of`, event `decide` |
+| `duplicate` | Same report digest as an earlier case of the program (no model call), or both calls name the same earlier case. The calls omit earlier cases waiting on the pass's own request for proof or closed by the pass as `no-proof-received` | `receipt_state: duplicate`, `duplicate_of`, event `decide` |
 | `does-not-qualify` | Both calls name the same published line and neither finds loss of funds plausible | `receipt_state: out-of-scope`, the line quoted in the reason, event `decide` |
 | `needs-proof` | Both calls find no reproduction steps or runnable proof | `receipt_state: needs-information`, a 14-day clock in `next_action_due_at`, event `request-information` |
 | `no-proof-received` | The clock ran out with no new report version | `receipt_state: rejected`, event `decide` |
@@ -330,6 +330,167 @@ SELECT mode, outcome, basis, hold_reason, COUNT(*) AS cases
 The fixture tests prove the controls, not the model. The release qualifies
 the routine call with the real provider
 (`scripts/qualify-security-routine.ts`).
+
+## Operator analysis retry and queue counts
+
+A report's automatic analysis runs behind the request that filed it with
+`BACKGROUND_ANALYSIS_TIMEOUT_MS` (25 seconds, because Cloudflare stops
+`waitUntil` work about 30 seconds after the response) and is never retried
+by itself; only an owner pressing Analyze runs it again, with
+`ANALYSIS_TIMEOUT_MS` (120 seconds). `/api/v1/operator/security-queue`
+(`operator-queue.ts`; PRD section 8, operator decision of 24 November 2026)
+lets one operator job see the queue and retry those analyses with the full
+limit. It answers only a request with
+`Authorization: Bearer <OPERATOR_FEED_TOKEN>`, compared in constant time by
+the same check as the reserved-awards feed (`backend/payments/README.md`);
+while the Pages secret is unset, shorter than 32 characters, or the token is
+missing or wrong, the API returns its ordinary not-found answer. Other
+methods with the right token answer 405, as the other operator routes do.
+Every answer has `cache-control: no-store`.
+
+The same job's `POST` first imports the GitHub private reports of active
+projects with a security program (`importGithubReports` in `handler.ts`; PRD
+section 8, operator decision of 25 November 2026): the maintainer's import
+under the automatic journal actor, at most five programs a run. It then writes the week's reminders (`owner-reminders.ts`;
+PRD section 8, operator decision of 25 November 2026): one Inbox notice a week
+to each reviewer of a project whose reports have waited more than seven days,
+with the count and the oldest date only. The event key carries the ISO week,
+so a repeat inside the week writes nothing.
+
+"Open" means a verified case with `receipt_state` `received` or `triaging`
+that does not wait for its deposit (`report-deposit-hold.ts`).
+`needs-information` waits on the reporter and every other state records a
+decision, so neither counts.
+
+`GET` answers
+`{"schema":"slop-security-queue-v1","generatedAt":...,"projects":[...]}`,
+one row per project with an open report: `projectId`, `open`,
+`withoutAnalysis` (open reports the owner's Analyze would accept with no
+attempt for the current report version), `analysisFailed` (the same, with a
+latest attempt that failed, was unavailable, or is still `running` after 15
+minutes), `undecidedOver7Days` and `oldestOpenAt`. It never carries a case
+id, a reporter, report text or an advisory id.
+
+`POST` (any body is ignored) runs at most one analysis inside the request,
+with `ANALYSIS_TIMEOUT_MS`, through `runCaseAnalysis`. It takes the oldest
+open report that `analysisMayStart` accepts and that does not wait for its
+deposit (both read again just before the run), with fewer than four attempts
+for its current report version and no attempt started in the last 30
+minutes. It starts nothing once 150 attempts of any origin started in the
+current UTC day. Answers:
+
+- `{"ran":true,"state":"complete"|"failed"|"unavailable","remainingEligible":N}`
+- `{"ran":false,"reason":"daily-limit"}`
+- `{"ran":false,"reason":"none-eligible"}`
+- `{"ran":false,"reason":"not-started"}`: the chosen report changed, or
+  another caller claimed the same attempt first (the attempt row's primary
+  key makes the claim run once).
+
+The analysis stays advisory, exactly as from the owner's Analyze.
+
+## Report deposit
+
+PRD section 8, "Report deposit", operator decision of 21 November 2026
+(`report-deposit.ts`, `report-deposit-hold.ts`, migration
+`0145_security_report_deposits.sql`, constants in
+`src/lib/security-report-deposit.mjs`). A private report filed through Slop
+needs a refundable deposit of SLOP on Robinhood Chain worth 5 US dollars at
+the SLOP rate in force, rounded up to a whole SLOP. This module asks,
+releases and decides. It moves no money and holds no key: the submission-fee
+Worker records the payment and signs the refund or the burn that a row here
+says is due.
+
+**Ask.** One row per report, written in the same batch as its new case, with
+the amount fixed then. `SECURITY_REPORT_DEPOSIT` chooses the row: `live`
+writes `asked`, `dry_run` writes `recorded` (which asks nobody and holds
+nothing), `off` writes none. No row is written when the project turned the
+deposit off (`project.security.reportDeposit: false`), when no SLOP rate is
+in force, or when the reporter is exempt: a Slop moderator or admin, the
+project's steward, a named security approver, an account that published a
+revision of the project or applied for it, or an account with current write,
+maintain or admin access to the repository. When that last GitHub read is
+unavailable the account is asked. The insert requires the case to exist with
+`created_at` equal to the ask instant, so a case from any earlier moment can
+never be asked, and a case with a row is never asked again.
+
+The four places a reporter creates a case all ask: a saved Slop report
+(`acceptStoredReport`), a verified link of a report already on GitHub
+(`writeVerifiedCase`), an older-style link (`createCase`, mode `claim`), and a
+reporter's own receipt check that records their other GitHub reports
+(`recordPrivateReports`). A maintainer's `record` or `import` asks nobody.
+
+**Hold.** A report waits while its row is `asked` with no payment and no
+outcome (`depositHeldSql`). That one condition is checked by:
+
+| What waits | Where |
+|---|---|
+| Screening, its assessment and the routing notice | `screenStoredReport`, `routedNotice`, `scheduleAnalysis` in `report-intake.ts` |
+| The reporter's own screening retry | `actStoredIntake`, action `screen`: 409 `deposit_required` |
+| The owner's notice of a linked GitHub report | `writeVerifiedCase`, `createCase`, `recordPrivateReports`: the technical recipients are left out |
+| The owner's lists, and every read or action by anyone but the reporter | `listCases`, `readCase`, `actOnCase`, `listStoredSubmissions`, `authorizedStored`: left out or 404 |
+| The routine pass, its write and the admin count | `candidates`, `record` and `routineSummary` in `routine-decisions.ts` |
+| GitHub forwarding | `approvedReportForForward`: 409 `deposit_required` with a plain reason |
+| Being an earlier report against someone else's | `matchingEvidenceDigest`, `earlierSameDigest` |
+
+The reporter still reads the report, adds a version and sees `deposit` on
+their Inbox row and case: `{ state, amount, payPath }` with `state` one of
+`needed`, `paid`, `refund_due`, `refunded`, `kept_due`, `kept`, or `null`
+when no deposit is asked. A report is never closed or deleted for an unpaid
+deposit. Add no path that screens, notifies, decides or forwards a report
+without this condition.
+
+**Release.** `runReportDepositSweep` runs behind security API requests, at
+most once every 30 seconds per isolate. It turns unpaid `asked` rows back
+into `recorded` when the server mode is not `live` (every one of them) or the
+project turned the deposit off; a released row keeps `outcome_reason =
+'turned-off'` and the time in `outcome_at`, with no outcome. It then starts
+the work that waited, three reports per sweep: the screening of a saved
+report still `queued`, or the owner's notice and the analysis of a linked
+GitHub report that has neither, or the owner's notice of an older-style link
+GitHub has not confirmed yet. That claim notice is tried once: the sweep sets
+`claim_notice_at` after a try that wrote the notice or found nobody to tell
+(no technical approver with current GitHub authority, or a retired project),
+so such a claim never takes the sweep's slots again. A try that fails, on a
+GitHub outage or on any other error, is not recorded there; the sweep sets
+`claim_retry_at` instead, logs an error that is not an outage by name, goes
+on to the next claim, and orders retried claims behind claims not tried yet,
+oldest retry first, so a lasting failure on some claims cannot keep a later
+claim from its notice.
+Only a paid ask and a
+released ask are looked at; a row that record-only mode wrote is never
+touched. Each start is safe to repeat.
+
+**Outcome.** The same sweep sets `refund_due` or `kept_due` on a paid row
+with no outcome (`reportDepositOutcome`), with one fixed reason:
+
+| Stored state | Outcome | Reason |
+|---|---|---|
+| The server mode is not `live`, or the project turned the deposit off | sent back | `turned-off` |
+| `received`, 14 days after `paid_at` | sent back | `silent` |
+| `received` with a maintainer's routing approval (`review_decision = 'forward'`) | sent back | `responded` |
+| `triaging` (acknowledged), unless an appeal returned it to the owner | sent back | `responded` |
+| `confirmed` | sent back | `responded` |
+| `needs-information` from a person, once a `report-revised` event follows the request | sent back | `responded` |
+| `rejected` without a person's spam mark, which includes "no proof received" | sent back | `responded` |
+| `duplicate`, the latest `decide` or `decide-appeal` event 7 days old, no open appeal | kept | `duplicate` |
+| `out-of-scope`, the same | kept | `out-of-scope` |
+| `rejected` whose latest `decide` event is a person's with `detail.spam = true`, the same | kept | `spam` |
+| `needs-information` from the routine pass, `disputed`, `triaging` after a returned appeal | waits | |
+
+A person marks spam with the optional boolean `spam` on the `decide` action,
+allowed only with outcome `rejected`. The decide form offers it as a "Spam"
+checkbox beside a rejection while the deposit is switched on
+(`src/SecurityBounty.tsx`). Screening's `spam` verdict
+(`screening_state`) never changes a receipt state, so a model's verdict alone
+never keeps a deposit. A kept outcome is written only while the case is still
+at the revision that was read, so a concurrent appeal wins. The Worker writes
+the final `refunded` or `kept`. A deposit nobody decides can be taken back
+from the contract by its payer after 30 days.
+
+`GET /api/v1/submission-fee/reports/:caseId` (`../submission-fee/handler.ts`)
+is the public, uncached read the pay page uses. It answers only for an
+`asked` row and returns the item, the amount, the payment and the outcome,
+never the project, the reporter or any report text.
 
 ## Legacy GitHub-first private intake
 

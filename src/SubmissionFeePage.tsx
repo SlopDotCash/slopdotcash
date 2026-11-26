@@ -6,6 +6,7 @@ import { networkLabel } from "./lib/network-names";
 import { transactionUrl } from "./lib/payments/contracts";
 import { findHistoricalProjectByRepositoryId } from "./lib/projects.mjs";
 import {
+  SUBMISSION_FEE_KEEP_LABEL,
   SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
   SUBMISSION_FEE_RECLAIM_DAYS,
   SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
@@ -25,8 +26,9 @@ import {
   readFeeItem,
   readFeeRates,
 } from "./lib/submission-fee-page";
-import { feePageSetup } from "./lib/submission-fee-setup";
+import { feePageSetup, standingDepositSetup } from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
+import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { formatDate, Spinner } from "./Presentation";
 import "./submission-fee.css";
 
@@ -109,7 +111,7 @@ async function loadFeeRates(signal?: AbortSignal): Promise<FeeRates | null> {
   }
 }
 
-function TransactionLink({
+export function TransactionLink({
   network,
   hash,
   label,
@@ -128,8 +130,11 @@ function TransactionLink({
   );
 }
 
+/** A recorded deposit and what became of it, as either pay page reads it. */
+type RecordedDeposit = Pick<FeeItem, "paid" | "outcome" | "resolveTransaction">;
+
 /** What a recorded deposit is waiting for, or what became of it. */
-function outcomeText(item: FeeItem): string {
+function outcomeText(item: RecordedDeposit, held: string): string {
   const kind = item.paid?.kind ?? "stable";
   if (item.outcome === "refunded")
     return "The deposit was sent back to the wallet that paid it.";
@@ -143,10 +148,17 @@ function outcomeText(item: FeeItem): string {
     return kind === "slop"
       ? "The deposit is to be kept: the SLOP will be sent to the burn address once the deposit's block is final."
       : "The deposit is to be kept: it will be sent to Slop's fee wallet once the deposit's block is final.";
-  return "The deposit is held by the deposit contract until this pull request is decided.";
+  return held;
 }
 
-function PaidRecord({ item }: { item: FeeItem }) {
+export function PaidRecord({
+  item,
+  held = "The deposit is held by the deposit contract until this pull request is decided.",
+}: {
+  item: RecordedDeposit;
+  /** What an undecided deposit waits for. */
+  held?: string;
+}) {
   const paid = item.paid;
   if (!paid) return null;
   return (
@@ -166,7 +178,7 @@ function PaidRecord({ item }: { item: FeeItem }) {
           label="Deposit transaction"
         />
       </p>
-      <p>{outcomeText(item)}</p>
+      <p>{outcomeText(item, held)}</p>
       {item.resolveTransaction ? (
         <p>
           <TransactionLink
@@ -208,7 +220,10 @@ function Terms({ ways }: { ways: readonly FeeWay[] }) {
         </li>
         <li>
           It is kept if the pull request is closed without a merge and stays
-          closed for {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days: {kept}.
+          closed for {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days: {kept}. If
+          the pull request closes an issue labelled {WANTED_LABEL} before it was
+          opened, it goes back instead, unless a maintainer adds{" "}
+          {SUBMISSION_FEE_KEEP_LABEL} in that time.
         </li>
         <li>
           If nothing settles a deposit, the wallet that paid it can take it back
@@ -250,6 +265,7 @@ function Due({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(() => hasSavedRequest(item.item));
+  const [{ deployed: standing }] = useState(standingDepositSetup);
   const confirmDue = useCallback(
     async (way: FeeWay) => {
       const latest = await loadFeeItem(
@@ -301,6 +317,14 @@ function Due({
                 SLOP is not offered right now: Slop's published SLOP rate could
                 not be read, so the SLOP amount could not be checked. Reload the
                 page to try again.
+              </p>
+            ) : null}
+            {standing ? (
+              <p>
+                Contribute often? A{" "}
+                <Link href="/deposit">standing deposit</Link> can stand in for
+                this fee on projects that accept it, once you have a merged pull
+                request there.
               </p>
             ) : null}
           </section>

@@ -1,5 +1,6 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { applyCatchUpChange } from "../../src/lib/backlog-rule.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { prospectiveMaintainerShare } from "../../src/lib/maintainer-share.mjs";
 import {
@@ -116,6 +117,7 @@ import {
 } from "./github-lookup";
 import {
   type AccessCheck,
+  currentRepositoryPath,
   manifestMatchesRepository,
   projectSetupStatus,
   type RepositoryAccessReader,
@@ -304,6 +306,14 @@ function assertNewProjectManifest(
       // names, and no owner revision can change it afterwards.
       reward.maintainerShareHistory === undefined,
       "A new project has no maintainer share history; set only the maintainer share",
+    ],
+    [
+      // Catching up on reviews is a pause of the backlog rule for a listed
+      // project; only an owner revision starts it, and only the server
+      // writes its history.
+      manifest.slopbot?.catchUpUntil === undefined &&
+        manifest.slopbot?.catchUpHistory === undefined,
+      "A new project is not catching up on reviews; start it from the project's settings once it is listed",
     ],
     [
       (manifest.funding.addresses ?? []).length === 0 &&
@@ -658,6 +668,35 @@ function prospectiveFinancialChange(
       ),
     }),
   };
+}
+
+/**
+ * The catch-up pause of the backlog rule (operator decision, 23 November
+ * 2026; PRD section 5). The owner sets or clears `slopbot.catchUpUntil`; the
+ * server checks the end and the once-per-month start, and alone appends the
+ * start to `slopbot.catchUpHistory`.
+ */
+function withCatchUpChange(
+  previous: ProjectDefinition,
+  next: ProjectDefinition,
+  now: Date,
+): ProjectDefinition {
+  if (
+    sameValue(previous.slopbot?.catchUpUntil, next.slopbot?.catchUpUntil) &&
+    sameValue(previous.slopbot?.catchUpHistory, next.slopbot?.catchUpHistory)
+  )
+    return next;
+  let slopbot: ProjectDefinition["slopbot"];
+  try {
+    slopbot = applyCatchUpChange(previous.slopbot, next.slopbot, now);
+  } catch (error) {
+    fail(
+      422,
+      "catch_up_refused",
+      error instanceof Error ? error.message : "Catching up was refused",
+    );
+  }
+  return slopbot === next.slopbot ? next : { ...next, slopbot };
 }
 
 /**
@@ -1099,7 +1138,7 @@ async function currentAuthority(
     manifest,
     actor,
   );
-  const authority = setupAuthority(access, actor, manifest.repositories[0].id);
+  const authority = setupAuthority(access, actor, manifest.repositories[0]);
   if (authority.state !== "verified") return { authority, access };
   let control: RepositoryControl;
   try {
@@ -1502,7 +1541,7 @@ async function ownerVault(
     fail(
       403,
       "vault_authority_required",
-      `Only the project steward or an admin of ${current.manifest.repositories[0].id} can set up the project vault.`,
+      `Only the project steward or an admin of ${currentRepositoryPath(current.manifest.repositories[0])} can set up the project vault.`,
     );
   if (!deps.vaultSetup)
     fail(
@@ -1515,6 +1554,9 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
+  // A removed project stays off: no vault review or registration revision.
+  if (current.manifest.listingTier === "retired")
+    fail(409, "project_restricted", "A removed project cannot be changed.");
   const body = saved?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,
@@ -1923,6 +1965,9 @@ async function publishOwnerRevision(
       contribution: body.contribution,
       note,
     });
+  // A removed project stays off: no edit, appended repository or new scan.
+  if (current.manifest.listingTier === "retired")
+    fail(409, "project_restricted", "A removed project cannot be changed.");
   // An appended repository's permanent GitHub id must be new to the registry.
   const submittedRepositories = (body.manifest as Record<string, unknown>)
     .repositories;
@@ -2028,10 +2073,13 @@ async function publishOwnerRevision(
   const added = appendedRepositories(current.manifest, submitted) ?? [];
   if (added.length > 0)
     await verifyAppendedRepositories(deps, actor, added, deps.now());
-  let manifest =
+  let manifest = withCatchUpChange(
+    current.manifest,
     changes.financial.length > 0
       ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
-      : submitted;
+      : submitted,
+    deps.now(),
+  );
   const clearance =
     changes.executable.length > 0
       ? await deps.vettingClearance(projectId, manifest, current.revision)

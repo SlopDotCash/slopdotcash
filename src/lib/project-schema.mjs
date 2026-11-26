@@ -15,12 +15,14 @@ import {
   readRecord as record,
   timestamp,
 } from "./record-validation.mjs";
+
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
  * skills, or money-shaped views. The schema is intentionally narrow so a pull
  * request cannot smuggle executable configuration or ambiguous reward terms.
  */
 
+import { assertCatchUpHistory, assertCatchUpUntil } from "./backlog-rule.mjs";
 import {
   assertFundingAddresses,
   fundingAssetForNetwork,
@@ -145,6 +147,7 @@ const OPTIONAL_PROJECT_KEYS = [
   "participation",
   "rewardAsset",
   "contribution",
+  "security",
   "securityBounty",
   "slopbot",
 ];
@@ -1309,6 +1312,8 @@ function validateProjectDefinition(
       slopbot,
       [
         "automaticClosure",
+        ...(slopbot.catchUpUntil === undefined ? [] : ["catchUpUntil"]),
+        ...(slopbot.catchUpHistory === undefined ? [] : ["catchUpHistory"]),
         ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
         ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
         ...(slopbot.submissionFee === undefined ? [] : ["submissionFee"]),
@@ -1325,6 +1330,13 @@ function validateProjectDefinition(
       );
     if (slopbot.intakeCap !== undefined)
       assertIntakeCap(slopbot.intakeCap, "project.slopbot.intakeCap");
+    if (slopbot.catchUpUntil !== undefined)
+      assertCatchUpUntil(slopbot.catchUpUntil, "project.slopbot.catchUpUntil");
+    if (slopbot.catchUpHistory !== undefined)
+      assertCatchUpHistory(
+        slopbot.catchUpHistory,
+        "project.slopbot.catchUpHistory",
+      );
     if (slopbot.submissionFee !== undefined)
       assertSubmissionFeeSetting(
         slopbot.submissionFee,
@@ -1332,6 +1344,20 @@ function validateProjectDefinition(
       );
     if (slopbot.wantedIssues !== undefined)
       assertWantedIssues(slopbot.wantedIssues, "project.slopbot.wantedIssues");
+  }
+  if (project.security !== undefined) {
+    // The report deposit setting (PRD section 8): absent or true is on.
+    const security = record(project.security, "project.security");
+    exactKeys(
+      security,
+      security.reportDeposit === undefined ? [] : ["reportDeposit"],
+      "project.security",
+    );
+    if (
+      security.reportDeposit !== undefined &&
+      typeof security.reportDeposit !== "boolean"
+    )
+      throw new TypeError("project.security.reportDeposit must be a boolean");
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&

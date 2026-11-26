@@ -34,6 +34,12 @@ import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import { ProjectWork } from "./ProjectWork";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
+import {
+  backlogJudged,
+  backlogNotice,
+  backlogRuleStarted,
+  backlogState,
+} from "./lib/backlog-rule.mjs";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { setRouteHead } from "./lib/document-head";
@@ -99,6 +105,7 @@ import {
   Spinner,
   StatusBadge,
 } from "./Presentation";
+import { SponsoredPoolsNotice } from "./SponsoredPoolsNotice";
 
 /**
  * Renders the GitHub-native Slop network across discovery, project,
@@ -149,6 +156,12 @@ const SecurityProgramPage = lazy(() =>
   })),
 );
 const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
+const ReportDepositPage = lazy(() => import("./ReportDepositPage"));
+const StandingDepositPage = lazy(() => import("./StandingDepositPage"));
+const RequestedReposPage = lazy(() => import("./RequestedRepos"));
+const RecordPage = lazy(() => import("./RecordPage"));
+const ReceiptsPage = lazy(() => import("./ReceiptsPage"));
+const RecordTermsPage = lazy(() => import("./RecordTermsPage"));
 const ProjectUpdatePage = lazy(() =>
   import("./ProjectProposalPage").then((module) => ({
     default: module.ProjectUpdatePage,
@@ -206,13 +219,36 @@ type PageRouteKind =
   | "admin"
   | "new-project"
   | "vetting-evidence"
-  | "security-cases";
+  | "security-cases"
+  | "requested"
+  | "record"
+  | "receipts"
+  | "standing-deposit"
+  | TermsRouteKind;
+/** Program terms pages and the privacy policy, each one fixed segment. */
+type TermsRouteKind =
+  | "referrals"
+  | "buyback"
+  | "october-allocation"
+  | "sponsored-pools"
+  | "privacy";
+const TERMS_ROUTES = new Set<string>([
+  "referrals",
+  "buyback",
+  "october-allocation",
+  "sponsored-pools",
+  "privacy",
+]);
+function isTermsRoute(kind: string): kind is TermsRouteKind {
+  return TERMS_ROUTES.has(kind);
+}
 type Route =
   | { kind: PageRouteKind }
   | { kind: ProjectRouteKind; projectId: string }
   | { kind: "cycle"; projectId: string; cycleId: string }
   | { kind: "profile"; login: string }
-  | { kind: "fee"; owner: string; repo: string; number: string };
+  | { kind: "fee"; owner: string; repo: string; number: string }
+  | { kind: "report-deposit"; caseId: string };
 
 /**
  * Each page's data needs. `snapshot` loads the public snapshot. `registry`
@@ -265,6 +301,24 @@ const ROUTES: Record<
   profile: { snapshot: true, registry: "cached" },
   // The registry names the repository; its numeric id never changes.
   fee: { snapshot: false, registry: "cached" },
+  // The record names no project, so the page needs no registry.
+  "report-deposit": { snapshot: false, registry: "independent" },
+  // The signed-in contributor's own deposit; it names no project.
+  "standing-deposit": {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Standing deposit",
+  },
+  // Repositories not on Slop: the page reads no project registry.
+  requested: { snapshot: false, registry: "independent" },
+  // The public record pages read only /data/record.json.
+  record: { snapshot: false, registry: "independent" },
+  receipts: { snapshot: false, registry: "independent" },
+  referrals: { snapshot: false, registry: "independent" },
+  buyback: { snapshot: false, registry: "independent" },
+  "october-allocation": { snapshot: false, registry: "independent" },
+  "sponsored-pools": { snapshot: false, registry: "independent" },
+  privacy: { snapshot: false, registry: "independent" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -279,6 +333,15 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["how-it-works", "how-it-works"],
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
+  ["requested", "requested"],
+  ["record", "record"],
+  ["receipts", "receipts"],
+  ["deposit", "standing-deposit"],
+  ["referrals", "referrals"],
+  ["buyback", "buyback"],
+  ["october-allocation", "october-allocation"],
+  ["sponsored-pools", "sponsored-pools"],
+  ["privacy", "privacy"],
 ]);
 
 /** Project pages at /projects/<id>/<section>. */
@@ -320,6 +383,9 @@ function internalRoute(pathname: string): Route {
     return { kind: "profile", login: second };
   if (first === "cycles" && segments.length === 3)
     return { kind: "cycle", projectId: second, cycleId: third };
+  // The Inbox links a report's deposit at /fee/report/<caseId>.
+  if (first === "fee" && second === "report" && segments.length === 3)
+    return { kind: "report-deposit", caseId: third };
   // Slopbot's fee comment links /fee/<owner>/<repo>/<number>.
   if (first === "fee" && segments.length === 4)
     return { kind: "fee", owner: second, repo: third, number: segments[3] };
@@ -395,12 +461,20 @@ function routeHead(route: Route): { title: string; path: string | null } {
   if (privateTitle) {
     return {
       title: pageTitle(privateTitle),
-      path: route.kind === "security-cases" ? "/security" : `/${route.kind}`,
+      path:
+        route.kind === "security-cases"
+          ? "/security"
+          : route.kind === "standing-deposit"
+            ? "/deposit"
+            : `/${route.kind}`,
     };
   }
   // One page per pull request: titled, never indexed.
   if (route.kind === "fee")
     return { title: pageTitle("Submission fee"), path: null };
+  // One page per report: titled, never indexed.
+  if (route.kind === "report-deposit")
+    return { title: pageTitle("Report deposit"), path: null };
   if (route.kind === "profile") {
     return {
       title: pageTitle(route.login),
@@ -494,6 +568,10 @@ function Footer({ marketing }: { marketing: boolean }) {
             LinkedIn
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
+          <Link href="/requested">Requested repos</Link>
+          <Link href="/record">Record</Link>
+          <Link href="/receipts">Receipts</Link>
+          <Link href="/privacy">Privacy</Link>
         </nav>
       </div>
     </footer>
@@ -954,12 +1032,17 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  // A project over its owner's intake cap has paused new contributors and
-  // is left out. The counts are read only when a project has a cap; while
-  // they load, and when they cannot be read, every project is listed.
+  // A project over its owner's intake cap has paused new contributors, and
+  // a project the backlog rule takes out of rotation is left out too. The
+  // counts are read only when a project can be left out; while they load,
+  // and when they cannot be read, every project is listed.
   const open = homeProjects(now);
   const [merge] = usePublicResource(
-    open.some((project) => intakeCap(project) !== null),
+    open.some(
+      (project) =>
+        intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(now)),
+    ),
     loadMergeActivity,
     "Merge activity unavailable",
   );
@@ -970,7 +1053,9 @@ function HomePage() {
       .filter(
         (project) =>
           !fundingPending &&
-          !intakePaused(project, mergeIndex?.get(project.id), now),
+          !intakePaused(project, mergeIndex?.get(project.id), now) &&
+          !backlogState(project, mergeIndex?.get(project.id), now)
+            .outOfRotation,
       )
       .map((project) => {
         const {
@@ -989,6 +1074,7 @@ function HomePage() {
   );
   return (
     <main>
+      <SponsoredPoolsNotice />
       <section className="hero shell">
         <fieldset
           aria-label="Choose your Slop journey"
@@ -1260,13 +1346,19 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
   const unlisted = !listedThisMonth(project, new Date());
   const [merge] = usePublicResource(
-    project.status === "active" && intakeCap(project) !== null,
+    project.status === "active" &&
+      (intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(new Date()))),
     loadMergeActivity,
     "Merge activity unavailable",
   );
   const paused =
     merge.status === "ready" &&
     intakePaused(project, merge.index.get(project.id), new Date());
+  const outOfRotation =
+    merge.status === "ready" &&
+    backlogState(project, merge.index.get(project.id), new Date())
+      .outOfRotation;
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1311,6 +1403,8 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
             <Spinner label="Checking project clearance" />
           ) : eligibility === "blocked" && paused ? (
             "This project has paused new contributors. The prompt below picks only listed projects."
+          ) : eligibility === "blocked" && outOfRotation ? (
+            "This project is out of rotation. The prompt below picks only listed projects."
           ) : eligibility === "blocked" && unlisted ? (
             <StatusBadge tone="warning">Not listed this month</StatusBadge>
           ) : eligibility === "blocked" ? (
@@ -1676,11 +1770,13 @@ function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
   const rows = state.index.get(project.id);
   const now = new Date();
   const line = mergeActivityLine(rows, now);
+  const backlog = backlogNotice(backlogState(project, rows, now));
   return (
     <>
       {intakePaused(project, rows, now) ? (
         <p className="project-reward-status">{INTAKE_PAUSED_NOTICE}</p>
       ) : null}
+      {backlog ? <p className="project-reward-status">{backlog}</p> : null}
       {line ? <p className="project-merge-activity">{line}</p> : null}
     </>
   );
@@ -1944,6 +2040,14 @@ function AppContent({ route }: { route: Route }) {
         number={route.number}
       />
     );
+  else if (route.kind === "requested") content = <RequestedReposPage />;
+  else if (route.kind === "record") content = <RecordPage />;
+  else if (route.kind === "receipts") content = <ReceiptsPage />;
+  else if (isTermsRoute(route.kind))
+    content = <RecordTermsPage name={route.kind} />;
+  else if (route.kind === "report-deposit")
+    content = <ReportDepositPage key={route.caseId} caseId={route.caseId} />;
+  else if (route.kind === "standing-deposit") content = <StandingDepositPage />;
   else content = <NotFound />;
   return (
     <>

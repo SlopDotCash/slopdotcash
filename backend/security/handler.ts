@@ -24,6 +24,7 @@ import {
   chunked,
   exactKeys,
   fail,
+  failureShape,
   isSameOriginJsonWrite,
   PROJECT_ID,
   pathParts,
@@ -100,8 +101,18 @@ import {
   repositoryReportingAuthority,
 } from "./project-access";
 import {
+  depositAmountText,
+  type ReportDepositView,
+  reportDepositAsk,
+  reportDepositView,
+  reportDepositViews,
+  sweepReportDeposits,
+} from "./report-deposit";
+import { depositHeld, depositHeldSql } from "./report-deposit-hold";
+import {
   analysisDependencies,
   readStoredReportByCase,
+  reportDepositWork,
   scheduleAnalysis,
   scheduleAppealTriage,
   storedIntakeViewForCase,
@@ -113,6 +124,7 @@ import {
 } from "./reporting-readiness";
 import {
   handleRoutineApi,
+  ROUTINE_ACTOR,
   ROUTINE_PROOF_NEXT_ACTION,
   routineClosed,
   sweepRoutineDecisions,
@@ -282,11 +294,6 @@ export async function securityNotificationAccess(
 
 function frozenTerms(row: CaseRow): FrozenTerms | null {
   return row.terms === null ? null : (JSON.parse(row.terms) as FrozenTerms);
-}
-
-function advisoryUrl(row: CaseRow): string | null {
-  if (row.advisory_ghsa === null) return null;
-  return `https://github.com/${row.advisory_repository}/security/advisories/${row.advisory_ghsa}`;
 }
 
 const OPEN_RECEIPT = ["received", "needs-information", "triaging"];
@@ -534,6 +541,10 @@ type CaseContext = {
   reservation: ReservationRow | null;
   intake: Awaited<ReturnType<typeof storedIntakeViewForCase>>;
   forwarded: { repository: string; advisory_ghsa: string } | null;
+  /** GitHub's last listed state of the case's advisory, when known. */
+  advisoryState: string | null;
+  /** The report's deposit, shown to its reporter only. */
+  deposit: ReportDepositView | null;
 };
 
 /**
@@ -555,13 +566,18 @@ async function caseContexts(
       reservation: null,
       intake: null,
       forwarded: null,
+      advisoryState: null,
+      deposit: null,
     });
   const ids = rows.map((row) => row.id);
-  const [settlements, intakes, directSettlements] = await Promise.all([
-    securitySettlementViews(deps.db, ids),
-    storedIntakeViewsForCases(deps, rolesByCase),
-    directSettlementViews(deps.db, ids),
-  ]);
+  const [settlements, intakes, directSettlements, deposits] = await Promise.all(
+    [
+      securitySettlementViews(deps.db, ids),
+      storedIntakeViewsForCases(deps, rolesByCase),
+      directSettlementViews(deps.db, ids),
+      reportDepositViews(deps, ids),
+    ],
+  );
   for (const part of chunked(ids)) {
     const placeholders = part.map(() => "?").join(",");
     const [reservations, forwarded] = await Promise.all([
@@ -587,10 +603,32 @@ async function caseContexts(
       if (context) context.forwarded = row;
     }
   }
+  const identities = new Map<string, { repository: string; ghsa: string }>();
+  for (const row of rows) {
+    const forwarded = contexts.get(row.id)?.forwarded ?? null;
+    if (row.advisory_ghsa !== null)
+      identities.set(row.id, {
+        repository: row.advisory_repository,
+        ghsa: row.advisory_ghsa,
+      });
+    else if (forwarded)
+      identities.set(row.id, {
+        repository: forwarded.repository,
+        ghsa: forwarded.advisory_ghsa,
+      });
+  }
+  const states = await advisoryStates(deps, [...identities.values()]);
+  for (const [caseId, identity] of identities) {
+    const context = contexts.get(caseId);
+    if (context)
+      context.advisoryState =
+        states.get(`${identity.repository}/${identity.ghsa}`) ?? null;
+  }
   for (const [caseId, context] of contexts) {
     context.settlement = settlements.get(caseId) ?? null;
     context.directSettlement = directSettlements.get(caseId) ?? null;
     context.intake = intakes.get(caseId) ?? null;
+    context.deposit = deposits.get(caseId) ?? null;
   }
   return contexts;
 }
@@ -645,6 +683,12 @@ async function caseView(
     railAvailable,
   );
   const payer = roles.has("security-maintainer") || roles.has("financial");
+  // The deposit belongs to the reporter's view alone (PRD section 8).
+  const deposit = roles.has("reporter")
+    ? preloaded
+      ? preloaded.deposit
+      : await reportDepositView(deps, row.id)
+    : null;
   const recovery =
     directSettlement?.state === "awaiting-external-payment"
       ? await directRecoveryView(deps.db, row.id, deps.directPayments)
@@ -682,7 +726,9 @@ async function caseView(
         ? payer
           ? "Send the remaining transfers with your external wallet, then verify the transaction IDs."
           : "Waiting for the payer to send and verify your payment."
-        : step.text,
+        : deposit?.state === "needed"
+          ? `Deposit needed: ${depositAmountText(deposit.amount)}. Your report is saved and waits for its deposit.`
+          : step.text,
     nextStepDueAt: step.dueAt,
     submissionState: row.submission_state,
     receivedAt: row.received_at,
@@ -766,21 +812,30 @@ async function caseView(
             )
             .bind(row.id)
             .first<{ repository: string; advisory_ghsa: string }>();
+  const advisoryIdentity =
+    row.advisory_ghsa === null
+      ? forwarded
+        ? { repository: forwarded.repository, ghsa: forwarded.advisory_ghsa }
+        : null
+      : { repository: row.advisory_repository, ghsa: row.advisory_ghsa };
+  const githubState =
+    advisoryIdentity === null
+      ? null
+      : preloaded
+        ? preloaded.advisoryState
+        : ((await advisoryStates(deps, [advisoryIdentity])).get(
+            `${advisoryIdentity.repository}/${advisoryIdentity.ghsa}`,
+          ) ?? null);
   const shared = {
     ...base,
     advisory:
-      row.advisory_ghsa === null
-        ? forwarded
-          ? {
-              repository: forwarded.repository,
-              ghsa: forwarded.advisory_ghsa,
-              url: `https://github.com/${forwarded.repository}/security/advisories/${forwarded.advisory_ghsa}`,
-            }
-          : null
+      advisoryIdentity === null
+        ? null
         : {
-            repository: row.advisory_repository,
-            ghsa: row.advisory_ghsa,
-            url: advisoryUrl(row),
+            ...advisoryIdentity,
+            url: `https://github.com/${advisoryIdentity.repository}/security/advisories/${advisoryIdentity.ghsa}`,
+            // GitHub's last listed state; null when Slop has not read it.
+            githubState,
           },
     intake: preloaded
       ? preloaded.intake
@@ -807,6 +862,7 @@ async function caseView(
     return {
       ...shared,
       view: "reporter",
+      deposit,
       events: events
         .filter((event) => REPORTER_EVENT_KINDS.has(event.kind))
         .map((event) => ({
@@ -933,6 +989,22 @@ async function listCases(
   const all = await programs(deps);
   const currentRoles = new Map<string, Set<Role>>();
   let authorityUnavailable = false;
+  // Every project without bounty terms needs a live GitHub permission read.
+  // Start them together: one after another, they cost a GitHub round trip
+  // per project for every viewer, and the browser abandons the list after
+  // 15 seconds. The case loop below reuses each result.
+  const authorities = new Map<string, Promise<boolean>>();
+  for (const [id, manifest] of all)
+    if (!manifest.securityBounty) {
+      const read = repositoryReportingAuthority(
+        deps.repositoryAccess,
+        manifest,
+        actor,
+      );
+      // Awaited below; this only keeps a failure from going unhandled first.
+      read.catch(() => undefined);
+      authorities.set(id, read);
+    }
   for (const [id, manifest] of all) {
     const roles = programRoles(
       manifest.securityBounty,
@@ -941,16 +1013,10 @@ async function listCases(
     );
     // A moderator's role belongs to an escalated case, not its whole project.
     roles.delete("dispute");
-    if (!manifest.securityBounty) {
+    const read = authorities.get(id);
+    if (read) {
       try {
-        if (
-          await repositoryReportingAuthority(
-            deps.repositoryAccess,
-            manifest,
-            actor,
-          )
-        )
-          roles.add("security-maintainer");
+        if (await read) roles.add("security-maintainer");
       } catch (error) {
         if (!reportingAuthorityUnavailable(error)) throw error;
         authorityUnavailable = true;
@@ -961,24 +1027,31 @@ async function listCases(
   const projectIds = [...currentRoles.keys()];
   const result = await deps.db
     .prepare(
-      `SELECT ${CASE_COLUMNS} FROM security_cases WHERE reporter_github_id = ? OR id IN (SELECT case_id FROM security_case_members WHERE github_id = ? AND revoked_at IS NULL)${
+      `SELECT ${CASE_COLUMNS} FROM security_cases WHERE (reporter_github_id = ? OR id IN (SELECT case_id FROM security_case_members WHERE github_id = ? AND revoked_at IS NULL)${
         projectIds.length > 0
           ? " OR project_id IN (SELECT value FROM json_each(?))"
           : ""
-      }${deps.moderatorGithubIds?.has(actor.githubId) ? " OR appeal_state <> 'none' OR related_party_review <> 'not-applicable'" : ""} ORDER BY created_at DESC LIMIT 500`,
+      }${deps.moderatorGithubIds?.has(actor.githubId) ? " OR appeal_state <> 'none' OR related_party_review <> 'not-applicable'" : ""}) AND (reporter_github_id = ? OR NOT ${depositHeldSql("security_cases.id")}) ORDER BY created_at DESC LIMIT 500`,
     )
     .bind(
       actor.githubId,
       actor.githubId,
       ...(projectIds.length > 0 ? [JSON.stringify(projectIds)] : []),
+      // A report that waits for its deposit is in nobody's queue but its
+      // reporter's own list.
+      actor.githubId,
     )
     .all<CaseRow>();
   const rows = result.results ?? [];
   // Every per-case read of the list, in a fixed number of statements: one list
   // request used to cost six D1 round trips per visible case.
   const projects = new Map<string, CaseContext["project"]>();
-  for (const projectId of new Set(rows.map((row) => row.project_id)))
-    projects.set(projectId, await currentReportingProject(deps, projectId));
+  const rowProjectIds = [...new Set(rows.map((row) => row.project_id))];
+  const reportingProjects = await Promise.all(
+    rowProjectIds.map((projectId) => currentReportingProject(deps, projectId)),
+  );
+  for (const [index, projectId] of rowProjectIds.entries())
+    projects.set(projectId, reportingProjects[index]);
   const triagerIds = new Set<string>();
   for (const part of chunked(rows.map((row) => row.id))) {
     const found = await deps.db
@@ -992,7 +1065,6 @@ async function listCases(
     for (const row of found.results ?? []) triagerIds.add(row.case_id);
   }
   // One remote authority read per project, not per case.
-  const authorities = new Map<string, Promise<boolean>>();
   const authority = (projectId: string) => () => {
     let read = authorities.get(projectId);
     if (!read) {
@@ -1067,6 +1139,8 @@ async function readCase(
   if (row === null) notFound();
   const roles = await caseRoles(deps, row, actor);
   if (roles.size === 0) notFound();
+  // Only its reporter reads a report that waits for its deposit.
+  if (!roles.has("reporter") && (await depositHeld(deps, row.id))) notFound();
   await accessLog(deps, row.id, actor, roles, "read").run();
   return json(200, { case: await caseView(deps, row, roles, true) });
 }
@@ -1138,6 +1212,23 @@ async function recordPrivateReports(
       frozen.terms ? JSON.stringify(frozen.terms) : null,
       frozen.terms ? "pending" : "not-applicable",
     ];
+    // A reporter who links their own GitHub report creates a Slop case, so
+    // it is asked like a new report (PRD section 8, "Report deposit"). A
+    // maintainer's import asks nobody. An older link keeps the row, or the
+    // absence of one, from when it was made.
+    const ask =
+      claim === null && role === "reporter"
+        ? await reportDepositAsk(deps, {
+            caseId,
+            projectId: input.projectId,
+            reporter: report.author,
+            at,
+          })
+        : [];
+    const held =
+      claim === null
+        ? ask.length > 0 && deps.reportDeposit?.mode === "live"
+        : await depositHeld(deps, claim.id);
     const write =
       claim === null
         ? deps.db
@@ -1189,6 +1280,7 @@ async function recordPrivateReports(
           guard: claim !== null,
         }),
         accessLog(deps, caseId, input.actor, new Set([role]), "write"),
+        ...ask,
         ...inboxStatements(deps, {
           caseId,
           revision,
@@ -1196,7 +1288,9 @@ async function recordPrivateReports(
           idempotencyKey,
           reporterGithubId: report.author.githubId,
           detail: {},
-          terms: input.terms,
+          // The owner's notice waits for the deposit; the release sweep
+          // sends it once the deposit is recorded.
+          terms: held ? undefined : input.terms,
         }),
       ]);
     } catch (error) {
@@ -1317,6 +1411,71 @@ async function rejectUnconfirmedClaims(
   }
 }
 
+/** The advisory states GitHub reports; any other value is not kept. */
+const ADVISORY_STATES = new Set(["triage", "draft", "published", "closed"]);
+
+/**
+ * Keeps the state GitHub reported for each listed private report, so a case
+ * can show whether its advisory is still open on GitHub (operator decision,
+ * 25 November 2026; PRD section 8). Display only. A row is written only when
+ * the state is new or changed. A failure here never fails the import.
+ */
+async function recordAdvisoryStates(
+  deps: SecurityApiDependencies,
+  repository: string,
+  reports: readonly GithubPrivateReport[],
+): Promise<void> {
+  const at = deps.now().toISOString();
+  const known = reports.filter((report) => ADVISORY_STATES.has(report.state));
+  try {
+    for (const part of chunked(known)) {
+      await deps.db.batch(
+        part.map((report) =>
+          deps.db
+            .prepare(
+              "INSERT INTO security_advisory_states (repository, ghsa, state, changed_at) VALUES (?, ?, ?, ?) ON CONFLICT(repository, ghsa) DO UPDATE SET state = excluded.state, changed_at = excluded.changed_at WHERE security_advisory_states.state <> excluded.state",
+            )
+            .bind(repository, report.ghsa, report.state, at),
+        ),
+      );
+    }
+  } catch {
+    // Never log a repository, an advisory or report content.
+    console.error("security advisory states: one write failed");
+  }
+}
+
+/**
+ * The stored GitHub state of each advisory, keyed `repository/ghsa`. An
+ * advisory GitHub has not listed to Slop has no entry.
+ */
+async function advisoryStates(
+  deps: SecurityApiDependencies,
+  advisories: readonly { repository: string; ghsa: string }[],
+): Promise<Map<string, string>> {
+  const states = new Map<string, string>();
+  const wanted = new Set(
+    advisories.map((entry) => `${entry.repository}/${entry.ghsa}`),
+  );
+  const ghsas = [...new Set(advisories.map((entry) => entry.ghsa))];
+  for (const part of chunked(ghsas)) {
+    const rows =
+      (
+        await deps.db
+          .prepare(
+            `SELECT repository, ghsa, state FROM security_advisory_states WHERE ghsa IN (${part.map(() => "?").join(",")})`,
+          )
+          .bind(...part)
+          .all<{ repository: string; ghsa: string; state: string }>()
+      ).results ?? [];
+    for (const row of rows) {
+      const key = `${row.repository}/${row.ghsa}`;
+      if (wanted.has(key)) states.set(key, row.state);
+    }
+  }
+  return states;
+}
+
 /**
  * Reconciles a program with GitHub: records the private reports that have no
  * case yet and settles older unconfirmed links. `own` limits it to the
@@ -1342,6 +1501,9 @@ async function reconcileProgram(
           (report) => report.author.githubId === actor.githubId,
         )
       : list.reports;
+  // The whole list is what GitHub holds, so only that scope records states.
+  if (scope === "all")
+    await recordAdvisoryStates(deps, terms.intake.repository, list.reports);
   const received = await recordPrivateReports(deps, {
     projectId,
     terms,
@@ -1356,6 +1518,63 @@ async function reconcileProgram(
     claimant: scope === "own" ? actor.githubId : null,
   });
   return { state: "ok", received, reports };
+}
+
+/** Programs read in one automatic import; the rest wait for the next run. */
+const AUTOMATIC_IMPORT_PROGRAMS = 5;
+
+/**
+ * Imports the GitHub private reports of active projects that have a security
+ * program (operator decision, 25 November 2026; PRD section 8). A report
+ * filed straight on the program's repository used to become a case only when
+ * its reporter linked it or a maintainer pressed Import, so it was never
+ * screened for duplicates or analyzed. This is the maintainer's import run on
+ * a schedule under the automatic journal actor: it records each unrecorded
+ * report as a verified case and asks nobody for a deposit. It writes nothing
+ * to GitHub. A project without a program is never read, an unreadable list
+ * writes nothing, and one program's failure does not stop the others.
+ */
+export async function importGithubReports(
+  deps: SecurityApiDependencies,
+): Promise<{ programs: number; received: number; unavailable: number }> {
+  const programs =
+    (
+      await deps.db
+        .prepare(
+          "SELECT id FROM projects WHERE status = 'active' AND json_type(manifest, '$.securityBounty') = 'object' ORDER BY id",
+        )
+        .all<{ id: string }>()
+    ).results ?? [];
+  // More programs than one run reads take turns by the clock.
+  const start =
+    programs.length > AUTOMATIC_IMPORT_PROGRAMS
+      ? Math.floor(deps.now().getTime() / 300_000) % programs.length
+      : 0;
+  const turn = [...programs.slice(start), ...programs.slice(0, start)].slice(
+    0,
+    AUTOMATIC_IMPORT_PROGRAMS,
+  );
+  let received = 0;
+  let unavailable = 0;
+  for (const { id } of turn) {
+    try {
+      const terms = await reportingContext(deps, id, true);
+      const result = await reconcileProgram(
+        deps,
+        id,
+        terms,
+        ROUTINE_ACTOR,
+        "all",
+      );
+      if (result.state === "ok") received += result.received.length;
+      else unavailable += 1;
+    } catch {
+      // Never log a project, a case or report content.
+      console.error("security automatic import: one program failed");
+      unavailable += 1;
+    }
+  }
+  return { programs: turn.length, received, unavailable };
 }
 
 async function maintainsProject(
@@ -1480,6 +1699,13 @@ async function createCase(
       "This advisory already has a verified case.",
     );
   }
+  // A reporter's link of a GitHub report is asked like a new report; a
+  // maintainer's record is not.
+  const ask =
+    mode === "claim"
+      ? await reportDepositAsk(deps, { caseId: id, projectId, reporter, at })
+      : [];
+  const held = ask.length > 0 && deps.reportDeposit?.mode === "live";
   const insert = caseInsertStatement(deps, {
     id,
     projectId,
@@ -1520,6 +1746,7 @@ async function createCase(
         guard: false,
       }),
       accessLog(deps, id, actor, new Set([role]), "write"),
+      ...ask,
       ...inboxStatements(deps, {
         caseId: id,
         revision: 1,
@@ -1527,7 +1754,8 @@ async function createCase(
         idempotencyKey,
         reporterGithubId: reporter.githubId,
         detail: {},
-        terms,
+        // No owner notice while the link waits for its deposit.
+        terms: held ? undefined : terms,
       }),
     ]);
   } catch (error) {
@@ -2458,6 +2686,7 @@ async function planDecision(
       "evidenceReference",
       "evidenceDigest",
       "award",
+      "spam",
     ],
   );
   requireRole(roles, "security-maintainer", "Security maintainers decide");
@@ -2492,6 +2721,13 @@ async function planDecision(
   if (typeof body.inScope !== "boolean")
     fail(400, "invalid_request", "Invalid inScope");
   const inScope = body.inScope;
+  // A person may mark a rejected report as spam. It is the only record that
+  // closes a report "as spam" (PRD section 8, "Report deposit"): a model's
+  // screening verdict never does.
+  if (body.spam !== undefined && typeof body.spam !== "boolean")
+    fail(400, "invalid_request", "Invalid spam");
+  if (body.spam === true && outcome !== "rejected")
+    fail(400, "invalid_request", "Only a rejected report can be marked spam");
   // The decider declares a related party; program approvers and the sponsor
   // account always are one (SEC-04, SEC-12). Once related, a case stays
   // related, so a redecision after an appeal cannot skip the review.
@@ -2568,6 +2804,7 @@ async function planDecision(
     loss,
     inScope,
     relatedParty,
+    ...(body.spam === true ? { spam: true } : {}),
     // Priority guidance for the owner, not eligibility (PRD section 8).
     priority:
       severity === "critical" ||
@@ -3229,6 +3466,9 @@ async function actOnCase(
   const program = await currentReportingProject(deps, row.project_id);
   const roles = await caseRoles(deps, row, actor);
   if (roles.size === 0) notFound();
+  // Nobody but its reporter acts on a report that waits for its deposit, so
+  // no owner, triager or reviewer can verify, decide or analyse it.
+  if (!roles.has("reporter") && (await depositHeld(deps, row.id))) notFound();
   const action = typeof body.action === "string" ? body.action : "";
   const idempotencyKey = stringField(body, "idempotencyKey", IDEMPOTENCY_KEY);
   const replay = await deps.db
@@ -3507,6 +3747,9 @@ export async function handleSecurityApi(
   // admin's own pass must not find the lease taken by its own request.
   if (parts[0] !== "security-routine")
     sweepRoutineDecisions(routine, deps.routineDecisions);
+  // The deposit sweep releases, decides and starts held work behind the
+  // same requests (PRD section 8, "Report deposit").
+  sweepReportDeposits(deps, reportDepositWork(deps));
   try {
     if (request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
@@ -3558,6 +3801,7 @@ export async function handleSecurityApi(
     return apiErrorResponse(caught, {
       label: "security case API failure",
       respond: json,
+      detail: () => failureShape(caught),
     });
   }
 }

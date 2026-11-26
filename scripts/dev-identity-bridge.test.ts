@@ -181,9 +181,22 @@ test("local handoff rejects non-loopback destinations and unbound authorization"
 test("ordinary production sign-in cannot be consumed as a local handoff", async () => {
   const { serve, production, development } = fixture();
   try {
+    // A website flow starts in a site page and is bound to that browser.
+    const browserPost = (url: string, body: object) =>
+      new Request(url, {
+        method: "POST",
+        headers: {
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+          cookie: binding,
+        },
+        body: JSON.stringify(body),
+      });
+    let binding = "";
     const started = await serve(
-      post(`${remote}/v1/oauth/start`, { audience: "slop-points-web" }),
+      browserPost(`${remote}/v1/oauth/start`, { audience: "slop-points-web" }),
     );
+    binding = (started.headers.get("set-cookie") ?? "").split(";")[0];
     const flow = await started.json();
     const poll = {
       flowId: flow.flowId,
@@ -193,21 +206,23 @@ test("ordinary production sign-in cannot be consumed as a local handoff", async 
     expect((await serve(post(`${remote}/v1/local/poll`, poll))).status).toBe(
       403,
     );
-    const authorize = await serve(new Request(flow.authorizationUrl));
+    const authorize = await serve(
+      new Request(flow.authorizationUrl, { headers: { cookie: binding } }),
+    );
     const github = new URL(authorize.headers.get("location") ?? "");
     const callback = await serve(
       new Request(
         `${remote}/v1/oauth/callback?state=${github.searchParams.get("state")}&code=github-code-123`,
         {
           headers: {
-            cookie: (authorize.headers.get("set-cookie") ?? "").split(";")[0],
+            cookie: `${(authorize.headers.get("set-cookie") ?? "").split(";")[0]}; ${binding}`,
           },
         },
       ),
     );
     expect(callback.status).toBe(200);
     expect(await callback.text()).not.toContain(local);
-    const result = await serve(post(`${remote}/v1/oauth/poll`, poll));
+    const result = await serve(browserPost(`${remote}/v1/oauth/poll`, poll));
     expect(result.status).toBe(200);
     expect((await result.json()).assertion).toMatch(/^slop_assert_v1_/u);
   } finally {

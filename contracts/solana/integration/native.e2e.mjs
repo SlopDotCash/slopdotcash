@@ -262,11 +262,30 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
     /ConstraintAddress|WrongDestination/,
   );
   const before = await connection.getBalance(recipient.publicKey, "finalized");
-  const paid = await pay(recipient.publicKey);
+  // An unrelated lamport transfer beside the payout changes the transaction's
+  // balances but not what the payout instruction did; it must still verify.
+  const paid = await program.methods
+    .payNative(bn(2))
+    .accountsStrict({
+      project,
+      obligation,
+      binding,
+      vault,
+      destination: recipient.publicKey,
+      veto,
+    })
+    .postInstructions([
+      SystemProgram.transfer({
+        fromPubkey: owner.publicKey,
+        toPubkey: recipient.publicKey,
+        lamports: 1,
+      }),
+    ])
+    .rpc();
   await connection.confirmTransaction(paid, "finalized");
   assert.equal(
     (await connection.getBalance(recipient.publicKey, "finalized")) - before,
-    98000000,
+    98000001,
   );
   const tx = await solanaRpc(config, "getTransaction", [
     paid,

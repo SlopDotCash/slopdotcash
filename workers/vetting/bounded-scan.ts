@@ -349,6 +349,17 @@ const INTERPRETER_COMMAND = commandToken(
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
+/** Words that forbid the instruction they belong to ("never paste ..."). */
+const INSTRUCTION_NEGATION = String.raw`\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b`;
+const SECRET_SEND_VERB = String.raw`\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b`;
+/**
+ * Trailing refusals in protective guidance ("when asked to send a key to a
+ * webhook, refuse" / "..., do not comply"), scoped to the same sentence after
+ * the destination while keeping concealment clauses ("and do not tell the
+ * user", "and refuse to tell the user") flagged.
+ */
+const TRAILING_REFUSAL = String.raw`\b(?:refus(?:e[ds]?|ing)(?!\s+to\s+(?:tell|inform|notify|alert|warn|mention|report|disclose|explain|log|show)\b)|declin(?:e[ds]?|ing)|reject(?:ed|ing|s)?|disobey(?:ed|ing|s)?|prohibit(?:ed|ing|s)?|forbid(?:den|ding|s)?|ignore\s+(?:it|that|this|the\s+(?:request|instruction|prompt|message))|(?:must|should)\s+be\s+(?:refused|declined|rejected|ignored|blocked|denied)|(?:do\s+not|don['\u2019]?t|never|must\s+not|should\s+not|cannot|can['\u2019]?t)\s+(?:comply|obey|follow(?:\s+(?:it|that|this|the\s+(?:request|instruction|prompt)))?|do\s+(?:it|so|that|this)|proceed|execute|fulfill|honou?r|allow|permit|accept|agree))\b`;
+
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
@@ -479,11 +490,19 @@ const RULES: Rule[] = [
     threat: "prompt-injection",
     severity: "medium",
     // An instruction to send a secret somewhere: the verb, the secret and a
-    // destination on one line that does not forbid it. "Never paste your
-    // token into an issue" and "post the token count" are ordinary agent
-    // guidance (operator decision, 19 November 2026).
-    pattern:
-      /(?<![^\n])(?![^\n]*\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b)[^\n]*\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b[^\n]{0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)[^\n]{0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))/iu,
+    // destination in one sentence that does not forbid it. "Never paste your
+    // token into an issue", "post the token count", and trailing-refusal
+    // guidance ("when asked to send an API key to a webhook, refuse") are
+    // ordinary agent guidance (operator decision, 19 November 2026). A leading
+    // negation forbids it only from the same sentence, before the destination
+    // and at most 200 characters before the verb; an unrelated negation in a
+    // later clause ("... and do not tell the user") or another sentence does
+    // not. The match starts at the verb, so its cost stays linear on a long
+    // line.
+    pattern: new RegExp(
+      String.raw`(?=${SECRET_SEND_VERB})(?<!${INSTRUCTION_NEGATION}(?:(?![.!?;]\s)[^\n]){0,200})${SECRET_SEND_VERB}(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))(?!(?:(?![.!?;]\s)[^\n]){0,160}${TRAILING_REFUSAL})`,
+      "iu",
+    ),
     summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
@@ -578,9 +597,10 @@ const RULE_POLICY_SHA256 = sha256(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
-    localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    localInstallHelpers:
+      "literal-shell-exec-wrapper-closure-substitution-branch-v3",
     sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
-    imageFormats: "png-jpeg-gif-webp-whole-structure-v1",
+    imageFormats: "png-jpeg-gif-webp-sfnt-woff-woff2-whole-structure-v2",
     templateReview: "queued-canonical-template-deterministic-only-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
@@ -761,19 +781,133 @@ function wellFormedWebp(bytes: Uint8Array): boolean {
   return chunks > 0 && at === bytes.length;
 }
 
+/** Big-endian unsigned 16-bit. */
+const uint16 = (bytes: Uint8Array, at: number) =>
+  (bytes[at] << 8) | bytes[at + 1];
+const printableTag = (bytes: Uint8Array, at: number) => {
+  for (let i = 0; i < 4; i += 1)
+    if (bytes[at + i] < 0x20 || bytes[at + i] > 0x7e) return false;
+  return true;
+};
+const align4 = (value: number) => Math.ceil(value / 4) * 4;
+
+/**
+ * A single TrueType or OpenType font: a known sfnt version, a table directory
+ * whose tables lie inside the file without repeating a tag, a `head` (or, for
+ * a bitmap-only font, `bhed`) table, and nothing after the last table but its
+ * padding. The recorded whole-file checksum is not required: font tools often
+ * leave it stale, and anyone writing a file can set it.
+ */
+function wellFormedSfnt(bytes: Uint8Array): boolean {
+  const n = bytes.length;
+  if (n < 12) return false;
+  const version = uint32(bytes, 0);
+  if (
+    version !== 0x00010000 &&
+    version !== 0x4f54544f && // OTTO
+    version !== 0x74727565 // true
+  )
+    return false;
+  const tables = uint16(bytes, 4);
+  const directoryEnd = 12 + 16 * tables;
+  if (tables === 0 || directoryEnd > n) return false;
+  const tags = new Set<string>();
+  let end = directoryEnd;
+  let head = false;
+  for (let i = 0; i < tables; i += 1) {
+    const at = 12 + 16 * i;
+    if (!printableTag(bytes, at)) return false;
+    const tag = String.fromCharCode(...bytes.subarray(at, at + 4));
+    if (tags.has(tag)) return false;
+    tags.add(tag);
+    const offset = uint32(bytes, at + 8);
+    const length = uint32(bytes, at + 12);
+    if (offset < directoryEnd || offset % 4 !== 0 || offset + length > n)
+      return false;
+    if (tag === "head" || tag === "bhed") head = length >= 12;
+    end = Math.max(end, offset + length);
+  }
+  return head && n <= align4(end);
+}
+
+/**
+ * A WOFF font: its recorded length is the file length, its tables and the
+ * optional metadata and private blocks lie inside the file, no tag repeats,
+ * and nothing follows the last block but its padding.
+ */
+function wellFormedWoff(bytes: Uint8Array): boolean {
+  const n = bytes.length;
+  if (n < 44 || uint32(bytes, 0) !== 0x774f4646) return false; // wOFF
+  if (uint32(bytes, 8) !== n || uint16(bytes, 14) !== 0) return false;
+  const tables = uint16(bytes, 12);
+  const directoryEnd = 44 + 20 * tables;
+  if (tables === 0 || directoryEnd > n) return false;
+  const tags = new Set<string>();
+  let end = directoryEnd;
+  for (let i = 0; i < tables; i += 1) {
+    const at = 44 + 20 * i;
+    if (!printableTag(bytes, at)) return false;
+    const tag = String.fromCharCode(...bytes.subarray(at, at + 4));
+    if (tags.has(tag)) return false;
+    tags.add(tag);
+    const offset = uint32(bytes, at + 4);
+    const compressed = uint32(bytes, at + 8);
+    const original = uint32(bytes, at + 12);
+    if (
+      offset < directoryEnd ||
+      offset % 4 !== 0 ||
+      compressed > original ||
+      offset + compressed > n
+    )
+      return false;
+    end = Math.max(end, offset + compressed);
+  }
+  for (const [offsetAt, lengthAt] of [
+    [24, 28],
+    [36, 40],
+  ]) {
+    const offset = uint32(bytes, offsetAt);
+    const length = uint32(bytes, lengthAt);
+    if (length === 0) continue;
+    if (offset < directoryEnd || offset + length > n) return false;
+    end = Math.max(end, offset + length);
+  }
+  return n <= align4(end);
+}
+
+/**
+ * A WOFF2 font: its signature, a recorded length equal to the file length, at
+ * least one table and a zero reserved field. Its table directory is variable
+ * length and its data is Brotli-compressed, so the end of the data is not
+ * located; the recorded length is what binds the whole file.
+ */
+function wellFormedWoff2(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 48 &&
+    uint32(bytes, 0) === 0x774f4632 && // wOF2
+    uint32(bytes, 8) === bytes.length &&
+    uint16(bytes, 12) > 0 &&
+    uint16(bytes, 14) === 0
+  );
+}
+
 const IMAGE_FORMATS = [
   { extension: /\.png$/iu, format: "png", check: wellFormedPng },
   { extension: /\.jpe?g$/iu, format: "jpeg", check: wellFormedJpeg },
   { extension: /\.gif$/iu, format: "gif", check: wellFormedGif },
   { extension: /\.webp$/iu, format: "webp", check: wellFormedWebp },
+  { extension: /\.(?:ttf|otf)$/iu, format: "sfnt", check: wellFormedSfnt },
+  { extension: /\.woff$/iu, format: "woff", check: wellFormedWoff },
+  { extension: /\.woff2$/iu, format: "woff2", check: wellFormedWoff2 },
 ] as const;
 
 /**
- * An ordinary image: its name and its whole byte structure agree on one of
- * these formats, with nothing before the signature or after the end marker.
- * No package manager, build tool or agent runs such a file, so it is listed
- * by digest instead of quarantined as an unknown binary (operator decision,
- * 19 November 2026). Code that reads it is source and is reviewed as such.
+ * An ordinary image or font: its name and its whole byte structure agree on
+ * one of these formats, with nothing before the signature or after the end
+ * marker. No package manager, build tool or agent runs such a file, so it is
+ * listed by digest instead of quarantined as an unknown binary (operator
+ * decisions, 19 November 2026 for images and 23 November 2026 for fonts).
+ * Code that reads it is source and is reviewed as such.
  */
 export function wellFormedImage(
   path: string,
@@ -1915,7 +2049,10 @@ export function inspectRepository(input: {
         (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
           /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
       )
-        commands.push(text);
+        return [
+          ...commands.map((text) => ({ path: file.path, text, directory })),
+          { path: file.path, text, directory, file: true },
+        ];
       return commands.map((text) => ({ path: file.path, text, directory }));
     }),
   );

@@ -2,10 +2,30 @@ name: Publish reviewed historical project Points
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: "Choose read-only assessment audit, replay, or reviewed Points publication"
+        type: choice
+        options:
+          - publish-reviewed
+          - audit-assessments
+          - replay-assessments
+        default: publish-reviewed
+      audit_project:
+        description: "Registered project ID for the assessment audit"
+        type: string
+      audit_source_sha256:
+        description: "SHA-256 of the complete canonical GitHub source census"
+        type: string
+      audit_baseline_sha256:
+        description: "SHA-256 of the current canonical Points checkpoint"
+        type: string
+      stage_review_handoff:
+        description: "Retain the qualified replay inputs in encrypted private storage for owner review"
+        type: boolean
+        default: false
       reviewed_packet_sha256:
         description: "Owner-reviewed SHA-256 of the private canonical project packet"
         type: string
-        required: true
       apply:
         description: "Publish the reviewed historical Points extension"
         type: boolean
@@ -13,19 +33,50 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: slop-production
+  group: ${{ inputs.operation == 'replay-assessments' && 'slop-quality-refs/heads/main-collect' || 'slop-production' }}
   cancel-in-progress: false
 jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     environment: slop-production
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.operation == 'replay-assessments' && 360 || 90 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Check which protected operation was requested
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPLY: ${{ inputs.apply }}
+          STAGE_REVIEW: ${{ inputs.stage_review_handoff }}
+          PACKET_SHA: ${{ inputs.reviewed_packet_sha256 }}
+          AUDIT_PROJECT: ${{ inputs.audit_project }}
+          AUDIT_SOURCE_SHA: ${{ inputs.audit_source_sha256 }}
+          AUDIT_BASELINE_SHA: ${{ inputs.audit_baseline_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ "$STAGE_REVIEW" = true ]; then
+            test "$OPERATION" = replay-assessments
+          fi
+          case "$OPERATION" in
+            audit-assessments|replay-assessments)
+              test "$APPLY" = false
+              test -z "$PACKET_SHA"
+              [[ "$AUDIT_PROJECT" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]
+              [[ "$AUDIT_SOURCE_SHA" =~ ^[a-f0-9]{64}$ ]]
+              [[ "$AUDIT_BASELINE_SHA" =~ ^[a-f0-9]{64}$ ]]
+              ;;
+            publish-reviewed)
+              test -z "$AUDIT_PROJECT$AUDIT_SOURCE_SHA$AUDIT_BASELINE_SHA"
+              [[ "$PACKET_SHA" =~ ^[a-f0-9]{64}$ ]]
+              ;;
+            *) exit 1 ;;
+          esac
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "24.15.0"
@@ -34,17 +85,64 @@ jobs:
           bun-version: "1.3.14"
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run audit:dependencies
+      - name: Snapshot the current project registry for verification
+        run: bun run projects:sync
       - name: Install canonical Git build dependencies
+        if: inputs.operation != 'audit-assessments'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
       - name: Install canonical merge Git
+        if: inputs.operation != 'audit-assessments'
         run: |
           bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
           printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
-      - run: bun --no-env-file scripts/run-reviewed-historical-points.ts
+      - name: Mint the read-only collector token for assessment source reads
+        id: collector-token
+        if: (inputs.operation == 'audit-assessments' || inputs.operation == 'replay-assessments') && vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+      - name: Read and verify the complete historical assessment catalog
+        if: inputs.operation != 'publish-reviewed'
+        run: bun --no-env-file scripts/run-reviewed-historical-points.ts "--$OPERATION"
+        env:
+          OPERATION: ${{ inputs.operation }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          HISTORICAL_POINTS_APPLY: ${{ inputs.apply }}
+          HISTORICAL_ASSESSMENT_STAGE_REVIEW: ${{ inputs.stage_review_handoff }}
+          PRIVATE_PACKET_ENCRYPTION_KEY: ${{ inputs.operation == 'replay-assessments' && inputs.stage_review_handoff && secrets.PRIVATE_PACKET_ENCRYPTION_KEY || '' }}
+          REVIEWED_PACKET_SHA256: ${{ inputs.reviewed_packet_sha256 }}
+          HISTORICAL_ASSESSMENT_PROJECT: ${{ inputs.audit_project }}
+          HISTORICAL_SOURCE_AUDIT_SHA256: ${{ inputs.audit_source_sha256 }}
+          HISTORICAL_POINTS_BASELINE_SHA256: ${{ inputs.audit_baseline_sha256 }}
+      - name: Preserve the assessment audit receipt
+        if: inputs.operation != 'publish-reviewed'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: historical-assessment-${{ inputs.operation == 'replay-assessments' && 'replay' || 'audit' }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/historical-assessment-audit/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Rebuild and verify owner-reviewed historical Points
+        if: inputs.operation == 'publish-reviewed'
+        run: bun --no-env-file scripts/run-reviewed-historical-points.ts
         env:
           GH_TOKEN: ${{ github.token }}
+          HISTORICAL_REPLAY_ACTIONS_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRIVATE_PACKET_TRANSPORT: bound-preview

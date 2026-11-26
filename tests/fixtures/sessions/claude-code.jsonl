@@ -1,0 +1,16 @@
+{"type": "user", "timestamp": "2026-11-23T10:00:01Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "user", "content": "EARLY-EVENT before the marker"}}
+{"type": "assistant", "timestamp": "2026-11-23T10:00:02Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t0", "name": "Bash", "input": {"command": "node run-receipt.mjs start"}}]}}
+{"type": "user", "timestamp": "2026-11-23T10:00:03Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t0", "content": "Project run started.\nslop-run:run-abc123"}]}}
+{"type": "assistant", "timestamp": "2026-11-23T10:00:04Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "SECRET-THINKING", "signature": "sig"}, {"type": "text", "text": "Working on it", "newField": "LEAK-ME"}]}, "unknownField": "LEAK-TOP"}
+{"type": "api-request", "timestamp": "2026-11-23T10:00:05Z", "payload": "API-REQUEST-BODY"}
+{"type": "attachment", "timestamp": "2026-11-23T10:00:05Z", "attachment": "ATTACHMENT-BODY"}
+{"type": "future-thing", "timestamp": "2026-11-23T10:00:05Z", "data": "FUTURE-BODY"}
+{"type": "user", "timestamp": "2026-11-23T10:00:06Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "user", "content": "Please fix the bug"}}
+{"type": "assistant", "timestamp": "2026-11-23T10:00:07Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "{{REPO}}/src/a.ts"}}]}}
+{"type": "user", "timestamp": "2026-11-23T10:00:08Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "export const a = 1;"}]}}
+{"type": "assistant", "timestamp": "2026-11-23T10:00:09Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Read", "input": {"file_path": "/home/u/other/secret.txt"}}]}}
+{"type": "user", "timestamp": "2026-11-23T10:00:10Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": [{"type": "text", "text": "TOP-SECRET-OTHER"}]}]}}
+{"type": "assistant", "timestamp": "2026-11-23T10:00:11Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t3", "name": "Write", "input": {"file_path": "{{REPO}}/src/new.ts", "content": "NEWFILE-BODY"}}]}}
+{"type": "user", "timestamp": "2026-11-23T10:00:12Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t3", "content": "File created"}]}}
+{"type": "assistant", "timestamp": "2026-11-23T10:00:13Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t4", "name": "Read", "input": {"file_path": "{{REPO}}/ignored.log"}}]}}
+{"type": "user", "timestamp": "2026-11-23T10:00:14Z", "cwd": "{{REPO}}", "sessionId": "s", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t4", "content": "IGNORED-LOG-BODY"}]}}
