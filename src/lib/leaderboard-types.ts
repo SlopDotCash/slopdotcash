@@ -749,6 +749,19 @@ export interface LeaderboardSnapshot {
     pullRequestId: string;
     units: ReviewedImplementationUnit[];
   }[];
+  /**
+   * Explicit supersessions declared by assessed joint records: the
+   * successor record names the solo assessments (`legacyPredecessors`)
+   * and earlier joint assessments (`supersedes`) it replaces. Points
+   * retires a predecessor's credit only through this relation, never
+   * from a source's mere absence or context presence. Absent from older
+   * snapshots and when no assessed joint record replaces a published
+   * predecessor.
+   */
+  valueAssessmentSupersessions?: {
+    predecessorDigest: string;
+    successorDigest: string;
+  }[];
   reviewExclusions?: ReviewExclusion[];
   /**
    * Credited review allocations omitted from the ledger because their

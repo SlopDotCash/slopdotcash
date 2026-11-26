@@ -7420,17 +7420,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "359ab526f34cc59c4e877ecb1d9dd370d94a5287e4252e21ba71139130322923",
+      "sha256": "022c9216d34baa3ed7c7d0dc5b77e8a75a9f09c12a58bbea561c4438bcd953d2",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 313, 335, 383, 415, 473, 534, 542, 549, 589, 698, 729, 845, 872
+        71, 76, 313, 335, 383, 415, 473, 534, 542, 549, 589, 698, 729, 858, 885
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "49e689b281129b9c8df2e74d6e0ad4217bca79dd3795303acc142b84a95aee5b",
+      "sha256": "2292c3105b8b9bb8947821919bc17ce83db8a612a2b1385eb121bf4b30964ff0",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
@@ -7450,12 +7450,12 @@
         2278, 2286, 2308, 2323, 2332, 2340, 2386, 2436, 2486, 2541, 2558, 2559,
         2562, 2563, 2667, 2669, 2670, 2674, 2677, 2685, 2687, 2705, 2944, 2997,
         3163, 3264, 3283, 3338, 3515, 3719, 3744, 3793, 3874, 3894, 3898, 4082,
-        4163, 4560, 4571, 4605, 4668, 4682, 5026, 5239, 5440, 5553, 5578, 5709,
-        5718, 5723, 5791, 5805, 6648, 6650, 6673, 6677, 6681, 6686, 6832, 6841,
-        6851, 6852, 6910, 6945, 6951, 6971, 6976, 6983, 6991, 6993, 7019, 7022,
-        7036, 7038, 7059, 7061, 7065, 7068, 7073, 7265, 7267, 7526, 7570, 7633,
-        7634, 8631, 8632, 8633, 8634, 8635, 8652, 8662, 8673, 8677, 8700, 8789,
-        8868, 8869, 8889, 8914, 9121
+        4176, 4599, 4610, 4644, 4707, 4721, 5065, 5278, 5479, 5592, 5617, 5727,
+        5804, 5806, 5807, 5818, 5992, 6001, 6006, 6074, 6088, 6934, 6936, 6959,
+        6963, 6967, 6972, 7118, 7127, 7137, 7138, 7196, 7231, 7237, 7257, 7262,
+        7269, 7277, 7279, 7305, 7308, 7322, 7324, 7345, 7347, 7351, 7354, 7359,
+        7551, 7553, 7812, 7856, 7919, 7920, 8917, 8918, 8919, 8920, 8921, 8938,
+        8948, 8959, 8963, 8986, 9075, 9154, 9155, 9175, 9239, 9271, 9478
       ],
       "review": "mapped-abstraction"
     },
@@ -7707,7 +7707,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "6ee409f76e15b0f8a3a510282bc53c06fc7b188608b43a6b5d6cdf196c0bff4a",
+      "sha256": "0c0d03627bea8f4e4f1a55c8504913ceb85e51eceeaf27518bdfd0429722ea84",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -7719,7 +7719,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [384, 869, 948, 1253, 1274, 1286, 1293],
+      "candidateLines": [384, 869, 948, 1319, 1340, 1352, 1359],
       "review": "mapped-abstraction"
     },
     {
