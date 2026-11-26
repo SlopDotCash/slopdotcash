@@ -6036,7 +6036,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "2ae6a0a69e4c9a63ca470af93ae7e6c6083e999054b027501e1c4e9ea2af25e8",
+      "sha256": "00fbd242bb8bbbae98620fbdb9d86adea136a1a17ef9854cb77cd2f14c361f5d",
       "models": [
         "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
@@ -6059,13 +6059,13 @@
       ],
       "candidateLines": [
         21, 23, 404, 414, 424, 435, 444, 445, 446, 447, 448, 450, 451, 523, 598,
-        599, 600, 603, 625, 704, 735, 772, 878, 946, 1024, 1025, 1034, 1049,
-        1050, 1276, 1291, 1309, 1349, 1356, 1359, 1362, 1365, 1434, 1437, 1439,
-        1443, 1444, 1449, 1466, 1470, 1478, 1479, 1482, 1484, 1492, 1523, 1569,
-        1572, 1587, 1588, 1638, 1641, 1645, 1646, 1647, 1648, 1652, 1672, 1674,
-        1691, 1696, 1758, 1759, 1764, 1765, 1770, 1777, 1779, 1819, 1820, 1823,
-        1824, 1827, 1828, 1849, 1850, 1856, 1861, 1863, 1867, 1868, 1907, 1930,
-        1940, 1971, 1973, 1998, 1999, 2015, 2016, 2027, 2029, 2059, 2062
+        599, 600, 603, 625, 704, 735, 772, 878, 946, 1024, 1025, 1059, 1074,
+        1075, 1282, 1297, 1315, 1355, 1362, 1365, 1368, 1371, 1440, 1443, 1445,
+        1449, 1450, 1455, 1472, 1476, 1484, 1485, 1488, 1490, 1498, 1529, 1575,
+        1578, 1593, 1594, 1644, 1647, 1651, 1652, 1653, 1654, 1658, 1678, 1680,
+        1697, 1702, 1764, 1765, 1770, 1771, 1776, 1783, 1785, 1825, 1826, 1829,
+        1830, 1833, 1834, 1855, 1856, 1862, 1867, 1869, 1873, 1874, 1943, 1966,
+        1976, 1997, 1999, 2024, 2025, 2041, 2042, 2053, 2055, 2085, 2088
       ],
       "review": "mapped-abstraction"
     },
@@ -20426,7 +20426,7 @@
     },
     {
       "path": "formal/models/ui/ui_home_audience.qnt",
-      "sha256": "aa8c501d3720d04fbe3913424d41f6552737de75798e7929d334d7438d43b1cf",
+      "sha256": "75130b9b5ea800c281da017f9a664925526992aef8b73000d720aaa14d7dd2c4",
       "sources": ["src/App.tsx"],
       "scenarios": [
         "defaultContributorTest",
@@ -20434,9 +20434,11 @@
         "historyRestoresRoleTest",
         "invalidFallsBackTest",
         "newSelectionDiscardsForwardHistoryTest",
+        "publishedFallbackStillOffersDiscoveryTest",
         "roleChangeClearsFailureTest",
         "roleChangeClearsSuccessTest",
-        "selectedRoleSurvivesReloadTest"
+        "selectedRoleSurvivesReloadTest",
+        "unavailableRegistryKeepsGenericJourneysTest"
       ]
     },
     {
