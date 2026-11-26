@@ -255,7 +255,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       ],
       detail: [
         { status: 200, cache: null, control: "no-store", cors: "*", contract, keys: ["schemaVersion", "project", "revision", "manifestSha256", "updatedAt", "skillsPublished", "vetting"] },
-        manifestOf(alpha), 1, false, { state: "unscanned", repositories: [{ repositoryId: "9101", state: "unscanned", basis: "Not cleared" }] },
+        manifestOf(alpha), 1, false, { state: "unscanned" },
       ],
       missing: [
         [404, { error: "not_found", message: "Project not found" }, contract],
@@ -276,7 +276,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
         [{ status: 410, cache: null, control: "no-store", cors: "*", contract, keys: ["error", "message", "restriction"] }, { error: "project_restricted", message: shared, restriction: restriction("beta") }],
         [{ status: 410, cache: null, control: "no-store", cors: "*", contract, keys: ["error", "message", "restriction"] }, { error: "project_restricted", message: shared, restriction: restriction("renamed") }],
       ],
-      open: [200, "Unrelated tooling, revised.", { state: "unscanned", repositories: [{ repositoryId: "9106", state: "unscanned", basis: "Not cleared" }] }],
+      open: [200, "Unrelated tooling, revised.", { state: "unscanned" }],
       unexpected: [],
       outbound: [],
     })

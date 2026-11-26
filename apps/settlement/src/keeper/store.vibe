@@ -58,20 +58,9 @@ export effect function bindIdentity(identity: string) {
 }
 
 schema AwardRow { readonly id: string; readonly actor: string }
-schema ReserveRow { readonly reserve: string }
 
 export effect function indexReserved(scope: string, id: string, actor: string, evidence: string) {
   try inTransaction((tx) => tx.run(sql`INSERT INTO awards(scope,id,actor,reserve) VALUES(${scope},${id},${actor},${evidence}) ON CONFLICT(scope,id) DO NOTHING`))
-}
-
-export effect function reservedSource(scope: string, id: string) {
-  return try inTransaction((tx) => effect {
-    const [row] = try decoded(ReserveRow, try tx.all(sql`SELECT reserve FROM awards WHERE scope = ${scope} AND id = ${id}`), "keeper award reserve")
-    if (row === undefined) return undefined
-    const parsed = try Effect.try({ try: () => JSON.parse(row.reserve) as unknown, catch: () => new RecordInvalid({ key: `award:${scope}:${id}` }) })
-    if (typeof parsed !== "object" || parsed === null || !("sourceDigest" in parsed) || typeof parsed.sourceDigest !== "string") return undefined
-    return parsed.sourceDigest
-  })
 }
 
 export effect function indexPaid(scope: string, id: string, evidence: string) {

@@ -49,7 +49,9 @@ const FeeWorldLive = Layer.effect(FeeWorld, effect {
     try {
       const parsed = JSON.parse(body) as { readonly id?: unknown; readonly method?: string }
       if (parsed.method === "eth_maxPriorityFeePerGas") return Response.json({ jsonrpc: "2.0", id: parsed.id ?? 1, result: "0x186a0" })
-    } catch {}
+    } catch {
+      return forwardBase(request)
+    }
     return forwardBase(request)
   }
   const net = internet({

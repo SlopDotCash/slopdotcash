@@ -415,10 +415,7 @@ effect function afterwards(id: string, actor: Actor) {
   const record = try caseRecord(id)
   if (record === undefined) throw refused(actionRows.notFoundCaseNotFound)
   const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
-  if (withheld(observed, actor.githubId)) {
-    const { row } = record
-    return { case: { id: row.id, revision: row.revision, receiptState: row.receipt_state, awardState: row.award_state, appealState: row.appeal_state, relatedParty: row.related_party, relatedPartyReview: row.related_party_review } }
-  }
+  if (withheld(observed, actor.githubId)) return { case: { id: record.row.id, revision: record.row.revision } }
   try audited(id, actor.githubId, observed.roles)
   return { case: try shownCase(observed, actor, true) }
 }

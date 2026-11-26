@@ -320,6 +320,27 @@ effect function firstAttempt(row: Conversion, network: Network, epoch: number) {
   return { fees, at: millisOf(row.submitted_at ?? row.created_at) - epoch }
 }
 
+effect function tokenScales(seenTokens: ReadonlyArray<Observed>, rows: ReadonlyArray<Conversion>, tokenOf: (address: string) => number) {
+  const scales = new Map<number, bigint>()
+  const raiseScale = (token: number, candidate: bigint) => {
+    const current = scales.get(token) ?? 1n
+    if (candidate > current) scales.set(token, candidate)
+  }
+  for (const [index, seen] of seenTokens.entries()) {
+    if (seen.scale !== undefined) raiseScale(index + 1, seen.scale)
+  }
+  for (const carrier of rows) {
+    const token = tokenOf(carrier.token)
+    for (const text of [carrier.amount_in, carrier.token_balance_before]) {
+      if (text !== null && decimal.test(text)) {
+        const raw = try orDie(Effect.try(() => BigInt(text)))
+        raiseScale(token, tokenScale(raw))
+      }
+    }
+  }
+  return scales
+}
+
 export effect function decodeJournal(instance: Instance, names: Names, [locks, conversions, replaced, reservations, steps, proven]: ReadonlyArray<Rows>) {
   const network = instance.network
   const epoch = instance.epoch
@@ -381,23 +402,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     tokens.push(address)
     return tokens.length
   }
-  const scales = new Map<number, bigint>()
-  const raiseScale = (token: number, candidate: bigint) => {
-    const current = scales.get(token) ?? 1n
-    if (candidate > current) scales.set(token, candidate)
-  }
-  for (const [index, seen] of instance.tokens.entries()) {
-    if (seen.scale !== undefined) raiseScale(index + 1, seen.scale)
-  }
-  for (const carrier of [...carriers, ...pendingImport]) {
-    const token = tokenOf(carrier.token)
-    for (const text of [carrier.amount_in, carrier.token_balance_before]) {
-      if (text !== null && decimal.test(text)) {
-        const raw = try orDie(Effect.try(() => BigInt(text)))
-        raiseScale(token, tokenScale(raw))
-      }
-    }
-  }
+  const scales = try tokenScales(instance.tokens, [...carriers, ...pendingImport], tokenOf)
   const scaleOf = (token: number) => scales.get(token) ?? 1n
   const wallets = instance.held.wallets
   const extraWallets: Array<string> = []

@@ -277,7 +277,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     }, {
       admission: {
         crossSite: [403, "origin_forbidden"],
-        wrongMethod: [405, "method_not_allowed"],
+        wrongMethod: [403, "origin_forbidden"],
         anonymous: [401, "unauthorized"],
         expectedMalformed: [400, "invalid_expected_actor"],
         expectedOther: [403, "actor_changed"],
