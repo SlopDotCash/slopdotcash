@@ -21,6 +21,7 @@ import { handleSecurityRead } from "../readKey/routes.vibe"
 import { type ReportingProgram, ReportingPrograms } from "../receipt/program.vibe"
 import { routineOwnerRanking } from "../routine/store.vibe"
 import type { CaseRole } from "../receipt/statements.vibe"
+import { privateSubmissionSession } from "./admission.vibe"
 import { IntakeSettings } from "./availability.vibe"
 import { parseReport } from "./report.vibe"
 import { CaseStanding, StoredIntake, SubmissionRow, caseOf, reporterView, standingColumns, storedIntake, submission, submissionView } from "./rows.vibe"
@@ -226,6 +227,6 @@ effect function read(actor: Actor, id: string, query: URLSearchParams) {
 }
 
 export const submissionReadRoutes = Layer.mergeAll(
-  handleSecurityRead(listSubmissions, (input) => listed(input.actor)),
+  handleSecurityRead({ ...listSubmissions, ...privateSubmissionSession }, (input) => listed(input.actor)),
   handleSecurityRead(readSubmission, (input) => read(input.actor, input.params.id ?? "", input.query)),
 )

@@ -1,5 +1,6 @@
 import { assert, layer } from "@effect/vitest"
-import { type Answer, type World, admissions, banned, bans, digest, faults, maintainer, other, reporter, reportingStatus, request, rows, started, storedObject } from "./support/intake/harness.ts"
+import type { RetentionR2Bucket } from "@repo/platform/r2"
+import { type Answer, type World, admissions, banned, bans, digest, faults, maintainer, origin, other, reporter, reportingStatus, request, rows, started, storedObject } from "./support/intake/harness.ts"
 
 service Intake { readonly world: World }
 
@@ -77,6 +78,46 @@ effect function counts(world: World, githubId: string) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Private submission refusals leave report storage and admissions untouched (spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
+    const { world } = try Intake
+    const root = "/api/v1/security-submissions"
+    const held = "/ss_missing_fixture"
+    effect function asked(path: string, method: "GET" | "POST", body = "{}", from = origin, contentType = "application/json") {
+      const response = try promise(() => world.mf.dispatchFetch(`${origin}${root}${path}`, {
+        method,
+        ...method === "GET" ? {} : { headers: { origin: from, "content-type": contentType }, body },
+      }))
+      const payload = try promise(() => response.json() as Promise<unknown>)
+      return [response.status, payload, response.headers.get("cache-control"), response.headers.get("x-robots-tag")]
+    }
+    effect function retained() {
+      const records = try promise(() => rows(world, "SELECT (SELECT count(*) FROM security_submissions) AS submissions, (SELECT count(*) FROM security_intake_rate_admissions) AS admissions, (SELECT count(*) FROM security_intake_reports) AS reports"))
+      const objects = try promise(() => (world.reports as RetentionR2Bucket).list({ prefix: "security-reports/", limit: 1000 }))
+      return [records, objects.objects.map((object) => object.key).sort()]
+    }
+    const before = try retained()
+    const forbidden = [403, { error: "origin_forbidden", message: "Requests must come from this site" }, "private, no-store", "noindex"]
+    const missing = [404, { error: "not_found", message: "Submission not found" }, "private, no-store", "noindex"]
+    const unauthorized = [401, { error: "unauthorized", message: "Sign in with GitHub" }, "private, no-store", "noindex"]
+    for (const path of ["", `${held}/report`, `${held}/review`, `${held}/screen`]) {
+      try same([
+        try asked(path, "POST"),
+        try asked(path, "POST", "{}", "https://other.test"),
+        try asked(path, "POST", "value=true", origin, "application/x-www-form-urlencoded"),
+        try asked(path, "POST", "{"),
+        try asked(path, "GET"),
+      ], [
+        path === "" ? missing : unauthorized,
+        forbidden,
+        forbidden,
+        path === "" ? [400, { error: "invalid_request", message: "Request body must be a JSON object" }, "private, no-store", "noindex"] : unauthorized,
+        path === "" ? unauthorized : missing,
+      ])
+    }
+    try same(try asked("", "POST", '{"origin":"slop","report":{}}'), unauthorized)
+    try same(try retained(), before)
+  })
+
   it.effect('Submit report: exact bytes in R2, digest verified, case and Inbox receipt atomic (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
     const world = (try Intake).world
     const anonymous = try promise(() => request(world, "/api/v1/security-submissions", { json: { projectId: "intake-fixture", idempotencyKey: "anonymous-key-0001", origin: "slop", report } }))

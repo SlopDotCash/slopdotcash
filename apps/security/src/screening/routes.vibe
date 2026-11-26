@@ -1,6 +1,6 @@
 // spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"
 import { randomId } from "@repo/platform/crypto"
-import { type Actor, Refused, handleRaw, json, jsonBody, sameOriginWrite } from "@repo/platform/http"
+import { type Actor, Refused, handleRawJsonWrite, json, jsonBody, methodNotAllowed } from "@repo/platform/http"
 import { Conflict } from "@repo/platform/stored"
 import { later } from "@repo/platform/worker"
 import type { Review, Screening } from "../../gen/security__screening.ts"
@@ -11,6 +11,7 @@ import { depositView } from "../deposit/view.vibe"
 import { AuthorityUnavailable, caseAuthority } from "../caseAuthority/snapshot.vibe"
 import { retryScreening, reviewRouting } from "../client/screening.vibe"
 import { postSecuritySubmissionsByIdReview as reviewRows, postSecuritySubmissionsByIdScreen as screenRows } from "../client/refusals.vibe"
+import { privateSubmissionSession, submissionMethodRefusal } from "../intake/admission.vibe"
 import { RateLimited, admit } from "../intake/attempt.vibe"
 import { ReceiptMissing, type SubmissionRow, caseOf, caseStanding, decorated, storedIntake, submission } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -66,7 +67,6 @@ effect function located(actor: Actor, id: string) {
 }
 
 effect function requestBody() {
-  if (!(try sameOriginWrite())) throw refused(screenRows.originForbidden)
   const value = jsonBody(retryScreening.limitKib) catch effect () => { throw refused(screenRows.invalidRequestProvideAValidPrivate) }
   return value as Readonly<Record<string, unknown>>
 }
@@ -133,6 +133,7 @@ effect function review(actor: Actor, id: string) {
 }
 
 export const screeningRoutes = Layer.mergeAll(
-  handleRaw(retryScreening, (input) => retry(input.actor, input.params.id ?? "")),
-  handleRaw(reviewRouting, (input) => review(input.actor, input.params.id ?? "")),
+  handleRawJsonWrite({ ...retryScreening, ...privateSubmissionSession }, (input) => retry(input.actor, input.params.id ?? ""), screenRows.originForbidden.headers),
+  handleRawJsonWrite({ ...reviewRouting, ...privateSubmissionSession }, (input) => review(input.actor, input.params.id ?? ""), reviewRows.originForbidden.headers),
+  methodNotAllowed([retryScreening, reviewRouting], submissionMethodRefusal()),
 )

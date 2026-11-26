@@ -1,0 +1,15 @@
+// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { refuse, sameOriginWrite } from "@repo/platform/http"
+import { postSecuritySubmissions as rows } from "../client/refusals.vibe"
+
+export const privateSubmissionSession = {
+  unauthenticated: { ...rows.unauthorized, code: rows.unauthorized.error },
+  actorMismatch: { ...rows.actorChanged, code: rows.actorChanged.error },
+}
+
+export effect function submissionMethodRefusal() {
+  const origin = rows.originForbidden
+  if ((try HttpServerRequest.HttpServerRequest).method !== "GET" && !(try sameOriginWrite())) throw refuse(origin.status, origin.error, origin.message, origin.headers)
+  const missing = rows.notFoundSubmissionNotFound
+  throw refuse(missing.status, missing.error, missing.message, missing.headers)
+}

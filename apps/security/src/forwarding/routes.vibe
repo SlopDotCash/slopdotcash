@@ -425,9 +425,7 @@ effect function directAuthorized(app: IntakeAppConfig, actor: Actor, row: Submis
   return try answer({ status, row, extra: { ...extra, authorizeUrl: flow.authorizeUrl } }, flow.cookie)
 }
 
-export effect function directCreated(actor: Actor, body: Readonly<Record<string, unknown>>) {
-  const { app } = try IntakeApp
-  if (app === undefined) throw refused(createRows.intakeUnavailableAutomaticPrivateIntakeIs)
+export effect function directCreated(app: IntakeAppConfig, actor: Actor, body: Readonly<Record<string, unknown>>) {
   if ((try (try Restrictions).account(actor.githubId)).banned) throw refused(createRows.participationBannedThisAccountCannotStart)
   if (!exactKeys(body, ["projectId", "idempotencyKey", "origin"], ["advisory"])) throw refused(createRows.invalidRequestRequestBodyHasUnexpected)
   const projectId = body.projectId

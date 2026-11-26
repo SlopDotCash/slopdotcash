@@ -2,7 +2,7 @@
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { randomId, randomToken, sha256Hex } from "@repo/platform/crypto"
 import { ConstraintViolation } from "@repo/platform/d1"
-import { type Actor, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
+import { type Actor, Caller, handleRaw, handleRawJsonWrite, json, jsonBody, methodNotAllowed, refuse, sameOriginWrite } from "@repo/platform/http"
 import { Registry, Restrictions } from "@repo/ports/backend"
 import { Rejected as CaseRejected, mayReadBody } from "../../gen/security__cases.effect.vibe"
 import type { Intake } from "../../gen/security__intake.ts"
@@ -10,6 +10,8 @@ import { Rejected, reportBytesAccepted } from "../../gen/security__intake.effect
 import { Rejected as ScreeningRejected, canReplace, revisionPermitted } from "../../gen/security__screening.effect.vibe"
 import { AuthorityUnavailable, caseAuthority } from "../caseAuthority/snapshot.vibe"
 import { intakeReadiness, reviseReport, submitReport } from "../client/intake.vibe"
+import { listSubmissions } from "../client/submissions.vibe"
+import { IntakeApp } from "../forwarding/grant.vibe"
 import { directCreated } from "../forwarding/routes.vibe"
 import { postSecuritySubmissions as createRows, postSecuritySubmissionsByIdReport as reviseRows } from "../client/refusals.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -18,6 +20,7 @@ import { slopReceipt } from "../receipt/statements.vibe"
 import { depositAsk } from "../deposit/ask.vibe"
 import { depositView } from "../deposit/view.vibe"
 import { withDeposit } from "./list.vibe"
+import { privateSubmissionSession, submissionMethodRefusal } from "./admission.vibe"
 import { RateLimited, admit, admitted, committed, objectKey, opened, putReport, upload } from "./attempt.vibe"
 import { IntakeSettings, cachedReadiness, projectId as projectIdPattern } from "./availability.vibe"
 import { type ParsedReport, type ReportRefusal, normalisedBytes, parseReport } from "./report.vibe"
@@ -30,10 +33,11 @@ interface Row {
   readonly status: number
   readonly error: string
   readonly message: string
+  readonly headers?: Readonly<Record<string, string>>
 }
 
 function refused(row: Row) {
-  return refuse(row.status, row.error, row.message)
+  return refuse(row.status, row.error, row.message, row.headers)
 }
 
 const idempotencyKey = /^[A-Za-z0-9_-]{16,80}$/u
@@ -69,7 +73,6 @@ function exactKeys(body: Readonly<Record<string, unknown>>, required: ReadonlyAr
 }
 
 effect function requestObject(limitKib: number, malformed: Row) {
-  if (!(try sameOriginWrite())) throw refused(createRows.originForbidden)
   const value = jsonBody(limitKib) catch effect () => { throw refused(malformed) }
   return value as Readonly<Record<string, unknown>>
 }
@@ -107,11 +110,20 @@ effect function reportingRepository(id: string) {
   return { project, program, repository: index + 1 }
 }
 
-effect function create(actor: Actor) {
+effect function create() {
+  if (!(try sameOriginWrite())) throw refused(createRows.originForbidden)
   const body = try requestObject(submitReport.limitKib, createRows.invalidRequestRequestBodyMustBe)
+  if (!Object.hasOwn(body, "report")) {
+    if (body.origin === "slop") throw refused(createRows.reportRequired)
+    const { app } = try IntakeApp
+    if (app === undefined) throw refused(createRows.notFoundSubmissionNotFound)
+    return try directCreated(app, try (try Caller).current(submitReport), body)
+  }
+  return try createReport(try (try Caller).current(submitReport), body)
+}
+
+effect function createReport(actor: Actor, body: Readonly<Record<string, unknown>>) {
   const settings = try IntakeSettings
-  if (!Object.hasOwn(body, "report") && body.origin === "slop") throw refused(createRows.reportRequired)
-  if (!Object.hasOwn(body, "report")) return try directCreated(actor, body)
   if (!settings.stored) throw refused(createRows.intakeUnavailable)
   if (!exactKeys(body, ["projectId", "idempotencyKey", "origin", "report"], ["expectedReporterGithubId"])) throw refused(createRows.invalidRequestRequestBodyHasUnexpected)
   if (body.expectedReporterGithubId !== undefined && body.expectedReporterGithubId !== actor.githubId) throw refused(createRows.reporterChanged)
@@ -247,7 +259,8 @@ effect function revise(actor: Actor, id: string) {
 }
 
 export const intakeRoutes = Layer.mergeAll(
-  handleRaw(submitReport, (input) => create(input.actor)),
-  handleRaw(reviseReport, (input) => revise(input.actor, input.params.id ?? "")),
+  handleRaw({ ...submitReport, ...privateSubmissionSession, access: "public" as const }, () => create()),
+  handleRawJsonWrite({ ...reviseReport, ...privateSubmissionSession }, (input) => revise(input.actor, input.params.id ?? ""), reviseRows.originForbidden.headers),
   handleRaw(intakeReadiness, (input) => cachedReadiness(input.params.id ?? "")),
+  methodNotAllowed([submitReport, listSubmissions, reviseReport], submissionMethodRefusal()),
 )
