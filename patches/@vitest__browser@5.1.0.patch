@@ -1,0 +1,26 @@
+diff --git a/dist/client/__vitest_browser__/tester-wR_fig-w.js b/dist/client/__vitest_browser__/tester-wR_fig-w.js
+index be2fbc0d240f464cc1b504edc11b6678f98fe477..5c36b6cb3e0bc7a9259edec8401b961c38999cdf 100644
+--- a/dist/client/__vitest_browser__/tester-wR_fig-w.js
++++ b/dist/client/__vitest_browser__/tester-wR_fig-w.js
+@@ -1150,14 +1150,19 @@ async function updateTestFilesLocations(files, sourceMaps) {
+ 	});
+ 	await Promise.all(promises);
+ }
++function compactArtifactName(name, task) {
++	if (name.length <= 64) return name;
++	return `${name.slice(0, 44)}-${task.id}`;
++}
+ function getFailureScreenshotName(test, retry, repeats) {
+ 	var _test$retry;
+-	const name = test.fullTestName.replace(/\W/g, "-");
++	const name = compactArtifactName(test.fullTestName.replace(/\W/g, "-"), test);
+ 	if (!(typeof test.retry === "number" ? test.retry : ((_test$retry = test.retry) === null || _test$retry === void 0 ? void 0 : _test$retry.count) ?? 0) && !test.repeats) return name;
+ 	return `${name}-${repeats}-${retry}`;
+ }
+ function getTraceName(task, retryCount, repeatsCount) {
+-	return `${(/* @__PURE__ */ getTestName(task, "-")).replace(/[^a-z0-9]/gi, "-")}-${repeatsCount}-${retryCount}`;
++	const name = compactArtifactName((/* @__PURE__ */ getTestName(task, "-")).replace(/[^a-z0-9]/gi, "-"), task);
++	return `${name}-${repeatsCount}-${retryCount}`;
+ }
+ 
+ //#endregion
