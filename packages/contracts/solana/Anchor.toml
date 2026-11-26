@@ -5,6 +5,7 @@ resolution = true
 skip-lint = false
 [programs.localnet]
 slop_escrow = "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ"
+slop_submission_deposits = "HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t"
 [provider]
 cluster = "Localnet"
 wallet = "./.local/payer.json"

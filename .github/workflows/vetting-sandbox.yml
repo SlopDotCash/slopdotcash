@@ -1,0 +1,35 @@
+name: Isolated artifact workflow
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+concurrency:
+  group: vetting-sandbox-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+jobs:
+  isolated-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: vetting-sandbox
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/security
+      - name: Build disposable sandbox container and verify isolated execution
+        env:
+          CI: "true"
+        run: |
+          set -euo pipefail
+          image="$(docker build --quiet apps/security/sandbox)"
+          export RUNNER_IMAGE_SHA256="${image#sha256:}"
+          pnpm --filter @repo/security test
