@@ -63,7 +63,7 @@ test("Accepts the exact October packet and validates every weight and eligibilit
   assert.equal(checked.evidence.pointsBatch, pointsDigest);
   assert.equal(checked.projects.length, 1);
   assertOctoberReviewedWeights(
-    checked.projects[0]!,
+    checked.projects[0],
     new Map([[a.githubUserId, { githubNodeId: a.githubNodeId, acceptedWorkPoints: 60 }]]),
     new Map([[a.githubUserId, a.githubNodeId], [b.githubUserId, b.githubNodeId]]),
     new Set([a.githubUserId]),
@@ -96,10 +96,10 @@ test("Rejects omitted, changed, unknown and newly ineligible weight rows", () =>
   ]);
   const known = new Map([[a.githubUserId, a.githubNodeId], [b.githubUserId, b.githubNodeId]]);
   const eligible = new Set([a.githubUserId]);
-  assert.throws(() => assertOctoberReviewedWeights({ ...project!, weights: project!.weights.slice(0, 1) }, expected, known, eligible), /omits a contributor/);
-  assert.throws(() => assertOctoberReviewedWeights(project!, new Map(), known, eligible), /differ from canonical/);
-  assert.throws(() => assertOctoberReviewedWeights(project!, expected, known, new Set()), /eligibility changed/);
-  assert.throws(() => assertOctoberReviewedWeights(project!, new Map([[a.githubUserId, expected.get(a.githubUserId)!]]), new Map(), eligible), /differ from canonical/);
+  assert.throws(() => assertOctoberReviewedWeights({ ...project, weights: project.weights.slice(0, 1) }, expected, known, eligible), /omits a contributor/);
+  assert.throws(() => assertOctoberReviewedWeights(project, new Map(), known, eligible), /differ from canonical/);
+  assert.throws(() => assertOctoberReviewedWeights(project, expected, known, new Set()), /eligibility changed/);
+  assert.throws(() => assertOctoberReviewedWeights(project, new Map([[a.githubUserId, expected.get(a.githubUserId)!]]), new Map(), eligible), /differ from canonical/);
 });
 
 const assetAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
