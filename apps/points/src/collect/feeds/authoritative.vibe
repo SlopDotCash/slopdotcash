@@ -1,10 +1,11 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/window.md, "A hosted feed outage is read again on the configured delays; any other failure stops at once"
 import { boundedBytes } from "@repo/platform/browser"
-import { type Machine } from "../../../gen/points__window.effect.vibe"
+import { type Machine, feedDelayBefore, feedDelaysValid, feedRetried } from "../../../gen/points__window.effect.vibe"
 
 export const feedTimeoutMs = 30_000
 export const feedLimitBytes = 8 * 1024 * 1024
 export const valueFeedUnavailableExitCode = 75
+const feedRetryDelaysVariable = "SLOP_VALUE_FEED_RETRY_DELAYS_MS"
 
 export error ValueFeedUnavailable { feed: string; reason: string }
 export error FeedRefused { feed: string; reason: string }
@@ -45,11 +46,44 @@ effect function answered(read: FeedRead) {
   return bytes
 }
 
-export effect function feedJson(read: FeedRead) {
+effect function feedRetryDelays() {
+  const invalid = new FeedRefused({ feed: feedRetryDelaysVariable, reason: `${feedRetryDelaysVariable} is invalid` })
+  const configured: string = Config.withDefault(Config.String(feedRetryDelaysVariable), "") catch effect () => {
+    throw invalid
+  }
+  const raw = configured.trim()
+  if (raw === "") return []
+  const delays = raw.split(",").map((part) => Number(part.trim()))
+  if (!delays.every((delay) => Number.isSafeInteger(delay)) || !feedDelaysValid(delays)) throw invalid
+  return delays
+}
+
+effect function retried<A, E, R>(read: A!E!R, delays: number[], attempt: number): A!E!R {
+  const value: A = read catch effect (error) => {
+    if (!(error instanceof ValueFeedUnavailable) || !feedRetried(true, attempt, delays)) throw error
+    const delayMs = feedDelayBefore(attempt, delays)
+    try Console.error(JSON.stringify({ event: "value_feed_retry", attempt, delayMs }))
+    try sleep(Duration.millis(delayMs))
+    return try retried(read, delays, attempt + 1)
+  }
+  return value
+}
+
+effect function withFeedRetry<A, E, R>(read: A!E!R) {
+  const delays = try feedRetryDelays()
+  return try retried(read, delays, 1)
+}
+
+effect function answeredInTime(read: FeedRead) {
   const bytes = timeout(answered(read), Duration.millis(read.timeoutMs)) catch effect (error) => {
     if (error._tag === "TimeoutError") throw new ValueFeedUnavailable({ feed: read.feed, reason: `no complete answer within ${read.timeoutMs} ms` })
     throw error
   }
+  return bytes
+}
+
+export effect function feedJson(read: FeedRead) {
+  const bytes = try withFeedRetry(answeredInTime(read))
   const parsed = parsedText(bytes)
   if (parsed === undefined) throw new FeedRefused({ feed: read.feed, reason: `${read.feed} is not valid JSON` })
   return parsed.value

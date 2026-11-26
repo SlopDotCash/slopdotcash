@@ -44,4 +44,8 @@ export const filled: Proposal = {
 
 export const monthly: Proposal = { ...filled, fundingMode: "monthly", monthlyPool: "1500", automaticClosure: "true" };
 
+export const promised: Proposal = { ...monthly, honorSystem: "true" };
+
 export const registry = { revision: 1, manifestSha256: "b".repeat(64) };
+
+export const optedOut: Proposal = { ...filled, submissionFee: "false", wantedIssues: "false", reportDeposit: "false" };

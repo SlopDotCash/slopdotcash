@@ -1,0 +1,58 @@
+// spec/backend/repoRequests.md, "A flag write is a same-origin JSON request naming exactly a repository and an action"; spec/backend/repoRequests.md, "The public board counts active flags per repository, never names who flagged, and leaves out a repository on Slop"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { boardLimit, flagDays, flagLimit } from "../../gen/backend__repoRequests.ts"
+
+export { boardLimit, flagDays, flagLimit }
+
+export const repoRequestsPath = "/api/v1/repo-requests"
+export const requestedPage = "/requested"
+
+const repoPath = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/(?!\.\.?$)[A-Za-z0-9_.-]{1,100}$/u
+const projectId = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
+const githubLink = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s?#]+)\/([^/\s?#]+)(?:[/?#].*)?$/iu
+
+export const repoPathRule = "Enter the repository as owner/name."
+export const repoInputRule = "Enter the repository as owner/name or paste its GitHub link."
+
+export function validRepoPath(value: unknown): value is string {
+  return typeof value === "string" && repoPath.test(value)
+}
+
+export function parseRepoInput(value: string): string | undefined {
+  const text = value.trim()
+  const link = githubLink.exec(text)
+  const path = link === null ? text.replace(/\/+$/u, "") : `${link[1]}/${(link[2] ?? "").replace(/\.git$/iu, "")}`
+  return validRepoPath(path) ? path : undefined
+}
+
+export function repoUrl(repo: string): string {
+  return `https://github.com/${repo}`
+}
+
+export function pitchText(count: number, repo: string, link: string): string {
+  const who = count === 1 ? "1 Slop contributor with merged work wants" : `${count} Slop contributors with merged work want`
+  return `${who} to work on ${repo}. List it free at ${link}`
+}
+
+const RepoPath = Schema.String.check(Schema.isPattern(repoPath))
+const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const Instant = Schema.String.check(Schema.makeFilter((value: string) => Number.isFinite(Date.parse(value))))
+
+export const RepoRequestBody = Schema.Struct({ repo: Schema.Unknown, action: Schema.Unknown })
+
+export const RequestedRepo = Schema.Struct({ repo: RepoPath, count: Count, newestAt: Instant })
+export type RequestedRepo = typeof RequestedRepo.Type
+
+export const MyRepoRequest = Schema.Struct({ repo: RepoPath, expiresAt: Instant, listedAs: Schema.NullOr(Schema.String.check(Schema.isPattern(projectId))) })
+export type MyRepoRequest = typeof MyRepoRequest.Type
+
+export const RepoRequestBoard = Schema.Struct({ repos: Schema.Array(RequestedRepo).check(Schema.isMaxLength(boardLimit)), mine: Schema.NullOr(Schema.Array(MyRepoRequest)) })
+export type RepoRequestBoard = typeof RepoRequestBoard.Type
+
+export const RepoRequestAnswer = Schema.Struct({ repo: RepoPath, count: Count, flagged: Schema.Boolean, expiresAt: Schema.NullOr(Instant) })
+export type RepoRequestAnswer = typeof RepoRequestAnswer.Type
+
+export const repoRequestBoard = route({ method: "GET", path: repoRequestsPath, access: "public", limitKib: 1, request: undefined, answer: RepoRequestBoard, rejected: "not_found", cache: { browserSeconds: 300 } })
+export const flagRepoRequest = route({ method: "POST", path: repoRequestsPath, access: "sessionWrite", limitKib: 1, request: RepoRequestBody, answer: RepoRequestAnswer, rejected: "request_limit", cache: "private" })
+
+export const api: ReadonlyArray<AnyRoute> = [repoRequestBoard, flagRepoRequest]

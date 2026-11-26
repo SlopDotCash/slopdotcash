@@ -1,0 +1,18 @@
+// spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"
+export interface LineCounts {
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface RepairRequest {
+  readonly original: unknown
+  readonly accepted: unknown
+  readonly acceptedCommitSha: string
+  readonly commitSha: string
+  readonly path: string
+}
+
+export service JointEvidence {
+  lines(file: unknown): LineCounts | undefined
+  repair(request: RepairRequest): (unknown | undefined)!!
+}

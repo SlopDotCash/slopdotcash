@@ -17,8 +17,8 @@ import { privateModel, privateProvider, privateRoute } from "../src/analysis/rou
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
-import { recoverRouting } from "../src/screening/jobs.vibe"
 import { screeningRoutes } from "../src/screening/routes.vibe"
+import { screeningAt } from "../src/screening/store.vibe"
 import { type World, digest, maintainer, origin, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 
 type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
@@ -74,6 +74,8 @@ const portsOf = (view: ProjectView) => Layer.mergeAll(
     byRepository: () => succeed(undefined),
     byPath: () => succeed(undefined),
     active: () => succeed([view]),
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
     fence: () => succeed(sql`1`),
   } satisfies Registry.Shape),
   Layer.succeed(Authority, {
@@ -419,10 +421,8 @@ effect function routing(screened: Screened.Shape) {
   try screen(screened, "43003", o.id, 1, screened.retired)
   const pendingO = try intakeOf(world, o.id)
   const callsBeforeJob = fake.calls.length
-  provide shellOf(world, fake, screened.clock, screened.beforeReply, surplusKey) {
-    try recoverRouting()
-    try recoverRouting()
-  }
+  try screen(screened, "43003", o.id, 3)
+  try screen(screened, "43003", o.id, 3)
   const jobCalls = fake.calls.length - callsBeforeJob
 
   const reportN = reportOf("Liquidation bonus exceeds the seized collateral", "A rounding error pays the liquidator a bonus larger than the collateral it seizes.")
@@ -475,27 +475,58 @@ effect function routing(screened: Screened.Shape) {
 }
 
 const reportX = reportOf("Paused vault still settles queued withdrawals", "Queued withdrawals settle while the vault is paused, so the pause never stops payouts.")
+const reportW = reportOf("Unscoped vault rounds withdrawals up", "Withdrawals round the share price up, so each exit takes one unit more than it burned.")
+const reportY = reportOf("Paused program vault skips the fee cap", "The fee cap is read before the pause check, so a paused vault charges an uncapped fee.")
 const ownerLine = "Losses that need the vault to stay paused for more than a week"
+const pausedLine = "Fees charged while the program is paused and the vault is empty"
+
+function scopeWith(line: string) {
+  return { sourceRevisions: [{ repository: "slop-test/intake", commit: "0".repeat(40) }], deployments: [], includedAssets: ["slop-test/intake"], excludedDependencies: [], excludedFindings: [line], testingPermission: "Use local tests with synthetic funds only.", severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds." }
+}
+
+effect function scopedRevision(world: World, revision: number, status: string, line: string | undefined) {
+  const createdAt = new Date(Date.now() - 2000 + revision * 300).toISOString()
+  const manifest = line === undefined ? "json_set(manifest, '$.securityBounty.status', ?)" : "json_set(manifest, '$.securityBounty.status', ?, '$.securityBounty.scope', json(?))"
+  const scope = line === undefined ? [] : [JSON.stringify(scopeWith(line))]
+  try promise(() => rows(world, `INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, ${manifest}, ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1`, revision, status, ...scope, String(revision).repeat(64), createdAt, project))
+}
+
+effect function storedExclusions(world: World, id: string) {
+  return (try Effect.provide(screeningAt(id), d1(world.db))).screening.exclusions
+}
 
 effect function exclusionsSent(screened: Screened.Shape) {
   const { world, fake } = screened
-  const scope = { sourceRevisions: [{ repository: "slop-test/intake", commit: "0".repeat(40) }], deployments: [], includedAssets: ["slop-test/intake"], excludedDependencies: [], excludedFindings: [ownerLine], testingPermission: "Use local tests with synthetic funds only.", severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds." }
-  try promise(() => rows(world, "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, json_set(manifest, '$.securityBounty.scope', json(?)), ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1", 3, JSON.stringify(scope), "c".repeat(64), new Date(Date.now() - 1000).toISOString(), project))
+  try scopedRevision(world, 3, "paused", undefined)
+  const w = try submit(world, "41019", "screening-case-w-0001", reportW)
+  fake.reply(screeningOf(reportW.summary), decided("needs-information", "Name the rounding function."))
+  const screenedW = try screen(screened, "41019", w.id, 1)
+  try scopedRevision(world, 4, "open", ownerLine)
   const x = try submit(world, "41020", "screening-case-x-0001", reportX)
   fake.reply(screeningOf(reportX.summary), decided("legitimate", "The report names the withdrawal queue and gives a safe reproduction."))
   fake.reply(analysisOf(reportX.summary), assessed("Paused vaults keep settling queued withdrawals."))
   const screenedX = try screen(screened, "41020", x.id, 1)
+  try scopedRevision(world, 5, "paused", pausedLine)
+  const y = try submit(world, "41021", "screening-case-y-0001", reportY)
+  fake.reply(screeningOf(reportY.summary), decided("needs-information", "Name the fee path that skips the cap."))
+  const screenedY = try screen(screened, "41021", y.id, 1)
   const scopeOf = (call: ProviderCall | undefined) => (jsonValue(said(call)) as { readonly programScope?: unknown } | undefined)?.programScope
-  const receiptScope = { includedAssets: ["slop-test/intake"], severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.", doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, ownerLine] }
+  const scopeFor = (line: string) => ({ includedAssets: ["slop-test/intake"], severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.", doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, line] })
   try same({
-    screenedX: screenedX.status,
+    screened: [screenedW.status, screenedX.status, screenedY.status],
+    unscoped: scopeOf(fake.calls.find(screeningOf(reportW.summary))),
     screening: scopeOf(fake.calls.find(screeningOf(reportX.summary))),
     analysis: scopeOf(fake.calls.find(analysisOf(reportX.summary))),
+    paused: scopeOf(fake.calls.find(screeningOf(reportY.summary))),
+    stored: [try storedExclusions(world, w.id), try storedExclusions(world, x.id), try storedExclusions(world, y.id)],
     x: try intakeOf(world, x.id),
   }, {
-    screenedX: 200,
-    screening: receiptScope,
-    analysis: receiptScope,
+    screened: [200, 200, 200],
+    unscoped: null,
+    screening: scopeFor(ownerLine),
+    analysis: scopeFor(ownerLine),
+    paused: scopeFor(pausedLine),
+    stored: [{ defaults: 0, owner: [] }, { defaults: 10, owner: [ownerLine.length] }, { defaults: 10, owner: [pausedLine.length] }],
     x: intake(1, "legitimate", "The report names the withdrawal queue and gives a safe reproduction.", 4, { routed: 1 }),
   })
 }
@@ -509,11 +540,11 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try lateResults(try Screened)
   })
 
-  it.effect('Routing notifies the current owners and triagers once per qualified version, never the reporter or the acting maintainer, and a scheduled repeat retries routing a pending intake (spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
+  it.effect('Routing notifies the current owners and triagers once per qualified version, never the reporter or the acting maintainer, and a repeated screen request retries routing a pending intake (spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
     try routing(try Screened)
   })
 
-  it.effect('Screening and the automatic assessment receive Slop\'s ten "does not qualify" lines followed by the owner\'s lines of the receipt terms (spec/security/reportNotices.md, "Story: Exclusions inform advice without deciding"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
+  it.effect('Screening and the automatic assessment receive Slop\'s ten "does not qualify" lines followed by the owner\'s lines of the receipt revision, a paused program\'s lines included, and a receipt without a scope receives none (spec/security/reportNotices.md, "Story: Exclusions inform advice without deciding"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
     try exclusionsSent(try Screened)
   })
 })

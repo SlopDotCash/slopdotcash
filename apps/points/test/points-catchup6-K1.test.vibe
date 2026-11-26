@@ -1,0 +1,182 @@
+// spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A later assessment that reaches an October-protected source holds the overlapping work and records each hold"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { decodeSnapshot, validateSnapshot } from "../src/client/snapshot/validate.vibe"
+import { type Award, type Revision, type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
+import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import { reviewedMergeGroups, holdProtected } from "../src/journal/hold.vibe"
+import { openStore, ownUnit, storeOf } from "../src/journal/ledger.vibe"
+import { applySnapshot, applySnapshots, jointHoldReasons, verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
+import type { Protection } from "../gen/points__protectedMonths.ts"
+import { october2026 } from "../gen/points__periods.ts"
+import { legacyHeldReview, registry, snapshotFile } from "./support/u9/fixtures.ts"
+
+const repository = "elizaOS/eliza"
+const carrier = { id: "U_kgDOcarrier", login: "carrier", kind: "User", avatarUrl: "", url: "https://github.com/carrier" }
+const occurredAt = "2026-10-30T00:00:00.000Z"
+const decidedAt = "2026-11-01T00:00:00.000Z"
+const recordedAt = "2026-11-17T06:00:00.000Z"
+const recordDigest = "b".repeat(64)
+const snapshotDigest = "d".repeat(64)
+const octoberOnly: Protection = { months: [{ project: "eliza", period: october2026 }], everyMonthProjects: [] }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function revision(previous: Revision | null, award: Award, decision?: RevisionBody["decision"], recordedAt = "2026-11-20T00:00:00.000Z") {
+  const body: RevisionBody = {
+    previous: previous?.id ?? null, recordedAt, sourceDigest: snapshotDigest, sourceRule: "slop-score-v2", award,
+    ...(decision === undefined ? {} : { decision }),
+  }
+  return { id: try pointRevisionId(body), ...body } satisfies Revision
+}
+
+effect function merge(sourceId: string, workUnitId: string, amount: number, at: string, joint: boolean) {
+  const parts = { projectId: "eliza", actorId: carrier.id, category: "merged-pull-request", sourceId }
+  const key = try pointKey(joint ? { ...parts, workUnitId } : parts)
+  return {
+    key, actor: { id: carrier.id, login: carrier.login }, projectId: "eliza", category: "merged-pull-request", amount, occurredAt: at, sourceId,
+    sourceUrl: `https://github.com/${repository}/pull/1`, workUnitId, provisional: false,
+  } satisfies Award
+}
+
+effect function heldOf(known: ReadonlyArray<Revision>, candidates: ReadonlyArray<Revision>, groups: ReturnType<typeof reviewedMergeGroups>) {
+  const store = try storeOf("2026-11-20T00:00:00.000Z", [], candidates)
+  const count = try holdProtected(store, new Set(known.map((row) => row.id)), octoberOnly, groups)
+  return { count, kept: store.revisions.map((row) => row.id) }
+}
+
+function jointEvent(completion: string, workUnitId: string) {
+  return {
+    id: `${completion}:joint:${workUnitId}:merged:${carrier.id}`, actor: carrier, category: "merged-pull-request", points: 1, scoreThirds: 3, workUnitId,
+    scoreDecisionSourceId: `value:${recordDigest}`, scoreDecisionAt: decidedAt, occurredAt, repository,
+    source: { id: completion, kind: "pull-request", number: 2, title: "Reviewed completion", url: `https://github.com/${repository}/pull/2` },
+    reason: "Reviewed implementation",
+  }
+}
+
+layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('Held implementation still publishes and reconciles its independently assessed review, and records each held pool (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A later assessment that reaches an October-protected source holds the overlapping work and records each hold")', () => effect {
+    const fixture = try promise(() => legacyHeldReview())
+    const targets = fixture.before.repositories.map((target) => ({
+      ...target, nodeId: fixture.before.source.repositories.find((row) => row.id === target.id)?.repositoryId ?? "",
+      aliases: target.id === `${target.owner}/${target.name}` ? [] : [`${target.owner}/${target.name}`],
+    }))
+    const compatible = { registered: targets, targets, projects: targets.map((target) => ({ id: target.projectId, skillSourcePath: "SKILL.md" })) }
+    const held = try validateSnapshot(fixture.held, compatible)
+    const revoked = try validateSnapshot(fixture.revoked, compatible)
+    const emptyMembership = Effect.as(validateSnapshot({ ...fixture.held, reviewedImplementationUnits: [] }, compatible), "") catch (error) => error.message
+    const store = try openStore(`${journalText(fixture.prior)}\n`, null, [])
+    const repositories = repositoriesOf(compatible, {})
+    const merges = () => [...store.latest.values()].filter(({ award }) => award.category === "merged-pull-request")
+    try applySnapshots(store, repositories, [{ snapshot: held, digest: "9".repeat(64) }], fixture.prior.generatedAt)
+    const retained = store.revisions.length
+    const heldMerges = merges()
+    try applySnapshots(store, repositories, [{ snapshot: revoked, digest: "a".repeat(64) }], fixture.prior.generatedAt)
+    const appended = store.revisions.slice(fixture.prior.revisions.length).map(({ award }) => [award.category, award.sourceId, award.amount])
+    const pools = new Set(store.held.filter((row) => row.reason === jointHoldReasons.HeldUnassessedPool).map((row) => row.subject))
+    try same({ retained, appended, mergesKept: JSON.stringify(merges()) === JSON.stringify(heldMerges), october: pools.has(ownUnit("asi", "PR_october")), emptyMembership }, {
+      retained: fixture.prior.revisions.length,
+      appended: [["substantive-review", "PRR_fixture", 0]],
+      mergesKept: true,
+      october: true,
+      emptyMembership: "Reviewed implementation membership must be nonempty",
+    })
+  })
+
+  it.effect('A historical replay retains a joint award with stale, incomplete or unresolved coverage and an ordinary minimum on its completion, and a rolling snapshot zeroes it (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window")', () => effect {
+    const base = try decodeSnapshot((try promise(() => snapshotFile())).value)
+    const completion = "PR_kwDOcompletion"
+    const workUnitId = `wu_${"c".repeat(64)}`
+    const coverageOf = (status: string) => [{ pullRequestId: completion, pullRequestNumber: 2, repository, status, recordDigest }]
+    const assessed = {
+      ...base, generatedAt: decidedAt, reviewExclusions: [], window: { ...base.window, from: "2026-10-01T00:00:00.000Z", to: "2026-11-15T00:00:00.000Z" },
+      ledger: [jointEvent(completion, workUnitId)], valueAssessmentCoverage: coverageOf("assessed"),
+    }
+    const repositories = repositoriesOf(registry, {})
+    const history = `${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: decidedAt, coverage: [], revisions: [] })}\n`
+    const results: Array<{ status: string; earlier: number; rolling: number; historical: boolean }> = []
+    for (const status of ["stale", "incomplete", "unresolved"]) {
+      const minimum = {
+        id: `${completion}:merged:${carrier.id}`, actor: carrier, category: "merged-pull-request", points: 1, occurredAt, repository,
+        source: { id: completion, kind: "pull-request", number: 2, title: "Reviewed completion", url: `https://github.com/${repository}/pull/2` },
+        reason: "Ordinary minimum",
+      }
+      const heldSnapshot = { ...assessed, ledger: [minimum], valueAssessmentCoverage: coverageOf(status) }
+      const rolling = try openStore(history, null, [])
+      try applySnapshot(rolling, repositories, assessed, "1".repeat(64), recordedAt)
+      const key = [...rolling.latest.values()].find(({ award }) => award.workUnitId === workUnitId)?.award.key ?? ""
+      const earlier = rolling.latest.get(key)
+      const historical = try openStore(history, null, [])
+      try applySnapshot(historical, repositories, assessed, "1".repeat(64), recordedAt)
+      try applySnapshot(rolling, repositories, heldSnapshot, "2".repeat(64), recordedAt)
+      try applySnapshot(historical, repositories, heldSnapshot, "2".repeat(64), recordedAt, { preserveHeldImplementation: true })
+      results.push({ status, earlier: earlier?.award.amount ?? 0, rolling: rolling.latest.get(key)?.award.amount ?? -1, historical: historical.latest.get(key)?.id === earlier?.id })
+    }
+    try same(results.map(({ status, rolling, historical }) => ({ status, rolling, historical })), [
+      { status: "stale", rolling: 0, historical: true },
+      { status: "incomplete", rolling: 0, historical: true },
+      { status: "unresolved", rolling: 0, historical: true },
+    ])
+    try same(results.every(({ earlier }) => earlier > 0), true)
+  })
+
+  it.effect('A rolling fallback preserves an October first-acceptance allocation and records the held pool (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A later assessment that reaches an October-protected source holds the overlapping work and records each hold")', () => effect {
+    const base = try decodeSnapshot((try promise(() => snapshotFile())).value)
+    const sourceId = "PR_kwDOoriginal"
+    const accepted = try revision(null, try merge(sourceId, "wu_eliza_eliza_pr_1", 30, occurredAt, false), {
+      sourceId, effectiveAt: decidedAt, reason: verifiedHistoricalAllocationDecision, delta: 30,
+    }, decidedAt)
+    const store = try openStore(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: decidedAt, coverage: [], revisions: [accepted] })}\n`, null, [])
+    const fallback = {
+      ...base, generatedAt: decidedAt, reviewExclusions: [],
+      window: { ...base.window, from: "2026-10-15T00:00:00.000Z", to: decidedAt },
+      ledger: [{
+        id: `${sourceId}:merged:${carrier.id}`, actor: carrier, category: "merged-pull-request", points: 1, occurredAt, repository,
+        source: { id: sourceId, kind: "pull-request", number: 1, title: "Previously accepted", url: accepted.award.sourceUrl },
+        reason: "Legacy merge assessment",
+      }],
+      valueAssessmentCoverage: [{
+        pullRequestId: sourceId, pullRequestNumber: 1, repository, status: "legacy-policy", recordDigest: null,
+        implementationAllocation: { rule: "changed-lines-v1", totalScoreThirds: 3, weights: [{ actorNodeId: carrier.id, actorLogin: carrier.login, changedLines: "15" }] },
+      }],
+    }
+    const repositories = repositoriesOf(registry, {})
+    try applySnapshots(store, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    const refreshed = [...store.revisions]
+    try applySnapshots(store, repositories, [{ snapshot: { ...fallback, generatedAt: recordedAt }, digest: "5".repeat(64) }], recordedAt)
+    try same({
+      refreshed, repeated: store.revisions,
+      held: store.held.some((row) => row.subject === ownUnit("eliza", sourceId) && row.reason === jointHoldReasons.HeldUnassessedPool),
+    }, { refreshed: [accepted], repeated: [accepted], held: true })
+  })
+
+  it.effect('A frozen retirement also holds its replacement in a later month (spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+    const decision = { sourceId: `value:${"a".repeat(64)}`, effectiveAt: "2026-11-20T00:00:00.000Z", reason: "Accepted work completed together" }
+    const october = try revision(null, try merge("PR_original", "wu_original", 10, "2026-10-14T00:00:00.000Z", false))
+    const replacement = try revision(null, try merge("PR_replacement", "wu_replacement", 10, "2026-11-13T00:00:00.000Z", false), { ...decision, delta: 10 })
+    const retirement = try revision(october, { ...october.award, amount: 0 }, { ...decision, delta: -10 })
+    const independent = try revision(null, try merge("PR_independent", "wu_independent", 10, "2026-11-13T00:00:00.000Z", false))
+    const result = try heldOf([october], [october, replacement, retirement, independent], new Map())
+    try same(result, { count: 2, kept: [october.id, independent.id] })
+  })
+
+  it.effect('Reviewed membership holds a standalone replacement without holding an independent unit in the same assessment (spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+    const base = try decodeSnapshot((try promise(() => snapshotFile())).value)
+    const workUnitId = `wu_${"b".repeat(64)}`
+    const otherUnitId = `wu_${"c".repeat(64)}`
+    const decision = { sourceId: `value:${recordDigest}`, effectiveAt: "2026-11-20T00:00:00.000Z", reason: "Reviewed implementation" }
+    const prior = try revision(null, try merge("PR_completion", workUnitId, 10, "2026-10-14T00:00:00.000Z", true), { ...decision, delta: 10 })
+    const retirement = try revision(prior, { ...prior.award, amount: 0 }, { ...decision, delta: -10 })
+    const replacement = try revision(null, try merge("PR_member", "independent-standalone-source-identity", 10, "2026-09-30T00:00:00.000Z", false))
+    const independent = try revision(null, try merge("PR_other", otherUnitId, 10, "2026-11-13T00:00:00.000Z", true), { ...decision, delta: 10 })
+    const units = [["PR_completion", workUnitId], ["PR_member", workUnitId], ["PR_other", otherUnitId]].map(([pullRequestId, unit]) => ({
+      repository, pullRequestId: pullRequestId ?? "", units: [{ recordDigest, workUnitId: unit ?? "", groupId: (unit ?? "").slice(3) }],
+    }))
+    const groups = reviewedMergeGroups([{ snapshot: { ...base, reviewedImplementationUnits: units }, digest: snapshotDigest }], repositoriesOf(registry, {}))
+    const result = try heldOf([prior], [prior, replacement, retirement, independent], groups)
+    try same(result, { count: 2, kept: [prior.id, independent.id] })
+  })
+})

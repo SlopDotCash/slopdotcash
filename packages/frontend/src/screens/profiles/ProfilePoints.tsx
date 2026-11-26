@@ -1,14 +1,14 @@
-// spec/frontend/views.md, "Recent Points sum each UTC day of the last days including today"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/backend/xConnection.md, "The verified X ID is reserved forever to the first GitHub identity that links it"
+// spec/frontend/views.md, "Story: Read a contributor's profile"; spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/backend/xConnection.md, "The verified X ID is reserved forever to the first GitHub identity that links it"
 import type { XProfile } from "@repo/backend/client";
 import type { ProfileIndex } from "@repo/points/client";
-import { DataState, Metric, NotFound } from "@repo/ui";
+import { DataState, NotFound } from "@repo/ui";
 import type { ReactNode } from "react";
-import { recentPoints } from "../../projections/profile.ts";
+import { NotFoundHead } from "../../app/notFoundHead.ts";
 import type { Shown } from "../home/listing.ts";
 import { XAccountLink } from "../points/People.tsx";
-import { lifetimeTotals, type StandingHistory } from "../points/standings.ts";
+import type { StandingHistory } from "../points/standings.ts";
 import { ProfileActivity } from "./ProfileActivity.tsx";
-import { censusMatches, type MembershipFacts, recentDays } from "./profile.ts";
+import { censusMatches, type MembershipFacts } from "./profile.ts";
 
 export type JoinStatus = "loading" | "unavailable" | "absent" | "ready";
 
@@ -19,7 +19,7 @@ export type ProfilePointsProps = {
   actorId?: string;
   /** The profile census. */
   census: Shown<ProfileIndex>;
-  /** The Points journal as standings. */
+  /** The Points journal, whose members confirm a login. */
   history: Shown<StandingHistory>;
   /** The signed-in member, when this is their own profile. */
   own: MembershipFacts | undefined;
@@ -37,8 +37,6 @@ export type ProfilePointsProps = {
   children?: ReactNode;
   /** The awards and payments section. */
   payments?: ReactNode;
-  /** Now, in milliseconds. */
-  nowMs: number;
 };
 
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
@@ -49,8 +47,8 @@ function XBadge({ x }: { x: Shown<XProfile | null> | undefined }) {
   return null;
 }
 
-/** A contributor's Points: the last 30 days and the total with participation, the daily chart, pull requests and payments; a contributor no source records is not found. */
-export function ProfilePoints({ login, actorId, census, history, own, joined, joinStatus, x, showIdentity = false, notFoundWhenUnrecorded = false, children, payments, nowMs }: ProfilePointsProps) {
+/** A contributor's record without Points figures: identity, X account, pull requests and payments; a contributor no source records is not found. */
+export function ProfilePoints({ login, actorId, census, history, own, joined, joinStatus, x, showIdentity = false, notFoundWhenUnrecorded = false, children, payments }: ProfilePointsProps) {
   const wanted = login.toLowerCase();
   const ready = history.value !== undefined;
   const members = history.value?.members ?? [];
@@ -61,21 +59,20 @@ export function ProfilePoints({ login, actorId, census, history, own, joined, jo
   const identity = !actorId || membership?.actor.id === actorId ? membership : undefined;
   const resolved = actorId ?? identity?.actor.id ?? recorded?.id;
   const member = resolved ? members.find((entry) => entry.actor.id === resolved) : named.length === 1 ? named[0] : undefined;
-  const known = ready && (member !== undefined || identity !== undefined || recorded !== undefined || (actorId !== undefined && joinStatus === "absent"));
-  const unavailable = known ? undefined : history.status === "Loading" || history.status === "Idle" ? "Loading…" : "Unavailable";
   if (notFoundWhenUnrecorded && ready && census.value !== undefined && joinStatus === "absent" && !own && !member && !recorded && named.length === 0) {
-    return <NotFound as="section" title="Contributor not found" />;
+    return (
+      <NotFound as="section" title="Contributor not found">
+        <NotFoundHead />
+      </NotFound>
+    );
   }
-  const total = (member && history.value ? (lifetimeTotals(history.value).get(member.actor.id) ?? 0) : 0) + (identity?.welcome ?? 0) + (identity?.socialPoints ?? 0);
   return (
     <section aria-label="Slop Points" className="flex flex-col gap-6">
       <ProfileActivity
         login={login}
-        actorId={resolved}
-        awards={member?.awards}
+        actorId={resolved ?? member?.actor.id}
         census={census}
         showIdentity={showIdentity}
-        nowMs={nowMs}
         badges={
           <>
             <DataState status={history.status} onRetry={history.onRetry} retryLabel="Retry points" />
@@ -86,12 +83,6 @@ export function ProfilePoints({ login, actorId, census, history, own, joined, jo
             ) : ready && (joinStatus === "loading" || joinStatus === "unavailable") ? (
               <p>{joinStatus === "loading" ? "Looking up membership…" : "Membership could not load."}</p>
             ) : null}
-          </>
-        }
-        summary={
-          <>
-            <Metric label={`${recentDays} days`} value={unavailable ?? recentPoints(member?.awards ?? [], nowMs, recentDays).toLocaleString("en-US")} />
-            <Metric label="Total" value={unavailable ?? total.toLocaleString("en-US")} />
           </>
         }
         payments={payments}

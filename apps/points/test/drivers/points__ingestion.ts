@@ -1,3 +1,4 @@
+// spec/points/ingestion.md, "Story: Read GitHub without retrying writes or inventing success"
 import { Effect } from "effect";
 import type { Driver, Options } from "../../gen/points__ingestion.conformance.ts";
 import type { Machine } from "../../gen/points__ingestion.effect.vibe";

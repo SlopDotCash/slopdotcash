@@ -1,23 +1,26 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/cases.md, "A report that waits for its deposit is its reporter's alone"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } from "@repo/platform/d1"
 import { type Actor, Refused, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "@repo/ports/backend"
-import { NotAState, apply, initial } from "../../gen/security__cases.effect.vibe"
+import { apply, canRecordAttested, heldFor, initial, mayRequestReceiptCheck } from "../../gen/security__cases.effect.vibe"
 import { ownerBudgetMs } from "../analysis/route.vibe"
-import { analyze } from "../assessment/routes.vibe"
-import { repositoryAuthority } from "../caseAuthority/snapshot.vibe"
+import { analyze, scheduleReceiptAnalysis } from "../assessment/routes.vibe"
+import { AuthorityUnavailable, caseAuthority, repositoryAuthorityOf } from "../caseAuthority/snapshot.vibe"
 import { actOnCase, claimCase, listCases, readCase } from "../client/cases.vibe"
 import { postSecurityCases as createRows, getSecurityCasesById as readRows, postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { depositAsk } from "../deposit/ask.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { projectId as projectPattern } from "../intake/availability.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
-import { ReportingPrograms } from "../receipt/program.vibe"
+import { type ReportingProgram, ReportingPrograms, termsAtReceipt } from "../receipt/program.vibe"
 import { caseEvent, caseInsert } from "../receipt/statements.vibe"
-import { type Body, exactKeys, planned } from "./actions.vibe"
-import { CaseRow, caseColumns, caseRecord } from "./rows.vibe"
-import { type Observed, accessLog, audited, caseNotices, committed, observedAs, observedCase, refused } from "./store.vibe"
+import { type Body, exactKeys, githubIdPattern, githubLogin, planned, timeField } from "./actions.vibe"
+import { type ReconcileScope, reconcileProgram } from "./receiptCheck.vibe"
+import { CaseRow, caseColumns, caseRecord, shownRecord } from "./rows.vibe"
+import { type Observed, accessLog, audited, caseNotices, committed, notAllowed, observedAs, observedCase, refused } from "./store.vibe"
 import { type Starter, scheduledTriage, triageMayStart, triaged } from "./triage.vibe"
 import { type ExtraActions, caseView, noExtraActions } from "./view.vibe"
 
@@ -48,6 +51,10 @@ function answer(body: unknown, status = 200) {
   return json(body, status, privateHeaders)
 }
 
+function withheld(observed: Observed, viewerGithubId: string) {
+  return observed.roles.size === 0 || heldFor(observed.model, githubNumber(viewerGithubId))
+}
+
 effect function extraActions(observed: Observed, viewerGithubId: string) {
   const handlers = try Effect.serviceOption(CaseActionHandlers)
   return Option.isSome(handlers) ? try handlers.value.contribution(observed, viewerGithubId) : noExtraActions
@@ -58,11 +65,16 @@ effect function shownCase(observed: Observed, actor: Actor, includeHistory: bool
 }
 
 effect function current(id: string, actor: Actor) {
-  return try observedCase(id, actor.githubId, actionRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+  const observed = try observedCase(id, actor.githubId, actionRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+  if (withheld(observed, actor.githubId)) throw refused(actionRows.notFoundCaseNotFound)
+  return observed
 }
 
 export effect function opened(actor: Actor, id: string) {
-  const observed = try observedCase(id, actor.githubId, readRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+  const record = try shownRecord(id)
+  if (record === undefined) throw refused(readRows.notFoundCaseNotFound)
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  if (withheld(observed, actor.githubId)) throw refused(readRows.notFoundCaseNotFound)
   try audited(id, actor.githubId, observed.roles)
   return { case: try shownCase(observed, actor, true) }
 }
@@ -83,19 +95,20 @@ effect function rememberedAuthority() {
 }
 
 effect function visibleProjects(actor: Actor) {
-  const programs = try allRows(ProgramRow, sql`SELECT id, json_type(manifest, '$.securityBounty') = 'object' AS bounty FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object' OR id IN (SELECT project_id FROM security_cases)`)
+  const programs = try allRows(ProgramRow, sql`SELECT id, json_type(manifest, '$.securityBounty') IS 'object' AS bounty FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object' OR id IN (SELECT project_id FROM security_cases)`)
   const reporting = try ReportingPrograms
   const roles = new Map<string, Set<string>>()
   const scoped: string[] = []
   let authorityUnavailable = false
+  const reads = new Map(try Effect.forEach(programs.filter((program) => program.bounty !== 1), (program) => repositoryAuthorityOf(program.id, actor.githubId), { concurrency: "unbounded" }))
   for (const program of programs) {
     const held = new Set<string>()
-    if (program.bounty === 1) {
+    const read = reads.get(program.id)
+    if (read === undefined) {
       const approvers = (try reporting.current(program.id))?.approvers
       if (approvers?.technical.includes(actor.githubId) === true) held.add("security-maintainer")
       if (approvers?.financial.includes(actor.githubId) === true) held.add("financial")
     } else {
-      const read = try repositoryAuthority({ projectId: program.id, viewerGithubId: actor.githubId })
       if (read === "unavailable") authorityUnavailable = true
       if (read === "granted") held.add("security-maintainer")
     }
@@ -107,8 +120,8 @@ effect function visibleProjects(actor: Actor) {
 }
 
 effect function listedRecord(id: string) {
-  return caseRecord(id) catch effect (error) => {
-    if (!(error instanceof NotAState) && !(error instanceof RowMismatch)) throw error
+  return shownRecord(id) catch effect (error) => {
+    if (!(error instanceof RowMismatch)) throw error
     try Effect.logWarning("security case left out of the case list", { caseId: id, reason: error._tag })
     return undefined
   }
@@ -121,7 +134,7 @@ effect function visibleCases(actor: Actor) {
   const moderator = try (try Roles).has(actor.githubId, "moderator")
   const scope = scoped.length === 0 ? sql`` : sql` OR c.project_id IN (SELECT value FROM json_each(${JSON.stringify(scoped)}))`
   const disputes = moderator ? sql` OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'` : sql``
-  const candidates = try allRows(CaseRow, sql`SELECT ${caseColumns} FROM security_cases c WHERE c.reporter_github_id = ${actor.githubId} OR c.id IN (SELECT case_id FROM security_case_members WHERE github_id = ${actor.githubId} AND revoked_at IS NULL)${scope}${disputes} ORDER BY c.created_at DESC LIMIT ${listLimit}`)
+  const candidates = try allRows(CaseRow, sql`SELECT ${caseColumns} FROM security_cases c WHERE (c.reporter_github_id = ${actor.githubId} OR c.id IN (SELECT case_id FROM security_case_members WHERE github_id = ${actor.githubId} AND revoked_at IS NULL)${scope}${disputes}) AND (c.reporter_github_id = ${actor.githubId} OR NOT ${depositHeldOn("c.id")}) ORDER BY c.created_at DESC LIMIT ${listLimit}`)
   const visible: Observed[] = []
   for (const candidate of candidates) {
     const record = try listedRecord(candidate.id)
@@ -134,7 +147,7 @@ effect function visibleCases(actor: Actor) {
       authorityUnavailable = true
       continue
     }
-    if (observed.roles.size === 0) continue
+    if (withheld(observed, actor.githubId)) continue
     visible.push(observed)
     if (!observed.roles.has("dispute")) continue
     const held = roles.get(record.row.project_id) ?? new Set<string>()
@@ -163,9 +176,9 @@ effect function stringField(body: Body, key: string, pattern: RegExp, invalid: {
   return value
 }
 
-effect function replayedClaim(caseId: string, actor: Actor) {
+effect function replayedClaim(caseId: string, actor: Actor, reporterGithubId = actor.githubId) {
   const record = try caseRecord(caseId)
-  if (record === undefined || record.row.reporter_github_id !== actor.githubId) return undefined
+  if (record === undefined || record.row.reporter_github_id !== reporterGithubId) return undefined
   const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
   if (observed.roles.size === 0) return undefined
   try audited(caseId, actor.githubId, observed.roles)
@@ -191,11 +204,13 @@ export effect function claimed(actor: Actor, body: Body) {
   try orDie(apply(initial, { type: "claim" }, initial.reporter))
   const id = `sc_${(try randomId()).replaceAll("-", "")}`
   const at = try isoNow()
-  const notices = try caseNotices({ caseId: id, revision: 1, kind: "claim", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: actor.githubId, detail: {}, program, relatedReview: false, at })
+  const ask = try depositAsk({ caseId: id, projectId, reporterGithubId: actor.githubId, at })
+  const notices = try caseNotices({ caseId: id, revision: 1, kind: "claim", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: actor.githubId, detail: {}, program: ask.held ? undefined : program, relatedReview: false, at })
   const written = (try D1).batch([
     caseInsert({ id, projectId, repository: program.repository, advisory, reporter: { githubId: actor.githubId, login: actor.login }, verified: undefined, ownerGithubId: null, at }),
     caseEvent({ caseId: id, revision: 1, kind: "claim", actorGithubId: actor.githubId, role: "reporter", idempotencyKey, reason: null, evidenceReference: null, detail: { advisory }, at, guard: false }),
     accessLog(id, actor.githubId, new Set(["reporter"]), "write", at),
+    ...ask.statements,
     ...notices,
   ]) catch effect (error) => {
     if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined
@@ -211,6 +226,125 @@ export effect function claimed(actor: Actor, body: Body) {
   if (record === undefined) throw refused(createRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
   const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
   return answer({ case: try shownCase(observed, actor, true) }, 201)
+}
+
+effect function openProgram(projectId: string, missing: { readonly status: number; readonly error: string; readonly message: string }, retired: { readonly status: number; readonly error: string; readonly message: string }) {
+  const program = try (try ReportingPrograms).current(projectId)
+  if (program === undefined) throw refused(missing)
+  const project = try (try Registry).project(projectId)
+  if (project === undefined || project.listingTier === "Retired") throw refused(retired)
+  return program
+}
+
+effect function maintainerAuthority(projectId: string, program: ReportingProgram, actor: Actor) {
+  const roles = caseAuthority({ caseId: "", projectId, reporterGithubId: "", viewerGithubId: actor.githubId, program: program.approvers }, 1) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw refused(actionRows.githubUnavailable);
+    default: throw error;
+  }
+  return roles.authority
+}
+
+effect function analysed(received: ReadonlyArray<string>) {
+  for (const caseId of received) try scheduleReceiptAnalysis(caseId)
+}
+
+effect function reconciled(projectId: string, program: ReportingProgram, actor: Actor, scope: ReconcileScope) {
+  const result = try reconcileProgram(projectId, program, actor, scope)
+  if (result.kind === "ok") try analysed(result.received)
+  return result
+}
+
+effect function receiptChecked(observed: Observed, actor: Actor, body: Body) {
+  try exactKeys(body, common)
+  const { row } = observed.record
+  const program = try openProgram(row.project_id, actionRows.projectNotFound, actionRows.projectNotFound)
+  if (!mayRequestReceiptCheck(observed.model, githubNumber(actor.githubId), observed.epoch)) throw notAllowed("check-receipt")
+  const result = try reconciled(row.project_id, program, actor, observed.roles.has("security-maintainer") ? "all" : "own")
+  if (result.kind !== "ok") throw refused(actionRows.receiptCheckUnavailable)
+}
+
+schema Recorded { id: string; submission_state: string }
+schema RecordEvent { ok: number }
+
+export effect function recorded(actor: Actor, body: Body) {
+  try exactKeys(body, ["mode", "projectId", "advisory", "idempotencyKey", "reporterGithubId", "reporterGithubLogin", "receivedAt", "confirmation"])
+  const projectId = try stringField(body, "projectId", projectPattern, createRows.invalidRequestInvalidProjectId)
+  const advisory = try stringField(body, "advisory", ghsa, createRows.invalidRequestInvalidAdvisory)
+  const idempotencyKey = try stringField(body, "idempotencyKey", idempotencyPattern, createRows.invalidRequestInvalidIdempotencyKey)
+  const program = try openProgram(projectId, createRows.programNotFoundThisProjectHasNo, createRows.projectNotFound)
+  const authority = try maintainerAuthority(projectId, program, actor)
+  const by = githubNumber(actor.githubId)
+  if (!authority.technical.includes(by)) throw refused(createRows.forbiddenOnlyASecurityMaintainer)
+  if (body.confirmation !== true) throw refused(createRows.confirmationRequired)
+  const reporterId = try stringField(body, "reporterGithubId", githubIdPattern, createRows.invalidRequestInvalidReporterGithubId)
+  const reporterLogin = try stringField(body, "reporterGithubLogin", githubLogin, createRows.invalidRequestInvalidReporterGithubLogin)
+  if (reporterId === actor.githubId) throw refused(createRows.conflicted)
+  const nowMs = try Clock.currentTimeMillis
+  const receivedAt = try timeField(body, "receivedAt", nowMs, true, createRows.invalidRequestInvalidReceivedAt)
+  const receipt = try termsAtReceipt(projectId, receivedAt)
+  const terms = receipt.receiptTerms
+  const fresh = { ...initial, reporter: githubNumber(reporterId), authority }
+  if (!canRecordAttested(fresh, by, authority.epoch, terms, true)) throw refused(createRows.forbiddenOnlyASecurityMaintainer)
+  const after = try orDie(apply(fresh, { type: "recordAttested", checkedEpoch: authority.epoch, terms, confirmed: true }, by))
+  const linked = try first(Linked, sql`SELECT case_id FROM security_submissions WHERE project_id = ${projectId} AND repository = ${program.repository} AND advisory_ghsa = ${advisory} AND case_id IS NOT NULL AND state IN ('submitted', 'receipt-verified') AND EXISTS (SELECT 1 FROM security_submission_intake i WHERE i.submission_id = security_submissions.id)`)
+  if (linked !== undefined) {
+    const replay = try replayedRecord(linked.case_id, reporterId, actor, idempotencyKey)
+    if (replay !== undefined) return answer(replay)
+    throw refused(createRows.advisoryAlreadyRecorded)
+  }
+  const id = `sc_${(try randomId()).replaceAll("-", "")}`
+  const at = try isoNow()
+  const notices = try caseNotices({ caseId: id, revision: 1, kind: "record", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: reporterId, detail: {}, program, relatedReview: false, at })
+  const verified = { receivedAt, verifiedBy: actor.githubId, policyRevision: receipt.policyRevision, terms: receipt.terms, award: after.award }
+  const written = (try D1).batch([
+    caseInsert({ id, projectId, repository: program.repository, advisory, reporter: { githubId: reporterId, login: reporterLogin }, verified, ownerGithubId: actor.githubId, at }),
+    caseEvent({ caseId: id, revision: 1, kind: "record", actorGithubId: actor.githubId, role: "security-maintainer", idempotencyKey, reason: null, evidenceReference: null, detail: { advisory, receivedAt, receivedAtSource: "maintainer-attested" }, at, guard: false }),
+    accessLog(id, actor.githubId, new Set(["security-maintainer"]), "write", at),
+    ...notices,
+  ]) catch effect (error) => {
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined
+    throw error
+  }
+  if (written === undefined) {
+    const existing = try first(Recorded, sql`SELECT id, submission_state FROM security_cases WHERE project_id = ${projectId} AND advisory_ghsa = ${advisory} AND reporter_github_id = ${reporterId} AND submission_state <> 'link-rejected'`)
+    if (existing !== undefined) {
+      const replay = try replayedRecord(existing.id, reporterId, actor, idempotencyKey)
+      if (replay !== undefined) return answer(replay)
+      if (existing.submission_state === "claimed") throw refused(createRows.claimPending)
+    }
+    throw refused(createRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  }
+  const record = try caseRecord(id)
+  if (record === undefined) throw refused(createRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  return answer({ case: try shownCase(observed, actor, true) }, 201)
+}
+
+export effect function imported(actor: Actor, body: Body) {
+  try exactKeys(body, ["mode", "projectId"])
+  const projectId = try stringField(body, "projectId", projectPattern, createRows.invalidRequestInvalidProjectId)
+  const program = try openProgram(projectId, createRows.programNotFoundThisProjectHasNo, createRows.projectNotFound)
+  const authority = try maintainerAuthority(projectId, program, actor)
+  if (!authority.technical.includes(githubNumber(actor.githubId))) throw refused(createRows.forbidden)
+  const result = try reconciled(projectId, program, actor, "all")
+  return answer({ state: result.kind, received: result.kind === "ok" ? result.received.length : 0 })
+}
+
+effect function replayedRecord(caseId: string, reporterId: string, actor: Actor, idempotencyKey: string) {
+  const record = try caseRecord(caseId)
+  if (record === undefined || record.row.reporter_github_id !== reporterId || record.row.submission_state !== "verified") return undefined
+  const own = try first(RecordEvent, sql`SELECT 1 AS ok FROM security_case_events WHERE case_id = ${caseId} AND case_revision = 1 AND kind = 'record' AND idempotency_key = ${idempotencyKey} AND actor_github_id = ${actor.githubId}`)
+  if (own === undefined) return undefined
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  if (observed.roles.size === 0) return undefined
+  try audited(caseId, actor.githubId, observed.roles)
+  return { replayed: true, case: try shownCase(observed, actor, true) }
+}
+
+export effect function created(actor: Actor, body: Body) {
+  if (body.mode === "import") return try imported(actor, body)
+  if (body.mode === "record") return try recorded(actor, body)
+  return try claimed(actor, body)
 }
 
 export type Performed =
@@ -243,6 +377,10 @@ export effect function performed(actor: Actor, id: string, body: Body) {
     if (!triageMayStart(observed.model, by, observed.epoch, try Clock.currentTimeMillis)) throw refused(actionRows.analysisRunning)
     return { kind: "triage", caseId: row.id, starter: { kind: "moderator", by, epoch: observed.epoch, model: observed.model } } satisfies Performed
   }
+  if (action === "check-receipt") {
+    try receiptChecked(observed, actor, body)
+    return { kind: "changed", caseId: row.id } satisfies Performed
+  }
   if (row.submission_state !== "verified" && action !== "verify-link" && action !== "reject-link") throw refused(actionRows.notVerified)
   const nowMs = try Clock.currentTimeMillis
   const at = try isoNow()
@@ -254,7 +392,7 @@ export effect function performed(actor: Actor, id: string, body: Body) {
     return { kind: "answered", body: handled } satisfies Performed
   }
   try committed({ observed, actor, change: plan.change, idempotencyKey, at })
-  if (plan.change.kind === "appeal") return { kind: "triage", caseId: row.id, starter: { kind: "automatic" } } satisfies Performed
+  if (plan.change.kind === "appeal" && plan.change.returnedToOwner !== true) return { kind: "triage", caseId: row.id, starter: { kind: "automatic" } } satisfies Performed
   return { kind: "changed", caseId: row.id } satisfies Performed
 }
 
@@ -272,7 +410,7 @@ effect function afterwards(id: string, actor: Actor) {
   const record = try caseRecord(id)
   if (record === undefined) throw refused(actionRows.notFoundCaseNotFound)
   const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
-  if (observed.roles.size === 0) return { case: { id: record.row.id, revision: record.row.revision } }
+  if (withheld(observed, actor.githubId)) return { case: { id: record.row.id, revision: record.row.revision } }
   try audited(id, actor.githubId, observed.roles)
   return { case: try shownCase(observed, actor, true) }
 }
@@ -284,6 +422,6 @@ effect function bodyOf(limitKib: number) {
 export const caseRoutes = Layer.mergeAll(
   handleRaw(listCases, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
   handleRaw(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
-  handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => claimed(input.actor, body))),
+  handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => created(input.actor, body))),
   handleRaw(actOnCase, (input) => Effect.flatMap(bodyOf(actOnCase.limitKib), (body) => Effect.map(acted(input.actor, input.params.id ?? "", body), (result) => answer(result)))),
 )

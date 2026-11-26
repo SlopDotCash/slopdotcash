@@ -212,10 +212,21 @@ occurrence in the unit's reward month, on or after the repository's start
 month, in a collected project. The recipients' line allocation must be
 writable for the unit's value: valid unique recipients, and complete lines
 when there is more than one. The revision's shares sum to the unit's value.
+The producer's scoring decision is admitted as for a first source revision:
+development's `appendPointAward` attaches the producer's decision to every
+first award key, work-unit pool keys included. Supplied with no decision,
+the first unit revision carries none; supplied with one, it carries a
+reassessment under the v2 score or value rule with that decision's source,
+effective time in `[0, now]` and reason, and its delta is the unit's whole
+value (the prior amount is zero).
 
 ```quint
 type UnitCredit = { project: str, unit: int, recipients: List[A::Recipient], completeLines: bool, occurredAt: int,
-  repositoryCountsFrom: int, projectCollected: bool, rule: SourceRule, provisional: bool, digest: str }
+  repositoryCountsFrom: int, projectCollected: bool, rule: SourceRule, provisional: bool, digest: str, decision: Decision }
+pure def firstDecisionAllowed(now: int, cat: Category, rule: SourceRule, decision: Decision): bool =
+  (decision.basis == NoBasis implies decision == noDecision) and
+  (decision.basis != NoBasis implies (decision.basis == Reassessment and decision.reason != "" and decision.source != "" and
+    decision.effectiveAt >= 0 and decision.effectiveAt <= now and decisionRule(cat, rule)))
 pure def appendRevision(r: Revision, l: Ledger): Ledger =
   { ...l, revisions: l.revisions.append(r), nextId: l.nextId + 1 }
 pure def canCreditUnit(l: Ledger, c: UnitCredit): bool =
@@ -224,6 +235,7 @@ pure def canCreditUnit(l: Ledger, c: UnitCredit): bool =
   u.value >= 10 and u.value <= P::maxSafe and not(unitCredited(l, c.unit)) and c.projectCollected and c.digest != "" and
   c.occurredAt >= c.repositoryCountsFrom and c.occurredAt >= 0 and c.occurredAt <= l.now and
   P::periodOf(c.occurredAt) == u.acceptedPeriod and ruleAllowed(MergedWork, c.rule) and
+  firstDecisionAllowed(l.now, MergedWork, c.rule, c.decision) and
   A::canWriteAllocation(u.value, c.recipients, c.completeLines, false) and
   u.sources.forall(s => not(sourceHasEvaluation(l, s))) and
   l.units.units.every(o => (o.supersededBy == c.unit and unitCredited(l, o.id)) implies latest(l, unitKey(o.project, o.id)).amount == 0)
@@ -232,7 +244,8 @@ pure def creditUnit(l: Ledger, c: UnitCredit): Ledger =
   appendRevision({ ...noRevision, id: l.nextId, key: unitKey(c.project, c.unit), amount: u.value,
     occurredAt: c.occurredAt, recordedAt: l.now, rule: c.rule, sourceDigest: c.digest,
     provisional: c.provisional, recipients: c.recipients, completeLines: c.completeLines,
-    shares: A::allocatePoints(u.value, c.recipients) }, l)
+    shares: A::allocatePoints(u.value, c.recipients),
+    decision: if (c.decision.basis == Reassessment) { ...c.decision, delta: u.value } else noDecision }, l)
 ```
 
 ### One verified accepted source creates one first revision per key
@@ -241,8 +254,13 @@ The ingestion producer supplies `SourceEvidence` for the exact source of a
 resolved issue, material test, evidence or review award. Only human GitHub
 users of a collected project receive Points, and work before a repository's
 start month counts for none. Slopbot and other bots never enter the ledger.
-A source with an evaluated award receives no ordinary credit. A first
-revision has no decision.
+A source with an evaluated award receives no ordinary credit. The
+producer's scoring decision is optional on the first revision too, as in
+development's `appendPointAward`: supplied with no decision, the first
+revision carries none; supplied with one (`scoreDecisionSourceId`), it
+carries a reassessment under the v2 score with that decision's source,
+effective time and reason, and its delta is the whole amount (the prior
+amount is zero).
 
 ```quint
 type SourceActor = HumanActor | BotActor | SlopbotActor
@@ -254,18 +272,21 @@ pure def ordinaryCategory(cat: Category): bool =
 pure def evidenceBinds(a: AwardInput, e: SourceEvidence): bool =
   e.source == a.key.source and e.project == a.key.project and e.actor == a.key.actor and
   e.workUnit == a.key.workUnit and e.occurredAt == a.occurredAt and e.digest == a.digest and e.digest != ""
-pure def canCredit(l: Ledger, a: AwardInput, e: SourceEvidence): bool =
+pure def scoreDecisionAllowed(l: Ledger, a: AwardInput, decision: Decision): bool =
+  firstDecisionAllowed(l.now, a.key.category, a.rule, decision)
+pure def canCredit(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): bool =
   validKey(a.key) and ordinaryCategory(a.key.category) and
-  latest(l, a.key) == noRevision and evidenceBinds(a, e) and
+  latest(l, a.key) == noRevision and evidenceBinds(a, e) and scoreDecisionAllowed(l, a, decision) and
   e.actorKind == HumanActor and e.accepted and e.projectCollected and
   a.occurredAt >= e.repositoryCountsFrom and a.occurredAt >= 0 and a.occurredAt <= l.now and
   amountAllowed(a.key.category, a.amount) and ruleAllowed(a.key.category, a.rule) and
   (a.provisional implies a.key.category == Review) and
   not(sourceHasEvaluation(l, a.key.source))
-pure def credit(l: Ledger, a: AwardInput, e: SourceEvidence): Ledger =
+pure def credit(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): Ledger =
   appendRevision({ ...noRevision, id: l.nextId, key: a.key, amount: a.amount,
     occurredAt: a.occurredAt, recordedAt: l.now, rule: a.rule, sourceDigest: a.digest,
-    provisional: a.provisional }, l)
+    provisional: a.provisional,
+    decision: if (decision.basis == NoBasis) noDecision else { ...decision, delta: a.amount } }, l)
 ```
 
 ### An evaluated award comes only from an admitted reviewed manifest
@@ -300,7 +321,8 @@ snapshot's value coverage, in phase `Assessed` (a reassessment), `Ratified`
 (a ratification) or `LegacyScored` (the legacy v2 score of a later
 snapshot). An assessed or ratified score carries the value decision
 `value:<record digest>`; a legacy score carries no decision. A provisional
-minimum never replaces a recorded value. The new value is divided between
+minimum never replaces a recorded value. Only a current unit is rescored:
+a unit a joint unit superseded stays zero. The new value is divided between
 the unit's existing recipients. A frozen reward period refuses the change.
 
 ```quint
@@ -309,7 +331,7 @@ pure def canRescoreUnit(l: Ledger, s: SP::Scored, reason: str, digest: str): boo
   val prior = latest(l, unitKey(s.project, s.unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   (s.phase == SP::Assessed or s.phase == SP::Ratified or s.phase == SP::LegacyScored) and s.project != "" and s.unit > 0 and
-  s.points != prior.amount and s.points >= 10 and s.points <= P::maxSafe and
+  W::live(unitOf(l, s.unit)) and s.points != prior.amount and s.points >= 10 and s.points <= P::maxSafe and
   not(isFrozen(l, s.project, P::periodOf(prior.occurredAt))) and reason != "" and digest != "" and
   A::canWriteAllocation(s.points, prior.recipients, prior.completeLines, false)
 pure def rescoreUnit(l: Ledger, s: SP::Scored, reason: str, digest: str): Ledger =
@@ -365,8 +387,10 @@ re-score it supplies with no decision appends a successor with no decision;
 one it supplies with a decision (`scoreDecisionSourceId`) appends a
 reassessment under the v2 score carrying that decision's source, effective
 time and reason, and a changed decision alone also appends. Applying a
-snapshot never rewrites a key the retained batch owns (below); the retained
-batch itself updates its own keys this way.
+snapshot never rewrites a key the retained batch owns (below): the adapter
+records the snapshot's coverage (`recordSnapshotCoverage`) before applying
+its re-scores, so a re-score whose digest is recorded coverage is a
+snapshot's; the retained batch itself updates its own keys this way.
 
 ```quint
 pure def canRescoreSource(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): bool =
@@ -375,13 +399,12 @@ pure def canRescoreSource(l: Ledger, a: AwardInput, e: SourceEvidence, decision:
   ordinaryCategory(a.key.category) and evidenceBinds(a, e) and e.actorKind == HumanActor and e.accepted and
   a.occurredAt == prior.occurredAt and
   amountAllowed(a.key.category, a.amount) and ruleAllowed(a.key.category, a.rule) and
-  (decision.basis == NoBasis implies decision == noDecision) and
-  (decision.basis != NoBasis implies (decision.basis == Reassessment and decision.reason != "" and decision.source != "" and
-    decision.effectiveAt >= 0 and decision.effectiveAt <= l.now and decisionRule(a.key.category, a.rule))) and
+  scoreDecisionAllowed(l, a, decision) and
   (a.provisional implies a.key.category == Review) and
   (a.amount != prior.amount or a.digest != prior.sourceDigest or a.provisional != prior.provisional or
     (decision.basis != NoBasis and (decision.source != prior.decision.source or
       decision.effectiveAt != prior.decision.effectiveAt or decision.reason != prior.decision.reason))) and
+  (batchOwned(l, a.key) implies not(l.coverage.contains(a.digest))) and
   (isFrozen(l, a.key.project, P::periodOf(prior.occurredAt)) implies a.amount == prior.amount)
 pure def rescoreSource(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): Ledger =
   val prior = latest(l, a.key)
@@ -531,7 +554,18 @@ only when its value coverage is assessed, human-ratified or legacy-policy,
 or a stale or incomplete coverage invalidates its joint decision, or a
 merge now scored by its own record absorbs its joint unit: a missing
 valuation, or a pull request absent from coverage, never zeroes it, and a
-held unassessed pool is skipped. A review omitted for the value policy
+held unassessed pool is skipped (the holds of the next rule, and a source
+with missing or legacy-policy coverage and a recorded merge pool). A review
+of a source whose implementation is held for joint review, with its own
+review assessment digest (`incomplete` coverage carrying
+`reviewAssessmentDigest`, `CoverageReviewAssessed`), is value covered, so
+the snapshot that drops it zeroes it; that source's merge award stays a
+held pool. A reviewed historical replay (`preserveHeldImplementation`)
+also keeps every merge award whose exact source has a coverage row that is
+not assessed, human-ratified or legacy-policy. A held pool gets no
+allocation-only reallocation from a rolling snapshot when the latest revision
+of the pool carries the verified historical allocation decision, nor in a
+reviewed historical replay (`snapshotMayReallocate`). A review omitted for the value policy
 boundary or for the window never zeroes; the omission must agree with the
 recorded occurrence and the policy boundary, or the whole snapshot is
 refused. The zero carries the superseding decision when there is one. A
@@ -539,11 +573,15 @@ frozen reward period refuses it.
 
 ```quint
 type SourceCoverage = CoverageNotApplicable | CoverageAbsent | CoverageAssessed | CoverageRatified | CoverageLegacy |
-  CoverageStale | CoverageIncomplete | CoverageMissing
+  CoverageStale | CoverageIncomplete | CoverageMissing | CoverageReviewAssessed
 type ReviewOmission = NotOmitted | OmittedBeforePolicy | OmittedOutsideWindow | AdverseExclusion
 type Supersession = { snapshotDigest: str, windowFrom: int, windowTo: int, policyFrom: int, supplied: List[AwardKey],
   projectCollected: bool, heldPool: bool, coverage: SourceCoverage, invalidatesJoint: bool, ownRecordAbsorbs: bool,
-  review: ReviewOmission, decision: Decision }
+  review: ReviewOmission, decision: Decision, preserveHeld: bool }
+pure def exactSourceUnassessed(coverage: SourceCoverage): bool =
+  coverage == CoverageStale or coverage == CoverageIncomplete or coverage == CoverageMissing or coverage == CoverageReviewAssessed
+pure def replayKeepsPool(cat: Category, snapshot: Supersession): bool =
+  snapshot.preserveHeld and cat == MergedWork and exactSourceUnassessed(snapshot.coverage)
 pure def inWindow(at: int, snapshot: Supersession): bool = at >= snapshot.windowFrom and at < snapshot.windowTo
 pure def coverageAllowsZero(snapshot: Supersession): bool =
   snapshot.coverage == CoverageNotApplicable or snapshot.coverage == CoverageAssessed or
@@ -560,7 +598,8 @@ pure def snapshotMayZero(cat: Category, inside: bool, snapshot: Supersession): b
   snapshot.projectCollected and not(snapshot.heldPool) and
   (snapshot.review == NotOmitted or (cat == Review and snapshot.review == AdverseExclusion)) and
   (inside or (cat == Review and snapshot.review == AdverseExclusion)) and
-  coverageAllowsZero(snapshot)
+  not(replayKeepsPool(cat, snapshot)) and
+  (coverageAllowsZero(snapshot) or (cat == Review and snapshot.coverage == CoverageReviewAssessed))
 pure def canZeroSuperseded(l: Ledger, k: AwardKey, snapshot: Supersession): bool =
   val prior = latest(l, k)
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
@@ -582,6 +621,19 @@ pure def lawPolicyOmissionNeverZeroes(cat: Category, inside: bool, snapshot: Sup
 pure def lawMissingValuationNeverZeroes(cat: Category, inside: bool, snapshot: Supersession): bool =
   ((snapshot.coverage == CoverageAbsent or snapshot.coverage == CoverageMissing) and not(snapshot.invalidatesJoint) and
     not(snapshot.ownRecordAbsorbs)) implies not(snapshotMayZero(cat, inside, snapshot))
+pure def lawHeldImplementationReviewOnlyZeroesReviews(cat: Category, inside: bool, snapshot: Supersession): bool =
+  (snapshot.coverage == CoverageReviewAssessed and cat != Review and not(snapshot.invalidatesJoint) and
+    not(snapshot.ownRecordAbsorbs)) implies not(snapshotMayZero(cat, inside, snapshot))
+pure def lawReplayKeepsUnassessedMergePool(inside: bool, snapshot: Supersession): bool =
+  (snapshot.preserveHeld and exactSourceUnassessed(snapshot.coverage)) implies not(snapshotMayZero(MergedWork, inside, snapshot))
+pure val verifiedAllocationReason =
+  "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved."
+pure def carriesVerifiedAllocation(l: Ledger, k: AwardKey): bool =
+  l.revisions.some(r => r.key == k and isLatest(l, r) and r.decision.reason == verifiedAllocationReason)
+pure def snapshotMayReallocate(l: Ledger, k: AwardKey, preserveHeld: bool): bool =
+  not(preserveHeld) and not(carriesVerifiedAllocation(l, k))
+pure def sometimesHeldImplementationReviewZeroed(l: Ledger): bool =
+  l.revisions.some(r => r.key.category == Review and r.amount == 0 and r.previous > 0 and r.sourceDigest == "s3")
 pure def sometimesSupersededZeroed(l: Ledger): bool =
   l.revisions.some(r => r.amount == 0 and r.previous > 0 and r.decision.basis == Superseded)
 pure def sometimesReviewSupersededZeroed(l: Ledger): bool =
@@ -591,14 +643,94 @@ pure def sometimesJointAbsorbedOwnRecord(l: Ledger): bool =
   l.revisions.some(r => r.key.category == MergedWork and r.amount > 0 and isLatest(l, r))
 ```
 
+### A later assessment that reaches an October-protected source holds the overlapping work and records each hold
+
+A source is October-protected when the latest revision of one of its
+merged-work awards occurred in October 2026 and carries the owner's
+original-contributor or duplicate-retirement decision. A snapshot's exact
+reviewed membership (`reviewedImplementationUnits`: per source, each
+assessed record digest, work unit and membership group) then holds every
+reviewed unit of a group that contains a protected source, and the sources
+of those units. Where the snapshot has no exact membership for the
+protected source's assessed record, every source assessed under that record
+digest, and every merge the snapshot decides by it, is held. A source whose
+coverage is missing or legacy-policy with a recorded merge pool is held as
+well. A held source's merge award is never credited again from the snapshot
+and never zeroed by omission (`heldPool` above); an independent reviewed
+unit of a held source may still score when its completion has no positive
+ordinary prior pool (development `applyPointsSnapshot`
+`holdsImplementation`). The adapter appends one hold record, with its
+reason, for each held source or unit; a hold appends no revision.
+
+```quint
+pure val octoberOriginalContributorReason =
+  "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved."
+pure val octoberDuplicateRetirementReason = "Owner-reviewed duplicate accepted work already rewarded by earlier sources."
+pure def octoberProtected(l: Ledger, source: int): bool =
+  l.revisions.some(r => isLatest(l, r) and r.key.category == MergedWork and P::periodOf(r.occurredAt) == P::october2026 and
+    (r.decision.reason == octoberOriginalContributorReason or r.decision.reason == octoberDuplicateRetirementReason) and
+    unitOf(l, r.key.workUnit).sources.contains(source))
+type ReviewedUnit = { source: int, recordDigest: str, workUnit: int, groupId: str }
+type AssessedSource = { source: int, recordDigest: str }
+type DecidedMerge = { source: int, recordDigest: str, workUnit: int }
+type JointHoldInput = { protectedSources: List[int], reviewed: List[ReviewedUnit], assessed: List[AssessedSource],
+  decided: List[DecidedMerge], fallbackHeld: List[int] }
+type JointHoldReason = HeldProtectedSource | HeldSharedRecord | HeldReviewedGroup | HeldUnassessedPool
+pure def protectedGroups(h: JointHoldInput): List[str] =
+  h.reviewed.select(u => h.protectedSources.includes(u.source)).listMap(u => u.groupId)
+pure def protectedMemberships(h: JointHoldInput): List[AssessedSource] =
+  h.reviewed.select(u => h.protectedSources.includes(u.source)).listMap(u => { source: u.source, recordDigest: u.recordDigest })
+pure def heldRecords(h: JointHoldInput): List[str] =
+  val memberships = protectedMemberships(h)
+  h.assessed.select(a => h.protectedSources.includes(a.source) and not(memberships.includes(a))).listMap(a => a.recordDigest)
+pure def sharedRecordHeld(h: JointHoldInput, source: int): bool =
+  val records = heldRecords(h)
+  h.assessed.some(a => a.source == source and records.includes(a.recordDigest)) or
+  h.decided.some(d => d.source == source and records.includes(d.recordDigest))
+pure def reviewedUnitHeld(h: JointHoldInput, recordDigest: str, workUnit: int): bool =
+  val groups = protectedGroups(h)
+  h.reviewed.some(u => u.recordDigest == recordDigest and u.workUnit == workUnit and groups.includes(u.groupId))
+pure def reviewedSourceHeld(h: JointHoldInput, source: int): bool =
+  val groups = protectedGroups(h)
+  h.reviewed.some(u => u.source == source and groups.includes(u.groupId)) or
+  h.decided.some(d => d.source == source and reviewedUnitHeld(h, d.recordDigest, d.workUnit))
+pure def knownReviewedUnit(h: JointHoldInput, recordDigest: str, workUnit: int): bool =
+  h.reviewed.some(u => u.recordDigest == recordDigest and u.workUnit == workUnit)
+pure def unassessedSourceHeld(h: JointHoldInput, source: int): bool =
+  h.protectedSources.includes(source) or sharedRecordHeld(h, source) or h.fallbackHeld.includes(source)
+pure def implementationPoolHeld(h: JointHoldInput, source: int, recordDigest: str, workUnit: int, priorOrdinaryPool: bool): bool =
+  unassessedSourceHeld(h, source) or reviewedUnitHeld(h, recordDigest, workUnit) or
+  (reviewedSourceHeld(h, source) and (not(knownReviewedUnit(h, recordDigest, workUnit)) or priorOrdinaryPool))
+pure def jointHoldReason(h: JointHoldInput, source: int): JointHoldReason =
+  if (h.protectedSources.includes(source)) HeldProtectedSource
+  else if (sharedRecordHeld(h, source)) HeldSharedRecord
+  else if (h.fallbackHeld.includes(source)) HeldUnassessedPool
+  else HeldReviewedGroup
+pure val protectedUnit: ReviewedUnit = { source: 1, recordDigest: "r1", workUnit: 1, groupId: "g1" }
+pure val holdSample: JointHoldInput = { protectedSources: List(1),
+  reviewed: List(protectedUnit, { ...protectedUnit, source: 2, workUnit: 2 }, { source: 3, recordDigest: "r1", workUnit: 3, groupId: "g2" }),
+  assessed: List({ source: 1, recordDigest: "r1" }, { source: 3, recordDigest: "r1" }), decided: List(), fallbackHeld: List() }
+pure def lawProtectedGroupHeld(priorOrdinaryPool: bool): bool =
+  implementationPoolHeld(holdSample, 2, "r1", 2, priorOrdinaryPool) and implementationPoolHeld(holdSample, 1, "r1", 1, priorOrdinaryPool)
+pure def lawIndependentReviewedUnitScores(priorOrdinaryPool: bool): bool =
+  not(implementationPoolHeld(holdSample, 3, "r1", 3, priorOrdinaryPool))
+pure def lawWithoutMembershipTheRecordIsHeld(priorOrdinaryPool: bool): bool =
+  implementationPoolHeld({ ...holdSample, reviewed: List() }, 3, "r1", 3, priorOrdinaryPool) and
+  jointHoldReason({ ...holdSample, reviewed: List() }, 3) == HeldSharedRecord
+pure def lawNothingProtectedHoldsNothing(source: int, priorOrdinaryPool: bool): bool =
+  not(implementationPoolHeld({ ...holdSample, protectedSources: List() }, source, "r1", source, priorOrdinaryPool))
+pure val priorOrdinaryPoolValues = Set(true, false)
+```
+
 ### An owner-reviewed duplicate retirement zeroes the October pool it covers
 
 The [reviewed historical runner](./reviewedHistory.md) zeroes a source's
 October implementation pool when every claim is already covered by an
 earlier accepted source, with the decision `owner_duplicate_<dossier digest>`
-and the v2 score, only inside a reviewed packet that applies
+and the v2 score, only inside a reviewed packet the run admits: one that
+previews for a preview run, one that applies for an apply run
 (`reconstructHistoricalPoints` refuses the whole packet otherwise). The
-retirement names the unit's source. The pool must be positive and in October
+retired source is one of the unit's sources. The pool must be positive and in October
 2026. A frozen reward period refuses it.
 
 ```quint
@@ -607,7 +739,7 @@ pure def canRetireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::
   val prior = latest(l, unitKey(project, unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   project != "" and unit > 0 and prior.amount > 0 and P::periodOf(prior.occurredAt) == P::october2026 and
-  retirement.source == unit and RH::retirementApplies(retirement) and RH::packetApplies(packetRun) and
+  unitOf(l, unit).sources.contains(retirement.source) and RH::retirementApplies(retirement) and RH::packetAdmits(packetRun) and
   reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
 pure def retireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
     reason: str, digest: str): Ledger =
@@ -627,7 +759,8 @@ October implementation pool, unchanged since the owner's review, between the
 reviewed recipients by their reviewed weights. The pool keeps its total; the
 revision is recorded under the v2 score with the decision
 `owner_october_<dossier digest>`, with the reviewed shares, only inside a
-reviewed packet that applies. A frozen reward period refuses it.
+reviewed packet the run admits: one that previews for a preview run, one
+that applies for an apply run. A frozen reward period refuses it.
 
 ```quint
 pure def canCorrectRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
@@ -636,7 +769,7 @@ pure def canCorrectRecipients(l: Ledger, project: str, unit: int, correction: RH
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   project != "" and unit > 0 and prior.amount >= 10 and prior.amount <= P::maxSafe and correction.pool == prior.amount and
   P::periodOf(prior.occurredAt) == P::october2026 and RH::recipientCorrectionApplies(correction) and
-  RH::packetApplies(packetRun) and A::canWriteAllocation(prior.amount, correction.recipients, true, false) and
+  RH::packetAdmits(packetRun) and A::canWriteAllocation(prior.amount, correction.recipients, true, false) and
   reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
 pure def correctRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
     packetRun: RH::PacketRun, reason: str, digest: str): Ledger =
@@ -822,6 +955,8 @@ pure def sometimesUnitCredited(l: Ledger): bool = l.revisions.some(r => r.key.ca
 pure def sometimesRescored(l: Ledger): bool = l.revisions.some(r => r.key.category == MergedWork and r.decision.basis == Reassessment)
 pure def sometimesRatified(l: Ledger): bool = l.revisions.some(r => r.decision.basis == Ratification)
 pure def sometimesReallocated(l: Ledger): bool = l.revisions.some(r => r.decision.basis == Reallocation)
+pure def sometimesFirstCreditDecided(l: Ledger): bool =
+  l.revisions.some(r => r.previous == 0 and ordinaryCategory(r.key.category) and r.decision.basis == Reassessment)
 pure def sometimesSourceRescored(l: Ledger): bool = l.revisions.some(r => r.key.category == Review and r.previous > 0)
 pure def sometimesPenalized(l: Ledger): bool = l.revisions.some(r => r.key.category == Penalty and r.amount < 0)
 pure def sometimesPenaltyExceedsCredit(l: Ledger): bool = l.revisions.some(r => r.key.category == Penalty and isLatest(l, r) and
@@ -854,13 +989,19 @@ pure val atValues = Set(2432005, 2432119, 2432210)
 pure val twoRecipients: List[A::Recipient] = List({ actor: 1, lines: 1 }, { actor: 2, lines: 3 })
 pure val cValues = Set(
   { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
-    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1" },
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1", decision: noDecision },
   { project: "p", unit: 2, recipients: List({ actor: 1, lines: 0 }), completeLines: true, occurredAt: 2432005,
-    repositoryCountsFrom: 2432000, projectCollected: true, rule: ValueV1, provisional: true, digest: "u2" },
+    repositoryCountsFrom: 2432000, projectCollected: true, rule: ValueV1, provisional: true, digest: "u2", decision: noDecision },
   { project: "p", unit: 1, recipients: twoRecipients, completeLines: false, occurredAt: 2432005, repositoryCountsFrom: 2432000,
-    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u3" },
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u3", decision: noDecision },
   { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432110, repositoryCountsFrom: 2432000,
-    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u4" })
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u4", decision: noDecision },
+  { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u5",
+    decision: { basis: Reassessment, effectiveAt: 2432000, reason: "scored", delta: 0, source: "value:u5", valued: true } },
+  { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u6",
+    decision: { basis: Reassessment, effectiveAt: 2432000, reason: "", delta: 0, source: "value:u6", valued: true } })
 pure val sValues = Set({ ...SP::initial, phase: SP::Assessed, project: "p", unit: 1, head: "h", acceptedAt: 2432005, points: 90 },
   { ...SP::initial, phase: SP::Ratified, project: "p", unit: 1, head: "h", acceptedAt: 2432005, points: 30 },
   { ...SP::initial, phase: SP::Provisional, project: "p", unit: 1, head: "h", acceptedAt: 2432005, points: 10 },
@@ -896,13 +1037,18 @@ pure val batchValues = Set({ digest: "b1", supplied: List(), listedProjects: Set
 pure val supersedingSample: Supersession = { snapshotDigest: "s1", windowFrom: 2432000, windowTo: 2432200, policyFrom: 2432000,
   supplied: List(), projectCollected: true, heldPool: false, coverage: CoverageAssessed, invalidatesJoint: false,
   ownRecordAbsorbs: false, review: NotOmitted,
-  decision: { basis: Superseded, effectiveAt: 2432000, reason: "superseded", delta: 0, source: "value:s1", valued: true } }
+  decision: { basis: Superseded, effectiveAt: 2432000, reason: "superseded", delta: 0, source: "value:s1", valued: true },
+  preserveHeld: false }
 pure val snapshotValues = Set(supersedingSample, { ...supersedingSample, decision: noDecision, coverage: CoverageLegacy },
+  { ...supersedingSample, snapshotDigest: "s3", decision: noDecision, coverage: CoverageReviewAssessed },
+  { ...supersedingSample, preserveHeld: true, coverage: CoverageMissing, ownRecordAbsorbs: true },
   { ...supersedingSample, coverage: CoverageMissing, ownRecordAbsorbs: true },
   { ...supersedingSample, coverage: CoverageAbsent }, { ...supersedingSample, review: OmittedOutsideWindow },
   { ...supersedingSample, windowFrom: 2432100, review: AdverseExclusion })
-pure val retirementValues = Set(RH::readyRetirement, { ...RH::readyRetirement, claimedPaths: 2 })
-pure val packetRunValues = Set(RH::readyRun, { ...RH::readyRun, candidateMatches: false })
+pure val retirementValues = Set(RH::readyRetirement, { ...RH::readyRetirement, claimedPaths: 2 }, RH::nativeRetirement)
+pure val packetRunValues = Set(RH::readyRun, { ...RH::readyRun, candidateMatches: false },
+  { ...RH::readyRun, preview: true, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false },
+  { ...RH::readyRun, qualifiedReplay: false })
 pure val ownerCorrection: RH::RecipientCorrection = { ...RH::readyCorrection, pool: 10,
   recipients: List({ actor: 1, lines: 1 }, { actor: 2, lines: 2 }),
   reviewedShares: List({ actor: 1, points: 3 }, { actor: 2, points: 7 }) }

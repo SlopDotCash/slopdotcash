@@ -49,8 +49,11 @@ effect function rowOf(store: Store, revision: Revision, template: Award, amount:
   const sourceRule = legacyRuleOf(revision)
   const confirmed = provenance.confirmation === true
   if (prior === undefined && amount === 0 && revision.key.category === "MergedWork") return undefined
+  const decided = !confirmed && revision.decision.basis !== "NoBasis"
   if (prior !== undefined && sameAward(prior.award, award) && samePenalty(prior.penalty, provenance.penalty) &&
-    (!confirmed || (prior.sourceDigest === provenance.sourceDigest && prior.sourceRule === sourceRule))) return undefined
+    (!confirmed || (prior.sourceDigest === provenance.sourceDigest && prior.sourceRule === sourceRule)) &&
+    (!decided || (prior.decision?.sourceId === provenance.decisionSourceId && prior.decision.effectiveAt === provenance.effectiveAt &&
+      prior.decision.reason === revision.decision.reason))) return undefined
   const body = {
     previous: prior?.id ?? null,
     recordedAt: provenance.recordedAt,
@@ -58,7 +61,7 @@ effect function rowOf(store: Store, revision: Revision, template: Award, amount:
     sourceRule,
     award,
     ...(provenance.penalty === undefined ? {} : { penalty: provenance.penalty }),
-    ...(confirmed || revision.decision.basis === "NoBasis" ? {} : {
+    ...(!decided ? {} : {
       decision: { sourceId: provenance.decisionSourceId, effectiveAt: provenance.effectiveAt, reason: revision.decision.reason, delta: amount - (prior?.award.amount ?? 0) },
     }),
   }

@@ -1,6 +1,8 @@
 import { assert, layer } from "@effect/vitest"
 module stagedGitHub {
   import { execFileSync } from "node:child_process"
+  import { writeFileSync } from "node:fs"
+  import { join } from "node:path"
   import type { GitHubFake } from "@repo/platform/testing/github"
 
   export interface StagedRecord {
@@ -34,12 +36,518 @@ module stagedGitHub {
     })
   }
 
+  /** @throws {Error} */
+  export function advanceBranch(origin: string, name: string, file: string): void {
+    writeFileSync(join(origin, file), `advanced ${Date.now()}\n`)
+    execFileSync("git", ["-C", origin, "-c", "user.name=Slop release", "-c", "user.email=release@slop.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", `advance ${name}`])
+  }
+
+  export interface StagedProducer {
+    readonly id: number
+    readonly sha: string
+    readonly archive: string
+    readonly digest: string
+    readonly createdAt: string
+    readonly expired?: boolean
+    readonly step?: string
+  }
+
+  /** @throws {never} */
+  export function stagedProducer(fake: GitHubFake, repository: string, producer: StagedProducer): void {
+    const json = (body: unknown) => () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
+    const run = `/repos/${repository}/actions/runs/${producer.id}`
+    const artifact = producer.id + 1
+    fake.alterNext(new RegExp(`^GET ${run}$`, "u"), json({ id: producer.id, repository: { full_name: repository }, head_repository: { full_name: repository }, head_branch: "main", event: "push", path: ".github/workflows/deploy.yml", status: "completed", head_sha: producer.sha, run_attempt: 2 }))
+    fake.alterNext(`GET ${run}/attempts/2/jobs`, json({ jobs: [{ name: "Prepare checked browser bundle", conclusion: "success", steps: [{ name: "Generate live contribution data", conclusion: producer.step ?? "success" }] }] }))
+    fake.alterNext(`GET ${run}/artifacts`, json({ artifacts: [{ id: artifact, name: `slop-source-${producer.sha}`, expired: producer.expired ?? false, created_at: producer.createdAt, digest: producer.digest, size_in_bytes: new TextEncoder().encode(producer.archive).byteLength, workflow_run: { id: producer.id, head_sha: producer.sha } }] }))
+    fake.alterNext(new RegExp(`^GET /repos/${repository}/actions/artifacts/${artifact}/zip$`, "u"), () => new Response(null, { status: 302, headers: { location: `https://artifacts.slop.invalid/${producer.id}.zip` } }))
+    fake.alterNext(new RegExp(`^GET /${producer.id}\\.zip$`, "u"), () => new Response(producer.archive, { status: 200 }))
+  }
+
+  /** @throws {never} */
+  export function emptyRegistry(fake: GitHubFake, origin: string, reads: string[]): GitHubFake["fetch"] {
+    return (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input)
+      if (url.origin !== origin) return fake.fetch(input, init)
+      reads.push(url.pathname)
+      const body = url.pathname === "/api/v1/projects" ? { schemaVersion: "1", projects: [], restrictions: [] } : { schemaVersion: "1", revisions: [] }
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }))
+    }
+  }
+
   /** @throws {never} */
   export function hangNext(fake: GitHubFake, match: string): void {
     fake.alterNext(match, () => new Promise<Response>(() => undefined))
   }
 }
-import { type StagedRecord, hangNext, refuseNext, stagedHistory } from stagedGitHub
+module actionsSimulation {
+  import { Clock, Duration, Effect } from "effect"
+
+  export type Inputs = Readonly<Record<string, string>>
+
+  export interface ActionStep { readonly name: string; readonly status: string; readonly conclusion: string | null; readonly started_at?: string }
+  export interface ActionJob { readonly name: string; readonly status: string; readonly conclusion: string | null; readonly steps?: ReadonlyArray<ActionStep> }
+
+  export interface ActionRun {
+    readonly id: number
+    readonly status: string
+    readonly conclusion: string | null
+    readonly event: string
+    readonly head_branch: string
+    readonly head_sha: string
+    readonly path: string
+    readonly run_attempt: number
+    readonly created_at: string
+    readonly repository: { readonly full_name: string }
+    readonly head_repository: { readonly full_name: string } | null
+  }
+
+  export interface Shape {
+    readonly collect?: string | null
+    readonly profilesAt?: string
+    readonly restore?: string
+    readonly published?: boolean
+    readonly prepare?: string
+  }
+
+  export interface Outcome { readonly conclusion: string; readonly published: boolean; readonly afterRerun?: boolean }
+
+  export interface WorldOptions {
+    readonly runs?: ReadonlyArray<ActionRun>
+    readonly jobs?: Readonly<Record<number, ReadonlyArray<ActionJob>>>
+    readonly artifacts?: Readonly<Record<number, ReadonlyArray<{ readonly name: string; readonly expired: boolean }>>>
+    readonly monthly?: ReadonlyArray<ActionRun>
+    readonly live?: string
+    readonly outcomes?: ReadonlyArray<Outcome>
+    readonly returnRunId?: boolean
+    readonly prepareDoneAfter?: { readonly id: number; readonly reads: number }
+    readonly liveFrom?: { readonly read: number; readonly generatedAt: string }
+    readonly unavailableOnce?: string
+  }
+
+  export interface World {
+    readonly fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+    readonly clock: Clock.Clock
+    readonly dispatched: Inputs[]
+    readonly reruns: number[]
+    readonly credentials: string[]
+    readonly retried: string[]
+  }
+
+  export const actionsRepository = "SlopDotCash/slopdotcash"
+  export const dayStart = Date.parse("2026-11-19T07:17:00Z")
+  export const checkpoint = [{ name: "leaderboard-discussions-1", expired: false }]
+
+  /** @throws {never} */
+  export function actionRun(id: number, extra: Partial<ActionRun> = {}): ActionRun {
+    return {
+      id,
+      status: "completed",
+      conclusion: "success",
+      event: "workflow_dispatch",
+      head_branch: "main",
+      head_sha: "a".repeat(40),
+      path: ".github/workflows/deploy.yml",
+      run_attempt: 1,
+      created_at: new Date(dayStart).toISOString(),
+      repository: { full_name: actionsRepository },
+      head_repository: { full_name: actionsRepository },
+      ...extra,
+    }
+  }
+
+  /** @throws {never} */
+  export function actionJobs(shape: Shape): ReadonlyArray<ActionJob> {
+    const prepare = shape.prepare ?? "completed"
+    const list: ActionJob[] = [
+      {
+        name: "Prepare checked browser bundle",
+        status: prepare,
+        conclusion: prepare !== "completed" ? null : shape.collect === "failure" ? "failure" : "success",
+        steps: [
+          { name: "Generate live contribution data", status: "completed", conclusion: shape.collect === undefined ? "success" : shape.collect },
+          { name: "Generate live contributor profiles", status: "completed", conclusion: "success", started_at: shape.profilesAt ?? "2026-11-19T10:00:00Z" },
+        ],
+      },
+      {
+        name: "Deploy trusted production bundle",
+        status: "completed",
+        conclusion: "success",
+        steps: [{ name: "Verify Cloudflare deployment commit metadata", status: "completed", conclusion: shape.published === true ? "success" : "skipped" }],
+      },
+    ]
+    if (shape.restore !== undefined) list.push({ name: "Restore trusted production discussion reads", status: "completed", conclusion: shape.restore })
+    return list
+  }
+
+  /** @throws {never} */
+  export function actionsWorld(options: WorldOptions): World {
+    let now = dayStart
+    let nextId = 900
+    let jobReads = 0
+    let liveReads = 0
+    let unavailable = options.unavailableOnce
+    const runs = new Map((options.runs ?? []).map((run) => [run.id, run]))
+    const pending = new Map<number, Outcome>()
+    const afterRerun = new Map<number, boolean>()
+    const jobs = new Map(Object.entries(options.jobs ?? {}).map(([id, list]) => [Number(id), list]))
+    const outcomes = [...(options.outcomes ?? [])]
+    const world: World = {
+      dispatched: [],
+      reruns: [],
+      credentials: [],
+      retried: [],
+      clock: {
+        currentTimeMillisUnsafe: () => now,
+        currentTimeMillis: Effect.sync(() => now),
+        currentTimeNanosUnsafe: () => BigInt(now) * 1_000_000n,
+        currentTimeNanos: Effect.sync(() => BigInt(now) * 1_000_000n),
+        monotonicTimeNanosUnsafe: () => BigInt(now) * 1_000_000n,
+        monotonicTimeNanos: Effect.sync(() => BigInt(now) * 1_000_000n),
+        sleep: (duration) => {
+          const millis = Duration.toMillis(duration)
+          return millis >= 15_000 ? Effect.sync(() => { now += millis }) : Clock.Clock.defaultValue().sleep(duration)
+        },
+      },
+      fetch: async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input))
+        const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+        if (url.host === "slop.cash") {
+          liveReads += 1
+          if (options.liveFrom !== undefined && liveReads >= options.liveFrom.read) return json({ generatedAt: options.liveFrom.generatedAt })
+          return options.live === undefined ? new Response("", { status: 503 }) : json({ generatedAt: options.live })
+        }
+        world.credentials.push(new Headers(init?.headers).get("authorization") ?? "")
+        const path = url.pathname.replace(`/repos/${actionsRepository}`, "")
+        if (unavailable !== undefined && path.endsWith(unavailable)) {
+          unavailable = undefined
+          world.retried.push(path)
+          return json({ message: "Server Error" }, 503)
+        }
+        if (path.endsWith("/dispatches")) {
+          const text = typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array)
+          const body = JSON.parse(text) as { readonly ref: string; readonly inputs: Inputs }
+          if (body.ref !== "main") return json({ message: "Not main" }, 422)
+          world.dispatched.push(body.inputs)
+          const id = nextId++
+          const outcome = outcomes.shift() ?? { conclusion: "success", published: true }
+          runs.set(id, actionRun(id, { status: "in_progress", conclusion: null, created_at: new Date(now).toISOString() }))
+          jobs.set(id, actionJobs({ collect: "skipped", published: outcome.published }))
+          pending.set(id, outcome)
+          if (outcome.afterRerun !== undefined) afterRerun.set(id, outcome.afterRerun)
+          return options.returnRunId === false ? new Response(null, { status: 204 }) : json({ workflow_run_id: id })
+        }
+        const rerun = /^\/actions\/runs\/(\d+)\/rerun-failed-jobs$/u.exec(path)
+        if (rerun !== null) {
+          const id = Number(rerun[1])
+          world.reruns.push(id)
+          const published = afterRerun.get(id) ?? false
+          const current = runs.get(id)
+          if (current !== undefined) runs.set(id, { ...current, status: "in_progress", conclusion: null })
+          pending.set(id, { conclusion: "failure", published })
+          jobs.set(id, actionJobs({ collect: "skipped", published }))
+          return new Response("", { status: 201 })
+        }
+        const listed = /^\/actions\/workflows\/([\w.-]+)\/runs$/u.exec(path)
+        if (listed !== null) {
+          const source = listed[1] === "monthly-rewards.yml" ? (options.monthly ?? []) : [...runs.values()]
+          const event = url.searchParams.get("event")
+          return json({ workflow_runs: source.filter((run) => event === null || run.event === event) })
+        }
+        const one = /^\/actions\/runs\/(\d+)(\/jobs|\/artifacts)?$/u.exec(path)
+        if (one !== null) {
+          const id = Number(one[1])
+          if (one[2] === "/jobs") {
+            jobReads += 1
+            if (options.prepareDoneAfter?.id === id && jobReads >= options.prepareDoneAfter.reads) jobs.set(id, actionJobs({ prepare: "completed" }))
+            return json({ jobs: jobs.get(id) ?? [] })
+          }
+          if (one[2] === "/artifacts") return json({ artifacts: options.artifacts?.[id] ?? [] })
+          const current = runs.get(id)
+          if (current === undefined) return json({ message: "Not Found" }, 404)
+          const finishing = pending.get(id)
+          if (finishing !== undefined) {
+            pending.delete(id)
+            runs.set(id, { ...current, status: "completed", conclusion: finishing.conclusion })
+          }
+          return json(current)
+        }
+        return json({ message: `Unexpected request ${path}` }, 404)
+      },
+    }
+    return world
+  }
+}
+module workflowShape {
+  import { spawnSync } from "node:child_process"
+  import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+  import { tmpdir } from "node:os"
+  import { join } from "node:path"
+  import { parse } from "yaml"
+  import { repoRoot } from "@repo/platform/testing/paths"
+
+  export interface Step { readonly name?: string; readonly if?: string; readonly run?: string; readonly env?: Readonly<Record<string, string>>; readonly with?: Readonly<Record<string, unknown>> }
+  export interface Job {
+    readonly if?: string
+    readonly needs?: ReadonlyArray<string>
+    readonly permissions?: Readonly<Record<string, string>>
+    readonly "runs-on"?: string
+    readonly "timeout-minutes"?: string | number
+    readonly concurrency?: { readonly group: string }
+    readonly env?: Readonly<Record<string, string>>
+    readonly steps: ReadonlyArray<Step>
+  }
+  export interface Workflow { readonly permissions?: Readonly<Record<string, string>>; readonly concurrency?: { readonly group: string }; readonly jobs: Readonly<Record<string, Job>> }
+  export interface Run {
+    readonly ref?: string
+    readonly event?: string
+    readonly inputs?: Readonly<Record<string, unknown>>
+    readonly collectorRunner?: string
+    readonly hosted?: boolean
+    readonly workflowRun?: Readonly<Record<string, unknown>>
+  }
+  interface Context { readonly github: unknown; readonly inputs: unknown; readonly vars: unknown; readonly runner: unknown }
+  export interface Ran { readonly code: number | null; readonly lines: ReadonlyArray<string> }
+  export interface DeadlineScenario { readonly ref: string; readonly hosted: boolean; readonly setupTime: number; readonly firstRunTime: number }
+
+  /** @throws {Error} */
+  function workflowFile(name: string): Workflow {
+    const document: unknown = parse(readFileSync(join(repoRoot, ".github", "workflows", name), "utf8"))
+    if (typeof document !== "object" || document === null || !("jobs" in document) || typeof document.jobs !== "object" || document.jobs === null) throw new Error(`${name} declares no jobs`)
+    return document as Workflow
+  }
+
+  /** @throws {Error} */
+  function jobOf(workflow: Workflow, name: string): Job {
+    const job = workflow.jobs[name]
+    if (job === undefined || !Array.isArray(job.steps)) throw new Error(`No job ${name}`)
+    return job
+  }
+
+  /** @throws {Error} */
+  function stepOf(job: Job, name: string): Step {
+    const step = job.steps.find((candidate) => candidate.name === name)
+    if (step === undefined) throw new Error(`No step ${name}`)
+    return step
+  }
+
+  function contextOf(run: Run): Context {
+    return {
+      github: {
+        ref: `refs/heads/${run.ref ?? "main"}`,
+        event_name: run.event ?? "push",
+        run_attempt: 2,
+        event: { repository: { id: 100 }, workflow_run: { head_repository: {}, ...run.workflowRun } },
+      },
+      inputs: run.inputs ?? {},
+      vars: { SLOP_COLLECTOR_RUNNER: run.collectorRunner ?? "", COLLECTOR_APP_CLIENT_ID: "collector" },
+      runner: { environment: run.hosted === false ? "self-hosted" : "github-hosted" },
+    }
+  }
+
+  /** @throws {Error} */
+  function evaluate(expression: string, context: Context): unknown {
+    const source = expression.replace(/([=!])=/gu, "$1==")
+    return new Function("github", "inputs", "vars", "runner", `return (${source});`)(context.github, context.inputs, context.vars, context.runner)
+  }
+
+  /** @throws {Error} */
+  function evaluated(value: string | number | undefined, context: Context): string {
+    return String(value ?? "").replace(/\$\{\{(.*?)\}\}/gsu, (_, expression: string) => String(evaluate(expression, context)))
+  }
+
+  /** @throws {Error} */
+  function runs(condition: string | undefined, context: Context): boolean {
+    return condition === undefined || Boolean(evaluate(condition, context))
+  }
+
+  /** @throws {Error} */
+  function bash(script: string, env: Readonly<Record<string, string>>, cwd: string): Ran {
+    const ran = spawnSync("bash", ["-euc", script], { cwd, env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" })
+    if (ran.error !== undefined) throw ran.error
+    if (ran.stderr !== "") throw new Error(ran.stderr)
+    return { code: ran.status, lines: ran.stdout.split("\n").filter((line) => line !== "" && !line.startsWith("::")).map((line) => line.trimEnd()) }
+  }
+
+  /** @throws {Error} */
+  function recorded(step: Step, env: Readonly<Record<string, string>>): ReadonlyArray<string> {
+    return bash(`node() { echo "$*"; }\n${step.run ?? ""}`, { RUNNER_TEMP: "/runner", ...env }, tmpdir()).lines
+  }
+
+  const collectionStubs = `
+clock=100000
+calls=0
+date() { echo "$clock"; }
+sleep() { echo "sleep $1"; clock=$((clock + $1)); }
+timeout() { echo "timeout $3"; shift 3; "$@"; }
+node() {
+  case "$1 $2" in
+    "apps/slopbot/dist/programs/main.js collect")
+      echo "collect $SLOP_DISCUSSION_DEADLINE_MS"
+      calls=$((calls + 1))
+      if [ "$calls" -eq 1 ]; then
+        clock=$((clock + FIRST_RUN_TIME))
+        return 75
+      fi
+      mkdir -p public/data
+      echo '{}' > public/data/leaderboard.json
+      ;;
+    "apps/points/dist/programs/main.js snapshot")
+      echo "fallback $4"
+      echo '{}' > "$5"
+      ;;
+    *) return 1 ;;
+  esac
+}
+mkdir -p "$BUNDLE/github"
+`
+
+  /** @throws {Error} */
+  function deadline(prepare: Job, scenario: DeadlineScenario): Ran {
+    const context = contextOf({ ref: scenario.ref, collectorRunner: scenario.hosted ? "" : "slop-collector", hosted: scenario.hosted })
+    const reserve = stepOf(prepare, "Reserve checked bundle time for hosted main collection")
+    const collect = stepOf(prepare, "Generate live contribution data")
+    const reserved = runs(reserve.if, context) ? `${reserve.run ?? ""}\nsource "$GITHUB_ENV"` : ""
+    const script = [collectionStubs, reserved, "clock=$((clock + SETUP_TIME))", collect.run ?? ""].join("\n")
+    const directory = mkdtempSync(join(tmpdir(), "slop-collection-deadline-"))
+    const ran = bash(script, {
+      GITHUB_ENV: join(directory, "github-env"),
+      GITHUB_REF: `refs/heads/${scenario.ref}`,
+      RUNNER_TEMP: directory,
+      BUNDLE: join(directory, "bundle"),
+      SLOP_DATA_ORIGIN: "https://slop.cash",
+      SLOP_DISCUSSION_DEADLINE_MS: "",
+      SLOP_PREPARE_COLLECT_UNTIL_SECONDS: "",
+      SLOP_COLLECTION_DEADLINE_S: evaluated(prepare.env?.SLOP_COLLECTION_DEADLINE_S, context),
+      SETUP_TIME: String(scenario.setupTime),
+      FIRST_RUN_TIME: String(scenario.firstRunTime),
+    }, directory)
+    rmSync(directory, { recursive: true, force: true })
+    return ran
+  }
+
+  /** @throws {Error} */
+  export function collectionWorkflows() {
+    const deploy = workflowFile("deploy.yml")
+    const daily = workflowFile("daily-collection.yml")
+    const prepare = jobOf(deploy, "prepare")
+    const restoreMemo = jobOf(deploy, "restore_memo")
+    const reserve = stepOf(prepare, "Reserve checked bundle time for hosted main collection")
+    const lane = (run: Run) => {
+      const context = contextOf(run)
+      return {
+        runsOn: evaluated(prepare["runs-on"], context),
+        group: evaluated(prepare.concurrency?.group, context),
+        timeout: evaluated(prepare["timeout-minutes"], context),
+        deadline: evaluated(prepare.env?.SLOP_COLLECTION_DEADLINE_S, context),
+        reserves: runs(reserve.if, context),
+        restoresMemo: runs(restoreMemo.if, context),
+      }
+    }
+    const start = jobOf(daily, "start")
+    const followUp = jobOf(daily, "follow-up")
+    const followUpStep = stepOf(followUp, "Publish a superseded collection or resume a failed one")
+    const dispatch = (run: Run) => {
+      const context = contextOf(run)
+      return { start: runs(start.if, context), followUp: runs(followUp.if, context) }
+    }
+    const completedRelease: Run = { event: "workflow_run", workflowRun: { id: 900, head_branch: "main", head_repository: { id: 100 }, event: "push" } }
+    const manualFollowUp: Run = { event: "workflow_dispatch", inputs: { release_run_id: "900" } }
+    const followUpCommand = (run: Run) => recorded(followUpStep, { RELEASE_RUN_ID: evaluated(followUpStep.env?.RELEASE_RUN_ID, contextOf(run)) })
+    const deadlines: Readonly<Record<string, DeadlineScenario>> = {
+      hostedRetryKeepsDeadline: { ref: "main", hosted: true, setupTime: 500, firstRunTime: 700 },
+      slowSetupKeepsReservation: { ref: "main", hosted: true, setupTime: 2700, firstRunTime: 700 },
+      retryThatCannotFitFallsBack: { ref: "main", hosted: true, setupTime: 500, firstRunTime: 19140 },
+      setupExhaustsBudget: { ref: "main", hosted: true, setupTime: 20820, firstRunTime: 0 },
+      collectorRunnerWindow: { ref: "main", hosted: false, setupTime: 500, firstRunTime: 700 },
+      stagingUnwrapped: { ref: "development", hosted: false, setupTime: 500, firstRunTime: 700 },
+    }
+    return {
+      prepareNeedsMemo: (prepare.needs ?? []).includes("restore_memo"),
+      lanes: {
+        freshOnCollector: lane({ ref: "main", event: "push", collectorRunner: "slop-collector", hosted: false }),
+        freshHosted: lane({ ref: "main", event: "push" }),
+        retained: lane({ ref: "main", event: "workflow_dispatch", inputs: { use_published_data: true, parallel_collection: false }, collectorRunner: "slop-collector" }),
+        parallel: lane({ ref: "main", event: "workflow_dispatch", inputs: { use_published_data: false, parallel_collection: true }, collectorRunner: "slop-collector" }),
+        staging: lane({ ref: "development", event: "push", collectorRunner: "slop-collector" }),
+      },
+      deadlines: Object.fromEntries(Object.entries(deadlines).map(([name, scenario]) => [name, deadline(prepare, scenario)])),
+      daily: {
+        schedule: dispatch({ event: "schedule" }),
+        manualStart: dispatch({ event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        manualFollowUp: dispatch(manualFollowUp),
+        completedRelease: dispatch(completedRelease),
+        forkRelease: dispatch({ event: "workflow_run", workflowRun: { id: 901, head_branch: "main", head_repository: { id: 7 }, event: "push" } }),
+        pullRequestRelease: dispatch({ event: "workflow_run", workflowRun: { id: 902, head_branch: "main", head_repository: { id: 100 }, event: "pull_request" } }),
+        development: dispatch({ ref: "development", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        startCommand: recorded(stepOf(start, "Dispatch a fresh collection unless one is running"), {}),
+        followUpCommands: [followUpCommand(completedRelease), followUpCommand(manualFollowUp)],
+      },
+    }
+  }
+
+  /** @throws {Error} */
+  export function reviewedWorkflow() {
+    const deploy = workflowFile("deploy.yml")
+    const reviewed = workflowFile("reviewed-historical-points.yml")
+    const publish = jobOf(reviewed, "publish")
+    const check = stepOf(publish, "Check which protected operation was requested")
+    const packet = "a".repeat(64)
+    const audit = { operation: "audit-assessments", audit_project: "slop", audit_source_sha256: "b".repeat(64), audit_baseline_sha256: "c".repeat(64) }
+    const replay = { ...audit, operation: "replay-assessments" }
+    const publication = { reviewed_packet_sha256: packet }
+    const dispatched = (inputs: Readonly<Record<string, unknown>>) => contextOf({ event: "workflow_dispatch", inputs: {
+      operation: "publish-reviewed", audit_project: "", audit_source_sha256: "", audit_baseline_sha256: "", stage_review_handoff: false, reviewed_packet_sha256: "", apply: false, ...inputs,
+    } })
+    const accepts = (inputs: Readonly<Record<string, unknown>>) => {
+      const context = dispatched(inputs)
+      const env = Object.fromEntries(Object.entries(check.env ?? {}).map(([name, value]) => [name, evaluated(value, context)]))
+      return bash(check.run ?? "", env, tmpdir()).code === 0
+    }
+    const steps = (inputs: Readonly<Record<string, unknown>>) => publish.steps.filter((step) => step.name !== undefined && runs(step.if, dispatched(inputs))).map((step) => step.name)
+    const upload = stepOf(publish, "Preserve the assessment audit receipt")
+    const receipt = (inputs: Readonly<Record<string, unknown>>) => evaluated(String(upload.with?.name ?? ""), dispatched(inputs))
+    const catalog = stepOf(publish, "Read and verify the complete historical assessment catalog")
+    const rebuild = stepOf(publish, "Rebuild and verify owner-reviewed historical Points")
+    return {
+      tokenScopes: { workflow: reviewed.permissions, job: publish.permissions ?? null },
+      validation: {
+        audit: accepts(audit),
+        replay: accepts(replay),
+        stagedReplay: accepts({ ...replay, stage_review_handoff: true }),
+        preview: accepts(publication),
+        applied: accepts({ ...publication, apply: true }),
+        stagedAudit: accepts({ ...audit, stage_review_handoff: true }),
+        stagedPublication: accepts({ ...publication, stage_review_handoff: true }),
+        auditApplying: accepts({ ...audit, apply: true }),
+        auditWithPacket: accepts({ ...audit, reviewed_packet_sha256: packet }),
+        auditInvalidProject: accepts({ ...audit, audit_project: "Slop" }),
+        auditShortDigest: accepts({ ...audit, audit_source_sha256: "b".repeat(63) }),
+        publicationWithAuditScope: accepts({ ...publication, audit_project: "slop" }),
+        publicationWithoutPacket: accepts({}),
+        unknownOperation: accepts({ ...audit, operation: "replay" }),
+      },
+      lanes: {
+        replay: { group: evaluated(reviewed.concurrency?.group, dispatched(replay)), timeout: evaluated(publish["timeout-minutes"], dispatched(replay)) },
+        audit: { group: evaluated(reviewed.concurrency?.group, dispatched(audit)), timeout: evaluated(publish["timeout-minutes"], dispatched(audit)) },
+        publication: { group: evaluated(reviewed.concurrency?.group, dispatched(publication)), timeout: evaluated(publish["timeout-minutes"], dispatched(publication)) },
+        freshCollection: evaluated(jobOf(deploy, "prepare").concurrency?.group, contextOf({ ref: "main", event: "push" })),
+      },
+      steps: { audit: steps(audit), replay: steps(replay), publication: steps(publication) },
+      receipts: { audit: receipt(audit), replay: receipt(replay) },
+      commands: {
+        registry: recorded(stepOf(publish, "Snapshot the current project registry for verification"), {}),
+        audit: recorded(catalog, { OPERATION: "audit-assessments" }),
+        replay: recorded(catalog, { OPERATION: "replay-assessments" }),
+        preview: recorded(rebuild, { REVIEWED_PACKET_SHA256: packet, HISTORICAL_POINTS_APPLY: "false" }),
+        applied: recorded(rebuild, { REVIEWED_PACKET_SHA256: packet, HISTORICAL_POINTS_APPLY: "true" }),
+      },
+    }
+  }
+}
+import { collectionWorkflows, reviewedWorkflow } from workflowShape
+import { type ActionRun, type Outcome, type Shape, type World, type WorldOptions, actionJobs, actionRun, actionsRepository, actionsWorld, checkpoint } from actionsSimulation
+import { type StagedProducer, type StagedRecord, advanceBranch, emptyRegistry, hangNext, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
@@ -48,10 +556,13 @@ import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { release } from "../src/programs/release.vibe"
 import { LockUnobserved } from "../src/publicationLock/group.vibe"
 import { BundleRefused } from "../src/release/manifest/inventory.vibe"
-import { githubDigest, registrySnapshotPath } from "../src/release/run/collect.vibe"
+import { githubDigest, publishedRegistryPath, registrySnapshotPath } from "../src/release/run/collect.vibe"
 import { StagingHistoryRefused } from "../src/release/run/history.vibe"
-import { writeCollection } from "../src/release/manifest/release.vibe"
-import { PublicationFailed, Publisher } from "../src/release/run/publisher.vibe"
+import { readCollection, writeCollection } from "../src/release/manifest/release.vibe"
+import { DataOptionsRefused, releaseCoverage } from "../src/release/coverage/options.vibe"
+import { CollectedDataRefused, restoreCollected } from "../src/release/run/restore.vibe"
+import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
+import { type Service, reviewedSubmissionFee } from "../gen/operations__release.effect.vibe"
 import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
 import { runFacts } from "../src/release/run/facts.vibe"
 import { ReleaseRefused } from "../src/release/run/run.vibe"
@@ -86,6 +597,7 @@ function described(error: unknown) {
   if (error instanceof ReleaseStopped) return `ReleaseStopped:${error.outcome}`
   if (error instanceof ReleaseRefused) return `ReleaseRefused:${error.step}`
   if (error instanceof LockUnobserved) return "LockUnobserved"
+  if (error instanceof DataOptionsRefused) return "DataOptionsRefused"
   if (error instanceof BundleRefused) return "BundleRefused"
   if (error instanceof StagingHistoryRefused) return `StagingHistoryRefused: ${error.message.replace(/epoch seconds \d+/u, "epoch seconds N")}`
   return error instanceof Error ? error.name : String(error)
@@ -115,16 +627,25 @@ effect function git(directory: string, args: ReadonlyArray<string>) {
   return new TextDecoder().decode(bytes).trim()
 }
 
-function recorder(calls: string[]) {
+const recordedOrder: ReadonlyArray<Service> = ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot", "SubmissionFee"]
+
+function recorder(calls: string[], afterFirstWorker?: void!!) {
   effect function refused(stage: string) {
     calls.push(stage)
     throw new PublicationFailed({ stage, message: "dry run publishes nothing" })
   }
+  effect function published(service: Service, target: Target) {
+    calls.push(`publish ${service}`)
+    if (afterFirstWorker !== undefined && calls.filter((call) => call.startsWith("publish ")).length === 1) try afterFirstWorker
+    return target.sourceSha
+  }
   return Layer.succeed(Publisher, {
-    order: ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot"],
-    prepare: () => refused("prepare"),
-    publish: (service) => refused(`publish ${service}`),
+    order: recordedOrder,
+    prepare: () => afterFirstWorker === undefined ? refused("prepare") : Effect.sync(() => { calls.push("prepare") }),
+    publish: (service, target) => afterFirstWorker === undefined ? refused(`publish ${service}`) : published(service, target),
     feeSettings: () => refused("feeSettings"),
+    feeVersions: () => refused("feeVersions"),
+    submissionFee: () => afterFirstWorker === undefined ? refused("submissionFee") : Effect.succeed({ config: reviewedSubmissionFee, refusal: undefined }),
     site: () => refused("site"),
     deployments: () => refused("deployments"),
     served: () => refused("served"),
@@ -139,7 +660,7 @@ effect function written(path: string, text: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer.provide(systemGit, NodeServices.layer)), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"; spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one")', () => scoped(effect {
+  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"; spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"; spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const { fake, token } = try seeded()
@@ -163,7 +684,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const stray = try git(root, ["commit-tree", `${initial}^{tree}`, "-m", "stray history"])
     try written(files.join(bundle, "site/index.html"), "<!doctype html><title>slop.cash</title>\n")
     try written(files.join(bundle, "site/skill-manifest.json"), "{}\n")
-    try written(files.join(bundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(bundle, "apps/app/dist/notify.js"), "export default {}\n")
     try written(files.join(bundle, "github/leaderboard.json"), "{\"records\":[]}\n")
     const snapshot = "{\"projects\":[],\"revisions\":[]}\n"
     try written(files.join(bundle, registrySnapshotPath), snapshot)
@@ -189,19 +710,19 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       SLOP_GITHUB_ENVIRONMENT: "slop-production",
     }
     const calls: string[] = []
-    effect function settled<A, E, R>(program: A!E!R) {
-      const ended = try exit(provideService(program, FetchHttpClient.Fetch, fake.fetch))
+    effect function settled<A, E, R>(program: A!E!R, fetch: GitHubFake["fetch"] = fake.fetch) {
+      const ended = try exit(provideService(program, FetchHttpClient.Fetch, fetch))
       return Exit.isSuccess(ended) ? "ok" : described(Cause.squash(ended.cause))
     }
-    effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}) {
-      return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))))
+    effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}, fetch: GitHubFake["fetch"] = fake.fetch) {
+      return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))), fetch)
     }
-    effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
+    effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle, afterFirstWorker?: void!!) {
       const run = effect {
         const facts = try runFacts()
         return try publishRelease({ environment, facts, bundle: from, receipts: receiptsPath, root, anchor })
       }
-      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
+      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls, afterFirstWorker), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
       return try exit(provideService(Effect.provide(run, services), FetchHttpClient.Fetch, fake.fetch))
     }
     effect function publishing(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
@@ -215,9 +736,29 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     }
 
     const siteless = files.join(directory, "siteless")
-    try written(files.join(siteless, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(siteless, "apps/app/dist/notify.js"), "export default {}\n")
     const withoutSite = try attempt(["manifest", "production", siteless])
     const retainedWithoutTime = try attempt(["collect", "production", bundle, "--retained"])
+    const registryOrigin = "http://127.0.0.1:8788"
+    const registryReads: string[] = []
+    const registryFetch = emptyRegistry(fake, registryOrigin, registryReads)
+    const collected = files.join(directory, "collected")
+    try written(files.join(collected, "github/leaderboard.json"), "{\"records\":[]}\n")
+    try written(files.join(collected, publishedRegistryPath), "{\"schemaVersion\":\"1\",\"syncedAt\":\"2026-01-01T00:00:00.000Z\",\"projects\":[{\"id\":\"stale\"}]}\n")
+    const registered = try attempt(["registry", "production", collected], { SLOP_API_ORIGIN: registryOrigin }, registryFetch)
+    const stalePublished = try fs.exists(files.join(collected, publishedRegistryPath))
+    const registryText = try fs.readFileString(files.join(collected, registrySnapshotPath))
+    const bound = try attempt(["collect", "production", collected], { SLOP_API_ORIGIN: registryOrigin }, registryFetch)
+    const boundCollection = try readCollection(collected)
+    const registrySnapshot = {
+      registered,
+      bound,
+      reads: registryReads,
+      unchanged: (try fs.readFileString(files.join(collected, registrySnapshotPath))) === registryText,
+      registrySha256: boundCollection.registrySha256 === (try sha256Hex(registryText)),
+      recordedAt: boundCollection.recordedAt === (try Effect.try(() => JSON.parse(registryText) as { readonly syncedAt: string })).syncedAt,
+      stalePublished,
+    }
     const manifested = try attempt(["manifest", "production", bundle])
     const verified = try attempt(["verify-bundle", bundle])
     const manifestSha256 = try sha256Hex(try fs.readFile(files.join(bundle, "release-manifest.json")))
@@ -245,11 +786,25 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const beforeCurrent = calls.splice(0)
     const current = try publishing("Production", complete)
     const currentCalls = calls.splice(0)
+    const moveBranch = orDie(Effect.try({
+      try: () => advanceBranch(origin, "main", "apps/operations/src/notice.txt"),
+      catch: (cause) => cause,
+    }))
+    const movedEnded = try published("Production", complete, {}, initial, bundle, moveBranch)
+    const movedStopped = Exit.isFailure(movedEnded) ? Cause.squash(movedEnded.cause) : undefined
+    const movedCalls = calls.splice(0)
+    const movedHead = try git(origin, ["rev-parse", "main"])
+    const movedAfterWorkers = {
+      outcome: described(movedStopped),
+      message: movedStopped instanceof ReleaseStopped ? movedStopped.message : "",
+      workersPublished: movedCalls.filter((call) => call.startsWith("publish ")).length > 1,
+      pagesCalled: movedCalls.some((call) => call === "site" || call === "deployments" || call === "served"),
+    }
 
     const stagingBundle = files.join(directory, "staging-bundle")
     try written(files.join(stagingBundle, "site/index.html"), "<!doctype html><title>staging.slop.cash</title>\n")
     try written(files.join(stagingBundle, "site/skill-manifest.json"), "{}\n")
-    try written(files.join(stagingBundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(stagingBundle, "apps/app/dist/notify.js"), "export default {}\n")
     try written(files.join(stagingBundle, "github/leaderboard.json"), "{\"records\":[]}\n")
     try written(files.join(stagingBundle, registrySnapshotPath), snapshot)
     try writeCollection(stagingBundle, {
@@ -311,6 +866,93 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
       hangNext(fake, historyPage)
     }, 3)
+    const retainedBundle = files.join(directory, "retained-bundle")
+    try written(files.join(retainedBundle, "site/index.html"), "<!doctype html><title>staging.slop.cash</title>\n")
+    try written(files.join(retainedBundle, "site/skill-manifest.json"), "{}\n")
+    try written(files.join(retainedBundle, "apps/app/dist/notify.js"), "export default {}\n")
+    try written(files.join(retainedBundle, "github/leaderboard.json"), "{\"records\":[{\"login\":\"retained\"}]}\n")
+    try written(files.join(retainedBundle, registrySnapshotPath), snapshot)
+    try writeCollection(retainedBundle, {
+      schemaVersion: 1,
+      environment: "staging",
+      kind: "retained",
+      registrySha256: try sha256Hex(snapshot),
+      githubSha256: try githubDigest(retainedBundle),
+      recordedAt: "2026-11-10T00:00:00.000Z",
+    })
+    const retainedManifested = try attempt(["manifest", "staging", retainedBundle])
+    const retainedReceipts = try receipts("retained-receipts", [...fullGates, "BrowserSmoke"], try sha256Hex(try fs.readFile(files.join(retainedBundle, "release-manifest.json"))))
+    const developmentRun: Readonly<Record<string, string>> = {
+      GITHUB_REF: "refs/heads/development",
+      GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/development`,
+      GITHUB_JOB: "staging",
+      SLOP_GITHUB_ENVIRONMENT: "slop-staging",
+      STAGING_ORDER_RETRY_UNTIL: String(Math.floor((try Clock.currentTimeMillis) / 1_000) + 120),
+    }
+    try Effect.try(() => stagedHistory(fake, repository, inOrder))
+    const retainedPush = try publishing("Staging", retainedReceipts, developmentRun, initial, retainedBundle)
+    try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: true } }))
+    const dispatched = { ...developmentRun, GITHUB_EVENT_NAME: "workflow_dispatch" }
+    const retainedCoverage = try attempt(["coverage", "staging"], dispatched)
+    try Effect.try(() => stagedHistory(fake, repository, inOrder))
+    const retainedManual = try publishing("Staging", retainedReceipts, dispatched, initial, retainedBundle)
+    const retainedManualCalls = calls.splice(0)
+    try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: true, discussion_resume_run: "41" } }))
+    const retainedWithResume = try attempt(["coverage", "staging"], dispatched)
+    try written(event, JSON.stringify({ repository: { full_name: repository } }))
+    const retained = { retainedManifested, retainedPush, retainedCoverage, retainedManual, retainedManualCalls, retainedWithResume }
+
+    const dispatchedMain: Readonly<Record<string, string>> = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_TOKEN: token }
+    const restoredRoot = files.join(directory, "restored")
+    const collectedArchive = "PK collected ledger and profiles"
+    const collectedDigest = `sha256:${try sha256Hex(collectedArchive)}`
+    const restoredAt = try Clock.currentTimeMillis
+    const hoursAgo = (hours: number) => new Date(restoredAt - hours * 3_600_000).toISOString()
+    effect function restoring(name: string, producer: StagedProducer, dataRun = String(producer.id), usePublishedData = true) {
+      try Effect.try(() => stagedProducer(fake, repository, producer))
+      try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: usePublishedData, data_from_run: dataRun } }))
+      const out = files.join(restoredRoot, name)
+      const run = effect {
+        const facts = try runFacts()
+        return try restoreCollected({ facts, dataRun, out, root, anchor: initial, token: Redacted.make(token) })
+      }
+      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...dispatchedMain })), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
+      const ended = try exit(provideService(Effect.provide(run, services), FetchHttpClient.Fetch, fake.fetch))
+      const archived = try fs.exists(files.join(out, "bundle.zip"))
+      if (Exit.isSuccess(ended)) return { dataKind: ended.value.dataKind, restoredFrom: ended.value.restoredFrom, archived }
+      const error = Cause.squash(ended.cause)
+      return { refused: error instanceof CollectedDataRefused ? error.message : described(error), archived }
+    }
+    effect function covered(environment: "Production" | "Staging", inputs: Readonly<Record<string, string | boolean>>) {
+      try written(event, JSON.stringify({ repository: { full_name: repository }, inputs }))
+      const overrides = environment === "Production" ? dispatchedMain : dispatched
+      const ended = try exit(Effect.provide(effect { return try releaseCoverage(try runFacts(), environment, true) }, ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides }))))
+      if (Exit.isSuccess(ended)) return "ok"
+      const error = Cause.squash(ended.cause)
+      return error instanceof DataOptionsRefused ? `DataOptionsRefused: ${error.message}` : described(error)
+    }
+    const producer = (id: number): StagedProducer => ({ id, sha: initial, archive: collectedArchive, digest: collectedDigest, createdAt: hoursAgo(1) })
+    try Effect.try(() => stagedProducer(fake, repository, producer(7071)))
+    try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: true, data_from_run: "7071" } }))
+    const unanchoredCommand = try attempt(["restore-collection", "7071", files.join(restoredRoot, "command"), root], dispatchedMain)
+    const commandArchived = try fs.exists(files.join(restoredRoot, "command", "bundle.zip"))
+    const restoredCollection = {
+      superseded: try restoring("superseded", producer(7001)),
+      nonAncestor: try restoring("non-ancestor", { ...producer(7011), sha: stray }),
+      failedCollection: try restoring("failed-collection", { ...producer(7021), step: "skipped" }),
+      expired: try restoring("expired", { ...producer(7031), expired: true }),
+      weekOld: try restoring("week-old", { ...producer(7041), createdAt: hoursAgo(7 * 24) }),
+      digestMismatch: try restoring("digest-mismatch", { ...producer(7051), digest: `sha256:${"0".repeat(64)}` }),
+      ownRun: try restoring("own-run", producer(7061), "41"),
+      withoutPublished: try restoring("without-published", producer(7081), "7081", false),
+      unanchoredCommand,
+      commandArchived,
+      coverageRetained: try covered("Production", { use_published_data: true, data_from_run: "7001" }),
+      coverageWithoutPublished: try covered("Production", { data_from_run: "7001" }),
+      coverageStaging: try covered("Staging", { use_published_data: true, data_from_run: "7001" }),
+    }
+    try written(event, JSON.stringify({ repository: { full_name: repository } }))
+
     const staging = {
       stagingManifested,
       stagedInOrder: stagedInOrder.step,
@@ -364,12 +1006,13 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     }
 
     try Effect.try(() => assert.deepStrictEqual({
-      withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, rotation, beforeCurrent,
-      current, currentCalls, advanced, advancedCalls, rewritten, rewrittenCalls,
+      withoutSite, retainedWithoutTime, registrySnapshot, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, rotation, beforeCurrent,
+      current, currentCalls, movedAfterWorkers, retained, restoredCollection, advanced, advancedCalls, rewritten, rewrittenCalls,
       staging, coverage,
     }, {
       withoutSite: "BundleRefused",
       retainedWithoutTime: "BundleRefused",
+      registrySnapshot: { registered: "ok", bound: "ok", reads: ["/api/v1/projects", "/api/v1/project-revisions"], unchanged: true, registrySha256: true, recordedAt: true, stalePublished: false },
       manifested: "ok",
       verified: "ok",
       pullRequest: "ReleaseRefused:configure",
@@ -383,6 +1026,30 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       beforeCurrent: [],
       current: "ReleaseStopped:PartiallyPublished",
       currentCalls: ["prepare"],
+      movedAfterWorkers: { outcome: "ReleaseStopped:PartiallyPublished", message: `Partial publication: Worker/services from ${tested} were published, but main changed to ${movedHead}. Pages was not published; this release failed and requires reconciliation.`, workersPublished: true, pagesCalled: false },
+      retained: {
+        retainedManifested: "ok",
+        retainedPush: "ReleaseRefused:retainSnapshot",
+        retainedCoverage: "ok",
+        retainedManual: "ReleaseStopped:PartiallyPublished",
+        retainedManualCalls: ["prepare"],
+        retainedWithResume: "DataOptionsRefused",
+      },
+      restoredCollection: {
+        superseded: { dataKind: "RetainedSnapshot", restoredFrom: 7001, archived: true },
+        nonAncestor: { refused: "Data producer is not a completed trusted main release", archived: false },
+        failedCollection: { refused: "Producer did not complete a fresh contribution collection", archived: false },
+        expired: { refused: "Checked bundle is expired, oversized or has unverified identity", archived: false },
+        weekOld: { refused: "Checked bundle is expired, oversized or has unverified identity", archived: false },
+        digestMismatch: { refused: "Bundle archive did not match its GitHub digest", archived: false },
+        ownRun: { refused: "Invalid collected data request", archived: false },
+        withoutPublished: { refused: "Invalid collected data request", archived: false },
+        unanchoredCommand: "ReleaseRefused:restoreCollection",
+        commandArchived: false,
+        coverageRetained: "ok",
+        coverageWithoutPublished: "DataOptionsRefused: Invalid collected data request",
+        coverageStaging: "DataOptionsRefused: Invalid collected data request",
+      },
       advanced: "ok",
       advancedCalls: [],
       rewritten: "ReleaseStopped:Refused",
@@ -410,4 +1077,192 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       coverage: { maintainerSkill: "pages=true", contributorSkill: "pages=true", readme: "pages=false" },
     }))
   }))
+  it.effect('Keep published contribution data fresh without a person watching it (spec/operations/dailyCollection.md, "Story: Keep published contribution data fresh without a person watching it"; spec/operations/dailyCollection.md, "A daily tick starts one fresh collection only when none runs"; spec/operations/dailyCollection.md, "A superseded collection is published by a retained-data release at most three times and never replaces newer data"; spec/operations/dailyCollection.md, "A failed collection with a checkpoint is resumed once, never a resume of a resume"; spec/operations/dailyCollection.md, "A follow-up acts only on a completed trusted main release, and publishes before it resumes"; spec/operations/dailyCollection.md, "Live data older than 48 hours fails the daily run"; spec/points/retainedFreshness.md, "A manual main release on retained data prepares in its own concurrency group")', () => effect {
+    const fresh = "2026-11-19T01:00:00Z"
+    const stale = "2026-11-07T12:34:00Z"
+    const fast = { skip_proofs: "true", skip_browser_tests: "true" }
+    const publishing = { ...fast, use_published_data: "true", data_from_run: "1" }
+    const superseded: Outcome = { conclusion: "success", published: false }
+    effect function daily(options: WorldOptions, args: ReadonlyArray<string>) {
+      const world = actionsWorld(options)
+      const config = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REPOSITORY: actionsRepository, GITHUB_TOKEN: "ghs_dailyCollectionFallback0000" }))
+      const ended = try exit(provideService(provideService(Effect.provide(release(["daily", ...args]), config), FetchHttpClient.Fetch, world.fetch), Clock.Clock, world.clock))
+      return { code: Exit.isSuccess(ended) ? 0 : 1, world }
+    }
+    effect function followed(run: ActionRun, shape: Shape, artifacts = checkpoint) {
+      const { code, world } = try daily({ runs: [run], jobs: { [run.id]: actionJobs(shape) }, artifacts: { [run.id]: artifacts }, live: stale }, ["follow-up", String(run.id)])
+      return { code, dispatched: world.dispatched.map((inputs) => inputs.data_from_run !== undefined ? "publish" : inputs.discussion_resume_run !== undefined ? "resume" : "fresh") }
+    }
+    const none = { code: 0, dispatched: [] }
+    const decided = {
+      publishes: try followed(actionRun(1), {}, []),
+      published: try followed(actionRun(1), { published: true }, []),
+      resumes: try followed(actionRun(1), { collect: "failure" }),
+      resumedAgain: try followed(actionRun(1), { collect: "failure", restore: "success" }),
+      noCheckpoint: try followed(actionRun(1), { collect: "failure" }, []),
+      expiredCheckpoint: try followed(actionRun(1), { collect: "failure" }, [{ name: "leaderboard-discussions-1", expired: true }]),
+      retained: try followed(actionRun(1), { collect: "skipped" }, []),
+      unknownStep: try followed(actionRun(1), { collect: null }, []),
+      pullRequest: try followed(actionRun(1, { event: "pull_request" }), {}),
+      otherBranch: try followed(actionRun(1, { head_branch: "development" }), {}),
+      fork: try followed(actionRun(1, { head_repository: { full_name: "someone/slopdotcash" } }), {}),
+      otherWorkflow: try followed(actionRun(1, { path: ".github/workflows/formal.yml" }), {}),
+      running: try followed(actionRun(1, { status: "in_progress" }), {}),
+    }
+    const started = try daily({ live: fresh }, ["start"])
+    const waited = try daily({ runs: [actionRun(5, { status: "in_progress", conclusion: null })], jobs: { 5: actionJobs({ prepare: "in_progress" }) }, prepareDoneAfter: { id: 5, reads: 3 }, live: fresh }, ["start"])
+    const collecting = try daily({ runs: [actionRun(5, { status: "in_progress", conclusion: null, event: "push" })], jobs: { 5: actionJobs({ prepare: "in_progress" }) }, live: fresh }, ["start"])
+    const queued = try daily({ runs: [actionRun(6, { status: "queued", conclusion: null })], live: fresh }, ["start"])
+    const monthly = try daily({ monthly: [actionRun(7, { status: "in_progress", path: ".github/workflows/monthly-rewards.yml" })], live: fresh }, ["start"])
+    const prepared = try daily({ runs: [actionRun(8, { status: "in_progress", conclusion: null })], jobs: { 8: actionJobs({ prepare: "completed" }) }, live: fresh }, ["start"])
+    const staleStart = try daily({ live: stale }, ["start"])
+    const unreadable = try daily({}, ["start"])
+    const retriedStart = try daily({ live: fresh, unavailableOnce: "/actions/workflows/monthly-rewards.yml/runs" }, ["start"])
+    const publishedAgain = try daily({ runs: [actionRun(1, { event: "push" })], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [superseded, { conclusion: "success", published: true }] }, ["follow-up", "1"])
+    const withoutRunId = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, returnRunId: false }, ["follow-up", "1"])
+    const threeSuperseded = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [superseded, superseded, superseded] }, ["follow-up", "1"])
+    const recovered = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [{ conclusion: "failure", published: false, afterRerun: true }] }, ["follow-up", "1"])
+    const failedTwice = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [{ conclusion: "failure", published: false, afterRerun: false }] }, ["follow-up", "1"])
+    const alreadyServed = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({ profilesAt: "2026-11-19T10:00:00Z" }) }, live: "2026-11-19T10:05:00Z" }, ["follow-up", "1"])
+    const newerMeanwhile = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, liveFrom: { read: 2, generatedAt: "2026-11-19T12:00:00Z" }, outcomes: [{ conclusion: "failure", published: false }] }, ["follow-up", "1"])
+    const resumed = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({ collect: "failure" }) }, artifacts: { 1: checkpoint } }, ["follow-up", "1"])
+    const busyResume = try daily({ runs: [actionRun(3), actionRun(4, { status: "in_progress", conclusion: null, event: "push" })], jobs: { 3: actionJobs({ collect: "failure" }), 4: actionJobs({ prepare: "in_progress" }) }, artifacts: { 3: checkpoint } }, ["follow-up", "3"])
+    const count = (ran: { readonly code: number; readonly world: World }) => ({ code: ran.code, dispatched: ran.world.dispatched.length, reruns: ran.world.reruns })
+    assert.deepStrictEqual({
+      decided,
+      started: { code: started.code, dispatched: started.world.dispatched, credentials: [...new Set(started.world.credentials)] },
+      waited: count(waited),
+      collecting: count(collecting),
+      queued: count(queued),
+      monthly: count(monthly),
+      prepared: count(prepared),
+      staleStart: count(staleStart),
+      unreadable: count(unreadable),
+      retriedStart: { ...count(retriedStart), retried: retriedStart.world.retried },
+      publishedAgain: { code: publishedAgain.code, dispatched: publishedAgain.world.dispatched },
+      withoutRunId: count(withoutRunId),
+      threeSuperseded: count(threeSuperseded),
+      recovered: count(recovered),
+      failedTwice: count(failedTwice),
+      alreadyServed: count(alreadyServed),
+      newerMeanwhile: count(newerMeanwhile),
+      resumed: { code: resumed.code, dispatched: resumed.world.dispatched },
+      busyResume: count(busyResume),
+      workflows: try Effect.try(() => collectionWorkflows()),
+    }, {
+      decided: {
+        publishes: { code: 0, dispatched: ["publish"] },
+        published: none,
+        resumes: { code: 0, dispatched: ["resume"] },
+        resumedAgain: none,
+        noCheckpoint: none,
+        expiredCheckpoint: none,
+        retained: none,
+        unknownStep: none,
+        pullRequest: none,
+        otherBranch: none,
+        fork: none,
+        otherWorkflow: none,
+        running: none,
+      },
+      started: { code: 0, dispatched: [fast], credentials: ["Bearer ghs_dailyCollectionFallback0000"] },
+      waited: { code: 0, dispatched: 1, reruns: [] },
+      collecting: { code: 0, dispatched: 0, reruns: [] },
+      queued: { code: 0, dispatched: 0, reruns: [] },
+      monthly: { code: 0, dispatched: 0, reruns: [] },
+      prepared: { code: 0, dispatched: 1, reruns: [] },
+      staleStart: { code: 1, dispatched: 1, reruns: [] },
+      unreadable: { code: 1, dispatched: 1, reruns: [] },
+      retriedStart: { code: 0, dispatched: 1, reruns: [], retried: ["/actions/workflows/monthly-rewards.yml/runs"] },
+      publishedAgain: { code: 0, dispatched: [publishing, publishing] },
+      withoutRunId: { code: 0, dispatched: 1, reruns: [] },
+      threeSuperseded: { code: 1, dispatched: 3, reruns: [] },
+      recovered: { code: 0, dispatched: 1, reruns: [900] },
+      failedTwice: { code: 1, dispatched: 1, reruns: [900] },
+      alreadyServed: { code: 0, dispatched: 0, reruns: [] },
+      newerMeanwhile: { code: 0, dispatched: 1, reruns: [] },
+      resumed: { code: 0, dispatched: [{ ...fast, discussion_resume_run: "1" }] },
+      busyResume: { code: 1, dispatched: 0, reruns: [] },
+      workflows: {
+        prepareNeedsMemo: true,
+        lanes: {
+          freshOnCollector: { runsOn: "slop-collector", group: "slop-quality-refs/heads/main-collect", timeout: "1440", deadline: "72000", reserves: false, restoresMemo: true },
+          freshHosted: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/main-collect", timeout: "360", deadline: "19200", reserves: true, restoresMemo: true },
+          retained: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/main-retained", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
+          parallel: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/main-collect-parallel", timeout: "360", deadline: "19200", reserves: true, restoresMemo: true },
+          staging: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/development-push", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
+        },
+        deadlines: {
+          hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"] },
+          slowSetupKeepsReservation: { code: 0, lines: ["timeout 18220", "collect 120820000", "sleep 60", "timeout 17460", "collect 120820000"] },
+          retryThatCannotFitFallsBack: { code: 0, lines: ["timeout 19300", "collect 119700000", "fallback https://slop.cash/data/leaderboard.json"] },
+          setupExhaustsBudget: { code: 1, lines: [] },
+          collectorRunnerWindow: { code: 0, lines: ["timeout 72100", "collect 172500000", "sleep 60", "timeout 72100", "collect 172500000"] },
+          stagingUnwrapped: { code: 0, lines: ["collect", "sleep 60", "collect"] },
+        },
+        daily: {
+          schedule: { start: true, followUp: false },
+          manualStart: { start: true, followUp: false },
+          manualFollowUp: { start: false, followUp: true },
+          completedRelease: { start: false, followUp: true },
+          forkRelease: { start: false, followUp: false },
+          pullRequestRelease: { start: false, followUp: false },
+          development: { start: false, followUp: false },
+          startCommand: ["apps/operations/dist/programs/main.js release daily start"],
+          followUpCommands: [["apps/operations/dist/programs/main.js release daily follow-up 900"], ["apps/operations/dist/programs/main.js release daily follow-up 900"]],
+        },
+      },
+    })
+  })
+
+  it.effect('Run the assessment audit, the replay and the reviewed publication only as dispatched (spec/points/assessmentAudit.md, "Story: Audit the assessments of a historical scope before owner review"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository")', () => effect {
+    const checked = "Check which protected operation was requested"
+    const audited = "Reject known production dependency vulnerabilities"
+    const snapshot = "Snapshot the current project registry for verification"
+    const gitBuild = ["Install canonical Git build dependencies", "Install canonical merge Git"]
+    const catalog = "Read and verify the complete historical assessment catalog"
+    const receipt = "Preserve the assessment audit receipt"
+    const publication = `apps/points/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+    assert.deepStrictEqual(try Effect.try(() => reviewedWorkflow()), {
+      tokenScopes: { workflow: { contents: "read" }, job: null },
+      validation: {
+        audit: true,
+        replay: true,
+        stagedReplay: true,
+        preview: true,
+        applied: true,
+        stagedAudit: false,
+        stagedPublication: false,
+        auditApplying: false,
+        auditWithPacket: false,
+        auditInvalidProject: false,
+        auditShortDigest: false,
+        publicationWithAuditScope: false,
+        publicationWithoutPacket: false,
+        unknownOperation: false,
+      },
+      lanes: {
+        replay: { group: "slop-quality-refs/heads/main-collect", timeout: "360" },
+        audit: { group: "slop-production", timeout: "90" },
+        publication: { group: "slop-production", timeout: "90" },
+        freshCollection: "slop-quality-refs/heads/main-collect",
+      },
+      steps: {
+        audit: [checked, audited, snapshot, catalog, receipt],
+        replay: [checked, audited, snapshot, ...gitBuild, "Mint the read-only collector token for replay", catalog, receipt],
+        publication: [checked, audited, snapshot, ...gitBuild, "Rebuild and verify owner-reviewed historical Points"],
+      },
+      receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2" },
+      commands: {
+        registry: [
+          "apps/operations/dist/programs/main.js release registry production /runner/slop-release",
+          "apps/points/dist/programs/main.js registry /runner/slop-release/registry/snapshot.json /runner/repository-registry.json",
+        ],
+        audit: ["apps/points/dist/programs/main.js reviewed --audit-assessments"],
+        replay: ["apps/slopbot/dist/programs/main.js reviewed-replay /runner/repository-registry.json"],
+        preview: [publication],
+        applied: [`${publication} --apply`],
+      },
+    })
+  })
 })

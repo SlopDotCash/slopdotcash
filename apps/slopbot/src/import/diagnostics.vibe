@@ -1,5 +1,12 @@
-// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"
 import { sha256Hex } from "@repo/platform/crypto"
+import type { TerminalFailure } from "../../gen/slopbot__historicalImport.ts"
+import { maxIntakeSources } from "../../gen/slopbot__historicalImport.effect.vibe"
+import { isIntakeCorrelation } from "./observation.vibe"
+
+export const intakeDiagnosticHeader = "x-slop-intake-diagnostics"
+
+export const intakeTerminalV1 = "terminal-v1"
 
 export const historicalIntakeStages = [
   "envelope",
@@ -49,13 +56,26 @@ export const historicalIntakeErrorNames = [
 
 export const historicalIntakeStatuses = [400, 401, 403, 404, 408, 409, 413, 415, 422, 429, 500, 502, 503, 504] as const
 
+export const sourceReadCategories = ["primary-rate-limit", "secondary-rate-limit", "rate-limited", "access-denied", "unclassified"] as const
+
+export const SourceReadRefusal = Schema.Struct({
+  category: Schema.Literals(sourceReadCategories),
+  remaining: Schema.NullOr(Schema.Number),
+  resetAt: Schema.NullOr(Schema.Number),
+  retryAfterSeconds: Schema.NullOr(Schema.Number),
+})
+
+export type SourceReadRefusal = typeof SourceReadRefusal.Type
+
 const githubFailures: ReadonlySet<string> = new Set(["NotFound", "GitHubRefused", "RateLimited", "GitHubUnavailable", "GitHubMalformed"])
 const stageNames: ReadonlySet<string> = new Set(historicalIntakeStages)
 const errorNames: ReadonlySet<string> = new Set(historicalIntakeErrorNames)
 const statuses: ReadonlySet<number> = new Set(historicalIntakeStatuses)
 const messageLimit = 4096
 const digestPattern = /^[a-f0-9]{64}$/u
-const sourceLimit = 10_000
+const terminalKeys = "errorName,httpStatus,messageSha256,sourceCount,sourceIndex,stage"
+const accessDenied = /^Resource not accessible by integration(?:[.\s]|$)/iu
+const secondaryLimit = /^You have exceeded a secondary rate limit(?:[.\s]|$)/iu
 
 export interface HistoricalIntakeProgress {
   readonly stage: HistoricalIntakeStage
@@ -71,9 +91,12 @@ export const HistoricalIntakeFailure = Schema.Struct({
   errorName: Schema.Literals(historicalIntakeErrorNames),
   httpStatus: Schema.NullOr(Schema.Literals(historicalIntakeStatuses)),
   messageSha256: Schema.NullOr(Schema.String),
+  sourceReadRefusal: Schema.optionalKey(SourceReadRefusal),
 })
 
 export type HistoricalIntakeFailure = typeof HistoricalIntakeFailure.Type
+
+export type HistoricalIntakeTerminalFailure = Omit<HistoricalIntakeFailure, "event" | "sourceReadRefusal">
 
 export service IntakeProgress {
   static readonly defaultValue = () => ({ observe: (_progress: HistoricalIntakeProgress) => Effect.void })
@@ -86,16 +109,71 @@ export effect function reached(stage: HistoricalIntakeStage, sourceIndex: number
 
 function positionsValid(failure: HistoricalIntakeFailure) {
   const { sourceCount, sourceIndex } = failure
-  if (sourceCount !== null && (!Number.isSafeInteger(sourceCount) || sourceCount < 1 || sourceCount > sourceLimit)) return false
+  if (sourceCount !== null && (!Number.isSafeInteger(sourceCount) || sourceCount < 1 || sourceCount > maxIntakeSources)) return false
   if (sourceIndex === null) return true
   return sourceCount !== null && Number.isSafeInteger(sourceIndex) && sourceIndex >= 0 && sourceIndex < sourceCount
+}
+
+function isCount(value: number | null) {
+  return value === null || (Number.isSafeInteger(value) && value >= 0)
+}
+
+function refusalValid(refusal: SourceReadRefusal | undefined, status: number | null) {
+  if (refusal === undefined) return true
+  if (status !== 403 && status !== 429) return false
+  if ((refusal.category === "access-denied" && status !== 403) || (refusal.category === "rate-limited" && status !== 429)) return false
+  if (refusal.category === "primary-rate-limit" && refusal.remaining !== 0) return false
+  return [refusal.remaining, refusal.resetAt, refusal.retryAfterSeconds].every(isCount)
 }
 
 export effect function projectHistoricalIntakeFailure(value: unknown) {
   const decoded = Schema.decodeUnknownEffect(HistoricalIntakeFailure)(value, { onExcessProperty: "error" }) catch () => undefined
   if (decoded === undefined || !stageNames.has(decoded.stage) || !positionsValid(decoded)) return undefined
   if (decoded.messageSha256 !== null && !digestPattern.test(decoded.messageSha256)) return undefined
+  if (!refusalValid(decoded.sourceReadRefusal, decoded.httpStatus)) return undefined
   return decoded
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+function recordOf(value: unknown): Fields | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function terminalCount(value: unknown) {
+  if (value === null) return 0
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= maxIntakeSources ? value : maxIntakeSources + 1
+}
+
+function terminalIndex(value: unknown) {
+  if (value === null) return -1
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : -2
+}
+
+export function terminalFailureFacts(value: unknown): TerminalFailure {
+  const fields = recordOf(value)
+  const status = fields?.httpStatus
+  const digest = fields?.messageSha256
+  return {
+    exactFields: fields !== undefined && Object.keys(fields).sort().join() === terminalKeys,
+    stageKnown: typeof fields?.stage === "string" && stageNames.has(fields.stage),
+    nameKnown: typeof fields?.errorName === "string" && errorNames.has(fields.errorName),
+    sourceIndex: terminalIndex(fields?.sourceIndex),
+    sourceCount: terminalCount(fields?.sourceCount),
+    statusKnown: status === null || (typeof status === "number" && statuses.has(status)),
+    digestValid: digest === null || (typeof digest === "string" && digestPattern.test(digest)),
+  }
+}
+
+export function terminalFields(value: HistoricalIntakeTerminalFailure): HistoricalIntakeTerminalFailure {
+  return {
+    stage: value.stage,
+    sourceIndex: value.sourceIndex,
+    sourceCount: value.sourceCount,
+    errorName: value.errorName,
+    httpStatus: value.httpStatus,
+    messageSha256: value.messageSha256,
+  }
 }
 
 interface ErrorFields {
@@ -104,6 +182,12 @@ interface ErrorFields {
   readonly message?: unknown
   readonly reason?: unknown
   readonly status?: unknown
+  readonly path?: unknown
+  readonly remaining?: unknown
+  readonly resetAt?: unknown
+  readonly retryAfterSeconds?: unknown
+  readonly observedResetAt?: unknown
+  readonly observedRetryAfterSeconds?: unknown
 }
 
 function fieldsOf(error: unknown): ErrorFields {
@@ -125,10 +209,36 @@ function messageOf(fields: ErrorFields) {
   return typeof fields.message === "string" ? fields.message : undefined
 }
 
+function countOrNull(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function sourceReadCategoryOf(status: 403 | 429, message: string, remaining: number | null): SourceReadRefusal["category"] {
+  if (status === 403 && accessDenied.test(message)) return "access-denied"
+  if (secondaryLimit.test(message)) return "secondary-rate-limit"
+  if (remaining === 0) return "primary-rate-limit"
+  return status === 429 ? "rate-limited" : "unclassified"
+}
+
+function sourceReadRefusalOf(fields: ErrorFields): SourceReadRefusal | undefined {
+  const refused = fields._tag === "GitHubRefused"
+  if (!refused && fields._tag !== "RateLimited") return undefined
+  const status = fields.status
+  if ((status !== 403 && status !== 429) || typeof fields.path !== "string" || !fields.path.startsWith("/repos/")) return undefined
+  const remaining = countOrNull(fields.remaining)
+  return {
+    category: sourceReadCategoryOf(status, typeof fields.message === "string" ? fields.message : "", remaining),
+    remaining,
+    resetAt: countOrNull(refused ? fields.resetAt : fields.observedResetAt),
+    retryAfterSeconds: countOrNull(refused ? fields.retryAfterSeconds : fields.observedRetryAfterSeconds),
+  }
+}
+
 export effect function historicalIntakeFailure(progress: HistoricalIntakeProgress, error: unknown) {
   const fields = fieldsOf(error)
   const message = messageOf(fields)
   const hashable = message !== undefined && message.length <= messageLimit && new TextEncoder().encode(message).length <= messageLimit
+  const refusal = sourceReadRefusalOf(fields)
   return try projectHistoricalIntakeFailure({
     event: "historical-intake-failure",
     stage: progress.stage,
@@ -137,15 +247,20 @@ export effect function historicalIntakeFailure(progress: HistoricalIntakeProgres
     errorName: errorNameOf(fields),
     httpStatus: httpStatusOf(fields),
     messageSha256: hashable ? try sha256Hex(message) : null,
+    ...(refusal === undefined ? {} : { sourceReadRefusal: refusal }),
   })
 }
 
-effect function logged(progress: HistoricalIntakeProgress, error: unknown) {
+export type RetainFailure = (failure: HistoricalIntakeFailure) => Effect.Effect<void>
+
+effect function logged(progress: HistoricalIntakeProgress, error: unknown, retain: RetainFailure | undefined) {
   const safe = try historicalIntakeFailure(progress, error)
-  if (safe !== undefined) try Effect.logError(JSON.stringify(safe))
+  if (safe === undefined) return
+  if (retain !== undefined) try retain(safe)
+  try Effect.logError(JSON.stringify(safe))
 }
 
-export effect function withHistoricalIntakeDiagnostics<A, E, R>(program: A!E!R) {
+export effect function withHistoricalIntakeDiagnostics<A, E, R>(program: A!E!R, retain?: RetainFailure) {
   const current = try Ref.make<HistoricalIntakeProgress>({ stage: "envelope", sourceIndex: null, sourceCount: null })
   const observer: IntakeProgress.Shape = { observe: (progress) => Ref.set(current, progress) }
   const observed = effect {
@@ -154,7 +269,21 @@ export effect function withHistoricalIntakeDiagnostics<A, E, R>(program: A!E!R) 
     }
   }
   return observed catch effect (error) => {
-    try exit(logged(try Ref.get(current), error))
+    try exit(logged(try Ref.get(current), error, retain))
     throw error
   }
+}
+
+export error IntakeCorrelationInvalid
+
+export type DiagnosedIntake<A> =
+  | { readonly status: 200; readonly receipt: A }
+  | { readonly status: 409; readonly correlation: string; readonly diagnostic: HistoricalIntakeTerminalFailure | null }
+
+export effect function diagnosedIntake<A, E, R>(correlation: string, program: A!E!R) {
+  if (!isIntakeCorrelation(correlation)) throw new IntakeCorrelationInvalid()
+  const retained = try Ref.make<HistoricalIntakeTerminalFailure | null>(null)
+  const receipt = Effect.map(withHistoricalIntakeDiagnostics(program, (failure) => Ref.set(retained, terminalFields(failure))), (value) => ({ value })) catch () => undefined
+  const reply: DiagnosedIntake<A> = receipt === undefined ? { status: 409, correlation, diagnostic: try Ref.get(retained) } : { status: 200, receipt: receipt.value }
+  return reply
 }

@@ -1,4 +1,4 @@
-// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/periods.md, "Story: Place every Points record in its UTC month"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
+// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/periods.md, "Story: Place every Points record in its UTC month"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
 import type { Statement } from "@repo/platform/d1"
 import type { ReadFailure } from "./backend.vibe"
 
@@ -84,9 +84,16 @@ export schema HeldWorkUnit {
   readonly unavailableNodeIds: ReadonlyArray<string>
 }
 
+export interface HistoricalClosedContext {
+  readonly standaloneReview: boolean
+  readonly digest: string
+}
+
 export interface ValueCensus {
   readonly value: ReadonlyArray<CensusOutcome>
   readonly attribution: ReadonlyArray<CensusOutcome>
+  readonly unavailableJointSources?: (ids: ReadonlyArray<string>) => ReadonlyArray<string>!ValueEvidenceRefused
+  readonly historicalClosedContexts?: ReadonlyMap<string, HistoricalClosedContext>
 }
 
 export interface SourceDecision {

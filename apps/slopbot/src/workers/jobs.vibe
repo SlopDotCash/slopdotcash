@@ -1,4 +1,5 @@
-// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
+// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
+import { isoNow } from "@repo/platform/clock"
 import { GitHubApp } from "@repo/platform/github/app"
 import { qualityHook } from "../activation/quality.vibe"
 import { applyAppealCommand } from "../appeals/commands.vibe"
@@ -10,10 +11,13 @@ import { reopenedHook } from "../closeAttempt/reopen.vibe"
 import { changedBeforeAction, changedBeforeLabel, decideFinding } from "../closure/decide.vibe"
 import { closureEligibility } from "../closure/participation.vibe"
 import { valueDisputeHooks } from "../disputes/valueHooks.vibe"
+import { feeCheckWanted } from "../fee/dispatch.vibe"
+import { feeReviewJob, refreshSubmissionFee } from "../fee/refresh.vibe"
 import { recordHold } from "../holds/record.vibe"
 import { applyMaintainerHold } from "../holds/timeline.vibe"
-import type { Job, ReviewJob } from "../jobs/job.vibe"
+import { type Job, type ReviewJob, type SubmissionFeeJob, feeJob, send } from "../jobs/job.vibe"
 import type { Handled } from "../jobs/retry.vibe"
+import { queueReadyAfterReview, refreshReadyLabel } from "../ready/refresh.vibe"
 import { type ReviewHooks, type ReviewSettings, reviewItem } from "../review/run.vibe"
 
 export service JobSettings {
@@ -43,12 +47,42 @@ effect function reviewed(job: ReviewJob, settings: ReviewSettings) {
   return try closeCandidate(decided.request)
 }
 
+effect function feeRefreshed(job: SubmissionFeeJob) {
+  const fee = try refreshSubmissionFee(job)
+  if (fee.review) try send(feeReviewJob(job, try isoNow()))
+  return fee.outcome
+}
+
+effect function feeCheckQueued(review: ReviewJob) {
+  const check = feeJob({ deliveryId: `${review.deliveryId}:fee`, installationId: review.installationId, repositoryId: review.repositoryId, owner: review.owner, repo: review.repo, number: review.number })
+  if (!(try feeCheckWanted(check, true))) return false
+  try send(check)
+  return true
+}
+
+effect function feeCheckAfterReview(review: ReviewJob) {
+  return feeCheckQueued(review) catch effect (error) => {
+    try Effect.logError("slopbot submission fee check queue failed", { delivery: review.deliveryId, failure: error._tag })
+    return false
+  }
+}
+
+effect function afterReview(job: Job) {
+  if (job.kind !== "review" || job.itemKind !== "pull_request") return
+  try queueReadyAfterReview(job)
+  try feeCheckAfterReview(job)
+}
+
 effect function handled(job: Job) {
   const { review, appeal } = try JobSettings
   const hooks = valueDisputeHooks(appeal)
   switch (job.kind) {
     case "review":
       return try reviewed(job, review)
+    case "submission_fee":
+      return try feeRefreshed(job)
+    case "ready_label":
+      return try refreshReadyLabel(job)
     case "maintainer_hold":
       return try applyMaintainerHold(job, review)
     case "appeal_command":
@@ -71,6 +105,7 @@ effect function installed(job: Job) {
 export effect function dispatchJob(job: Job) {
   const outcome = try installed(job)
   try Effect.logInfo("slopbot job outcome", { delivery: job.deliveryId, kind: job.kind, outcome })
+  try afterReview(job)
   const result: Handled = sourceChanged.has(outcome) ? "SourceChanged" : "Done"
   return result
 }

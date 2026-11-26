@@ -5,7 +5,7 @@ import { type FileRecovery, type FileRequest, fileRequestsSha256 } from "@repo/p
 import { GitHub, GitHubMalformed } from "@repo/platform/github"
 import { acceptedPatchReplay } from "../src/value/proofs/acceptedReplay.vibe"
 import { type BinaryEvidence, addedBinaryRecovery, binarySourceLimitations, recoverRetainedBinaryAtMerge, validAddedBinaryProof } from "../src/value/proofs/binary.vibe"
-import { verifiedBlob } from "../src/value/proofs/blob.vibe"
+import { unrecovered, verifiedBlob } from "../src/value/proofs/blob.vibe"
 import {
   type FileChange,
   type RetainedAtMerge,
@@ -62,6 +62,7 @@ const contentsRoute = /\/contents\//u
 const forgedSha = "1".repeat(40)
 const mergedAt = "2026-11-16T00:00:00Z"
 const changedMetadata = "Source metadata changed during collection"
+const largeText = "x\n".repeat(460_800)
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
@@ -197,6 +198,12 @@ effect function recoveredText(world: Seeded) {
     { filename: "src/helper.ts", previous_filename: "src/util.ts", status: "renamed", additions: 0, deletions: 0, blob_url: null },
   ], world.base, world.moved)
   const patches = try addedValuePatchRecovery(repository)(addedTexts.map((text, index) => addedFile(textName(index), addedLines(text).length)), world.texts)
+  const largeRef = try Effect.try(() => world.fake.world.addCommit(repository, { branch: "large-text", parents: [world.base], message: "Large text", author: "ada", files: { "large.txt": largeText } }))
+  const interned: string[] = []
+  const recoverLarge = addedValuePatchRecovery(repository, { ...unrecovered, intern: (text) => { interned.push(text); return text } })
+  const disagreeing = try recoverLarge([addedFile("large.txt", 1)], largeRef)
+  const internedBeforeAgreement = interned.length
+  const agreeing = try recoverLarge([addedFile("large.txt", addedLines(largeText).length)], largeRef)
   const cached = comparison("old\n", "new\n")
   const cachedBefore = valueAdditionCount(cached)
   Object.assign(cached.fullComparison?.after ?? {}, { text: "forged\n" })
@@ -207,6 +214,13 @@ effect function recoveredText(world: Seeded) {
     removed: removed.map((file) => [file.removedComparison?.before, fileLines(file)]),
     renames: renames.map((file) => [file.unchangedRename, file.patch]),
     patches: patches.map((file) => file.patch),
+    large: [
+      textBytes(largeText).length,
+      disagreeing[0]?.patch,
+      internedBeforeAgreement,
+      agreeing[0]?.patch === expectedAddedPatch(largeText),
+      interned.length === 1 && interned[0] === agreeing[0]?.patch,
+    ],
     myers: [
       cachedBefore,
       valueAdditionCount(cached),
@@ -317,7 +331,7 @@ effect function capturedSources(world: Seeded) {
     repository,
     repositoryNodeId: world.nodeId,
     pull: { head: { sha: world.head } },
-    files: [{ filename: "app.ts", status: "modified", additions: 0, deletions: 0, blob_url: null }],
+    files: listedFiles,
   }
   provide capture.layer {
     const pullReads = [try issueOf(pullPath)]
@@ -404,6 +418,7 @@ it.live('Omitted counts come only from hash-verified text, a truncated patch sta
         [undefined, undefined],
       ],
       patches: addedTexts.map(expectedAddedPatch),
+      large: [900 * 1024, undefined, 0, true, true],
       myers: [1, 0, [1, 1], [1, 1], [[0, 0, "NoLineSource"], [0, 0, "NoLineSource"]]],
     })
     const retainedTrees = [try treeShaOf(world.retainedMerge), try treeShaOf(world.retainedParent)]

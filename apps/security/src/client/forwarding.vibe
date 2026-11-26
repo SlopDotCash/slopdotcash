@@ -1,4 +1,4 @@
-// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"
+// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"
 import { type AnyRoute, route } from "@repo/platform/route"
 import { SubmissionView } from "./intake.vibe"
 
@@ -16,4 +16,6 @@ export const forwardingCallback = route({ method: "GET", path: "/api/v1/security
 export const sendForwarding = route({ method: "POST", path: "/api/v1/security-submissions/:id/send", access: "sessionWrite", limitKib: 256, request: undefined, answer: Forwarded, rejected: "stale_revision", cache: "private" })
 export const reconcileForwarding = route({ method: "POST", path: "/api/v1/security-submissions/:id/reconcile", access: "sessionWrite", limitKib: 256, request: undefined, answer: Forwarded, rejected: "nothing_to_reconcile", cache: "private" })
 
-export const forwardingApi: ReadonlyArray<AnyRoute> = [authorizeForwarding, forwardingCallback, sendForwarding, reconcileForwarding]
+export const verifyForwarding = route({ method: "POST", path: "/api/v1/security-submissions/:id/verify", access: "sessionWrite", limitKib: 256, request: undefined, answer: Forwarded, rejected: "action_not_allowed", cache: "private" })
+
+export const forwardingApi: ReadonlyArray<AnyRoute> = [authorizeForwarding, forwardingCallback, sendForwarding, reconcileForwarding, verifyForwarding]

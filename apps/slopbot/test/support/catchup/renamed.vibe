@@ -28,17 +28,26 @@ export effect function registeredUnderFormerPath() {
   const digest = try sha256Hex(manifest)
   const at = "2026-11-01T00:00:00.000Z"
   const statements: ReadonlyArray<Statement> = [
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('alpha', 1, ${manifest}, ${digest}, 'Created', ${at})`,
+    sql`INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES ('alpha', 1, 'Created')`,
     sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('alpha', 'active', 1, ${manifest}, ${digest}, ${at}, ${at})`,
     sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${formerPath}, 'alpha')`,
     sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${currentPath}, 'alpha')`,
-    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('alpha', 1, ${manifest}, ${digest}, 'Created', ${at})`,
-    sql`INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES ('alpha', 1, 'Created')`,
   ]
   return statements
 }
 
 export function requestedAtCurrentPath(deliveryId: string, number: number, receivedAt: string): ReadonlyArray<Statement> {
   const [owner = "", repo = ""] = currentPath.split("/")
+  return [
+    sql`INSERT INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (${deliveryId}, 'pull_request', ${receivedAt})`,
+    sql`INSERT INTO slopbot_value_requests (delivery_id, installation_id, repository_id, owner, repo, pull_request_number, received_at)
+      VALUES (${deliveryId}, ${installationId}, ${repositoryId}, ${owner}, ${repo}, ${number}, ${receivedAt})`,
+  ]
+}
+
+export function requestedAtFormerPath(deliveryId: string, number: number, receivedAt: string): ReadonlyArray<Statement> {
+  const [owner = "", repo = ""] = formerPath.split("/")
   return [
     sql`INSERT INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (${deliveryId}, 'pull_request', ${receivedAt})`,
     sql`INSERT INTO slopbot_value_requests (delivery_id, installation_id, repository_id, owner, repo, pull_request_number, received_at)
@@ -73,7 +82,7 @@ export effect function servedWithBlobUrls(world: World, sha: string) {
 }
 
 function census(world: World) {
-  return () => ({
+  return (body: Readonly<Record<string, unknown>>) => typeof body["data"] !== "object" || body["data"] === null || !("search" in body["data"]) ? body : ({
     data: {
       search: {
         issueCount: pulls.length,

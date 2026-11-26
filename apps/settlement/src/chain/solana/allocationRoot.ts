@@ -19,7 +19,7 @@ export interface AllocationTree {
   readonly root: Digest;
   readonly total: U64;
   readonly count: number;
-  proof(index: number): ReadonlyArray<AllocationNode> | undefined;
+  readonly proofs: ReadonlyArray<ReadonlyArray<AllocationNode>>;
 }
 
 export type Allocation = { readonly kind: "built"; readonly tree: AllocationTree } | { readonly kind: "refused"; readonly issue: AllocationIssue };
@@ -57,25 +57,17 @@ export function solanaAllocationRoot(entries: ReadonlyArray<MonthlyEntry>): Allo
     levels.push(next);
   }
   const top = levels[levels.length - 1][0];
-  return {
-    kind: "built",
-    tree: {
-      root: top.hash,
-      total: top.total,
-      count: entries.length,
-      proof(index) {
-        if (!Number.isSafeInteger(index) || index < 0 || index >= entries.length) return undefined;
-        const siblings: AllocationNode[] = [];
-        let at = index;
-        for (const level of levels.slice(0, -1)) {
-          const sibling = level[at % 2 === 1 ? at - 1 : at + 1];
-          if (sibling !== undefined) siblings.push(sibling);
-          at = Math.floor(at / 2);
-        }
-        return siblings;
-      },
-    },
+  const proof = (index: number) => {
+    const siblings: AllocationNode[] = [];
+    let at = index;
+    for (const level of levels.slice(0, -1)) {
+      const sibling = level[at % 2 === 1 ? at - 1 : at + 1];
+      if (sibling !== undefined) siblings.push(sibling);
+      at = Math.floor(at / 2);
+    }
+    return siblings;
   };
+  return { kind: "built", tree: { root: top.hash, total: top.total, count: entries.length, proofs: entries.map((_, index) => proof(index)) } };
 }
 
 /** @throws {never} */

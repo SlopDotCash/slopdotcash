@@ -1,20 +1,22 @@
 // spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
 import { EvmRpc } from "@repo/platform/chain/evm"
-import { type Fee, type Holding, type VaultClaim, canClaim, leaseHeld, nonceFloor, openRows, solanaSequence, vaultOf, wallet } from "../../gen/fees__conversion.effect.vibe"
+import { type Fee, type Holding, type VaultClaim, canClaim, holding, leaseHeld, nonceFloor, openRows, solanaSequence, vaultOf, wallet } from "../../gen/fees__conversion.effect.vibe"
 import { type Mode, buybackSigns, converts, networkSigns } from "../../gen/fees__runtime.effect.vibe"
-import { ConversionChain, chainFailure, detailOf, wideNumber } from "../conversion/chain.vibe"
+import { ConversionChain, chainFailure, detailOf, safeNumber, wideNumber } from "../conversion/chain.vibe"
 import type { Claims } from "../conversion/run.vibe"
 import { type Session, renewed, step } from "../conversion/session.vibe"
 import type { Facts } from "../journal/store.vibe"
 import { type JupiterSettings, jupiterQuote } from "../jupiter/quote.vibe"
+import { providerErrorLog, rpcProviderOf } from "../kernels/providerFailure.ts"
 import type { KyberSettings } from "../kyber/route.vibe"
 import type { VaultFact } from "../runtime/reviewed.vibe"
 import { FeeWallet, type Prepared, type Signed, signedFacts } from "../signer/feeWallet.vibe"
 import type { EvmNetwork, FeeIntent } from "../signer/intents.ts"
 import { solanaSignedFacts } from "../signer/solana.vibe"
-import { ClaimRefused, evmVault, failureText } from "./evm.vibe"
+import { type FinalizedAccrual, evmFinalizedAccrual, observeAccrual, solanaFinalizedAccrual } from "./accrual.vibe"
+import { ClaimRefused, evmVault, failureText, roleRefusal } from "./evm.vibe"
 import { type SolanaClaimPlan, solanaVault } from "./solana.vibe"
-import { type Admission, admission, evmClaimCost, evmClaimValue } from "./value.vibe"
+import { type Admission, admission, evmClaimCost, evmClaimValue, valueAdmission } from "./value.vibe"
 
 export interface EvmClaimSettings { readonly vaults: ReadonlyArray<VaultFact>; readonly kyber: KyberSettings }
 
@@ -25,9 +27,10 @@ interface Planned {
   readonly amount: bigint
   readonly value: bigint
   readonly cost: bigint | undefined
+  readonly roleFree: boolean
 }
 
-type Planning = Planned | { readonly skipped: string } | undefined
+type Planning = Planned | { readonly skipped: string; readonly amount: bigint } | undefined
 
 const runConditions: ReadonlyArray<readonly [(state: Fee, runId: number) => boolean, string]> = [
   [(state, runId) => leaseHeld(state, runId), "the fee lease is not held"],
@@ -54,7 +57,7 @@ function smaller(left: bigint, right: bigint) {
   return left < right ? left : right
 }
 
-function candidateOf(state: Fee, holding: Holding, amount: bigint): VaultClaim {
+function candidateOf(state: Fee, holding: Holding, amount: bigint, roleFree: boolean): VaultClaim {
   const solana = state.network === "Solana"
   return {
     vault: holding.vault,
@@ -68,11 +71,13 @@ function candidateOf(state: Fee, holding: Holding, amount: bigint): VaultClaim {
     gasLimit: 1,
     fees: { maxFee: 1, priority: 0 },
     blockhashSlot: solana ? 1 : 0,
+    roleFree,
+    pricedFeeMicro: 0,
   }
 }
 
 function claimOf(base: VaultClaim, admitted: Extract<Admission, { kind: "admitted" }>, prepared: Prepared, tx: number): VaultClaim {
-  const fitted = { ...base, valueMicro: admitted.valueMicro, gasValue: admitted.gasValue, tx }
+  const fitted = { ...base, valueMicro: admitted.valueMicro, gasValue: admitted.gasValue, tx, pricedFeeMicro: safeNumber(prepared.pricedFeeMicro) ?? -1 }
   if (prepared.family === "solana") return { ...fitted, gasLimit: 1, fees: { maxFee: prepared.maximumUnits, priority: 0 }, blockhashSlot: prepared.blockhashSlot }
   return { ...fitted, nonce: prepared.nonce, gasLimit: prepared.gasLimit, fees: prepared.feeUnits, blockhashSlot: 0 }
 }
@@ -86,25 +91,31 @@ effect function evmPlan(session: Session, holding: Holding, fact: VaultFact, set
   const head = try (try EvmRpc).head("latest")
   const current = try evmVault(fact, head.number)
   if (current === undefined) return undefined satisfies Planning
+  if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
   const amount = smaller(wideNumber(holding.accrued), current.accrued)
   if (amount === 0n) return undefined satisfies Planning
   const valued = try evmClaimValue(network, fact.token, amount, settings.kyber)
-  if (valued.kind === "skipped") return { skipped: valued.reason } satisfies Planning
+  if (valued.kind === "skipped") return { skipped: valued.reason, amount } satisfies Planning
+  const floor = valueAdmission(session.state, candidateOf(session.state, holding, amount, current.roleFree), valued.valueMicro)
+  if (floor.kind === "skipped") return { skipped: floor.reason, amount } satisfies Planning
   const cost = try evmClaimCost(network, current.vault, settings.kyber)
   const intent: FeeIntent = { kind: "EvmClaimFees", network, nonceFloor: wideNumber(nonceFloor(session.state)), valueMicro: valued.valueMicro, vault: current.vault }
-  return { intent, amount, value: valued.valueMicro, cost } satisfies Planning
+  return { intent, amount, value: valued.valueMicro, cost, roleFree: current.roleFree } satisfies Planning
 }
 
-effect function solanaPlan(holding: Holding, fact: VaultFact, settings: SolanaClaimSettings) {
+effect function solanaPlan(session: Session, holding: Holding, fact: VaultFact, settings: SolanaClaimSettings) {
   const current = try solanaVault(fact, "finalized")
   if (current === undefined) return undefined satisfies Planning
+  if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
   const amount = smaller(wideNumber(holding.accrued), current.accrued)
   if (amount === 0n) return undefined satisfies Planning
   const value = current.deployment.mint === settings.jupiter.usdc ? amount : (try jupiterQuote(settings.jupiter, current.deployment.mint, amount, 0)).outAmount
+  const floor = valueAdmission(session.state, candidateOf(session.state, holding, amount, current.roleFree), value)
+  if (floor.kind === "skipped") return { skipped: floor.reason, amount } satisfies Planning
   const { program, project, vault, mint } = current.deployment
   const plan: SolanaClaimPlan = { program, project, vault, mint, amount, valueMicro: value }
   const intent: FeeIntent = { kind: "SolanaClaim", network: "Solana", ...plan }
-  return { intent, amount, value, cost: settings.jupiter.feeMicro } satisfies Planning
+  return { intent, amount, value, cost: settings.jupiter.feeMicro, roleFree: current.roleFree } satisfies Planning
 }
 
 effect function reserved(session: Session, base: VaultClaim, admitted: Extract<Admission, { kind: "admitted" }>, prepared: Prepared) {
@@ -126,7 +137,7 @@ effect function journaled(session: Session, base: VaultClaim, admitted: Extract<
 
 effect function submitted(session: Session, mode: Mode, holding: Holding, fact: VaultFact, planned: Planned) {
   const network = session.state.network
-  const base = candidateOf(session.state, holding, planned.amount)
+  const base = candidateOf(session.state, holding, planned.amount, planned.roleFree)
   const verdict = admission(session.state, base, planned.value, planned.cost)
   const amount = planned.amount.toString()
   if (verdict.kind === "skipped") {
@@ -147,31 +158,34 @@ effect function submitted(session: Session, mode: Mode, holding: Holding, fact: 
   return 1
 }
 
-effect function oneVault<E, R>(session: Session, mode: Mode, holding: Holding, fact: VaultFact, plan: (holding: Holding, fact: VaultFact) => Planning!E!R) {
-  const planned = try plan(holding, fact)
+type Accrual<E, R> = (fact: VaultFact) => (FinalizedAccrual | undefined)!E!R
+
+type Plan<E, R> = (holding: Holding, fact: VaultFact) => Planning!E!R
+
+effect function oneVault<E, R, F, S>(session: Session, mode: Mode, fact: VaultFact, accrual: Accrual<F, S>, plan: Plan<E, R>) {
+  if (!(try observeAccrual(session, fact, accrual))) return 0
+  const held = holding(session.state, vaultOf(session.state, session.names.number("vault", fact.vault)).token)
+  if (held.accrued <= 0 || openRows(session.state, held.token) > 0) return 0
+  const planned = try plan(held, fact)
   if (planned === undefined) return 0
   if ("skipped" in planned) {
-    try Effect.logInfo("fee_claim_skipped", { network: session.state.network, vault: fact.vault, amount: String(holding.accrued), reason: planned.skipped })
+    try Effect.logInfo("fee_claim_skipped", { network: session.state.network, vault: fact.vault, amount: planned.amount.toString(), reason: planned.skipped })
     return 0
   }
-  return try submitted(session, mode, holding, fact, planned)
+  return try submitted(session, mode, held, fact, planned)
 }
 
-effect function claimed<E, R>(session: Session, mode: Mode, vaults: ReadonlyArray<VaultFact>, plan: (holding: Holding, fact: VaultFact) => Planning!E!R) {
+effect function claimed<E, R, F, S>(session: Session, mode: Mode, vaults: ReadonlyArray<VaultFact>, accrual: Accrual<F, S>, plan: Plan<E, R>) {
   const blocked = blockedRun(session, mode)
   if (blocked !== undefined) {
     try Effect.logInfo("fee_claim_skipped", { network: session.state.network, reason: blocked })
     return 0
   }
   let count = 0
-  for (const holding of session.state.holdings) {
-    if (holding.vault === 0 || holding.accrued <= 0 || openRows(session.state, holding.token) > 0) continue
+  for (const fact of vaults) {
     if (!(try renewed(session, false))) break
-    const text = session.names.text("vault", holding.vault)
-    const fact = vaults.find((entry) => entry.vault === text)
-    if (fact === undefined) continue
-    const moved = oneVault(session, mode, holding, fact, plan) catch effect (error) => {
-      try Effect.logWarning("fee_claim_error", { network: session.state.network, vault: fact.vault, error: failureText(error) })
+    const moved = oneVault(session, mode, fact, accrual, plan) catch effect (error) => {
+      try Effect.logWarning("fee_claim_error", { network: session.state.network, vault: fact.vault, ...providerErrorLog(error, rpcProviderOf(session.state.network), failureText(error)) })
       return 0
     }
     count += moved
@@ -180,11 +194,11 @@ effect function claimed<E, R>(session: Session, mode: Mode, vaults: ReadonlyArra
 }
 
 export function evmVaultClaims(settings: EvmClaimSettings) {
-  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, (holding, fact) => evmPlan(session, holding, fact, settings))
+  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, evmFinalizedAccrual, (held, fact) => evmPlan(session, held, fact, settings))
 }
 
 export function solanaVaultClaims(settings: SolanaClaimSettings) {
-  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, (holding, fact) => solanaPlan(holding, fact, settings))
+  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, solanaFinalizedAccrual, (held, fact) => solanaPlan(session, held, fact, settings))
 }
 
 export effect function claimsIn<E, R>(hook: (session: Session, mode: Mode) => number!E!R) {

@@ -1,4 +1,6 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"
+import { maxCap, minCap } from "../../../gen/backend__intakeCap.ts";
+import { honorSystemValid, maxShareBasisPoints } from "../../../gen/backend__projects.ts";
 import { githubUserIdFromNodeId } from "../nodeId.ts";
 import { legacyHolder } from "../store/legacy.ts";
 import { readyLabelProblem } from "./readyLabel.ts";
@@ -614,6 +616,25 @@ function validateReviewBudget(value: unknown, field: string, poolPaymentMode: un
   if (BigInt(monthlyCapMinor) <= 0n || !effectiveAt.endsWith("-01T00:00:00.000Z") || budget.unusedFunds !== "rollover-without-cap-increase" || !fundingConsistent || (budget.paymentMode === "enabled" && poolPaymentMode !== "enabled") || budget.monthlyCapDisplay !== formatMonthlyCapDisplay(monthlyCapMinor)) fail(`${field} review budget policy is inconsistent`);
 }
 
+function shareBasisPoints(value: unknown, minimum: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maxShareBasisPoints;
+}
+
+function validateMaintainerShare(reward: Json, field: string): void {
+  const hasShare = Object.hasOwn(reward, "maintainerShare");
+  const hasHistory = Object.hasOwn(reward, "maintainerShareHistory");
+  if ((hasShare || hasHistory) && reward.kind !== "monthly-pool") fail(`${field}.maintainerShare applies to a monthly pool only`);
+  if (hasShare && !shareBasisPoints(reward.maintainerShare, 1)) fail(`${field}.maintainerShare must be whole basis points from 1 to ${maxShareBasisPoints}, or omitted`);
+  if (!hasHistory) return;
+  const history = reward.maintainerShareHistory;
+  if (!Array.isArray(history) || history.length === 0) fail(`${field}.maintainerShareHistory must be a nonempty array`);
+  let previous = "";
+  for (const entry of history) {
+    if (!isRecord(entry) || Object.keys(entry).sort().join() !== "basisPoints,throughCycle" || typeof entry.throughCycle !== "string" || !cyclePattern.test(entry.throughCycle) || entry.throughCycle <= previous || !shareBasisPoints(entry.basisPoints, 0)) fail(`${field}.maintainerShareHistory must list basisPoints and throughCycle in chronological UTC months`);
+    previous = entry.throughCycle;
+  }
+}
+
 interface RewardOptions {
   readonly allowLegacyExternalPrizeFee: boolean;
   readonly escrow: Json | undefined;
@@ -622,7 +643,7 @@ interface RewardOptions {
 
 function validateReward(value: unknown, field: string, { allowLegacyExternalPrizeFee, escrow, rewardAsset }: RewardOptions): Json {
   const reward = record(value, field);
-  const optional = ["externalOpportunity", "externalEvaluations", "cycleCaps", "honorSystem", "payoutExclusions", "reviewBudget"].filter((key) => Object.hasOwn(reward, key));
+  const optional = ["externalOpportunity", "externalEvaluations", "cycleCaps", "honorSystem", "maintainerShare", "maintainerShareHistory", "payoutExclusions", "reviewBudget"].filter((key) => Object.hasOwn(reward, key));
   exactKeys(reward, ["chain", "committedMinor", "currency", "cycle", "feeBasisPoints", "fundingState", "kind", "monthlyCapDisplay", "monthlyCapMinor", "paymentMode", "rewardStartAt", "unusedFunds", ...optional], field);
   if (Object.hasOwn(reward, "payoutExclusions")) validatePayoutExclusions(reward.payoutExclusions, `${field}.payoutExclusions`);
   if (Object.hasOwn(reward, "externalEvaluations")) {
@@ -632,7 +653,8 @@ function validateReward(value: unknown, field: string, { allowLegacyExternalPriz
   }
   const monthlyCapMinor = minor(reward.monthlyCapMinor, `${field}.monthlyCapMinor`);
   const committedMinor = minor(reward.committedMinor, `${field}.committedMinor`);
-  if (Object.hasOwn(reward, "honorSystem") && (reward.honorSystem !== true || reward.kind !== "monthly-pool" || BigInt(monthlyCapMinor) === 0n)) fail(`${field}.honorSystem must be true on a positive monthly pool, or omitted`);
+  if (Object.hasOwn(reward, "honorSystem") && !honorSystemValid({ monthlyPool: reward.kind === "monthly-pool", monthlyAmount: BigInt(monthlyCapMinor) > 0n ? 1 : 0, honor: reward.honorSystem === true ? "HonorTrue" : "HonorFalse", share: shareBasisPoints(reward.maintainerShare, 1) ? reward.maintainerShare : 0 })) fail(`${field}.honorSystem must be true on a positive monthly pool, or omitted`);
+  validateMaintainerShare(reward, field);
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") fail(`${field}.paymentMode is invalid`);
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
@@ -714,7 +736,43 @@ interface DefinitionOptions {
 }
 
 const projectKeys = ["authority", "description", "eyebrow", "funding", "headline", "id", "links", "listingTier", "modelPolicy", "name", "repositories", "reviewSkill", "reward", "schemaVersion", "skill", "slug", "status", "steward", "terms"];
-const optionalProjectKeys = ["image", "escrow", "participation", "rewardAsset", "contribution", "securityBounty", "slopbot"];
+const optionalProjectKeys = ["image", "escrow", "participation", "rewardAsset", "contribution", "security", "securityBounty", "slopbot"];
+
+const slopbotSettings = ["intakeCap", "readyLabel", "submissionFee", "wantedIssues"] as const;
+const submissionFeeMinor = /^[1-9][0-9]{0,15}$/u;
+const submissionFeeMinMinor = 1_000_000n;
+const submissionFeeMaxMinor = 10_000_000n;
+
+function validateSubmissionFee(value: unknown, field: string): void {
+  const fee = record(value, field);
+  const keys = Object.keys(fee).sort().join(",");
+  if (keys !== "enabled" && keys !== "amountMinor,enabled") fail(`${field} has unexpected or missing fields`);
+  if (typeof fee.enabled !== "boolean") fail(`${field}.enabled must be a boolean`);
+  if (fee.amountMinor !== undefined && (typeof fee.amountMinor !== "string" || !submissionFeeMinor.test(fee.amountMinor) || BigInt(fee.amountMinor) < submissionFeeMinMinor || BigInt(fee.amountMinor) > submissionFeeMaxMinor)) fail(`${field}.amountMinor must be a base-unit amount from ${submissionFeeMinMinor} to ${submissionFeeMaxMinor}`);
+}
+
+function validateSlopbot(value: unknown): void {
+  const field = "project.slopbot";
+  const slopbot = record(value, field);
+  const settings = slopbotSettings.filter((key) => slopbot[key] !== undefined);
+  const consent = slopbot.automaticClosure === undefined ? [] : ["automaticClosure"];
+  if (consent.length + settings.length === 0) fail(`${field} has unexpected or missing fields`);
+  exactKeys(slopbot, [...consent, ...settings], field);
+  if (slopbot.automaticClosure !== undefined && typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
+  const readyLabel = slopbot.readyLabel === undefined ? undefined : readyLabelProblem(slopbot.readyLabel, `${field}.readyLabel`);
+  if (readyLabel !== undefined) fail(readyLabel);
+  const { intakeCap } = slopbot;
+  if (intakeCap !== undefined && (typeof intakeCap !== "number" || !Number.isSafeInteger(intakeCap) || intakeCap < minCap || intakeCap > maxCap)) fail(`${field}.intakeCap must be a whole number from ${minCap} to ${maxCap}`);
+  if (slopbot.submissionFee !== undefined) validateSubmissionFee(slopbot.submissionFee, `${field}.submissionFee`);
+  if (slopbot.wantedIssues !== undefined && typeof slopbot.wantedIssues !== "boolean") fail(`${field}.wantedIssues must be a boolean`);
+}
+
+function validateSecurity(value: unknown): void {
+  const field = "project.security";
+  const security = record(value, field);
+  exactKeys(security, security.reportDeposit === undefined ? [] : ["reportDeposit"], field);
+  if (security.reportDeposit !== undefined && typeof security.reportDeposit !== "boolean") fail(`${field}.reportDeposit must be a boolean`);
+}
 
 function assertTrusted(project: Json, trusted: Trusted): void {
   if (project.escrow !== undefined && canonical(project.escrow) !== canonical(trusted.escrow)) fail("project.escrow changes only through vault setup, which records verified deployments");
@@ -741,14 +799,8 @@ function validateProjectDefinition(value: unknown, { trusted, historical }: Defi
   text(project.headline, "project.headline", { max: 120, min: 8 });
   text(project.description, "project.description", { max: 600, min: 24 });
   if (project.contribution !== undefined) validateContribution(project.contribution);
-  if (project.slopbot !== undefined) {
-    const slopbot = record(project.slopbot, "project.slopbot");
-    const consentKey = slopbot.readyLabel === undefined || Object.hasOwn(slopbot, "automaticClosure") ? ["automaticClosure"] : [];
-    exactKeys(slopbot, slopbot.readyLabel === undefined ? consentKey : [...consentKey, "readyLabel"], "project.slopbot");
-    if (consentKey.length > 0 && typeof slopbot.automaticClosure !== "boolean") fail("project.slopbot.automaticClosure must be a boolean");
-    const readyLabel = slopbot.readyLabel === undefined ? undefined : readyLabelProblem(slopbot.readyLabel, "project.slopbot.readyLabel");
-    if (readyLabel !== undefined) fail(readyLabel);
-  }
+  if (project.slopbot !== undefined) validateSlopbot(project.slopbot);
+  if (project.security !== undefined) validateSecurity(project.security);
   if (!legacyListing && project.listingTier !== "featured" && project.listingTier !== "community" && project.listingTier !== "retired") fail("project.listingTier is invalid");
   if (project.status !== "active" && project.status !== "paused") fail("project.status is invalid");
   if (project.listingTier === "retired" && project.status !== "paused") fail("retired projects must stay paused");
@@ -819,6 +871,11 @@ function ownSections(value: unknown): Trusted {
 /** @throws {never} */
 export function definitionProblem(value: unknown, trusted: Trusted): string | undefined {
   return problemOf(() => validateProjectDefinition(value, { trusted, historical: false }));
+}
+
+/** @throws {never} */
+export function historicalDefinitionProblem(value: unknown, trusted: Trusted): string | undefined {
+  return problemOf(() => validateProjectDefinition(value, { trusted, historical: true }));
 }
 
 function strictStored(value: unknown): Json {
@@ -909,12 +966,62 @@ function bindingTerms(terms: Json): string {
   });
 }
 
-function assertPolicyTransition(previousValue: unknown, nextValue: unknown): void {
+const evmImplementationReviewKeys = ["authority", "vaultImplementation", "vaultImplementationCodeSha256", "factoryImplementation", "factoryImplementationCodeSha256"];
+const offChainDeploymentKeys = ["maxNativeCostWei", "bindingConsentNonceLimit"];
+
+function implementationReview(review: unknown): string {
+  const fields = isRecord(review) ? review : {};
+  return JSON.stringify(evmImplementationReviewKeys.map((key) => String(fields[key] ?? "").toLowerCase()));
+}
+
+function assertEvmUpgradeHistory(previous: Json, next: Json): void {
+  const before = list(previous.history);
+  const after = list(next.history);
+  const changed = implementationReview(previous) !== implementationReview(next);
+  if (after.length !== before.length + (changed ? 1 : 0) || before.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(after[index])) || (changed && implementationReview(after[before.length]) !== implementationReview(previous))) fail("Reviewed EVM upgrade history must append the outgoing implementation");
+}
+
+function deploymentKeyChanged(deployment: Json, successor: Json, key: string): boolean {
+  if (offChainDeploymentKeys.includes(key)) return false;
+  if (isRecord(deployment.evmUpgrade) && isRecord(successor.evmUpgrade) && ["evmUpgrade", "sourceCommit", "deploymentTransaction"].includes(key)) return false;
+  if (Boolean(deployment.programId) && deployment.upgradeAuthority !== null && ["codeSha256", "upgradeAuthority", "sourceCommit", "deploymentTransaction"].includes(key)) return false;
+  return key === "evmUpgrade" ? JSON.stringify(deployment[key]) !== JSON.stringify(successor[key]) : deployment[key] !== successor[key];
+}
+
+function assertEscrowTransition(previousValue: unknown, nextValue: unknown, allowUnfundedChange: boolean): void {
+  const previous = isRecord(previousValue) ? previousValue : undefined;
+  const next = isRecord(nextValue) ? nextValue : undefined;
+  const before = list(previous?.deployments).filter(isRecord);
+  for (const deployment of list(next?.deployments).filter(isRecord))
+    if (isRecord(deployment.evmUpgrade) && deployment.evmUpgrade.history !== undefined && !before.some((candidate) => candidate.network === deployment.network)) fail("A new escrow deployment cannot carry reviewed EVM upgrade history");
+  if (previous === undefined) return;
+  if (next === undefined || ((!allowUnfundedChange || before.length > 0) && (previous.chain !== next.chain || previous.effectiveCycle !== next.effectiveCycle)) || previous.feeMode !== next.feeMode || previous.feeBasisPoints !== next.feeBasisPoints || previous.withdrawalFeeBasisPoints !== next.withdrawalFeeBasisPoints) fail("An escrow project's settlement chain and fee policy cannot change");
+  const after = list(next.deployments).filter(isRecord);
+  for (const deployment of before) {
+    const successor = after.find((candidate) => candidate.network === deployment.network);
+    if (successor === undefined || isRecord(deployment.evmUpgrade) !== isRecord(successor.evmUpgrade) || Object.keys(deployment).some((key) => deploymentKeyChanged(deployment, successor, key))) fail("Historical escrow deployments are immutable");
+    if (isRecord(deployment.evmUpgrade) && isRecord(successor.evmUpgrade)) assertEvmUpgradeHistory(deployment.evmUpgrade, successor.evmUpgrade);
+  }
+}
+
+function assertSecurityBountyTransition(previousValue: unknown, nextValue: unknown): void {
+  const previous = isRecord(previousValue) ? previousValue : undefined;
+  const next = isRecord(nextValue) ? nextValue : undefined;
+  const settlement = isRecord(previous?.settlement) ? previous.settlement : undefined;
+  if (!(settlement !== undefined && list(settlement.deployments).length === 0 && next?.settlement === undefined)) assertEscrowTransition(settlement, next?.settlement, false);
+  if (previous !== undefined && next === undefined) fail("a security bounty program cannot be removed; close it instead");
+}
+
+function assertPolicyTransition(previousValue: unknown, nextValue: unknown, trusted: Trusted): void {
   const previous = validateProjectDefinition(previousValue, { trusted: ownSections(previousValue), historical: true });
-  const next = validateProjectDefinition(nextValue, { trusted: ownSections(previousValue), historical: false });
+  const next = validateProjectDefinition(nextValue, { trusted, historical: false });
   if (previous.id !== next.id) fail("project id cannot change");
   const previousFunding = record(previous.funding, "project.funding");
   const nextFunding = record(next.funding, "project.funding");
+  const previousReward = record(previous.reward, "project.reward");
+  const unfundedMonthly = previousReward.kind === "monthly-pool" && previousReward.fundingState !== "committed" && BigInt(String(previousReward.committedMinor)) === 0n && previousReward.paymentMode !== "enabled" && list(isRecord(previous.escrow) ? previous.escrow.deployments : undefined).length === 0 && list(previousFunding.addresses).length === 0 && list(previousFunding.commitments).length === 0;
+  assertEscrowTransition(previous.escrow, next.escrow, unfundedMonthly);
+  assertSecurityBountyTransition(previous.securityBounty, next.securityBounty);
   assertFundingRouteTransition(list(previousFunding.addresses).filter(isRecord), list(nextFunding.addresses).filter(isRecord));
   const previousAuthority = record(previous.authority, "project.authority");
   const nextAuthority = record(next.authority, "project.authority");
@@ -966,9 +1073,9 @@ function assertPayoutExclusionTransition(previous: unknown, next: unknown, nowIs
 }
 
 /** @throws {never} */
-export function transitionProblem(previous: unknown, next: unknown, nowIso: string): string | undefined {
+export function transitionProblem(previous: unknown, next: unknown, nowIso: string, trusted: Trusted = ownSections(previous)): string | undefined {
   return problemOf(() => {
-    assertPolicyTransition(previous, next);
+    assertPolicyTransition(previous, next, trusted);
     assertPayoutExclusionTransition(previous, next, nowIso);
   });
 }

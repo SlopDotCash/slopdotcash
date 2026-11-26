@@ -1,11 +1,12 @@
 // spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
 import { type AllocationChange, type MonthlyOwnerView, monthlyAllocations, monthlyFinalize, monthlySettings, monthlyView } from "@repo/settlement/client"
 import { cutoffAt, parsePeriod } from "@repo/settlement/kernels/calendar"
-import { type ChainResult, type Event, type Flow, Machine, type MonthView, type Notice, type OwnerMonthly, type SaveResult, type Target, adapter, canCheck, canConfirmUnsent, canEditDraft, canEnterCandidate, canFinalize, canFinalizeReply, canFundsReply, canObserveApproval, canObserveClock, canObserveMonth, canOpenFunds, canRecheckAuthority, canReview, canSave, canSaveReply, canSend, canSignIn, canSignOut, canWalletReply, clock, flowOf, initial, machineOver, server, withFlow } from "../../../gen/frontend__ownerMonthly.effect.vibe"
+import { type ChainResult, type Event, type Flow, Machine, type MonthView, type Notice, type OwnerMonthly, type SaveResult, type Target, adapter, canCheck, canConfirmUnsent, canEditDraft, canEnterCandidate, canFinalize, canFinalizeReply, canFundsReply, canObserveApproval, canObserveClock, canObserveMonth, canOpenFunds, canRecheckAuthority, canReview, canSave, canSaveReply, canSend, canSignIn, canSignOut, canWalletReply, clock, flowOf, initial, machineOver, resumed, server, withFlow } from "../../../gen/frontend__ownerMonthly.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { type CallFailure, call } from "../../platform/api.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { SlotStorage } from "../core/slots.ts"
+import { readText, slotOfText } from "./flowSlots.ts"
 import { type OwnerPlan, planOf, planText } from "./ownerPlans.schema.ts"
 import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage } from "./slotKeeper.vibe"
 
@@ -29,6 +30,11 @@ export interface MonthRead {
 
 export error MonthlyRefused { notice: Notice; message: string }
 export error MonthlyUncertain { message: string }
+export error HashNotKept { hash: string; storage: boolean; message: string }
+
+export function notKeptMessage(hash: string, storage: boolean): string {
+  return storage ? `Submitted ${hash}. Keep this hash; browser storage could not save it.` : `Submitted ${hash}. Keep this hash; the saved request changed.`
+}
 
 export const monthlyMessages = {
   signIn: "Sign in as a project owner or repository administrator first.",
@@ -52,6 +58,7 @@ const noticeMessages: Readonly<Record<Notice, string>> = {
   Finalized: "This month is finalized. Its allocations can no longer change.",
   StorageBlocked: storageBlockedMessage,
   Occupied: "A saved request is waiting for recovery. Check wallet activity before another attempt.",
+  NoticeWindow: "A cut's 24-hour notice ends after this month's cutoff. Turn automatic finalization on once the notice ends, or finalize the month yourself then.",
 }
 
 export function monthlyNotice(notice: Notice): string {
@@ -83,7 +90,7 @@ function cutoffOf(view: MonthlyOwnerView): number {
 }
 
 export function monthOf(view: MonthlyOwnerView): MonthView {
-  return { sequence: view.proposal?.allocationSequence ?? 0, automatic: view.automatic, cutoffAt: cutoffOf(view), latestCutAt: seconds(view.proposal?.latestCutAt ?? null), frozen: view.run !== null }
+  return { sequence: view.proposal?.allocationSequence ?? 0, automatic: view.automatic, cutoffAt: cutoffOf(view), latestCutAt: seconds(view.proposal?.latestCutAt ?? null), frozen: view.run !== null, fixed: view.proposal?.earlyCloseAt !== undefined }
 }
 
 export function saveResultOf(failure: CallFailure): SaveResult {
@@ -101,27 +108,34 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
   const held = try Ref.make<OwnerMonthly>(initial)
   const keeper: SlotKeeper<"commitment" | "setting" | "release"> = slotKeeper(storage, keys)
   let actor = ""
+  let signingIn = 0
 
   effect function load() {
     let state = try Ref.get(held)
     for (const target of targets) {
       const flow = flowOf(state, target)
-      if (live(flow)) continue
-      const read = keeper.read(slotTarget(target))
-      const found = read.kind === "owned" ? { slot: read.slot.attempt, slotOwner: read.slot.account } : { slot: noAttempt, slotOwner: 0 }
-      if (sameSlot(flow, found)) continue
-      state = withFlow(target, { ...flow, ...found }, state)
-      const identity = found.slot.identity
-      if (identity !== "" && !state.used.includes(identity)) state = { ...state, used: [...state.used, identity] }
+      if (!live(flow)) {
+        const read = keeper.read(slotTarget(target))
+        const found = read.kind === "owned" ? { slot: read.slot.attempt, slotOwner: read.slot.account } : { slot: noAttempt, slotOwner: 0 }
+        if (!sameSlot(flow, found)) {
+          state = withFlow(target, { ...flow, ...found }, state)
+          const identity = found.slot.identity
+          if (identity !== "" && !state.used.includes(identity)) state = { ...state, used: [...state.used, identity] }
+        }
+      }
+      const kept = flowOf(state, target)
+      const adopter = state.owner > 0 ? state.owner : signingIn
+      if (kept.slotOwner === 0 && kept.slot.identity !== "" && adopter > 0) state = withFlow(target, state.owner > 0 ? resumed({ ...kept, slotOwner: adopter }, adopter) : { ...kept, slotOwner: adopter }, state)
     }
     return state
   }
 
   effect function keep(next: OwnerMonthly) {
     const before = try Ref.get(held)
+    const stored = try load()
     for (const target of targets) {
       const flow = flowOf(next, target)
-      if (!sameSlot(flowOf(before, target), flow)) try keeper.write(slotTarget(target), flow)
+      if (!sameSlot(flowOf(before, target), flow) || !sameSlot(flowOf(stored, target), flow)) try keeper.write(slotTarget(target), flow)
     }
     try Ref.set(held, next)
   }
@@ -153,7 +167,10 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
 
   effect function reply(target: Target, identity: string, outcome: "Signed" | "Declined" | "Uncertain", hash: string) {
     const state = try machine.get()
-    if (canWalletReply(state, target, identity, outcome, hash, adapter)) try sent({ type: "walletReply", target, identity, reply: outcome, hash }, adapter)
+    if (!canWalletReply(state, target, identity, outcome, hash, adapter)) return "changed" as const
+    if (try sent({ type: "walletReply", target, identity, reply: outcome, hash }, adapter)) return "kept" as const
+    const stored = slotOfText(readText(storage, keys[slotTarget(target)]))
+    return stored.kind === "owned" && stored.slot.attempt.identity === identity ? "unsaved" as const : "changed" as const
   }
 
   effect function readMonth() {
@@ -225,7 +242,8 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
       try reply(target, identity, "Uncertain", "")
       throw new MonthlyUncertain({ message: monthlyMessages.unclear })
     }
-    try reply(target, identity, "Signed", hash)
+    const kept = try reply(target, identity, "Signed", hash)
+    if (kept !== "kept") throw new HashNotKept({ hash, storage: kept === "unsaved", message: notKeptMessage(hash, kept === "unsaved") })
     return hash
   }
 
@@ -242,7 +260,11 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
       const state = try machine.get()
       actor = githubId
       if (account === 0 && canSignOut(state, state.owner)) try sent({ type: "signOut" }, state.owner)
-      else if (account > 0 && canSignIn(state, account, manages, account)) try sent({ type: "signIn", account, manages }, account)
+      else if (account > 0 && canSignIn(state, account, manages, account)) {
+        signingIn = account
+        try sent({ type: "signIn", account, manages }, account)
+        signingIn = 0
+      }
       return try machine.get()
     },
     readMonth,

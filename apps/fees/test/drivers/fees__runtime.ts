@@ -1,3 +1,4 @@
+// spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"
 import { readFileSync } from "node:fs";
 import { Effect } from "effect";
 import type { Driver, Options } from "../../gen/fees__runtime.conformance.ts";

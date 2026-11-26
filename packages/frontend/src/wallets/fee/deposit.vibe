@@ -1,0 +1,166 @@
+// spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"; spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"
+import { type ApprovalEvidence, approvalSettled } from "../../../gen/frontend__batchedDeposit.ts"
+import { networkLabel } from "../../kernels/assetText.ts"
+import { WalletFailed } from "../core/discovery.vibe"
+import { type EvmConnection, evmChainId, evmRequest, requireSelected, sendTransaction } from "../core/evm.vibe"
+import { allowanceData, balanceOfData, hexQuantity, wordValue } from "../owner/evmCalls.ts"
+import { type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, failureCode, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf } from "../owner/evmEvidence.ts"
+import { settled } from "../owner/ownerDecisions.ts"
+import { type DepositStep, type FeeWay, batchCalls, depositEvents, pausedData, reviewedDeposit, stepCall } from "./feeCalls.ts"
+
+export interface FeeReview {
+  readonly approvalNeeded: boolean
+  readonly resetAllowance: boolean
+  readonly batch: boolean
+}
+
+export type FeeCheck = "pending" | "notSent" | "received" | "failed" | "approvalConfirmed" | "finalized" | "mismatch"
+
+export interface BatchCheck {
+  readonly status: FeeCheck
+  readonly transaction: string
+}
+
+export error FeeRefused { message: string }
+export error FeeBatchUnavailable { message: string }
+
+export const depositMessages = {
+  notThere: (network: string) => `The deposit contract is not on the network your wallet is connected to. Check that it is ${networkLabel(network)}.`,
+  paused: "New deposits are paused on the deposit contract. Nothing was sent. Try again later.",
+  lowBalance: (symbol: string, network: string) => `Your ${symbol} balance on ${networkLabel(network)} is too low for this deposit.`,
+  switchDeclined: (network: string) => `Switch your wallet to ${networkLabel(network)} to pay this way.`,
+  switchFailed: (network: string, chainId: number) => `Your wallet could not switch to ${networkLabel(network)} (chain id ${chainId}). Add that network in your wallet, then review again.`,
+  approveFirst: "Approve the exact token amount before depositing.",
+  approved: "The token approval is already in place. Review again.",
+  batchUnavailable: "Your wallet cannot send this as one request. Approve, then deposit.",
+  batchRefused: "Your wallet could not send this as one request. Nothing was sent. Approve, then deposit.",
+  batchNoReference: "The wallet did not return a batch reference. Check wallet activity before another attempt.",
+  enterHash: "Enter a transaction hash from your wallet.",
+  enterTransaction: "Enter the transaction from your wallet.",
+  mismatch: "This transaction does not match the pending wallet action. Check its hash in your wallet.",
+  notRequest: "This transaction does not match the request.",
+  notCanonical: "The transaction is not in the canonical finalized chain.",
+  unknownStatus: "The transaction status is not recognized.",
+  batchUnrecognized: "The wallet returned an unrecognized batch status. Enter its transaction hash from wallet activity.",
+  batchPartial: "The wallet reports a partly completed batch. Check wallet activity and enter its transaction hash.",
+  batchNoTransaction: "The wallet did not return the batch transaction. Enter its hash from wallet activity.",
+  invalidAnswer: "Your wallet returned an invalid token amount.",
+} as const
+
+function refused(message: string) {
+  return new FeeRefused({ message })
+}
+
+effect function chainOf(way: FeeWay) {
+  return try orDie(Effect.try(() => BigInt(way.chainId)))
+}
+
+export effect function switchFeeChain(connection: EvmConnection, way: FeeWay) {
+  const chain = try chainOf(way)
+  if ((try evmChainId(connection)) === chain) return
+  evmRequest(connection, "wallet_switchEthereumChain", [{ chainId: hexQuantity(chain) }]) catch effect (error) => {
+    if (error._tag === "WalletDeclined") throw refused(depositMessages.switchDeclined(way.network))
+    throw refused(depositMessages.switchFailed(way.network, way.chainId))
+  }
+}
+
+effect function word(connection: EvmConnection, to: string, data: string) {
+  const value = wordValue(try evmRequest(connection, "eth_call", [{ to, data }, "latest"]))
+  if (value === undefined) throw refused(depositMessages.invalidAnswer)
+  return value
+}
+
+export effect function reviewFeeDeposit(connection: EvmConnection, way: FeeWay) {
+  const chain = try chainOf(way)
+  try requireSelected(connection, chain)
+  if ((try evmRequest(connection, "eth_getCode", [way.contract, "latest"])) === "0x") throw refused(depositMessages.notThere(way.network))
+  if ((try word(connection, way.contract, pausedData())) !== 0n) throw refused(depositMessages.paused)
+  const amount = try orDie(Effect.try(() => BigInt(way.amount)))
+  if ((try word(connection, way.token, balanceOfData(connection.address))) < amount) throw refused(depositMessages.lowBalance(way.symbol, way.network))
+  const allowance = try word(connection, way.token, allowanceData(connection.address, way.contract))
+  const approvalNeeded = allowance < amount
+  const capabilities: unknown = approvalNeeded ? evmRequest(connection, "wallet_getCapabilities", [connection.address, [hexQuantity(chain)]]) catch () => undefined : undefined
+  return { approvalNeeded, resetAllowance: approvalNeeded && allowance > 0n, batch: approvalNeeded && atomicSupported(capabilities, chain) } satisfies FeeReview
+}
+
+export effect function sendFeeDeposit<E>(connection: EvmConnection, way: FeeWay, item: string, step: DepositStep, beforePrompt: void!E) {
+  const review = try reviewFeeDeposit(connection, way)
+  if (step === "send" && review.approvalNeeded) throw refused(depositMessages.approveFirst)
+  if (step !== "send" && !review.approvalNeeded) throw refused(depositMessages.approved)
+  const transaction = { from: connection.address, ...stepCall(way, item, step) }
+  try evmRequest(connection, "eth_estimateGas", [transaction])
+  return try sendTransaction(connection, try chainOf(way), transaction, beforePrompt)
+}
+
+export effect function sendFeeBatch<E>(connection: EvmConnection, way: FeeWay, item: string, beforePrompt: void!E) {
+  const review = try reviewFeeDeposit(connection, way)
+  if (!review.batch) throw new FeeBatchUnavailable({ message: depositMessages.batchUnavailable })
+  const calls = batchCalls(way, item, review.resetAllowance)
+  const [first] = calls
+  if (first !== undefined) try evmRequest(connection, "eth_estimateGas", [{ from: connection.address, ...first }])
+  const chain = try chainOf(way)
+  try requireSelected(connection, chain)
+  try beforePrompt
+  const result: unknown = evmRequest(connection, "wallet_sendCalls", [{ version: "2.0.0", from: connection.address, chainId: hexQuantity(chain), atomicRequired: true, calls }]) catch effect (error) => {
+    if (error._tag === "WalletFailed" && batchRefusedCode(failureCode(error))) throw new FeeBatchUnavailable({ message: depositMessages.batchRefused })
+    throw error
+  }
+  const reference = batchReferenceOf(result)
+  if (reference === undefined) throw new WalletFailed({ message: depositMessages.batchNoReference })
+  return reference
+}
+
+effect function settledRead(connection: EvmConnection, receipt: WalletReceipt, hash: string, finalityRequired: boolean) {
+  const finalizedNumber = finalityRequired ? blockNumberOf(try evmRequest(connection, "eth_getBlockByNumber", ["finalized", false])) : 0n
+  if (finalizedNumber === undefined) throw new WalletFailed({ message: "Your wallet returned an invalid block." })
+  const canonicalHash = blockHashOf(try evmRequest(connection, "eth_getBlockByNumber", [hexQuantity(receipt.blockNumber), false]))
+  const outcome = settled(canonicalReceipt(receipt, hash, canonicalHash), !finalityRequired || receipt.blockNumber <= finalizedNumber, finalityRequired, receiptStatus(receipt.status))
+  if (outcome === "notCanonical") throw refused(depositMessages.notCanonical)
+  if (outcome === "unknownStatus") throw refused(depositMessages.unknownStatus)
+  return outcome
+}
+
+function depositOutcome(way: FeeWay, item: string, payer: string, receipt: WalletReceipt, status: "pending" | "included" | "failed" | "finalized"): FeeCheck {
+  if (status === "pending" || status === "failed") return status
+  const events = depositEvents(way, item, payer, receipt)
+  if (status === "included") return events.length === 1 ? "received" : "pending"
+  return reviewedDeposit(way, events) ? "finalized" : "mismatch"
+}
+
+function approvalOutcome(status: "pending" | "included" | "failed" | "finalized"): FeeCheck {
+  const evidence: ApprovalEvidence = status === "finalized" ? "ApprovalFinal" : status === "included" ? "ApprovalIncluded" : status === "failed" ? "ApprovalFailed" : "ApprovalPending"
+  return approvalSettled(evidence) ? "approvalConfirmed" : evidence === "ApprovalFailed" ? "failed" : "pending"
+}
+
+export effect function checkFeeDeposit(connection: EvmConnection, way: FeeWay, item: string, hash: string, step: DepositStep) {
+  try requireSelected(connection, try chainOf(way))
+  if (!isTransactionHash(hash)) throw refused(depositMessages.enterHash)
+  const receipt = receiptOf(try evmRequest(connection, "eth_getTransactionReceipt", [hash]))
+  if (receipt === undefined) return "pending" satisfies FeeCheck
+  const expected = stepCall(way, item, step)
+  const transaction = transactionOf(try evmRequest(connection, "eth_getTransactionByHash", [hash]))
+  if (transaction === undefined || !matchesCall(transaction, { from: connection.address, to: expected.to, input: expected.data, value: 0n })) throw refused(depositMessages.mismatch)
+  const status = try settledRead(connection, receipt, hash, step === "send")
+  if (step !== "send") return approvalOutcome(status)
+  return depositOutcome(way, item, connection.address, receipt, status)
+}
+
+export effect function checkFeeBatch(connection: EvmConnection, way: FeeWay, item: string, reference: string, entered: string) {
+  try requireSelected(connection, try chainOf(way))
+  let hash = entered
+  if (hash === "") {
+    if (reference === "") throw refused(depositMessages.enterTransaction)
+    const report = batchReport(try evmRequest(connection, "wallet_getCallsStatus", [reference]))
+    if (report.kind === "unrecognized") throw refused(depositMessages.batchUnrecognized)
+    if (report.kind === "partial") throw refused(depositMessages.batchPartial)
+    if (report.kind === "pending") return { status: "pending", transaction: "" } satisfies BatchCheck
+    if (report.kind === "notSent") return { status: "notSent", transaction: "" } satisfies BatchCheck
+    if (report.hash === undefined) throw refused(depositMessages.batchNoTransaction)
+    hash = report.hash
+  }
+  if (!isTransactionHash(hash)) throw refused(depositMessages.enterHash)
+  const receipt = receiptOf(try evmRequest(connection, "eth_getTransactionReceipt", [hash]))
+  if (receipt === undefined) return { status: "pending", transaction: hash } satisfies BatchCheck
+  const status = try settledRead(connection, receipt, hash, true)
+  return { status: depositOutcome(way, item, connection.address, receipt, status), transaction: hash } satisfies BatchCheck
+}

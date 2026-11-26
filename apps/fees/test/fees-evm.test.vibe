@@ -6,7 +6,7 @@ import type { Handler } from "@repo/platform/testing"
 import { type Anvil, anvil, artifact, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
 import { internet } from "@repo/platform/testing/internet"
 import { asFetch, kyberNative, parsedJson, quotesFake } from "@repo/platform/testing/quotes"
-import { type Fee, type Row, initial, maximumSafeValue, noRow } from "../gen/fees__conversion.effect.vibe"
+import { type Fee, type Row, initial, lockMs, maximumSafeValue, noRow } from "../gen/fees__conversion.effect.vibe"
 import type { Runtime } from "../gen/fees__runtime.effect.vibe"
 import { approveCalldata, decodedApproval, parsedType2, unsignedType2 } from "../src/evm/abi.ts"
 import { approvalSettled } from "../src/evm/approval.vibe"
@@ -251,7 +251,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('A stuck send is replaced at the same nonce with exactly the bounded fee step, after three minutes, handed to the journal before broadcast, waits while ten times its priced fee exceeds the recorded value or a swap is within two minutes of its deadline, and neither an oversized step nor a recorded unlimited approval is ever signed (spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
+  it.effect('A stuck send is replaced at the same nonce with exactly the bounded fee step, after three minutes, handed to the journal before broadcast, reads the network fee only after the wait, and lets the journal\'s rule refuse it while ten times its priced fee exceeds the recorded value or a swap is within two minutes of its deadline, and neither an oversized step nor a recorded unlimited approval is ever signed (spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
     const chains = try Chains
     const { chain, token } = chains.ethereum
     const owner = chain.accounts[1]
@@ -267,10 +267,11 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const raw = try promise(() => key.sign(stuck.transaction))
     const firstSend = try onChain(broadcast(raw), { network: "Ethereum" })
     const recorded = { kind: "KyberApprove", network: "Ethereum", token, amount, nonceFloor: 0n, valueMicro: 500_000_000n } as const
-    const row: Row = { ...noRow, id: 1, token: 1, kind: "Approval", live: true, state: "Submitted", wallet: 1, amountIn: 7, valueMicro: 500_000_000, nonce, gasLimit: 100_000, deadline: maximumSafeValue, attempts: [{ tx: 1, maxFee: 4, priority: 2, at: 0 }] }
-    const fee = (clock: number, runtime: Runtime): Fee => ({ ...initial, network: "Ethereum", runtime, clock, rows: [row] })
+    const row: Row = { ...noRow, id: 1, token: 1, kind: "Approval", live: true, state: "Submitted", wallet: 1, amountIn: 7, valueMicro: 500_000_000, nonce, gasLimit: 100_000, deadline: maximumSafeValue, attempts: [{ tx: 1, maxFee: 4000, priority: 2000, at: 0 }] }
+    const fee = (clock: number, runtime: Runtime): Fee => ({ ...initial, network: "Ethereum", runtime, clock, lease: { holder: 1, expiresAt: clock + lockMs }, nextRun: 2, rows: [row] })
+    const started = try Clock.currentTimeMillis
     const settings = { limits: limitsOf.Ethereum, kyber: { clientId: kyberswap.clientId, buyback: undefined } }
-    const input = (clock: number, runtime = live) => ({ fee: fee(clock, runtime), runId: 1, rowId: 1, recorded, attempts: [raw] as const, preparation: [] })
+    const input = (clock: number, runtime = live) => ({ fee: fee(clock, runtime), epoch: started - clock, runId: 1, rowId: 1, recorded, attempts: [raw] as const, preparation: [] })
     const noClaim = () => Effect.void
     const early = try onChain(replacementPlan(input(100_000), settings, noClaim), { network: "Ethereum" })
     const inactive = try onChain(replacementPlan(input(180_000, { ...live, replacementActive: false }), settings, noClaim), { network: "Ethereum" })
@@ -297,19 +298,19 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       order: order.map((line) => line.split(" ")[0]),
       content: next === undefined || original === undefined ? undefined : { nonce: next.nonce === original.nonce, to: next.to === original.to, data: next.data === original.data, gas: next.gas === original.gas, value: next.value === original.value },
       fees: [next?.maxFeePerGas, next?.maxPriorityFeePerGas],
-      networkFee: { aboveLatestUnit: replaced.networkFee.maxFeeNeeded > 4, observedAt: replaced.networkFee.observedAt },
+      networkFee: { aboveLatestUnit: replaced.networkFee.maxFeeNeeded > 4000, afterWait: replaced.networkFee.observedAt >= 180_000, priced: replaced.networkFee.pricedFeeMicro >= 0 },
       reSigned,
     }, {
       firstSend: true,
       early: { kind: "Wait", reason: "the latest attempt has waited less than three minutes" },
       inactive: { kind: "Wait", reason: "same-nonce replacement is not activated for this network" },
       nearDeadline: { kind: "Wait", reason: "router deadline too close; a same-nonce replacement would revert" },
-      overValue: { kind: "Wait", reason: "ten times the replacement fee exceeds the recorded value or cannot be priced" },
+      overValue: { kind: "Wait", reason: "Final prepared native fee exceeds the gas-cost multiple or cannot be priced" },
       overStep: { tag: "SignRefused", issue: "the replacement fees are outside the bounded step" },
       order: ["journaled", "broadcast"],
       content: { nonce: true, to: true, data: true, gas: true, value: true },
       fees: [5_000_000_000n, 2_500_000_000n],
-      networkFee: { aboveLatestUnit: true, observedAt: 180_000 },
+      networkFee: { aboveLatestUnit: true, afterWait: true, priced: true },
       reSigned: { tag: "SignRefused", issue: "Recorded send differs from its intent" },
     })
   })

@@ -1,0 +1,376 @@
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "A joint assessment credits a retained copy to its original author, a verified repair to its accepted author, and holds an unverified repair"
+import { millisOf } from "@repo/platform/clock"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { MergeResolution, mergeResolutionLineCounts } from "@repo/platform/git/evidence"
+import type { SourceDecision } from "@repo/ports/points"
+import type { AssessmentSource } from "../../../gen/points__scoringPolicy.ts"
+import { AssemblyRefused } from "../../collect/run/pipeline.vibe"
+import type { Assessment, ChangedFile, FileAttribution, JointClaim, JointDecision, JointUnit, ReviewValue } from "../facts.vibe"
+import { compareCodeUnits } from "../facts.vibe"
+import { JointEvidence, type LineCounts } from "./lines.vibe"
+
+export schema HistoryRow {
+  readonly sequence: number
+  readonly record_digest: string
+  readonly record_json: string
+  readonly recorded_at: string
+}
+
+schema ReviewWire {
+  readonly sourceId: string
+  readonly tier: "none" | "triage" | "standard" | "deep" | "specialist"
+  readonly finding: string
+  readonly outcome: string
+}
+
+schema RecordWire {
+  readonly pullRequestNodeId: string
+  readonly repository: string
+  readonly headSha: string
+  readonly occurredAt: string
+  readonly rubricVersion: string
+  readonly model: { readonly reported: string }
+  readonly assessment: {
+    readonly tier: "none" | "micro" | "small" | "medium" | "large" | "xl" | "exceptional" | null
+    readonly rationale: string
+    readonly reviews: ReadonlyArray<ReviewWire>
+  }
+}
+
+schema DecisionWire {
+  readonly status: "missing" | "incomplete" | "stale" | "assessed" | "unresolved"
+  readonly history: ReadonlyArray<HistoryRow>
+  readonly latestDigest: string | null
+  readonly sourceUnavailable?: boolean
+  readonly implementationActorNodeIds?: ReadonlyArray<string>
+  readonly record?: Schema.Unknown
+}
+
+export type DecisionStatus = DecisionWire["status"]
+
+export interface ValueDecision {
+  readonly status: DecisionStatus
+  readonly history: ReadonlyArray<HistoryRow>
+  readonly latestDigest: string | null
+  readonly sourceUnavailable: boolean
+  readonly implementationActorNodeIds: ReadonlyArray<string>
+  readonly record: RecordWire | undefined
+}
+
+export const decisionMismatch = "Current value decision does not match the collected accepted outcome"
+
+function malformed(row: SourceDecision, joint: boolean) {
+  return new AssemblyRefused({ message: `${joint ? "Joint value" : "Value"} decision for ${row.sourceId} is malformed` })
+}
+
+effect function decision(row: SourceDecision, joint: boolean) {
+  const refused = malformed(row, joint)
+  const wire = Schema.decodeUnknownEffect(DecisionWire)(row.decision) catch effect () => { throw refused }
+  const common = { status: wire.status, history: wire.history, latestDigest: wire.latestDigest, sourceUnavailable: wire.sourceUnavailable === true, implementationActorNodeIds: wire.implementationActorNodeIds ?? [] }
+  if (wire.status !== "assessed") return { ...common, record: undefined } satisfies ValueDecision
+  if (joint) {
+    if (wire.latestDigest === null || wire.history.length === 0) throw refused
+    return { ...common, sourceUnavailable: false, record: undefined } satisfies ValueDecision
+  }
+  const record = Schema.decodeUnknownEffect(RecordWire)(wire.record) catch effect () => { throw refused }
+  if (wire.latestDigest === null || record.pullRequestNodeId !== row.sourceId) throw new AssemblyRefused({ message: decisionMismatch })
+  return { ...common, sourceUnavailable: false, record } satisfies ValueDecision
+}
+
+export effect function decisionsOf(rows: ReadonlyArray<SourceDecision>, joint: boolean) {
+  const decisions = new Map<string, ValueDecision>()
+  for (const row of rows) {
+    if (decisions.has(row.sourceId)) throw new AssemblyRefused({ message: `Value decisions repeat ${row.sourceId}` })
+    decisions.set(row.sourceId, try decision(row, joint))
+  }
+  return decisions
+}
+
+export interface AcceptedSource {
+  readonly id: string
+  readonly repository: string
+  readonly acceptedAt: string
+  readonly merged: boolean
+}
+
+export interface Assessed {
+  readonly assessment: Assessment | null
+  readonly reviewValues: ReadonlyArray<ReviewValue>
+}
+
+const unassessed: Assessed = { assessment: null, reviewValues: [] }
+
+export effect function assessmentOf(found: ValueDecision | undefined, source: AcceptedSource, assessmentSource: AssessmentSource) {
+  const record = found?.record
+  if (found === undefined || record === undefined || found.latestDigest === null) return unassessed
+  if (record.repository.toLowerCase() !== source.repository.toLowerCase() || record.occurredAt !== source.acceptedAt || (source.merged && record.assessment.tier === null)) {
+    throw new AssemblyRefused({ message: decisionMismatch })
+  }
+  const reviewValues: ReadonlyArray<ReviewValue> = record.assessment.reviews.map((review) => ({ reviewId: review.sourceId, tier: review.tier, finding: review.finding, outcome: review.outcome }))
+  if (record.assessment.tier === null) return { assessment: null, reviewValues } satisfies Assessed
+  const assessment: Assessment = {
+    tier: record.assessment.tier,
+    source: assessmentSource,
+    digest: found.latestDigest,
+    rubric: record.rubricVersion,
+    model: record.model.reported,
+    head: record.headSha,
+    recordedAt: found.history.at(-1)?.recorded_at ?? source.acceptedAt,
+    rationale: record.assessment.rationale,
+  }
+  return { assessment, reviewValues } satisfies Assessed
+}
+
+export schema EvidenceActor {
+  readonly node_id: string
+  readonly login: string
+  readonly type: string
+}
+
+export schema JointPull {
+  readonly node_id: string
+  readonly number: number
+  readonly html_url: string
+  readonly title: string
+  readonly user: EvidenceActor
+  readonly merged_at: string | null
+  readonly closed_at: string | null
+  readonly updated_at: string
+  readonly head: { readonly sha: string }
+}
+
+schema JointFile {
+  readonly filename: string
+  readonly previous_filename?: string
+  readonly status: string
+  readonly additions: number
+  readonly deletions: number
+  readonly patch?: string
+  readonly blob_url?: string | null
+  readonly addedComparison?: Schema.Unknown
+  readonly removedComparison?: Schema.Unknown
+  readonly fullComparison?: Schema.Unknown
+}
+
+schema JointCommitWire {
+  readonly sha: string
+  readonly author: EvidenceActor | null
+  readonly parents: ReadonlyArray<{ readonly sha: string }>
+}
+
+schema JointAttribution {
+  readonly sha: string
+  readonly files?: ReadonlyArray<JointFile>
+  readonly limitations: ReadonlyArray<string>
+}
+
+export schema JointReview {
+  readonly node_id: string
+  readonly body: string
+  readonly user: EvidenceActor | null
+  readonly submitted_at: string | null
+}
+
+export schema JointComment {
+  readonly node_id: string
+  readonly body: string
+  readonly user: EvidenceActor | null
+  readonly created_at: string
+  readonly updated_at: string
+}
+
+schema SourceEvidence {
+  readonly pull: JointPull
+  readonly indirectAcceptance?: { readonly observedOnBranchAt: string }
+  readonly commits: ReadonlyArray<JointCommitWire>
+  readonly commitAttribution: ReadonlyArray<JointAttribution>
+  readonly mergeResolutions?: ReadonlyArray<MergeResolution>
+  readonly reviews: ReadonlyArray<JointReview>
+  readonly comments: ReadonlyArray<JointComment>
+}
+
+schema JointClaimWire {
+  readonly id: string
+  readonly commitSha: string
+  readonly path: string
+  readonly carrierPullRequestIds: ReadonlyArray<string>
+  readonly creditPullRequestId: string
+  readonly retainedCopy?: { readonly acceptancePullRequestId: string; readonly acceptedCommitSha: string; readonly repair?: Schema.Unknown }
+}
+
+schema JointUnitWire {
+  readonly workUnitId: string
+  readonly claimIds: ReadonlyArray<string>
+  readonly assessment: {
+    readonly tier: "none" | "micro" | "small" | "medium" | "large" | "xl" | "exceptional" | null
+    readonly rationale: string
+    readonly reviews: ReadonlyArray<ReviewWire>
+  }
+}
+
+schema RetainedSources {
+  readonly evidence: { readonly sources: ReadonlyArray<Schema.Unknown> }
+}
+
+schema JointWire {
+  readonly latestDigest: string
+  readonly history: ReadonlyArray<HistoryRow>
+  readonly record: {
+    readonly rubricVersion: string
+    readonly model: Schema.Unknown
+    readonly sources: ReadonlyArray<{ readonly pullRequestNodeId: string }>
+    readonly units: ReadonlyArray<JointUnitWire>
+  }
+  readonly evidence: {
+    readonly sources: ReadonlyArray<{ readonly evidence: SourceEvidence }>
+    readonly claims: ReadonlyArray<JointClaimWire>
+  }
+}
+
+export interface JointCommit {
+  readonly oid: string
+  readonly parentCount: number
+  readonly author: EvidenceActor | null
+  readonly additions: number
+  readonly deletions: number
+  readonly attributions: ReadonlyArray<FileAttribution>
+  readonly resolutions: ReadonlyArray<ReadonlyArray<ChangedFile>>
+}
+
+export interface JointSource {
+  readonly pull: JointPull
+  readonly acceptedAt: string | null
+  readonly reviews: ReadonlyArray<JointReview>
+  readonly comments: ReadonlyArray<JointComment>
+  readonly commits: ReadonlyArray<JointCommit>
+}
+
+export interface JointRead {
+  readonly decision: JointDecision
+  readonly indexed: ReadonlyArray<string>
+  readonly sources: ReadonlyArray<JointSource>
+}
+
+type ValueLines = (file: unknown) => LineCounts | undefined
+
+function isLineCount(count: number) {
+  return Number.isSafeInteger(count) && count >= 0
+}
+
+function changedFile(file: JointFile, lines: ValueLines): ChangedFile {
+  const counted = lines(file)
+  const complete = counted !== undefined && isLineCount(counted.additions) && isLineCount(counted.deletions)
+  return { filename: file.filename, previousFilename: file.previous_filename ?? null, additions: complete ? counted.additions : -1, deletions: complete ? counted.deletions : -1 }
+}
+
+function attributionOf(entry: JointAttribution, lines: ValueLines): FileAttribution {
+  return { limited: entry.limitations.length > 0, files: (entry.files ?? []).map((file) => changedFile(file, lines)) }
+}
+
+function lineTotal(files: ReadonlyArray<ChangedFile>, count: (file: ChangedFile) => number) {
+  return files.some((file) => count(file) < 0) ? -1 : files.reduce((sum, file) => sum + count(file), 0)
+}
+
+function resolutionFiles(resolution: MergeResolution, commit: JointCommitWire): ReadonlyArray<ChangedFile> {
+  const counts = mergeResolutionLineCounts(resolution, { sha: commit.sha, parents: commit.parents })
+  return (counts ?? []).map((count) => ({ filename: count.path, previousFilename: null, additions: count.additions, deletions: count.deletions }))
+}
+
+function jointCommit(evidence: SourceEvidence, commit: JointCommitWire, lines: ValueLines): JointCommit {
+  const attributions = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha).map((entry) => attributionOf(entry, lines))
+  const single = attributions.length === 1 ? attributions[0] : undefined
+  return {
+    oid: commit.sha,
+    parentCount: commit.parents.length,
+    author: commit.author,
+    additions: single === undefined ? -1 : lineTotal(single.files, (file) => file.additions),
+    deletions: single === undefined ? -1 : lineTotal(single.files, (file) => file.deletions),
+    attributions,
+    resolutions: (evidence.mergeResolutions ?? []).filter((resolution) => resolution.commitSha === commit.sha).map((resolution) => resolutionFiles(resolution, commit)),
+  }
+}
+
+function modelOf(model: unknown) {
+  if (typeof model !== "object" || model === null) return ""
+  const fields: Readonly<Record<string, unknown>> = { ...model }
+  const reported = fields["reported"] ?? fields["model"]
+  return typeof reported === "string" ? reported : ""
+}
+
+effect function repairVerified(claim: JointClaimWire, retained: ReadonlyMap<string, unknown>, values: JointEvidence.Shape) {
+  const copy = claim.retainedCopy
+  if (copy === undefined || copy.repair === undefined) return true
+  const original = retained.get(claim.creditPullRequestId)
+  const accepted = retained.get(copy.acceptancePullRequestId)
+  if (original === undefined || accepted === undefined) return false
+  const repaired = try values.repair({ original, accepted, acceptedCommitSha: copy.acceptedCommitSha, commitSha: claim.commitSha, path: claim.path })
+  return repaired !== undefined && JSON.stringify(repaired) === JSON.stringify(copy.repair)
+}
+
+effect function unitOf(unit: JointUnitWire, claims: ReadonlyMap<string, JointClaimWire>, retained: ReadonlyMap<string, unknown>, values: JointEvidence.Shape) {
+  const scoped: JointClaimWire[] = []
+  for (const id of unit.claimIds) {
+    const claim = claims.get(id)
+    if (claim === undefined) throw new AssemblyRefused({ message: "Joint unit lost a verified implementation claim" })
+    scoped.push(claim)
+  }
+  const claimed: JointClaim[] = []
+  for (const claim of scoped) {
+    const copy = claim.retainedCopy
+    const kind = copy?.repair === undefined ? "OrdinaryCopy" : (try repairVerified(claim, retained, values)) ? "VerifiedRepair" : "UnverifiedRepair"
+    claimed.push({
+      id: claim.id,
+      sourceId: claim.creditPullRequestId,
+      commitOid: claim.commitSha,
+      path: claim.path,
+      copy: copy === undefined ? null : { sourceId: copy.acceptancePullRequestId, commitOid: copy.acceptedCommitSha, kind },
+      carriers: claim.carrierPullRequestIds,
+    })
+  }
+  return {
+    workUnitId: unit.workUnitId,
+    tier: unit.assessment.tier,
+    rationale: unit.assessment.rationale,
+    sources: [...new Set(scoped.map((claim) => claim.retainedCopy?.acceptancePullRequestId ?? claim.creditPullRequestId))],
+    carriers: [...new Set(scoped.flatMap((claim) => claim.carrierPullRequestIds))],
+    claims: claimed,
+    retainedOriginal: scoped.filter((claim) => claim.retainedCopy !== undefined).map((claim) => claim.creditPullRequestId).sort(compareCodeUnits)[0] ?? null,
+    reviewValues: unit.assessment.reviews.map((review) => ({ reviewId: review.sourceId, tier: review.tier, finding: review.finding, outcome: review.outcome })),
+  } satisfies JointUnit
+}
+
+export effect function jointOf(row: SourceDecision, sourceAt: (acceptedAt: string) => AssessmentSource) {
+  const refused = malformed(row, true)
+  const wire = Schema.decodeUnknownEffect(JointWire)(row.decision) catch effect () => { throw refused }
+  const raw = Schema.decodeUnknownEffect(RetainedSources)(row.decision) catch effect () => { throw refused }
+  const latest = wire.history.at(-1)
+  if (latest === undefined) throw refused
+  const values = try JointEvidence
+  const retained = new Map<string, unknown>()
+  for (const [index, { evidence: source }] of wire.evidence.sources.entries()) {
+    if (!retained.has(source.pull.node_id)) retained.set(source.pull.node_id, raw.evidence.sources[index])
+  }
+  const sources: ReadonlyArray<JointSource> = wire.evidence.sources.map(({ evidence }) => ({
+    pull: evidence.pull,
+    acceptedAt: evidence.pull.merged_at ?? evidence.indirectAcceptance?.observedOnBranchAt ?? null,
+    reviews: evidence.reviews,
+    comments: evidence.comments,
+    commits: evidence.commits.map((commit) => jointCommit(evidence, commit, (file) => values.lines(file))),
+  }))
+  const indirect = new Set(wire.evidence.sources.flatMap(({ evidence }) => evidence.indirectAcceptance === undefined ? [] : [evidence.pull.node_id]))
+  const claims = new Map(wire.evidence.claims.map((claim) => [claim.id, claim] as const))
+  const units: JointUnit[] = []
+  for (const unit of wire.record.units) units.push(try unitOf(unit, claims, retained, values))
+  const completedAt = sources.flatMap((source) => source.acceptedAt === null ? [] : [source.acceptedAt]).sort((left, right) => millisOf(left) - millisOf(right)).at(-1) ?? latest.recorded_at
+  const decision: JointDecision = {
+    digest: wire.latestDigest,
+    source: sourceAt(completedAt),
+    rubric: wire.record.rubricVersion,
+    model: modelOf(wire.record.model),
+    recordedAt: latest.recorded_at,
+    hashesVerified: latest.record_digest === wire.latestDigest && wire.history.every((history) => sha256Of(history.record_json) === history.record_digest),
+    members: sources.map((source) => ({ pullId: source.pull.node_id, head: source.pull.head.sha, acceptedAt: source.acceptedAt, indirect: indirect.has(source.pull.node_id) })),
+    units,
+  }
+  return { decision, indexed: wire.record.sources.map((source) => source.pullRequestNodeId), sources } satisfies JointRead
+}

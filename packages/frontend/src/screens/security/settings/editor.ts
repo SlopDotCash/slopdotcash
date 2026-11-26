@@ -267,22 +267,13 @@ export function proposedProgram(project: EditorProject, form: EditorForm, actor:
   };
 }
 
-/** Whether these terms create or change an asset award, whose precision only the server may resolve from the typed amount. @throws {never} */
-export function assetAwardChanged(project: EditorProject, form: EditorForm): boolean {
-  const proposed = proposedAmount(project, form);
-  if (proposed?.asset === undefined) return false;
-  const published = project.existing?.terms.amount;
-  return form.assetChanged || published?.asset === undefined || published.grossMinor !== proposed.grossMinor;
-}
-
 /** Why these terms cannot be reviewed yet, or undefined. @throws {never} */
 export function programProblem(project: EditorProject, form: EditorForm): string | undefined {
   const proposed = proposedAmount(project, form);
   if (proposed === undefined || amountPreview(project, form) === undefined) return "Check the award amount and asset.";
   const typed = assetBaseUnits(form.amount, proposed.decimals);
   if (typed.kind === "invalid") return typed.message;
-  if (typed.minor === "0") return "Enter an award greater than zero.";
-  return assetAwardChanged(project, form) ? "A new or changed asset award cannot be published yet: the server cannot resolve the asset's precision from the typed amount. Keep the published award and asset to publish other changes." : undefined;
+  return typed.minor === "0" ? "Enter an award greater than zero." : undefined;
 }
 
 /** The GitHub logins of the project contacts named under the terms. @throws {never} */

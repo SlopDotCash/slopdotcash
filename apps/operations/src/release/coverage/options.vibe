@@ -1,10 +1,11 @@
 // spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"
-import { coverage } from "../../../gen/operations__releaseCoverage.effect.vibe"
+import { type Requests, coverage, dataOptionsAllowed, explicitManual } from "../../../gen/operations__releaseCoverage.effect.vibe"
 import { type Environment, coverageRequest } from "../../../gen/operations__release.effect.vibe"
 import type { RunFacts } from "../run/facts.vibe"
-import { type Run, startRun } from "../run/run.vibe"
+import { ReleaseRefused, type Run, startRun } from "../run/run.vibe"
 
 export error OutputUnwritable { path: string }
+export error DataOptionsRefused { message: string }
 
 export effect function writeOutputs(values: Readonly<Record<string, string | number | boolean>>) {
   const lines = Object.entries(values).map(([key, value]) => `${key}=${String(value)}\n`).join("")
@@ -22,11 +23,25 @@ export effect function selectCoverage(run: Run, facts: RunFacts) {
   try run.send({ type: "selectManualCoverage", skipProofs: facts.options.skipProofs, skipBrowserTests: facts.options.skipBrowserTests })
 }
 
-export effect function releaseCoverage(facts: RunFacts, environment: Environment) {
+function refusalOf(request: Requests) {
+  if (request.usePublishedData && !explicitManual(request)) return "Published data is limited to manual main or development releases."
+  if (request.dataFromRun && !(explicitManual(request) && request.target === "Main" && request.usePublishedData)) return "Invalid collected data request"
+  return "Discussion resume requires a fresh main release."
+}
+
+export effect function releaseCoverage(facts: RunFacts, environment: Environment, anchored: boolean) {
   const run = try startRun(environment, facts.by)
-  try run.send({ type: "configure", environment, ref: facts.ref })
+  try run.send({ type: "configure", environment, ref: facts.ref, anchored })
+  if ((try run.state()).phase === "Refused") throw new ReleaseRefused({ step: "configure", phase: "Refused" })
   try selectCoverage(run, facts)
-  const checks = coverage({ ...coverageRequest(try run.state()), usePublishedData: facts.options.usePublishedData })
+  const request: Requests = {
+    ...coverageRequest(try run.state()),
+    usePublishedData: facts.options.usePublishedData,
+    dataFromRun: facts.options.dataFromRun !== "",
+    resumeDiscussions: facts.options.discussionResumeRun !== "",
+  }
+  if (!dataOptionsAllowed(request)) throw new DataOptionsRefused({ message: refusalOf(request) })
+  const checks = coverage(request)
   return {
     eligible: checks.eligible,
     state_models: checks.stateModels,

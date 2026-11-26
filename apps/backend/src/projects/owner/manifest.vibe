@@ -1,11 +1,14 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"
 import { Refused } from "@repo/platform/http"
+import { type Project, prospectiveShare } from "../../../gen/backend__projects.effect.vibe"
 import { postProjects, putProjectsById } from "../../client/refusals.vibe"
-import { fieldsCompleteOf } from "../store/codec.vibe"
+import { fieldsCompleteOf, monthOf, shareHistoryOf, shareOfReward } from "../store/codec.vibe"
 import { manifestOf } from "../store/rows.vibe"
 import { type Json, objectOf, same } from "./revisionChanges.ts"
 
 type Row = { readonly status: number; readonly error: string; readonly message?: string }
+
+export { shareHistoryOf, shareOfReward }
 
 export function refusal(row: Row, message?: string): Refused {
   return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "" })
@@ -73,6 +76,7 @@ export effect function newProjectRefusal(manifest: Json, actor: Creator, storedA
         (reviewBudget === undefined || (storedApplication && reviewBudget.paymentMode === "disabled" && reviewBudget.committedMinor === "0" && reviewBudget.fundingState === "pledged")),
       "A new project may only pledge a monthly amount with payments disabled; a separate review budget is not offered",
     ],
+    [reward.maintainerShareHistory === undefined, "A new project has no maintainer share history; set only the maintainer share"],
     [list(objectOf(manifest.funding)?.addresses).length === 0 && fundingCommitments(manifest).length === 0 && list(objectOf(manifest.escrow)?.deployments).length === 0, "Vault deployments and funding routes are added after setup"],
     [
       program === undefined ||
@@ -158,15 +162,25 @@ function chainEscrow(escrow: unknown): unknown {
   return { ...object, deployments: list(object.deployments).map((deployment) => Object.fromEntries(Object.entries(objectOf(deployment) ?? {}).filter(([key]) => key !== "maxNativeCostWei" && key !== "bindingConsentNonceLimit"))) }
 }
 
-function positiveMinor(value: unknown): boolean {
+export function positiveMinor(value: unknown): boolean {
   return typeof value === "string" && /^[0-9]*[1-9][0-9]*$/u.test(value)
 }
 
 function fixedReward(reward: Json): Json {
-  return Object.fromEntries(Object.entries(reward).filter(([key]) => !["monthlyCapMinor", "monthlyCapDisplay", "cycleCaps", "chain", "currency", "feeBasisPoints", "payoutExclusions"].includes(key)))
+  return Object.fromEntries(Object.entries(reward).filter(([key]) => !["monthlyCapMinor", "monthlyCapDisplay", "cycleCaps", "chain", "currency", "feeBasisPoints", "honorSystem", "maintainerShare", "maintainerShareHistory", "payoutExclusions"].includes(key)))
 }
 
-export function prospectiveFinancialChange(previous: Json, next: Json, nowIso: string): Json | Refused {
+function cycleText(month: number): string {
+  return `${String(Math.floor(month / 100)).padStart(4, "0")}-${String(month % 100).padStart(2, "0")}`
+}
+
+function withProspectiveShare(project: Project, before: Json, after: Json, nowIso: string): Json {
+  const history = prospectiveShare({ ...project, share: shareOfReward(before), shareHistory: shareHistoryOf(before), month: monthOf(nowIso) }, shareOfReward(after))
+  if (history.length === shareHistoryOf(before).length) return after
+  return { ...after, maintainerShareHistory: history.map((entry) => ({ throughCycle: cycleText(entry.throughMonth), basisPoints: entry.basisPoints })) }
+}
+
+export function prospectiveFinancialChange(previous: Json, next: Json, nowIso: string, project: Project): Json | Refused {
   const before = objectOf(previous.reward) ?? {}
   const after = objectOf(next.reward) ?? {}
   if (before.kind !== "monthly-pool" || after.kind !== "monthly-pool") return financialRestricted(putProjectsById.financialChangeRestrictedOnlyAMonthlyReward)
@@ -178,20 +192,22 @@ export function prospectiveFinancialChange(previous: Json, next: Json, nowIso: s
   const funded = before.fundingState === "committed" || positiveMinor(before.committedMinor) || before.paymentMode === "enabled" || list(objectOf(previous.escrow)?.deployments).length > 0 || list(objectOf(previous.funding)?.addresses).length > 0 || fundingCommitments(previous).length > 0
   if (funded && (!sameValue(previous.rewardAsset, next.rewardAsset) || !sameValue(previousEscrow, nextEscrow))) return financialRestricted(putProjectsById.financialChangeRestrictedAFundedProjectKeeps)
   const assetChanged = !sameValue(previous.rewardAsset, next.rewardAsset) || before.chain !== after.chain || before.currency !== after.currency
-  if (!sameValue(fixedReward(before), fixedReward(after)) || (assetChanged ? after.cycleCaps !== undefined : !sameValue(before.cycleCaps, after.cycleCaps))) return financialRestricted(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount)
+  if (!sameValue(before.maintainerShareHistory, after.maintainerShareHistory)) return refusal(putProjectsById.financialChangeRestrictedTheMaintainerShareHistory)
+  if (!sameValue(fixedReward(before), fixedReward(after)) || (assetChanged ? after.cycleCaps !== undefined : !sameValue(before.cycleCaps, after.cycleCaps))) return refusal(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount)
   const cycle = utcPeriod(nowIso)
+  const shared = (reward: Json) => withProspectiveShare(project, before, reward, nowIso)
   const rewardStartAt = typeof before.rewardStartAt === "string" ? before.rewardStartAt : nowIso
   if (assetChanged) {
     const zeroCaps = monthsThrough(rewardStartAt, cycle).map((cycleId) => ({ cycleId, monthlyCapMinor: "0" }))
     const reward = Object.fromEntries(Object.entries(after).filter(([key]) => key !== "cycleCaps"))
-    return { ...next, reward: zeroCaps.length === 0 ? reward : { ...reward, cycleCaps: zeroCaps } }
+    return { ...next, reward: shared(zeroCaps.length === 0 ? reward : { ...reward, cycleCaps: zeroCaps }) }
   }
-  if (before.monthlyCapMinor === after.monthlyCapMinor) return next
+  if (before.monthlyCapMinor === after.monthlyCapMinor) return { ...next, reward: shared(after) }
   const caps = list(before.cycleCaps).map((cap) => objectOf(cap) ?? {})
   const listed = new Set(caps.map((cap) => String(cap.cycleId)))
   const kept = monthsThrough(rewardStartAt, cycle).filter((cycleId) => !listed.has(cycleId)).map((cycleId) => ({ cycleId, monthlyCapMinor: before.monthlyCapMinor }))
-  if (kept.length === 0) return next
-  return { ...next, reward: { ...after, cycleCaps: [...caps, ...kept].sort((left, right) => String(left.cycleId).localeCompare(String(right.cycleId))) } }
+  if (kept.length === 0) return { ...next, reward: shared(after) }
+  return { ...next, reward: shared({ ...after, cycleCaps: [...caps, ...kept].sort((left, right) => String(left.cycleId).localeCompare(String(right.cycleId))) }) }
 }
 
 export function nextUtcMonthStart(nowIso: string): string {

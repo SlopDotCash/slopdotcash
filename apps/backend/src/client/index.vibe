@@ -7,6 +7,7 @@ import { api as email } from "./email.vibe"
 import { api as projectSetup } from "./projectSetup.vibe"
 import { api as projects } from "./projects.vibe"
 import { api as referrals } from "./referrals.vibe"
+import { api as repoRequests } from "./repoRequests.vibe"
 import { api as wallets } from "./wallets.vibe"
 
 export * from "./accounts.vibe"
@@ -17,6 +18,9 @@ export * from "./identity.vibe"
 export * from "./projectSetup.vibe"
 export * from "./projects.vibe"
 export * from "./referrals.vibe"
+export * from "./repoRequests.vibe"
+export * from "./submissionFee.vibe"
+export * from "./submissionFeeKernels.ts"
 export * from "./wallets.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = [...accounts, ...email, ...projectSetup, ...projects, ...admin, ...wallets, ...binding, ...referrals]
+export const api: ReadonlyArray<AnyRoute> = [...accounts, ...email, ...projectSetup, ...projects, ...admin, ...wallets, ...binding, ...referrals, ...repoRequests]

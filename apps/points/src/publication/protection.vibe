@@ -1,4 +1,4 @@
-// spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"; spec/points/periods.md, "A period freezes only when settlement has frozen, reserved or completed it, or an obligation exists"
+// spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"; spec/points/periods.md, "A period freezes only when settlement has frozen, reserved or completed it, or an obligation exists"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"
 import { type NonEmpty, type Statement, rows, sql } from "@repo/platform/d1"
 import { instantOf } from "../kernels/records/instants.ts"
 import { declassifyProtected, freezeEvidenceOf, periodOf } from "../../gen/points__periods.effect.vibe"
@@ -13,29 +13,46 @@ export interface ProtectionScope {
 
 schema ProtectionRow { project_id: string; period: string; payment_run: number; allocation_change: number; direct_transfer: number; unmapped_obligation: number }
 
-const monthPattern = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+export const monthPattern = /^\d{4}-(?:0[1-9]|1[0-2])$/u
 const scopesPerQuery = 45
 
 const baseQualificationPaid = sql`(p.id='0xe63ed9a7de8b38d1e847c4d850c7cb08d15ca429615c933eaefd9683b6367c4c' AND p.network='base-mainnet' AND p.vault='0x6c1297c3b96a00347cb501f572cb5811c2a8ed36' AND p.state='paid' AND p.source_digest='991cdcc980c86dee602eccb30c79290a51a67f4569b2292efad7211d62086ee3' AND p.paid_transaction IS '0x4b9290966d9bacbe77d0e936ccb749cc8c0b9622331bf8f4a42b965c1fa704d8' AND EXISTS (SELECT 1 FROM payment_events e WHERE e.network=p.network AND e.transaction_id=p.paid_transaction AND e.event_index=982 AND e.kind='paid' AND e.obligation_id=p.id AND CASE WHEN json_valid(e.evidence_json) THEN json_extract(e.evidence_json,'$.projectId')=p.project_id ELSE 0 END))`
 
-function paymentRun(project: Statement, period: Statement) {
-  return sql`EXISTS (SELECT 1 FROM monthly_payment_runs m WHERE m.project_id=${project} AND m.period=${period})`
+interface MonthSource {
+  readonly table: Statement
+  readonly alias: Statement
+  readonly month: Statement
+  readonly flag: Statement
 }
 
-function allocationChange(project: Statement, period: Statement) {
-  return sql`EXISTS (SELECT 1 FROM monthly_allocation_changes m WHERE m.project_id=${project} AND m.period=${period})`
+function identifier(text: string): Statement {
+  return { text, params: [] }
 }
 
-function directTransfer(project: Statement, period: Statement) {
-  return sql`EXISTS (SELECT 1 FROM payment_direct_transfers p WHERE p.project_id=${project} AND p.contribution_month=${period})`
+function monthSource(table: string, alias: string, month: string, flag: string): MonthSource {
+  return { table: identifier(table), alias: identifier(alias), month: identifier(month), flag: identifier(flag) }
+}
+
+const monthSources: ReadonlyArray<MonthSource> = [
+  monthSource("monthly_payment_runs", "m", "period", "payment_run"),
+  monthSource("monthly_allocation_changes", "m", "period", "allocation_change"),
+  monthSource("payment_direct_transfers", "p", "contribution_month", "direct_transfer"),
+]
+
+function separated(parts: ReadonlyArray<Statement>, separator: Statement) {
+  return parts.reduce((all, part, position) => position === 0 ? part : sql`${all}${separator}${part}`, sql``)
+}
+
+function recordedMonth(source: MonthSource, project: Statement, period: Statement) {
+  return sql`EXISTS (SELECT 1 FROM ${source.table} ${source.alias} WHERE ${source.alias}.project_id=${project} AND ${source.alias}.${source.month}=${period})`
 }
 
 function unmappedObligation(project: Statement) {
   return sql`EXISTS (SELECT 1 FROM payment_obligations p WHERE p.project_id=${project} AND NOT ${baseQualificationPaid} AND NOT EXISTS (SELECT 1 FROM monthly_payment_obligations m WHERE m.project_id=p.project_id AND m.network=p.network AND m.vault=p.vault AND m.source_digest=p.source_digest))`
 }
 
-function protectedScope(project: Statement, period: Statement) {
-  return sql`(${paymentRun(project, period)} OR ${allocationChange(project, period)} OR ${directTransfer(project, period)} OR ${unmappedObligation(project)})`
+export function protectedScope(project: Statement, period: Statement) {
+  return sql`(${separated([...monthSources.map((source) => recordedMonth(source, project, period)), unmappedObligation(project)], sql` OR `)})`
 }
 
 export function protectedAward(payload: Statement) {
@@ -46,17 +63,21 @@ function bit(value: Statement) {
   return sql`CASE WHEN ${value} THEN 1 ELSE 0 END`
 }
 
-function joined(parts: NonEmpty<Statement>) {
-  const [head, ...rest] = parts
-  return rest.reduce((all, part) => sql`${all}, ${part}`, head)
-}
-
 function preflight(scopes: NonEmpty<ProtectionScope>) {
   const project = sql`scopes.project_id`
   const period = sql`scopes.period`
-  const [head, ...rest] = scopes
-  const values = joined([sql`(${head.projectId}, ${head.period})`, ...rest.map((scope) => sql`(${scope.projectId}, ${scope.period})`)])
-  return sql`WITH scopes(project_id, period) AS (VALUES ${values}) SELECT scopes.project_id AS project_id, scopes.period AS period, ${bit(paymentRun(project, period))} AS payment_run, ${bit(allocationChange(project, period))} AS allocation_change, ${bit(directTransfer(project, period))} AS direct_transfer, ${bit(unmappedObligation(project))} AS unmapped_obligation FROM scopes ORDER BY scopes.project_id, scopes.period`
+  const values = separated(scopes.map((scope) => sql`(${scope.projectId}, ${scope.period})`), sql`, `)
+  const flags = separated([...monthSources.map((source) => sql`${bit(recordedMonth(source, project, period))} AS ${source.flag}`), sql`${bit(unmappedObligation(project))} AS unmapped_obligation`], sql`, `)
+  return sql`WITH scopes(project_id, period) AS (VALUES ${values}) SELECT scopes.project_id AS project_id, scopes.period AS period, ${flags} FROM scopes ORDER BY scopes.project_id, scopes.period`
+}
+
+export function protectedMonthsListing() {
+  const listed = separated(monthSources.map((source) => sql`SELECT project_id, ${source.month} AS period FROM ${source.table}`), sql` UNION `)
+  return sql`SELECT project_id, period FROM (${listed}) ORDER BY project_id, period`
+}
+
+export function protectedProjectsListing() {
+  return sql`SELECT DISTINCT o.project_id AS project_id FROM payment_obligations o WHERE ${unmappedObligation(sql`o.project_id`)} ORDER BY o.project_id`
 }
 
 effect function checkedScopes(scopes: ReadonlyArray<ProtectionScope>) {
@@ -68,7 +89,7 @@ effect function checkedScopes(scopes: ReadonlyArray<ProtectionScope>) {
   return [...unique.values()]
 }
 
-effect function periodNumber(period: string) {
+export effect function periodNumber(period: string) {
   const at = instantOf(`${period}-01T00:00:00.000Z`)
   if (at === null) throw new ProtectionScopeInvalid()
   return periodOf(at)

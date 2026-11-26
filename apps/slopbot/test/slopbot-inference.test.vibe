@@ -113,7 +113,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     })
   })
 
-  it.effect('Three non-free attempts without a retained result exhaust the source key (spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop")', () => effect {
+  it.effect('Three non-free attempts without a retained result exhaust the source key, and a Surplus spending denial goes to Orbio in the same attempt, which publishes or waits as budget (spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop")', () => effect {
     const { world } = try Journey
     const outcomes: ReadonlyArray<string>[] = []
     for (const attempt of [1, 2, 3]) {
@@ -128,10 +128,29 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     try batch(requested("inference-2-4", 2, "2026-11-10T00:14:00.000Z"))
     outcomes.push(try consumed(2))
     const routes = try callsAbout(2)
-    try same({ outcomes, calls: routes.length, journal: try journalOf(2) }, {
+    const resetsAt = "2099-01-01T00:00:00.000Z"
+    try batch(requested("inference-4", 4, "2026-11-10T00:15:00.000Z"))
+    try Effect.try(() => {
+      world.providers.reply((call) => sonnet(call) && about(4)(call), { failure: "spendDenied", resetsAt })
+      world.providers.reply((call) => orbio(call) && about(4)(call), { text: unresolvedVerdict(4), model: "anthropic/claude-sonnet-5.5" }, { input: 90, output: 50, costMicro: 1100 })
+      world.providers.reply((call) => sonnet(call) && about(5)(call), { failure: "spendDenied", resetsAt })
+      world.providers.reply((call) => orbio(call) && about(5)(call), { failure: "unavailable" })
+    })
+    const served = try consumed(4)
+    try batch(requested("inference-5", 5, "2026-11-10T00:16:00.000Z"))
+    const waiting = try consumed(5)
+    try same({ outcomes, calls: routes.length, journal: try journalOf(2), served, waiting, denied: [try callsAbout(4), try callsAbout(5)], published: try journalOf(4), unpublished: try journalOf(5) }, {
       outcomes: [["Retry"], ["Retry"], ["Retry"], ["AttemptsExhausted"]],
       calls: 9,
       journal: [],
+      served: ["Published"],
+      waiting: ["BudgetWait"],
+      denied: [
+        ["surplus-anthropic claude-sonnet-5.5 16000", "orbio anthropic/claude-sonnet-5.5 16000"],
+        ["surplus-anthropic claude-sonnet-5.5 16000", "orbio anthropic/claude-sonnet-5.5 16000"],
+      ],
+      published: [{ pull: 4, status: "unresolved", provider: "orbio", model: "anthropic/claude-sonnet-5.5", supersedes: null }],
+      unpublished: [],
     })
   })
 

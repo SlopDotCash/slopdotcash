@@ -1,0 +1,291 @@
+// spec/points/collectorToken.md, "Only a main collection of live data mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { GitHub } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { encodeParts } from "../src/client/snapshot/parts.vibe"
+import { discussionCache } from "../src/ingestion/discussions.vibe"
+import { ingestionGitHub } from "../src/ingestion/read.vibe"
+import { collectorRenewal } from "../src/ingestion/token.vibe"
+import { restoreLocal } from "../src/snapshot/restoreLocal.vibe"
+import { etagged } from "./support/catchup5/web.ts"
+import { repository, seeded, start, statuses } from "./support/u3/github.ts"
+import { sameBytes } from "./support/u8/pages.ts"
+
+const minute = 60_000
+const api = "https://api.github.com"
+const raw = "https://raw.githubusercontent.com"
+const mintMatch = /^POST \/app\/installations\/42\/access_tokens$/u
+const etag = "\"immutable\""
+
+interface Sent {
+  readonly to: string
+  readonly credential: string
+}
+
+schema Commit { sha: string }
+schema Compared { status: string }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function collectorWorld(now: () => number) {
+  return try Effect.try(() => {
+    const fake = githubFake({ now })
+    fake.world.addUser({ id: 101, login: "ada" })
+    fake.world.addUser({ id: 102, login: "grace" })
+    fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
+    fake.world.addInstallation({ id: 42, account: "ada", repositories: ["widgets"], permissions: { contents: "read", issues: "read", pull_requests: "read" } })
+    return { fake, original: fake.tokens.user("ada"), other: fake.tokens.user("grace") }
+  })
+}
+
+function recording(fake: GitHubFake, original: string, other: string) {
+  const sent: Sent[] = []
+  const fresh = new Map<string, string>()
+  function credential(authorization: string) {
+    const token = authorization.split(" ")[1] ?? ""
+    if (token === original) return "original"
+    if (token === other) return "other"
+    if (token.startsWith("ey")) return "app"
+    const known = fresh.get(token) ?? `fresh ${fresh.size + 1}`
+    fresh.set(token, known)
+    return known
+  }
+  const fetcher: Fetcher = {
+    fetch: async (request) => {
+      const url = new URL(request.url)
+      sent.push({ to: `${request.method} ${url.origin}${url.pathname}`, credential: credential(request.headers.get("authorization") ?? "") })
+      return fake.fetch(request)
+    },
+  }
+  return { sent, fetcher }
+}
+
+type Credential = "Bearer original" | "token original" | "Bearer other"
+type Read = (atMinutes: number, url: string, credential: Credential) => ReadonlyArray<Sent>!!
+
+interface Collector {
+  readonly fake: GitHubFake
+  readonly read: Read
+}
+
+function appSettings(fake: GitHubFake, ref: string) {
+  return {
+    COLLECTOR_APP_CLIENT_ID: fake.app.clientId,
+    COLLECTOR_APP_PRIVATE_KEY: fake.app.privateKeyPem,
+    COLLECTOR_APP_INSTALLATION_ID: "42",
+    COLLECTOR_APP_REPOSITORY: "widgets",
+    GITHUB_REF: ref,
+    GITHUB_EVENT_NAME: "push",
+  }
+}
+
+effect function collection<A>(environment: (fake: GitHubFake) => Readonly<Record<string, string>>, run: (collector: Collector) => A!!) {
+  const clock = settableClock(start)
+  const world = try collectorWorld(clock.now)
+  const { sent, fetcher } = recording(world.fake, world.original, world.other)
+  const renewed = Layer.provide(collectorRenewal(), outboundVia(fetcher))
+  const config = ConfigProvider.layer(ConfigProvider.fromUnknown({ ...environment(world.fake), GITHUB_TOKEN: world.original }))
+  provide clock.layer, config {
+    provide renewed {
+      const client = try HttpClient.HttpClient
+      const read: Read = (atMinutes, url, credential) => effect {
+        clock.set(start + atMinutes * minute)
+        const before = sent.length
+        const [scheme = "", who = ""] = credential.split(" ")
+        const authorization = `${scheme} ${who === "original" ? world.original : world.other}`
+        try orDie(client.execute(HttpClientRequest.get(url, { headers: { accept: "application/vnd.github+json", authorization } })))
+        return sent.slice(before)
+      }
+      return try run({ fake: world.fake, read })
+    }
+  }
+}
+
+const repoUrl = `${api}/repos/ada/widgets`
+const rawUrl = `${raw}/ada/widgets/main/README.md`
+const fetched = (credential: string) => ({ to: `GET ${repoUrl}`, credential })
+const minted = { to: `POST ${api}/app/installations/42/access_tokens`, credential: "app" }
+
+it.live('A long collection renews the App token at first use and from fifty minutes, keeps it after a failed mint and leaves other requests alone (spec/points/collectorToken.md, "Story: Collect with a read-only App token that outlives its one-hour grant"; spec/points/collectorToken.md, "Only a main collection of live data mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry")', () => effect {
+  const renewing = try collection((fake) => appSettings(fake, "refs/heads/main"), ({ fake, read }) => effect {
+    const first = try read(0, repoUrl, "Bearer original")
+    const beforeRenewal = try read(49, repoUrl, "Bearer original")
+    const renewal = try read(50, repoUrl, "Bearer original")
+    try orDie(Effect.try(() => fake.failNext(mintMatch, { status: 500 })))
+    const before = fake.requests.length
+    const failedMint = try read(100, repoUrl, "Bearer original")
+    const failedStatuses = statuses(fake, before)
+    const withinRetryWait = try read(100.5, repoUrl, "Bearer original")
+    const retried = try read(101, repoUrl, "Bearer original")
+    const tokenScheme = try read(101, repoUrl, "token original")
+    const otherToken = try read(102, repoUrl, "Bearer other")
+    const otherOrigin = try read(160, rawUrl, "Bearer original")
+    return { first, beforeRenewal, renewal, failedMint, failedStatuses, withinRetryWait, retried, tokenScheme, otherToken, otherOrigin }
+  })
+  try same(renewing, {
+    first: [minted, fetched("fresh 1")],
+    beforeRenewal: [fetched("fresh 1")],
+    renewal: [minted, fetched("fresh 2")],
+    failedMint: [minted, fetched("fresh 2")],
+    failedStatuses: [500, 200],
+    withinRetryWait: [fetched("fresh 2")],
+    retried: [minted, fetched("fresh 3")],
+    tokenScheme: [fetched("fresh 3")],
+    otherToken: [fetched("other")],
+    otherOrigin: [{ to: `GET ${rawUrl}`, credential: "original" }],
+  })
+  const workflowToken = (environment: (fake: GitHubFake) => Readonly<Record<string, string>>) => collection(environment, ({ read }) => effect {
+    const first = try read(0, repoUrl, "Bearer original")
+    const later = try read(55, repoUrl, "Bearer original")
+    return [first, later]
+  })
+  const withoutSettings = try workflowToken(() => ({}))
+  const staging = try workflowToken((fake) => appSettings(fake, "refs/heads/development"))
+  try same({ withoutSettings, staging }, {
+    withoutSettings: [[fetched("original")], [fetched("original")]],
+    staging: [[fetched("original")], [fetched("original")]],
+  })
+  const invalid = collection((fake) => ({ ...appSettings(fake, "refs/heads/main"), COLLECTOR_APP_INSTALLATION_ID: "0x2a" }), () => effect {
+    return "built"
+  }) catch (error) => error._tag
+  try same(invalid, "ConfigInvalid")
+})
+
+const special = /[.*+?^$()|[\]\\{}]/gu
+
+function exactly(method: string, path: string) {
+  const escaped = path.replace(special, "\\$&")
+  return new RegExp(`^${method} ${escaped}$`, "u")
+}
+
+function answering(fake: GitHubFake, answers: ReadonlyMap<string, unknown>, status: 200 | 304) {
+  for (const [path, body] of answers) {
+    fake.alterNext(exactly("GET", path), () => etagged(status, body, etag))
+  }
+}
+
+function validators(fake: GitHubFake) {
+  const seen: Array<string | null> = []
+  const fetcher: Fetcher = {
+    fetch: async (request) => {
+      seen.push(request.headers.get("if-none-match"))
+      return fake.fetch(request)
+    },
+  }
+  return { seen, fetcher }
+}
+
+it.live('A resumed collection revalidates commit-addressed pages and never keeps another commit, a branch name or an unregistered repository (spec/points/ingestion.md, "Story: Read GitHub without retrying writes or inventing success"; spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const sha = "a".repeat(40)
+  const base = "b".repeat(40)
+  const commitPage = `/repos/${repository}/commits/${sha}?per_page=100&page=2`
+  const comparePage = `/repos/${repository}/compare/${base}...${sha}?per_page=100&page=1`
+  const tree = `/repos/${repository}/git/trees/${sha}?recursive=1`
+  const immutable = new Map<string, unknown>([
+    [commitPage, { sha, files: [{ filename: "a.ts", patch: "+x" }] }],
+    [comparePage, { status: "ahead", base_commit: { sha: base }, commits: [], files: [] }],
+    [tree, { sha, tree: [] }],
+  ])
+  const other = "c".repeat(40)
+  const rejected = new Map<string, unknown>([
+    [`/repos/${repository}/commits/${other}?per_page=100&page=1`, { sha: "d".repeat(40), files: [] }],
+    [`/repos/${repository}/commits/main?per_page=100&page=1`, { sha: other, files: [] }],
+    [`/repos/other/repo/commits/${other}?per_page=100&page=1`, { sha: other, files: [] }],
+  ])
+  provide NodeServices.layer, webCrypto, clock.layer {
+    const fs = try FileSystem.FileSystem
+    const outcome = try scoped(effect {
+      const repositories = [{ name: repository, nodeId: world.nodeId }]
+
+      effect function pass(directory: string, answers: ReadonlyMap<string, unknown>, status: 200 | 304, token: string) {
+        const cache = try discussionCache({ directory, repositories })
+        const { seen, fetcher } = validators(world.fake)
+        answering(world.fake, answers, status)
+        const live = Layer.provide(ingestionGitHub({ token: Redacted.make(token), discussions: cache }), outboundVia(fetcher))
+        provide live {
+          const github = try GitHub
+          const read = try Effect.forEach([...answers.keys()], (path) => effect {
+            if (path.includes("/compare/")) return try github.json(path, Compared)
+            return try github.json(path, Commit)
+          })
+          return { read, validators: seen, entries: (try fs.readDirectory(directory)).length }
+        }
+      }
+
+      const kept = try fs.makeTempDirectoryScoped()
+      const observed = try pass(kept, immutable, 200, world.token)
+      const grace = try Effect.try(() => world.fake.tokens.user("grace"))
+      const resumed = try pass(kept, immutable, 304, grace)
+      const refused = try fs.makeTempDirectoryScoped()
+      const others = try pass(refused, rejected, 200, world.token)
+      return { observed, resumed, others: others.entries }
+    })
+    const read = [{ sha }, { status: "ahead" }, { sha }]
+    try same(outcome, {
+      observed: { read, validators: [null, null, null], entries: 3 },
+      resumed: { read, validators: [etag, etag, etag], entries: 3 },
+      others: 0,
+    })
+  }
+})
+
+effect function restoredDirectory(bytes: Uint8Array) {
+  const fs = try FileSystem.FileSystem
+  const directory = try fs.makeTempDirectoryScoped()
+  try fs.makeDirectory(`${directory}/leaderboard`)
+  const encoded = try encodeParts(bytes)
+  try fs.writeFile(`${directory}/leaderboard.json`, encoded.root)
+  for (const part of encoded.parts) {
+    try fs.writeFile(`${directory}/${part.path.slice("/data/".length)}`, part.bytes)
+  }
+  return { directory, parts: encoded.parts }
+}
+
+function filler(letter: string) {
+  return new TextEncoder().encode(JSON.stringify({ filler: letter.repeat(26 * 1024 * 1024) }))
+}
+
+it.live('A restored data directory reassembles the exact collected ledger and refuses a tampered part (spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation")', () => effect {
+  provide NodeServices.layer, webCrypto {
+    const fs = try FileSystem.FileSystem
+    const outcome = try scoped(effect {
+      const split = filler("x")
+      const restored = try restoredDirectory(split)
+      const splitBytes = try restoreLocal(restored.directory, `${restored.directory}/out.json`)
+      const splitSame = sameBytes(try fs.readFile(`${restored.directory}/out.json`), split)
+
+      const tampered = try restoredDirectory(filler("y"))
+      const first = tampered.parts[0]
+      if (first !== undefined) {
+        const changed = new Uint8Array(first.bytes)
+        changed[0] = (changed[0] ?? 0) ^ 1
+        try fs.writeFile(`${tampered.directory}/${first.path.slice("/data/".length)}`, changed)
+      }
+      const refused = restoreLocal(tampered.directory, `${tampered.directory}/out.json`) catch (error) => error._tag
+
+      const small = new TextEncoder().encode("{\"generatedAt\":\"2026-11-18T00:00:00.000Z\"}\n")
+      const single = try restoredDirectory(small)
+      try restoreLocal(single.directory, `${single.directory}/out.json`)
+      const singleText = try fs.readFileString(`${single.directory}/out.json`)
+      return { parts: restored.parts.length > 1, splitBytes, splitSame, tamperedParts: tampered.parts.length > 1, refused, singleText, singleParts: single.parts.length }
+    })
+    try same(outcome, {
+      parts: true,
+      splitBytes: filler("x").length,
+      splitSame: true,
+      tamperedParts: true,
+      refused: "PartsInvalid",
+      singleText: "{\"generatedAt\":\"2026-11-18T00:00:00.000Z\"}\n",
+      singleParts: 0,
+    })
+  }
+})

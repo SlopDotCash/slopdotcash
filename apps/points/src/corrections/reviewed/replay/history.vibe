@@ -1,0 +1,153 @@
+// spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+import { historyOrigin, valueHistoryPath, valueHistoryVersion, workUnitHistoryPath, workUnitHistoryVersion } from "@repo/ports/slopbot"
+import { utf8 } from "@repo/platform/crypto"
+import { parsedJson } from "@repo/platform/git/bytes"
+import { replayed } from "../../../ingestion/replayed.ts"
+import { refusal } from "../packet.vibe"
+import type { AssessmentCatalogRow, HistoricalAssessmentCatalog, Row } from "../audit/catalog.vibe"
+
+export interface HistoryScope {
+  readonly projectId: string
+  readonly repository: string
+  readonly repositoryNodeId: string
+}
+
+interface Entry {
+  readonly record: { readonly sequence: number; readonly record_digest: string; readonly record_json: string; readonly recorded_at: string }
+  readonly bytes: number
+}
+
+const pageBytes = 8 * 1024 * 1024
+const pageRecords = 100
+const encoder = new TextEncoder()
+
+function byteLength(value: unknown) {
+  return encoder.encode(JSON.stringify(value)).length
+}
+
+function publicRow(row: AssessmentCatalogRow): Entry {
+  const record = { sequence: row.sequence, record_digest: row.record_digest, record_json: row.record_json, recorded_at: row.recorded_at }
+  return { record, bytes: byteLength(record) }
+}
+
+function append<T>(index: Map<number, T[]>, number: number, value: T) {
+  const entries = index.get(number)
+  if (entries === undefined) index.set(number, [value])
+  else entries.push(value)
+}
+
+function fields(value: unknown): Row {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Row : {}
+}
+
+effect function history(holds: boolean) {
+  if (!holds) throw refusal("Frozen historical assessment catalog is incomplete or out of scope")
+}
+
+effect function frozenIndex(catalog: HistoricalAssessmentCatalog, scope: HistoryScope) {
+  const { jointThrough, legacyThrough, jointScopedCount, legacyRepoCount } = catalog.heads
+  try history(scope.repositoryNodeId.length > 0 && scope.repository.length > 0 && scope.projectId.length > 0 && Number.isSafeInteger(jointThrough) && jointThrough >= 0 &&
+    Number.isSafeInteger(legacyThrough) && legacyThrough >= 0 && catalog.joint.length === jointScopedCount && catalog.legacy.length === legacyRepoCount)
+  const byNumber = new Map<number, string>()
+  const byId = new Map<string, number>()
+  const bind = (source: Row) => effect {
+    const id = source.pullRequestNodeId
+    const number = source.pullRequestNumber
+    try history(source.repositoryNodeId === scope.repositoryNodeId && typeof id === "string" && id.length > 0 && typeof number === "number" && Number.isSafeInteger(number) &&
+      number > 0 && (byNumber.get(number) ?? id) === id && (byId.get(id) ?? number) === number)
+    byNumber.set(Number(number), String(id))
+    byId.set(String(id), Number(number))
+    return Number(number)
+  }
+  const legacy = new Map<number, Entry[]>()
+  let previous = 0
+  for (const row of catalog.legacy) {
+    const source = fields(parsedJson(row.record_json)?.value)
+    try history(Number.isSafeInteger(row.sequence) && row.sequence > previous && row.sequence <= legacyThrough && row.repository_node_id === scope.repositoryNodeId &&
+      row.pull_request_node_id === source.pullRequestNodeId && source.projectId === scope.projectId)
+    append(legacy, try bind(source), publicRow(row))
+    previous = row.sequence
+  }
+  const seeds = new Map<number, string[]>()
+  const joint = new Map<string, { readonly entry: Entry; readonly predecessors: ReadonlyArray<string> }>()
+  previous = 0
+  for (const row of catalog.joint) {
+    const record = fields(parsedJson(row.record_json)?.value)
+    const sources = Array.isArray(record.sources) ? record.sources.map(fields) : []
+    const predecessors = Array.isArray(record.supersedes) ? record.supersedes.map(String) : undefined
+    try history(Number.isSafeInteger(row.sequence) && row.sequence > previous && row.sequence <= jointThrough && !joint.has(row.record_digest) &&
+      row.project_id === scope.projectId && record.projectId === scope.projectId && sources.length > 0 && predecessors !== undefined && predecessors.every((digest) => joint.has(digest)))
+    for (const source of sources) append(seeds, try bind(source), row.record_digest)
+    joint.set(row.record_digest, { entry: publicRow(row), predecessors: predecessors ?? [] })
+    previous = row.sequence
+  }
+  const histories = new Map<number, ReadonlyArray<Entry>>()
+  const jointHistory = (number: number) => {
+    const known = histories.get(number)
+    if (known !== undefined) return known
+    const pending = [...(seeds.get(number) ?? [])]
+    const collected = new Map<string, Entry>()
+    for (const digest of pending) {
+      const ancestor = joint.get(digest)
+      if (collected.has(digest) || ancestor === undefined) continue
+      collected.set(digest, ancestor.entry)
+      pending.push(...ancestor.predecessors)
+    }
+    const entries = [...collected.values()].sort((left, right) => left.record.sequence - right.record.sequence)
+    if (entries.length > 0) histories.set(number, entries)
+    return entries
+  }
+  return { legacy, jointHistory }
+}
+
+function answer(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
+  return orDie(Effect.try(() => replayed(request, status, { "content-type": "application/json" }, utf8(body === null ? "" : JSON.stringify(body)))))
+}
+
+export function historicalAssessmentTransport(catalog: HistoricalAssessmentCatalog, scope: HistoryScope) {
+  return Layer.effect(HttpClient.HttpClient, effect {
+    const underlying = try HttpClient.HttpClient
+    const index = try frozenIndex(catalog, scope)
+    const { jointThrough, legacyThrough } = catalog.heads
+    return HttpClient.make((request) => {
+      const url = URL.parse(request.url)
+      if (url === null || url.origin !== historyOrigin) return underlying.execute(request)
+      const invalid = answer(request, 400, null)
+      if (url.username !== "" || url.password !== "" || url.hash !== "" || request.method !== "GET") return invalid
+      const isJoint = url.pathname === workUnitHistoryPath
+      if (!isJoint && url.pathname !== valueHistoryPath) return invalid
+      const params = url.searchParams
+      const through = params.get("through")
+      const pull = params.get("pull") ?? ""
+      const cursor = params.get("after") ?? "0"
+      const after = Number(cursor)
+      const number = Number(pull)
+      const allowed = new Set(isJoint ? ["repositoryNodeId", "pull", "after", "through"] : ["repositoryNodeId", "pull", "after"])
+      if ([...params.keys()].some((key) => !allowed.delete(key)) || params.get("repositoryNodeId") !== scope.repositoryNodeId || !/^[1-9]\d*$/u.test(pull) ||
+        !Number.isSafeInteger(number) || !/^(0|[1-9]\d*)$/u.test(cursor) || !Number.isSafeInteger(after) || after > (isJoint ? jointThrough : legacyThrough) ||
+        (isJoint && (through !== null || after > 0) && through !== String(jointThrough))) return invalid
+      const entries = isJoint ? index.jointHistory(number) : index.legacy.get(number) ?? []
+      const envelope = {
+        schemaVersion: isJoint ? workUnitHistoryVersion : valueHistoryVersion,
+        repository: scope.repository,
+        repositoryNodeId: scope.repositoryNodeId,
+        pullRequestNumber: number,
+        ...(isJoint ? { throughSequence: jointThrough, totalRecords: entries.length } : {}),
+      }
+      const records: Entry["record"][] = []
+      let bytes = byteLength({ ...envelope, records, nextAfter: Number.MAX_SAFE_INTEGER })
+      let nextAfter: number | null = null
+      for (const entry of entries) {
+        if (entry.record.sequence <= after) continue
+        if (records.length === pageRecords || bytes + entry.bytes + 1 > pageBytes) {
+          if (records.length === 0) return invalid
+          nextAfter = records[records.length - 1]?.sequence ?? null
+          break
+        }
+        records.push(entry.record)
+        bytes += entry.bytes + 1
+      }
+      return answer(request, 200, { ...envelope, records, nextAfter })
+    })
+  })
+}

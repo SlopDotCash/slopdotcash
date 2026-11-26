@@ -1,15 +1,19 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
+import { fromAmount } from "@repo/settlement/kernels/amounts";
 import { DataState, Disclosure, ExternalLink, PageHeader } from "@repo/ui";
 import { ArrowRight, HandCoins } from "lucide-react";
 import type { ReactNode } from "react";
+import { reviewBudgetShown } from "../../../gen/frontend__views.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { useSession } from "../../app/useSession.ts";
-import { networkLabel } from "../../kernels/assetText.ts";
+import { formatRewardMinor, networkLabel } from "../../kernels/assetText.ts";
 import { SOURCE_REPOSITORY } from "../../platform/site.ts";
-import { type ListedProject, listedThisMonth, reviewBudgetLabel, type Shown } from "../home/listing.ts";
+import { Chip } from "../admin/parts.tsx";
+import { FundedMeter } from "../cycles/CycleAllocation.tsx";
+import { type ListedProject, onSponsors, type Shown, sponsorPoolLine } from "../home/listing.ts";
 import type { MergeLine } from "../home/ProjectCards.tsx";
 import { FundingStatus } from "./FundingStatus.tsx";
-import { type NetworkPays, sponsorPoolLabel } from "./funding.ts";
+import type { NetworkPays } from "./funding.ts";
 import { type LiveFootprint, WhoBuilds, whoBuildsDateLabel, type WhoBuildsSnapshot } from "./WhoBuilds.tsx";
 
 const link = "text-primary underline underline-offset-4 hover:decoration-2";
@@ -18,7 +22,7 @@ export interface SponsorsReads {
   readonly projects: Shown<ReadonlyArray<ListedProject>>;
   readonly mergeLine: MergeLine;
   readonly networkPays: NetworkPays;
-  readonly whoBuilds: WhoBuildsSnapshot;
+  readonly whoBuilds: WhoBuildsSnapshot | undefined;
   readonly live: Shown<LiveFootprint>;
 }
 
@@ -39,34 +43,44 @@ function Explained({ title, children, aside }: { title: string; children: ReactN
   );
 }
 
-function SponsorCard({ project, mergeLine, networkPays, reviewBudgets }: { project: ListedProject; mergeLine: MergeLine; networkPays: NetworkPays; reviewBudgets: boolean }) {
+function PoolLabel({ project }: { project: ListedProject }) {
+  const prize = project.reward.kind === "external-prize-share" ? project.reward.externalOpportunity : undefined;
+  return prize ? <Chip title={prize.name}>External</Chip> : sponsorPoolLine(project);
+}
+
+function SponsorCard({ project, mergeLine, networkPays }: { project: ListedProject; mergeLine: MergeLine; networkPays: NetworkPays }) {
   const merge = project.status === "active" ? mergeLine(project) : null;
+  const budget = project.reward.reviewBudget;
+  const months = project.coverage?.tag === "Covers" ? fromAmount(project.coverage.months) : 0n;
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
       <a href={`/projects/${project.slug}/funding`} className="inline-flex items-center justify-between gap-2 font-semibold text-foreground hover:text-primary">
         <strong>{project.name}</strong>
         <ArrowRight aria-hidden className="size-4 shrink-0" />
       </a>
-      <p className="text-muted-foreground">{sponsorPoolLabel(project)}</p>
+      <p className="text-muted-foreground">
+        <PoolLabel project={project} />
+      </p>
       {project.reward.chain ? <p className="text-sm text-muted-foreground">{networkLabel(project.reward.chain)}</p> : null}
       <FundingStatus project={project} networkPays={networkPays} />
+      {months > 0n ? <small className="text-sm text-muted-foreground">{`Covers ${months} ${months === 1n ? "month" : "months"}`}</small> : null}
       {merge ? <small className="text-sm text-muted-foreground">{merge}</small> : null}
-      {reviewBudgets && project.reward.reviewBudget ? <small className="text-sm text-muted-foreground">{reviewBudgetLabel(project.reward.reviewBudget)}</small> : null}
+      {budget && reviewBudgetShown(budget.fundingState === "committed") ? (
+        <small className="text-muted-foreground">
+          <FundedMeter label="Reviews" fundedMinor={budget.committedMinor} funded={formatRewardMinor(budget.committedMinor)} cap={budget.monthlyCapDisplay} />
+        </small>
+      ) : null}
+      {project.shareLine ? <small className="text-sm text-muted-foreground">{project.shareLine}</small> : null}
     </li>
   );
 }
 
-/** Where to fund a project, what funding decides, and who the money reaches. */
+/** Where to fund a project, its fees and custody, and who the money reaches. */
 export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live, branch }: SponsorsViewProps) {
   const listed = projects.value ?? [];
-  const reviewBudgets = listed.some((project) => project.reward.reviewBudget);
-  const externalPrize = listed.some((project) => project.reward.kind === "external-prize-share");
   return (
     <main className="mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-10 px-4 py-8">
-      <div className="flex flex-col gap-3">
-        <PageHeader title="Fund a project" icon={<HandCoins className="size-6 text-primary" />} />
-        <p className="text-muted-foreground">Deposit into a project’s vault. Funded awards pay monthly when payments are enabled.</p>
-      </div>
+      <PageHeader title="Fund a project" icon={<HandCoins className="size-6 text-primary" />} />
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
           <h2 className="text-xl font-semibold text-foreground">Projects</h2>
@@ -74,24 +88,25 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
             Add a project
           </a>
         </div>
+        <p className="text-muted-foreground">Anyone can deposit from their own wallet into a project's registered vault. Deposits are public. Depositors have no refund right, and the project owner can withdraw free funds, less a 2% fee.</p>
         <DataState status={projects.status} onRetry={projects.onRetry}>
           <ul aria-label="Project funding pools" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {listed.filter(listedThisMonth).map((project) => (
-              <SponsorCard key={project.id} project={project} mergeLine={mergeLine} networkPays={networkPays} reviewBudgets={reviewBudgets} />
+            {listed.filter(onSponsors).map((project) => (
+              <SponsorCard key={project.id} project={project} mergeLine={mergeLine} networkPays={networkPays} />
             ))}
           </ul>
         </DataState>
       </section>
-      <Disclosure summary="Funding rules and fees">
+      <Disclosure summary="Fees & rules">
         <div className="flex flex-col gap-8 pt-2">
           <Explained
             title="Fees"
             aside={
               <dl aria-label="Example: $5,000 in gross escrow awards" className="grid gap-3 rounded-lg border border-border p-6">
                 {[
-                  ["Example gross awards", "$5,000"],
-                  ["Slop fee, deducted", "$100"],
-                  ["Contributors receive", "$4,900"],
+                  ["Awards", "$5,000"],
+                  ["Fee 2%", "$100"],
+                  ["Paid out", "$4,900"],
                 ].map(([term, value]) => (
                   <div key={term} className="flex flex-wrap items-baseline justify-between gap-2">
                     <dt>{term}</dt>
@@ -101,46 +116,36 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
               </dl>
             }
           >
-            <p>Ordinary awards deduct 2% in the award asset.</p>
-            {externalPrize ? <p>External prize shares use the terms published for that project. The prize sponsor controls eligibility and payment.</p> : null}
-          </Explained>
-          <Explained title="What you decide">
-            <ul className="list-disc pl-5">
-              <li>The monthly cap.</li>
-              <li>Award changes before the monthly cutoff, and whether automatic payment runs.</li>
-            </ul>
             <p>
-              <a className={link} href="/how-it-works">
-                Payment stages
-              </a>
+              <Chip>2% fee</Chip>
             </p>
           </Explained>
           <Explained title="Custody and keys">
             <ul className="flex list-disc flex-col gap-1 pl-5">
-              <li>Funds are held by the project vault contract. Private bounties use a separate vault.</li>
-              <li>The owner can withdraw free funds with the 2% fee. Reserved awards cannot be withdrawn.</li>
+              <li>Held in the project vault contract.</li>
+              <li>Owner withdrawals: 2% fee. Reserved awards locked.</li>
               <li>
-                Slop’s fee key can only claim and convert fees. A compromised identity attester key can redirect unpaid awards, and Slop’s upgrade keys can change the contracts. Read the{" "}
                 <ExternalLink className={link} href={`${SOURCE_REPOSITORY}/blob/${branch}/docs/slop-product-requirements.md#11-source-delivery-and-acceptance`}>
-                  authority and key risks
+                  Key risks
                 </ExternalLink>
-                .
               </li>
             </ul>
           </Explained>
         </div>
       </Disclosure>
-      <Disclosure summary={`Audience report · ${whoBuildsDateLabel(whoBuilds.generatedAt)}`}>
-        <div className="pt-2">
-          <WhoBuilds snapshot={whoBuilds} live={live} branch={branch} />
-        </div>
-      </Disclosure>
+      {whoBuilds === undefined ? null : (
+        <Disclosure summary={`Audience report · ${whoBuildsDateLabel(whoBuilds.generatedAt)}`}>
+          <div className="pt-2">
+            <WhoBuilds snapshot={whoBuilds} live={live} branch={branch} />
+          </div>
+        </Disclosure>
+      )}
       <section className="flex flex-col gap-3">
         <h2 className="text-xl font-semibold text-foreground">Public records</h2>
         <ul className="flex flex-col gap-2">
           <li>
-            <a className={link} href="/#leaderboard">
-              Live leaderboard
+            <a className={link} href="/points">
+              Contributors
             </a>
           </li>
           <li>

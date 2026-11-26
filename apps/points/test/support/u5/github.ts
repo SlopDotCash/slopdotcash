@@ -1,6 +1,7 @@
 // spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
 import type { Fetcher } from "@repo/platform/bindings";
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github";
+import { userNodeId } from "../u10/actors.ts";
 
 export const start = Date.UTC(2026, 10, 16, 12, 0, 0);
 export const day = 86_400_000;
@@ -25,9 +26,9 @@ export const closedAt = iso(start - day);
 /** @throws {Error} */
 export function seeded(): Seeded {
   const fake = githubFake({ now: () => start - 50 * day });
-  fake.world.addUser({ id: 101, login: "ada" });
-  fake.world.addUser({ id: 102, login: "grace" });
-  fake.world.addUser({ id: 103, login: "linus" });
+  fake.world.addUser({ id: 101, login: "ada", nodeId: userNodeId(101) });
+  fake.world.addUser({ id: 102, login: "grace", nodeId: userNodeId(102) });
+  fake.world.addUser({ id: 103, login: "linus", nodeId: userNodeId(103) });
   const created = fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" });
   const base = created.branches.get(created.defaultBranch) ?? "";
   const grace = fake.world.addCommit(repository, { branch: "paired", parents: [base], author: "grace", files: { "src/a.ts": "one\ntwo\nthree\n" } });
@@ -128,5 +129,7 @@ export function statisticsUnavailableAt(fake: GitHubFake, index: number): void {
 
 /** @throws {never} */
 export function gatewayFailures(fake: GitHubFake, times: number): void {
-  for (let attempt = 0; attempt < times; attempt += 1) fake.failNext(/^POST \/graphql$/u, { status: 502 });
+  for (let attempt = 0; attempt < times; attempt += 1) {
+    fake.alterNext(/^POST \/graphql$/u, () => new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html; charset=utf-8" } }));
+  }
 }

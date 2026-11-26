@@ -1,9 +1,10 @@
-// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"
 import { Alert, Button, Disclosure, Spinner } from "@repo/ui";
 import { useState } from "react";
 import type { PageProps } from "../../../app/pages.ts";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { useSession } from "../../../app/useSession.ts";
+import { actorNumber } from "../../../session/session.vibe";
 import { BountyFunding } from "../../funding/awards/BountyFunding.tsx";
 import { bountyProjectOf } from "../../funding/awards/bounty.schema.ts";
 import { run, useMounted } from "../program/hooks.ts";
@@ -43,8 +44,8 @@ function Editor({ runtime, projectId, actor, onPublished, onRetry }: EditorProps
   const current = published ?? read.value.value;
   const project = editorProjectOf(current.manifest);
   if (project === undefined) return <Refused message={settingsMessages.unreadable} label="Try again" onRetry={onRetry} />;
-  const publish: Publish = async (manifest) => {
-    const done = await run(runtime, publishProgram({ projectId, manifest, expectedRevision: current.revision, actorId: actor.githubId }));
+  const publish: Publish = async (manifest, bountyAmount) => {
+    const done = await run(runtime, publishProgram({ projectId, manifest, expectedRevision: current.revision, bountyAmount, actorId: actor.githubId }));
     if (!done.ok) return done.message;
     if (done.value.kind === "lost") {
       setLost(done.value.message);
@@ -59,7 +60,7 @@ function Editor({ runtime, projectId, actor, onPublished, onRetry }: EditorProps
   return (
     <div className="flex flex-col gap-6">
       <ProgramEditor key={`${project.id}:${current.revision}`} project={project} actor={actor} onPublish={publish} />
-      {vault ? <BountyFunding project={vault} /> : null}
+      {vault ? <BountyFunding project={vault} manager={{ account: actorNumber(actor.githubId), githubId: actor.githubId }} /> : null}
     </div>
   );
 }

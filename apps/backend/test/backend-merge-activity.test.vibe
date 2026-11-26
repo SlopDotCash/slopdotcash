@@ -30,6 +30,7 @@ service World {
 error MigrationFailed { file: string }
 
 schema Failure { project_id: string; repository: string; failure: string }
+schema Latest { revision: number }
 
 function iso(hours: number) {
   return new Date(start + hours * hour).toISOString()
@@ -48,7 +49,7 @@ effect function populate(fake: GitHubFake) {
     world.addRepo({ id: 7001, owner, name: "alpha" })
     world.addRepo({ id: 7002, owner, name: "beta" })
     many.forEach((path, index) => world.addRepo({ id: 7101 + index, owner, name: path.split("/")[1] ?? "" }))
-    world.addInstallation({ id: 77, account: owner, repositories: "all", permissions: { pull_requests: "read" } })
+    world.addInstallation({ id: 77, account: owner, repositories: "all", permissions: { pull_requests: "read", issues: "write" } })
     const repo = `${owner}/alpha`
     world.addPull({ repo, author: "alice", createdAt: iso(-240) })
     const answered = world.addPull({ repo, author: "bob", createdAt: iso(-240) })
@@ -90,8 +91,15 @@ const Shell = Layer.unwrap(effect {
 
 effect function project(id: string, status: string, paths: ReadonlyArray<string>) {
   const text = try orDie(Effect.try(() => manifest(id, status, paths)))
-  try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, ${status}, 1, ${text}, ${"a".repeat(64)}, ${t0}, ${t0})
-    ON CONFLICT (id) DO UPDATE SET status = excluded.status, manifest = excluded.manifest`)
+  const [latest] = try rows(Latest, sql`SELECT coalesce(max(revision), 0) AS revision FROM project_revisions WHERE project_id = ${id}`)
+  const revision = (latest?.revision ?? 0) + 1
+  const digest = String(revision).padStart(64, "a")
+  try (try D1).run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, ${revision}, ${text}, ${digest}, 'Seeded', '1', 'member-1', ${t0})`)
+  if (revision === 1) {
+    try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, ${status}, 1, ${text}, ${digest}, ${t0}, ${t0})`)
+  } else {
+    try (try D1).run(sql`UPDATE projects SET status = ${status}, revision = ${revision}, manifest = ${text}, manifest_sha256 = ${digest}, updated_at = ${t0} WHERE id = ${id}`)
+  }
 }
 
 effect function counted(before: number) {
@@ -114,21 +122,21 @@ effect function refreshed(advanceMillis: number) {
 }
 
 function alphaAt(repository: string, observedAt: string, lastAttemptFailed: boolean) {
-  return { repository, observedAt, lastAttemptFailed, lastMergedAt: latestMerge, waitingOutside: 1, waitingCapped: false, mergedOutsideLast30Days: 2, medianHoursToMerge: 36 }
+  return { repository, observedAt, lastAttemptFailed, lastMergedAt: latestMerge, waitingOutside: 1, waitingCapped: false, mergedOutsideLast30Days: 2, medianHoursToMerge: 36, openOutside: 3, openOutsideCapped: false }
 }
 
 function emptyAt(repository: string, observedAt: string) {
-  return { repository, observedAt, lastAttemptFailed: false, lastMergedAt: null, waitingOutside: 0, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null }
+  return { repository, observedAt, lastAttemptFailed: false, lastMergedAt: null, waitingOutside: 0, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null, openOutside: 0, openOutsideCapped: false }
 }
 
-const gone = { repository: "gone-org/gone", observedAt: "2026-11-10T00:00:00.000Z", lastAttemptFailed: false, lastMergedAt: "2026-11-09T00:00:00.000Z", waitingOutside: 3, waitingCapped: false, mergedOutsideLast30Days: 4, medianHoursToMerge: 12.5 }
+const gone = { repository: "gone-org/gone", observedAt: "2026-11-10T00:00:00.000Z", lastAttemptFailed: false, lastMergedAt: "2026-11-09T00:00:00.000Z", waitingOutside: 3, waitingCapped: false, mergedOutsideLast30Days: 4, medianHoursToMerge: 12.5, openOutside: null, openOutsideCapped: false }
 
 function answerOf(projects: ReadonlyArray<{ readonly projectId: string; readonly repositories: ReadonlyArray<unknown> }>) {
   return { schema: "slop-merge-activity-v1", waitingDays: 7, medianWindowDays: 30, projects }
 }
 
 layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Merge activity refresh with a failed read keeps last values with their date (spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date")', () => effect {
+  it.effect('Merge activity refresh with a failed read keeps last values with their date (spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not")', () => effect {
     const { fake } = try World
     const db = try D1
     try project("alpha", "active", [`${owner}/alpha`])

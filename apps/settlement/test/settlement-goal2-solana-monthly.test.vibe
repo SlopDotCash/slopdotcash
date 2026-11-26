@@ -1,0 +1,232 @@
+import { assert, layer } from "@effect/vitest"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import { Request as WebRequest } from "miniflare"
+import type { ExecutionContext } from "@repo/platform/bindings"
+import { type Blockhash, SYSTEM_PROGRAM, TOKEN_PROGRAM, SolanaRpc, base64Decode, solanaRpc } from "@repo/platform/chain/solana"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated, outbound } from "@repo/platform/http"
+import { worker } from "@repo/platform/worker"
+import { Authority, type ProjectView, Registry, RegistryManifests, Restrictions } from "@repo/ports/backend"
+import { digestBytes, i64, i64le } from "../src/chain/solana/bytes.ts"
+import { anchorData, meta } from "../src/chain/solana/instructions.ts"
+import { PURPOSE_BYTE, configAddress, keyBytes, programDataAddress, projectAddress, vaultAddress } from "../src/chain/solana/pda.ts"
+import { type Instruction, withSignature } from "../src/chain/solana/transactions.ts"
+import { checkMonthlySetting, readMonthlySetting, reviewMonthlySetting } from "../src/owner/monthlySetting.vibe"
+import { paymentNetworks } from "../src/owner/networks.vibe"
+import { registryProjectDigest } from "../src/owner/ownerInstructions.ts"
+import { ownerRoutes } from "../src/owner/routes.vibe"
+import { verifiedDeployment } from "../src/owner/solanaDeployment.vibe"
+import type { SolanaDeployment } from "../src/vault/policy.vibe"
+import { type Deployment, escrowDeployment } from "./support/solana/escrow.ts"
+import { type Keypair, keypair, submit, submitWire } from "./support/solana/program.ts"
+
+service Escrow {
+  readonly deployment: Deployment
+}
+
+const Started = Layer.effect(Escrow, effect {
+  const deployment = try acquireRelease(promise(() => escrowDeployment()), (started) => promise(() => started.close()))
+  return { deployment }
+})
+
+const capture = { revision: 1, snapshotDigest: "" }
+const context: ExecutionContext = { waitUntil: () => undefined }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function described(error: Error) {
+  const tag = "_tag" in error && typeof error._tag === "string" ? error._tag : error.name
+  return error.message !== "" ? `${tag}: ${error.message}` : tag
+}
+
+effect function refusalOf<A, E extends Error, R>(run: A!E!R) {
+  return run catch (error) => described(error)
+}
+
+effect function opened(projectId: string) {
+  const { deployment } = try Escrow
+  const { chain } = deployment
+  const owner = chain.holder
+  const noDelay = i64(0n)
+  if (noDelay === undefined) return try die(new Error("zero is outside i64"))
+  const digest = registryProjectDigest(projectId)
+  const project = projectAddress(chain.program, owner.address, digest, "Ordinary")
+  const vault = vaultAddress(chain.program, project)
+  const initialize: Instruction = {
+    program: chain.program,
+    accounts: [meta(owner.address, true, true), meta(project, true), meta(chain.mints.classic, false), meta(vault, true), meta(TOKEN_PROGRAM, false), meta(SYSTEM_PROGRAM, false), meta(configAddress(chain.program), false)],
+    data: anchorData("initialize", digestBytes(digest), digestBytes(deployment.network), keyBytes(deployment.identity.address), keyBytes(deployment.feeRecipient.address), i64le(noDelay), i64le(noDelay), Uint8Array.of(PURPOSE_BYTE.Ordinary)),
+  }
+  const created = try promise(() => submit(chain, owner, [initialize]))
+  const programData = try (try SolanaRpc).account(programDataAddress(chain.program), "finalized")
+  if (programData === undefined) return try die(new Error("program data missing"))
+  const record: SolanaDeployment = {
+    projectId,
+    scope: "ordinary",
+    network: "solana-devnet",
+    vault,
+    asset: chain.mints.classic,
+    owner: owner.address,
+    identityAuthority: deployment.identity.address,
+    feeRecipient: deployment.feeRecipient.address,
+    deploymentTransaction: created,
+    sourceCommit: "0".repeat(40),
+    codeSha256: try sha256Hex(programData.data.slice(45)),
+    bindingDelaySeconds: "0",
+    family: "solana",
+    chain: "solana",
+    genesisHash: chain.validator.genesis,
+    programId: chain.program,
+    upgradeAuthority: chain.upgradeAuthority.address,
+    projectPda: project,
+    networkDomain: deployment.network,
+    rotationAuthority: deployment.rotationAuthority.address,
+    rotationDelaySeconds: "0",
+  }
+  return { verified: try verifiedDeployment(record), owner }
+}
+
+effect function sentPlan(wallet: Keypair, transaction: string) {
+  const wire = base64Decode(transaction)
+  if (wire === undefined) return try die(new Error("the plan is not base64"))
+  const signature = try Effect.try(() => ed25519.sign(wire.slice(65), wallet.seed))
+  const filled = withSignature(wire, wallet.address, signature)
+  if (filled === undefined) return try die(new Error("the signature did not encode"))
+  const { deployment } = try Escrow
+  return try promise(() => submitWire(deployment.chain, filled))
+}
+
+effect function onChain<A, E, R>(run: A!E!R) {
+  const { deployment } = try Escrow
+  const { validator } = deployment.chain
+  provide solanaRpc({ urls: Redacted.make([validator.url]), genesis: validator.genesis }) {
+    return try run
+  }
+}
+
+layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('The vault owner reads automatic monthly payment, turns it on with a positive cap through a fixed plan signed in the wallet and checked once at finality, and a zero cap, a cap beyond u64, another wallet or a different setting are refused (spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
+    const { verified, owner } = try opened("owner-monthly-setting")
+    const before = try readMonthlySetting(verified)
+    const on = { wallet: owner.address, cap: "500000", enabled: true }
+    const zero = try refusalOf(reviewMonthlySetting({ verified, intent: { ...on, cap: "0" }, capture }))
+    const wide = try refusalOf(reviewMonthlySetting({ verified, intent: { ...on, cap: "18446744073709551616" }, capture }))
+    const strangerWallet = try Effect.try(() => keypair())
+    const stranger = try refusalOf(reviewMonthlySetting({ verified, intent: { ...on, wallet: strangerWallet.address }, capture }))
+    const plan = try reviewMonthlySetting({ verified, intent: on, capture })
+    if (plan.transaction === null) return try die(new Error("turning the setting on planned no transaction"))
+    const blockhash = plan.transaction.blockhash as Blockhash
+    const sent = try sentPlan(owner, plan.transaction.transaction)
+    const otherSetting = try refusalOf(checkMonthlySetting({ verified, intent: { ...on, cap: "400000" }, blockhash, transactionId: sent, capture }))
+    const checked = try checkMonthlySetting({ verified, intent: on, blockhash, transactionId: sent, capture })
+    const after = try readMonthlySetting(verified)
+    const unchanged = try reviewMonthlySetting({ verified, intent: on, capture })
+    const off = try reviewMonthlySetting({ verified, intent: { ...on, cap: "0", enabled: false }, capture })
+    try same({
+      before,
+      plan: { wallet: plan.wallet, cap: plan.cap, enabled: plan.enabled, current: plan.current },
+      refusals: [zero, wide, stranger, otherSetting],
+      checked,
+      after,
+      unchanged: unchanged.transaction,
+      off: { current: off.current, planned: off.transaction !== null },
+    }, {
+      before: { current: { cap: "0", enabled: false }, decimals: verified.decimals },
+      plan: { wallet: owner.address, cap: "500000", enabled: true, current: { cap: "0", enabled: false } },
+      refusals: [
+        "WalletActionRefused: Turning on automatic monthly payment needs a positive monthly amount.",
+        "WalletActionRefused: The monthly cap is outside the Solana vault's supported range.",
+        "WalletActionRefused: Connect the vault owner's wallet to change automatic monthly payment.",
+        "WalletActionRefused: This transaction does not match the pending wallet action. Check its signature in your wallet.",
+      ],
+      checked: "finalized",
+      after: { current: { cap: "500000", enabled: true }, decimals: verified.decimals },
+      unchanged: null,
+      off: { current: { cap: "500000", enabled: true }, planned: true },
+    })
+  }))
+})
+
+const projectView: ProjectView = { projectId: "route-project", revision: 1, manifestSha256: "0".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: "77", stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [], closureConsent: false }
+
+const routeOutbound: string[] = []
+const settingSite = worker({
+  services: (_env: object) => Layer.mergeAll(
+    paymentNetworks({ PAYMENT_NETWORKS: '["solana-devnet"]', PAYMENT_RPC_URLS: '{"solana-devnet":"https://solana-devnet.invalid"}' }),
+    Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
+    Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } }),
+    Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+      routeOutbound.push(request.url)
+      return try die(new Error("a refusal before the chain must not call an RPC endpoint"))
+    })),
+    Layer.succeed(Registry, {
+      project: (projectId) => effect { return projectId === projectView.projectId ? projectView : undefined },
+      byRepository: () => effect { return undefined },
+      byPath: () => effect { return undefined },
+      active: () => effect { return [projectView] },
+      pausedProjects: () => effect { return [] },
+      fence: () => effect { return sql`1` },
+      appendVaultRegistration: () => Effect.die(new Error("The monthly setting journey registers no vaults")),
+    }),
+    Layer.succeed(Authority, { repository: (read) => effect { return { ...read, permission: "PermissionDenied" as const, installation: "Installed" as const } } }),
+    Layer.succeed(Restrictions, {
+      account: () => effect { return { banned: false } },
+      project: () => effect { return { restricted: false } },
+      fence: () => effect { return sql`SELECT 1` },
+      unbanned: () => effect { return sql`1` },
+    }),
+    webCrypto,
+  ),
+  routes: ownerRoutes,
+})
+
+effect function posted(body: unknown, origin?: string) {
+  const headers: Record<string, string> = origin === undefined ? { "content-type": "application/json" } : { "content-type": "application/json", origin }
+  const request = try orDie(Effect.try(() => new WebRequest("https://slop.test/api/v1/payments/projects/route-project/solana-monthly-commitment", { method: "POST", headers, body: JSON.stringify(body) })))
+  const response = try promise(() => settingSite.fetch(request as unknown as globalThis.Request, {}, context))
+  const text = try promise(() => response.text())
+  return { status: response.status, body: try orDie(Effect.try(() => JSON.parse(text) as unknown)) }
+}
+
+layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('The monthly setting route refuses a cross-origin write, a malformed step, cap, wallet, blockhash or signature, an unserved network and an unregistered vault before any chain read (spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan")', () => effect {
+    const site = "https://slop.test"
+    const read = { step: "read", network: "solana-devnet", vault: SYSTEM_PROGRAM }
+    const review = { ...read, step: "review", wallet: SYSTEM_PROGRAM, cap: "500000", enabled: true }
+    const check = { ...review, step: "check", blockhash: SYSTEM_PROGRAM, transactionId: "1" }
+    const answers = [
+      try posted(read),
+      try posted({ ...read, step: "sign" }, site),
+      try posted({ ...review, cap: "01" }, site),
+      try posted({ ...review, cap: "1".repeat(21) }, site),
+      try posted({ ...review, enabled: "yes" }, site),
+      try posted({ ...review, wallet: "not-a-wallet" }, site),
+      try posted({ ...check, blockhash: "not-a-blockhash" }, site),
+      try posted({ ...check, transactionId: "1".repeat(101) }, site),
+      try posted({ ...read, network: "base-mainnet" }, site),
+      try posted(read, site),
+      try posted(check, site),
+    ]
+    const invalid = { status: 400, body: { error: "invalid_monthly_setting" } }
+    const missing = { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } }
+    try same({ answers, routeOutbound }, {
+      answers: [
+        { status: 403, body: { error: "origin_forbidden" } },
+        invalid,
+        invalid,
+        invalid,
+        invalid,
+        invalid,
+        invalid,
+        invalid,
+        { status: 503, body: { error: "payments_unavailable" } },
+        missing,
+        missing,
+      ],
+      routeOutbound: [],
+    })
+  })
+})

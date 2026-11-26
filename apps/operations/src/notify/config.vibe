@@ -1,7 +1,7 @@
 // spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"
 import { sha256Hex } from "@repo/platform/crypto"
 import { AdminRecipients, EmailAddress, SenderAddress } from "../notifications/contracts.schema.vibe"
-import type { Release } from "../notifications/rows.vibe"
+import type { Channel, Release } from "../notifications/rows.vibe"
 
 export interface NotifyVars {
   readonly NOTIFY_FROM_ADDRESS: string
@@ -134,9 +134,9 @@ function releaseOf(pilot: Configured): Release {
   }
 }
 
-export function releaseFor(settings: NotifySettings.Shape): Release {
-  if (settings.security.kind === "on") return releaseOf(settings.security)
-  return { routes: [], generalEmail: settings.activity.kind === "on" && settings.activity.generalEmail }
+export function releaseFor(settings: NotifySettings.Shape, channel: Channel): Release {
+  const pilot = channel === "security" ? settings.security : settings.activity
+  return pilot.kind === "on" ? releaseOf(pilot) : { routes: [], generalEmail: false }
 }
 
 export function enrollmentOpen(pilot: Pilot): pilot is Configured & { readonly unsubscribeKey: Redacted.Redacted<Uint8Array> } {

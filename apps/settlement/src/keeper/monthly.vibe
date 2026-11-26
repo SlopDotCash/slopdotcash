@@ -1,7 +1,7 @@
-// spec/settlement/monthlySettlement.md, "On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"
+// spec/settlement/monthlySettlement.md, "On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized"; spec/settlement/monthlySettlement.md, "The executor's cursor passes a leaf only on a matching finalized award, or once the reserve is exhausted"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"
 import { EvmRpc, type Hex, recoverDigest } from "@repo/platform/chain/evm"
 import type { SqlTx } from "@repo/platform/journal"
-import { leavesPerCall, nextLeafCursor } from "../../gen/settlement__monthlySettlement.effect.vibe"
+import { type LeafAward, exhaustedLeafStep, leavesPerCall, nextLeafCursor, pooledLeafStep } from "../../gen/settlement__monthlySettlement.effect.vibe"
 import { type Bytes32, awardCall, awardId, bytes32, decodeAddress, decodeAward, decodeBytes32, escrowGetter, evmAddress, isZero } from "../chain/evm/abi.ts"
 import { type MonthlyEntry, type MonthlyReservation, type MonthlyReserveState, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, decodeMonthlyReserve, monthlyDigest, monthlyReserveCall, monthlyReserveDigest, monthlyRootCall, reserveMonthlyCalldata, sumTree } from "../chain/evm/monthlyRoot.ts"
 import { parseBaseUnits } from "../kernels/amounts.ts"
@@ -9,7 +9,7 @@ import { type Period, formatPeriod, parsePeriod, periodContaining, shiftPeriod }
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { type Attempt, type SendContext, fingerprintOf, parsedAttempt, readAttempt, reasonOf, retireReverted, signNewAttempt } from "./attempts.vibe"
 import { canonicalJson } from "./canonical.ts"
-import { monthlyCutoff } from "./config.vibe"
+import { type KeeperConfig, monthlyCutoff } from "./config.vibe"
 import type { KeeperResult } from "./diagnostics.vibe"
 import { submitSigned } from "./pay.vibe"
 import { KeeperRefused, publicJson, siteOrigin } from "./registry.vibe"
@@ -56,6 +56,7 @@ schema Plan {
   readonly totalGrossBase: string
   readonly entries: ReadonlyArray<PlanEntry>
   readonly evmReservation?: Reservation
+  readonly frozenAt?: string
 }
 
 schema LegacyAuthorization {
@@ -63,7 +64,7 @@ schema LegacyAuthorization {
   readonly signatureHex: string
 }
 
-schema Authorization {
+export schema Authorization {
   readonly plan: Plan
   readonly signatureHex: string
   readonly legacyAuthorization?: LegacyAuthorization
@@ -78,17 +79,20 @@ interface Retained {
 
 export interface MonthlySubmission {
   readonly transactionId: string | null
+  readonly transactionIds?: ReadonlyArray<string>
   readonly alreadyCommitted: boolean
   readonly complete?: boolean
   readonly notAdmitted?: boolean
   readonly committedSources?: ReadonlyArray<string>
 }
 
-export interface MonthContext {
-  readonly send: SendContext
+export interface MonthContext<E, R> {
+  readonly config: KeeperConfig
+  readonly deployment: { readonly projectId: string; readonly vault: string }
   readonly projectActive: boolean
   readonly restricted: boolean
   readonly execute: boolean
+  submit(authorization: Authorization, admit: boolean, perRun: number): (MonthlySubmission | undefined)!E!R
 }
 
 const SIGNATURE = /^[a-f0-9]{130}$/u
@@ -284,7 +288,8 @@ effect function submitReserve(context: SendContext, authorization: Authorization
   if (state.remaining === 0n) {
     let index = cursor
     for (; index < entries.length && index < cursor + bound; index += 1) {
-      if (!(try sendJournaledUntilFinalized(context, `${key}:${tree.root.hash}:leaf:${index}`))) break
+      const settled = try sendJournaledUntilFinalized(context, `${key}:${tree.root.hash}:leaf:${index}`)
+      if (exhaustedLeafStep(settled) !== "PassLeaf") break
       try keepCursor(cursorKey, index + 1)
     }
     return { transactionId: null, alreadyCommitted: true, complete: rootSettled && index === entries.length } satisfies MonthlySubmission
@@ -299,10 +304,14 @@ effect function submitReserve(context: SendContext, authorization: Authorization
     const id: Bytes32 = try Effect.try({ try: () => awardId(deployment.chainId, vault, entry.sourceDigest), catch: () => refused("Invalid monthly authorization") })
     const award = decodeAward(try vaultRead(context, awardCall(id)))
     if (award === undefined) throw refused("Malformed contract state")
-    if (award.actor !== 0n) {
-      if (award.actor !== entry.actor || award.gross !== entry.gross || !payoutFeeAccepted(award.gross, award.fee, false))
-        throw refused("Admitted monthly source conflicts with a funded award")
-      const settled = try sendJournaledUntilFinalized(context, leafKey)
+    const found: LeafAward = award.actor === 0n ? "LeafAwardMissing"
+      : award.actor === entry.actor && award.gross === entry.gross && payoutFeeAccepted(award.gross, award.fee, false) ? "LeafAwardMatching" : "LeafAwardConflicting"
+    // Only a matching award's nonce is awaited: a missing award is sent and a conflicting one halts the call.
+    const settled = found === "LeafAwardMatching" && (try sendJournaledUntilFinalized(context, leafKey))
+    const step = pooledLeafStep(found, settled)
+    if (step === "HaltLeaf") throw refused("Admitted monthly source conflicts with a funded award")
+    if (step === "WaitLeaf") continue
+    if (step === "PassLeaf") {
       const next = nextLeafCursor(cursor, index, true, settled)
       if (next !== cursor) {
         cursor = next
@@ -349,8 +358,8 @@ export effect function submitEvmMonthly(context: SendContext, authorization: Aut
   return { transactionId: sent.transactionId, alreadyCommitted: false } satisfies MonthlySubmission
 }
 
-effect function published(context: MonthContext, period: string, key: string) {
-  const { config, deployment } = context.send
+effect function published<E, R>(context: MonthContext<E, R>, period: string, key: string) {
+  const { config, deployment } = context
   const origin = siteOrigin(config.apiOrigin)
   const url = `${origin}/api/v1/payments/projects/${deployment.projectId}/monthly/${period}/authorization/${config.network}`
   const answer = try publicJson(url, origin, () => new KeeperRefused({ message: "Monthly authorization publication unavailable" }))
@@ -363,8 +372,15 @@ effect function published(context: MonthContext, period: string, key: string) {
   return value
 }
 
-export effect function serveMonths(context: MonthContext, scope: string, item: { readonly projectId: string; readonly vault: string }) {
-  const { config } = context.send
+export function evmMonths(send: SendContext) {
+  return (authorization: Authorization, admit: boolean, perRun: number) => effect {
+    if (!admit && authorization.plan.evmReservation === undefined) return undefined
+    return try submitEvmMonthly(send, authorization, admit, perRun)
+  }
+}
+
+export effect function serveMonths<E, R>(context: MonthContext<E, R>, scope: string, item: { readonly projectId: string; readonly vault: string }) {
+  const { config } = context
   const results: KeeperResult[] = []
   const nowSeconds = Math.floor((try Clock.currentTimeMillis) / 1000)
   const current = try Effect.try(() => periodContaining(nowSeconds))
@@ -392,9 +408,8 @@ export effect function serveMonths(context: MonthContext, scope: string, item: {
       results.push({ ...item, operation, state: admit ? "published-not-executed" : "resume-only" })
       continue
     }
-    if (!admit && authorization.plan.evmReservation === undefined) continue
     const chosen = authorization
-    const submitted = submitEvmMonthly(context.send, chosen, admit, config.perRun) catch effect (error) => {
+    const submitted = context.submit(chosen, admit, config.perRun) catch effect (error) => {
       results.push({ ...item, operation, state: "waiting", error: reasonOf(error) })
       return undefined
     }

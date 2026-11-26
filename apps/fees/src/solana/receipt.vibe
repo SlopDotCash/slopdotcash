@@ -150,6 +150,22 @@ export effect function routeCredit(send: RouteSend, fetched: FetchedTransaction)
   return credit.amount
 }
 
+effect function routeReviewed(send: RouteSend) {
+  if (send.accountProof !== undefined && (try retainedProof(send.accountProof)).route !== undefined) return true
+  const raw = base64Decode(send.rawTx)
+  if (raw === undefined) return try refuse("Solana native journal lacks its reviewed signed bytes")
+  if (!(try parsedTransaction(raw)).legacy) return try refuse("Versioned swap receipt lacks its retained route review")
+  return false
+}
+
+function tokenDelta(fetched: FetchedTransaction, owner: string, mint: string) {
+  const total = (values: ReadonlyArray<TokenBalance>) => values
+    .filter((value) => value.owner === owner && value.mint === mint)
+    .reduce((sum, value) => sum + value.amount, 0n)
+  const credit = total(fetched.meta.postTokenBalances) - total(fetched.meta.preTokenBalances)
+  return credit > 0n ? credit : 0n
+}
+
 export effect function routeStatus(send: RouteSend) {
   const status = try signatureStatus(send.txId)
   if (status === undefined) {
@@ -158,9 +174,10 @@ export effect function routeStatus(send: RouteSend) {
     return { kind: "unseen" } satisfies SendStatus
   }
   if (status.confirmationStatus !== "finalized") return { kind: "pending", mined: true } satisfies SendStatus
+  const reviewed = try routeReviewed(send)
   const receipt = try nativeReceipt(send)
   if (receipt.kind === "unseen") return { kind: "pending", mined: true } satisfies SendStatus
-  const output = receipt.succeeded ? try routeCredit(send, receipt.fetched) : 0n
+  const output = !receipt.succeeded ? 0n : reviewed ? try routeCredit(send, receipt.fetched) : tokenDelta(receipt.fetched, send.wallet, send.targetToken)
   return {
     kind: "landed",
     txId: send.txId,

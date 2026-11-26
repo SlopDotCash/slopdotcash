@@ -311,6 +311,30 @@ function nativeReceiptOf(rawTx: string, signature: string, walletPost: number, w
   return { signature, body }
 }
 
+function unreviewedSwap(versioned: boolean) {
+  const message = Uint8Array.from([...versioned ? [128] : [], 1, 0, 1, 2, ...key(wallet), ...key(jupiter.program), ...key(blockhash), 1, 1, 1, 0, 0, ...versioned ? [0] : []])
+  const signature = ed25519.sign(message, seed)
+  return { rawTx: base64Encode(Uint8Array.from([1, ...signature, ...message])), txId: base58Encode(signature) }
+}
+
+function unreviewedReceiptOf(rawTx: string, signature: string) {
+  const body: ReceiptBody = {
+    slot: 110,
+    blockTime: null,
+    transaction: [rawTx, "base64"],
+    meta: {
+      err: null,
+      fee: 5000,
+      preBalances: [1_000_000_000, 1_000_000],
+      postBalances: [999_995_000, 1_000_000],
+      preTokenBalances: [balance(2, usdc, TOKEN_PROGRAM, "100"), balance(3, input, TOKEN_2022_PROGRAM, "500")],
+      postTokenBalances: [balance(2, usdc, TOKEN_PROGRAM, "1334"), balance(3, input, TOKEN_2022_PROGRAM, "400")],
+      loadedAddresses: { writable: [], readonly: [] },
+    },
+  }
+  return { signature, body }
+}
+
 interface ReceiptBody {
   readonly slot: number
   readonly blockTime: null
@@ -327,7 +351,7 @@ interface ReceiptBody {
 }
 
 layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('The fee wallet signs a v0 Token-2022 Jupiter swap only after every account is reviewed and simulated, retains that review with its reservation, and credits exactly the finalized route output (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+  it.effect('The fee wallet signs a v0 Token-2022 Jupiter swap only after every account is reviewed and simulated, retains that review with its reservation, and credits exactly the finalized route output; a legacy swap signed before route reviews is credited by the fee wallet\'s finalized target-token gain, and a versioned one without its review is refused (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const fixture = try Fixture
     try fixture.set({})
     const balanceOfCanonical = try onSolana(walletBalance(input, 0n))
@@ -368,6 +392,13 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     const recorded = { token: input, targetToken: usdc, amountIn: 10_000_000n, minimumOutput: 1_990_000n }
     const recordedSwap = retainedSendReview(sent.rawTx, send.accountProof, wallet, recorded) catch (error) => issueOf(error)
     const otherAmount = retainedSendReview(sent.rawTx, send.accountProof, wallet, { ...recorded, amountIn: 9_999_999n }) catch (error) => issueOf(error)
+    const legacy = unreviewedSwap(false)
+    const legacySend: RouteSend = { ...send, txId: legacy.txId, rawTx: legacy.rawTx, accountProof: undefined }
+    try fixture.set({ receipt: unreviewedReceiptOf(legacy.rawTx, legacy.txId) })
+    const legacyLanded = try onSolana(routeStatus(legacySend))
+    const versioned = unreviewedSwap(true)
+    try fixture.set({ receipt: unreviewedReceiptOf(versioned.rawTx, versioned.txId) })
+    const versionedUnreviewed = onSolana(routeStatus({ ...legacySend, txId: versioned.txId, rawTx: versioned.rawTx })) catch (error) => issueOf(error)
     try same({
       balanceOfCanonical,
       legacy: parsed.legacy,
@@ -382,6 +413,8 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       missingAfterExpiry,
       recordedSwap,
       otherAmount,
+      legacyLanded,
+      versionedUnreviewed,
     }, {
       balanceOfCanonical: 10_000_000n,
       legacy: false,
@@ -396,6 +429,8 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       missingAfterExpiry: { kind: "pending", mined: false },
       recordedSwap: undefined,
       otherAmount: "Jupiter account review differs from the recorded swap",
+      legacyLanded: { kind: "landed", txId: legacy.txId, succeeded: true, output: 1234n, actualWei: "5000", blockHash: blockhash, allowance: 0n, feesClaimed: 0n, vaultDebit: 0n, walletCredit: 0n, roleFree: false },
+      versionedUnreviewed: "Versioned swap receipt lacks its retained route review",
     })
   })
 

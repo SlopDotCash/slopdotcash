@@ -5,7 +5,7 @@ import type { PageProps } from "../../../app/pages.ts";
 import type { PaymentSlot } from "./CaseDetail.tsx";
 import { SecurityInbox } from "./SecurityInbox.tsx";
 
-/** `/security`: the signed-in viewer's private security cases. */
+/** `/security`: the signed-in viewer's private reports and cases. */
 export function SecurityCasesPage({ runtime, payment }: PageProps & { payment?: PaymentSlot }) {
   return (
     <main className="mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-12">

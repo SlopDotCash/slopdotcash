@@ -72,6 +72,41 @@ pure def canElapse(r: Review, seconds: int): bool = seconds > 0
 pure def elapse(r: Review, seconds: int): Review = { ...r, now: r.now + seconds }
 ```
 
+### A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap
+
+Source `runReview` in `review.ts`, lines 1488-1575, and `intake-cap.ts`
+(development `e126f2419`, #2986; `8008b4617`, #3058). For a pull request in
+contributor scope the checks after binding run in this order: an exempt
+author's standing unpaid fee ask is released first
+([submission fee gate](./submissionFeeGate.md)); a routing decision that
+does not review is the skip of the rule above; a pull request of a
+not-exempt author that Slopbot has not completed a review of is skipped with
+the reason `intake-cap` while the project is paused at its intake cap (the
+pause is [backend's intake cap](../backend/intakeCap.md), read as a fact);
+a pull request whose fee gate waits (`feeStep` asks or waits) is skipped with
+the reason `fee-needed`; only then comes the monthly cap below. Each skip
+makes no model call, writes no review label, comment or close and uses no
+monthly admission. A later delivery reviews the pull request once the pause
+ends or the fee is paid or released. A failure of the fee step is not a
+review attempt: the attempt's row is finished failed with no
+review-failure comment, and the queue's retry runs the review again.
+
+```quint
+pure def canSkipForIntake(r: Review, paused: bool, outsidePull: bool, reviewedBefore: bool): bool =
+  r.status == Queued and r.bound and not(r.capAdmitted) and r.scope == RS::Contributor and
+  outsidePull and paused and not(reviewedBefore)
+pure def skipForIntake(r: Review, paused: bool, outsidePull: bool, reviewedBefore: bool): Review =
+  { ...r, status: Skipped, bound: false, capAdmitted: false }
+pure def canSkipForFee(r: Review, feeWaits: bool): bool =
+  r.status == Queued and r.bound and not(r.capAdmitted) and r.scope == RS::Contributor and feeWaits
+pure def skipForFee(r: Review, feeWaits: bool): Review = { ...r, status: Skipped, bound: false, capAdmitted: false }
+pure def stepIntakeAndFeeSkipBeforeAdmission(before: Review, via: str, after: Review): bool =
+  (via == "skipForIntake" or via == "skipForFee") implies
+    (not(before.capAdmitted) and before.scope == RS::Contributor and after.calls == before.calls)
+pure def sometimesSkippedBeforeAdmissionWithoutCalls(r: Review): bool =
+  r.status == Skipped and r.scope == RS::Contributor and r.calls.length() == 0
+```
+
 ### A bound review of a new item over the month's free-review cap is skipped before any call
 
 The worker admits the item to the repository's month
@@ -342,7 +377,10 @@ pure val weight_start = 3
 
 Source `loadPolicy`, `pullDiff` and `loadContext` in
 `workers/slopbot/review.ts` and `fileText` in `github.ts`. Guidance is read
-from the default branch at the recorded base commit: the first present file
+at the commit the review compares against: for a pull request the current
+target branch tip that GitHub selected and the comparison with the head
+used, so a pull request into another branch is held to that branch's
+guides; for an issue the default branch tip. It is the first present file
 of each group `AGENTS.md`/`agents.md`; `CONTRIBUTING.md`/`contributing.md`/
 `.github/CONTRIBUTING.md`/`docs/CONTRIBUTING.md`; `README.md`/`readme.md`. A
 present file over 64 KiB, or one GitHub returns without base64 file
@@ -359,7 +397,13 @@ Each omitted file is one named limitation, and a comparison of 300 or more
 files adds one more. Coverage is complete only when nothing was omitted,
 and `unreviewedContent` is the `unreviewed` count `finish` receives, so a
 limited result can never label, close or penalize. An issue has no diff
-and its coverage is its text.
+and its coverage is its text. The policy digest is SHA-256 of the default
+branch tip, the repository file and the guides read; when the compared
+target commit is not the default branch tip, `digestTargetSha` adds it as
+`targetSha`, and when the two are one commit the digest keeps the form of
+reviews recorded before guides were read at the target, so their stored
+digests stay valid. A target tip that moves after the review therefore
+changes the digest, and the current-source check refuses the close.
 
 ```quint
 type ComparedFile = { chunkChars: int, patched: bool }
@@ -387,6 +431,10 @@ pure def guidanceOf(reads: List[GuidanceRead]): GuidanceStatus =
   if (reads.every(g => not(g.found))) GuidanceMissing
   else if (reads.some(g => g.found and guidanceTruncated(g))) GuidanceTruncated
   else GuidanceComplete
+pure def digestTargetSha(defaultTip: str, targetTip: str): str = if (targetTip == defaultTip) "" else targetTip
+pure def lawOneCommitKeepsTheDigest(sampleTip: str): bool = digestTargetSha(sampleTip, sampleTip) == ""
+pure def lawAnotherTargetIsBound(sampleTip: str, sampleTarget: str): bool =
+  sampleTarget != sampleTip implies digestTargetSha(sampleTip, sampleTarget) == sampleTarget
 pure def lawFileLimitNeverComplete(sampleDiff: List[ComparedFile]): bool =
   sampleDiff.length() >= comparisonFileLimit implies not(coverageComplete(sampleDiff))
 pure def lawMissingPatchNeverComplete(sampleDiff: List[ComparedFile]): bool =
@@ -403,6 +451,8 @@ pure val sampleDiffValues = Set(List(), List(smallPatch), List(smallPatch, { chu
 pure val sampleGuidanceValues = Set(List(), List({ found: false, bytes: 0, readable: false }),
   List({ found: true, bytes: 900, readable: true }, { found: true, bytes: 65537, readable: true }),
   List({ found: true, bytes: 0, readable: false }), List({ found: true, bytes: 65536, readable: true }))
+pure val sampleTipValues = Set("main-tip", "release-tip")
+pure val sampleTargetValues = Set("main-tip", "release-tip", "moved-tip")
 ```
 
 ### Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized

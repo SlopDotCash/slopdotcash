@@ -31,6 +31,16 @@ export function fetcherOf(fake: GitHubFake): Fetcher {
 }
 
 /** @throws {never} */
+export function answer(body: string | Uint8Array | null, init: ResponseInit = {}): Response {
+  return new Response(typeof body === "string" || body === null ? body : body.slice(), init);
+}
+
+/** @throws {never} */
+export function jsonAnswer(value: unknown, init: ResponseInit = {}): Response {
+  return Response.json(value, init);
+}
+
+/** @throws {never} */
 export function withEtag(fake: GitHubFake, match: RegExp, etag: string): void {
   fake.alterNext(match, (response) => {
     const headers = new Headers(response.headers);

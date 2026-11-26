@@ -1,0 +1,31 @@
+// spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"; spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"
+import { networkTerms } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { resolverMaySign } from "../../gen/fees__submissionFeeSends.effect.vibe"
+import { type ResolveTransaction, type ResolverSigner, ResolverSignRefused } from "../submissionFee/chain.vibe"
+import { SubmissionFeeConfigInvalid } from "../submissionFee/config.vibe"
+import { type ResolverKey, resolveManyOf, resolverKey } from "./resolverKey.ts"
+
+export interface ResolverEnv {
+  readonly SUBMISSION_FEE_RESOLVER_KEY?: string
+}
+
+export function resolverSecret(env: ResolverEnv) {
+  const text = env.SUBMISSION_FEE_RESOLVER_KEY?.trim() ?? ""
+  return text === "" ? undefined : Redacted.make(text)
+}
+
+effect function signWith(network: string, key: ResolverKey, transaction: ResolveTransaction) {
+  const intent = resolveManyOf(network, transaction)
+  const published = networkTerms(network)
+  if (intent === undefined || !resolverMaySign(
+    { chainId: intent.chainId, contract: intent.contract, ids: [...intent.ids], refunds: [...intent.refunds] },
+    { chainId: published.chainId, contract: published.contract.toLowerCase() },
+  )) throw new ResolverSignRefused({ issue: "The resolver key signs only resolveMany on the published contract" })
+  return try tryPromise({ try: () => key.sign(intent), catch: () => new ResolverSignRefused({ issue: "The resolver key could not sign" }) })
+}
+
+export effect function resolverSigner(network: string, secret: Redacted.Redacted<string>) {
+  const key = resolverKey(Redacted.value(secret))
+  if (key === undefined) throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_RESOLVER_KEY is malformed" })
+  return { address: key.address, sign: (transaction: ResolveTransaction) => signWith(network, key, transaction) } satisfies ResolverSigner
+}

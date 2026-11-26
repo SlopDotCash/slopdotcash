@@ -1,0 +1,171 @@
+// spec/slopbot/readyLabel.md, "Story: Label a pull request ready only while every condition holds at its head"
+import type { D1Database } from "@repo/platform/bindings"
+import { jsonVar } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { Caller, Unauthenticated, answered, body, json, outbound } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import { worker } from "@repo/platform/worker"
+import { ProjectAudience, ProjectStatus, type ProjectView, Registry, RegistryManifests, Restrictions } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { Enforcement } from "@repo/ports/security"
+import { submissionFeeMode } from "../../src/fee/store.vibe"
+import { ingressRoutes } from "../../src/ingress/routes.vibe"
+import { webhookSettings } from "../../src/ingress/webhook.vibe"
+import { type Job, JobQueue, QueueUnavailable, ReadyLabelJob, ReviewJob } from "../../src/jobs/job.vibe"
+import { queueReadyAfterReview, refreshReadyLabel } from "../../src/ready/refresh.vibe"
+import { dispatchReadyChecks } from "../../src/ready/store.vibe"
+import { lostQueueNumber } from "./ingressNumbers.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly GITHUB_API: string
+  readonly GITHUB_TOKEN: string
+  readonly SLOPBOT_WEBHOOK_SECRET: string
+  readonly SLOPBOT_APP_USER_ID: string
+  readonly TEST_PROJECTS: string
+}
+
+schema TestProject {
+  readonly projectId: string
+  readonly path: string
+  readonly repositoryId: string
+  readonly rowStatus: ProjectStatus
+}
+
+schema StoredManifest { readonly project_id: string; readonly manifest: string }
+
+const TestProjects = Schema.Array(TestProject)
+
+function viewOf(project: typeof TestProject.Type): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 1,
+    manifestSha256: "0".repeat(64),
+    rowStatus: project.rowStatus,
+    manifestStatus: project.rowStatus,
+    listingTier: "Community",
+    retirement: "NotRetired",
+    stewardGithubId: "100",
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+function manifestOf(row: typeof StoredManifest.Type) {
+  return { projectId: row.project_id, active: true, revision: 1, manifest: row.manifest, manifestSha256: "0".repeat(64), updatedAt: "2026-11-01T00:00:00.000Z" }
+}
+
+function portsOver(text: string, db: D1Database) {
+  const database = d1(db)
+  return Layer.unwrap(effect {
+    const projects = try jsonVar("TEST_PROJECTS", text, TestProjects)
+    const byId = (projectId: string) => projects.find((project) => project.projectId === projectId)
+    const stored = (projectId?: string) => Effect.provide(rows(StoredManifest, projectId === undefined ? sql`SELECT project_id, manifest FROM ready_test_manifests` : sql`SELECT project_id, manifest FROM ready_test_manifests WHERE project_id = ${projectId}`), database)
+    return Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
+        byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+        byPath: (fullName) => effect {
+          const found = projects.find((project) => project.path === fullName.toLowerCase())
+          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+        },
+        active: () => effect { return projects.map(viewOf) },
+        pausedProjects: () => effect { return projects.filter((project) => project.rowStatus === "Paused").map(viewOf) },
+        appendVaultRegistration: () => Effect.die(new Error("the ready-label journeys register no vault")),
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(RegistryManifests, {
+        current: () => Effect.map(stored(), (found) => found.map(manifestOf)),
+        project: (projectId) => Effect.map(stored(projectId), (found) => found[0] === undefined ? undefined : manifestOf(found[0])),
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: () => effect { return { restricted: false } },
+        fence: () => effect { return sql`1` },
+        unbanned: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Enforcement, {
+        project: () => effect { return { restriction: "Clear" as const, enforcementGeneration: 0, clearanceGeneration: "0" } },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(ProjectAudience, {
+        listedBy: () => effect { return sql`SELECT NULL AS recipient WHERE 0` },
+        owners: () => effect { return sql`SELECT NULL AS recipient WHERE 0` },
+      }),
+      Layer.succeed(Notices, {
+        statements: () => effect { return [] },
+        fanout: () => effect { return [] },
+        payoutRecipient: (project) => effect { return project.stewardGithubId },
+      }),
+    )
+  })
+}
+
+function queueOver(db: D1Database) {
+  return Layer.effect(JobQueue, effect {
+    const database = try D1
+    return {
+      send: (job: Job) => job.number === lostQueueNumber
+        ? Effect.fail(new QueueUnavailable({ kind: job.kind }))
+        : Effect.asVoid(Effect.orDie(database.run(sql`INSERT INTO ready_test_jobs (delivery, kind, number) VALUES (${job.deliveryId}, ${job.kind}, ${job.number})`))),
+    }
+  }).pipe(Layer.provide(d1(db)))
+}
+
+const callerFixture = Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } })
+
+effect function at<A, E, R>(program: A!E!R) {
+  const http = try HttpServerRequest.HttpServerRequest
+  const now = Number(http.headers["x-test-now"] ?? "0")
+  const clock = settableClock(now).layer
+  provide clock {
+    return try program
+  }
+}
+
+effect function refreshed() {
+  return try answered(effect {
+    const job = try body(ReadyLabelJob, 4)
+    const outcome = at(refreshReadyLabel(job)) catch (error) => `failed: ${error._tag}`
+    return json({ outcome })
+  })
+}
+
+effect function dispatched() {
+  return try answered(effect {
+    return json({ sent: try at(dispatchReadyChecks()) })
+  })
+}
+
+effect function reviewed() {
+  return try answered(effect {
+    const job = try body(ReviewJob, 4)
+    return json({ queued: try at(queueReadyAfterReview(job)) })
+  })
+}
+
+function services(env: Env) {
+  return Layer.mergeAll(
+    d1(env.SLOPBOT_DB),
+    webCrypto,
+    Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-ready-test" }), outbound),
+    queueOver(env.SLOPBOT_DB),
+    webhookSettings(env),
+    portsOver(env.TEST_PROJECTS, env.SLOPBOT_DB),
+    callerFixture,
+    submissionFeeMode(undefined),
+  )
+}
+
+const routes = Layer.mergeAll(
+  ingressRoutes,
+  HttpRouter.add("POST", "/test/ready/refresh", refreshed()),
+  HttpRouter.add("POST", "/test/ready/dispatch", dispatched()),
+  HttpRouter.add("POST", "/test/ready/after-review", reviewed()),
+)
+
+export default worker({ services, routes })

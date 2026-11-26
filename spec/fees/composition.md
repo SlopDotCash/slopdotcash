@@ -3,8 +3,8 @@
 PRD section 6 "Received-fee handling" and "SLOP buyback and burn" require
 every fee receipt that reaches a network fee wallet to come from a settled
 source, and every buyback income entry to come from a finalized USDC vault
-claim, a finalized conversion output or a completed direct-award fee, each
-counted once. A token's observed balance increase is fee income without a
+claim, a finalized conversion output, a completed direct-award fee or a kept
+submission fee, each counted once. A token's observed balance increase is fee income without a
 named source, as in development's `runNetwork`, which converts whatever the
 wallet's token balance shows; it never counts as buyback income. This
 machine composes the [conversion journal](./conversion.md) of one network fee
@@ -32,7 +32,8 @@ kind, amount and finalized chain time. Settled-source evidence covers
 receipts only: a project token, an allowlisted token or the network's USDC
 is evaluated from the wallet's observed balance, and an increase there is
 fee income with no named source (`core.ts` 784-830). Buyback income still
-counts only claims, conversion outputs and booked direct-award fees.
+counts only claims, conversion outputs, booked direct-award fees and kept
+submission fees.
 
 ```quint
 import runtime as R from "./runtime"
@@ -46,8 +47,11 @@ type SourceEvidence = { source: FeeSource, receipt: int, token: int, amount: int
 type FeeEntry = { source: FeeSource, receipt: int, token: int, usdc: bool, amount: int, chainTime: int, caseId: int }
 type Output = { row: int, output: int, at: int }
 type Credit = { key: B::IncomeKey, amount: M::Amount }
-type FeeFlow = { fee: CV::Fee, journal: J::FeeJournal, buyback: B::Buyback, entries: List[FeeEntry], outputs: List[Output], credits: List[Credit] }
-pure val initial: FeeFlow = { fee: { ...CV::initial, clock: B::buybackStart }, journal: J::initial, buyback: B::initial, entries: List(), outputs: List(), credits: List() }
+type KeptFee = { deposit: int, token: int, amount: int, toFeeWallet: bool, accepted: bool, finalized: bool, resolved: bool, chainTime: int }
+type FeeFlow = { fee: CV::Fee, journal: J::FeeJournal, buyback: B::Buyback, entries: List[FeeEntry], outputs: List[Output], credits: List[Credit],
+  kept: List[KeptFee] }
+pure val initial: FeeFlow = { fee: { ...CV::initial, clock: B::buybackStart }, journal: J::initial, buyback: B::initial, entries: List(), outputs: List(), credits: List(),
+  kept: List() }
 pure def transferOf(evidence: SourceEvidence): CV::FinalizedTransfer =
   { receipt: evidence.receipt, token: evidence.token, amount: evidence.amount, toFeeWallet: true, sameAsset: true, finalized: true }
 pure def cashMatches(s: FeeFlow, evidence: SourceEvidence): bool =
@@ -142,7 +146,7 @@ pure def alwaysOutputsOnce(s: FeeFlow): bool = s.outputs.every(o => o.row > 0 an
 
 ## Story: Count each buyback income once, from its own receipt
 
-### Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee
+### Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee
 
 Payout fees accrue in the reviewed vaults and reach the fee wallet only
 through the journal's claims, so a USDC payout fee counts as its finalized
@@ -158,6 +162,18 @@ direct-award fees). A claim or a conversion output counts at the Worker
 clock its row finalized at, so one finalized before activation never
 counts (`finalized_at >= startAt`). Only the fee Worker records income, on the buyback
 instance of this wallet's network.
+
+A kept submission fee is a deposit of the [submission deposit
+contract](./submissionFeeDeposits.md) kept for a pull request closed
+unmerged and sent to this fee wallet. The fee Worker reads it from the
+submission-fee Worker's own finalized deposit rows (`buyback-store.ts`
+`keptSubmissionFees`): only a row recorded as kept from the contract's
+finalized `Resolved` event, accepted, finalized, resolved, kept to this fee
+wallet and in the asset asked, so a refunded or reclaimed deposit, one not
+yet resolved and kept SLOP, which goes to the burn address, never count. It
+is keyed by its deposit, counted once, in the network's USDC, at its
+resolution time, and only from the activation instant. Only Base and
+Robinhood Chain have the contract, so the Ethereum and Solana legs read none.
 
 ```quint
 pure def entryFor(s: FeeFlow, feeReceipt: int): FeeEntry =
@@ -204,11 +220,34 @@ pure def creditDirectFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sen
   val key = keyOf(B::DirectFee, s.fee.network, feeReceipt)
   { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime, R::Worker),
     credits: s.credits.append({ key: key, amount: M::smallAmount(e.amount) }) }
+pure def keptFor(s: FeeFlow, deposit: int): KeptFee =
+  s.kept.foldl({ deposit: 0, token: 0, amount: 0, toFeeWallet: false, accepted: false, finalized: false, resolved: false, chainTime: 0 },
+    (found, k) => if (k.deposit == deposit) k else found)
+pure def keptProven(keptFee: KeptFee): bool = keptFee.deposit > 0 and keptFee.amount > 0 and keptFee.accepted and keptFee.finalized
+  and keptFee.resolved and keptFee.toFeeWallet and keptFee.chainTime > 0
+pure def canObserveKeptFee(s: FeeFlow, keptFee: KeptFee, by: R::Sender): bool =
+  by == R::Worker and keptProven(keptFee) and not(s.kept.some(x => x.deposit == keptFee.deposit))
+pure def observeKeptFee(s: FeeFlow, keptFee: KeptFee, by: R::Sender): FeeFlow = { ...s, kept: s.kept.append(keptFee) }
+pure def canCreditKeptFee(s: FeeFlow, deposit: int, chainTime: int, by: R::Sender): bool =
+  val k = keptFor(s, deposit)
+  val key = keyOf(B::KeptSubmissionFee, s.fee.network, deposit)
+  by == R::Worker and s.fee.network == s.buyback.source and k.deposit > 0 and CV::holding(s.fee, k.token).asset == CV::TargetStable
+    and chainTime == k.chainTime and not(credited(s, key))
+    and B::canRecordIncome(s.buyback, key, M::smallAmount(k.amount), chainTime, R::Worker)
+pure def creditKeptFee(s: FeeFlow, deposit: int, chainTime: int, by: R::Sender): FeeFlow =
+  val k = keptFor(s, deposit)
+  val key = keyOf(B::KeptSubmissionFee, s.fee.network, deposit)
+  { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(k.amount), chainTime, R::Worker),
+    credits: s.credits.append({ key: key, amount: M::smallAmount(k.amount) }) }
+pure def alwaysKeptFeesProvenOnce(s: FeeFlow): bool = s.kept.every(k => keptProven(k)
+  and s.kept.select(x => x.deposit == k.deposit).length() == 1)
 pure def backed(s: FeeFlow, credit: Credit): bool =
   if (credit.key.kind == B::ConversionOutput) outputRow(s, credit.key.id).kind == CV::Conversion
     and s.outputs.some(o => o.row == credit.key.id and o.at >= B::buybackStart and M::equalAmounts(credit.amount, M::smallAmount(o.output)))
   else if (credit.key.kind == B::UsdcClaim) usdcClaimRow(s, credit.key.id)
     and s.outputs.some(o => o.row == credit.key.id and o.at >= B::buybackStart and M::equalAmounts(credit.amount, M::smallAmount(o.output)))
+  else if (credit.key.kind == B::KeptSubmissionFee) s.kept.some(k => k.deposit == credit.key.id and keptProven(k)
+    and k.chainTime >= B::buybackStart and M::equalAmounts(credit.amount, M::smallAmount(k.amount)))
   else credit.key.kind == B::DirectFee and s.entries.some(e => e.receipt == credit.key.id and e.usdc
     and M::equalAmounts(credit.amount, M::smallAmount(e.amount)) and e.source == DirectAwardFee)
 pure def alwaysIncomeBackedByReceiptOrConversion(s: FeeFlow): bool = s.credits.every(c => backed(s, c))
@@ -216,12 +255,15 @@ pure def alwaysIncomeBackedByReceiptOrConversion(s: FeeFlow): bool = s.credits.e
   and s.buyback.income == s.credits.foldl(M::zero, (total, c) => M::addAmounts(total, c.amount))
 pure def receiptKeyed(credit: Credit): bool = credit.key.kind == B::DirectFee
 pure def rowKeyed(credit: Credit): bool = credit.key.kind == B::ConversionOutput or credit.key.kind == B::UsdcClaim
+pure def depositKeyed(credit: Credit): bool = credit.key.kind == B::KeptSubmissionFee
 pure def alwaysNoReceiptCountedTwice(s: FeeFlow): bool = s.credits.every(c => s.credits.select(x => x.key == c.key).length() == 1
   and (receiptKeyed(c) implies s.credits.select(x => receiptKeyed(x) and x.key.id == c.key.id).length() == 1)
-  and (rowKeyed(c) implies s.credits.select(x => rowKeyed(x) and x.key.id == c.key.id).length() == 1))
+  and (rowKeyed(c) implies s.credits.select(x => rowKeyed(x) and x.key.id == c.key.id).length() == 1)
+  and (depositKeyed(c) implies s.credits.select(x => depositKeyed(x) and x.key.id == c.key.id).length() == 1))
 pure def sometimesUsdcFeeIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::UsdcClaim)
 pure def sometimesConversionIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::ConversionOutput)
 pure def sometimesDirectFeeIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::DirectFee)
+pure def sometimesKeptFeeIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::KeptSubmissionFee)
 pure val evidenceValues = Set(
   { source: PayoutFee, receipt: 1, token: 1, amount: 1000000000, chainTime: B::buybackStart, caseId: 0, reconciled: true },
   { source: PayoutFee, receipt: 3, token: 2, amount: 1000000000, chainTime: B::buybackStart, caseId: 0, reconciled: true },
@@ -229,6 +271,13 @@ pure val evidenceValues = Set(
   { source: DirectAwardFee, receipt: 4, token: 1, amount: 25, chainTime: B::buybackStart + 1, caseId: 1, reconciled: true },
   { source: DirectAwardFee, receipt: 5, token: 1, amount: 26, chainTime: B::buybackStart + 1, caseId: 1, reconciled: true })
 pure val feeReceiptValues = Set(1, 3, 4)
+pure val keptFeeValues = Set(
+  { deposit: 7, token: 1, amount: 2000000, toFeeWallet: true, accepted: true, finalized: true, resolved: true, chainTime: B::buybackStart + 1 },
+  { deposit: 8, token: 2, amount: 5000000, toFeeWallet: true, accepted: true, finalized: true, resolved: true, chainTime: B::buybackStart },
+  { deposit: 9, token: 1, amount: 2000000, toFeeWallet: true, accepted: true, finalized: true, resolved: true, chainTime: B::buybackStart - 1 },
+  { deposit: 10, token: 1, amount: 2000000, toFeeWallet: false, accepted: true, finalized: true, resolved: true, chainTime: B::buybackStart + 1 },
+  { deposit: 11, token: 1, amount: 2000000, toFeeWallet: true, accepted: true, finalized: true, resolved: false, chainTime: B::buybackStart + 1 })
+pure val depositValues = Set(7, 8, 9)
 pure val reviewedValues = CV::reviewedValues
 pure val accrualValues = CV::accrualValues
 pure val vaultClaimValues = CV::vaultClaimValues
@@ -260,6 +309,8 @@ pure val weight_finalizeSend = 10
 pure val weight_creditClaim = 8
 pure val weight_creditConversion = 8
 pure val weight_creditDirectFee = 8
+pure val weight_observeKeptFee = 6
+pure val weight_creditKeptFee = 8
 pure val weight_registerVault = 6
 pure val weight_accrue = 6
 pure val weight_claim = 6

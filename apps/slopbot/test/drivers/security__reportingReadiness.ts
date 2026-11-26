@@ -22,7 +22,6 @@ function projectOf(key: string) {
   return `readiness-g${generation}-${key}`;
 }
 
-/** The model numbers a node id; the application stores GitHub's text. */
 function nodeText(id: number) {
   return id === 0 ? "" : `R_node${id}`;
 }
@@ -74,8 +73,12 @@ interface Row {
 
 async function storedRows(key: string): Promise<ReadonlyArray<Row>> {
   const found = await db.prepare("SELECT project_revision, repository_key FROM repository_reporting_status WHERE project_id = ? ORDER BY rowid")
-    .bind(projectOf(key)).all<Row>();
-  return found.results;
+    .bind(projectOf(key)).all();
+  return found.results.map((row) => {
+    const { project_revision: revision, repository_key: repositoryKey } = row;
+    if (typeof revision !== "number" || typeof repositoryKey !== "string") throw new Error("repository_reporting_status row has an unexpected shape");
+    return { project_revision: revision, repository_key: repositoryKey };
+  });
 }
 
 async function storedOf(key: string, revision: number, repositoryKey: string): Promise<Stored | undefined> {
@@ -106,7 +109,6 @@ async function observed(key: string): Promise<Readiness> {
   return { observations };
 }
 
-/** The refresh records only an attempt it accepts, so a changed stored row is the application's acceptance. */
 async function dispatched(key: string, event: Event): Promise<"accepted" | "refused"> {
   await seed(key);
   const target = targetOf(key, event.target);

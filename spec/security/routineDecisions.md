@@ -22,11 +22,19 @@ and cost; they need adapters and are not modelled here.
 ### The pass reads only an unappealed undecided report once per case revision and mode
 
 `SECURITY_ROUTINE_DECISIONS` is `off`, `dry_run` or `live`; any other value
-is off (`routineMode`). Production starts in `dry_run` and staging `off`;
-`live` needs its own reviewed change. The pass reads a case the
+is off (`routineMode`). Production started in `dry_run` and runs `live` since
+20 November 2026 (operator decision, its own reviewed change, development
+commit `49014751c`); staging is `off`. The pass reads a case the
 [case rule](./cases.md) allows: still received, or with its own request for
-proof due or answered by a newer version. A report version still being
-screened is not read until 15 minutes after it was saved. Each case revision
+proof due or answered by a newer version, and never one that waits for its
+[deposit](./reportDeposit.md); a live change commits only while the case
+still does not wait (`candidates` and `caseChange` in
+`backend/security/routine-decisions.ts`, development commit `c04752ccf`). A
+report that waits for its deposit is never supplied as an earlier case or as
+a same-digest duplicate of another report. A report version still being
+screened is not read until 15 minutes after the last write to its case
+(`security_cases.updated_at`): a saved version, a person's action and a live
+routine decision each restart that wait. Each case revision
 gets one final decision per mode, also under overlapping passes. A failed
 attempt waits six hours before the next one, three at most. A live decision
 applies only to the case revision it read, so a person's action that lands
@@ -44,16 +52,17 @@ type Decision = { outcome: C::RoutineOutcome, basis: Basis, hold: Hold, duplicat
 type RoutineRecord = { mode: Mode, caseRevision: int, reportVersion: int, at: int, decision: Decision, applied: bool }
 type FailedAttempt = { mode: Mode, caseRevision: int, at: int }
 type Routine = { mode: Mode, privateCase: C::PrivateCase, screening: S::Screening, onGithub: bool, nowMs: int, savedAt: int,
-  records: List[RoutineRecord], failures: List[FailedAttempt] }
+  records: List[RoutineRecord], failures: List[FailedAttempt], proofFile: bool }
 pure val screeningWaitMs = 900000
 pure val unavailableRetryMs = 21600000
 pure val maxUnavailableAttempts = 3
 pure val receivedCase: C::PrivateCase =
   { ...C::receive(C::initial, C::SlopReceived, T::standardTerms, C::NewReceipt, M::zero, 1), authority: C::staff }
 pure val initial: Routine = { mode: DryRun, privateCase: receivedCase, screening: S::initial, onGithub: false,
-  nowMs: T::standardTerms.receivedAt, savedAt: T::standardTerms.receivedAt, records: List(), failures: List() }
-pure def screeningSettled(r: Routine): bool = (r.screening.phase != S::Queued and r.screening.phase != S::Running)
-  or r.nowMs >= r.savedAt + screeningWaitMs
+  nowMs: T::standardTerms.receivedAt, savedAt: T::standardTerms.receivedAt, records: List(), failures: List(), proofFile: false }
+pure def screeningSettledFor(screening: S::Screening, savedAt: int, nowMs: int): bool =
+  (screening.phase != S::Queued and screening.phase != S::Running) or nowMs >= savedAt + screeningWaitMs
+pure def screeningSettled(r: Routine): bool = screeningSettledFor(r.screening, r.savedAt, r.nowMs)
 pure def ownsRevision(r: Routine, mode: Mode, caseRevision: int): bool = mode == r.mode and caseRevision == r.privateCase.revision
 pure def failuresNow(r: Routine): int = r.failures.select(f => ownsRevision(r, f.mode, f.caseRevision)).length()
 pure def readable(r: Routine): bool = r.mode != Off and C::routineReadable(r.privateCase, r.nowMs) and screeningSettled(r)
@@ -75,7 +84,7 @@ pure def stepAuditRecordsRetained(before: Routine, after: Routine): bool =
 ### Two independent calls must agree before a close, and a plausible loss of funds closes nothing
 
 The two calls are separate requests with the prompt label
-`slop-security-routine-decision-1`; the second lists the published lines and
+`slop-security-routine-decision-2`; the second lists the published lines and
 earlier reports in the opposite order. Each names at most an earlier case of
 the program, a closing line, whether theft or permanent freezing of funds is
 plausible, whether proof is present and a severity. The closing lines are the
@@ -86,11 +95,18 @@ supplied makes the answer invalid, which counts as a failed call. In order:
 a plausible loss in either call acknowledges; a duplicate or a line named by
 one call only is a disagreement; differing proof readings disagree; missing
 proof asks once per report, and a later version still without proof goes to
-the owner. The ranked severity is the higher of the two.
+the owner. The ranked severity is the higher of the two. A report version
+that carries a proof-of-concept file ([intake](./intake.md)) has proof present
+by rule: both readings say so, with nothing missing, before they are combined
+(`withFile` in `evaluate`, development commit `548dcaaf7`).
 
 ```quint
 type Reading = { lossPlausible: bool, duplicateOf: int, line: int, proofPresent: bool, severity: int }
 pure val routineSeparateRuleCount = 3
+pure def withFile(x: Reading, file: bool): Reading = if (file) { ...x, proofPresent: true } else x
+pure def lawFileIsProof(first: Reading, second: Reading, askedBefore: bool): bool =
+  val d = combine(withFile(first, true), withFile(second, true), askedBefore)
+  d.outcome != C::RoutineNeedsProof and d.hold != ProofStillMissing
 pure val earlierCases = Set(7, 9)
 pure def closingLines(context: T::ExclusionContext): int =
   if (context.defaults == 0) 0 else context.defaults - routineSeparateRuleCount + context.owner.length()
@@ -159,7 +175,7 @@ pure def verdict(r: Routine, found: Observation): Decision =
     | NoCallNeeded => held(AnalysisUnavailable, ByHold, 0)
     | NotStored => held(ReportNotStored, ByHold, 0)
     | SameDigest(x) => { outcome: C::RoutineDuplicate, basis: ByDigest, hold: NoHold, duplicateOf: x.earlier, line: 0, severity: 0 }
-    | Calls(x) => combine(x.first, x.second, r.privateCase.routine.proofAsked > 0)
+    | Calls(x) => combine(withFile(x.first, r.proofFile), withFile(x.second, r.proofFile), r.privateCase.routine.proofAsked > 0)
   }
 pure def canDecideReport(r: Routine, found: Observation): bool = readable(r) and accepts(r, found)
   and (r.mode != Live or C::routineOutcomeAllowed(r.privateCase, verdict(r, found).outcome,
@@ -168,7 +184,8 @@ pure def decideReport(r: Routine, found: Observation): Routine =
   val d = verdict(r, found)
   { ...r, records: r.records.append({ mode: r.mode, caseRevision: r.privateCase.revision, reportVersion: r.privateCase.reportVersion,
       at: r.nowMs, decision: d, applied: r.mode == Live }),
-    privateCase: if (r.mode == Live) C::routineDecided(d.outcome, r.privateCase, d.duplicateOf, r.nowMs) else r.privateCase }
+    privateCase: if (r.mode == Live) C::routineDecided(d.outcome, r.privateCase, d.duplicateOf, r.nowMs) else r.privateCase,
+    savedAt: if (r.mode == Live) r.nowMs else r.savedAt }
 pure def canFailCalls(r: Routine): bool = readable(r) and not(withoutCalls(r)) and failuresNow(r) < maxUnavailableAttempts
 pure def failCalls(r: Routine): Routine =
   { ...r, failures: r.failures.append({ mode: r.mode, caseRevision: r.privateCase.revision, at: r.nowMs }) }
@@ -205,6 +222,8 @@ pure def sometimesLossAcknowledged(r: Routine): bool = r.privateCase.receipt == 
 pure def sometimesDisagreementAcknowledged(r: Routine): bool = r.records.some(d => d.applied and d.decision.hold == CallsDisagreed)
 pure def sometimesGithubAcknowledged(r: Routine): bool = r.records.some(d => d.applied and d.decision.hold == GithubAdvisory)
 pure def sometimesUnavailableAcknowledged(r: Routine): bool = r.records.some(d => d.applied and d.decision.hold == AnalysisUnavailable)
+pure def sometimesFileCountsAsProof(r: Routine): bool = r.proofFile
+  and r.records.some(d => d.applied and d.reportVersion > 1 and d.decision.outcome == C::RoutineAcknowledged and d.decision.hold == NoHold)
 ```
 
 ### The reporter appeals a routine close once, to the owner, and the pass never reads the report again
@@ -214,32 +233,35 @@ the report to the program owner untriaged; the owner decides with the
 ordinary decision. An appeal of the owner's later decision opens the
 moderator path. People act on the composed case as in the
 [case machine](./cases.md); the reporter saves a new version as in the
-[screening machine](./screening.md) while no copy exists on GitHub. A report
+[screening machine](./screening.md) while no copy exists on GitHub; the
+version carries a proof-of-concept file or not. A report
 reaches GitHub by forwarding or import ([forwarding](./forwarding.md)).
 
 ```quint
 pure def epoch(r: Routine): int = r.privateCase.authority.epoch
 pure def canRequestInformation(r: Routine, by: int): bool = C::canRequestInformation(r.privateCase, by, epoch(r))
-pure def requestInformation(r: Routine, by: int): Routine = { ...r, privateCase: C::requestInformation(r.privateCase, by, epoch(r)) }
+pure def requestInformation(r: Routine, by: int): Routine =
+  { ...r, privateCase: C::requestInformation(r.privateCase, by, epoch(r)), savedAt: r.nowMs }
 pure def canDecide(r: Routine, by: int, decision: C::Decision): bool =
   C::canDecide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision)
 pure def decide(r: Routine, by: int, decision: C::Decision): Routine =
-  { ...r, privateCase: C::decide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision) }
+  { ...r, privateCase: C::decide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision), savedAt: r.nowMs }
 pure def canAppeal(r: Routine, by: int): bool = C::routineAppealable(r.privateCase, by) or C::canAppeal(r.privateCase, by)
 pure def appeal(r: Routine, by: int): Routine =
-  { ...r, privateCase: if (C::routineAppealable(r.privateCase, by)) C::routineReturned(by, r.privateCase) else C::appeal(r.privateCase, by) }
+  { ...r, privateCase: if (C::routineAppealable(r.privateCase, by)) C::routineReturned(by, r.privateCase) else C::appeal(r.privateCase, by),
+    savedAt: r.nowMs }
 pure def canDecideAppeal(r: Routine, by: int, uphold: bool): bool = C::canDecideAppeal(r.privateCase, by, epoch(r), uphold)
 pure def decideAppeal(r: Routine, by: int, uphold: bool): Routine =
-  { ...r, privateCase: C::decideAppeal(r.privateCase, by, epoch(r), uphold) }
+  { ...r, privateCase: C::decideAppeal(r.privateCase, by, epoch(r), uphold), savedAt: r.nowMs }
 pure def revisionEvidence(r: Routine, by: int): S::RevisionEvidence = { isReporter: by == r.privateCase.reporter,
   draftOrFailed: not(r.onGithub), noAdvisory: not(r.onGithub), caseNeedsInformation: r.privateCase.receipt == C::NeedsInformation,
   exactCaseCas: true, allowedCaseState: C::canReviseReport(r.privateCase, by, r.screening.version + 1),
   exactObjectStored: true, admitted: true }
 pure def canSaveVersion(r: Routine, by: int, digest: str): bool =
   S::canReplace(r.screening, r.screening.revision, digest, revisionEvidence(r, by))
-pure def saveVersion(r: Routine, by: int, digest: str): Routine =
+pure def saveVersion(r: Routine, by: int, digest: str, proofFile: bool): Routine =
   { ...r, screening: S::replace(r.screening, r.screening.revision, digest, revisionEvidence(r, by)),
-    privateCase: C::reviseReport(r.privateCase, by, r.screening.version + 1), savedAt: r.nowMs }
+    privateCase: C::reviseReport(r.privateCase, by, r.screening.version + 1), savedAt: r.nowMs, proofFile: proofFile }
 pure def canClaimScreening(r: Routine): bool = S::canClaim(r.screening, r.screening.revision, r.nowMs, true)
 pure def claimScreening(r: Routine): Routine = { ...r, screening: S::claim(r.screening, r.screening.revision, r.nowMs, true) }
 pure def screeningInput(r: Routine, duplicate: bool): S::Input = { exactVersionLoaded: true,
@@ -286,10 +308,11 @@ pure val modeValues = Set(Off, DryRun, Live)
 pure val msValues = Set(900000, 21600000, 1209600000)
 pure val byValues = Set(1, 2, 4)
 pure val digestValues = Set("revised", "again")
+pure val proofFileValues = Set(true, false)
 pure val upholdValues = Set(true, false)
 pure val decisionValues = Set(
-  { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false },
-  { finding: C::Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false })
+  { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: false },
+  { finding: C::Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false })
 pure val weight_decideReport = 16
 pure val weight_failCalls = 10
 pure val weight_saveVersion = 6

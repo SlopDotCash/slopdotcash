@@ -1,0 +1,300 @@
+// spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, describe, it } from "@effect/vitest"
+import { Response as WebResponse } from "miniflare"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import type { GitHub } from "@repo/platform/github"
+import { systemGit } from "@repo/platform/git"
+import { outboundVia } from "@repo/platform/http"
+import { type Handler, internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { Graphql, graphqlClient } from "@repo/points/collect"
+import { type CensusOutcome, type ValueCensus, ValueInputs } from "@repo/ports/points"
+import { historyOrigin, workUnitHistoryPath } from "@repo/ports/slopbot"
+import { rebindHistoricalStandaloneReview } from "../src/value/collect/closedReview.vibe"
+import { collectValueInputs } from "../src/value/collect/inputs.vibe"
+import type { RegisteredRepository } from "../src/value/evidence/types.vibe"
+import { valueRubricVersion } from "../src/value/inference/assessment.vibe"
+import { prepareWorkUnitEvidence } from "../src/value/workUnits/prepare.vibe"
+import { type SourceBinding, type WorkUnitRecord, workUnitRecordVersion } from "../src/value/workUnits/record.vibe"
+import type { WorkUnitSource } from "../src/value/workUnits/types.vibe"
+import { historyIdentity } from "./support/collectWorld.vibe"
+import { type Seeded, acceptanceRecorder, githubOver, mergedAt, patchCommitPages, policyOf, repository, requested, seeded } from "./support/evidenceWorker.vibe"
+import { evidenceOf, githubOver as githubOverStack, noRetainedCopies, policyText, registered as registeredStack, repository as stackRepository, seeded as seededStack } from "./support/workUnitsWorker.vibe"
+
+const feedHost = new URL(historyOrigin).host
+const producer = { producerRevision: "c".repeat(40), model: { provider: "surplus", requested: "gpt-5.5", reported: "gpt-5.5" } }
+const absent = "PR_kwDOabsent99"
+const acquisitionRefusals = ["Public Git object acquisition refused", "Required merge reconstruction Git version unavailable"]
+
+interface Feed {
+  readonly joint: Map<number, ReadonlyArray<unknown>>
+  readonly single: Map<number, ReadonlyArray<unknown>>
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function feedHandler(feed: Feed): Handler {
+  return async (request) => {
+    const url = new URL(request.url)
+    const joint = url.pathname === workUnitHistoryPath
+    const pull = Number(url.searchParams.get("pull"))
+    const records = (joint ? feed.joint : feed.single).get(pull) ?? []
+    return WebResponse.json({
+      schemaVersion: joint ? "slop-work-unit-history:v1" : "slop-value-history:v1",
+      ...historyIdentity(url),
+      pullRequestNumber: pull,
+      records: url.searchParams.get("after") === "0" ? records : [],
+      nextAfter: null,
+      ...(joint ? { throughSequence: records.length, totalRecords: records.length } : {}),
+    })
+  }
+}
+
+effect function journalRows(records: ReadonlyArray<WorkUnitRecord>) {
+  const rows: Array<{ readonly sequence: number; readonly record_digest: string; readonly record_json: string; readonly recorded_at: string }> = []
+  for (const [index, record] of records.entries()) {
+    const json = JSON.stringify(record)
+    rows.push({ sequence: index + 1, record_digest: try sha256Hex(json), record_json: json, recorded_at: "2026-11-12T00:00:00.000Z" })
+  }
+  return rows
+}
+
+function bindingOf(world: Seeded, pullRequestNodeId: string, pullRequestNumber: number): SourceBinding {
+  return {
+    repository,
+    repositoryNodeId: world.repositoryNodeId,
+    repositoryDatabaseId: 7397,
+    pullRequestNodeId,
+    pullRequestNumber,
+    headSha: world.head,
+    mergeSha: world.merge,
+    occurredAt: mergedAt,
+    policySha: world.base,
+    sourceDigest: "a".repeat(64),
+  }
+}
+
+function recordOf(world: Seeded, sources: ReadonlyArray<SourceBinding>): WorkUnitRecord {
+  return {
+    schemaVersion: workUnitRecordVersion,
+    projectId: policyOf(world).projectId,
+    sourceDigest: "b".repeat(64),
+    sources,
+    claims: [],
+    units: [],
+    rubricVersion: valueRubricVersion,
+    assessedAt: "2026-11-11T00:00:00.000Z",
+    supersedes: [],
+    legacyPredecessors: [],
+    revisionReason: null,
+    ...producer,
+  }
+}
+
+effect function outcomeOf(world: Seeded, number: number) {
+  const pull = try Effect.try(() => world.fake.world.pull(repository, number))
+  return { id: pull.nodeId, url: `https://github.com/${repository}/pull/${number}`, number, headRefOid: pull.headSha, updatedAt: pull.updatedAt, mergedAt, closedAt: null } satisfies CensusOutcome
+}
+
+effect function loaded(census: ValueCensus) {
+  const read = Effect.map((try ValueInputs).load(census), (inputs) => ({ kind: "loaded" as const, inputs }))
+  return read catch (error) => ({ kind: error._tag, message: error.message })
+}
+
+effect function collected(world: Seeded, feed: Feed, census: ValueCensus) {
+  const net = internet({ github: world.fake.handler, hosts: { [feedHost]: feedHandler(feed) } })
+  const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
+  const services = Layer.mergeAll(githubOver(world), Layer.provide(graphqlClient({ token: Redacted.make(world.token) }), outbound), acceptanceRecorder().layer)
+  provide Layer.provide(collectValueInputs({ repositories: [policyOf(world)] }), Layer.mergeAll(services, outbound, webCrypto, systemGit, NodeServices.layer)) {
+    return try loaded(census)
+  }
+}
+
+function probeOf(asked: string[][], answer: (ids: ReadonlyArray<string>) => ReadonlyArray<string>) {
+  return (ids: ReadonlyArray<string>) => effect {
+    asked.push([...ids])
+    return answer(ids)
+  }
+}
+
+function jointOf(result: { readonly kind: string; readonly inputs?: { readonly jointValueDecisions: ReadonlyArray<{ readonly sourceId: string; readonly decision: unknown }> } }) {
+  return (result.inputs?.jointValueDecisions ?? []).map(({ sourceId, decision }) => {
+    const fields: Readonly<Record<string, unknown>> = typeof decision === "object" && decision !== null ? { ...decision } : {}
+    return [sourceId, fields["status"], fields["sourceUnavailable"] === true, fields["latestDigest"]]
+  })
+}
+
+describe('Recover complete history at a fixed sequence boundary (spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set")', () => {
+  it.live("a census source with a joint record is consumed and its member takes the joint decision, with no refusal", () => effect {
+    provide webCrypto {
+      const world = try seeded()
+      try patchCommitPages(world, world.head)
+      try patchCommitPages(world, world.merge)
+      const outcome = try outcomeOf(world, 1)
+      const rows = try journalRows([recordOf(world, [bindingOf(world, outcome.id, 1)])])
+      const result = try collected(world, { joint: new Map([[1, rows]]), single: new Map() }, { value: [outcome], attribution: [] })
+      const joint = jointOf(result)
+      const digest = rows[0]?.record_digest
+      try same({ kind: result.kind, members: joint.map(([id]) => id), consumed: joint.every(([, status, held, latest]) => (status === "incomplete" || status === "stale") && !held && latest === digest), single: "inputs" in result ? result.inputs.valueDecisions.length : -1 }, { kind: "loaded", members: [outcome.id], consumed: true, single: 0 })
+    }
+  })
+
+  it.live("a member outside the census that the probe confirms unavailable holds the work unit without reading it, and an unrequested answer is refused", () => effect {
+    provide webCrypto {
+      const world = try seeded()
+      const outcome = try outcomeOf(world, 1)
+      const rows = try journalRows([recordOf(world, [bindingOf(world, outcome.id, 1), bindingOf(world, absent, 99)])])
+      const feed: Feed = { joint: new Map([[1, rows]]), single: new Map() }
+      const asked: string[][] = []
+      const before = requested(world, /pulls\/99/u)
+      const held = try collected(world, feed, { value: [outcome], attribution: [], unavailableJointSources: probeOf(asked, (ids) => ids) })
+      const digest = rows[0]?.record_digest ?? ""
+      try same({
+        kind: held.kind,
+        asked,
+        held: "inputs" in held ? held.inputs.heldWorkUnits : [],
+        joint: jointOf(held),
+        reads: requested(world, /pulls\/99/u) - before,
+      }, {
+        kind: "loaded",
+        asked: [[absent]],
+        held: [{ recordDigest: digest, sourceNodeIds: [outcome.id, absent].sort(), unavailableNodeIds: [absent] }],
+        joint: [[outcome.id, "unresolved", true, digest], [absent, "unresolved", true, digest]],
+        reads: 0,
+      })
+      const stray = try collected(world, feed, { value: [outcome], attribution: [], unavailableJointSources: probeOf([], () => ["PR_never_asked"]) })
+      try same(stray, { kind: "ValueEvidenceRefused", message: "Unavailable joint source was not requested" })
+    }
+  })
+
+  it.live("a merge source that needs a full diff goes to public Git object recovery and fails closed when the objects cannot be acquired", () => effect {
+    provide webCrypto {
+      const world = try seeded()
+      try Effect.try(() => world.fake.world.addPull({ repo: repository, number: 5, author: "grace", title: "Binary data", createdAt: "2026-11-04T00:00:00Z", headSha: world.head, commits: [world.head], mergedAt, mergeCommit: world.merge, files: [{ path: "data.bin", status: "modified", additions: 1, deletions: 1 }] }))
+      const outcome = try outcomeOf(world, 5)
+      const result = try collected(world, { joint: new Map(), single: new Map([[5, [{ sequence: 1 }]]]) }, { value: [outcome], attribution: [] })
+      const message = "message" in result ? result.message : ""
+      try same({ kind: result.kind, acquisition: acquisitionRefusals.includes(message) }, { kind: "ValueEvidenceRefused", acquisition: true })
+    }
+  })
+})
+
+interface PublicNode {
+  readonly __typename: string
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly createdAt: string
+  readonly repository: { readonly id: string; readonly databaseId: number; readonly isPrivate: boolean; readonly nameWithOwner: string }
+}
+
+interface Rebind {
+  readonly earlier: WorkUnitSource
+  readonly current: WorkUnitSource
+  readonly record: WorkUnitRecord
+  readonly observed: PublicNode
+  readonly repositories: ReadonlyArray<RegisteredRepository>
+  readonly github: Layer.Layer<GitHub>
+}
+
+effect function preparedWith(github: Layer.Layer<GitHub>, source: WorkUnitSource, repository: RegisteredRepository) {
+  provide noRetainedCopies, github {
+    return try prepareWorkUnitEvidence([source], [repository])
+  }
+}
+
+effect function standaloneReview() {
+  const world = try seededStack()
+  const closedAt = "2026-11-05T00:00:00Z"
+  const url = `https://github.com/${stackRepository}/pull/10`
+  const base = evidenceOf(world, { number: 10, author: world.ada, headSha: world.first, mergedAt: closedAt, changes: [] })
+  const earlier: WorkUnitSource = {
+    evidence: { ...base, pull: { ...base.pull, merged_at: null, merge_commit_sha: null, changed_files: 0, commits: 0 }, files: [], mergeCommitEvidence: null, evidenceUrls: [url], implementationActorNodeIds: [] },
+    policy: { sha: world.base, text: policyText },
+  }
+  const github = githubOverStack(world)
+  const prepared = try preparedWith(github, earlier, registeredStack(world))
+  const assessment = { status: "assessed", tier: null, reviews: [{ sourceId: "PRR_review" }] }
+  const record: WorkUnitRecord = {
+    schemaVersion: workUnitRecordVersion,
+    projectId: registeredStack(world).projectId,
+    sourceDigest: prepared.sourceDigest,
+    sources: [{
+      repository: stackRepository,
+      repositoryNodeId: world.repositoryNodeId,
+      repositoryDatabaseId: world.repositoryDatabaseId,
+      pullRequestNodeId: earlier.evidence.pull.node_id,
+      pullRequestNumber: 10,
+      headSha: world.first,
+      mergeSha: null,
+      occurredAt: closedAt,
+      policySha: world.base,
+      sourceDigest: prepared.sourceDigests[0]?.digest ?? "",
+    }],
+    claims: [],
+    units: [{ workUnitId: "wu_review", claimIds: [], assessment }],
+    rubricVersion: valueRubricVersion,
+    assessedAt: "2026-11-10T00:00:00.000Z",
+    supersedes: [],
+    legacyPredecessors: [],
+    revisionReason: null,
+    ...producer,
+  }
+  const reference = { id: "PR_kwDOstack11", number: 11, url: `https://github.com/${stackRepository}/pull/11`, repository: stackRepository }
+  const current: WorkUnitSource = { ...earlier, evidence: { ...earlier.evidence, relatedPullRequests: [reference], evidenceUrls: [url, reference.url] } }
+  const observed: PublicNode = {
+    __typename: "PullRequest",
+    id: reference.id,
+    number: reference.number,
+    url: reference.url,
+    createdAt: "2026-11-11T00:00:00Z",
+    repository: { id: world.repositoryNodeId, databaseId: world.repositoryDatabaseId, isPrivate: false, nameWithOwner: stackRepository },
+  }
+  return { earlier, current, record, observed, repositories: [registeredStack(world)], github } satisfies Rebind
+}
+
+function referenceGraphql(node: unknown, asked: unknown[]) {
+  return Layer.succeed(Graphql, {
+    execute: (_document, variables) => effect {
+      asked.push(variables)
+      return { node }
+    },
+    compareCommitPage: () => Effect.succeed({}),
+    ensureBudget: () => Effect.void,
+    availableBudget: () => Effect.succeed(0),
+    tryReferenceDiscussion: () => Effect.succeed(null),
+    requestCount: () => Effect.succeed(asked.length),
+    rateLimit: () => Effect.succeed({ cost: 0, consumedDuringRun: 0, limit: 5000, remaining: 5000, resetAt: "2026-11-12T00:00:00.000Z" }),
+  })
+}
+
+effect function rebound(fixture: Rebind, node: unknown, record: WorkUnitRecord, asked: unknown[] = []) {
+  provide noRetainedCopies, fixture.github, referenceGraphql(node, asked) {
+    return try rebindHistoricalStandaloneReview(fixture.current, record, fixture.repositories)
+  }
+}
+
+describe('Rebind a stale standalone closure review (spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => {
+  it.effect("a late same-repository relation is subtracted only when exact public evidence restores the recorded digests", () => effect {
+    const fixture = try standaloneReview()
+    const asked: unknown[] = []
+    try same({ rebound: try rebound(fixture, fixture.observed, fixture.record, asked), asked }, { rebound: fixture.earlier, asked: [{ id: "PR_kwDOstack11" }] })
+    const wrongNodes = [
+      { ...fixture.observed, id: "PR_other" },
+      { ...fixture.observed, createdAt: "2026-11-10T00:00:00Z" },
+      { ...fixture.observed, repository: { ...fixture.observed.repository, isPrivate: true } },
+    ]
+    const [binding] = fixture.record.sources
+    const wrongRecords: ReadonlyArray<WorkUnitRecord> = [
+      { ...fixture.record, sourceDigest: "0".repeat(64) },
+      ...(binding === undefined ? [] : [{ ...fixture.record, sources: [{ ...binding, sourceDigest: "0".repeat(64) }] }]),
+    ]
+    const kept: boolean[] = []
+    for (const node of wrongNodes) kept.push((try rebound(fixture, node, fixture.record)) === fixture.current)
+    for (const record of wrongRecords) kept.push((try rebound(fixture, fixture.observed, record)) === fixture.current)
+    try same(kept, [true, true, true, true, true])
+  })
+})

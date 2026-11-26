@@ -38,6 +38,11 @@ export const REQUIRED_EVIDENCE_ROWS = [
 ];
 export const CLAIM_RECENCY_DAYS = 7;
 export const MISSION_READY_LABEL = "mission-ready";
+/**
+ * The standard label a project's maintainers put on the issues they most want
+ * done (slop.cash PRD section 5). The same name on every project.
+ */
+export const WANTED_LABEL = "slop-wanted";
 export const MAX_OPEN_ITEMS = 10_000;
 // The repository-size bound protects discovery. This smaller work-epoch bound
 // is the liveness contract: one run has a finite frozen PR frontier and may
@@ -118,6 +123,7 @@ const EPIC_TITLE_RE = /^\s*(?:\[[^\]]*\bepic\b[^\]]*\]|epic\s*:)/i;
 const EPIC_LABEL_RE = /^epic(?:\s+\d+)?$/i;
 const DEFAULT_CONTRIBUTOR_READY_LABELS = [
   MISSION_READY_LABEL,
+  WANTED_LABEL,
   "bug-confirmed",
   "demo-blocker",
   "good first issue",
@@ -408,6 +414,10 @@ export function readProjectSelectionPolicy(scriptUrl = import.meta.url) {
       "skill project.selection.eligibleIssueLabels",
     ),
   };
+}
+
+function isWantedLabel(label) {
+  return label.trim().toLowerCase() === WANTED_LABEL;
 }
 
 function compareByNumber(left, right) {
@@ -3588,6 +3598,9 @@ export function collectLiveReport(
       reviewablePullRequests: reviewablePullRequests.length,
     },
     candidateIssues: candidateIssues.sort(compareByNumber),
+    wantedIssues: candidateIssues
+      .filter((issue) => issue.labels.some(isWantedLabel))
+      .sort(compareByNumber),
     reviewablePullRequests: reviewablePullRequests.sort(compareByNumber),
     filtered: {
       botIssues: botIssues.sort(compareByNumber),
@@ -3657,9 +3670,17 @@ export function renderMarkdown(report) {
       ? `Review epoch cutoff: ${report.selection.reviewEpoch.cutoff}; frozen candidates: ${report.selection.reviewEpoch.candidates.length}/${report.selection.reviewEpoch.candidateCount}; deferred to a later epoch: ${report.selection.reviewEpoch.deferred.length}.`
       : "Review epoch: unavailable.",
     "",
-    "## Priority 1: unclaimed issue candidates with no open closing PR",
+    `## Priority 0: issues the maintainers labelled ${WANTED_LABEL}, unclaimed, with no open closing PR`,
     "",
-    markdownItems(report.candidateIssues),
+    markdownItems(report.wantedIssues ?? []),
+    "",
+    "## Priority 1: other unclaimed issue candidates with no open closing PR",
+    "",
+    markdownItems(
+      report.candidateIssues.filter(
+        (issue) => !issue.labels.some(isWantedLabel),
+      ),
+    ),
     "",
     "## Priority 2: pull requests with no current-head review",
     "",

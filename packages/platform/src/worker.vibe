@@ -133,6 +133,15 @@ export effect function forward(assets: Fetcher) {
   return HttpServerResponse.fromWeb(response)
 }
 
+effect function routable<E, R>(app: HttpServerResponse.HttpServerResponse!E!R) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const end = request.url.search(/[?;#]/u)
+  const path = end === -1 ? request.url : request.url.slice(0, end)
+  const decodable = Exit.isSuccess(try exit(Effect.try(() => decodeURI(path))))
+  if (decodable) return try app
+  return try Effect.provideService(app, HttpServerRequest.HttpServerRequest, request.modify({ url: `${path.replaceAll("%", "%25")}${request.url.slice(path.length)}` }))
+}
+
 export interface Site<Env extends object, S, LE, K extends string> {
   readonly areas: ReadonlyArray<Area<never, any>>
   readonly services: (env: Env) => Layer.Layer<S, LE>
@@ -143,7 +152,7 @@ export function pages<Env extends Readonly<Record<K, Fetcher>>, S, LE, K extends
   const running = isolate((env: Env) => {
     const provided = site.areas.reduce((layer: Layer.Layer<any, any>, part) => Layer.provideMerge(part.provides, layer), site.services(env))
     const areaRoutes = site.areas.reduce((layer: Layer.Layer<never, never, any>, part) => Layer.merge(layer, part.routes), Layer.empty)
-    const routes = Layer.mergeAll(areaRoutes, preflight(site.areas.flatMap((part) => part.api)), HttpRouter.add("*", "*", forward(env[site.assets])))
+    const routes = Layer.mergeAll(areaRoutes, preflight(site.areas.flatMap((part) => part.api)), HttpRouter.add("*", "*", forward(env[site.assets])), HttpRouter.middleware(routable, { global: true }))
     const runtime = ManagedRuntime.make(provided)
     return HttpRouter.toWebHandler(Layer.provideMerge(routes as Layer.Layer<never, never, HttpRouter.HttpRouter>, provided), { memoMap: runtime.memoMap, disableLogger: true }).handler as Handler
   })

@@ -1,0 +1,197 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { Fetcher } from "@repo/platform/bindings"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { type ValueCensus, ValueInputs } from "@repo/ports/points"
+import type { HistoricalPin } from "../src/client/snapshot/validate.vibe"
+import { type HistoricalRequest, approvedHistoryFrom, assertMergedCensus, collectHistorical } from "../src/collect/run/historical.vibe"
+import { PointsJournal } from "../src/kernels/records/records.schema.ts"
+import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { windowBounds } from "../src/window/window.vibe"
+import { type Seeded, closedAt, repository, seeded, start } from "./support/u5/github.ts"
+import { jsonAnswer } from "./support/u3/github.ts"
+import { acceptedReviewHistoryJson, registryAnswer, registryOrigin, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function message(error: { readonly _tag: string }) {
+  return "message" in error && typeof error.message === "string" ? error.message : error._tag
+}
+
+const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
+
+function withSecondProject(world: Seeded): Fetcher {
+  const inner = served(world).fetcher
+  const [project] = registryAnswer(world).projects
+  const gadgets = {
+    ...project,
+    id: "gadgets",
+    name: "gadgets",
+    authority: { ...project.authority, repositoryId: "ada/gadgets", repositoryNodeId: "R_gadgets" },
+    repositories: project.repositories.map((listing) => ({ ...listing, id: "ada/gadgets", displayName: "Gadgets", githubUrl: "https://github.com/ada/gadgets" })),
+  }
+  const answer = { ...registryAnswer(world), projects: [project, gadgets] }
+  return {
+    fetch: (request) => new URL(request.url).href === `${registryOrigin}/api/v1/projects`
+      ? Promise.resolve(jsonAnswer(answer, { headers: { "content-type": "application/json", "x-slop-project-api-contract": "1" } }))
+      : inner.fetch(request),
+  }
+}
+
+function layers(world: Seeded, asked: Array<ValueCensus>) {
+  const outbound = outboundVia(withSecondProject(world))
+  const values = Layer.succeed(ValueInputs, {
+    load: (census: ValueCensus) => effect {
+      asked.push(census)
+      return {
+        valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+        jointValueDecisions: [],
+        valueActors: [],
+        retainedCommitCredits: [],
+        attributionHolds: [],
+        heldWorkUnits: [],
+      }
+    },
+  })
+  return Layer.mergeAll(
+    outbound,
+    Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
+    Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
+    values,
+  )
+}
+
+effect function auditedPull(world: Seeded, number: number) {
+  const pull = try Effect.try(() => world.fake.world.pull(repository, number))
+  if (pull.mergedAt === null) throw new Error(`the reviewed pull ${number} is not merged`)
+  return { id: pull.nodeId, number: pull.number, headSha: pull.headSha, mergedAt: pull.mergedAt }
+}
+
+effect function reviewed(world: Seeded, directory: string) {
+  const fs = try FileSystem.FileSystem
+  try fs.makeDirectory(`${directory}/data`, { recursive: true })
+  try fs.writeFileString(`${directory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
+  try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
+  const project = registryAnswer(world).projects[0]
+  const pin: HistoricalPin = { projectId: "widgets", repository, repositoryNodeId: world.repositoryNodeId, manifestSha256: try sha256Hex(JSON.stringify(project)) }
+  const generatedAt = try isoAt(start)
+  const baseline = try Schema.decodeUnknownEffect(PointsJournal)({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt, coverage: [], revisions: [] })
+  const bounds = try windowBounds(start)
+  const heads = {
+    jointThrough: 0,
+    legacyThrough: 0,
+    jointScopedCount: 0,
+    legacyRepoCount: 0,
+    d1PointsDigest: try sha256Hex(JSON.stringify(baseline)),
+    d1PointsCount: 0,
+    enforcementGeneration: 0,
+    registryRevision: 1,
+    registryManifestSha256: pin.manifestSha256,
+  }
+  const closedBinding = { digest: "d".repeat(64), number: world.pulls.closed, headSha: "c".repeat(40), occurredAt: closedAt, standaloneReview: true as const }
+  return {
+    registryPath: `${directory}/registry.json`,
+    registryOrigin,
+    dataRoot: directory,
+    pin,
+    project,
+    mergedScope: { repository, repositoryNodeId: world.repositoryNodeId, from: bounds.from, through: bounds.to, sources: [] },
+    heads,
+    baseline,
+    closedContexts: new Map([[world.ids.closed, closedBinding]]),
+  } satisfies HistoricalRequest
+}
+
+it.live('A historical collection reads only the pinned repository after its merged census matches the reviewed scope (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
+  const world = try Effect.try(() => seeded())
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
+  try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped()
+    const base = try reviewed(world, directory)
+    const asked: Array<ValueCensus> = []
+    const unaudited = Effect.provide(collectHistorical(base), layers(world, asked)) catch (error) => message(error)
+    try same({ unaudited, asked: asked.length }, { unaudited: "Collected historical outcomes differ from the source audit", asked: 0 })
+    const audited = try Effect.forEach([world.pulls.paired, world.pulls.stacked, world.pulls.bulk], (number) => auditedPull(world, number))
+    const [row] = audited
+    if (row === undefined) throw new Error("the reviewed scope lists no merge")
+    const moved = Effect.provide(collectHistorical({ ...base, mergedScope: { ...base.mergedScope, sources: [{ ...row, headSha: "0".repeat(40) }, ...audited.slice(1)] } }), layers(world, asked)) catch (error) => message(error)
+    try same({ moved, asked: asked.length }, { moved: "Collected historical outcomes differ from the source audit", asked: 0 })
+    const { collection, snapshot } = try Effect.provide(collectHistorical({ ...base, mergedScope: { ...base.mergedScope, sources: audited } }), layers(world, asked))
+    const [census] = asked
+    try same({
+      targets: collection.targets.map((target) => target.id),
+      repositories: collection.source.repositories.map((row) => row.id),
+      published: snapshot.repositories.map(({ id, role }) => ({ id, role })),
+      sourceNode: snapshot.source.repositoryId,
+      policy: snapshot.valuePolicyEffectiveAt,
+      closed: census?.historicalClosedContexts?.get(world.ids.closed),
+      contexts: census?.historicalClosedContexts?.size,
+      implementation: collection.implementation,
+    }, {
+      targets: [repository],
+      repositories: [repository],
+      published: [{ id: repository, role: "primary" }],
+      sourceNode: world.repositoryNodeId,
+      policy: approvedHistoryFrom,
+      closed: { standaloneReview: true, digest: "d".repeat(64) },
+      contexts: 1,
+      implementation: undefined,
+    })
+    const changed: Array<unknown> = []
+    for (const change of [{ id: "PR_different" }, { number: row.number + 1 }, { headRefOid: "b".repeat(40) }, { mergedAt: try isoAt(Date.parse(row.mergedAt) + 1000) }]) {
+      const observed = { id: row.id, number: row.number, headRefOid: row.headSha, mergedAt: row.mergedAt, ...change }
+      const refused = assertMergedCensus([row], [observed]) catch (error) => message(error)
+      changed.push(refused)
+    }
+    const exact = assertMergedCensus([row], [{ id: row.id, number: row.number, headRefOid: row.headSha, mergedAt: row.mergedAt.replace(".000Z", "Z") }]) catch (error) => message(error)
+    const empty = assertMergedCensus([row], []) catch (error) => message(error)
+    const refusal = "Collected historical outcomes differ from the source audit"
+    try same({ changed, exact, empty }, { changed: [refusal, refusal, refusal, refusal], exact: undefined, empty: refusal })
+  })
+  }
+})
+
+it.live('A moved Points checkpoint or scoring window refuses before any collection (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")', () => effect {
+  const world = try Effect.try(() => seeded())
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
+  try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped()
+    const base = try reviewed(world, directory)
+    const asked: Array<ValueCensus> = []
+    const before = world.operations.length
+    const refusals: Array<unknown> = []
+    for (const request of [
+      { ...base, heads: { ...base.heads, d1PointsCount: 1 } },
+      { ...base, heads: { ...base.heads, d1PointsDigest: "0".repeat(64) } },
+      { ...base, heads: { ...base.heads, registryManifestSha256: "a".repeat(64) } },
+      { ...base, mergedScope: { ...base.mergedScope, repositoryNodeId: "R_moved" } },
+      { ...base, mergedScope: { ...base.mergedScope, from: try isoAt(Date.parse(base.mergedScope.from) + 1000) } },
+      { ...base, pin: { ...base.pin, projectId: "gadgets" }, mergedScope: base.mergedScope },
+    ]) {
+      const refused = Effect.provide(collectHistorical(request), layers(world, asked)) catch (error) => message(error)
+      refusals.push(refused)
+    }
+    try same({ refusals, operations: world.operations.length - before, asked: asked.length }, {
+      refusals: [
+        "Historical collection differs from the verified checkpoint",
+        "Historical collection differs from the verified checkpoint",
+        "Historical collection differs from the verified checkpoint",
+        "Historical collection differs from the verified checkpoint",
+        "Historical leaderboard has a different scoring window",
+        "Historical leaderboard requires the pinned active project and repository",
+      ],
+      operations: 0,
+      asked: 0,
+    })
+  })
+  }
+})

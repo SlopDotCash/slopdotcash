@@ -1,0 +1,39 @@
+// spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp, type Scope } from "@repo/platform/github/app"
+import type { LabelAttempt } from "../../../gen/backend__mergeActivity.ts"
+import { wantedLabelColor, wantedLabelDescription } from "../../../gen/backend__mergeActivity.effect.vibe"
+
+function scopeOf(name: string) {
+  return { repositories: [name], permissions: { issues: "write" } } satisfies Scope
+}
+
+effect function created(repository: string, label: string) {
+  const sent = (try GitHub).send("POST", `/repos/${repository}/labels`, { name: label, color: wantedLabelColor, description: wantedLabelDescription }) catch effect (error) => {
+    if (error._tag === "GitHubRefused" && error.status === 422) return "LabelCreateRaced" as const
+    return "LabelCreateFailed" as const
+  }
+  if (typeof sent === "string") return sent
+  return sent.status === 201 ? "LabelCreated" as const : "LabelCreateFailed" as const
+}
+
+effect function ensured(repository: string, label: string) {
+  const found = (try GitHub).status(`/repos/${repository}/labels/${encodeURIComponent(label)}`) catch effect (error) => {
+    if (error._tag === "NotFound") return 404
+    return 0
+  }
+  if (found === 200) return "LabelFound" satisfies LabelAttempt
+  if (found !== 404) return "LabelReadFailed" satisfies LabelAttempt
+  return try created(repository, label)
+}
+
+export effect function ensureWantedLabel(repository: string, label: string) {
+  const [owner = "", name = ""] = repository.split("/")
+  const app = try GitHubApp
+  const installation = app.installationFor(owner, name) catch () => undefined
+  if (installation === undefined) return "LabelReadFailed" satisfies LabelAttempt
+  provide app.asInstallation(installation, scopeOf(name)) {
+    const attempt: LabelAttempt = try ensured(repository, label)
+    return attempt
+  }
+}

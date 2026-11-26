@@ -91,7 +91,7 @@ effect function nativeReview(options: SolanaWalletOptions, wallet: string, raw: 
   const priced = try jupiterQuote(options.jupiter, wrappedSol, maximum, options.maxSlippageBps)
   if (priced.outAmount <= 0n) return try deny("limits", "Final Solana native cost cannot be priced")
   if (priced.outAmount * options.gasMultiple > valueMicro) return try deny("limits", "Final Solana native cost exceeds the gas-cost multiple")
-  return try blockhashAnchor(blockhashOf(raw, parsed), fee.slot)
+  return { blockhashSlot: try blockhashAnchor(blockhashOf(raw, parsed), fee.slot), pricedFeeMicro: priced.outAmount }
 }
 
 effect function soleSigner(parsed: ParsedTransaction, wallet: string) {
@@ -137,7 +137,7 @@ effect function jupiterPrepared(options: SolanaWalletOptions, wallet: string, in
   if (simulation.err) return try deny("review", "Jupiter route simulation is unavailable or failed")
   try checkRouteSimulation(review, simulation)
   const reviewed: AccountProof = { ...proof, route: { expectation: expectationJson(expected), accounts: review.observations } }
-  const blockhashSlot = try nativeReview(options, wallet, raw, parsed, reviewed, intent.valueMicro)
+  const { blockhashSlot, pricedFeeMicro } = try nativeReview(options, wallet, raw, parsed, reviewed, intent.valueMicro)
   return {
     family: "solana",
     intent,
@@ -149,6 +149,7 @@ effect function jupiterPrepared(options: SolanaWalletOptions, wallet: string, in
     messageOffset: parsed.messageOffset,
     expiresAt: swap.lastValidBlockHeight,
     minimumOutput: minimumOut,
+    pricedFeeMicro,
   } satisfies SolanaReviewed
 }
 
@@ -205,7 +206,7 @@ export function solanaFeeWallet(options: SolanaWalletOptions) {
 
 export function solanaModelSend(signed: SolanaSigned, tx: number, nonce: number): SignedSend | undefined {
   const ready = signed.prepared
-  if (ready.intent.kind !== "JupiterSwap" || ready.minimumOutput > wideOf(maximumSafeValue)) return undefined
+  if (ready.intent.kind !== "JupiterSwap" || ready.minimumOutput > wideOf(maximumSafeValue) || ready.pricedFeeMicro > wideOf(maximumSafeValue)) return undefined
   return {
     kind: "Conversion",
     tx,
@@ -217,6 +218,10 @@ export function solanaModelSend(signed: SolanaSigned, tx: number, nonce: number)
     minimumOutput: Number(ready.minimumOutput),
     deadline: maximumSafeValue,
     blockhashSlot: ready.blockhashSlot,
+    toPinnedRouter: true,
+    approvedAmount: 0,
+    allowance: 0,
+    pricedFeeMicro: Number(ready.pricedFeeMicro),
   }
 }
 

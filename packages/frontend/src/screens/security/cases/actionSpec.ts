@@ -1,6 +1,8 @@
-// spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"
+// spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"
+import { REPORT_DEPOSIT_SWITCHED_ON } from "@repo/security/client";
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { utcInput } from "../../../flows/security/cases.vibe";
+import { REPORT_DEPOSIT_SPAM_INFO } from "../../../projections/reportDeposit.ts";
 import { decimalToMinor } from "./amount.ts";
 import type { SecurityCase } from "./case.schema.ts";
 import { awardAmounts, awardText, money } from "./labels.ts";
@@ -155,6 +157,7 @@ function decideSpec(record: SecurityCase): ActionSpec {
           ["rejected", "Rejected"],
         ],
       },
+      ...(REPORT_DEPOSIT_SWITCHED_ON ? [{ name: "spam", label: "Spam", info: REPORT_DEPOSIT_SPAM_INFO, kind: "checkbox", when: { field: "outcome", values: ["rejected"] } } as const satisfies FieldSpec] : []),
       { name: "severity", label: "Severity", kind: "select", options: [["", "Choose severity"], ...severityOptions] },
       {
         name: "loss",

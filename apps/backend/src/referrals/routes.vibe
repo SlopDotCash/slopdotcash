@@ -1,6 +1,6 @@
 // spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
 import { ConstraintViolation, first, sql } from "@repo/platform/d1"
-import { Refused, admission, answered, body, handle } from "@repo/platform/http"
+import { Refused, admission, answerSubtree, answered, body, handle } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Refusal } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
@@ -14,7 +14,8 @@ import { type Followed, linkOf, send } from "./store.vibe"
 
 schema Reservation { github_id: string }
 
-const linkPrefix = "/referral/"
+const linkRoot = "/referral"
+const linkPrefix = `${linkRoot}/` as const
 const projectForm = "/projects/new"
 const referralSettings = "/account#referral"
 
@@ -57,7 +58,7 @@ effect function chooseName(actor: string) {
 }
 
 function pathOf(pathname: string): ReferralPath {
-  if (pathname === linkPrefix || pathname === linkPrefix.slice(0, -1)) return "BareReferral"
+  if (pathname === linkPrefix || pathname === linkRoot) return "BareReferral"
   return pathname.startsWith(linkPrefix) ? "NamedReferral" : "OutsideReferral"
 }
 
@@ -138,7 +139,7 @@ const otherCodeMethods = ["GET", "PUT", "PATCH", "DELETE", "OPTIONS"] as const
 export const ReferralCodeRoutes = Layer.mergeAll(
   handle({ ...chooseCode, request: undefined }, (input) => chooseName(input.actor.githubId)),
   HttpRouter.addAll(otherCodeMethods.map((method) => HttpRouter.route(method, chooseCode.path, answered(effect { throw new Refused(refusals.OriginForbidden) })))),
-  HttpRouter.add("*", `${linkPrefix}*`, answered(followLink())),
+  answerSubtree(linkRoot, followLink()),
 )
 
 export const ReferralRoutes = Layer.mergeAll(ReferralCodeRoutes, ReferredProjectRoutes)

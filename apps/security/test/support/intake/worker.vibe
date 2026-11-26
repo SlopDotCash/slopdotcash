@@ -1,16 +1,20 @@
-// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"
+// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
 import type { D1Database, R2Bucket } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, first, sql } from "@repo/platform/d1"
+import { unconfiguredGitHubApp } from "@repo/platform/github/app"
 import { handle, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type ProjectView, Registry, Restrictions, VaultRegistrationRefused } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
 import { privateRoute } from "../../../src/analysis/route.vibe"
+import { reportDepositSettings } from "../../../src/deposit/settings.vibe"
+import { intakeApp } from "../../../src/forwarding/grant.vibe"
 import { intakeSettings } from "../../../src/intake/availability.vibe"
 import { submissionReadRoutes } from "../../../src/intake/list.vibe"
 import { intakeRoutes } from "../../../src/intake/routes.vibe"
@@ -26,6 +30,7 @@ interface Env {
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
   readonly SLOP_PRIVATE_INTAKE_MODE: string
   readonly BANNED_GITHUB_IDS: string
+  readonly SECURITY_REPORT_DEPOSIT?: string
 }
 
 const plan = faults()
@@ -50,6 +55,8 @@ function fixture(projectId: string, restricted: boolean): ProjectView {
 const projects: ReadonlyMap<string, ProjectView> = new Map([
   ["intake-fixture", fixture("intake-fixture", false)],
   ["intake-unpaid", fixture("intake-unpaid", false)],
+  ["intake-scoped", fixture("intake-scoped", false)],
+  ["intake-lines", fixture("intake-lines", false)],
   ["intake-full", fixture("intake-full", false)],
   ["intake-closed", fixture("intake-closed", false)],
   ["intake-restricted", fixture("intake-restricted", true)],
@@ -133,12 +140,15 @@ export default worker({
     d1(env.SLOP_DB),
     webCrypto,
     noEdgeCache,
+    unconfiguredGitHubApp,
     rolesFrom(env),
     reportBucket(faultyBucket(env.PRIVATE_TRACES, plan)),
     intakeSettings({ mode: env.SLOP_PRIVATE_INTAKE_MODE, automatic: false }),
+    intakeApp(env),
+    reportDepositSettings(env.SECURITY_REPORT_DEPOSIT ?? "off"),
     Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
-    Layer.provide(ports(env), d1(env.SLOP_DB)),
+    Layer.provide(Layer.mergeAll(ports(env), SubmissionFeeRatesLive, ProjectParticipationLive), d1(env.SLOP_DB)),
   ),
   routes: Layer.mergeAll(intakeRoutes, submissionReadRoutes, testRoutes),
 })

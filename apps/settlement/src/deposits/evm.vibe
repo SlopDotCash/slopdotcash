@@ -1,0 +1,83 @@
+// spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once"; spec/settlement/vaultDeposits.md, "A run reads pages up to the finalized block and stores each page with its cursor"; spec/settlement/vaultDeposits.md, "Rules"
+import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
+import { type Run, canStartPage, runOf, worker } from "../../gen/settlement__vaultDeposits.effect.vibe"
+import { type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
+import { EVENT_TOPICS } from "../chain/evm/events.ts"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+import { evmDeposits } from "./decode.ts"
+import { DepositReadFailed, type DepositKey, type EvmDepositSession, type VaultDepositRecord, openEvmDeposits, storedEvmCursor } from "./store.vibe"
+
+export type EvmDepositDeployment = Extract<RegisteredDeployment, { family: "evm" }>
+
+export const EVM_DEPOSIT_PAGES_PER_RUN = 10
+
+const SLOT = 1
+
+effect function creationBlock(deployment: EvmDepositDeployment) {
+  const receipt = try (try EvmRpc).finalizedReceipt(deployment.deploymentTransaction as `0x${string}`)
+  if (receipt === undefined || receipt.status !== "success") throw new DepositReadFailed({ message: "Deployment origin unavailable" })
+  return Number(receipt.blockNumber)
+}
+
+effect function pageRecords(vault: EvmAddress, run: Run) {
+  const rpc = try EvmRpc
+  const range = try orDie(Effect.try(() => ({ from: BigInt(run.fromBlock), to: BigInt(run.toBlock) })))
+  const logs = try rpc.logs({ address: vault, topics: [EVENT_TOPICS.Deposited], fromBlock: range.from, toBlock: range.to })
+  const decoded = evmDeposits(vault, logs, range)
+  if (decoded.kind === "malformed") throw new DepositReadFailed({ message: decoded.issue })
+  const times = new Map<bigint, number>()
+  const records: VaultDepositRecord[] = []
+  for (const deposit of decoded.value) {
+    let time = times.get(deposit.block)
+    if (time === undefined) {
+      const header = try rpc.blockByNumber(deposit.block)
+      if (header === undefined || header.hash.toLowerCase() !== deposit.blockHash) throw new DepositReadFailed({ message: "Deposit block unavailable" })
+      time = header.timestamp
+      times.set(deposit.block, time)
+    }
+    records.push({ transactionId: deposit.transaction, eventIndex: deposit.index, depositor: deposit.depositor, amount: deposit.amount, blockNumber: deposit.block, blockTime: time })
+  }
+  return records
+}
+
+effect function readPages(vault: EvmAddress, session: EvmDepositSession) {
+  let recorded = 0
+  for (let pages = 0; pages < EVM_DEPOSIT_PAGES_PER_RUN; pages++) {
+    if (!canStartPage(try session.current(), SLOT, worker)) break
+    const started = try session.send({ type: "startPage", slot: SLOT }, worker, [])
+    const records = pageRecords(vault, runOf(started, SLOT)) catch effect (error) => {
+      try session.send({ type: "failPage", slot: SLOT }, worker, [])
+      throw error
+    }
+    try session.send({ type: "completePage", slot: SLOT }, worker, records)
+    recorded += records.length
+  }
+  return recorded
+}
+
+effect function scanned(deployment: EvmDepositDeployment) {
+  const vault = evmAddress(deployment.vault)
+  const pageBlocks = Number(deployment.scanPageBlocks)
+  if (vault === undefined || !Number.isSafeInteger(pageBlocks) || pageBlocks < 1 || pageBlocks > 9_999_999) throw new DepositReadFailed({ message: "Reviewed scan page size required for deposit scanning" })
+  const key = { projectId: deployment.projectId, network: deployment.network, chain: deployment.chain, vault: deployment.vault } satisfies DepositKey
+  const stored = try storedEvmCursor(key)
+  const origin = stored === undefined ? try creationBlock(deployment) : stored + 1
+  const session = try openEvmDeposits(key, { purpose: deployment.scope === "security-bounty" ? "PrivateBountyVault" : "OrdinaryVault", origin, pageBlocks })
+  const head = try (try EvmRpc).head("finalized")
+  try session.observe(Number(head.number))
+  return try readPages(vault, session)
+}
+
+export effect function scanEvmDeposits(deployment: EvmDepositDeployment) {
+  const urls = (try PaymentRpc).urls[deployment.network]
+  if (urls === undefined) throw new DepositReadFailed({ message: "Private RPC configuration unavailable" })
+  const run = effect {
+    provide evmRpc({ urls, chainId: deployment.chainId }) {
+      return try scanned(deployment)
+    }
+  }
+  return run catch effect (error) => {
+    throw error._tag === "WrongChain" ? new DepositReadFailed({ message: "Deposit scanner chain mismatch" }) : error
+  }
+}

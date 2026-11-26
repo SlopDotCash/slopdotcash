@@ -16,11 +16,15 @@ models. The included-creation funding offer is the
 and [vault snapshots](../settlement/vaultSnapshots.md) own balances and
 registration.
 
-One instance is one browser context on one project's owner vault page: the
-creation flow and the registered vault's transfer flow. The sender `by` is
-the signed-in account (positive), the server (`0`), the wallet and chain
-adapter (`-1`), the page's timer (`-2`) or the tab's visibility (`-3`). Each flow's saved request is a
-[wallet attempt](./walletAttempt.md) in a slot keyed by its account.
+One instance is one browser context on one project's vault: the owner's
+creation flow and the registered vault's transfer flow, which the public
+project page's deposit also uses. The sender `by` is the signed-in account
+(positive), the server (`0`), the wallet and chain adapter (`-1`), the page's
+timer (`-2`), the tab's visibility (`-3`) or the person in a tab with no
+session (`-4`). Each owner flow's saved request is a
+[wallet attempt](./walletAttempt.md) in a slot keyed by its account; a
+deposit-only request is the tab's own slot (owner `0`), which every account
+in the tab sees.
 
 ## Story: Create and register the vault without asking the wallet twice
 
@@ -30,6 +34,24 @@ The owner reviews the creation against the current project revision, or a
 deposit or withdrawal against the registered vault. Sending creates the
 flow's slot first; an occupied slot, including one another account left in
 this browser, or a storage failure asks nothing of the wallet.
+
+The public project page's deposit is deposit-only
+([projections](./projections.md), "The public page offers only a deposit,
+after the no-refund disclosure"; development `src/PublicVaultFunding.tsx`
+with `VaultActions depositOnly`, keyed by the vault alone in
+`src/lib/pending-attempt.ts` `vaultActionKey`): any connected wallet may
+review and send it, signed in or not, once the vault is registered. It is
+never a withdrawal and releases nothing: the person sends their own funds to
+the registered vault. Its saved request is the tab's slot, so signing in or
+out neither hides nor resumes it for someone else, and whoever is in the tab
+checks, recovers or clears it. Creation, registration and withdrawal stay the
+signed-in owner's alone.
+
+A review that was never sent is replaced by the next one: the owner, or the
+deposit-only form's person, may review again after changing the amount, the
+action or the wallet, as development's `inspect` replaces its review whenever
+no attempt is pending (`src/VaultActions.tsx:260–306`). Only a flow whose
+request is awaiting the wallet, sent or unclear refuses a new review.
 
 ```quint
 import walletAttempt as WA from "./walletAttempt"
@@ -43,25 +65,32 @@ type Answer = StillPending | IncludedRead | FinalRead | Refused | Reverted | Rea
 type Notice = Quiet | StorageBlocked | Occupied | WithdrawalRefused | Received | CheckFailed | Registered | Counted | TransferFailed
   | LockedFundsRefused
 type Flow = { phase: Phase, slot: WA::Attempt, slotOwner: int, awaiting: str, sentLifetime: int, inflight: Origin,
-  autoAsks: int, refusals: int, stopped: bool, hiddenAsks: int }
+  autoAsks: int, refusals: int, stopped: bool, hiddenAsks: int, depositOnly: bool }
 type OwnerVault = { owner: int, lifetime: int, editing: bool, creation: Flow, transfer: Flow, notice: Notice, lateReplies: int,
   used: List[str], hidden: bool }
 pure val server = 0
 pure val adapter = -1
 pure val timer = -2
 pure val tab = -3
+pure val visitor = -4
 pure def autoAskLimit(target: Target): int = if (target == Creation) 120 else 240
 pure val hiddenAskLimit = 120
 pure val refusalLimit = 3
 pure val idleFlow: Flow = { phase: Idle, slot: WA::noAttempt, slotOwner: 0, awaiting: "", sentLifetime: 0, inflight: NoCheck,
-  autoAsks: 0, refusals: 0, stopped: false, hiddenAsks: 0 }
+  autoAsks: 0, refusals: 0, stopped: false, hiddenAsks: 0, depositOnly: false }
 pure val initial: OwnerVault = { owner: 0, lifetime: 0, editing: false, creation: idleFlow, transfer: idleFlow, notice: Quiet, lateReplies: 0,
   used: List(), hidden: false }
 pure def flowOf(v: OwnerVault, target: Target): Flow = if (target == Creation) v.creation else v.transfer
 pure def withFlow(target: Target, flow: Flow, v: OwnerVault): OwnerVault =
   if (target == Creation) { ...v, creation: flow } else { ...v, transfer: flow }
+pure def visibleTo(flow: Flow, account: int): bool =
+  flow.slot != WA::noAttempt and (flow.slotOwner == account or flow.slotOwner == 0)
+pure def tabSlot(flow: Flow): bool = flow.slot != WA::noAttempt and flow.slotOwner == 0
+pure def actor(v: OwnerVault): int = if (v.owner > 0) v.owner else visitor
+pure def mayAct(v: OwnerVault, flow: Flow, who: int): bool =
+  if (flow.depositOnly) who == actor(v) else (v.owner > 0 and who == v.owner)
 pure def resumed(flow: Flow, account: int): Flow =
-  val own = flow.slot != WA::noAttempt and flow.slotOwner == account
+  val own = visibleTo(flow, account)
   { ...flow, inflight: NoCheck, awaiting: "", autoAsks: 0, refusals: 0, stopped: false, hiddenAsks: 0,
     phase: if (flow.phase == Done) Done
       else if (not(own)) Idle else if (flow.slot.hash != "" or flow.slot.candidate != "") Sent else Unclear }
@@ -74,8 +103,13 @@ pure def signOut(v: OwnerVault, by: int): OwnerVault = { ...v, owner: 0, lifetim
   notice: Quiet, creation: resumed(v.creation, 0), transfer: resumed(v.transfer, 0) }
 pure def canReview(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P::PoolFacts, by: int): bool =
   v.owner > 0 and by == v.owner and (flowOf(v, target).phase == Idle or flowOf(v, target).phase == Failed
-    or (target == Transfer and v.transfer.phase == Done))
+    or flowOf(v, target).phase == Reviewed or (target == Transfer and v.transfer.phase == Done))
   and (if (target == Creation) v.creation.phase != Done else v.creation.phase == Done)
+pure def reviewed(flow: Flow, depositOnly: bool): Flow = { ...flow, phase: Reviewed, depositOnly: depositOnly, inflight: NoCheck,
+  autoAsks: 0, refusals: 0, stopped: false, hiddenAsks: 0 }
+pure def canReviewDeposit(v: OwnerVault, by: int): bool = by == actor(v) and v.creation.phase == Done
+  and (v.transfer.phase == Idle or v.transfer.phase == Failed or v.transfer.phase == Done or v.transfer.phase == Reviewed)
+pure def reviewDeposit(v: OwnerVault, by: int): OwnerVault = withFlow(Transfer, reviewed(v.transfer, true), { ...v, notice: Quiet })
 ```
 
 ### A withdrawal that would break the month's promise is refused on Slop's pages
@@ -98,15 +132,15 @@ pure def review(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P::P
   val withdrawing = target == Transfer and M::positiveAmount(withdrawal)
   if (withdrawing and VL::lockRefusesWithdrawal(locks, withdrawal)) { ...v, notice: LockedFundsRefused }
   else if (withdrawing and not(VL::withdrawalAllowed(pool, locks, withdrawal))) { ...v, notice: WithdrawalRefused }
-  else withFlow(target, { ...flowOf(v, target), phase: Reviewed, inflight: NoCheck, autoAsks: 0, refusals: 0, stopped: false,
-    hiddenAsks: 0 }, { ...v, notice: Quiet })
+  else withFlow(target, reviewed(flowOf(v, target), false), { ...v, notice: Quiet })
 pure def canSend(v: OwnerVault, target: Target, identity: str, stored: bool, by: int): bool =
-  v.owner > 0 and by == v.owner and flowOf(v, target).phase == Reviewed and identity != "" and not(v.used.includes(identity))
+  mayAct(v, flowOf(v, target), by) and flowOf(v, target).phase == Reviewed and identity != "" and not(v.used.includes(identity))
 pure def send(v: OwnerVault, target: Target, identity: str, stored: bool, by: int): OwnerVault =
   val flow = flowOf(v, target)
   if (not(stored)) { ...v, notice: StorageBlocked }
   else if (not(WA::mayCreate(flow.slot))) { ...v, notice: Occupied }
-  else withFlow(target, { ...flow, phase: Awaiting, awaiting: identity, slotOwner: v.owner, sentLifetime: v.lifetime,
+  else withFlow(target, { ...flow, phase: Awaiting, awaiting: identity, slotOwner: if (flow.depositOnly) 0 else v.owner,
+    sentLifetime: v.lifetime,
     slot: { ...WA::noAttempt, identity: identity, bytesId: if (target == Creation) "creation" else "transfer" } },
     { ...v, notice: Quiet, used: v.used.append(identity) })
 ```
@@ -116,11 +150,13 @@ pure def send(v: OwnerVault, target: Target, identity: str, stored: bool, by: in
 A returned hash is saved with compare-and-set; a decline clears the exact
 unsigned record. Each reply carries the page lifetime its request was sent
 in, and is applied once. A reply after an account change or sign-out still lands in
-its own account's slot but changes nothing on screen. An unclear result keeps
+its own account's slot but changes nothing on screen; a deposit-only request
+is the tab's, so a late reply to it settles what the tab shows to whoever is
+in it. An unclear result keeps
 the attempt: the owner checks wallet activity, then either enters the hash
 or explicitly confirms nothing was sent, which clears the slot and allows a
 new send. Signing in again with the same account resumes its saved attempt;
-another account never sees it.
+another account never sees an owner flow's attempt.
 
 ```quint
 pure def canWalletReply(v: OwnerVault, target: Target, lifetime: int, identity: str, reply: WA::Reply, hash: str, by: int): bool =
@@ -133,17 +169,17 @@ pure def walletReply(v: OwnerVault, target: Target, lifetime: int, identity: str
   val slot = if (reply == WA::Signed) WA::compareAndSet(flow.slot, expected, { ...flow.slot, hash: hash })
     else if (reply == WA::Declined) WA::compareAndClear(flow.slot, expected) else flow.slot
   val kept = { ...flow, slot: slot, sentLifetime: 0 }
-  val shown = flow.slotOwner == v.owner and (flow.phase == Unclear or flow.phase == Sent)
+  val shown = visibleTo(flow, v.owner) and (flow.phase == Unclear or flow.phase == Sent)
   if (lifetime < v.lifetime) withFlow(target, { ...kept, phase: if (shown) resumed(kept, v.owner).phase else flow.phase },
     { ...v, lateReplies: v.lateReplies + 1 })
   else withFlow(target, { ...flow, slot: slot, awaiting: "", sentLifetime: 0,
     phase: if (reply == WA::Signed) Sent else if (reply == WA::Declined) Reviewed else Unclear }, v)
-pure def canConfirmUnsent(v: OwnerVault, target: Target, by: int): bool = v.owner > 0 and by == v.owner
+pure def canConfirmUnsent(v: OwnerVault, target: Target, by: int): bool = mayAct(v, flowOf(v, target), by)
   and flowOf(v, target).phase == Unclear
 pure def confirmUnsent(v: OwnerVault, target: Target, by: int): OwnerVault =
   val flow = flowOf(v, target)
   withFlow(target, { ...flow, phase: Reviewed, slot: WA::compareAndClear(flow.slot, flow.slot) }, v)
-pure def canEnterCandidate(v: OwnerVault, target: Target, candidate: str, by: int): bool = v.owner > 0 and by == v.owner
+pure def canEnterCandidate(v: OwnerVault, target: Target, candidate: str, by: int): bool = mayAct(v, flowOf(v, target), by)
   and candidate != "" and (flowOf(v, target).phase == Unclear or flowOf(v, target).phase == Sent)
   and flowOf(v, target).slot.hash == "" and flowOf(v, target).inflight == NoCheck
 pure def enterCandidate(v: OwnerVault, target: Target, candidate: str, by: int): OwnerVault =
@@ -181,11 +217,11 @@ pure def edit(v: OwnerVault, editing: bool, by: int): OwnerVault =
   { ...v, editing: editing, creation: { ...v.creation, inflight: if (v.creation.inflight == AutoCheck) retire else v.creation.inflight } }
 pure def canAsk(v: OwnerVault, target: Target, origin: Origin, by: int): bool =
   val flow = flowOf(v, target)
-  v.owner > 0 and flow.phase == Sent and
+  (v.owner > 0 or flow.depositOnly) and flow.phase == Sent and
   (if (origin == AutoCheck) by == timer and flow.slot.hash != "" and not(v.editing) and flow.inflight == NoCheck
       and not(flow.stopped) and flow.autoAsks < autoAskLimit(target)
       and (not(v.hidden) or (target == Creation and flow.hiddenAsks < hiddenAskLimit))
-    else origin == OwnerCheck and by == v.owner and flow.inflight != OwnerCheck)
+    else origin == OwnerCheck and mayAct(v, flow, by) and flow.inflight != OwnerCheck)
 pure def ask(v: OwnerVault, target: Target, origin: Origin, by: int): OwnerVault =
   val flow = flowOf(v, target)
   val background = origin == AutoCheck and v.hidden
@@ -237,15 +273,19 @@ pure def alwaysLiveRequestsAreSaved(v: OwnerVault): bool = flowSaved(v.creation,
   and flowSaved(v.transfer, autoAskLimit(Transfer))
 pure def alwaysTransfersNeedRegistration(v: OwnerVault): bool =
   (v.transfer.phase != Idle or v.transfer.slot != WA::noAttempt) implies v.creation.phase == Done
-pure def flowOwned(flow: Flow, v: OwnerVault): bool = (flow.slot != WA::noAttempt implies flow.slotOwner > 0)
-  and ((flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear) implies flow.slotOwner == v.owner and v.owner > 0)
+pure def flowOwned(flow: Flow, v: OwnerVault): bool = (flow.slot != WA::noAttempt implies (flow.slotOwner > 0 or flow.depositOnly))
+  and flow.slotOwner >= 0
+  and (tabSlot(flow) implies flow.depositOnly and (flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear))
+  and ((flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear)
+    implies tabSlot(flow) or (flow.slotOwner == v.owner and v.owner > 0))
   and (flow.phase == Awaiting implies flow.sentLifetime == v.lifetime)
   and ((flow.awaiting != "") iff (flow.phase == Awaiting))
   and flow.sentLifetime >= 0 and flow.sentLifetime <= v.lifetime
 pure def alwaysAttemptsBelongToTheirAccount(v: OwnerVault): bool = flowOwned(v.creation, v) and flowOwned(v.transfer, v)
+  and not(v.creation.depositOnly)
 pure def alwaysSignedOutIsIdle(v: OwnerVault): bool = v.owner == 0 implies
-  (v.creation.phase == Idle or v.creation.phase == Done) and (v.transfer.phase == Idle or v.transfer.phase == Done)
-    and not(v.editing)
+  (v.creation.phase == Idle or v.creation.phase == Done)
+    and (v.transfer.phase == Idle or v.transfer.phase == Done or v.transfer.depositOnly) and not(v.editing)
 pure def alwaysAttemptsFresh(v: OwnerVault): bool = (v.creation.slot.identity == "" or v.used.includes(v.creation.slot.identity))
   and (v.transfer.slot.identity == "" or v.used.includes(v.transfer.slot.identity))
 pure def alwaysNoAutoCheckWhileEditing(v: OwnerVault): bool = v.editing implies v.creation.inflight != AutoCheck
@@ -256,8 +296,8 @@ pure def stepOwnerCheckNeverRetired(before: OwnerVault, after: OwnerVault): bool
   and not(before.transfer.inflight == OwnerCheck and after.transfer.inflight == AutoCheck)
 pure def stepLateReplyChangesNothingShown(before: OwnerVault, after: OwnerVault): bool =
   after.lateReplies > before.lateReplies implies after.notice == before.notice and after.lifetime == before.lifetime
-    and (before.creation.slotOwner != before.owner implies after.creation.phase == before.creation.phase)
-    and (before.transfer.slotOwner != before.owner implies after.transfer.phase == before.transfer.phase)
+    and (not(visibleTo(before.creation, before.owner)) implies after.creation.phase == before.creation.phase)
+    and (not(visibleTo(before.transfer, before.owner)) implies after.transfer.phase == before.transfer.phase)
 pure def stepOnlyFinalResultsComplete(before: OwnerVault, via: str, after: OwnerVault): bool =
   (before.creation.phase != Done and after.creation.phase == Done) or (before.transfer.phase != Done and after.transfer.phase == Done)
     implies via == "answer"
@@ -274,8 +314,9 @@ pure def sometimesCounted(v: OwnerVault): bool = v.transfer.phase == Done
 pure def sometimesTimerStopped(v: OwnerVault): bool = v.creation.stopped and v.creation.phase == Sent
 pure def sometimesStorageBlocked(v: OwnerVault): bool = v.notice == StorageBlocked
 pure def sometimesLateReply(v: OwnerVault): bool = v.lateReplies > 0
+pure def sometimesDepositedWithoutSession(v: OwnerVault): bool = v.owner == 0 and v.transfer.depositOnly and v.transfer.phase == Sent
 pure val accountValues = Set(1, 2)
-pure val byValues = Set(1, 2, server, adapter, timer, tab)
+pure val byValues = Set(1, 2, server, adapter, timer, tab, visitor)
 pure val lifetimeValues = Set(1, 2)
 pure val identityValues = Set("c1", "c2", "t1")
 pure val hashValues = Set("", "h1")
@@ -286,4 +327,9 @@ pure val weight_send = 10
 pure val weight_walletReply = 14
 pure val weight_ask = 14
 pure val weight_answer = 20
+pure val eval_witness_sometimesDepositedWithoutSession = (("signIn", 1, 1),
+  ("review", Creation, M::zero, P::fundedPool, VL::noLocks, 1), ("send", Creation, "c1", true, 1),
+  ("walletReply", Creation, 1, "c1", WA::Signed, "h1", adapter), ("ask", Creation, OwnerCheck, 1),
+  ("answer", Creation, 1, OwnerCheck, FinalRead, server), ("signOut", 1), ("reviewDeposit", visitor),
+  ("send", Transfer, "t1", true, visitor), ("walletReply", Transfer, 2, "t1", WA::Signed, "h1", adapter))
 ```

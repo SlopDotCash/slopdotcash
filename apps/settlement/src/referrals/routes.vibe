@@ -1,7 +1,7 @@
 // spec/settlement/referralFiles.md, "Story: Serve every filed month exactly as it was filed"; spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"
 import { first, rows, RowMismatch, sql } from "@repo/platform/d1"
 import { isoAt, millisOf } from "@repo/platform/clock"
-import { Caller, answered } from "@repo/platform/http"
+import { Caller, answerSubtree, answered } from "@repo/platform/http"
 import { type FileAnswer, type FileMode, type Method, type StoredFile, answerFiles } from "../../gen/settlement__referralFiles.effect.vibe"
 import { claimCacheStale } from "../../gen/settlement__referralPublication.effect.vibe"
 import { type AccrualIndexEntry, ReferralAccount, referralAccount, referralAccruals } from "../client/referrals.vibe"
@@ -80,7 +80,6 @@ interface ChainView {
 const indexSchema = "slop-referral-accrual-index-v1"
 const maxUint256 = (1n << 256n) - 1n
 const fileModes: Record<FileRow["mode"], FileMode> = { dry_run: "DryRunFile", live: "PostingFile" }
-const accrualTree = `${referralAccruals.path}/*` as const
 const hidden = { enabled: false } as const
 
 const decodeFiled = Schema.decodeUnknownEffect(Schema.fromJsonString(FiledReferrers))
@@ -300,6 +299,6 @@ effect function accountAnswer() {
 }
 
 export const referralRoutes = Layer.mergeAll(
-  HttpRouter.add("*", accrualTree, answered(accrualAnswer())),
+  answerSubtree(referralAccruals.path, accrualAnswer()),
   HttpRouter.add("*", referralAccount.path, answered(accountAnswer())),
 )

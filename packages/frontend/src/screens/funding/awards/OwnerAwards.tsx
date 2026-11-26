@@ -17,6 +17,7 @@ import { useAwardAction, useFollowedMonth, useMonthView } from "./hooks.ts";
 import { monthBounds, monthsBetween, monthText, savedCommitmentMonths, shiftMonth } from "./month.ts";
 import { MonthPanel } from "./MonthPanel.tsx";
 import { CommitmentResult, OwnerCommitment } from "./OwnerCommitment.tsx";
+import { OwnerReserveRelease } from "./ReserveRelease.tsx";
 
 export type OwnerAwardsProps = {
   /** The page's runtime, which knows the signed-in account. */
@@ -111,6 +112,11 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
                 </>
               ) : null
             }
+            release={
+              deployment && family === "evm" ? (
+                <OwnerReserveRelease key={`${view.projectId}:${view.period}:${view.manifestSha256}`} runtime={runtime} view={view} account={account} onReleased={() => void refresh()} />
+              ) : null
+            }
           />
         </>
       ) : null}
@@ -122,7 +128,7 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
 export function OwnerAwards({ runtime, project, awardMonths, networkPays }: OwnerAwardsProps) {
   const shown = useSession(runtime);
   const address = useAddress();
-  const bounds = monthBounds(awardMonths, Date.now());
+  const bounds = monthBounds(project.id, awardMonths, Date.now());
   const saved = savedCommitmentMonths(sessionSlots(), project.id, monthsBetween(bounds.first, bounds.start));
   const [opened, setOpened] = useState(saved.length > 0);
   const [period, setPeriod] = useState(bounds.start);
@@ -168,7 +174,7 @@ export function OwnerAwards({ runtime, project, awardMonths, networkPays }: Owne
             <span aria-live="polite" className="min-w-40 text-center font-semibold text-foreground">
               {monthText(period)}
             </span>
-            <Button variant="secondary" size="icon" aria-label="Next award month" disabled={period >= bounds.lastClosed} onClick={() => setPeriod(shiftMonth(period, 1))}>
+            <Button variant="secondary" size="icon" aria-label="Next award month" disabled={period >= bounds.last} onClick={() => setPeriod(shiftMonth(period, 1))}>
               <ChevronRight aria-hidden="true" />
             </Button>
           </nav>

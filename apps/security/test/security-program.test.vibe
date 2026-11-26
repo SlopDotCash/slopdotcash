@@ -1,21 +1,26 @@
 import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
 import { Refused, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
+import { Execution } from "@repo/platform/worker"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { approvedAward } from "../src/bounty/port.vibe"
 import { type DirectRoute, DirectRoutes } from "@repo/ports/settlement"
-import { SecurityProgramFunds } from "../src/bounty/funds.vibe"
+import { type ProgramChange, ProgramRefused, SecurityProgramFunds as ProgramFunds, SecurityProgramPublication } from "@repo/ports/security"
 import { awardClearancesLive } from "../src/bounty/store.vibe"
 import { caseRecord } from "../src/cases/rows.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { acted } from "../src/cases/routes.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
-import type { Json, ProgramFundsView } from "../src/program/manifest.ts"
-import { type Publication, programOf, publication } from "../src/program/store.vibe"
+import type { ProgramFundsView } from "../src/program/manifest.ts"
+import { SecurityProgramPublicationLive } from "../src/program/publication.vibe"
+import { programOf } from "../src/program/store.vibe"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
-import { remediationHandlersLive } from "../src/remediation/routes.vibe"
+import { caseActionHandlersLive } from "../src/cases/handlers.vibe"
 import { type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 import { receiptNotices } from "./support/intake/notices.vibe"
 
@@ -27,9 +32,11 @@ service Program {
   readonly world: World
   readonly funds: Box<ProgramFundsView | undefined>
   readonly route: Box<DirectRoute | undefined>
+  readonly pending: Array<Promise<unknown>>
 }
 
 const administrator = "18633264"
+const configured = "4242"
 const triager = "703"
 const steward = "900"
 const paid = "intake-fixture"
@@ -43,7 +50,8 @@ let keys = 0
 const registryRevisions = new Map<string, number>()
 
 const Started = Layer.effect(Program, effect {
-  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const pending: Array<Promise<unknown>> = []
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => Promise.allSettled(pending).then(() => running.mf.dispose())))
   const at = new Date(Date.now() - 86_400_000).toISOString()
   const manifest = JSON.stringify({ id: "slopdotcash", status: "active", repositories: [{ id: "slop-test/intake" }] })
   const reviewed = new Date(Date.now() + 86_400_000).toISOString()
@@ -52,7 +60,7 @@ const Started = Layer.effect(Program, effect {
     world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('slopdotcash',1,?,?,'Program fixture',?)").bind(manifest, "e".repeat(64), at),
     world.db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('slopdotcash','active',1,?,?,?,?)").bind(manifest, "e".repeat(64), at, at),
   ]))
-  return { world, funds: { current: undefined }, route: { current: undefined } }
+  return { world, funds: { current: undefined }, route: { current: undefined }, pending }
 })
 
 function fixture(projectId: string): ProjectView {
@@ -64,16 +72,16 @@ function fixture(projectId: string): ProjectView {
 
 function shellOf(program: Program.Shape) {
   const ports = Layer.mergeAll(
-    Layer.succeed(Registry, { project: (projectId) => succeed(fixture(projectId)), byRepository: () => succeed(undefined), byPath: () => succeed(undefined), active: () => succeed([]), fence: () => succeed(sql`1`) } satisfies Registry.Shape),
+    Layer.succeed(Registry, { project: (projectId) => succeed(fixture(projectId)), byRepository: () => succeed(undefined), byPath: () => succeed(undefined), active: () => succeed([]), pausedProjects: () => succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => succeed(sql`1`) } satisfies Registry.Shape),
     Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: read.actorGithubId === administrator ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
     Layer.succeed(Restrictions, { account: () => succeed({ banned: false }), project: () => succeed({ restricted: false }), fence: () => succeed(sql`SELECT 1`), unbanned: () => succeed(sql`1`) } satisfies Restrictions.Shape),
-    Layer.succeed(SecurityProgramFunds, { read: () => succeed({ funds: program.funds.current, guards: [] }) } satisfies SecurityProgramFunds.Shape),
+    Layer.succeed(ProgramFunds, { read: () => succeed({ funds: program.funds.current, guards: [] }) } satisfies ProgramFunds.Shape),
     Layer.succeed(DirectRoutes, { route: () => succeed(program.route.current) } satisfies DirectRoutes.Shape),
   )
-  const base = Layer.mergeAll(d1(program.world.db), webCrypto, reportBucket(program.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: administrator, PROJECT_MODERATOR_GITHUB_IDS: administrator }), ports, receiptNotices)
+  const base = Layer.mergeAll(d1(program.world.db), webCrypto, reportBucket(program.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: `${administrator},${configured}`, PROJECT_MODERATOR_GITHUB_IDS: administrator }), ports, receiptNotices, reportDepositSettings("off"), Layer.succeed(Execution, { context: { waitUntil: (work) => { program.pending.push(work) } } satisfies ExecutionContext }))
   const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))
   const programs = Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route), base)
-  return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, remediationHandlersLive), programs)
+  return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, caseActionHandlersLive, SecurityProgramPublicationLive, SubmissionFeeRatesLive, ProjectParticipationLive), programs)
 }
 
 effect function same(actual: unknown, expected: unknown) {
@@ -167,13 +175,80 @@ function fullTerms() {
 }
 
 const bountyOnly = { kind: "monthly-pool", monthlyCapMinor: "0", committedMinor: "0", paymentMode: "disabled" }
+const draftVault = { deployments: [{ network: "base-mainnet", vault: `0x${"ab".repeat(20)}`, asset: usdcBase }] }
+
+interface Published {
+  readonly securityBounty: unknown
+}
+
+function manifestOf(projectId: string, securityBounty: unknown) {
+  return { id: projectId, status: "active", repositories: [{ id: "slop-test/intake" }], reward: bountyOnly, ...securityBounty === undefined ? {} : { securityBounty } }
+}
+
+function change(as: string, projectId: string, previous: unknown, next: unknown, creating = false): ProgramChange {
+  return {
+    projectId, actor: { githubId: as, login: as === administrator ? "administrator" : `member-${as}` }, administrator: as === administrator || as === configured,
+    canManageContacts: true, creating, previous: creating ? undefined : manifestOf(projectId, previous), next: manifestOf(projectId, next),
+  }
+}
+
+effect function published(request: ProgramChange) {
+  const port = try SecurityProgramPublication
+  return Effect.map(port.publish(request), (answer): Published | string => answer) catch effect (error) => {
+    if (error instanceof ProgramRefused) return error.kind === "InvalidManifest" ? error.message : error.kind
+    throw error
+  }
+}
+
+function funding(answer: Published) {
+  return (answer.securityBounty as { readonly funding: unknown }).funding
+}
+
+function standardTerms(status: string) {
+  const { fundingPolicy: _afterApproval, ...terms } = fullTerms()
+  return {
+    ...terms, status, split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 }, amount: { currency: "USDC", decimals: 6, grossMinor: "1000000", network: "base" },
+    capacity: { awards: 3, closesAt: null, exhaustionRule: "Each qualifying finding is decided on its own." }, settlement: draftVault,
+  }
+}
+
+effect function programChanges(program: Program.Shape) {
+  const draft = standardTerms("draft")
+  const opened = standardTerms("open")
+  program.funds.current = undefined
+  const unfunded = try published(change(steward, "program-draft", draft, opened))
+  program.funds.current = vault("1500000")
+  const prefunded = try published(change(steward, "program-draft", draft, opened))
+  const splitByOwner = try published(change(steward, "program-draft", draft, fullTerms()))
+  const deleted = try published(change(steward, "program-draft", draft, undefined))
+  program.funds.current = undefined
+  const unchanged = try published(change(steward, "program-draft", opened, opened))
+  const approvedByConfigured = try published(change(configured, "slopdotcash", undefined, fullTerms()))
+  const newFullAward = try published(change(steward, "program-new", undefined, fullTerms(), true))
+  try same({
+    unfunded,
+    prefunded: typeof prefunded === "string" ? prefunded : { status: (prefunded.securityBounty as { readonly status: unknown }).status, funding: (funding(prefunded) as { readonly state: unknown }).state },
+    splitByOwner, deleted,
+    unchanged: typeof unchanged === "string" ? unchanged : (unchanged.securityBounty as { readonly status: unknown }).status,
+    approvedByConfigured: typeof approvedByConfigured === "string" ? approvedByConfigured : funding(approvedByConfigured),
+    newFullAward,
+  }, {
+    unfunded: "FundingUnavailable",
+    prefunded: { status: "open", funding: "verified-available" },
+    splitByOwner: "SplitRestricted",
+    deleted: "ProgramRequired",
+    unchanged: "open",
+    approvedByConfigured: { state: "pledged" },
+    newFullAward: "NewSplitRestricted",
+  })
+}
 
 effect function fullAward(program: Program.Shape) {
   const { world } = program
   program.funds.current = undefined
-  const elsewhere = try publication({ projectId: full, actor: actor(administrator), next: fullTerms(), status: undefined, reward: bountyOnly, canManageContacts: true })
-  const byOwner = try publication({ projectId: "slopdotcash", actor: actor(steward), next: fullTerms(), status: undefined, reward: bountyOnly, canManageContacts: true })
-  const platform = try publication({ projectId: "slopdotcash", actor: actor(administrator), next: fullTerms(), status: undefined, reward: bountyOnly, canManageContacts: true })
+  const elsewhere = try published(change(administrator, full, undefined, fullTerms()))
+  const byOwner = try published(change(steward, "slopdotcash", undefined, fullTerms()))
+  const platform = try published(change(administrator, "slopdotcash", undefined, fullTerms()))
   const held = try submit(world, reporter, full, "Unchecked withdrawal drains the treasury")
   try act(maintainer, held, "decide", decision("unchecked-withdrawal"))
   program.funds.current = vault("9000000")
@@ -182,27 +257,28 @@ effect function fullAward(program: Program.Shape) {
   const owed = try approvedAward(held)
   try same({
     elsewhere, byOwner,
-    platform: platform.kind === "Published" ? { kind: platform.kind, revision: platform.programRevision, funding: (platform.securityBounty as { readonly funding: unknown }).funding } : platform,
+    platform: typeof platform === "string" ? platform : funding(platform),
     approved, row, owed: owed === undefined ? undefined : { split: owed.split, direct: owed.direct, gross: owed.grossBaseUnits },
   }, {
-    elsewhere: { kind: "Refused", refusal: { kind: "OfferRefused" } },
-    byOwner: { kind: "Refused", refusal: { kind: "Owner", reason: "SplitRestricted" } },
-    platform: { kind: "Published", revision: 1, funding: { state: "pledged" } },
+    elsewhere: "SplitRestricted",
+    byOwner: "SplitRestricted",
+    platform: { state: "pledged" },
     approved: "done",
     row: [{ award_state: "approved", payment_state: "rail-unavailable", vault: 0, direct: 0 }],
     owed: { split: "FullAward", direct: false, gross: "500001" },
   })
 }
 
-function verdict(published: Publication) {
-  if (published.kind === "Published") return published.kind
-  return published.refusal.kind === "InvalidTerms" ? published.refusal.problem : published.refusal.kind
+let platformTerms: unknown = undefined
+
+function verdict(answer: Published | string) {
+  return typeof answer === "string" ? answer : "Published"
 }
 
 effect function publishedLines(lines: unknown) {
   const terms = fullTerms()
   const scope = lines === undefined ? terms.scope : { ...terms.scope, excludedFindings: lines }
-  return try publication({ projectId: "slopdotcash", actor: actor(administrator), next: { ...terms, scope } as unknown as Json, status: undefined, reward: bountyOnly, canManageContacts: true })
+  return try published(change(administrator, "slopdotcash", platformTerms, { ...terms, scope }))
 }
 
 effect function stored(world: World, revision: number, securityBounty: unknown) {
@@ -236,19 +312,20 @@ effect function ownerExclusions(program: Program.Shape) {
     verdict(try publishedLines("One string")),
   ]
   const first = try publishedLines(undefined)
-  if (first.kind !== "Published") return try die(new Error("the program without owner lines was not published"))
+  if (typeof first === "string") return try die(new Error("the program without owner lines was not published"))
   try stored(world, 2, first.securityBounty)
+  platformTerms = first.securityBounty
   const lines = ["Gas refund rounding", "Issues fixed in a later release"]
   const second = try publishedLines(lines)
-  if (second.kind !== "Published") return try die(new Error("the program with owner lines was not published"))
+  if (typeof second === "string") return try die(new Error("the program with owner lines was not published"))
   try stored(world, 3, second.securityBounty)
+  platformTerms = second.securityBounty
   const repeated = verdict(try publishedLines([...lines, "GAS REFUND ROUNDING"]))
   const history = try programOf("slopdotcash")
   const revisions = try promise(() => rows(world, "SELECT revision, json_extract(manifest, '$.securityBounty.scope.excludedFindings') AS lines FROM project_revisions WHERE project_id = 'slopdotcash' ORDER BY revision"))
-  try same({ accepted, refused, programRevisions: [first.programRevision, second.programRevision], repeated, offer: history.program.offer.excludedFindings, history: history.program.revisions, revisions }, {
+  try same({ accepted, refused, repeated, offer: history.program.offer.excludedFindings, history: history.program.revisions, revisions }, {
     accepted: ["Published", "Published", "Published", "Published"],
     refused: [`${field} must list 0 to 20 entries`, `${field}[0] is invalid`, `${field}[0] is invalid`, `${field}[0] is invalid`, `${field}[0] is invalid`, `${field} contains duplicates`, `${field}[0] is invalid`, `${field} must list 0 to 20 entries`],
-    programRevisions: [1, 2],
     repeated: `${field} contains duplicates`,
     offer: lines.map((line) => line.length),
     history: [1, 2],
@@ -332,6 +409,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     provide shellOf(program) {
       try exactDisclosure(program)
       try legacyJournal(program)
+    }
+  })
+
+  it.effect('A draft opens prefunded from its own fresh finalized vault, only an administrator changes the split, a configured administrator approves a full award and a program is never deleted (spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/security/program.md, "Administrators approve a split exception for one exact future revision"; spec/security/program.md, "A program revision needs current owner authority and exact split rules")', () => effect {
+    const program = try Program
+    provide shellOf(program) {
+      try programChanges(program)
     }
   })
 

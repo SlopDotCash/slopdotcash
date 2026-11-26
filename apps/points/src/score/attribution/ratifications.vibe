@@ -1,0 +1,199 @@
+// spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"
+import { millisOf } from "@repo/platform/clock"
+import type { Parsed } from "@repo/contributor/client"
+import { findRepository, isRecord, repositoryIdFromUrl } from "../../client/snapshot/checks.vibe"
+import { pullRequestTextSources } from "../../collect/evidence/artifacts.vibe"
+import type { ReviewRecord } from "../../collect/merged/hydrate.vibe"
+import { AssemblyRefused } from "../../collect/run/pipeline.vibe"
+import {
+  type ApprovalCheck, type ContextCheck, type RatificationContext, type RatificationRecord, type RecordCheck,
+  checkApproval, checkRatificationContext, checkRatificationRecord, isMaintainerAssociation,
+} from "../../kernels/scoring/ratification.ts"
+import type { ScoreTier } from "../../kernels/scoring/tiers.ts"
+import { type Actor, type Ratification, sameActor } from "../facts.vibe"
+import { type AttributionContext, assessModelAttribution } from "./markers.vibe"
+import { assertReviewRecord, assertReviewRecordReceiptJoin, parseFencedRecord, parseReviewRecordBlock, registeredProject } from "./reviewRecords.vibe"
+
+export interface RatificationOptions {
+  readonly verifyRunReceipts: boolean
+}
+
+const scoreKeys = ["coRatifierNodeIds", "headSha", "projectId", "proposalReviewNodeIds", "pullRequestNodeId", "reason", "ruleVersion", "schemaVersion", "scoreThirds", "supersedes", "tier", "workUnitId"].sort()
+const approvalKeys = ["decision", "headSha", "projectId", "pullRequestNodeId", "reason", "ruleVersion", "schemaVersion", "tier", "workUnitId"].sort()
+const associationPermission = "WritePermission"
+const unreferencedProposal = "slop-score proposal does not reference a review record on this pull request"
+
+const recordRefusals: Readonly<Record<Exclude<RecordCheck, "valid">, string>> = {
+  "unsupported-version": "score record version is unsupported",
+  "unregistered-project": "score record project is not registered",
+  "invalid-pull-request": "score record pullRequestNodeId is invalid",
+  "invalid-head": "score record headSha is invalid",
+  "invalid-work-unit": "score record workUnitId is invalid",
+  "tier-mismatch": "score record tier and scoreThirds do not match",
+  "invalid-proposals": "score record proposalReviewNodeIds is invalid",
+  "missing-proposal": "non-micro scores require a Claude review proposal",
+  "invalid-co-ratifiers": "score record coRatifierNodeIds is invalid",
+  "missing-co-ratifier": "XL and exceptional scores require a co-ratifier",
+  "invalid-reason": "score record reason is invalid",
+  "invalid-supersedes": "score record supersedes is invalid",
+}
+
+const contextRefusals: Readonly<Record<Exclude<ContextCheck, "valid">, string>> = {
+  "not-maintainer": "slop-score author is not a maintainer",
+  "edited": "slop-score source was edited; append a successor instead",
+  "different-head": "slop-score record does not match the exact pull request head",
+  "supersedes-itself": "slop-score record cannot supersede itself",
+}
+
+const approvalRefusals: Readonly<Record<Exclude<ApprovalCheck, "valid">, string>> = {
+  "invalid-header": "score approval header is invalid",
+  "different-decision": "score approval does not match the ratified decision",
+  "invalid-reason": "score approval reason is invalid",
+}
+
+function refused(message: string) {
+  return new AssemblyRefused({ message })
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : ""
+}
+
+function nodeIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(text) : [""]
+}
+
+function sameKeys(value: Readonly<Record<string, unknown>>, keys: ReadonlyArray<string>) {
+  return Object.keys(value).sort().join("\u0000") === keys.join("\u0000")
+}
+
+effect function recorded<A>(parsed: Parsed<A>) {
+  if (parsed.kind === "invalid") throw refused(parsed.reason)
+  return parsed.value
+}
+
+effect function ratificationRecord(value: unknown, context: AttributionContext, placed: RatificationContext) {
+  if (!isRecord(value)) throw refused("score record must be an object")
+  if (!sameKeys(value, scoreKeys)) throw refused("score record has unexpected or missing fields")
+  const supersedes = value.supersedes
+  const record: RatificationRecord = {
+    schemaVersion: text(value.schemaVersion),
+    ruleVersion: text(value.ruleVersion),
+    projectId: text(value.projectId),
+    pullRequestNodeId: text(value.pullRequestNodeId),
+    headSha: text(value.headSha),
+    workUnitId: text(value.workUnitId),
+    tier: text(value.tier),
+    scoreThirds: typeof value.scoreThirds === "number" ? value.scoreThirds : -1,
+    proposalReviewNodeIds: nodeIds(value.proposalReviewNodeIds),
+    coRatifierNodeIds: nodeIds(value.coRatifierNodeIds),
+    reason: text(value.reason),
+    supersedes: supersedes === null ? null : text(supersedes),
+  }
+  const checked = checkRatificationRecord(record, registeredProject(context.registry, value.projectId) !== undefined)
+  if (checked !== "valid") throw refused(recordRefusals[checked])
+  const bound = checkRatificationContext(record, placed)
+  if (bound !== "valid") throw refused(contextRefusals[bound])
+  return record
+}
+
+effect function approved(value: unknown, expected: RatificationRecord) {
+  if (!isRecord(value)) throw refused("score record must be an object")
+  if (!sameKeys(value, approvalKeys)) throw refused("score approval has unexpected or missing fields")
+  const checked = checkApproval({
+    schemaVersion: text(value.schemaVersion),
+    ruleVersion: text(value.ruleVersion),
+    projectId: text(value.projectId),
+    pullRequestNodeId: text(value.pullRequestNodeId),
+    headSha: text(value.headSha),
+    workUnitId: text(value.workUnitId),
+    tier: text(value.tier),
+    decision: text(value.decision),
+    reason: text(value.reason),
+  }, expected)
+  if (checked !== "valid") throw refused(approvalRefusals[checked])
+}
+
+export effect function scoreRatifications(pulls: ReadonlyArray<ReviewRecord>, context: AttributionContext, options: RatificationOptions) {
+  const ratifications = new Map<string, Ratification>()
+  for (const pull of pulls) {
+    const repository = repositoryIdFromUrl(context.registry, pull.url)
+    const project = repository === undefined ? undefined : findRepository(context.registry, repository)?.projectId
+    if (project === undefined) throw refused("score record repository is not registered")
+    const sources = pullRequestTextSources(pull)
+    const sourceById = new Map(sources.map((source) => [source.id, source] as const))
+    const associations = new Map(pull.comments.map((comment) => [comment.id, comment.authorAssociation] as const))
+    const sharesOutcome = (who: Actor | null) => sameActor(who, pull.author)
+    const comments = sources
+      .filter((candidate) => candidate.kind === "comment")
+      .sort((left, right) => millisOf(left.createdAt) - millisOf(right.createdAt) || left.id.localeCompare(right.id))
+    let current: Ratification | null = null
+    for (const source of comments) {
+      const association = associations.get(source.id) ?? ""
+      if (!isMaintainerAssociation(association)) continue
+      const raw = try recorded(parseFencedRecord(source.body, "slop-score"))
+      if (raw === null) continue
+      const record = try ratificationRecord(raw, context, {
+        projectId: project,
+        pullRequestNodeId: pull.id,
+        headSha: pull.headRefOid,
+        sourceNodeId: source.id,
+        authorAssociation: association,
+        createdAt: source.createdAt,
+        updatedAt: source.updatedAt,
+      })
+      const maintainer = source.author
+      if (maintainer === null) throw refused("slop-score author is not a maintainer")
+      if (current === null && record.supersedes !== null) throw refused("first slop-score record cannot supersede another record")
+      if (current !== null && record.supersedes !== current.sourceId) throw refused("slop-score correction must supersede the current record")
+      if (sharesOutcome(maintainer) && record.coRatifierNodeIds.length === 0) throw refused("self slop-score requires a second maintainer co-ratifier")
+      let securityRisk = false
+      for (const reviewNodeId of record.proposalReviewNodeIds) {
+        const reviewSource = sourceById.get(reviewNodeId)
+        if (reviewSource === undefined) throw refused(unreferencedProposal)
+        const proposal = try recorded(parseReviewRecordBlock(reviewSource.body))
+        if (proposal === null) throw refused(unreferencedProposal)
+        if (!isRecord(proposal) || proposal.schemaVersion !== "2") throw refused("non-micro slop-score requires a v2 Claude review proposal")
+        const proposed = try recorded(assertReviewRecord(proposal, context.registry))
+        const assessment = try assessModelAttribution([reviewSource], context, { requireEverySource: true, verifyRunReceipts: options.verifyRunReceipts })
+        const receipt = options.verifyRunReceipts ? (assessment.declarations[0]?.run ?? null) : null
+        try recorded(assertReviewRecordReceiptJoin(proposed, receipt, { artifactUrl: pull.url, headSha: pull.headRefOid }, context.registry))
+        if (proposed.securityRisk !== "none") {
+          if (record.coRatifierNodeIds.length === 0) throw refused("security-sensitive slop-score requires a co-ratifier")
+          securityRisk = true
+        }
+      }
+      const coRatifiers: Actor[] = []
+      for (const ratifierNodeId of record.coRatifierNodeIds) {
+        const ratifier = sourceById.get(ratifierNodeId)
+        const ratifierAuthor = ratifier?.author ?? null
+        if (ratifier === undefined || ratifierAuthor === null || !isMaintainerAssociation(associations.get(ratifier.id) ?? "") || ratifier.createdAt !== ratifier.updatedAt) {
+          throw refused("slop-score co-ratifier is not an immutable maintainer comment")
+        }
+        if (sameActor(ratifierAuthor, maintainer)) throw refused("slop-score co-ratifier must be a second maintainer")
+        if (sharesOutcome(ratifierAuthor)) throw refused("slop-score co-ratifier must not share the scored outcome")
+        const approval = try recorded(parseFencedRecord(ratifier.body, "slop-score-approval", "slop-score-approval JSON is malformed"))
+        if (approval === null) throw refused("slop-score co-ratifier lacks a score approval record")
+        try approved(approval, record)
+        coRatifiers.push(ratifierAuthor)
+      }
+      current = {
+        tier: record.tier as ScoreTier,
+        maintainer,
+        authority: { maintainer, project, permission: associationPermission },
+        coRatifiers,
+        securityRisk,
+        proposals: record.proposalReviewNodeIds,
+        head: record.headSha,
+        record: source.id,
+        sourceId: source.id,
+        url: source.url,
+        at: source.createdAt,
+        reason: record.reason,
+        workUnitId: record.workUnitId,
+      }
+    }
+    if (current !== null) ratifications.set(pull.id, current)
+  }
+  return ratifications
+}

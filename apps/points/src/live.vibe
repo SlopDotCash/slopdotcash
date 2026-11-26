@@ -1,18 +1,24 @@
-// spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"
+// spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
 import { disputeAudience } from "./disputes/port.vibe"
 import { disputeRoutes } from "./disputes/routes.vibe"
 import { contributorAudience } from "./journal/audience.vibe"
+import { ProtectedMonthsRoutes } from "./publication/protectedRoute.vibe"
 import { journalRoutes } from "./publication/routes.vibe"
+import { type CloseoutMonth, closeoutLedger, currentPointsBatch } from "./rewardWeights/closeout.vibe"
 import { ClosedMonthLive } from "./rewardWeights/live.vibe"
 
 export { DisputeTriage, SourceUnverified, type Lease, type Triage, type TriageOutcome, disputeSource, disputeTriage, pendingDisputes, triageDispute } from "./disputes/port.vibe"
-export { ClosedMonthLive, contributorAudience, disputeAudience }
+export { type ProtectedMonthsVars, protectedMonthsAccess } from "./publication/protectedRoute.vibe"
+export { ClosedMonthLive, type CloseoutMonth, closeoutLedger, contributorAudience, currentPointsBatch, disputeAudience }
+export { checkedSnapshot, repositoryRegistry } from "./programs/registry.vibe"
+export { protectedScope } from "./publication/protection.vibe"
+export { restoreSnapshot } from "./snapshot/restore.vibe"
 
 export const points = area({
   name: "points",
   api,
-  routes: Layer.mergeAll(journalRoutes, disputeRoutes),
+  routes: Layer.mergeAll(journalRoutes, disputeRoutes, ProtectedMonthsRoutes),
   provides: Layer.mergeAll(ClosedMonthLive, disputeAudience, contributorAudience),
 })

@@ -1,20 +1,23 @@
-// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/retainedFreshness.md, "Story: A retained release never moves production back to older data"
+// spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/retainedFreshness.md, "Story: A retained release never moves production back to older data"; spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/localGitObjects.md, "Story: Read immutable Git objects without spending the GitHub allowance"
 import { webCrypto } from "@repo/platform/crypto"
 import { createMergeBundleFromFile, installPinnedGit, systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
-import { type Command, program } from "@repo/platform/program"
+import { type Command, program, usageFailure } from "@repo/platform/program"
 import { applyCorrections } from "../corrections/apply/command.vibe"
 import { proveCandidates } from "../corrections/apply/prove.vibe"
 import { evaluations } from "../evaluations/check.vibe"
+import { compareLocal } from "./gitCompare.vibe"
+import { stagePacket } from "../corrections/reviewed/transport.vibe"
 import { corrections } from "./corrections.vibe"
 import { journal } from "./journal.vibe"
+import { memo } from "./memo.vibe"
 import { profiles } from "./profiles.vibe"
+import { registry } from "./registry.vibe"
+import { reviewed } from "./reviewed.vibe"
 import { retainedFresh } from "./retainedFresh.vibe"
 import { snapshot } from "./snapshot.vibe"
 
-error GitUsage { message: string }
-
-const gitUsage = "git install /absolute/installation/directory | git bundle /absolute/repository /absolute/inputs.json /absolute/output.bundle"
+const gitUsage = "git install /absolute/installation/directory | git bundle /absolute/repository /absolute/inputs.json /absolute/output.bundle | git compare-local <root> <owner/repo> [commits] [walkCommits]"
 
 effect function git(args: ReadonlyArray<string>) {
   const [command, ...rest] = args
@@ -28,7 +31,16 @@ effect function git(args: ReadonlyArray<string>) {
     try Console.log(JSON.stringify(bundle))
     return
   }
-  throw new GitUsage({ message: `Usage: ${gitUsage}` })
+  if (command === "compare-local") {
+    if ((rest[0] ?? "") === "" || (rest[1] ?? "") === "") {
+      try Console.error("usage: git compare-local <root> <owner/repo>")
+      return usageFailure
+    }
+    try compareLocal(rest)
+    return
+  }
+  try Console.error(`usage: ${gitUsage}`)
+  return usageFailure
 }
 
 function command<E, R>(run: Command<E, R>): Command<unknown, R> {
@@ -42,8 +54,12 @@ program({
     profiles: command(profiles),
     git: command(git),
     journal: command(journal),
+    memo: command(memo),
     evaluations: command(evaluations),
     corrections: command(corrections({ prove: proveCandidates, apply: applyCorrections })),
+    registry: command(registry),
     "retained-fresh": command(retainedFresh),
+    reviewed: command(reviewed),
+    "reviewed-packet": command(stagePacket),
   },
 }).runMain()

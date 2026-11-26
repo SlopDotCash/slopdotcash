@@ -26,9 +26,10 @@ Earlier snapshots remain in the original project history.
 ## Vibestack tooling
 
 `vibestack/`, `SPEC.md`, the agent skills and the root engineering
-configuration are vendored from the published `lalalune/vibestack` `develop`
-commit `24160dee4adc6e6e074ab0039b01a101b059e857`. Only commits published there
-are vendored. The readiness audit compared Slop `development` at
+configuration are vendored from the reviewed `lalalune/vibestack` source
+snapshot commit `b7f1827be748d4a97aee094d9961371d553012a7`. The vendor update takes
+the delta from `e4e2ab38f761897657c918f073e19114874b37ff` and retains Slop's
+product, verification and release configuration. The readiness audit compared Slop `development` at
 `87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
 `8d62e02c652df461631512e39cb00a2079bcadcc19d75f51799fc047e69cbfd5`. The
 retained PRD snapshot and source manifest keep their recorded pin until the
@@ -39,12 +40,14 @@ These local patches differ from that commit:
 | Patch | Files | Reason |
 | --- | --- | --- |
 | Guide and license | `vibestack/README.md`, `vibestack/LICENSE` | The upstream README with links rebased to `../`; the root README describes Slop |
-| `info` color, exported contrast and focus-ring boundary | `vibestack/design/tokens.ts`, `vibestack/design/test/`, root `package.json` export `./design/tokens` | Slop's tokens define `info`, which upstream rejects as an unknown token path; `ring` is held to 3:1 beside `input`; `@repo/ui` tests its colors with the token contrast function |
-| Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`; directories without a `package.json`, such as `packages/contracts`, are no workspace package; Foundry is installed beside Node |
+| Design token export and token-aligned Studio/fixture classes | root `package.json` export `./design/tokens`, `vibestack/design/test/design.test.ts`, `vibestack/studio/src/page/*.tsx` | `@repo/ui` tests its colors with the upstream-exported `contrast` function from `vibestack/design/tokens`; `design.test.ts` adapts `shadow-sm`/`shadow-lg` in the empty-scale lint fixture, and Studio's page maps 18 Tailwind utility classes (`z-30`/`z-40`, `leading-normal`/`leading-relaxed`, `font-normal`, `shadow-sm`/`shadow-lg`) to Slop's `tokens.json` scales |
+| Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`. `packages/contracts` is a workspace package with native Foundry and Rust tasks |
+| Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md` | Slop keeps signer custody, frozen-source exclusions, package exports and UI-driver rules. Upstream's comment and effect rules allow only the inventoried existing counts; new violations fail |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
+| Native setup | `.github/actions/setup/action.yml`, `.github/workflows/ci.yml` | Keep the reviewed validator image; install libcurl headers and the SHA-pinned Agave program builder without shadowing that validator |
 | Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
 
-`AGENTS.md` adds only the Slop specification migration section, which names
+`AGENTS.md` includes the Slop specification migration section, which names
 `lucide-react` as the single icon library and keeps pull-request narratives
 true to their diff. `.github/workflows/release.yml` is not vendored.
 
@@ -96,6 +99,39 @@ flowchart LR
 The template application remains its original greeting demonstration. Its
 tests and drivers exercise the toolchain. The migration adds no Slop runtime,
 database migration, route, signer, deployment or transaction.
+
+## Frontend parity
+
+Each `development` route at `24885ae9e` (`src/App.tsx`), its vibestack spec
+and its page in `packages/frontend` (`src/app/registered.tsx`). "Post-pin"
+marks a later `development` PRD or interface change that the retained PRD
+snapshot does not carry; it waits for the requirements repin.
+
+| Address | `development` screen | Spec (`spec/`) | `packages/frontend` | Gap |
+| --- | --- | --- | --- | --- |
+| `/` | `HomePage` in `App.tsx`, `SecurityOffer` | `app`, `frontend/presentation`, `poolListing`, `views` | `screens/home` | Post-pin: home Points leaderboard removed (`f75c049aa`), non-Points rewards listed (`b1b08de50`) |
+| `/how-it-works` | `PublicPages`, `PointsRules` | `frontend/projections`, `vaultLocks`, `points/scoringPolicy`, `slopbot/categories` | `screens/public` | Post-pin FAQ answers (`3bb6ba9d8`, `e4d5fe3a0`) |
+| `/sponsors` | `SponsorsPage` | `frontend/poolListing`, `projections`, `views` | `screens/public` | None |
+| `/cycles`, `/cycles/:project/:cycle` | `CyclePages`, `ProjectLeaderboard`, `VaultPaymentHistory` | `frontend/views`, `projections`, `rankedSnapshot`, `paymentHistory`, `snapshotCache` | `screens/cycles` | None |
+| `/points` | `PointsPage` in `Points.tsx` | `frontend/projections`, `rankedSnapshot`, `requests` | `screens/points` | Post-pin: titled "Contributors", Points hidden (`99b25b769`); `routes` keeps "Leaderboard" |
+| `/account`, `/wallet`, `/points?x` | `AccountPage`, `InboxEmail`, `ReferralCode` | `frontend/presentation`, `walletConsent`, `referralSettings`, `backend/email`, `xConnection` | `screens/account`, `referrals` | None |
+| `/login` | `LoginPage` in `Points.tsx` | `backend/accounts`, `frontend/composition` | `screens/account` | Post-pin: sign-in bound to its browser (`805b26053`) |
+| `/earnings` | `Earnings`, `PayoutRows`, `PayoutConsent`, `ContributorAllocation`, `ReferralClaims` | `frontend/projections`, `walletConsent`, `referralSettings`, `settlement/publicRecords` | `screens/payouts` | Allocation row specified in `frontend/projections`; no page row yet |
+| `/inbox` | `Inbox`, `InboxEmailAction`, `IncompleteAssessments`, `PointsDisputes`, `PrivateReportSummary` | `frontend/navigation`, `emailAction`, `reportDetails`, `operations/notifications`, `slopbot/assessmentInbox`, `points/disputes` | `screens/inbox` | None |
+| `/admin` | `Admin`, `AdminProjectEnforcement`, `AdminVetting`, `GeneratedSkillPreview` | `frontend/navigation`, `backend/projects`, `security/enforcement`, `admission`, `fees/feeReport` | `screens/admin` | None |
+| `/projects/new` | `ProjectProposalPage`, `ProjectSetupStatus`, `PendingProjectApplications`, field components | `frontend/presentation`, `projectDrafts`, `backend/projects`, `closureConsent`, `referralCodes` | `screens/setup` | None |
+| `/vetting-evidence` | `VettingEvidence` | `frontend/navigation`, `security/evidence`, `privacy` | `screens/admin` | None |
+| `/security` | `SecurityBounty`, `DirectBountyPayment`, `SolanaBountyPayment`, `SolanaBountyRecovery`, `BountySubmittedPayments` | `security/cases`, `privacy`, `frontend/directBountyPrompt`, `solanaBountyPrompt`, `walletAttempt` | `screens/security` | Post-pin: owner marks a rejected report as spam (`a381f7591`) |
+| `/projects/:project` | `ProjectPage`, `ProjectWork`, `EscrowFunding`, `PublicVaultFunding`, `OwnerAwards`, `OwnerCommitment`, `OwnerReserveRelease`; bounty-only `ProjectBountyFunding` | `frontend/projections`, `poolListing`, `views`, `projectLinks`, `rankedSnapshot`, `ownerMonthly`, `paymentHistory`, `vaultLocks` | `screens/projects`, `screens/funding` | Post-pin: wanted issues first (`13d3f5144`). `ProjectRiskFlag` is unmounted since `ec3526fe6`; `flows/projects/flags.vibe` has no page |
+| `/projects/:project/manage` | `ProjectUpdatePage`, `OwnerVaultSetup`, `VaultActions`, `VaultMonthLock`, `AutomaticMonthlyPayment` | `frontend/projectDrafts`, `readyLabelForm`, `ownerVault`, `provisionalVault`, `batchedDeposit`, `monthLock`, `ownerMonthly` | `screens/setup/update`, `screens/funding/vault` | Post-pin: integration-branch publication (`e2fe2b22f`), submission fee setting (`8008b4617`) |
+| `/projects/:project/security` | `SecurityBounty`, `PrivateReportForm`, `ReportProofFields`, `ProjectSecuritySettings`, `SecurityProgramEditor`, `OwnerBountyVault` | `security/program`, `terms`, `intake`, `frontend/drafts`, `reportDetails`, `ownerMonthly` | `screens/security` | Post-pin: proof-of-concept file (`548dcaaf7`) |
+| `/contributors/:login` | `ProfilePage`, `Profiles` | `frontend/views`, `rankedSnapshot`, `points/profiles`, `penalties` | `screens/profiles` | Post-pin: Points hidden (`99b25b769`), verifiable evidence (`bf73d46fa`) |
+| `/fee/:owner/:repo/:number`, `/fee/report/:case` | `SubmissionFeePage`, `SubmissionFeePay`, `ReportDepositPage` | None: `app` has no route kind | None | Owner decision on submission deposits |
+| Any other | `NotFound` | `app`, `frontend/routes` | `app` | None |
+
+Shared pieces map to `spec/ui/`: `Operations` copy controls to `copy`,
+`Presentation` badges and disclosures to `status` and `controls`, and
+`ChainIcon` to the `NetworkMark` component of `packages/ui`.
 
 ## Coverage records
 

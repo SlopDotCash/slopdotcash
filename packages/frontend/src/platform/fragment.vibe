@@ -1,0 +1,7 @@
+// spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over"
+import { alignTo } from "../../gen/frontend__routes.effect.vibe"
+import { listenForFragments } from "./hashScroll.ts"
+
+export effect function alignFragments() {
+  try sync(() => listenForFragments(alignTo))
+}

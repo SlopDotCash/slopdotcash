@@ -1,0 +1,165 @@
+// spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"; spec/fees/directBountyIncome.md, "Booking uses the exact completed journal and both canonical timestamps"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { type DirectBounty, type Intent, type Terms, type Transfer, type Wallet, initial, noIntent, noTransfer } from "../../gen/settlement__directBounty.effect.vibe"
+import { zero } from "../../gen/settlement__money.effect.vibe"
+import type { Network } from "../../gen/fees__runtime.effect.vibe"
+import type { EnabledNetwork } from "../runtime/config.vibe"
+import { type DirectAward, canonical } from "./store.vibe"
+
+module limbs {
+  import type { Amount } from "../../gen/settlement__money.ts"
+  import { toAmount } from "@repo/settlement/kernels/amounts"
+  /** @throws {never} */
+  export function amountOf(text: string): Amount {
+    if (!/^(?:0|[1-9]\d*)$/u.test(text)) return [-1]
+    try {
+      return toAmount(BigInt(text))
+    } catch {
+      return [-1]
+    }
+  }
+}
+import { amountOf } from limbs
+
+schema StoredWallet { readonly id: string; readonly address: string; readonly digest: string }
+schema StoredAsset { readonly address: string }
+schema StoredTransfer { readonly recipient: string; readonly amountBase: string }
+schema StoredTransaction { readonly nonce?: string }
+schema StoredSolana { readonly transaction: string }
+
+schema StoredIntent {
+  readonly afterBlock: string
+  readonly afterBlocks?: ReadonlyArray<string>
+  readonly asset: StoredAsset
+  readonly payer: StoredWallet
+  readonly recipient: StoredWallet
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly transfers: ReadonlyArray<StoredTransfer>
+  readonly transactions?: ReadonlyArray<StoredTransaction>
+  readonly solana?: StoredSolana
+}
+
+schema StoredLeg { readonly transactionId: string; readonly blockNumber: string; readonly message?: string }
+
+schema PaymentRow { case_id: string; intent: string; prepared_at: string; verified_at: string | null }
+schema RevisionRow { case_id: string; generation: number; intent: string }
+schema LegRow { case_id: string; leg_index: number; evidence: string }
+
+const decimal = /^(?:0|[1-9]\d*)$/u
+
+function wholeNumber(text: string | undefined): number {
+  if (text === undefined) return -1
+  const value = /^0x[\da-f]{1,13}$/iu.test(text) || /^(?:0|[1-9]\d{0,15})$/u.test(text) ? Number(text) : -1
+  return Number.isSafeInteger(value) ? value : -1
+}
+
+effect function parsed<S extends Schema.Constraint>(schema: S, text: string, label: string) {
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new RowMismatch({ text: label, issue: "stored JSON is malformed" }) })
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "stored JSON does not match its shape" }) }
+}
+
+effect function checkedFee(intent: typeof StoredIntent.Type, label: string) {
+  if (!decimal.test(intent.feeBase)) throw new RowMismatch({ text: label, issue: "Direct fee has an invalid amount" })
+  const toFees = intent.transfers[1]
+  if (intent.feeBase !== "0" && (!toFees?.recipient || toFees.amountBase !== intent.feeBase)) throw new RowMismatch({ text: label, issue: "Direct fee differs from its immutable transfers" })
+}
+
+function walletOf(network: Network, claims: ReadonlyArray<string>, wallet: typeof StoredWallet.Type): Wallet {
+  return { claim: claims.indexOf(wallet.id) + 1, address: canonical(network, wallet.address), digest: wallet.digest }
+}
+
+function intentOf(network: Network, stored: typeof StoredIntent.Type, generation: number): Intent {
+  const solana = network === "Solana"
+  const claims = [...new Set([stored.payer.id, stored.recipient.id])].sort()
+  const anchors = stored.afterBlocks ?? [stored.afterBlock, stored.afterBlock]
+  return {
+    ...noIntent,
+    active: true,
+    generation,
+    payer: walletOf(network, claims, stored.payer),
+    reporter: walletOf(network, claims, stored.recipient),
+    researcherNonce: solana ? -1 : wholeNumber(stored.transactions?.[0]?.nonce),
+    feeNonce: solana ? -1 : wholeNumber(stored.transactions?.[1]?.nonce),
+    researcherAnchor: wholeNumber(solana ? stored.afterBlock : anchors[0] ?? stored.afterBlock),
+    feeAnchor: wholeNumber(solana ? stored.afterBlock : anchors[1] ?? stored.afterBlock),
+    message: stored.solana?.transaction ?? "",
+  }
+}
+
+function transferOf(network: Network, stored: typeof StoredIntent.Type, intent: Intent, legIndex: number, leg: typeof StoredLeg.Type): Transfer {
+  const both = network === "Solana"
+  const researcher = !both && legIndex === 0
+  const toResearcher = stored.transfers[0]
+  const toFees = stored.transfers[1]
+  return {
+    ...noTransfer,
+    lane: both ? "Both" : researcher ? "Researcher" : "Fee",
+    network,
+    asset: canonical(network, stored.asset.address),
+    payerAddress: canonical(network, stored.payer.address),
+    researcherAddress: both || researcher ? canonical(network, toResearcher?.recipient ?? "") : "",
+    feeAddress: both || !researcher ? canonical(network, toFees?.recipient ?? "") : "",
+    principal: both || researcher ? amountOf(toResearcher?.amountBase ?? "0") : zero,
+    fee: both || !researcher ? amountOf(toFees?.amountBase ?? "0") : zero,
+    transaction: canonical(network, leg.transactionId),
+    nonce: both ? -1 : researcher ? intent.researcherNonce : intent.feeNonce,
+    message: both ? leg.message ?? "" : "",
+    height: wholeNumber(leg.blockNumber),
+    finalized: true,
+    succeeded: true,
+    exact: true,
+  }
+}
+
+function termsOf(network: Network, caseId: number, stored: typeof StoredIntent.Type): Terms {
+  return {
+    caseId,
+    project: 1,
+    finding: 1,
+    payerActor: 1,
+    reporterActor: 2,
+    network,
+    asset: canonical(network, stored.asset.address),
+    feeWallet: canonical(network, stored.transfers[1]?.recipient ?? ""),
+    gross: amountOf(stored.grossBase),
+    split: "StandardSplit",
+  }
+}
+
+effect function legOf(network: Network, stored: typeof StoredIntent.Type, intent: Intent, found: typeof LegRow.Type | undefined, label: string) {
+  if (found === undefined) return noTransfer
+  return transferOf(network, stored, intent, found.leg_index, try parsed(StoredLeg, found.evidence, `${label} receipt`))
+}
+
+export effect function directAwards(network: EnabledNetwork) {
+  const chain = network.definition.name
+  const model = network.network
+  const payments = try rows(PaymentRow, sql`SELECT p.case_id, p.intent, p.prepared_at, r.verified_at FROM security_direct_payments p LEFT JOIN security_direct_payment_receipts r ON r.case_id = p.case_id WHERE json_extract(p.intent, '$.chain') = ${chain} AND EXISTS (SELECT 1 FROM security_direct_transfer_receipts t WHERE t.case_id = p.case_id) ORDER BY p.case_id`)
+  const revisions = try rows(RevisionRow, sql`SELECT v.case_id, v.generation, v.intent FROM security_direct_payment_revisions v JOIN security_direct_payments p ON p.case_id = v.case_id WHERE json_extract(p.intent, '$.chain') = ${chain} ORDER BY v.case_id, v.generation`)
+  const legs = try rows(LegRow, sql`SELECT t.case_id, t.leg_index, t.evidence FROM security_direct_transfer_receipts t JOIN security_direct_payments p ON p.case_id = t.case_id WHERE json_extract(p.intent, '$.chain') = ${chain} ORDER BY t.case_id, t.leg_index`)
+  const awards: Array<DirectAward> = []
+  for (const [index, payment] of payments.entries()) {
+    const label = `direct payment ${payment.case_id}`
+    const original = try parsed(StoredIntent, payment.intent, label)
+    if (payment.verified_at !== null) try checkedFee(original, label)
+    const latest = revisions.filter((row) => row.case_id === payment.case_id).at(-1)
+    const stored = latest === undefined ? original : try parsed(StoredIntent, latest.intent, `${label} successor`)
+    const intent = intentOf(model, stored, latest?.generation ?? 0)
+    const paidLegs = legs.filter((row) => row.case_id === payment.case_id)
+    const researcherReceipt = try legOf(model, stored, intent, paidLegs.find((row) => row.leg_index === 0), label)
+    const bounty: DirectBounty = {
+      ...initial,
+      admitted: true,
+      terms: termsOf(model, index + 1, stored),
+      payerWallet: intent.payer,
+      reporterWallet: intent.reporter,
+      intent,
+      researcherReceipt,
+      feeReceipt: model === "Solana" ? researcherReceipt : try legOf(model, stored, intent, paidLegs.find((row) => row.leg_index === 1), label),
+    }
+    awards.push({ bounty, originalPreparedAt: millisOf(payment.prepared_at), aggregateVerifiedAt: payment.verified_at === null ? 0 : millisOf(payment.verified_at) })
+  }
+  return awards
+}

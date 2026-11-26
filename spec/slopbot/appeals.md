@@ -43,7 +43,8 @@ type AppealSubject = { item: str, revision: str, author: int, category: F::Categ
   scope: ProjectScope }
 type DraftChoice = NoDraft | DraftUphold | DraftDeny
 type Escalation = NotEscalated | MaliciousFinding | HighDebit | LowConfidence | DraftRejected | Overdue |
-  ParticipationBan | RetiredProject
+  ParticipationBan | RetiredProject | SiblingHeld
+type SiblingStatus = SiblingUnknown | NoSiblingHold | SiblingDenied | SiblingEscalated | SiblingDenyDraft
 type Resolution = Unresolved | Upheld | Denied
 type ResolvedVia = NotResolved | AcceptedDraft | MaintainerReopen | ModeratorDecision
 type BanStatus = BanUnknown | NotBanned | Banned
@@ -52,13 +53,13 @@ type Entry = { stage: Stage, by: int }
 type Appeal = { opened: bool, subject: AppealSubject, appellant: int, openedAt: int, now: int, queuedAt: int,
   draft: DraftChoice, draftConfidence: int, escalation: Escalation, notices: Set[int], ban: BanStatus,
   resolution: Resolution, via: ResolvedVia, resolvedBy: int,
-  postedDraft: bool, postedEscalation: bool, postedResolution: bool, journal: List[Entry] }
+  postedDraft: bool, postedEscalation: bool, postedResolution: bool, journal: List[Entry], sibling: SiblingStatus }
 pure val noSubject: AppealSubject = { item: "", revision: "", author: 0, category: F::NoFinding, tableVersion: 0, debit: 0,
   scope: ScopeActive }
 pure val initial: Appeal = { opened: false, subject: noSubject, appellant: 0, openedAt: 0, now: 0, queuedAt: 0,
   draft: NoDraft, draftConfidence: 0, escalation: NotEscalated, notices: Set(), ban: BanUnknown,
   resolution: Unresolved, via: NotResolved, resolvedBy: 0,
-  postedDraft: false, postedEscalation: false, postedResolution: false, journal: List() }
+  postedDraft: false, postedEscalation: false, postedResolution: false, journal: List(), sibling: SiblingUnknown }
 pure val slopModerators: Set[int] = Set(18633264, 202660855)
 pure val resolutionSeconds = 604800
 pure val requeueSeconds = 86400
@@ -97,26 +98,57 @@ Points, confidence below 90 hundredths and an appellant with an active
 participation ban each escalate. A private security case uses its separate
 path in the security area.
 
+The appeal also observes its siblings, the other finding appeals of the same
+item (`siblingAppealHold` in `appeals.ts`, development `8e7f678e5`,
+`49a48f001`, #3179, #3208, #3216): a penalty is recorded once per item, so a
+repeat appeal opened on a new head or body must not be self-decided while an
+earlier appeal of the same item was denied ("an earlier appeal of this item
+was denied"), awaits a moderator ("… awaits a moderator") or has an
+unanswered deny draft ("… has a deny draft"). Value disputes are not
+findings and are left out. The order at triage is the ban, then a sibling
+hold, then the published criteria (`triageAppeal` in `review.ts`).
+
+A `missing_evidence` finding whose active penalty is `missing_evidence`
+is drafted deterministically, at confidence 100, from the current item:
+uphold when the Evidence section now passes the check of
+[closure](./closure.md), deny otherwise (`draftResolution`, development
+`bf73d46fa`). No model drafts it.
+
 ```quint
 pure def canObserveTime(a: Appeal, observedAt: int): bool = observedAt >= a.now
 pure def observeTime(a: Appeal, observedAt: int): Appeal = { ...a, now: observedAt }
 pure def canObserveBan(a: Appeal, status: BanStatus): bool = unresolved(a) and status != BanUnknown
 pure def observeBan(a: Appeal, status: BanStatus): Appeal = { ...a, ban: status }
+pure def canObserveSibling(a: Appeal, siblingStatus: SiblingStatus): bool =
+  unresolved(a) and siblingStatus != SiblingUnknown
+pure def observeSibling(a: Appeal, siblingStatus: SiblingStatus): Appeal = { ...a, sibling: siblingStatus }
+pure def siblingHeld(a: Appeal): bool =
+  a.sibling == SiblingDenied or a.sibling == SiblingEscalated or a.sibling == SiblingDenyDraft
+pure def evidenceDrafted(a: Appeal): bool = a.subject.category == F::MissingEvidence and a.subject.debit > 0
 pure def canDraft(a: Appeal, uphold: bool, confidenceHundredths: int): bool =
-  unresolved(a) and not(retired(a)) and a.draft == NoDraft and F::validConfidence(confidenceHundredths)
+  unresolved(a) and not(retired(a)) and a.draft == NoDraft and F::validConfidence(confidenceHundredths) and
+  not(evidenceDrafted(a))
 pure def draft(a: Appeal, uphold: bool, confidenceHundredths: int): Appeal =
   { ...a, draft: if (uphold) DraftUphold else DraftDeny, draftConfidence: confidenceHundredths }
-pure def criteriaReason(a: Appeal): Escalation =
-  if (a.ban == Banned) ParticipationBan
-  else if (F::confirmedMalicious(a.subject.category)) MaliciousFinding
+pure def canDraftFromEvidence(a: Appeal, evidenceMissing: bool): bool =
+  unresolved(a) and not(retired(a)) and a.draft == NoDraft and evidenceDrafted(a)
+pure def draftFromEvidence(a: Appeal, evidenceMissing: bool): Appeal =
+  { ...a, draft: if (evidenceMissing) DraftDeny else DraftUphold, draftConfidence: 100 }
+pure def publishedReason(a: Appeal): Escalation =
+  if (F::confirmedMalicious(a.subject.category)) MaliciousFinding
   else if (a.subject.debit >= F::escalationDebit) HighDebit
   else if (a.draftConfidence < F::closeConfidence) LowConfidence
   else NotEscalated
+pure def criteriaReason(a: Appeal): Escalation =
+  if (a.ban == Banned) ParticipationBan
+  else if (siblingHeld(a)) SiblingHeld
+  else publishedReason(a)
 pure def escalatedWith(reason: Escalation, a: Appeal): Appeal =
   { ...a, escalation: reason, notices: slopModerators,
     journal: a.journal.append({ stage: EscalationStage, by: 0 }) }
 pure def canEscalateByCriteria(a: Appeal): bool =
-  unresolved(a) and not(escalated(a)) and a.draft != NoDraft and a.ban != BanUnknown and criteriaReason(a) != NotEscalated
+  unresolved(a) and not(escalated(a)) and a.draft != NoDraft and a.ban != BanUnknown and a.sibling != SiblingUnknown and
+  criteriaReason(a) != NotEscalated
 pure def escalateByCriteria(a: Appeal): Appeal = escalatedWith(criteriaReason(a), a)
 pure def canEscalateRetired(a: Appeal): bool = unresolved(a) and retired(a) and not(escalated(a))
 pure def escalateRetired(a: Appeal): Appeal = escalatedWith(RetiredProject, a)
@@ -127,6 +159,9 @@ pure def alwaysRetiredHasNoDraft(a: Appeal): bool = retired(a) implies a.draft =
 pure def stepDraftOnce(before: Appeal, after: Appeal): bool = before.draft != NoDraft implies
   after.draft == before.draft and after.draftConfidence == before.draftConfidence
 pure def stepEscalationOnce(before: Appeal, after: Appeal): bool = escalated(before) implies after.escalation == before.escalation
+pure def sometimesEvidenceDraftUpheld(a: Appeal): bool =
+  evidenceDrafted(a) and a.draft == DraftUphold and a.draftConfidence == 100
+pure def sometimesSiblingHeldAtTriage(a: Appeal): bool = a.escalation == SiblingHeld and a.draft == DraftDeny
 pure def sometimesEscalatedByCriteria(a: Appeal): bool = a.escalation == HighDebit or a.escalation == MaliciousFinding
 pure def sometimesBanEscalated(a: Appeal): bool = a.escalation == ParticipationBan
 pure def sometimesRetiredEscalated(a: Appeal): bool = a.escalation == RetiredProject
@@ -143,7 +178,12 @@ appellant seen at an answer from the appellant or a current maintainer
 escalates instead of resolving, whether or not a draft exists yet; any other
 sender is refused first (`review.ts` lines 3060-3082). Without a
 ban and without a draft, an answer changes nothing ("no draft to answer
-yet"). An escalated appeal ignores further draft answers.
+yet"). An escalated appeal ignores further draft answers ("a Slop moderator
+decides this appeal"). A sibling can be denied or escalated, or get a deny
+draft, after triage, so the siblings are read again when the appellant
+accepts an uphold draft: with a hold the appeal escalates with that reason
+instead of resolving (`review.ts` lines 3273-3293). A maintainer's accept,
+and the appellant's accept of a deny draft, are not held.
 
 ```quint
 type ActorRole = RoleUnavailable | CurrentMaintainer | NotMaintainer
@@ -151,13 +191,22 @@ type AuthorityCheck = { actor: int, item: str, role: ActorRole }
 pure def mayAnswer(a: Appeal, by: int, authority: AuthorityCheck): bool = by > 0 and
   (by == a.appellant or (authority.actor == by and authority.item == a.subject.item and authority.role == CurrentMaintainer))
 pure def answerable(a: Appeal): bool = unresolved(a) and not(escalated(a)) and a.draft != NoDraft
-pure def canReject(a: Appeal, by: int, authority: AuthorityCheck): bool = answerable(a) and mayAnswer(a, by, authority)
+pure def canReject(a: Appeal, by: int, authority: AuthorityCheck): bool = answerable(a) and mayAnswer(a, by, authority) and
+  a.ban == NotBanned
 pure def reject(a: Appeal, by: int, authority: AuthorityCheck): Appeal = escalatedWith(DraftRejected, a)
 pure def canEscalateBanAtAnswer(a: Appeal, by: int, authority: AuthorityCheck): bool =
   unresolved(a) and not(escalated(a)) and a.ban == Banned and mayAnswer(a, by, authority)
 pure def escalateBanAtAnswer(a: Appeal, by: int, authority: AuthorityCheck): Appeal = escalatedWith(ParticipationBan, a)
+pure def appellantUpholds(a: Appeal, by: int): bool = by == a.appellant and a.draft == DraftUphold
 pure def canAccept(a: Appeal, by: int, authority: AuthorityCheck): bool =
-  answerable(a) and mayAnswer(a, by, authority) and a.ban == NotBanned and criteriaReason(a) == NotEscalated
+  answerable(a) and mayAnswer(a, by, authority) and a.ban == NotBanned and publishedReason(a) == NotEscalated and
+  (appellantUpholds(a, by) implies a.sibling == NoSiblingHold)
+pure def canEscalateSiblingAtAnswer(a: Appeal, by: int, authority: AuthorityCheck): bool =
+  answerable(a) and mayAnswer(a, by, authority) and a.ban == NotBanned and appellantUpholds(a, by) and siblingHeld(a)
+pure def escalateSiblingAtAnswer(a: Appeal, by: int, authority: AuthorityCheck): Appeal = escalatedWith(SiblingHeld, a)
+pure def stepHeldSiblingNeverSelfUpheld(before: Appeal, via: str, after: Appeal): bool =
+  via == "accept" implies not(siblingHeld(before) and appellantUpholds(before, after.resolvedBy))
+pure def sometimesSiblingHeldAtAnswer(a: Appeal): bool = a.escalation == SiblingHeld and a.draft == DraftUphold
 pure def accept(a: Appeal, by: int, authority: AuthorityCheck): Appeal =
   { ...a, resolution: if (a.draft == DraftUphold) Upheld else Denied, via: AcceptedDraft, resolvedBy: by,
     journal: a.journal.append({ stage: ResolutionStage, by: by }) }
@@ -277,7 +326,9 @@ pure val spamSubject: AppealSubject = { item: "pr", revision: "head", author: 5,
 pure val subjectValues = Set(spamSubject, { ...spamSubject, category: F::Scam, debit: 240 },
   { ...spamSubject, category: F::Duplicate, debit: 0 }, { ...spamSubject, scope: ScopeRetired },
   { ...spamSubject, scope: ScopeRetired, debit: 0 }, { ...spamSubject, category: F::NoFinding },
-  { ...spamSubject, debit: 240 }, { ...spamSubject, tableVersion: 2 })
+  { ...spamSubject, debit: 240 }, { ...spamSubject, tableVersion: 2 }, { ...spamSubject, tableVersion: 3 },
+  { ...spamSubject, category: F::MissingEvidence, tableVersion: 2, debit: 10 },
+  { ...spamSubject, category: F::MissingEvidence, tableVersion: 1, debit: 10 })
 pure val byValues = Set(5, 6, 18633264)
 pure val authorityValues = Set({ actor: 6, item: "pr", role: CurrentMaintainer }, { actor: 6, item: "pr", role: NotMaintainer },
   { actor: 6, item: "pr", role: RoleUnavailable }, { actor: 18633264, item: "pr", role: CurrentMaintainer })

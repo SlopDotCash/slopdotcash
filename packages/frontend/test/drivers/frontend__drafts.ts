@@ -1,4 +1,4 @@
-// spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"
+// spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/drafts.md, "A definite refusal returns the report to review with a fresh key"
 import { ManagedRuntime } from "effect";
 import { outcome } from "@repo/platform/testing/area";
 import type { Driver, Options } from "../../gen/frontend__drafts.conformance.ts";

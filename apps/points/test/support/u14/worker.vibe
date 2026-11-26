@@ -2,7 +2,7 @@
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, first, rows, sql } from "@repo/platform/d1"
-import { handle, outbound } from "@repo/platform/http"
+import { handle, outbound, refuse } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
@@ -60,6 +60,13 @@ effect function planned(request: PlanRequest) {
   return { dispositions: result.dispositions, phases: result.phases, journal: `${journalText(result.journal)}\n` }
 }
 
+effect function plannedOrRefused(request: PlanRequest) {
+  return planned(request) catch effect (error) => {
+    if (error._tag === "CorrectionRefused") throw refuse(409, "correction_refused", error.message)
+    throw error
+  }
+}
+
 effect function publicJournal() {
   const batch = try first(LatestBatch, sql`SELECT generated_at, coverage FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1`)
   if (batch === undefined) return null
@@ -82,5 +89,5 @@ effect function recorded(text: string) {
 
 export default worker({
   services: (env: Env) => Layer.provideMerge(Layer.mergeAll(CallerLive, accountSettings(env)), Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env))),
-  routes: Layer.mergeAll(handle(seedRoute, (input) => seeded(input.body.journal)), handle(planRoute, (input) => planned(input.body)), handle(recordRoute, (input) => recorded(input.body.journal)), handle(publicRoute, () => published())),
+  routes: Layer.mergeAll(handle(seedRoute, (input) => seeded(input.body.journal)), handle(planRoute, (input) => plannedOrRefused(input.body)), handle(recordRoute, (input) => recorded(input.body.journal)), handle(publicRoute, () => published())),
 })

@@ -6,7 +6,7 @@ import { type Aggregate, type Decision, type Rows, load, update } from "@repo/pl
 import type { Evidence as GroupEvidence, JointRecord, Journal, SourceKind } from "../../../gen/slopbot__workUnits.effect.vibe"
 import { NotAState, apply, decodeState } from "../../../gen/slopbot__workUnits.effect.vibe"
 import { InstallationRow, installationOf } from "../../installation/store.vibe"
-import { StoredRecord, valueAssessmentKey, workUnitAssessmentKey } from "../history/read.vibe"
+import { StoredRecord, workUnitAssessmentKey } from "../history/read.vibe"
 import { JournalBytesInvalid, type PublicationBinding, RecordNotAppended, activeInstallationGuard, appendValueRecord, sourceKey } from "../history/store.vibe"
 import { type PreparedRecord, workUnitRecordVersion } from "./record.vibe"
 import type { GroupFacts } from "./types.vibe"
@@ -262,8 +262,7 @@ export effect function appendSingleRecord(recordJson: string, binding: Publicati
   const source = parsed === undefined ? undefined : Schema.decodeUnknownEffect(SingleSource)(parsed.value) catch () => undefined
   if (source === undefined) throw new JournalBytesInvalid({ issue: "record is not a value record" })
   const digest = sha256Of(recordJson)
-  const assessmentKey = try valueAssessmentKey(source)
-  const replayed = try first(StoredDigest, sql`SELECT record_digest FROM slopbot_value_journal WHERE assessment_key = ${assessmentKey} OR record_digest = ${digest}`)
+  const replayed = try first(StoredDigest, sql`SELECT record_digest FROM slopbot_value_journal WHERE record_digest = ${digest}`)
   if (replayed !== undefined) return try appendValueRecord(recordJson, binding)
   const scope: JournalScope = {
     sources: [[source.repositoryNodeId, source.pullRequestNodeId]],

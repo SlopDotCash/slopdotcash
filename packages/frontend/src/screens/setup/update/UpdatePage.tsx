@@ -1,10 +1,11 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
 import type { SetupStatus } from "@repo/backend/client";
 import { Alert, Button, NotFound, PageHeader, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
 import { Check, CloudCheck, CloudOff, Lock, Settings2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { NotFoundHead } from "../../../app/notFoundHead.ts";
 import { type PageProps, signInPurposes } from "../../../app/pages.ts";
 import { Chip } from "../../admin/parts.tsx";
 import type { PageRuntime } from "../../../app/runtime.vibe";
@@ -27,6 +28,7 @@ import { failureMessage, useRun } from "../proposal/run.ts";
 import { SetupStatusPanel } from "../status/SetupStatusPanel.tsx";
 import { type CurrentRevision, currentRevision, publishUpdate, removeManaged, revisionUnreadable } from "./actions.vibe";
 import { ChangeReview } from "./ChangeReview.tsx";
+import { useIntegrationBranch } from "./IntegrationBranch.tsx";
 import { type EditStore, useEdit, useEditStore } from "./editStore.ts";
 import type { PendingRepository } from "./manifest.schema.ts";
 import { ProjectRemoved, RemoveProject } from "./RemoveProject.tsx";
@@ -102,6 +104,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const [addition, setAddition] = useState<Addition>({ state: "idle" });
   const inFlight = useRef(false);
   const lookups = useRef(0);
+  const branch = useIntegrationBranch(runtime);
   const current = published !== undefined && published.revision >= base.revision ? published : base;
   const managed = managedOf(current.revision, current.manifest);
   if (managed === undefined)
@@ -112,7 +115,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     );
   const { manifest } = managed;
   if (removal.status === "removed") return <ProjectRemoved name={manifest.name} />;
-  const review = reviewOf(managed, edit, new Date());
+  const review = reviewOf(managed, edit, new Date(), branch.change);
   const valid = Object.keys(review.errors).length === 0;
   const publishing = submission.status === "publishing";
   const shown = (field: string) => (attempted ? review.errors[field] : undefined);
@@ -132,7 +135,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     const submitted = edit;
     inFlight.current = true;
     setSubmission({ status: "publishing" });
-    const exit = await runtime.runPromiseExit(publishUpdate({ projectId: base.projectId, manifest: review.next, expectedRevision: managed.revision, monthlyAmount: review.monthlyAmount, actor: actorId }));
+    const exit = await runtime.runPromiseExit(publishUpdate({ projectId: base.projectId, manifest: review.next, expectedRevision: managed.revision, monthlyAmount: review.monthlyAmount, actor: actorId, branch: review.branchRequest }));
     inFlight.current = false;
     if (Exit.isSuccess(exit)) {
       const { project, setup: answered } = exit.value;
@@ -141,11 +144,13 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
       setSetup(answered);
       store.update((latest) => afterPublish(latest, submitted, repositoryIds(project.manifest), project.revision));
       setAttempted(false);
+      if (review.branchRequest !== undefined) branch.clear();
       return setSubmission({ status: "published", revision: project.revision, vaultSetup: after !== undefined && !isBountyOnly(after) && after.escrow !== undefined && after.escrow.deployments.length === 0 });
     }
     const failure = Exit.findErrorOption(exit);
     const refused = failure._tag === "Some" && failure.value._tag === "EditorRefused" ? failure.value : undefined;
     if (refused?.accessLost) return onAccessLost();
+    if (refused?.branchMoved) branch.clear();
     setSubmission({ status: "failed", message: refused?.message ?? failureMessage(exit.cause, "Publication could not be confirmed."), staleRevision: refused?.staleRevision ?? false });
   };
 
@@ -211,6 +216,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
         }}
         onAdd={() => void add()}
         publishing={publishing}
+        branch={branch}
       />
       {review.stale ? (
         <Alert variant="destructive">
@@ -266,7 +272,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
               Rev {submission.revision}
             </Chip>
             {submission.vaultSetup ? (
-              <a href="#project-vault" className="text-primary underline underline-offset-4">
+              <a href="#vault-setup" className="text-primary underline underline-offset-4">
                 Set up vault
               </a>
             ) : null}
@@ -288,7 +294,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
           )}
         </p>
       </div>
-      <Vault runtime={runtime} manifest={current.manifest} />
+      <Vault runtime={runtime} manifest={current.manifest} onVaultRegistered={onReload} />
       <p id="security-settings">
         <a href={`/projects/${manifest.slug}/security#security-settings`} className="text-primary underline underline-offset-4">
           Manage security bounty
@@ -298,27 +304,27 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   );
 }
 
-function Vault({ runtime, manifest }: { runtime: PageRuntime; manifest: unknown }) {
+function Vault({ runtime, manifest, onVaultRegistered }: { runtime: PageRuntime; manifest: unknown; onVaultRegistered: () => void }) {
   const managed = managedOf(0, manifest)?.manifest;
   const project = fundingProjectOf(manifest);
   if (managed === undefined || project === undefined || isBountyOnly(managed) || !managed.escrow || managed.reward.kind === "external-prize-share") return null;
   return (
     <div id="project-vault">
-      <PooledEscrow runtime={runtime} project={project} manifest={manifest} />
+      <PooledEscrow runtime={runtime} project={project} manifest={manifest} onVaultRegistered={onVaultRegistered} />
     </div>
   );
 }
 
-function PooledEscrow({ runtime, project, manifest }: { runtime: PageRuntime; project: FundingProject; manifest: unknown }) {
+function PooledEscrow({ runtime, project, manifest, onVaultRegistered }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; onVaultRegistered: () => void }) {
   const reads = useOnce(projectRuntime(runtime), "reads", () => projectReads());
-  return reads.status === "done" ? <CurrentPool runtime={runtime} project={project} manifest={manifest} pool={reads.value.pool} /> : <EscrowFunding runtime={runtime} project={project} />;
+  return reads.status === "done" ? <CurrentPool runtime={runtime} project={project} manifest={manifest} pool={reads.value.pool} onVaultRegistered={onVaultRegistered} /> : <EscrowFunding runtime={runtime} project={project} onVaultRegistered={onVaultRegistered} />;
 }
 
-function CurrentPool({ runtime, project, manifest, pool }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; pool: ShownRead<PoolFundingIndex> }) {
+function CurrentPool({ runtime, project, manifest, pool, onVaultRegistered }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; pool: ShownRead<PoolFundingIndex>; onVaultRegistered: () => void }) {
   const read = useShownRead(pool, "all");
   const shown = projectOf(manifest);
   const facts = shown !== undefined && read.status === "Current" ? projectFunding({ project: shown, read: { status: read.status, vaults: read.value?.get(shown.id) }, networkPays, nowMs: Date.now() }).facts : undefined;
-  return <EscrowFunding runtime={runtime} project={project} pool={facts} />;
+  return <EscrowFunding runtime={runtime} project={project} pool={facts} onVaultRegistered={onVaultRegistered} />;
 }
 
 function ProjectEditor(props: EditorProps) {
@@ -391,7 +397,11 @@ export function UpdatePage({ runtime, route }: PageProps) {
     );
   const base = loaded ?? (read?.status === "done" ? read.value : undefined);
   if (base === undefined) {
-    if (read?.status === "done") return <NotFound title="Project not found" />;
+    if (read?.status === "done") return (
+      <NotFound title="Project not found">
+        <NotFoundHead />
+      </NotFound>
+    );
     return (
       <Frame>
         {read?.status === "failed" ? (

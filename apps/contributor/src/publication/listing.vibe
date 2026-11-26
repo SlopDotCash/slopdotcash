@@ -1,58 +1,81 @@
-// spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"
-import type { RegistryManifest } from "@repo/ports/backend"
-import { type PoolCandidate, type PoolFactsView, PoolListing } from "@repo/ports/settlement"
-import { type MonthListing, monthListingOf } from "../../gen/contributor__publication.effect.vibe"
+// spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"
+import { type IntakeCount, IntakeCounts, type RegistryManifest } from "@repo/ports/backend"
+import type { StoredCount } from "../../gen/backend__intakeCap.effect.vibe"
+import { type IntakeListing, type MonthListing, intakeListingOf, monthListingOf } from "../../gen/contributor__publication.effect.vibe"
 import type { PoolFacts } from "../../gen/frontend__projections.effect.vibe"
-import { zero } from "../../gen/settlement__money.effect.vibe"
+import { type Amount, zero } from "../../gen/settlement__money.effect.vibe"
 
 schema OpenSecurityProgram { readonly status: "open" }
 schema SecurityProgramField { readonly securityBounty: OpenSecurityProgram }
+schema CycleCap { readonly cycleId: string; readonly monthlyCapMinor: string }
+schema MonthlyPoolReward { readonly kind: "monthly-pool"; readonly monthlyCapMinor: string; readonly cycleCaps?: ReadonlyArray<CycleCap> }
+schema MonthlyPoolField { readonly reward: MonthlyPoolReward }
+schema IntakeCapSetting { readonly intakeCap: number }
+schema IntakeCapField { readonly slopbot: IntakeCapSetting }
 
-export type FundingRead = ReadonlyMap<string, PoolFactsView> | undefined
+export type IntakeRead = ReadonlyMap<string, ReadonlyArray<IntakeCount>> | undefined
 
+const hourMs = 3_600_000
+const minorDigits = /^\d+$/u
 const securityOpen = Schema.is(SecurityProgramField)
+const monthlyPoolOf = Schema.is(MonthlyPoolField)
+const intakeCapOf = Schema.is(IntakeCapField)
 
-const unreadPool: PoolFacts = {
-  read: "PoolFailed",
-  monthlyPool: false,
-  period: 0,
-  amount: [...zero],
-  priorAmount: [...zero],
-  priorPending: false,
-  freeNow: [...zero],
-  monthStartRead: false,
-  freeAtStart: [...zero],
-  withdrawnSince: false,
-  pledgeSupport: false,
-  pledged: [...zero],
+function limbsOf(minor: string): Amount {
+  if (!minorDigits.test(minor)) return [1]
+  const limbs: number[] = []
+  for (let end = minor.length; end > 0; end -= 3) limbs.push(Number(minor.slice(Math.max(0, end - 3), end)))
+  return limbs
 }
 
-function poolOf(view: PoolFactsView): PoolFacts {
+function utcMonth(now: number): string {
+  return new Date(now).toISOString().slice(0, 7)
+}
+
+function configuredPool(manifest: unknown, now: number): PoolFacts {
+  const pool = monthlyPoolOf(manifest) ? manifest.reward : undefined
+  const month = utcMonth(now)
+  const minor = pool?.cycleCaps?.find((cap) => cap.cycleId === month)?.monthlyCapMinor ?? pool?.monthlyCapMinor
   return {
-    ...view,
-    amount: [...view.amount],
-    priorAmount: [...view.priorAmount],
-    freeNow: [...view.freeNow],
-    freeAtStart: [...view.freeAtStart],
-    pledged: [...view.pledged],
+    read: "PoolCurrent",
+    monthlyPool: pool !== undefined,
+    period: Number(month.replace("-", "")),
+    amount: minor === undefined ? [...zero] : limbsOf(minor),
+    priorAmount: [...zero],
+    priorPending: false,
+    freeNow: [...zero],
+    monthStartRead: false,
+    freeAtStart: [...zero],
+    withdrawnSince: false,
+    pledgeSupport: false,
+    pledged: [...zero],
   }
 }
 
-effect function answered(candidates: ReadonlyArray<PoolCandidate>) {
-  const answer = try (try PoolListing).facts(candidates)
-  if (answer === undefined) return undefined
-  const read = new Map(answer.map((entry) => [entry.projectId, entry.pool] as const))
-  return candidates.every((candidate) => read.has(candidate.projectId)) ? read : undefined
+export function monthListingFor(manifest: unknown, now: number): MonthListing {
+  return monthListingOf({ securityOpen: securityOpen(manifest), pool: configuredPool(manifest, now) })
 }
 
-export effect function fundingRead(candidates: ReadonlyArray<PoolCandidate>) {
-  const outcome = try exit(answered(candidates))
-  const read: FundingRead = Exit.isSuccess(outcome) ? outcome.value : undefined
-  if (read === undefined) try Effect.logError("project discovery pool funding unavailable")
-  return read
+export effect function intakeRead() {
+  const outcome = try exit((try IntakeCounts).counts())
+  if (Exit.isSuccess(outcome)) return outcome.value satisfies IntakeRead
+  try Effect.logError("project discovery intake counts unavailable")
+  return undefined satisfies IntakeRead
 }
 
-export function monthListingFor(read: FundingRead, project: RegistryManifest, manifest: unknown): MonthListing {
-  const pool = read?.get(project.projectId)
-  return monthListingOf({ active: project.active, securityOpen: securityOpen(manifest), pool: pool === undefined ? unreadPool : poolOf(pool) })
+function capOf(manifest: unknown): number {
+  const cap = intakeCapOf(manifest) ? manifest.slopbot.intakeCap : 0
+  return Number.isSafeInteger(cap) && cap >= 1 ? cap : 0
+}
+
+function storedCount(count: IntakeCount, now: number): ReadonlyArray<StoredCount> {
+  const observed = Date.parse(count.observedAt)
+  if (!Number.isFinite(observed) || !Number.isSafeInteger(count.openOutside)) return []
+  return [{ read: true, count: count.openOutside, observedAt: -Math.ceil((now - observed) / hourMs) }]
+}
+
+export function intakeListingFor(read: IntakeRead, project: RegistryManifest, manifest: unknown, now: number): IntakeListing {
+  const counts = read?.get(project.projectId)
+  if (counts === undefined) return intakeListingOf(false, 0, project.active, 0, [])
+  return intakeListingOf(true, capOf(manifest), project.active, 0, counts.flatMap((count) => storedCount(count, now)))
 }

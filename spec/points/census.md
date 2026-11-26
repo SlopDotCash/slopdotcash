@@ -22,8 +22,15 @@ the [historical import](./historicalImport.md).
 
 ### Collection starts only for a collected project and never moves its window back
 
-The project view excludes paused, retired, quarantined and legacy projects:
-the ids kept in `src/lib/legacy-projects.json` and the retired registry
+The project view excludes paused, retired, quarantined and legacy projects.
+A legacy project is a removed pre-registry project id kept in
+`src/lib/legacy-projects.json` as a history label that the current D1
+registry does not list. A project the registry lists is never legacy, even
+when its id also appears in that file: a registered project that owns a
+legacy repository keeps the legacy id (every id in that file is registered
+today, among them eliza, slopdotcash, asi, feed, thenetwork, canonry and
+delta-star) and is collected unless it is paused, retired or quarantined.
+Legacy projects and the retired registry
 listings are never collected, scored or paid.
 
 ```quint
@@ -54,14 +61,20 @@ pure def stepWindowNeverRegresses(before: Census, after: Census): bool = after.l
 ### Pages follow the cursor chain and a changed count stops the pass
 
 A repeated cursor, a cursor out of sequence and overlapping pages cannot
-invent a count. The first changed `totalCount` restarts collection once; a
-second change leaves the census incomplete. The terminal page is required
-even when the count already matches.
+invent a count. The last page is the one without a next page (`next` 0); a
+listing whose first page is also its last, an empty one included, is a
+complete census. Every page that is not the last must advance: its next
+cursor is neither its own cursor nor one already followed, or the pass stops
+(development `collectOpenReferences`, "cursor did not advance"). The first
+changed `totalCount` restarts collection once; a second change leaves the
+census incomplete. The terminal page is required even when the count already
+matches.
 
 ```quint
 pure def canRecordPage(c: Census, page: Page): bool =
   c.phase == Collecting and not(c.terminalSeen) and page.cursor == c.expectedCursor and
-  not(c.cursorsSeen.includes(page.cursor)) and page.next != page.cursor and page.totalCount >= 0 and
+  not(c.cursorsSeen.includes(page.cursor)) and
+  (page.next == 0 or (page.next != page.cursor and not(c.cursorsSeen.includes(page.next)))) and page.totalCount >= 0 and
   (c.totalCount == -1 or page.totalCount == c.totalCount) and page.items.every(i => i.id > 0)
 pure def addItem(items: List[Item], i: Item): List[Item] = if (items.some(o => o.id == i.id)) items else items.append(i)
 pure def recordPage(c: Census, page: Page): Census =
@@ -77,6 +90,9 @@ pure def recordFailure(c: Census): Census = { ...c, phase: Incomplete }
 pure def canFinish(c: Census): bool =
   c.phase == Collecting and c.terminalSeen and c.items.length() == c.totalCount
 pure def finish(c: Census): Census = { ...c, phase: ReadyForPublication }
+pure def sometimesOnePageReady(c: Census): bool =
+  c.phase == ReadyForPublication and c.cursorsSeen.length() == 1 and c.items.length() > 0
+pure def sometimesEmptyReady(c: Census): bool = c.phase == ReadyForPublication and c.totalCount == 0
 ```
 
 ### Every retained item has a deterministic, fail-closed selection decision with all its reasons
@@ -227,6 +243,16 @@ enumerated node that became unavailable (`SourceNodeUnavailableError`)
 discards the first attempt and recollects every source once, with the same
 client: the cost spent, the reserve and the reset already waited for carry
 over. Any other failure, or a second such failure, stops the collection.
+One exception (operator decision, 20 November 2026; main 2ffedc0c6,
+development 7f71c6ce9, `JOINT_SOURCE_CONFIRMATION_PROBES`,
+`JOINT_SOURCE_CONFIRMATION_DELAY_MS`): a joint value-record member outside
+the live census that GitHub cannot resolve is, in the first attempt, probed
+twice more, 5,000 ms apart, each probe a counted request of the same budget.
+When every probe reports the same unavailable sources, its work unit is held
+and the source recorded unavailable in that attempt, with no recollection; a
+probe that resolves the batch, reports other sources or fails otherwise
+discards the attempt and the collection recollects once, as above. The
+recollection holds such a member on its own single probe.
 Publication is outside the retry. The [ingestion read](./ingestion.md) is a
 separate REST transport with no budget of its own.
 
@@ -248,6 +274,15 @@ pure def budgetDecision(budget: Budget, cost: int): BudgetDecision =
   else WaitForReset
 pure def afterReset(remaining: int): Budget = { windowSpent: 0, windowDrain: 0, remaining: remaining, waitedForReset: true }
 pure def recollects(attempt: int, cause: RetryCause): bool = attempt == 1 and cause != OtherFailure
+pure val confirmationProbes = 2
+pure val confirmationDelayMs = 5000
+pure def holdsJointMember(attempt: int, agreeingProbes: int): bool =
+  (attempt == 1 and agreeingProbes == confirmationProbes + 1) or (attempt == 2 and agreeingProbes >= 1)
+pure def lawFirstAttemptHoldNeedsEveryProbe(agreeingProbes: int): bool =
+  holdsJointMember(1, agreeingProbes) implies agreeingProbes == confirmationProbes + 1
+pure def lawRecollectionHoldsOnOneProbe(agreeingProbes: int): bool =
+  agreeingProbes >= 1 implies holdsJointMember(2, agreeingProbes)
+pure def lawUnprobedMemberNeverHeld(attempt: int): bool = not(holdsJointMember(attempt, 0))
 pure def lawSpendKeepsCapAndReserve(budget: Budget, cost: int): bool =
   budgetDecision(budget, cost) == SpendNow implies
     (budget.windowSpent + cost <= maxGenerationCost and budget.windowDrain + cost <= maxGenerationCost and
@@ -265,6 +300,48 @@ pure val budgetValues = Set(openBudget, { ...openBudget, windowSpent: 4800 }, { 
 pure val costValues = Set(-1, 0, 1, 100, 4900, 4901)
 pure val remainingValues = Set(0, 100, 5000)
 pure val attemptValues = Set(1, 2)
+pure val agreeingProbesValues = Set(0, 1, 2, 3, 4)
+```
+
+### A split Search range whose children disagree with the parent count is repeated once
+
+The closed and merged references of the live collection come from GitHub
+Search (`collectSearchReferences`, `collectSearchReferenceRange` in
+`scripts/generate-leaderboard.ts`). A range whose first page reports a
+`totalCount` of 950 or more, or whose cursor pages deduplicate by node ID to a
+count other than that `totalCount`, is split at its midpoint into two halves,
+each collected the same way; a range of one second (1,000 ms) or less is never
+split and refuses the snapshot. The deduplicated union of the two halves must
+equal the parent's `totalCount`. The first such mismatch, at any depth,
+discards every reference of that attempt and repeats the original range the
+collection asked for once, with the same client (its request accounting,
+cutoff and completeness checks carry over). A mismatch in the repeat refuses
+the snapshot (`Split GitHub Search returned <n> unique references but parent
+reported <m> for <range>`). Any other failure is not repeated, and a count
+that changes between the cursor pages of one range refuses the snapshot.
+
+```quint
+pure val searchSafeResultLimit = 950
+pure val minimumSearchSliceMs = 1000
+type SplitOutcome = SplitCollected | SplitRepeated | SplitRefused
+pure def splitNeeded(parentCount: int, cursorUnique: int): bool =
+  parentCount >= searchSafeResultLimit or cursorUnique != parentCount
+pure def splitAllowed(rangeMs: int): bool = rangeMs > minimumSearchSliceMs
+pure def splitOutcome(attempt: int, childrenUnique: int, parentCount: int): SplitOutcome =
+  if (childrenUnique == parentCount) SplitCollected else if (attempt == 1) SplitRepeated else SplitRefused
+pure def lawSplitRepeatedOnlyOnce(attempt: int, childrenUnique: int, parentCount: int): bool =
+  splitOutcome(attempt, childrenUnique, parentCount) == SplitRepeated implies (attempt == 1 and childrenUnique != parentCount)
+pure def lawSecondSplitMismatchRefused(childrenUnique: int, parentCount: int): bool =
+  childrenUnique != parentCount implies splitOutcome(2, childrenUnique, parentCount) == SplitRefused
+pure def lawReconciledSplitCollected(attempt: int, parentCount: int): bool =
+  splitOutcome(attempt, parentCount, parentCount) == SplitCollected
+pure def lawLargeRangeSplits(parentCount: int, cursorUnique: int): bool =
+  parentCount >= searchSafeResultLimit implies splitNeeded(parentCount, cursorUnique)
+pure def lawMinimumRangeNeverSplits(rangeMs: int): bool = rangeMs <= minimumSearchSliceMs implies not(splitAllowed(rangeMs))
+pure val parentCountValues = Set(0, 949, 950, 951)
+pure val childrenUniqueValues = Set(0, 949, 950, 951)
+pure val cursorUniqueValues = Set(0, 949, 950)
+pure val rangeMsValues = Set(999, 1000, 1001)
 ```
 
 ### An optional discussion probe starts only with two available points and never waits for quota to probe
@@ -313,12 +390,18 @@ pure val deadlineValues = Set(1000, 2000000000)
 pure val human: Item = { id: 1, kind: PullRequestItem, open: true, author: HumanAuthor, diffAvailable: true, hasAssignee: false,
   claimed: false, draft: false, reviewRequested: false, approved: false, changesRequested: false,
   securityLabel: false, humanGated: false, epic: false, contributorReady: true, blockedLabel: false }
+pure val emptyPage: Page = { cursor: 0, next: 0, totalCount: 0, items: List() }
+pure val collectedProject: ProjectView = { registered: true, paused: false, retired: false, legacy: false, quarantined: false }
+pure val eval_witness_sometimesEmptyReady = (("begin", collectedProject, 0), ("recordPage", emptyPage), "finish")
+pure val eval_witness_sometimesOnePageReady = (("begin", collectedProject, 0),
+  ("recordPage", { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, hasAssignee: true }) }), "finish")
 pure val pageValues = Set(
   { cursor: 0, next: 5, totalCount: 2, items: List(human) },
   { cursor: 5, next: 0, totalCount: 2, items: List({ ...human, id: 2, author: UnknownAuthor }) },
   { cursor: 5, next: 0, totalCount: 3, items: List({ ...human, id: 3 }) },
   { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, hasAssignee: true }) },
-  { cursor: 5, next: 5, totalCount: 2, items: List(human) })
+  { cursor: 5, next: 5, totalCount: 2, items: List(human) },
+  emptyPage)
 pure val projectValues = Set({ registered: true, paused: false, retired: false, legacy: false, quarantined: false },
   { registered: true, paused: true, retired: false, legacy: false, quarantined: false },
   { registered: true, paused: false, retired: false, legacy: true, quarantined: false })

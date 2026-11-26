@@ -1,0 +1,70 @@
+// spec/frontend/requestedRepos.md, "A board read keeps a ready board on screen and a failed one offers Try again"; spec/frontend/requestedRepos.md, "One flag, renew or withdraw is in flight per lifetime, a success reloads the board and a refusal changes nothing else"
+import { pointsMe } from "@repo/backend/client"
+import type { PageRuntime } from "../../app/runtime.vibe"
+import { call } from "../../platform/api.vibe"
+import { memberLimitBytes } from "../../referrals/runtime.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { type RepoRequestAction, RequestedRepos, type RequestedView, requestedLayer } from "./flow.vibe"
+
+const requestedMount = Layer.effectDiscard(effect {
+  const requested = try RequestedRepos
+  const browser = try BrowserSession
+  const services = try Effect.context<HttpClient.HttpClient>()
+  const scope = try Scope.Scope
+  let running: Fiber.Fiber<void> | undefined = undefined
+
+  effect function readViewer(lifetime: number) {
+    const member = call(pointsMe, {}, { limitBytes: memberLimitBytes }) catch () => null
+    if (member === null) return
+    try requested.showViewer(lifetime, { login: member.actor.login, referralCode: member.referralCode })
+  }
+
+  effect function open(actorId: number) {
+    const mounted = try requested.mount(actorId === 0 ? "" : String(actorId))
+    if (actorId === 0) {
+      try requested.load()
+      return
+    }
+    try Effect.all([readViewer(mounted.page.lifetime), requested.load()], { concurrency: "unbounded", discard: true })
+  }
+
+  effect function follow(actorId: number) {
+    const previous = running
+    running = undefined
+    if (previous !== undefined) try Fiber.interrupt(previous)
+    running = fork.in(scope) Effect.provideContext(open(actorId), services)
+  }
+
+  try browser.onAccountChange((actorId) => follow(actorId))
+  try follow((try browser.lifetime()).actorId)
+})
+
+export const requestedSection = Layer.provideMerge(requestedMount, requestedLayer)
+
+export type RequestedRuntime = ReturnType<typeof makeRequestedRuntime>
+
+function makeRequestedRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(requestedSection, Layer.effectContext(page.contextEffect)))
+}
+
+const sections = new WeakMap<PageRuntime, RequestedRuntime>()
+
+export function requestedRuntime(page: PageRuntime): RequestedRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeRequestedRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function watchRequested(show: (view: RequestedView) => void!!) {
+  for try (const view of (try RequestedRepos).changes) try show(view)
+}
+
+export effect function actOn(repo: string, action: RepoRequestAction) {
+  try (try RequestedRepos).act(repo, action)
+}
+
+export effect function retryBoard() {
+  try (try RequestedRepos).retry()
+}

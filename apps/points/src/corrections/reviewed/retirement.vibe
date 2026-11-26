@@ -1,0 +1,658 @@
+// spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"
+import { millisOf } from "@repo/platform/clock"
+import { mergeResolutionLineCounts } from "@repo/platform/git/evidence"
+import { parsedJson, sha256Of } from "@repo/platform/git/bytes"
+import { type Award, type Journal, type Revision as Row } from "../../kernels/records/canonical.ts"
+import { pointKey } from "../../kernels/records/ids.vibe"
+import { scoreTiers } from "../../kernels/scoring/tiers.ts"
+import { verifiedHistoricalAllocationDecision } from "../../journal/snapshot.vibe"
+import { compareCodeUnits } from "../../client/snapshot/checks.vibe"
+import type { CorrectionCommit, CorrectionSource } from "../apply/manifest.vibe"
+import { type AcceptanceOrder, type AcceptanceSource, type AcceptedPromotion, type AcceptedSquash, type CarriedMergeEdge, type ClaimCover, type EarlierBasis, type IdenticalChange, type IdenticalKind, type MixedProof, type NativeCover, type NetOutcome, type Retirement, type UnchangedPromotion, noNetOutcome } from "../../../gen/points__reviewedHistory.ts"
+import { commitObjectId } from "./bytes.ts"
+import { assertHistoricalNetOutcome } from "./netOutcome.vibe"
+import { type ContextSource, type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type PacketSquash, digestPattern, digestText, identicalKeys, matchesCarriedAcceptance, mergeGitVersion, octoberStart, pullUrl, require, shaPattern } from "./packet.vibe"
+
+export interface VerifiedRetirements {
+  readonly duplicates: ReadonlySet<string>
+  readonly order: ReadonlyMap<string, ReadonlyArray<AcceptanceOrder>>
+}
+
+export interface RetirementInput {
+  readonly packet: HistoricalPacket
+  readonly retirement: PacketRetirement
+  readonly baseline: Journal
+  readonly latestBaseline: ReadonlyMap<string, Row>
+  readonly rewarded: ReadonlyArray<Row>
+  readonly current: ReadonlyMap<string, Row>
+  readonly pool: ReadonlyArray<Row>
+  readonly verified: VerifiedRetirements
+  readonly retiringSources: ReadonlySet<string>
+  readonly validated: ReadonlyMap<string, string>
+  readonly sourceOf: (id: string) => number
+  readonly objectOf: (text: string) => number
+}
+
+export interface CheckedRetirement {
+  readonly record: Retirement
+  readonly mixed: ReadonlyArray<MixedProof>
+}
+
+interface Retained {
+  readonly tree: string
+  readonly parents: ReadonlyArray<string>
+}
+
+type Json = Readonly<Record<string, unknown>>
+
+const noPromotion: AcceptedPromotion = { headTree: 0, mergeTree: 0, mergeParents: [], sourceHead: 0 }
+const noIdentical: IdenticalChange = { kind: "NoIdenticalChange", earlierSources: 0, ownerAt: -1, ownerRetiring: false, diffVerified: false, ownRecordPool: false,
+  ownerPositive: false, ownerPositiveAtBaseline: false, sameHead: false, singleOwnCommit: false, carriedMatches: false, ownerPoolKept: false, originalAuthorPair: false,
+  carrierTipPinned: false }
+const ordinaryCategory = "merged-pull-request"
+const maximumRetainedCommit = 1024 * 1024
+
+function objectOfJson(value: unknown): Json | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Json : undefined
+}
+
+function listOf(value: unknown): ReadonlyArray<Json> {
+  return Array.isArray(value) ? value.flatMap<Json>((item: unknown) => objectOfJson(item) ?? []) : []
+}
+
+function textOf(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function same(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function isSha(value: unknown): value is string {
+  return typeof value === "string" && shaPattern.test(value)
+}
+
+function count(value: number | null | undefined) {
+  return value !== null && value !== undefined && Number.isSafeInteger(value) && value >= 0
+}
+
+function at(iso: string | null) {
+  return iso === null ? -1 : millisOf(iso)
+}
+
+function identity(source: { readonly repositoryNodeId: string; readonly sourceUrl: string; readonly headSha: string; readonly occurredAt: string | null; readonly author: { readonly id: string; readonly kind: string } | null }) {
+  return JSON.stringify([source.repositoryNodeId, source.sourceUrl, source.headSha, source.occurredAt, source.author?.id ?? null, source.author?.kind ?? null])
+}
+
+function awardsOf(input: RetirementInput) {
+  return input.rewarded.map((row) => row.award)
+}
+
+effect function ownRecord(award: Award) {
+  return award.key === (try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }))
+}
+
+export effect function ownRecordPool(pool: ReadonlyArray<Row>) {
+  let own = pool.some(({ award }) => award.amount > 0)
+  for (const row of pool) own = own && (try ownRecord(row.award))
+  return own
+}
+
+effect function ordinaryRows(rows: Iterable<Row>, projectId: string, sourceIds: ReadonlyArray<string>) {
+  const found: Row[] = []
+  for (const row of rows) {
+    if (row.award.projectId === projectId && row.award.category === ordinaryCategory && sourceIds.includes(row.award.sourceId) && (try ownRecord(row.award))) found.push(row)
+  }
+  return found
+}
+
+function identicalKind(proof: IdenticalAcceptedChange): IdenticalKind {
+  if (proof.carriedAcceptance === true) return "CarriedAcceptance"
+  if (proof.emptySquash === true) return "EmptySquash"
+  if (proof.survivingCarrier === true) return "SurvivingCarrier"
+  return proof.earlierMergeSha === proof.mergeSha ? "SharedMerge" : "DistinctSquash"
+}
+
+const identicalKeySets: Readonly<Record<IdenticalKind, string>> = {
+  NoIdenticalChange: "",
+  CarriedAcceptance: "carriedAcceptance,diffSha256,earlierMergeSha,earlierSourceId,mergeSha",
+  EmptySquash: "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha",
+  SurvivingCarrier: "diffSha256,earlierMergeSha,earlierSourceId,mergeSha,survivingCarrier",
+  SharedMerge: "diffSha256,earlierMergeSha,earlierSourceId,mergeSha",
+  DistinctSquash: "diffSha256,earlierMergeSha,earlierSourceId,mergeSha",
+}
+
+effect function identicalRecord(input: RetirementInput, source: CorrectionSource, earlier: ReadonlyMap<string, CorrectionSource>) {
+  const { packet, retirement } = input
+  const proof = retirement.identicalAcceptedChange
+  if (proof === undefined) return noIdentical
+  const kind = identicalKind(proof)
+  const owner = earlier.get(proof.earlierSourceId)
+  const sharedMerge = proof.earlierMergeSha === proof.mergeSha
+  const [only] = source.commits
+  const singleOwnCommit = source.commits.length === 1 && only?.sha === source.headSha && only.parentCount === 1
+  const carriedMatches = owner !== undefined && matchesCarriedAcceptance(source, owner, proof.earlierMergeSha)
+  const diffVerified = input.verified.duplicates.has(digestText(retirement))
+  const baselineRows = [...input.latestBaseline.values()]
+  const ownerRows = try ordinaryRows(input.rewarded, packet.projectId, owner === undefined ? [] : [owner.sourceId])
+  const positive = ownerRows.filter(({ award }) => award.amount > 0 && award.sourceUrl === owner?.sourceUrl && award.occurredAt === owner.occurredAt)
+  const positiveAtBaseline = positive.some(({ award }) => (input.latestBaseline.get(award.key)?.award.amount ?? 0) > 0)
+  try require(identicalKeys(proof) === identicalKeySets[kind] && digestPattern.test(proof.diffSha256) && shaPattern.test(proof.earlierMergeSha) &&
+    shaPattern.test(proof.mergeSha) && earlier.size === 1 && owner !== undefined && (proof.survivingCarrier !== true || !sharedMerge) &&
+    (kind === "CarriedAcceptance" ? !sharedMerge && carriedMatches : sharedMerge ? proof.emptySquash !== true && owner?.headSha === source.headSha : singleOwnCommit) &&
+    owner?.occurredAt !== null && source.occurredAt !== null && (owner?.occurredAt ?? "") < source.occurredAt && !input.retiringSources.has(owner?.sourceId ?? "") &&
+    retirement.unchangedPromotion === undefined && retirement.earlierAcceptanceProof === undefined && retirement.acceptedPromotion === undefined &&
+    retirement.acceptedSquashes === undefined && retirement.coverage.length === 0 && diffVerified &&
+    (kind === "SurvivingCarrier" || kind === "DistinctSquash" ? positive.length > 0 : positiveAtBaseline),
+    "Identical accepted change lacks a verified earlier ordinary pool")
+  let ownerPoolKept = true
+  if (kind === "CarriedAcceptance") {
+    const before = try ordinaryRows(baselineRows, packet.projectId, [owner?.sourceId ?? ""])
+    ownerPoolKept = before.length === ownerRows.length && ownerRows.every((row) => {
+      const prior = input.latestBaseline.get(row.award.key)
+      return prior !== undefined && (prior.id === row.id || (row.previous === prior.id && row.decision?.reason === verifiedHistoricalAllocationDecision && same(row.award, prior.award)))
+    })
+    try require(ownerPoolKept, "Carried merge changes the retained earlier ordinary pool")
+  }
+  const ownPool = try ownRecordPool(input.pool)
+  let originalAuthorPair = false
+  if (kind === "SurvivingCarrier") {
+    const pair = [source.sourceId, owner?.sourceId ?? ""]
+    const inPair = ({ award }: Row) => award.projectId === packet.projectId && award.category === ordinaryCategory && pair.includes(award.sourceId)
+    const currentPair = [...input.current.values()].filter(inPair)
+    const baselinePair = baselineRows.filter(inPair)
+    const positivePair = currentPair.filter(({ award }) => award.amount > 0)
+    const retiring = positivePair.filter(({ award }) => award.sourceId === source.sourceId)
+    const retained = positivePair.filter(({ award }) => award.sourceId === owner?.sourceId)
+    const [retiringRow] = retiring
+    const [retainedRow] = retained
+    const original = source.author
+    const carrierKey = try pointKey({ projectId: packet.projectId, actorId: original?.id ?? "", category: ordinaryCategory, sourceId: owner?.sourceId ?? "" })
+    originalAuthorPair = owner !== undefined && original?.kind === "User" && only?.author?.id === original.id && only.author.kind === "User" &&
+      retiring.length === 1 && retained.length === 1 && retiringRow !== undefined && retainedRow !== undefined && input.pool.some((row) => row.id === retiringRow.id) &&
+      retiringRow.award.actor.id === original.id && retainedRow.award.actor.id === original.id && retainedRow.award.amount === retiringRow.award.amount &&
+      retainedRow.award.sourceUrl === owner.sourceUrl && retainedRow.award.occurredAt === owner.occurredAt && retainedRow.award.occurredAt.startsWith("2026-10-") &&
+      retainedRow.award.key === carrierKey && currentPair.length === baselinePair.length && currentPair.every((row) => input.latestBaseline.get(row.award.key)?.id === row.id)
+    try require(originalAuthorPair, "Surviving carrier must preserve the equal original-author award")
+  }
+  return {
+    kind,
+    earlierSources: earlier.size,
+    ownerAt: at(owner?.occurredAt ?? null),
+    ownerRetiring: input.retiringSources.has(owner?.sourceId ?? ""),
+    diffVerified,
+    ownRecordPool: ownPool,
+    ownerPositive: positive.length > 0,
+    ownerPositiveAtBaseline: positiveAtBaseline,
+    sameHead: owner?.headSha === source.headSha,
+    singleOwnCommit,
+    carriedMatches,
+    ownerPoolKept,
+    originalAuthorPair,
+    carrierTipPinned: kind === "SurvivingCarrier" && diffVerified,
+  } satisfies IdenticalChange
+}
+
+effect function netRecord(input: RetirementInput, source: CorrectionSource) {
+  const { packet, retirement } = input
+  const proof = retirement.netOutcome
+  if (proof === undefined) return noNetOutcome
+  try assertHistoricalNetOutcome(proof, source)
+  const trustedVerification = input.verified.duplicates.has(digestText(retirement))
+  try require(retirement.earlierSources.length === 0 && retirement.coverage.length === 0 && retirement.identicalAcceptedChange === undefined &&
+    retirement.earlierAcceptanceProof === undefined && retirement.unchangedPromotion === undefined && retirement.acceptedSquashes === undefined &&
+    retirement.acceptedPromotion === undefined && trustedVerification, "Net outcome must be the exclusive trusted native duplicate proof")
+  let earlierAwardsRetained = true
+  for (const earlier of proof.sources) {
+    const retained = input.latestBaseline.get(earlier.awardKey)
+    const award = retained?.award
+    const key = try pointKey({ projectId: packet.projectId, actorId: award?.actor.id ?? "", category: ordinaryCategory, sourceId: earlier.id })
+    earlierAwardsRetained = earlierAwardsRetained && retained !== undefined && award !== undefined && retained.id === earlier.awardRevisionId &&
+      input.current.get(earlier.awardKey)?.id === retained.id && retained.recordedAt <= packet.reviewedAt && award.projectId === packet.projectId &&
+      award.category === ordinaryCategory && award.sourceId === earlier.id && award.sourceUrl === pullUrl(packet.sourceAudit.repository, earlier.number) &&
+      award.occurredAt === earlier.mergedAt && award.amount > 0 && !input.retiringSources.has(earlier.id) && award.key === key
+    try require(earlierAwardsRetained, "Net outcome earlier ordinary award is not retained")
+  }
+  const occurredAt = source.occurredAt ?? ""
+  const mergedAt = new Map(proof.sources.map((earlier) => [earlier.id, earlier.mergedAt] as const))
+  const used = new Set(proof.paths.flatMap((row) => row.sourceIds))
+  const ownPool = try ownRecordPool(input.pool)
+  return {
+    present: true,
+    sources: proof.sources.length,
+    earlierBefore: proof.sources.every((earlier) => earlier.mergedAt < occurredAt),
+    inSubmittedRange: trustedVerification,
+    completeRange: trustedVerification && source.complete && source.commitCount === source.commits.length,
+    allPaths: trustedVerification && proof.paths.length > 0 && new Set(proof.paths.map((row) => row.path)).size === proof.paths.length && used.size === proof.sources.length,
+    composes: trustedVerification && proof.paths.every((row) => row.sourceIds.every((id, index) => index === 0 || (mergedAt.get(row.sourceIds[index - 1] ?? "") ?? "") < (mergedAt.get(id) ?? ""))),
+    trustedVerification,
+    earlierAwardsRetained,
+    ownRecordPool: ownPool,
+  } satisfies NetOutcome
+}
+
+export effect function retainedCommit(raw: string, sha: string) {
+  try require(new TextEncoder().encode(raw).length <= maximumRetainedCommit, "Invalid retained squash commit")
+  try require(commitObjectId(raw) === sha, "Retained squash commit hash changed")
+  const end = raw.indexOf("\n\n")
+  const headers = (end < 0 ? raw : raw.slice(0, end)).split("\n")
+  const tree = /^tree ([a-f0-9]{40})$/u.exec(headers[0] ?? "")?.[1]
+  const parents = headers.filter((line) => line.startsWith("parent ")).map((line) => line.slice(7))
+  try require(tree !== undefined && parents.every((parent) => shaPattern.test(parent)) && new Set(parents).size === parents.length, "Invalid retained squash parents")
+  return { tree: tree ?? "", parents } satisfies Retained
+}
+
+effect function checkedSource(input: RetirementInput, item: CorrectionSource, source: CorrectionSource, earlier: ReadonlyMap<string, CorrectionSource>) {
+  const { packet, retirement } = input
+  const audited = packet.sourceAudit.sources.find((row) => row.id === item.sourceId) ?? retirement.earlierAcceptanceProof?.contextSources.find((row) => row.id === item.sourceId)
+  try require(item.complete && item.commitCount === item.commits.length && item.commits.length > 0 && new Set(item.commits.map((commit) => commit.sha)).size === item.commits.length &&
+    audited !== undefined && audited.headSha === item.headSha && audited.mergedAt === item.occurredAt && item.repositoryNodeId === source.repositoryNodeId &&
+    item.repository.toLowerCase() === source.repository.toLowerCase() && item.sourceUrl === pullUrl(packet.sourceAudit.repository, audited.number),
+    "Duplicate source is incomplete or outside the audit")
+  if (item !== source) {
+    try require(item.occurredAt !== null && source.occurredAt !== null && item.occurredAt <= source.occurredAt && earlier.has(item.sourceId), "Duplicate coverage is not an earlier accepted source")
+  }
+}
+
+effect function unchangedRecord(input: RetirementInput, source: CorrectionSource) {
+  const unchanged = input.retirement.unchangedPromotion
+  if (unchanged === undefined) return { records: [] as UnchangedPromotion[], trees: new Map<string, { readonly tree: string; readonly parents: ReadonlyArray<string> }>() }
+  const { pull, merge } = unchanged
+  const trees = new Map(unchanged.commits.map((commit) => [commit.sha, { tree: commit.tree.sha, parents: commit.parents.map((parent) => parent.sha) }] as const))
+  try require(Object.keys(unchanged).sort().join() === "commits,merge,pull,sourceDigest" &&
+    unchanged.sourceDigest === digestText({ pull: unchanged.pull, merge: unchanged.merge, commits: unchanged.commits }) &&
+    pull.node_id === source.sourceId && pull.html_url === source.sourceUrl && pull.state === "closed" && pull.merged_at !== null &&
+    new Date(pull.merged_at).toISOString() === source.occurredAt && pull.head.sha === source.headSha && isSha(pull.base.sha) &&
+    Object.keys(merge).sort().join() === "files,parents,sha,stats" && Object.keys(merge.stats).sort().join() === "additions,deletions,total" &&
+    merge.sha === pull.merge_commit_sha && isSha(merge.sha) && merge.parents.length === 2 && merge.parents[1]?.sha === source.headSha &&
+    merge.parents.every((parent) => Object.keys(parent).join() === "sha" && isSha(parent.sha)) && merge.parents[0]?.sha !== merge.parents[1]?.sha &&
+    merge.stats.additions === 0 && merge.stats.deletions === 0 && merge.stats.total === 0 && merge.files.length === 0 &&
+    unchanged.commits.length === trees.size &&
+    unchanged.commits.every((commit) => Object.keys(commit).sort().join() === "parents,sha,tree" && isSha(commit.sha) && Object.keys(commit.tree).join() === "sha" &&
+      isSha(commit.tree.sha) && commit.parents.every((parent) => Object.keys(parent).join() === "sha" && isSha(parent.sha)) &&
+      new Set(commit.parents.map((parent) => parent.sha)).size === commit.parents.length),
+    "Unchanged promotion identity is invalid")
+  const firstParent = merge.parents[0]?.sha ?? ""
+  const head = trees.get(source.headSha)
+  const base = trees.get(pull.base.sha)
+  const accepted = trees.get(merge.sha)
+  const parent = trees.get(firstParent)
+  const required = new Set([pull.base.sha, source.headSha, merge.sha, firstParent, ...source.commits.flatMap((commit) => [commit.sha, ...(commit.parentShas ?? [])])])
+  try require(required.size === trees.size && [...required].every((sha) => trees.has(sha)), "Promotion tree proof has missing or extra commits")
+  try require(head !== undefined && base !== undefined && accepted !== undefined && parent !== undefined && head.tree === base.tree && accepted.tree === parent.tree &&
+    same(accepted.parents, merge.parents.map((item) => item.sha)), "Unchanged promotion trees or accepted parents differ")
+  for (const commit of source.commits) {
+    const retained = trees.get(commit.sha)
+    try require(retained !== undefined && same(retained.parents, commit.parentShas), "Promotion commit parent proof is incomplete")
+  }
+  const record: UnchangedPromotion = {
+    headTree: input.objectOf(head?.tree ?? ""),
+    baseTree: input.objectOf(base?.tree ?? ""),
+    acceptedTree: input.objectOf(accepted?.tree ?? ""),
+    firstParentTree: input.objectOf(parent?.tree ?? ""),
+    mergeParents: merge.parents.map((item) => input.objectOf(item.sha)),
+    sourceHead: input.objectOf(source.headSha),
+    changedFiles: merge.files.length,
+    changedLines: merge.stats.total,
+    proofComplete: true,
+  }
+  return { records: [record], trees }
+}
+
+effect function promotionRecord(input: RetirementInput, source: CorrectionSource, squashes: number) {
+  const proof = input.retirement.earlierAcceptanceProof
+  if (squashes === 0 && proof === undefined) return noPromotion
+  const promotion = input.retirement.acceptedPromotion
+  try require(promotion !== undefined && source.commits.some((commit) => commit.sha === source.headSha), "Accepted promotion proof is missing")
+  const head = try retainedCommit(promotion?.headCommit ?? "", source.headSha)
+  const merge = try retainedCommit(promotion?.mergeCommit ?? "", promotion?.mergeSha ?? "")
+  try require(head.tree === merge.tree && merge.parents.length === 2 && merge.parents[1] === source.headSha && merge.parents[0] !== source.headSha, "Accepted promotion changes submitted content")
+  return { headTree: input.objectOf(head.tree), mergeTree: input.objectOf(merge.tree), mergeParents: merge.parents.map(input.objectOf), sourceHead: input.objectOf(source.headSha) } satisfies AcceptedPromotion
+}
+
+effect function squashRecord(input: RetirementInput, squash: PacketSquash, source: CorrectionSource, earlier: ReadonlyMap<string, CorrectionSource>) {
+  const { packet, retirement } = input
+  const audited = packet.sourceAudit.sources.find((item) => item.id === squash.sourceId)
+  const submitted = earlier.get(squash.sourceId)
+  if (submitted !== undefined) {
+    const context = retirement.earlierAcceptanceProof?.contextSources.find((item) => item.id === squash.sourceId)
+    try require(context?.mergeSha === squash.commit.sha && identity(submitted) === identity(squash) && !submitted.commits.some((commit) => commit.sha === squash.commit.sha),
+      "Submitted source and accepted squash bindings differ")
+  }
+  const files = squash.commit.files ?? []
+  try require(squash.sourceId !== source.sourceId && squash.repositoryNodeId === source.repositoryNodeId && audited !== undefined && audited.headSha === squash.headSha &&
+    audited.mergedAt === squash.occurredAt && squash.sourceUrl === pullUrl(packet.sourceAudit.repository, audited.number) && source.occurredAt !== null &&
+    squash.occurredAt < source.occurredAt && squash.author !== null && ["User", "Bot"].includes(squash.author.kind) &&
+    (squash.commit.author === null || ["User", "Bot"].includes(squash.commit.author.kind)) && squash.commit.firstAcceptedSourceId === squash.sourceId &&
+    squash.commit.parentCount === 1 && squash.commit.parentShas?.length === 1 && files.length > 0 && new Set(files.map((file) => file.path)).size === files.length &&
+    files.every((file) => count(file.additions) && count(file.deletions)) &&
+    squash.commit.additions === files.reduce((sum, file) => sum + file.additions, 0) && squash.commit.deletions === files.reduce((sum, file) => sum + file.deletions, 0),
+    "Incomplete accepted squash source")
+  try retainedCommit(squash.headCommit, squash.headSha)
+  const accepted = try retainedCommit(squash.acceptedCommit, squash.commit.sha)
+  try require(same(accepted.parents, squash.commit.parentShas), "Accepted squash parent changed")
+  return {
+    source: input.sourceOf(squash.sourceId),
+    occurredAt: at(squash.occurredAt),
+    firstAccepted: input.sourceOf(squash.commit.firstAcceptedSourceId ?? ""),
+    parents: squash.commit.parentCount,
+    paths: files.length,
+    distinctPaths: true,
+    countsMatch: true,
+    authorKnown: true,
+  } satisfies AcceptedSquash
+}
+
+function historicalAward(input: RetirementInput, item: CorrectionSource, context: ContextSource) {
+  const id = context.historicalAwardRevisionId
+  if (id === undefined) return undefined
+  const historical = input.baseline.revisions.find((row) => row.id === id)
+  const current = historical === undefined ? undefined : input.latestBaseline.get(historical.award.key)
+  const holds = historical !== undefined && historical.award.projectId === input.packet.projectId && historical.award.sourceId === item.sourceId &&
+    historical.award.sourceUrl === item.sourceUrl && historical.award.occurredAt === item.occurredAt && historical.award.category === "merged-pull-request" &&
+    historical.award.amount > 0 && historical.award.occurredAt < octoberStart && historical.recordedAt < input.packet.reviewedAt &&
+    current?.award.amount === 0 && current.decision === undefined && current.penalty === undefined
+  return holds
+}
+
+effect function earlierAcceptance(input: RetirementInput, source: CorrectionSource, earlier: ReadonlyMap<string, CorrectionSource>) {
+  const { packet, retirement } = input
+  const proof = retirement.earlierAcceptanceProof
+  const accepted = new Map(proof?.commits.map((item) => [item.sha, item.sourceId] as const) ?? [])
+  const bases: EarlierBasis[] = []
+  const covers: NativeCover[] = []
+  const edges: CarriedMergeEdge[] = []
+  if (proof === undefined) {
+    for (const item of earlier.values()) {
+      bases.push({ source: input.sourceOf(item.sourceId), acceptedAt: at(item.occurredAt), complete: true, coversCommits: false, rewarded: false, validatedEarlierRetirement: false, reviewedBotFollowups: false, reviewedHistoricalAward: false, allBot: false })
+    }
+    return { accepted, bases, covers, edges }
+  }
+  try require(accepted.size === proof.commits.length && proof.commits.length > 0 && new Set(proof.objects.map((item) => item.sha)).size === proof.objects.length &&
+    new Set(proof.contextSources.map((item) => item.id)).size === proof.contextSources.length && proof.contextSources.length === earlier.size &&
+    proof.contextSources.every((item) => earlier.has(item.id)), "Earlier acceptance repeats or omits source identity")
+  const objects = new Map<string, Retained>()
+  for (const item of proof.objects) objects.set(item.sha, try retainedCommit(item.raw, item.sha))
+  const required = new Set<string>()
+  const rewardedSources = new Set(awardsOf(input).filter((award) => award.projectId === packet.projectId && award.category === "merged-pull-request" && award.amount > 0).map((award) => award.sourceId))
+  for (const item of [source, ...earlier.values()]) {
+    required.add(item.headSha)
+    for (const commit of item.commits) {
+      required.add(commit.sha)
+      const retained = objects.get(commit.sha)
+      try require(retained !== undefined && commit.parentCount === retained.parents.length && same(commit.parentShas, retained.parents), "Earlier acceptance commit parents differ")
+    }
+    const head = objects.get(item.headSha)
+    try require(head !== undefined, "Earlier acceptance head is unavailable")
+    const context = item === source ? undefined : proof.contextSources.find((row) => row.id === item.sourceId)
+    const baseSha = item === source ? proof.sourceBaseSha : context?.baseSha
+    try require(isSha(baseSha), "Earlier acceptance base is unavailable")
+    try require(objects.has(baseSha ?? ""), "Earlier acceptance base object is missing")
+    required.add(baseSha ?? "")
+    const members = new Set(item.commits.map((commit) => commit.sha))
+    const reachable = new Set<string>()
+    const pending = [item.headSha]
+    while (pending.length > 0) {
+      const sha = pending.pop() ?? ""
+      if (reachable.has(sha) || !members.has(sha)) continue
+      reachable.add(sha)
+      pending.push(...(objects.get(sha)?.parents ?? []))
+    }
+    try require(reachable.size === members.size, "Earlier acceptance has disconnected source commits")
+    if (item === source || context === undefined) continue
+    try require(context.headSha === item.headSha && context.mergedAt === item.occurredAt && Number.isSafeInteger(context.number) && context.number > 0 &&
+      item.sourceUrl === pullUrl(packet.sourceAudit.repository, context.number) && isSha(context.mergeSha), "Earlier acceptance source identity differs")
+    const audited = packet.sourceAudit.sources.find((row) => row.id === item.sourceId)
+    try require(audited === undefined || (audited.number === context.number && audited.headSha === context.headSha && audited.mergedAt === context.mergedAt),
+      "Earlier acceptance conflicts with current audit")
+    required.add(context.mergeSha)
+    const merge = objects.get(context.mergeSha)
+    const automatic = context.automaticMerge
+    if (automatic !== undefined) {
+      try require(merge !== undefined && merge.parents.length === 1 && automatic.gitVersion === mergeGitVersion && isSha(automatic.baseParentSha) && isSha(automatic.automaticTree) &&
+        automatic.baseParentSha === merge.parents[0] && automatic.automaticTree === merge.tree && objects.has(automatic.baseParentSha), "Earlier automatic merge proof is invalid")
+      required.add(automatic.baseParentSha)
+    }
+    try require(merge !== undefined && (automatic !== undefined || context.mergeSha === item.headSha || (merge.parents.length === 2 && merge.parents[1] === item.headSha) ||
+      merge.tree === head?.tree), "Earlier acceptance merge does not retain its head")
+    const historical = historicalAward(input, item, context)
+    try require(historical !== false, "Earlier historical award reference is invalid")
+    const followups = context.reviewedBotFollowupShas
+    const humanShas = item.commits.filter((commit) => commit.author?.kind !== "Bot").map((commit) => commit.sha).sort()
+    if (followups !== undefined) {
+      try require(item.author?.kind === "Bot" && item.occurredAt !== null && item.occurredAt < octoberStart && followups.length > 0 && new Set(followups).size === followups.length &&
+        same([...followups].sort(), humanShas) && objectOfJson(parsedJson(retirement.evidence)?.value)?.historicalPriorAcceptanceReviewed === true, "Earlier bot follow-up review is invalid")
+    }
+    const coversCommits = proof.commits.some((commit) => commit.sourceId === item.sourceId)
+    const basis: EarlierBasis = {
+      source: input.sourceOf(item.sourceId),
+      acceptedAt: at(item.occurredAt),
+      complete: true,
+      coversCommits,
+      rewarded: rewardedSources.has(item.sourceId),
+      validatedEarlierRetirement: item.occurredAt !== null && source.occurredAt !== null && item.occurredAt < source.occurredAt && input.validated.get(item.sourceId) === digestText(item),
+      reviewedBotFollowups: followups !== undefined,
+      reviewedHistoricalAward: historical === true,
+      allBot: item.author?.kind === "Bot" && item.commits.every((commit) => commit.author?.kind === "Bot"),
+    }
+    try require(!coversCommits || basis.rewarded || basis.validatedEarlierRetirement || basis.reviewedBotFollowups || basis.reviewedHistoricalAward || basis.allBot,
+      "Earlier acceptance has no retained reward or bot exclusion")
+    bases.push(basis)
+  }
+  try require(required.size === objects.size && [...required].every((sha) => objects.has(sha)), "Earlier acceptance has missing or extra Git objects")
+  for (const [sha, sourceId] of accepted) {
+    const commit = source.commits.find((item) => item.sha === sha)
+    const owner = earlier.get(sourceId)
+    const retained = owner?.commits.find((item) => item.sha === sha)
+    const cover: NativeCover = {
+      inSource: commit !== undefined,
+      owner: input.sourceOf(sourceId),
+      ownerAt: at(owner?.occurredAt ?? null),
+      ownerRetiring: input.retiringSources.has(sourceId),
+      ownerValidated: owner !== undefined && input.validated.get(sourceId) === digestText(owner),
+      commitFirstAccepted: input.sourceOf(commit?.firstAcceptedSourceId ?? ""),
+      retainedFirstAccepted: input.sourceOf(retained?.firstAcceptedSourceId ?? ""),
+      sameAuthor: commit !== undefined && retained !== undefined && commit.author?.id === retained.author?.id && commit.author?.kind === retained.author?.kind,
+      sameParents: commit !== undefined && retained !== undefined && same(commit.parentShas, retained.parentShas),
+    }
+    try require(commit !== undefined && owner !== undefined && retained !== undefined &&
+      (!cover.ownerRetiring || (owner.occurredAt !== null && source.occurredAt !== null && owner.occurredAt < source.occurredAt && cover.ownerValidated)) &&
+      commit.firstAcceptedSourceId === sourceId && retained.firstAcceptedSourceId === sourceId && cover.sameAuthor && cover.sameParents,
+      "Earlier acceptance does not cover the exact native commit")
+    covers.push(cover)
+  }
+  const edgeShas = new Set<string>()
+  for (const { sha, earlierSourceId } of proof.acceptedMergeEdges ?? []) {
+    const origin = earlier.get(earlierSourceId)
+    const context = proof.contextSources.find((item) => item.id === earlierSourceId)
+    const merge = objects.get(sha)
+    const member = source.commits.find((item) => item.sha === sha)
+    const ordinary = packet.corrections.candidates.find((item) => item.kind === "pull-request" && item.projectId === packet.projectId && item.sourceId === earlierSourceId &&
+      item.sourceIds.length === 1 && item.sourceIds[0] === earlierSourceId && item.occurredAt === origin?.occurredAt)
+    let ordinaryRewarded = false
+    for (const award of awardsOf(input)) {
+      if (award.projectId === packet.projectId && award.category === ordinaryCategory && award.sourceId === earlierSourceId && award.sourceUrl === origin?.sourceUrl &&
+        award.occurredAt === origin.occurredAt && award.workUnitId === ordinary?.workUnitId && award.amount > 0 && (try ownRecord(award))) ordinaryRewarded = true
+    }
+    const edge: CarriedMergeEdge = {
+      origin: input.sourceOf(earlierSourceId),
+      originAt: at(origin?.occurredAt ?? null),
+      originRetiring: input.retiringSources.has(earlierSourceId),
+      namedAcceptedMerge: context?.mergeSha === sha,
+      twoParents: merge?.parents.length === 2,
+      originHeadSecond: merge?.parents[1] === origin?.headSha,
+      memberIsMerge: member?.parentCount === 2,
+      rangeFromFirstParent: true,
+      ordinaryRewarded,
+      repeated: edgeShas.has(sha) || accepted.has(sha),
+    }
+    try require(!edge.repeated && origin?.occurredAt !== null && origin?.occurredAt !== undefined && source.occurredAt !== null && origin.occurredAt < source.occurredAt &&
+      !edge.originRetiring && edge.namedAcceptedMerge && edge.twoParents && edge.originHeadSecond && edge.memberIsMerge && ordinary !== undefined && ordinaryRewarded,
+      "Earlier accepted merge edge is not bound to a retained ordinary award")
+    edgeShas.add(sha)
+    edges.push(edge)
+  }
+  return { accepted, bases, covers, edges }
+}
+
+function recordSource(record: Json, id: string) {
+  return listOf(record.sources).find((item) => item.pullRequestNodeId === id)
+}
+
+effect function rewardedClaim(input: RetirementInput, coverage: PacketRetirement["coverage"][number], owner: { readonly sourceId: string; readonly repositoryNodeId: string; readonly headSha: string }, commit: CorrectionCommit, path: string, source: CorrectionSource) {
+  const unit = coverage.rewardedUnit
+  if (unit === undefined) return { jointUnit: false, jointAssessed: false, jointSources: [] as AcceptanceSource[], awardSource: 0, botUnit: false }
+  try require(!input.retiringSources.has(unit.awardSourceId), "Duplicate coverage relies on another retired pool")
+  const parsed = parsedJson(unit.recordJson)?.value
+  try require(parsed !== undefined && digestText(parsed) === unit.recordDigest && sha256Of(unit.recordJson) === unit.recordDigest, "Rewarded claim record changed")
+  const record = objectOfJson(parsed) ?? {}
+  const claims = listOf(record.claims)
+  const claim = claims.find((item) => item.id === unit.claimId)
+  const group = listOf(record.units).find((item) => item.workUnitId === unit.workUnitId)
+  const claimIds = Array.isArray(group?.claimIds) ? group.claimIds.flatMap((id) => typeof id === "string" ? [id] : []) : []
+  const unitClaims = claims.filter((item) => typeof item.id === "string" && claimIds.includes(item.id))
+  const acceptance = unitClaims.flatMap((item) => {
+    const copy = objectOfJson(item.retainedCopy)
+    const found = recordSource(record, textOf(copy?.acceptancePullRequestId) ?? textOf(item.creditPullRequestId) ?? "")
+    return found === undefined ? [] : [found]
+  })
+  const ranked = [...new Set(acceptance.map((item) => textOf(item.pullRequestNodeId) ?? ""))].sort(compareCodeUnits)
+  const ordered = [...acceptance].sort((left, right) => (Date.parse(textOf(left.occurredAt) ?? "") - Date.parse(textOf(right.occurredAt) ?? "")) ||
+    compareCodeUnits(textOf(left.pullRequestNodeId) ?? "", textOf(right.pullRequestNodeId) ?? ""))
+  const botUnit = unitClaims.length > 0 && unitClaims.length === claimIds.length && new Set(claimIds).size === claimIds.length &&
+    unitClaims.every((item) => Array.isArray(item.implementationActorNodeIds) && item.implementationActorNodeIds.length === 0)
+  const assessment = objectOfJson(group?.assessment)
+  const tier = textOf(assessment?.tier) ?? ""
+  const assessed = assessment?.status === "assessed" && (scoreTiers as ReadonlyArray<string>).includes(tier)
+  const ownerSource = recordSource(record, owner.sourceId)
+  const carriers = Array.isArray(claim?.carrierPullRequestIds) ? claim.carrierPullRequestIds : []
+  try require(record.projectId === input.packet.projectId && ownerSource?.repositoryNodeId === owner.repositoryNodeId && ownerSource.headSha === owner.headSha &&
+    claim?.repositoryNodeId === source.repositoryNodeId && claim.commitSha === commit.sha && claim.path === path &&
+    (claim.creditPullRequestId === owner.sourceId || carriers.includes(owner.sourceId)) && claimIds.includes(unit.claimId) && assessed &&
+    textOf(ordered[ordered.length - 1]?.pullRequestNodeId) === unit.awardSourceId, "Rewarded unit does not cover the duplicate claim")
+  const jointSources = acceptance.map((item) => {
+    const id = textOf(item.pullRequestNodeId) ?? ""
+    return { source: input.sourceOf(id), acceptedAt: Date.parse(textOf(item.occurredAt) ?? ""), nodeRank: ranked.indexOf(id) } satisfies AcceptanceSource
+  })
+  return { jointUnit: true, jointAssessed: assessed, jointSources, awardSource: input.sourceOf(unit.awardSourceId), botUnit }
+}
+
+export effect function checkedRetirement(input: RetirementInput) {
+  const { packet, retirement } = input
+  const source = retirement.source
+  try require(digestPattern.test(retirement.evidenceSha256), "Invalid duplicate dossier digest")
+  const earlier = new Map(retirement.earlierSources.map((item) => [item.sourceId, item] as const))
+  try require(source.sourceId === retirement.sourceId && source.repositoryNodeId === packet.sourceAudit.repositoryNodeId && earlier.size === retirement.earlierSources.length &&
+    !earlier.has(source.sourceId), "Invalid duplicate source identity")
+  for (const item of [source, ...earlier.values()]) try checkedSource(input, item, source, earlier)
+  const net = try netRecord(input, source)
+  const identical = try identicalRecord(input, source, earlier)
+  const unchanged = try unchangedRecord(input, source)
+  const squashList = retirement.acceptedSquashes ?? []
+  const squashes = new Map(squashList.map((item) => [item.sourceId, item] as const))
+  try require(squashes.size === squashList.length, "Repeated accepted squash source")
+  const promotion = try promotionRecord(input, source, squashes.size)
+  const squashRecords: AcceptedSquash[] = []
+  for (const squash of squashes.values()) squashRecords.push(try squashRecord(input, squash, source, earlier))
+  const native = try earlierAcceptance(input, source, earlier)
+  const rewarded = (sourceId: string, workUnitId: string | undefined) => awardsOf(input).some((award) => award.projectId === packet.projectId &&
+    award.category === "merged-pull-request" && award.amount > 0 && award.sourceId === sourceId && (workUnitId === undefined || award.workUnitId === workUnitId))
+  const used = new Set<string>()
+  const expected: string[] = []
+  const claims: ClaimCover[] = []
+  const mixed: MixedProof[] = []
+  const carriedEdges = new Set(native.edges.length === 0 ? [] : (retirement.earlierAcceptanceProof?.acceptedMergeEdges ?? []).map((edge) => edge.sha))
+  for (const commit of retirement.identicalAcceptedChange === undefined && retirement.netOutcome === undefined ? source.commits : []) {
+    const parents = commit.parentShas ?? []
+    try require(shaPattern.test(commit.sha) && Number.isSafeInteger(commit.parentCount) && commit.parentCount >= 0 && parents.length === commit.parentCount &&
+      parents.every((parent) => shaPattern.test(parent)), "Duplicate commit identity is incomplete")
+    if (native.accepted.has(commit.sha) || carriedEdges.has(commit.sha)) continue
+    if (commit.parentCount > 1) {
+      const resolution = commit.mergeResolution
+      const files = resolution === undefined ? null : mergeResolutionLineCounts(resolution, { sha: commit.sha, parents: parents.map((sha) => ({ sha })) })
+      try require(files !== null && same(files, commit.files), "Duplicate merge has unreviewed resolution work")
+      const counted = files ?? []
+      if (retirement.unchangedPromotion !== undefined && counted.length > 0) {
+        const retained = unchanged.trees.get(commit.sha)
+        const parent = unchanged.trees.get(parents[0] ?? "")
+        try require(retained !== undefined && parent !== undefined && retained.tree === parent.tree, "Promotion merge changes its first-parent tree")
+        try require(resolution?.resolvedTree === retained?.tree, "Promotion resolution tree is unbound")
+        continue
+      }
+      if (counted.length === 0) continue
+    }
+    const files = commit.files ?? []
+    try require(files.length > 0 && new Set(files.map((file) => file.path)).size === files.length, "Duplicate commit lacks complete paths")
+    for (const file of files) {
+      expected.push(`${commit.sha}\u0000${file.path}`)
+      const matches = retirement.coverage.filter((row) => row.commitSha === commit.sha && row.path === file.path)
+      try require(matches.length === 1, "Duplicate claim coverage is missing or repeated")
+      const coverage = matches[0]
+      if (coverage === undefined) continue
+      const candidate = squashes.get(coverage.sourceId)
+      const squash = candidate?.commit.sha === commit.sha ? candidate : undefined
+      const submitted = earlier.get(coverage.sourceId)
+      const owner = squash ?? submitted
+      const retained = squash?.commit ?? submitted?.commits.find((item) => item.sha === commit.sha)
+      if (squash !== undefined) used.add(squash.sourceId)
+      if (candidate !== undefined && submitted !== undefined) {
+        const context = retirement.earlierAcceptanceProof?.contextSources.find((item) => item.id === candidate.sourceId)
+        mixed.push({
+          context: context !== undefined,
+          submittedIdentity: input.objectOf(identity(submitted)),
+          squashIdentity: input.objectOf(identity(candidate)),
+          contextAcceptedOutput: input.objectOf(context?.mergeSha ?? ""),
+          squashOutput: input.objectOf(candidate.commit.sha),
+          submitted: submitted.commits.map((item) => input.objectOf(item.sha)),
+          pathCommit: input.objectOf(commit.sha),
+        })
+      }
+      const retainedFile = retained?.files?.find((item) => item.path === file.path)
+      const sameCounts = count(file.additions) && count(file.deletions) && retainedFile?.additions === file.additions && retainedFile.deletions === file.deletions
+      try require(owner !== undefined && !input.retiringSources.has(owner.sourceId) && retained !== undefined && retained.parentCount === commit.parentCount && retained.sha === commit.sha &&
+        (squash === undefined || (same(squash.commit.files, commit.files) && squash.commit.additions === commit.additions && squash.commit.deletions === commit.deletions)) &&
+        (squash !== undefined ? commit.firstAcceptedSourceId === source.sourceId : commit.firstAcceptedSourceId === owner?.sourceId) &&
+        retained?.firstAcceptedSourceId === owner?.sourceId && same(retained?.parentShas, commit.parentShas) && retained?.author?.id === commit.author?.id &&
+        retained?.author?.kind === commit.author?.kind && sameCounts, "Earlier source does not cover the exact duplicate claim")
+      const ownerId = owner?.sourceId ?? ""
+      const joint = try rewardedClaim(input, coverage, { sourceId: ownerId, repositoryNodeId: owner?.repositoryNodeId ?? "", headSha: owner?.headSha ?? "" }, commit, file.path, source)
+      const botSquash = squash?.author?.kind === "Bot" && squash.commit.author?.kind === "Bot"
+      const ownerRewarded = coverage.rewardedUnit === undefined ? rewarded(ownerId, undefined) : rewarded(coverage.rewardedUnit.awardSourceId, coverage.rewardedUnit.workUnitId)
+      try require(joint.botUnit || botSquash || ownerRewarded, "Duplicate claim lacks a retained rewarded pool")
+      claims.push({ owner: input.sourceOf(ownerId), coverings: matches.length, ownerRetiring: input.retiringSources.has(ownerId), sameCounts, ...joint, botSquash, ownerRewarded })
+    }
+  }
+  try require((retirement.identicalAcceptedChange !== undefined || retirement.netOutcome !== undefined || expected.length > 0 || native.accepted.size > 0) && used.size === squashes.size && retirement.coverage.length === expected.length &&
+    retirement.coverage.every((row) => expected.includes(`${row.commitSha}\u0000${row.path}`)), "Duplicate retirement has extra or empty coverage")
+  const evidence = objectOfJson(parsedJson(retirement.evidence)?.value) ?? {}
+  const proof = retirement.earlierAcceptanceProof
+  try require(sha256Of(retirement.evidence) === retirement.evidenceSha256 && evidence.sourceId === retirement.sourceId && evidence.workUnitId === retirement.workUnitId &&
+    evidence.sourceSha256 === digestText(source) && evidence.coverageSha256 === digestText(retirement.coverage) && evidence.earlierSourcesSha256 === digestText(retirement.earlierSources) &&
+    (retirement.identicalAcceptedChange === undefined || evidence.identicalAcceptedChangeSha256 === digestText(retirement.identicalAcceptedChange)) &&
+    (retirement.netOutcome === undefined || evidence.netOutcomeSha256 === digestText(retirement.netOutcome)) &&
+    (proof === undefined || (evidence.earlierAcceptanceProofSha256 === digestText(proof) &&
+      (!proof.contextSources.some((row) => row.historicalAwardRevisionId !== undefined) || evidence.historicalPriorAcceptanceReviewed === true))) &&
+    (retirement.acceptedSquashes === undefined || evidence.acceptedSquashesSha256 === digestText(retirement.acceptedSquashes)) &&
+    (retirement.acceptedPromotion === undefined || evidence.acceptedPromotionSha256 === digestText(retirement.acceptedPromotion)) &&
+    (retirement.unchangedPromotion === undefined || evidence.unchangedPromotionSha256 === digestText(retirement.unchangedPromotion)), "Duplicate retirement dossier changed")
+  const record: Retirement = {
+    source: input.sourceOf(source.sourceId),
+    occurredAt: at(source.occurredAt),
+    sourceComplete: true,
+    poolUnchanged: true,
+    octoberPool: true,
+    dossierBound: true,
+    claimedPaths: expected.length,
+    promotion,
+    unchanged: unchanged.records,
+    squashes: squashRecords,
+    covers: native.covers,
+    earlier: native.bases,
+    claims,
+    mergeEdges: native.edges,
+    order: identical.kind === "NoIdenticalChange" && !net.present ? [...(input.verified.order.get(digestText(retirement)) ?? [])] : [],
+    identical,
+    net,
+  }
+  return { record, mixed } satisfies CheckedRetirement
+}

@@ -1,30 +1,51 @@
-// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"
 import { Caller, bytesBody, handleRaw, json } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { later } from "@repo/platform/worker"
+import { refusalReply } from "../../gen/slopbot__historicalImport.effect.vibe"
 import { ImportReceipt, ImportTerminalFrame, importHeartbeatMillis, importLimitBytes, importMediaTypes, importStreamMediaType, otherImportMethods, valueImport } from "../client/import.vibe"
 import { postSlopbotValueImport } from "../client/refusals.vibe"
+import { type HistoricalIntakeTerminalFailure, intakeDiagnosticHeader, intakeTerminalV1, terminalFailureFacts, terminalFields } from "./diagnostics.vibe"
+import { type IntakeObserver, intakeCorrelationHeader, isIntakeCorrelation, pagesIntakeObserver } from "./observation.vibe"
 import { historicalParts, utf8Text } from "./parts.ts"
 
 export interface HistoricalValueBinding {
   publishSubscription(administratorGithubId: string, input: unknown, bundle?: Uint8Array): Promise<unknown>
+  publishSubscriptionDiagnosed?(administratorGithubId: string, input: unknown, correlation: string, bundle?: Uint8Array): Promise<unknown>
 }
 
 export error NotPublished
 
+export const DiagnosedAnswer = Schema.Union([
+  Schema.Struct({ status: Schema.Literal(200), receipt: ImportReceipt }),
+  Schema.Struct({ status: Schema.Literal(409), correlation: Schema.Unknown, diagnostic: Schema.Unknown }),
+])
+
+export type DiagnosedAnswer = typeof DiagnosedAnswer.Type
+
 export service HistoricalValueImport {
   readonly configured: boolean
   publish(administratorGithubId: string, input: unknown, bundle: Uint8Array | undefined): typeof ImportReceipt.Type!NotPublished
+  readonly publishDiagnosed?: (administratorGithubId: string, input: unknown, correlation: string, bundle: Uint8Array | undefined) => Effect.Effect<DiagnosedAnswer, NotPublished>
+}
+
+effect function answerOf<S extends Schema.ConstraintDecoder<unknown>>(schema: S, call: () => Promise<unknown>) {
+  const answer = try tryPromise({ try: call, catch: () => new NotPublished() })
+  return Schema.decodeUnknownEffect(schema)(answer) catch effect () => { throw new NotPublished() }
 }
 
 export function historicalValueImport(binding: HistoricalValueBinding | undefined) {
+  const diagnosable = typeof binding?.publishSubscriptionDiagnosed === "function"
   return Layer.succeed(HistoricalValueImport, {
     configured: binding !== undefined,
     publish: (administratorGithubId, input, bundle) => effect {
       if (binding === undefined) throw new NotPublished()
-      const receipt = try tryPromise({ try: () => binding.publishSubscription(administratorGithubId, input, bundle), catch: () => new NotPublished() })
-      return Schema.decodeUnknownEffect(ImportReceipt)(receipt) catch effect () => { throw new NotPublished() }
+      return try answerOf(ImportReceipt, () => binding.publishSubscription(administratorGithubId, input, bundle))
     },
+    ...(binding === undefined || !diagnosable ? {} : {
+      publishDiagnosed: (administratorGithubId: string, input: unknown, correlation: string, bundle: Uint8Array | undefined) =>
+        answerOf(DiagnosedAnswer, () => binding?.publishSubscriptionDiagnosed?.(administratorGithubId, input, correlation, bundle) ?? Promise.reject(new NotPublished())),
+    }),
   })
 }
 
@@ -55,13 +76,19 @@ interface Submission {
   readonly bundle: Uint8Array | undefined
 }
 
+interface Diagnosis {
+  readonly optedIn: boolean
+  readonly correlation: string | undefined
+}
+
 function mediaTypeOf(request: HttpServerRequest.HttpServerRequest) {
   return (request.headers["content-type"] ?? "").split(";")[0] ?? ""
 }
 
-effect function submission(mediaType: string, contentType: string) {
+effect function submission(mediaType: string, contentType: string, observe: IntakeObserver) {
   const bytes = bytesBody(importLimitBytes, importMediaTypes) catch () => undefined
   if (bytes === undefined) return undefined
+  try observe("body-eof", { bodyBytes: bytes.length })
   if (mediaType === "multipart/form-data") {
     const parts = tryPromise(() => historicalParts(bytes, contentType)) catch () => undefined
     if (parts === undefined) return undefined
@@ -87,15 +114,25 @@ effect function importAnswer() {
   const mediaType = mediaTypeOf(request)
   const sameOrigin = request.headers.origin === new URL(request.originalUrl).origin
   if (!sameOrigin || !importMediaTypes.some((accepted) => accepted === mediaType)) return refused(postSlopbotValueImport.originForbidden)
+  const correlation = request.headers[intakeCorrelationHeader]
+  const observe = try pagesIntakeObserver(correlation)
   const actor = try signedIn()
   if (actor === null) return refused(postSlopbotValueImport.intakeUnavailable)
   if (actor === undefined) return refused(postSlopbotValueImport.unauthorized)
   if (!(try (try Roles).has(actor.githubId, "administrator"))) return refused(postSlopbotValueImport.forbidden)
   const publisher = try HistoricalValueImport
   if (!publisher.configured) return refused(postSlopbotValueImport.intakeUnavailable)
-  const submitted = try submission(mediaType, request.headers["content-type"] ?? "")
-  if (submitted === undefined) return refused(postSlopbotValueImport.invalidRequest)
-  const publication = published(publisher, actor.githubId, submitted)
+  try observe("owner-admitted")
+  const submitted = try submission(mediaType, request.headers["content-type"] ?? "", observe)
+  if (submitted === undefined) {
+    try observe("terminal", { terminalStatus: 400 })
+    return refused(postSlopbotValueImport.invalidRequest)
+  }
+  try observe("parsed")
+  const diagnosis: Diagnosis = isIntakeCorrelation(correlation)
+    ? { optedIn: request.headers[intakeDiagnosticHeader] === intakeTerminalV1, correlation }
+    : { optedIn: false, correlation: undefined }
+  const publication = published(publisher, actor.githubId, submitted, diagnosis, observe)
   if (!acceptsStream(request)) {
     const result = try publication
     return respond(result.status, result.body)
@@ -105,26 +142,47 @@ effect function importAnswer() {
     try Deferred.succeed(outcome, try publication)
   })
   const encoder = new TextEncoder()
-  return HttpServerResponse.stream(Stream.map(frames(outcome), (frame) => encoder.encode(frame)), { status: 200, headers: streamHeaders, contentType: importStreamMediaType })
+  return HttpServerResponse.stream(Stream.map(frames(outcome, observe), (frame) => encoder.encode(frame)), { status: 200, headers: streamHeaders, contentType: importStreamMediaType })
 }
 
 function acceptsStream(request: HttpServerRequest.HttpServerRequest) {
   return (request.headers.accept ?? "").split(",").some((type) => type.trim() === importStreamMediaType)
 }
 
-effect function published(publisher: HistoricalValueImport.Shape, administratorGithubId: string, submitted: Submission) {
-  const receipt = publisher.publish(administratorGithubId, submitted.input, submitted.bundle) catch effect () => {
-    try Effect.logError("historical value import failure")
-    return undefined
+const notPublished: Terminal = { status: 409, body: { error: postSlopbotValueImport.assessmentNotPublished.error } }
+
+function diagnosedRefusal(diagnosis: Diagnosis, answered: unknown, diagnostic: unknown): Terminal {
+  const correlation = diagnosis.correlation
+  const echoed = correlation !== undefined && answered === correlation
+  if (correlation === undefined || refusalReply(diagnosis.optedIn, true, echoed, terminalFailureFacts(diagnostic)) === "PlainRefusal") return notPublished
+  return { status: 409, body: { error: postSlopbotValueImport.assessmentNotPublished.error, diagnostic: { correlation, failure: terminalFields(diagnostic as HistoricalIntakeTerminalFailure) } } }
+}
+
+effect function answered(publisher: HistoricalValueImport.Shape, administratorGithubId: string, submitted: Submission, diagnosis: Diagnosis) {
+  const diagnosed = publisher.publishDiagnosed
+  if (!diagnosis.optedIn || diagnosis.correlation === undefined || diagnosed === undefined) {
+    const receipt = try publisher.publish(administratorGithubId, submitted.input, submitted.bundle)
+    const terminal: Terminal = { status: 200, body: receipt }
+    return terminal
   }
-  const terminal: Terminal = receipt === undefined
-    ? { status: 409, body: { error: postSlopbotValueImport.assessmentNotPublished.error } }
-    : { status: 200, body: receipt }
+  const answer = try diagnosed(administratorGithubId, submitted.input, diagnosis.correlation, submitted.bundle)
+  const terminal: Terminal = answer.status === 200 ? { status: 200, body: answer.receipt } : diagnosedRefusal(diagnosis, answer.correlation, answer.diagnostic)
   return terminal
 }
 
-effect function* frames(outcome: Deferred.Deferred<Terminal>) {
+effect function published(publisher: HistoricalValueImport.Shape, administratorGithubId: string, submitted: Submission, diagnosis: Diagnosis, observe: IntakeObserver) {
+  try observe("rpc-dispatch")
+  const terminal = answered(publisher, administratorGithubId, submitted, diagnosis) catch effect () => {
+    try Effect.logError("historical value import failure")
+    return notPublished
+  }
+  try observe("terminal", { terminalStatus: terminal.status })
+  return terminal
+}
+
+effect function* frames(outcome: Deferred.Deferred<Terminal>, observe: IntakeObserver) {
   yield pendingFrame
+  try observe("heartbeat-queued")
   while (true) {
     const settled = try.race [Deferred.await(outcome), Effect.as(sleep(Duration.millis(importHeartbeatMillis)), undefined)]
     if (settled === undefined) {

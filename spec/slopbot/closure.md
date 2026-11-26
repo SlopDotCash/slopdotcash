@@ -20,7 +20,7 @@ observation whose provenance is a named verified service:
 
 | Observation | Verified by |
 |---|---|
-| `GateObservation.source` | the GitHub review adapter: exact item, head, content digest, installation, item state, assignees, author role, the approved project revision with its saved consent, and the repository's `.github/slopbot.json` |
+| `GateObservation.source` | the GitHub review adapter: exact item, head, content digest, installation, item state, assignees, author role, the approved project revision with its saved consent, the repository's `.github/slopbot.json`, and the deterministic Evidence check of the current body against the published contribution guide (`evidenceMissing`, the `//@` kernel `apps/slopbot/src/review/evidence.ts` applying `evidenceFinding` below) |
 | `GateObservation.participation` | the closure-eligibility reader over `points_members`, `trace_runs` and `run_progress_events` in D1 |
 | `GateObservation.activation` | closure activation (`closureActivation.md`) |
 | `Verdict` | the provider route of review (`review.md`), one retained call record per triage or confirm call |
@@ -68,13 +68,15 @@ type ReviewIdentity = { project: int, repository: int, kind: ReviewItemKind, ite
 type SourceObservation = { identity: ReviewIdentity, scope: RepositoryScope, source: SourceStatus,
   installation: InstallationStatus, item: ItemCondition, closedBy: ClosedBy, draft: bool, coverage: Coverage,
   assignment: Assignment, authorRole: AuthorRole, projectRevision: int, consent: CC::SavedConsent,
-  file: PolicyFile, fileClosure: bool, modeCategory: F::Category, fileMode: CategoryMode, securityAuthorized: bool }
+  file: PolicyFile, fileClosure: bool, modeCategory: F::Category, fileMode: CategoryMode, securityAuthorized: bool,
+  evidenceMissing: bool }
 pure val reviewedItem: ReviewIdentity = { project: 1, repository: 7, kind: PullRequest, itemNode: "pr",
   revision: "head", contentDigest: "review", author: 5 }
 pure val unknownSource: SourceObservation = { identity: reviewedItem, scope: Unregistered, source: SourceUnknown,
   installation: InstallationUnknown, item: ItemUnknown, closedBy: NotClosed, draft: false, coverage: CoverageUnknown,
   assignment: AssignmentUnknown, authorRole: RoleUnknown, projectRevision: 0, consent: CC::Absent,
-  file: FileInvalid, fileClosure: false, modeCategory: F::NoFinding, fileMode: ModeOff, securityAuthorized: false }
+  file: FileInvalid, fileClosure: false, modeCategory: F::NoFinding, fileMode: ModeOff, securityAuthorized: false,
+  evidenceMissing: false }
 pure def sourceUsable(o: SourceObservation, identity: ReviewIdentity): bool =
   o.identity == identity and o.source == SourceCurrent and o.installation == InstallationActive and
   o.item == ItemOpen and not(o.draft) and o.coverage != CoverageUnknown
@@ -92,13 +94,16 @@ pure def lawLimitedCoverageNeverActs(sampleObservation: SourceObservation, ident
 Source `projectRepositoryConfig`: effective closure is the saved project
 consent and the file's `closure` value; a missing file defers to the saved
 consent with the default category modes; an invalid file is label-only for
-every category and never closes. A category that can never close is
-label-only even if a file asks for closure, since such a file is invalid.
+every category and never closes. A category that can never close
+(`out_of_scope`) is label-only even if a file asks for closure. The default
+mode of `missing_evidence` is close (`DEFAULT_CATEGORIES` in `contracts.ts`
+since #3063); whether such a finding may close is the evidence path of the
+closing rule below.
 
 ```quint
 pure def defaultMode(category: F::Category): CategoryMode =
   if (category == F::NoFinding) ModeOff
-  else if (category == F::OutOfScope or category == F::MissingEvidence or category == F::LowQuality) ModeLabel
+  else if (category == F::OutOfScope or category == F::LowQuality) ModeLabel
   else ModeClose
 pure def effectiveMode(o: SourceObservation, category: F::Category): CategoryMode =
   if (category == F::NoFinding) ModeOff
@@ -123,8 +128,9 @@ pure def lawFileOptOutWins(sampleObservation: SourceObservation): bool =
 
 Source `parseRepositoryConfig`, `configProblem` and `labelOnlyConfig` in
 `workers/slopbot/contracts.ts`, and `loadContext` in `review.ts`. The
-adapter reads `.github/slopbot.json` from the default branch at the
-recorded base commit, at most 16 KiB. A file that exists but is truncated,
+adapter reads `.github/slopbot.json` from the default branch tip, at most
+16 KiB, also for a pull request into another branch, whose guides are read
+at its target commit ([review](./review.md)). A file that exists but is truncated,
 unreadable or not JSON is invalid, never a reason to use the defaults. A
 valid file is one JSON object whose keys are among `version`, `audience`,
 `issues`, `pullRequests`, `closure`, `reviewExempt`, `dailyCloseCap` and
@@ -134,10 +140,13 @@ booleans (absent: `issues` and `pullRequests` true, `closure` and
 `reviewExempt` false); whose `dailyCloseCap`, when present, is an integer
 from 0 to 200 (absent: 25); and whose `categories`, when present, is an
 object mapping the nine category names other than `none` to `off`, `label`
-or `close`, never `missing_evidence` to `close`. Unlisted categories keep
-their default modes. As in the development code, `out_of_scope: "close"`
-leaves the file valid, and the effective policy above still makes that
-category label-only. Every other problem makes the observation
+or `close` (development refuses `close` only for the categories in
+`NEVER_CLOSE`, which since #3063 holds `none` alone, and `none` is not a
+category key). Unlisted categories keep their default modes. As in the
+development code, `out_of_scope: "close"` and `missing_evidence: "close"`
+leave the file valid; the effective policy above still makes `out_of_scope`
+label-only, and a model's `missing_evidence` verdict is still a label. Every
+other problem makes the observation
 `FileInvalid`, which the rule above makes label-only with no closure and
 the default cap of 25. The shell parses the bytes into `RepositoryFile`:
 `ValueInteger` is a JSON number that is a whole number, and an integer
@@ -160,8 +169,7 @@ pure val fileMaxDailyCloseCap = 200
 pure val fileDefaultDailyCloseCap = 25
 pure def optionalBoolean(fileValue: FileValue): bool = fileValue == ValueMissing or fileValue == ValueBool
 pure def validOverride(o: CategoryOverride): bool =
-  fileCategoryKeys.contains(o.categoryKey) and fileModeNames.contains(o.modeName) and
-  not(o.categoryKey == "missing_evidence" and o.modeName == "close")
+  fileCategoryKeys.contains(o.categoryKey) and fileModeNames.contains(o.modeName)
 pure def repositoryFileValid(f: RepositoryFile): bool =
   f.jsonObject and not(f.truncated) and f.fileKeys.every(k => fileConfigKeys.contains(k)) and
   f.versionValue == ValueInteger and f.versionNumber == 1 and
@@ -187,9 +195,9 @@ pure def lawUnknownKeyInvalidates(sampleFile: RepositoryFile): bool =
   sampleFile.fileKeys.some(k => not(fileConfigKeys.contains(k))) implies not(repositoryFileValid(sampleFile))
 pure def lawTruncatedFileInvalid(sampleFile: RepositoryFile): bool =
   sampleFile.truncated implies not(repositoryFileValid(sampleFile))
-pure def lawMissingEvidenceNeverConfiguredToClose(sampleFile: RepositoryFile): bool =
-  (repositoryFileValid(sampleFile) and sampleFile.categoriesValue == ValueObject) implies
-    sampleFile.overrides.every(o => not(o.categoryKey == "missing_evidence" and o.modeName == "close"))
+pure def lawUnknownCategoryKeyInvalidates(sampleFile: RepositoryFile): bool =
+  (sampleFile.categoriesValue == ValueObject and sampleFile.overrides.some(o => not(fileCategoryKeys.contains(o.categoryKey))))
+    implies not(repositoryFileValid(sampleFile))
 pure def lawMissingFileDefersToProject(sampleFile: RepositoryFile): bool =
   policyFileOf(false, sampleFile) == FileAbsent
 pure val minimalFile: RepositoryFile = { jsonObject: true, truncated: false, fileKeys: List("version", "audience"),
@@ -277,7 +285,9 @@ pure def lawSelfNeverRelated(related: RelatedItemCheck, identity: ReviewIdentity
 
 ### Two independent grounded verdicts with the same category are required before any close
 
-The first call is triage; a close also needs a confirm call. A finding is
+The first call is triage; a close also needs a confirm call, except the
+deterministic missing-evidence close, whose finding replaces both model
+verdicts (the closing rule below). A finding is
 uncertain when it is not grounded, has confidence below 90 hundredths,
 reports limitations, or is a duplicate without the verified related item. On
 the closure path a deterministic prefilter without model triage and a
@@ -318,15 +328,39 @@ low quality), two confirming verdicts, and no reopen or appeal of this
 revision. The close attempt evaluates the same gates again on a later
 observation before it reserves capacity.
 
+A `missing_evidence` finding takes the evidence path instead (`runReview`
+and `stillMayClose` in `review.ts`, development `bf73d46fa`, #3063,
+`8f401ba2f`, #3152): it closes only when it is the service's deterministic
+evidence verdict (`evidenceVerdict`, never a model's) and the observation it
+is decided or rechecked on repeats the finding from the current body and
+guide (`evidenceMissing`). That finding replaces the two confirming model
+verdicts; development makes no model call for it. Its switch is the separate
+evidence switch of [closure activation](./closureActivation.md), which needs
+no category qualification. Every other gate above still applies: active
+full-review scope, an open pull request with complete coverage, no assignee,
+a non-maintainer author, the saved project consent (unchecked for a new
+project, false when missing), the file's close mode, participation
+authority, and no reopen or appeal; the reopen breaker and the daily cap are
+the [close capacity](./closeCapacity.md) the close attempt reserves. A
+model's `missing_evidence` verdict never takes the closing path: it is a
+label.
+
 ```quint
-type ActivationView = { enabled: bool, category: F::Category, categoryQualified: bool, verifierQualified: bool }
+type ActivationView = { enabled: bool, category: F::Category, categoryQualified: bool, verifierQualified: bool,
+  evidenceEnabled: bool }
 type GateObservation = { seq: int, source: SourceObservation, participation: ParticipationEvidence,
   activation: ActivationView }
-pure val inactive: ActivationView = { enabled: false, category: F::NoFinding, categoryQualified: false, verifierQualified: false }
+pure val inactive: ActivationView = { enabled: false, category: F::NoFinding, categoryQualified: false, verifierQualified: false,
+  evidenceEnabled: false }
 pure val unobserved: GateObservation = { seq: 0, source: unknownSource, participation: noParticipation, activation: inactive }
 pure def activationAllows(a: ActivationView, category: F::Category): bool =
-  a.enabled and a.category == category and a.categoryQualified and
-  (not(F::requiresObjectiveVerifier(category)) or a.verifierQualified)
+  if (category == F::MissingEvidence) a.evidenceEnabled
+  else a.enabled and a.category == category and a.categoryQualified and
+    (not(F::requiresObjectiveVerifier(category)) or a.verifierQualified)
+pure def evidenceClose(g: GateObservation, t: AssessedVerdict): bool =
+  t.verdict.category == F::MissingEvidence and t.verdict.deterministic and g.source.evidenceMissing
+pure def evidencePath(g: GateObservation, t: AssessedVerdict): bool =
+  t.verdict.category != F::MissingEvidence or evidenceClose(g, t)
 pure def closePolicyFor(g: GateObservation, identity: ReviewIdentity, category: F::Category): bool =
   mayActOrdinaryFor(g.source, identity) and identity.kind == PullRequest and
   g.source.assignment == Unassigned and g.source.authorRole == NonMaintainer and effectiveClosure(g.source) and
@@ -335,8 +369,21 @@ pure def closePathFor(g: GateObservation, identity: ReviewIdentity, category: F:
   closePolicyFor(g, identity, category) and participationAuthority(g.participation, identity) and
   activationAllows(g.activation, category)
 pure def closeGatesFor(g: GateObservation, identity: ReviewIdentity, t: AssessedVerdict, k: AssessedVerdict): bool =
-  closePathFor(g, identity, t.verdict.category) and confirms(t, k)
+  closePathFor(g, identity, t.verdict.category) and evidencePath(g, t) and (evidenceClose(g, t) or confirms(t, k))
 pure def lawInactiveNeverAllows(category: F::Category): bool = not(activationAllows(inactive, category))
+pure def lawModelMissingEvidenceIsLabel(g: GateObservation, identity: ReviewIdentity, sampleVerdict: AssessedVerdict,
+  otherVerdict: AssessedVerdict): bool =
+  (sampleVerdict.verdict.category == F::MissingEvidence and not(sampleVerdict.verdict.deterministic)) implies
+    not(closeGatesFor(g, identity, sampleVerdict, otherVerdict))
+pure def lawEvidenceCloseNeedsTheFreshFinding(g: GateObservation, identity: ReviewIdentity, sampleVerdict: AssessedVerdict,
+  otherVerdict: AssessedVerdict): bool =
+  (sampleVerdict.verdict.category == F::MissingEvidence and not(g.source.evidenceMissing)) implies
+    not(closeGatesFor(g, identity, sampleVerdict, otherVerdict))
+pure def lawEvidenceCloseKeepsEveryOtherGate(g: GateObservation, identity: ReviewIdentity, sampleVerdict: AssessedVerdict,
+  otherVerdict: AssessedVerdict): bool =
+  closeGatesFor(g, identity, sampleVerdict, otherVerdict) implies
+    (closePolicyFor(g, identity, sampleVerdict.verdict.category) and participationAuthority(g.participation, identity) and
+      activationAllows(g.activation, sampleVerdict.verdict.category))
 pure def lawIssuesNeverPassGates(g: GateObservation, identity: ReviewIdentity, category: F::Category): bool =
   identity.kind == Issue implies not(closePolicyFor(g, identity, category))
 ```
@@ -350,6 +397,9 @@ candidate starts its close attempt, which reserves capacity only after a
 later recheck. A budget-blocked or failed confirm call leaves the revision
 triaged and retryable; it never decides. The initial observation, with
 sequence number zero, is unusable, so every decision is made on a real read.
+A close candidate has two confirming model verdicts, or is the deterministic
+missing-evidence finding on the evidence path; a deterministic finding on
+the evidence path is not uncertain for want of a model triage.
 
 ```quint
 type Phase = Unreviewed | Triaged | Decided
@@ -365,11 +415,13 @@ pure def mayReview(c: Closure): bool = sourceUsable(c.gate.source, c.identity) a
 pure def mayPostOrdinary(c: Closure): bool = mayPostOrdinaryFor(c.gate.source, c.identity) and not(revisionDisputed(c))
 pure def mayActOrdinary(c: Closure): bool = mayActOrdinaryFor(c.gate.source, c.identity) and not(revisionDisputed(c))
 pure def mayPostSecurity(c: Closure): bool = c.gate.source.scope == SecurityOnly and c.gate.source.securityAuthorized and mayReview(c)
-pure def closePath(c: Closure): bool = closePathFor(c.gate, c.identity, c.triage.verdict.category)
-pure def closeGates(c: Closure): bool = c.hasConfirm and closeGatesFor(c.gate, c.identity, c.triage, c.confirm)
+pure def closePath(c: Closure): bool =
+  closePathFor(c.gate, c.identity, c.triage.verdict.category) and evidencePath(c.gate, c.triage)
+pure def closeGates(c: Closure): bool = (c.hasConfirm or evidenceClose(c.gate, c.triage)) and
+  closeGatesFor(c.gate, c.identity, c.triage, c.confirm)
 pure def uncertainFinding(c: Closure): bool = c.triage.verdict.category != F::NoFinding and
-  (initiallyUncertain(c.triage) or (closePath(c) and (c.triage.verdict.deterministic or
-    (c.hasConfirm and not(confirms(c.triage, c.confirm))))))
+  (initiallyUncertain(c.triage) or (closePath(c) and not(evidenceClose(c.gate, c.triage)) and
+    (c.triage.verdict.deterministic or (c.hasConfirm and not(confirms(c.triage, c.confirm))))))
 pure def canObserve(c: Closure, observation: GateObservation): bool =
   observation.seq > c.gate.seq and observation.source.identity == c.identity
 pure def observe(c: Closure, observation: GateObservation): Closure = { ...c, gate: observation }
@@ -404,9 +456,14 @@ pure def alwaysOrdinaryOutcomesActive(c: Closure): bool =
 pure def alwaysSecurityDecisionKeepsScope(c: Closure): bool =
   (c.outcome == SecurityAdvisory iff (c.phase == Decided and c.decidedScope == SecurityOnly)) and
   (c.phase == Decided implies (c.decidedScope == Active or c.decidedScope == SecurityOnly))
+pure def evidenceCandidate(t: AssessedVerdict): bool =
+  t.verdict.category == F::MissingEvidence and t.verdict.deterministic
 pure def alwaysCandidateConfirmed(c: Closure): bool = c.outcome == CloseCandidate implies
-  c.hasConfirm and confirms(c.triage, c.confirm) and c.identity.kind == PullRequest and
+  ((c.hasConfirm and confirms(c.triage, c.confirm)) or evidenceCandidate(c.triage)) and c.identity.kind == PullRequest and
   F::permittedAction(c.triage.verdict.category) == F::CloseAllowed and c.decidedSeq > 0
+pure def sometimesEvidenceCloseCandidate(c: Closure): bool = c.outcome == CloseCandidate and evidenceCandidate(c.triage)
+pure def sometimesModelMissingEvidenceLabeled(c: Closure): bool =
+  c.outcome == LabelFinding and c.triage.verdict.category == F::MissingEvidence and not(c.triage.verdict.deterministic)
 pure def alwaysUncertainOrCandidateHasFinding(c: Closure): bool =
   (c.outcome == Uncertain or c.outcome == CloseCandidate or c.outcome == LabelFinding) implies
     c.triage.verdict.category != F::NoFinding
@@ -421,13 +478,84 @@ pure def sometimesUncertainOutcome(c: Closure): bool = c.outcome == Uncertain
 pure def sometimesCloseCandidate(c: Closure): bool = c.outcome == CloseCandidate
 ```
 
+### The evidence finding names a field that the declared change types of a signed Slop submission require
+
+Source `missingSubmissionEvidence` and `hasSlopParticipationFooter` in
+`workers/slopbot/submission-evidence.ts`, `evidenceVerdict` in `review.ts`
+and development's model `formal/models/slopbot/bot_submission_evidence.qnt`
+(`bf73d46fa`, #3063; `8f401ba2f`, #3152; `cb568e59b`, #3197). The check
+runs only for a contributor-scope pull request reviewed without
+limitations. It needs the published guide: a policy file named
+`CONTRIBUTING.md`, read completely, whose visible text has an `## Evidence`
+line and whose text names every field label (`Change types:`, `Test results:`,
+`Proof of change:`, `Runtime logs:`, `UI video:`, `Benchmarks:`,
+`On-device testing:`); without it nothing is found. Only a pull request
+whose visible body has the line `Made via @slopdotcash` is checked. The
+fields are read from the body's `## Evidence` section, outside HTML comments
+and code fences, up to the next heading of level one or two or the footer;
+a field is a line `<label>: <value>`, optionally a list item, and counts only
+when it appears exactly once. `Change types` is a comma-separated list of
+`docs`, `non-ui`, `ui`, `performance` and `hardware` (a final full stop
+ignored); it is malformed when missing, repeated, empty or naming another
+type, and `docs` must stand alone. Every submission needs test results and
+proof of change; `non-ui` adds runtime logs, `ui` adds a UI video,
+`performance` benchmarks and `hardware` on-device testing; `ui` adds UI
+screenshots too when the guide's own Evidence section lists a
+`UI screenshots:` field. A value counts as present when it does not start
+with a placeholder (`N/A`, `NA`, `none`, `TBD`, `TODO`, `pending`,
+`not run`, `not tested`, `not applicable`, any case) and is an `https` link
+with a path to a host with a dot (no credentials, not `example.com`,
+`example.net` or `example.org`), or, outside UI video and UI screenshots, at
+least five words. Malformed change types are a finding, as is any required
+field that is not present. Reading the text is the `//@` kernel
+`apps/slopbot/src/review/evidence.ts`; this rule owns the field table, which
+[the contributor workflow](../contributor/workflow.md) imports, and the
+finding the kernel returns is `GateObservation.source.evidenceMissing`.
+
+```quint
+type ChangeType = Docs | NonUi | Ui | Performance | Hardware
+type EvidenceField = TestResults | ProofOfChange | RuntimeLogs | UiVideo | UiScreenshots | Benchmarks | OnDeviceTesting
+pure val commonEvidence: Set[EvidenceField] = Set(TestResults, ProofOfChange)
+pure def requiredEvidence(types: Set[ChangeType], guideScreenshots: bool): Set[EvidenceField] =
+  commonEvidence
+    .union(if (types.contains(NonUi)) Set(RuntimeLogs) else Set())
+    .union(if (types.contains(Ui)) Set(UiVideo) else Set())
+    .union(if (types.contains(Ui) and guideScreenshots) Set(UiScreenshots) else Set())
+    .union(if (types.contains(Performance)) Set(Benchmarks) else Set())
+    .union(if (types.contains(Hardware)) Set(OnDeviceTesting) else Set())
+pure def validChangeTypes(types: Set[ChangeType], typesMalformed: bool): bool =
+  not(typesMalformed) and types.size() > 0 and (not(types.contains(Docs)) or types.size() == 1)
+pure def evidenceFinding(guide: bool, footer: bool, typesMalformed: bool, types: Set[ChangeType],
+  supplied: Set[EvidenceField], guideScreenshots: bool): bool =
+  guide and footer and
+    (not(validChangeTypes(types, typesMalformed)) or not(requiredEvidence(types, guideScreenshots).subseteq(supplied)))
+pure def lawDocsAloneNeedsOnlyCommonFields(guideScreenshots: bool): bool =
+  requiredEvidence(Set(Docs), guideScreenshots).subseteq(commonEvidence) and
+    commonEvidence.subseteq(requiredEvidence(Set(Docs), guideScreenshots))
+pure def lawUnsignedOrUnguidedNeverFinds(guide: bool, footer: bool, typesMalformed: bool, types: Set[ChangeType],
+  supplied: Set[EvidenceField], guideScreenshots: bool): bool =
+  (not(guide) or not(footer)) implies not(evidenceFinding(guide, footer, typesMalformed, types, supplied, guideScreenshots))
+pure def lawCompleteEvidenceFindsNothing(guide: bool, footer: bool, typesMalformed: bool, types: Set[ChangeType],
+  supplied: Set[EvidenceField], guideScreenshots: bool): bool =
+  (validChangeTypes(types, typesMalformed) and requiredEvidence(types, guideScreenshots).subseteq(supplied)) implies
+    not(evidenceFinding(guide, footer, typesMalformed, types, supplied, guideScreenshots))
+pure def lawDocsWithAnotherTypeIsAFinding(types: Set[ChangeType], supplied: Set[EvidenceField], guideScreenshots: bool): bool =
+  (types.contains(Docs) and types.size() > 1) implies evidenceFinding(true, true, false, types, supplied, guideScreenshots)
+pure def lawUiWithoutVideoIsAFinding(types: Set[ChangeType], supplied: Set[EvidenceField], guideScreenshots: bool): bool =
+  (types.contains(Ui) and not(supplied.contains(UiVideo))) implies
+    evidenceFinding(true, true, false, types, supplied, guideScreenshots)
+```
+
 ## Story: Label certain findings and security results without closing
 
-### A certain finding that cannot close is labeled once; out-of-scope and missing evidence are label-only
+### A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label
 
 Source `runReview`: a certain finding whose close is blocked by a policy gate
 (no consent, an ineligible author, mode label, inactive switch) is commented
-and labeled with its category label. Issues are labeled and never closed. A
+and labeled with its category label. Issues are labeled and never closed.
+`out_of_scope` never closes, and a `missing_evidence` verdict that is not the
+deterministic evidence finding is labeled even where the file's mode is
+close (`runReview`, lines 1644-1651). A
 close candidate is commented and labeled with its category label the same
 way before its close is reserved (`runReview` in `review.ts`, lines
 1780-1880: comment, action, label, then `reserveClose`); a close that is
@@ -530,17 +658,22 @@ They do not bound production values.
 pure val verifiedSource: SourceObservation = { identity: reviewedItem, scope: Active, source: SourceCurrent,
   installation: InstallationActive, item: ItemOpen, closedBy: NotClosed, draft: false, coverage: CoverageComplete,
   assignment: Unassigned, authorRole: NonMaintainer, projectRevision: 3, consent: CC::Enabled,
-  file: FileAbsent, fileClosure: false, modeCategory: F::NoFinding, fileMode: ModeOff, securityAuthorized: false }
+  file: FileAbsent, fileClosure: false, modeCategory: F::NoFinding, fileMode: ModeOff, securityAuthorized: false,
+  evidenceMissing: false }
 pure val ownRun: PrOpenedEvent = { actor: 5, sessionActor: 5, project: 1, repository: 7, prNode: "pr" }
 pure val eligibleParticipation: ParticipationEvidence = { member: 5, membership: MemberActive,
   events: List(ownRun), copiedMarker: false }
-pure val activeSpam: ActivationView = { enabled: true, category: F::Spam, categoryQualified: true, verifierQualified: false }
+pure val activeSpam: ActivationView = { enabled: true, category: F::Spam, categoryQualified: true, verifierQualified: false,
+  evidenceEnabled: false }
+pure val evidenceGate: GateObservation = { seq: 4, source: { ...verifiedSource, evidenceMissing: true },
+  participation: eligibleParticipation, activation: { ...activeSpam, evidenceEnabled: true } }
 pure val eligibleGate: GateObservation = { seq: 1, source: verifiedSource, participation: eligibleParticipation,
   activation: activeSpam }
 pure val observationValues = Set(eligibleGate, { ...eligibleGate, seq: 2 },
   { ...eligibleGate, seq: 2, source: { ...verifiedSource, scope: SecurityOnly, securityAuthorized: true } },
   { ...eligibleGate, seq: 1, source: { ...verifiedSource, coverage: CoverageLimited } },
-  { ...eligibleGate, seq: 3, source: { ...verifiedSource, consent: CC::Absent } })
+  { ...eligibleGate, seq: 3, source: { ...verifiedSource, consent: CC::Absent } }, evidenceGate,
+  { ...evidenceGate, seq: 5, activation: activeSpam })
 pure val sampleObservationValues = Set(verifiedSource,
   { ...verifiedSource, scope: ReversalOnly }, { ...verifiedSource, consent: CC::Absent },
   { ...verifiedSource, consent: CC::Disabled }, { ...verifiedSource, coverage: CoverageLimited },
@@ -557,7 +690,9 @@ pure val spamVerdict: Verdict = { callId: "t", category: F::Spam, confidenceHund
   objectiveDefect: "", deterministic: false }
 pure val verdictValues = Set(spamVerdict, { ...spamVerdict, callId: "k" },
   { ...spamVerdict, callId: "k", confidenceHundredths: 89 }, { ...spamVerdict, category: F::Scam },
-  { ...spamVerdict, category: F::OutOfScope })
+  { ...spamVerdict, category: F::OutOfScope },
+  { ...spamVerdict, callId: "e", category: F::MissingEvidence, confidenceHundredths: 100, deterministic: true },
+  { ...spamVerdict, category: F::MissingEvidence })
 pure val groundingValues = Set({ callId: "t", contentDigest: "review", evidenceFound: true, policy: PolicyComplete, ruleFound: true },
   { callId: "k", contentDigest: "review", evidenceFound: true, policy: PolicyComplete, ruleFound: true },
   { callId: "t", contentDigest: "review", evidenceFound: true, policy: PolicyTruncated, ruleFound: true })
@@ -575,10 +710,13 @@ pure val sampleVerdictValues = Set(assessedSpam, { ...assessedSpam, grounded: fa
   { ...assessedSpam, verdict: { ...spamVerdict, callId: "k", category: F::Duplicate }, related: true },
   { ...assessedSpam, verdict: { ...spamVerdict, category: F::LowQuality, objectiveDefect: "d" } },
   { ...assessedSpam, verdict: { ...spamVerdict, callId: "k", category: F::LowQuality, objectiveDefect: "e" } },
-  { ...assessedSpam, verdict: { ...spamVerdict, callId: "k" } })
+  { ...assessedSpam, verdict: { ...spamVerdict, callId: "k" } },
+  { ...assessedSpam, verdict: { ...spamVerdict, category: F::MissingEvidence } },
+  { ...assessedSpam, verdict: { ...spamVerdict, category: F::MissingEvidence, confidenceHundredths: 100, deterministic: true } })
 pure val otherVerdictValues = sampleVerdictValues
 pure val vValues = Set(spamVerdict, { ...spamVerdict, category: F::Busywork }, { ...spamVerdict, deterministic: true })
-pure val gValues = Set(eligibleGate, { ...eligibleGate, source: { ...verifiedSource, identity: { ...reviewedItem, kind: Issue } } })
+pure val gValues = Set(eligibleGate, { ...eligibleGate, source: { ...verifiedSource, identity: { ...reviewedItem, kind: Issue } } },
+  evidenceGate, { ...evidenceGate, source: verifiedSource })
 pure val identityValues = Set(reviewedItem, { ...reviewedItem, author: 6 }, { ...reviewedItem, kind: Issue })
 pure val reopenValues = Set({ itemNode: "pr", revision: "head", actor: 9, role: ReopenByMaintainer, at: 50 },
   { itemNode: "pr", revision: "head", actor: 5, role: ReopenByAuthor, at: 50 },

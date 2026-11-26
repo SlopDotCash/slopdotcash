@@ -32,7 +32,12 @@ the signed transaction was checked.
 ### Only finalized income from a named source at or after activation increases the budget
 
 Income is a finalized conversion output into USDC, a finalized USDC fee
-claim or a completed direct-award fee on this instance's own source network.
+claim, a completed direct-award fee or a kept stablecoin submission fee on
+this instance's own source network. A kept submission fee is a deposit the
+submission deposit contract sent to this fee wallet in the network's USDC
+when its pull request closed unmerged; it counts once per deposit, at the
+time of its finalized `Resolved` event (`buyback-store.ts`
+`keptSubmissionFees`). Among the bridge sources only Base has that contract.
 A fee in another token counts once, as its conversion output. Each source key counts once.
 Recording income needs no mode: income from the activation instant counts
 even while the buyback is off, and earlier income never counts.
@@ -41,7 +46,7 @@ even while the buyback is off, and earlier income never counts.
 import money as M from "../settlement/money"
 import half as H from "../settlement/half"
 import runtime as R from "./runtime"
-type IncomeKind = ConversionOutput | UsdcClaim | DirectFee | RobinhoodFee
+type IncomeKind = ConversionOutput | UsdcClaim | DirectFee | KeptSubmissionFee | RobinhoodFee
 type IncomeKey = { kind: IncomeKind, network: R::Network, id: int }
 type SendPhase = NoSend | Submitted | Unknown | Finalized | Failed
 type Send = { tx: int, phase: SendPhase, amount: int }
@@ -340,6 +345,7 @@ pure val nowValues = Set(buybackStart + 1, buybackStart + 3600001, buybackStart 
 pure val chainTimeValues = Set(buybackStart - 1, buybackStart, buybackStart + 1)
 pure val keyValues = Set({ kind: ConversionOutput, network: R::Base, id: 1 }, { kind: UsdcClaim, network: R::Base, id: 1 },
   { kind: DirectFee, network: R::Base, id: 2 }, { kind: RobinhoodFee, network: R::Robinhood, id: 3 },
+  { kind: KeptSubmissionFee, network: R::Base, id: 4 },
   { kind: ConversionOutput, network: R::Solana, id: 4 })
 pure val incomeAmountValues = Set(List(0, 0, 0, 1), List(0, 0, 500), List(0, 0, 0, 2))
 pure val sourceNetworkValues = Set(R::Robinhood, R::Solana, R::Ethereum)

@@ -9,6 +9,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { area, pages } from "@repo/platform/worker"
 import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
+import { AuthorityUnavailable, SecurityNoticeAccess } from "@repo/ports/security"
 import { AssessmentQueue } from "@repo/ports/slopbot"
 import { inboxApi } from "../src/client/inbox.vibe"
 import { inboxRoutes } from "../src/inbox/routes.vibe"
@@ -35,6 +36,7 @@ const other = "9300000002"
 const moderator = "9300000003"
 const listedModerator = "9300000004"
 const caseId = "sc_inbox_journey_case"
+const unavailableCase = "sc_inbox_journey_unavailable"
 const version = "1".repeat(64)
 const digest = "d".repeat(64)
 const providerReference = "private-provider-reference"
@@ -49,6 +51,12 @@ const site = pages({
   services: (env: Env) => Layer.mergeAll(
     Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: moderator, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${listedModerator}` }))),
     Layer.succeed(AssessmentQueue, { bundled: (actor) => succeed(actor.githubId === member ? { recipientGithubId: member, items: [], next: null } : null) }),
+    Layer.succeed(SecurityNoticeAccess, {
+      forCase: (read) => effect {
+        if (read.caseId === unavailableCase) throw new AuthorityUnavailable({ projectId: "inbox-journey" })
+        return { allowed: read.caseId === caseId && read.githubId === member, acknowledgeHours: 72 }
+      },
+    }),
   ),
   assets: "ASSETS",
 })
@@ -140,12 +148,20 @@ effect function readAt(eventKey: string, recipient: string) {
   return row?.read_at ?? null
 }
 
+function project(id: string, manifestSha: string) {
+  const manifest = JSON.stringify({ id })
+  return [
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${id}, 1, ${manifest}, ${manifestSha}, 'Seeded revision', ${seededAt})`,
+    sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'paused', 1, ${manifest}, ${manifestSha}, ${seededAt}, ${seededAt})`,
+  ]
+}
+
 function at(minute: number) {
   return `2030-01-02T00:${String(minute).padStart(2, "0")}:00.000Z`
 }
 
 layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Read the Inbox over HTTP without email details, and mark only the recipient\'s own notices read (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
+  it.effect('Read the Inbox over HTTP without email details, mark only the recipient\'s own notices read, and acknowledge a report receipt once (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
     try signedUp([member, other, moderator, listedModerator])
     try (try D1).batch(securityCases)
     const signedOut = try ask("/api/v1/notifications")
@@ -219,7 +235,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       readIsNotAcknowledgment: [afterReading?.readAt !== null, afterReading?.acknowledgedAt],
       besideLegacy: [besideLegacy.status, besideLegacy.body],
     }, {
-      signedOut: [401, { error: "not_signed_in", message: "" }],
+      signedOut: [401, { error: "not_signed_in" }],
       cache: "private, no-store",
       private: [],
       listed: {
@@ -243,23 +259,46 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
         ],
       },
       paging: [100, 13, null, 113, 113],
-      invalidCursor: [400, { error: "invalid_cursor", message: "" }],
+      invalidCursor: [400, { error: "invalid_cursor" }],
       marks: [{ marked: 1 }, { marked: 0 }, { marked: 0 }, { marked: 1 }],
       readAt: [true, null, null],
       refusals: [
-        [403, { error: "origin_forbidden", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [403, { error: "actor_changed", message: "" }],
-        [400, { error: "invalid_expected_actor", message: "" }],
-        [401, { error: "not_signed_in", message: "" }],
-        [403, { error: "actor_changed", message: "" }],
-        [405, { error: "method_not_allowed", message: "" }],
+        [403, { error: "origin_forbidden" }],
+        [400, { error: "invalid_request" }],
+        [400, { error: "invalid_request" }],
+        [400, { error: "invalid_request" }],
+        [400, { error: "invalid_request" }],
+        [403, { error: "actor_changed" }],
+        [400, { error: "invalid_expected_actor" }],
+        [401, { error: "not_signed_in" }],
+        [403, { error: "actor_changed" }],
+        [405, { error: "method_not_allowed" }],
       ],
       readIsNotAcknowledgment: [true, null],
       besideLegacy: [200, { marked: 1 }],
+    })
+
+    const acknowledge = (id: string, eventKey: string, as = member) => ask(`/api/v1/security-cases/${id}/acknowledge`, { as, json: { eventKey } })
+    const answers = [
+      try acknowledge(caseId, "security-receipt:inbox-1"),
+      try acknowledge(caseId, "security-receipt:inbox-1"),
+      try acknowledge(caseId, "security-receipt:inbox-absent"),
+      try acknowledge(caseId, "security-receipt:inbox-1", other),
+      try acknowledge(unavailableCase, "security-receipt:inbox-1"),
+    ].map((answer) => answer.status === 200 ? [answer.status, answer.body] : [answer.status, (answer.body as { error?: unknown } | null)?.error])
+    const acknowledgedEvents = try (try D1).all(sql`SELECT e.state FROM security_notification_delivery_events e JOIN security_notification_outbox o ON o.id = e.delivery_id
+      WHERE o.event_key = 'security-receipt:inbox-1' AND o.recipient_github_id = ${member} AND e.state = 'acknowledged'`)
+    const receipt = (try inbox(member)).notifications.find((item) => item.eventKey === "security-receipt:inbox-1")
+    try same({ answers, acknowledgedEvents: acknowledgedEvents.length, asksAcknowledgment: receipt !== undefined && "acknowledgedAt" in receipt }, {
+      answers: [
+        [200, { acknowledged: true }],
+        [200, { acknowledged: true }],
+        [404, "not_found"],
+        [404, "not_found"],
+        [503, "github_unavailable"],
+      ],
+      acknowledgedEvents: 1,
+      asksAcknowledgment: false,
     })
   })
 
@@ -309,17 +348,84 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       opened: [
         [302, "https://github.com/acme/widgets/pull/7", null],
         [302, "https://github.com/acme/widgets/pull/8", null],
-        [403, null, { error: "not_authorized", message: "" }],
-        [403, null, { error: "not_authorized", message: "" }],
-        [404, null, { error: "not_found", message: "" }],
-        [400, null, { error: "invalid_request", message: "" }],
-        [404, null, { error: "not_found", message: "" }],
-        [401, null, { error: "not_signed_in", message: "" }],
-        [403, null, { error: "not_authorized", message: "" }],
-        [403, null, { error: "not_authorized", message: "" }],
+        [403, null, { error: "not_authorized" }],
+        [403, null, { error: "not_authorized" }],
+        [404, null, { error: "not_found" }],
+        [400, null, { error: "invalid_request" }],
+        [404, null, { error: "not_found" }],
+        [401, null, { error: "not_signed_in" }],
+        [403, null, { error: "not_authorized" }],
+        [403, null, { error: "not_authorized" }],
       ],
-      reversed: [404, { error: "not_found", message: "" }],
+      reversed: [404, { error: "not_found" }],
       listedAfter: [[["slopbot-appeal-inbox-1", "slopbot_appeal_resolved"]], 1],
+    })
+  })
+
+  it.effect('A decided reinstatement request retires its review notice from the list, the unread count and mark-read, a ban that keeps the appeal leaves it, and an account request retires only when its own account is decided (spec/operations/moderation.md, "Story: A moderator reads only what current authority allows and records each decision with a reason"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check")', () => effect {
+    const db = try D1
+    const projectId = "inbox-reinstatement"
+    const manifestSha = "e".repeat(64)
+    const record = (id: string, sequence: number, action: string, stateAfter: string, appealAfter: string, role: string, source: string, minute: number) =>
+      sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys,
+          actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+        VALUES (${id}, ${projectId}, ${sequence}, ${action}, ${stateAfter}, ${appealAfter}, 'journey record', 'journey evidence', '9301', '["github:9301"]',
+          ${role === "project-steward" ? member : listedModerator}, ${role === "project-steward" ? "steward" : "placer"}, NULL, ${role}, ${source}, 1, ${manifestSha}, NULL, NULL, 'no_revision_needed', ${at(minute)})`
+    const reviewKey = "reinstatement-review:enf_inbox_request"
+    const baseline = (try inbox(moderator)).unread
+    try save([notice(reviewKey, "ReinstatementReview", at(45), moderator, projectId, "/admin")], [
+      ...project(projectId, manifestSha),
+      record("enf_inbox_quarantine", 1, "quarantine", "quarantined", "none", "project-moderator", "admin-panel", 41),
+      record("enf_inbox_request", 2, "request_reinstatement", "quarantined", "requested", "project-steward", "owner-request", 42),
+    ])
+    const listed = (answer: { unread: number; notifications: ReadonlyArray<Record<string, unknown>> }) =>
+      [answer.notifications.filter((item) => item.eventKey === reviewKey).map((item) => item.kind), answer.unread - baseline]
+    const open = listed(try inbox(moderator))
+    try db.batch([record("enf_inbox_ban", 3, "ban", "banned", "requested", "project-moderator", "admin-panel", 46)])
+    const appealKept = listed(try inbox(moderator))
+    try db.batch([record("enf_inbox_denial", 4, "deny_reinstatement", "banned", "denied", "project-moderator", "admin-panel", 47)])
+    const decided = listed(try inbox(moderator))
+    try ask("/api/v1/notifications/read", { as: moderator, json: { eventKeys: [reviewKey] } })
+    try same({ open, appealKept, decided, readAt: try readAt(reviewKey, moderator) }, {
+      open: [["reinstatement_review"], 1],
+      appealKept: [["reinstatement_review"], 1],
+      decided: [[], 0],
+      readAt: null,
+    })
+
+    const bannedProject = "inbox-account-requests"
+    const released = "9300000011"
+    const kept = "9300000012"
+    const issuer = JSON.stringify({ kind: "vetting-service", keySha256: "f".repeat(64), assessmentId: "assessment-inbox-ban", policyVersion: "journey-policy", rule: "confirmed-malicious" })
+    const entry = (id: string, sequence: number, action: string, appealAfter: string, actor: string | null, role: string, source: string, minute: number) =>
+      sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys,
+          actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+        VALUES (${id}, ${bannedProject}, ${sequence}, ${action}, 'banned', ${appealAfter}, 'journey record', 'journey evidence', '9302', '["github:9302"]',
+          ${actor}, ${actor === null ? null : `login-${actor}`}, ${actor === null ? issuer : null}, ${role}, ${source}, 1, ${manifestSha}, NULL, NULL, 'no_revision_needed', ${at(minute)})`
+    const accountKey = (account: string) => `reinstatement-review:enf_inbox_account_${account}`
+    const accountBaseline = (try inbox(moderator)).unread
+    try save([released, kept].map((account) => notice(accountKey(account), "ReinstatementReview", at(52), moderator, bannedProject, "/admin")), [
+      ...project(bannedProject, manifestSha),
+      entry("enf_inbox_signed_ban", 1, "ban", "none", null, "vetting-service", "standing-rule", 48),
+      entry("enf_inbox_account_ban", 2, "ban", "none", listedModerator, "project-moderator", "admin-panel", 49),
+      sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES ('enf_inbox_account_ban', ${released}, ${`login-${released}`}), ('enf_inbox_account_ban', ${kept}, ${`login-${kept}`})`,
+      entry(`enf_inbox_account_${released}`, 3, "request_reinstatement", "requested", released, "banned-account", "account-request", 50),
+      entry(`enf_inbox_account_${kept}`, 4, "request_reinstatement", "requested", kept, "banned-account", "account-request", 51),
+    ])
+    const accounts = (answer: { unread: number; notifications: ReadonlyArray<Record<string, unknown>> }) =>
+      [answer.notifications.filter((item) => item.eventKey === accountKey(released) || item.eventKey === accountKey(kept)).map((item) => item.eventKey).sort(), answer.unread - accountBaseline]
+    const bothOpen = accounts(try inbox(moderator))
+    try db.batch([
+      entry("enf_inbox_account_release", 5, "reinstate_accounts", "requested", moderator, "project-moderator", "admin-panel", 53),
+      sql`INSERT INTO project_account_reinstatements (enforcement_id, ban_enforcement_id, github_id) VALUES ('enf_inbox_account_release', 'enf_inbox_account_ban', ${released})`,
+    ])
+    const oneReleased = accounts(try inbox(moderator))
+    try ask("/api/v1/notifications/read", { as: moderator, json: { eventKeys: [accountKey(released), accountKey(kept)] } })
+    try same({ bothOpen, oneReleased, releasedRead: try readAt(accountKey(released), moderator), keptRead: (try readAt(accountKey(kept), moderator)) !== null }, {
+      bothOpen: [[accountKey(released), accountKey(kept)].sort(), 2],
+      oneReleased: [[accountKey(kept)], 1],
+      releasedRead: null,
+      keptRead: true,
     })
   })
 })

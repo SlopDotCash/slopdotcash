@@ -9,7 +9,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeWhole } from "../util.ts";
-import { declared, isContract } from "./properties.ts";
 
 /** In every header: a change to what is generated rewrites every file. */
 export const VERSION = 1;
@@ -74,6 +73,7 @@ export async function generateTests(packageDir: string): Promise<Generated> {
         `describe(${JSON.stringify(source)}, () => {`, ...schemas.map((name) => `  schemaTests(${JSON.stringify(name)}, subject[${JSON.stringify(name)}]);`), "});",
       ]);
     } else {
+      const { declared, isContract } = await import("./properties.ts");
       const contracts = names.filter((name) => isContract(module[name]));
       const tests = contracts.flatMap((name) => {
         const properties = Object.entries(declared(module[name] as never)).flatMap(([property, check]) => check ? [property] : []);
@@ -103,7 +103,8 @@ export async function generateTests(packageDir: string): Promise<Generated> {
 /** Whether values of `schema` can be generated; if not, `skip` hears why. */
 function arbitraryOf(schema: Schema.Schema<unknown>, skip: (reason: string) => void) {
   try {
-    Effect.runSync(Arbitrary.sampleEffect(Arbitrary.schema(schema), { count: 1, seed: 1 }));
+    Effect.runSync(Arbitrary.sampleEffect(Arbitrary.schema(schema), { count: 1, seed: 1 }).pipe(Effect.mapError((refused) =>
+      new Error(`its filters refused all ${refused.discards} values tried`))));
     return true;
   } catch (error) {
     skip(`no value can be generated for it: ${error instanceof Error ? error.message : String(error)}`);

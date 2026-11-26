@@ -1,0 +1,29 @@
+// spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
+import { allChunked, list, sql } from "@repo/platform/d1"
+import { type ReportDepositState, type ReportDepositView, depositAmountText, reportDepositPayPath } from "../client/reportDeposit.ts"
+
+schema ViewRow { case_id: string; slop_amount: string; paid_at: string | null; outcome: string | null }
+
+const outcomes: ReadonlySet<string> = new Set(["refund_due", "kept_due", "refunded", "kept"])
+
+function viewOf(row: ViewRow): ReportDepositView {
+  const state: ReportDepositState = row.outcome !== null && outcomes.has(row.outcome) ? row.outcome as ReportDepositState : row.paid_at === null ? "needed" : "paid"
+  return { state, amount: row.slop_amount, payPath: reportDepositPayPath(row.case_id) }
+}
+
+export effect function depositViews(caseIds: ReadonlyArray<string>) {
+  const found = try allChunked(ViewRow, [...new Set(caseIds)], (chunk) => sql`SELECT case_id, slop_amount, paid_at, outcome FROM security_report_deposits WHERE mode = 'asked' AND case_id IN ${list(chunk)}`)
+  return new Map(found.map((row) => [row.case_id, viewOf(row)]))
+}
+
+export effect function depositView(caseId: string) {
+  return (try depositViews([caseId])).get(caseId) ?? null
+}
+
+export function depositNeeded(deposit: ReportDepositView | null | undefined) {
+  return deposit?.state === "needed"
+}
+
+export function depositNextStep(deposit: ReportDepositView) {
+  return `Deposit needed: ${depositAmountText(deposit.amount)}. Your report is saved and waits for its deposit.`
+}

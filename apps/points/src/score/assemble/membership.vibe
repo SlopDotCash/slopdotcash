@@ -1,0 +1,148 @@
+// spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { RepositoryRegistry, ReviewedImplementationSource, ReviewedWorkUnit, SourceRepository, ValueCoverage } from "../../client/snapshot/schema.vibe"
+import { AssemblyRefused } from "../../collect/run/pipeline.vibe"
+import { compareCodeUnits } from "../facts.vibe"
+import type { ValueDecision } from "./decisions.vibe"
+
+schema MemberClaim {
+  readonly id: string
+  readonly carrierPullRequestIds: ReadonlyArray<string>
+  readonly creditPullRequestId: string
+  readonly retainedCopy?: { readonly acceptancePullRequestId: string } | null
+}
+
+schema MemberUnit {
+  readonly workUnitId: string
+  readonly claimIds: ReadonlyArray<string>
+  readonly assessment?: { readonly status: string } | null
+}
+
+schema MemberRecord {
+  readonly projectId: string
+  readonly sources: ReadonlyArray<{ readonly repository: string; readonly repositoryNodeId: string; readonly pullRequestNodeId: string }>
+  readonly claims: ReadonlyArray<MemberClaim>
+  readonly units: ReadonlyArray<MemberUnit>
+}
+
+const recordDigestPattern = /^[a-f0-9]{64}$/u
+const workUnitIdPattern = /^wu_[a-f0-9]{64}$/u
+const digestMismatch = "Reviewed implementation record digest does not match"
+const bindingInvalid = "Reviewed implementation source binding is invalid"
+const identityInvalid = "Reviewed implementation unit identity is invalid"
+const claimInvalid = "Reviewed implementation unit claim is invalid"
+const memberInvalid = "Reviewed implementation member is not a source"
+
+interface Membership {
+  readonly recordDigest: string
+  readonly workUnitId: string
+  readonly unitKey: string
+}
+
+function refused(message: string) {
+  return new AssemblyRefused({ message })
+}
+
+function groups() {
+  const parents = new Map<string, string>()
+  const find = (start: string) => {
+    let root = start
+    for (let parent = parents.get(root); parent !== undefined && parent !== root; parent = parents.get(root)) root = parent
+    let unit = start
+    while (unit !== root) {
+      const parent = parents.get(unit)
+      parents.set(unit, root)
+      if (parent === undefined) break
+      unit = parent
+    }
+    return root
+  }
+  const join = (left: string, right: string) => {
+    const a = find(left)
+    const b = find(right)
+    if (a < b) parents.set(b, a)
+    else if (b < a) parents.set(a, b)
+  }
+  return { find, join }
+}
+
+effect function parsedRecord(json: string) {
+  const parsed = Effect.try(() => JSON.parse(json) as unknown) catch () => undefined
+  const record = Schema.decodeUnknownEffect(MemberRecord)(parsed) catch effect () => { throw refused(bindingInvalid) }
+  return record
+}
+
+export effect function reviewedUnitsBySource(joint: ReadonlyMap<string, ValueDecision>, registry: RepositoryRegistry) {
+  const memberships = new Map<string, Membership[]>()
+  const seen = new Set<string>()
+  const owners = new Map<string, string>()
+  const group = groups()
+  for (const decision of new Set(joint.values())) {
+    for (const row of decision.history) {
+      if (seen.has(row.record_digest)) continue
+      if (!recordDigestPattern.test(row.record_digest) || (try sha256Hex(row.record_json)) !== row.record_digest) throw refused(digestMismatch)
+      seen.add(row.record_digest)
+      const record = try parsedRecord(row.record_json)
+      if (record.units.some((unit) => unit.assessment?.status !== "assessed")) continue
+      const sources = new Map<string, string>()
+      for (const source of record.sources) {
+        const repository = registry.registered.find((candidate) => candidate.id.toLowerCase() === source.repository.toLowerCase())
+        if (repository === undefined || repository.projectId !== record.projectId || repository.nodeId !== source.repositoryNodeId || sources.has(source.pullRequestNodeId)) throw refused(bindingInvalid)
+        sources.set(source.pullRequestNodeId, source.repositoryNodeId)
+      }
+      const claims = new Map(record.claims.map((claim) => [claim.id, claim] as const))
+      const units = new Set<string>()
+      const assigned = new Set<string>()
+      for (const { workUnitId, claimIds } of record.units) {
+        if (claimIds.length === 0) continue
+        if (!workUnitIdPattern.test(workUnitId) || units.has(workUnitId)) throw refused(identityInvalid)
+        units.add(workUnitId)
+        const unitKey = JSON.stringify([record.projectId, row.record_digest, workUnitId])
+        const members = new Set<string>()
+        for (const claimId of claimIds) {
+          const claim = claims.get(claimId)
+          if (claim === undefined || assigned.has(claimId)) throw refused(claimInvalid)
+          assigned.add(claimId)
+          const claimKey = JSON.stringify([record.projectId, claimId])
+          const owner = owners.get(claimKey)
+          if (owner === undefined) owners.set(claimKey, unitKey)
+          else group.join(unitKey, owner)
+          for (const id of claim.carrierPullRequestIds) members.add(id)
+          members.add(claim.creditPullRequestId)
+          const copy = claim.retainedCopy
+          if (copy !== undefined && copy !== null) members.add(copy.acceptancePullRequestId)
+        }
+        for (const id of members) {
+          const repositoryNodeId = sources.get(id)
+          if (repositoryNodeId === undefined) throw refused(memberInvalid)
+          const key = JSON.stringify([repositoryNodeId, id])
+          const found = memberships.get(key) ?? []
+          found.push({ recordDigest: row.record_digest, workUnitId, unitKey })
+          memberships.set(key, found)
+        }
+      }
+    }
+  }
+  const groupIds = new Map<string, string>()
+  const bySource = new Map<string, ReadonlyArray<ReviewedWorkUnit>>()
+  for (const [key, members] of memberships) {
+    const sorted = [...members].sort((left, right) => compareCodeUnits(left.recordDigest, right.recordDigest) || compareCodeUnits(left.workUnitId, right.workUnitId))
+    const units: ReviewedWorkUnit[] = []
+    for (const member of sorted) {
+      const root = group.find(member.unitKey)
+      const groupId = groupIds.get(root) ?? (try sha256Hex(root))
+      groupIds.set(root, groupId)
+      units.push({ recordDigest: member.recordDigest, workUnitId: member.workUnitId, groupId })
+    }
+    bySource.set(key, units)
+  }
+  return bySource
+}
+
+export function reviewedImplementationUnits(coverage: ReadonlyArray<ValueCoverage>, repositories: ReadonlyArray<SourceRepository>, bySource: ReadonlyMap<string, ReadonlyArray<ReviewedWorkUnit>>): ReadonlyArray<ReviewedImplementationSource> {
+  const nodeIds = new Map(repositories.map((repository) => [repository.id, repository.repositoryId] as const))
+  return coverage.flatMap(({ repository, pullRequestId }) => {
+    const units = bySource.get(JSON.stringify([nodeIds.get(repository), pullRequestId]))
+    return units === undefined ? [] : [{ repository, pullRequestId, units }]
+  })
+}

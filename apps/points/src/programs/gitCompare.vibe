@@ -1,0 +1,101 @@
+// spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's"
+import { gitBytes } from "@repo/platform/git"
+import { GitHub, github, githubApi } from "@repo/platform/github"
+import { localGitObjects } from "../ingestion/localGit.vibe"
+import { transportLimitBytes } from "../ingestion/read.vibe"
+
+error CompareToken { message: string }
+error LocalGitMismatch { message: string }
+
+const historyLimitBytes = 256 * 1024 * 1024
+const gitSeconds = 600
+const remoteOnly = ["node_id", "verification"]
+
+type Body = Readonly<Record<string, unknown>>
+
+function isBody(value: unknown): value is Body {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function withoutKeys(body: Body, keys: ReadonlyArray<string>): Body {
+  return Object.fromEntries(Object.entries(body).filter(([key]) => !keys.includes(key)))
+}
+
+function subtrees(body: Body) {
+  const entries = Array.isArray(body.tree) ? body.tree : []
+  return entries.flatMap((entry: unknown) => isBody(entry) && entry.type === "tree" && typeof entry.sha === "string" ? [entry.sha] : [])
+}
+
+effect function gitLines(gitDir: string, args: ReadonlyArray<string>) {
+  const bytes = try gitBytes({ args: ["--git-dir", gitDir, ...args], limit: historyLimitBytes, seconds: gitSeconds }, `git ${args[0] ?? ""} failed in ${gitDir}`)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+export effect function compareLocal(args: ReadonlyArray<string>) {
+  const [root = "", repository = "", commitArg = "40", walkArg = "3"] = args
+  const primary = try Config.withDefault(Config.String("GITHUB_TOKEN"), "")
+  const token = primary !== "" ? primary : try Config.withDefault(Config.String("GH_TOKEN"), "")
+  if (token === "") throw new CompareToken({ message: "GITHUB_TOKEN is required" })
+  const gitDir = `${root}/${repository}.git`
+  const results = { same: 0, declined: 0, different: 0 }
+  const timing = { apiMs: 0, localMs: 0, apiReads: 0, localReads: 0 }
+  provide github({ token: Redacted.make(token), userAgent: "slopbot" }) {
+    const remote = try GitHub
+    try scoped(effect {
+      const local = try localGitObjects(root)
+
+      effect function compare(path: string, omit: ReadonlyArray<string> = []) {
+        let started = try Clock.currentTimeMillis
+        const read = try remote.json(path, Schema.Unknown, { limitBytes: transportLimitBytes })
+        const theirs: Body = isBody(read) ? read : {}
+        timing.apiMs += (try Clock.currentTimeMillis) - started
+        timing.apiReads += 1
+        started = try Clock.currentTimeMillis
+        const ours = try local.read(new URL(`${githubApi}${path}`))
+        timing.localMs += (try Clock.currentTimeMillis) - started
+        timing.localReads += 1
+        if (ours === undefined) {
+          results.declined += 1
+          try Console.log(`declined ${path}`)
+          return theirs
+        }
+        const remoteText = JSON.stringify(withoutKeys(theirs, omit))
+        const mine = new TextDecoder().decode(ours)
+        if (remoteText === mine) results.same += 1
+        else {
+          results.different += 1
+          try Console.log(`DIFFERENT ${path}`)
+          try Console.log(`  github ${remoteText.slice(0, 400)}`)
+          try Console.log(`  local  ${mine.slice(0, 400)}`)
+        }
+        return theirs
+      }
+
+      const all = (try gitLines(gitDir, ["rev-list", "--all"])).split("\n")
+      const count = Number(commitArg)
+      const step = Math.max(1, Math.floor(all.length / count))
+      const commits = all.filter((_, index) => index % step === 0).slice(0, count)
+      for (const sha of commits) {
+        try compare(`/repos/${repository}/git/commits/${sha}`, remoteOnly)
+      }
+
+      for (const sha of commits.slice(0, Number(walkArg))) {
+        const tree = try gitLines(gitDir, ["rev-parse", `${sha}^{tree}`])
+        try compare(`/repos/${repository}/git/trees/${tree}?recursive=1`)
+        const queue = [tree]
+        const seen = new Set<string>()
+        while (queue.length > 0) {
+          const next = queue.shift() ?? ""
+          if (seen.has(next)) continue
+          seen.add(next)
+          const body = try compare(`/repos/${repository}/git/trees/${next}`)
+          queue.push(...subtrees(body))
+        }
+      }
+
+      try Console.log(JSON.stringify({ results, timing, stats: try local.stats() }))
+      try local.close()
+    })
+  }
+  if (results.different > 0) throw new LocalGitMismatch({ message: `${results.different} local Git answers differ from GitHub's` })
+}

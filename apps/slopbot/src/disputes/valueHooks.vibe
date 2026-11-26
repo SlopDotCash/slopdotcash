@@ -189,16 +189,20 @@ effect function answerDraft(job: AppealCommandJob, session: AppealSession, key: 
   const check = checkOf(dispute, sender, maintainer)
   const banned = try commitDispute(key, {}, (loaded) => [
     { event: { type: "observeBan", status: loaded.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+    { event: { type: "escalateBanAtAnswer", check }, by: sender, optional: true },
     { event: { type: "escalateDraft" }, by: 0, optional: true },
   ])
-  if (banned.applied.includes("escalateDraft")) try publishValueStage(session, key, "escalation")
+  if (banned.applied.includes("escalateBanAtAnswer") || banned.applied.includes("escalateDraft")) try publishValueStage(session, key, "escalation")
   if (banned.dispute.escalation !== "NotEscalated") {
     if (job.command === "reject") try publishValueStage(session, key, "escalation")
     return moderatorDecides
   }
   if (banned.dispute.draft === "NoDraft") return "no draft to answer yet"
   if (job.command === "reject") {
-    const rejected = try commitDispute(key, {}, () => [{ event: { type: "reject", check }, by: sender, optional: true }])
+    const rejected = try commitDispute(key, {}, (loaded) => [
+      { event: { type: "observeBan", status: loaded.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+      { event: { type: "reject", check }, by: sender, optional: true },
+    ])
     if (!rejected.applied.includes("reject")) return rejected.dispute.resolution === "Unresolved" ? moderatorDecides : "appeal already resolved"
     try publishValueStage(session, key, "escalation")
     return `appeal escalated: ${escalationOf(try loadDispute(key))}`
@@ -206,10 +210,11 @@ effect function answerDraft(job: AppealCommandJob, session: AppealSession, key: 
   const accepted = try commitDispute(key, {}, (loaded) => [
     { event: { type: "observeBan", status: loaded.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
     { event: { type: "accept", check }, by: sender, optional: true },
+    { event: { type: "escalateBanAtAnswer", check }, by: sender, optional: true },
     { event: { type: "escalateDraft" }, by: 0, optional: true },
   ])
   if (accepted.applied.includes("accept")) return try resolved(session, key)
-  if (accepted.applied.includes("escalateDraft")) try publishValueStage(session, key, "escalation")
+  if (accepted.applied.includes("escalateBanAtAnswer") || accepted.applied.includes("escalateDraft")) try publishValueStage(session, key, "escalation")
   return accepted.dispute.resolution === "Unresolved" ? moderatorDecides : "appeal already resolved"
 }
 

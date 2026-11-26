@@ -20,8 +20,14 @@ with an audited administrator split approval recorded for that exact program
 revision. A standard split divides exactly by four. The owner's exclusion
 lines are part of the revision ([terms](./terms.md)), so a change applies
 only to later reports. A full award is an
-after-approval pledge (CLAUDE.md, 28 October 2026): it binds no 75/25 bounty
-vault.
+after-approval pledge: it binds no 75/25 bounty vault. Slop's own program
+follows the operator decision of 20 November 2026 (`SECURITY.md`, PRD
+section 8, "Slop payout code"), which replaces the offer of 28 October 2026:
+it opens only if the Slop Cash decision market of 24 November 2026 passes,
+pays $5,000 in full to the first qualifying reporter of each accepted critical
+finding, at most two awards within 12 months, and the Slop Cash S.P. pays each
+approved award directly, through no Slop vault or payment rail. Until it
+opens, no paid award is offered for Slop's own code.
 
 ```quint
 import money as M from "../settlement/money"
@@ -54,6 +60,7 @@ pure def fundedEnough(p: Program, offer: Offer): bool =
 pure def canPublish(p: Program, by: int, owner: VerifiedOwner, offer: Offer, nowMs: int): bool =
   ownerMatches(p, owner, by) and nowMs > 0 and nowMs >= p.publishedAt
     and offerShapeValid(p, offer, p.revision + 1) and fundedEnough(p, offer)
+    and ((offer.status == Open and offer.policy == T::Prefunded) implies (nowMs >= p.fundingObservedAt and nowMs - p.fundingObservedAt <= 1800000))
 pure def publish(p: Program, by: int, owner: VerifiedOwner, offer: Offer, nowMs: int): Program =
   { ...p, offer: offer, revision: p.revision + 1, publishedAt: nowMs, revisions: p.revisions.append(p.revision + 1) }
 ```
@@ -84,14 +91,18 @@ pledge. A pledge is never treated as money. Development reads the funds of
 the next terms' vault when the owner publishes (`securityProgramFunds(next.id,
 after)` in `backend/projects/handler.ts`), so a draft whose own vault holds
 fresh finalized free funds opens prefunded directly, and the publish guard
-reads only an observation made for the published asset. A later observation
-never rewrites a published revision.
+reads only an observation made for the published asset no more than 30
+minutes before the publish. Only the funding observer sends the observation:
+the shell sends it from its own read of the vault snapshots
+(`readSecurityProgramFunds` in `backend/security/program-funds.ts`), never
+from a request. A later observation never rewrites a published revision.
 
 ```quint
 type FundingSnapshot = { finalized: bool, observedAt: int, asset: str, free: M::Amount }
-pure def canObserveFunding(p: Program, snapshot: FundingSnapshot, nowMs: int, offer: Offer): bool =
-  nowMs >= snapshot.observedAt and snapshot.observedAt >= p.fundingObservedAt and M::validAmount(snapshot.free)
-pure def observeFunding(p: Program, snapshot: FundingSnapshot, nowMs: int, offer: Offer): Program =
+pure val fundingObserver = -1
+pure def canObserveFunding(p: Program, by: int, snapshot: FundingSnapshot, nowMs: int, offer: Offer): bool = by == fundingObserver
+  and nowMs >= snapshot.observedAt and snapshot.observedAt >= p.fundingObservedAt and M::validAmount(snapshot.free)
+pure def observeFunding(p: Program, by: int, snapshot: FundingSnapshot, nowMs: int, offer: Offer): Program =
   { ...p, fundingObservedAt: snapshot.observedAt, fundingAsset: offer.asset, funding: if (snapshot.finalized and snapshot.asset == offer.asset
       and offer.asset != "" and nowMs - snapshot.observedAt <= 1800000 and M::positiveAmount(snapshot.free)) VerifiedAvailable else Pledged }
 pure def canObserveProjectRevision(p: Program, projectRevision: int): bool = projectRevision > p.projectRevision
@@ -142,10 +153,12 @@ pure def stepAdministratorsConfigured(before: Program, after: Program): bool =
 
 ### Simulation samples cover both projects, both splits and stale funds
 
+Sender -1 is the funding observer.
+
 ```quint
 pure val ownerValues = Set({ actor: 7, project: "umia", projectRevision: 1 }, { actor: 18633264, project: "slopdotcash", projectRevision: 1 },
   { actor: 7, project: "umia", projectRevision: 2 })
-pure val byValues = Set(7, 18633264)
+pure val byValues = Set(-1, 7, 18633264)
 pure val projectValues = Set("umia", "slopdotcash")
 pure val standardOffer: Offer = { status: Open, policy: T::AfterApproval, eligibility: T::InScopeSecurity, gross: List(100),
   split: T::StandardSplit, asset: "usdc", excludedFindings: List(3, 300) }

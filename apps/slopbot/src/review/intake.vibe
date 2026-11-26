@@ -1,0 +1,31 @@
+// spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap"; spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"
+import { isoNow } from "@repo/platform/clock"
+import { first, sql } from "@repo/platform/d1"
+import { IntakePause } from "@repo/ports/backend"
+
+export const intakeCapReason = "intake-cap"
+
+export interface IntakeItem {
+  readonly projectId: string
+  readonly repositoryId: number
+  readonly authorId: number
+  readonly number: number
+}
+
+export interface IntakeFacts {
+  readonly paused: boolean
+  readonly reviewedBefore: boolean
+}
+
+schema Reviewed { readonly ok: number }
+
+export effect function reviewedBefore(item: IntakeItem) {
+  const found: typeof Reviewed.Type | undefined = try first(Reviewed, sql`SELECT 1 AS ok FROM slopbot_reviews WHERE repository_id = ${item.repositoryId} AND author_id = ${item.authorId} AND item_kind = 'pull_request' AND item_number = ${item.number} AND status = 'completed' LIMIT 1`)
+  return found !== undefined
+}
+
+export effect function intakeFacts(item: IntakeItem) {
+  const paused = try (try IntakePause).paused(item.projectId, try isoNow())
+  if (!paused) return { paused, reviewedBefore: false } satisfies IntakeFacts
+  return { paused, reviewedBefore: try reviewedBefore(item) } satisfies IntakeFacts
+}

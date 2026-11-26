@@ -22,11 +22,13 @@ that does not decode opens the unknown page.
 
 ```quint
 type RouteKind = Home | HowItWorks | Sponsors | CycleArchive | Cycle | Points | Account | Login | Earnings | Inbox |
-  Admin | NewProject | VettingEvidence | SecurityCases | Project | ManageProject | SecurityProgram | Profile | Unknown
-type Route = { kind: RouteKind, projectId: str, cycleId: str, login: str }
+  Admin | NewProject | VettingEvidence | SecurityCases | Project | ManageProject | SecurityProgram | Profile |
+  Fee | FeeReport | Requested | Unknown
+type Route = { kind: RouteKind, projectId: str, cycleId: str, login: str, owner: str, repo: str, number: str, caseId: str }
 type Shell = { route: Route, opened: int }
 
-pure def page(kind: RouteKind): Route = { kind: kind, projectId: "", cycleId: "", login: "" }
+pure def page(kind: RouteKind): Route =
+  { kind: kind, projectId: "", cycleId: "", login: "", owner: "", repo: "", number: "", caseId: "" }
 pure val initial: Shell = { route: page(Home), opened: 0 }
 
 pure def canOpen(s: Shell, segments: List[str]): bool = segments.every(segment => segment != "")
@@ -59,12 +61,28 @@ pure def canonical(segments: List[str], securitySettings: bool): List[str] =
 Each kind is a pattern of the canonical segments. No two patterns overlap,
 and the parser returns the one that matches.
 
+Slopbot's fee comment links a pull request's submission fee at
+`/fee/<owner>/<repo>/<number>`, and the Inbox links a report's deposit at
+`/fee/report/<case>`; neither page needs an account. The shell matches them
+by shape alone, three segments `fee`, `report` and the case, or four
+segments beginning `fee`, and hands the page its segments as they are:
+whether they name a pull request (a GitHub login, a repository name of 1 to
+100 letters, digits, `.`, `_` and `-` other than `.` and `..`, a number of 1
+to 10 digits without a leading zero) or a case (`sc_` and 8 to 72 letters,
+digits, `_` and `-`) is the page's to say, as "This address does not name a
+pull request" or "This address does not name a report", not the unknown
+page.
+
+`/requested` opens the Requested repos page, whose `?flag=<owner>/<name>`
+query is the page's to read, not the shell's.
+
 ```quint
 pure def namedKind(segment: str): RouteKind =
   if (segment == "how-it-works") HowItWorks else if (segment == "sponsors") Sponsors
   else if (segment == "cycles") CycleArchive else if (segment == "account") Account else if (segment == "login") Login
   else if (segment == "earnings") Earnings else if (segment == "inbox") Inbox else if (segment == "admin") Admin
-  else if (segment == "vetting-evidence") VettingEvidence else if (segment == "security") SecurityCases else Unknown
+  else if (segment == "vetting-evidence") VettingEvidence else if (segment == "security") SecurityCases
+  else if (segment == "requested") Requested else Unknown
 pure def namedPage(segment: str, kind: RouteKind): bool = kind != Unknown and namedKind(segment) == kind
 
 pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
@@ -83,11 +101,14 @@ pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool, securit
   else if (kind == SecurityProgram) n == 3 and first == "projects" and third == "security"
   else if (kind == Profile) n == 2 and first == "contributors"
   else if (kind == Cycle) n == 3 and first == "cycles"
+  else if (kind == FeeReport) n == 3 and first == "fee" and second == "report"
+  else if (kind == Fee) n == 4 and first == "fee"
   else if (kind == Unknown) false
   else n == 1 and namedPage(first, kind)
 
 pure val knownKinds = List(Home, HowItWorks, Sponsors, CycleArchive, Cycle, Points, Account, Login, Earnings, Inbox, Admin,
-  NewProject, VettingEvidence, SecurityCases, Project, ManageProject, SecurityProgram, Profile)
+  NewProject, VettingEvidence, SecurityCases, Project, ManageProject, SecurityProgram, Profile, Fee, FeeReport,
+  Requested)
 pure def kindMatches(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
   if (kind == Unknown) not(knownKinds.some(known => matchesKnown(known, segments, withX, securitySettings)))
   else matchesKnown(kind, segments, withX, securitySettings)
@@ -107,6 +128,8 @@ pure def parse(segments: List[str], withX: bool, securitySettings: bool): Route 
   else if (n == 3 and first == "projects" and third == "security") { ...page(SecurityProgram), projectId: second }
   else if (n == 2 and first == "contributors") { ...page(Profile), login: second }
   else if (n == 3 and first == "cycles") { ...page(Cycle), projectId: second, cycleId: third }
+  else if (n == 3 and first == "fee" and second == "report") { ...page(FeeReport), caseId: third }
+  else if (n == 4 and first == "fee") { ...page(Fee), owner: second, repo: third, number: path.nthOr(3, "") }
   else page(Unknown)
 
 pure def lawEachAddressNamesOneKind(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
@@ -116,14 +139,17 @@ pure def lawEachAddressNamesOneKind(kind: RouteKind, segments: List[str], withX:
 ### A route carries exactly the identifiers its page needs
 
 A project page, its settings and its security program carry the project, a
-cycle carries its project and its id, and a profile carries the login. No
-other route carries any.
+cycle carries its project and its id, a profile carries the login, a
+submission fee carries the owner, repository and number, and a report's
+deposit carries the case. No other route carries any.
 
 ```quint
 pure def needsProject(kind: RouteKind): bool = kind == Project or kind == ManageProject or kind == SecurityProgram or kind == Cycle
 pure def alwaysRouteCarriesItsIdentifiers(s: Shell): bool =
   (s.route.projectId != "" iff needsProject(s.route.kind)) and (s.route.cycleId != "" iff s.route.kind == Cycle) and
-  (s.route.login != "" iff s.route.kind == Profile)
+  (s.route.login != "" iff s.route.kind == Profile) and (s.route.owner != "" iff s.route.kind == Fee) and
+  (s.route.repo != "" iff s.route.kind == Fee) and (s.route.number != "" iff s.route.kind == Fee) and
+  (s.route.caseId != "" iff s.route.kind == FeeReport)
 pure def alwaysOpenedIsNonnegative(s: Shell): bool = s.opened >= 0
 ```
 
@@ -141,9 +167,14 @@ pure def sometimesProjectSecurity(s: Shell): bool = s.route.kind == SecurityProg
 pure def sometimesAccountFromX(s: Shell): bool = s.route.kind == Account and s.opened > 0
 pure def sometimesUnknown(s: Shell): bool = s.route.kind == Unknown
 pure def sometimesProfile(s: Shell): bool = s.route.kind == Profile
+pure def sometimesFee(s: Shell): bool = s.route.kind == Fee
+pure def sometimesFeeReport(s: Shell): bool = s.route.kind == FeeReport
+pure def sometimesRequested(s: Shell): bool = s.route.kind == Requested
 pure val segmentsValues = Set(
+  List("fee", "octocat", "slop", "7"), List("fee", "report", "sc_abcdefgh"), List("fee", "report"), List("fee", "octocat", "slop"),
   List(), List("points"), List("wallet"), List("security"), List("cycles"), List("how-it-works"), List("projects"),
   List("projects", "new"), List("projects", "slop"), List("projects", "slop", "manage"), List("projects", "slop", "security"),
   List("projects", "slop", "awards"), List("projects", "new", "funding"), List("admin", "applications", "7"),
-  List("contributors", "octocat"), List("cycles", "slop", "2026-11"), List("cycles", "slop"), List("projects", ""))
+  List("contributors", "octocat"), List("cycles", "slop", "2026-11"), List("cycles", "slop"), List("projects", ""),
+  List("requested"), List("requested", "x"))
 ```

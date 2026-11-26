@@ -5,7 +5,6 @@ import { positiveBudgetFits } from "@repo/settlement/kernels/budget"
 import type { Environment, Event, Mode, Network, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts"
 import { apply, initial, readinessEntryApplies, readyFor, walletOf } from "../../gen/fees__runtime.effect.vibe"
 import { type FeeSecrets, type FeeVars, type NetworkDefinition, type SecretName, definitions, evmNetworks, expectedSecrets, isTokenAddress, networkNamed, networkOrder, secretNames } from "./networks.vibe"
-import { type ReadinessEvent, type ReadinessSettings, decodeReadiness, sameReadiness } from "./readiness.vibe"
 import { jupiter, kyberswap } from "./pins.ts"
 
 export interface NativeLimits { readonly perTransaction: bigint; readonly perDay: bigint; readonly additionalFeeReserve: bigint }
@@ -300,6 +299,38 @@ export interface Held { readonly runtime: Runtime; readonly wallets: ReadonlyArr
 
 export const unpublished: Held = { runtime: initial, wallets: ["unpublished EVM fee wallet", "unpublished Solana fee wallet"] }
 
+export interface ReadinessEntry { readonly network: Network; readonly wallet: string }
+export interface ReadinessSettings { readonly entries: ReadonlyArray<ReadinessEntry>; readonly replacementActive: boolean }
+
+export type ReadinessEvent =
+  | { readonly type: "verifyReadiness"; readonly network: Network; readonly wallet: string }
+  | { readonly type: "withdrawReadiness"; readonly network: Network }
+  | { readonly type: "setReplacement"; readonly active: boolean }
+
+const readinessPair = /^([a-z]+):(\S+)$/u
+
+effect function readinessEntryOf(text: string) {
+  const match = readinessPair.exec(text)
+  const network = match === null ? undefined : networkNamed(match[1] ?? "")
+  const wallet = match?.[2] ?? ""
+  if (network === undefined || !isTokenAddress(network, wallet)) throw new ConfigInvalid({ name: "FEE_READY", issue: "each entry must be network:walletAddress with a known network and a valid address" })
+  return { network, wallet } satisfies ReadinessEntry
+}
+
+export effect function decodeReadiness(vars: FeeVars) {
+  const texts = [...new Set((vars.FEE_READY ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== ""))]
+  const entries: Array<ReadinessEntry> = []
+  for (const text of texts) entries.push(try readinessEntryOf(text))
+  const replacement = (vars.FEE_REPLACEMENT_ACTIVE ?? "").trim()
+  if (replacement !== "" && replacement !== "true" && replacement !== "false") throw new ConfigInvalid({ name: "FEE_REPLACEMENT_ACTIVE", issue: "must be true or false" })
+  return { entries, replacementActive: replacement === "true" } satisfies ReadinessSettings
+}
+
+export function sameReadiness(left: ReadinessSettings, right: ReadinessSettings) {
+  const pairs = (settings: ReadinessSettings) => [...new Set(settings.entries.map((entry) => `${entry.network}:${entry.wallet}`))].sort().join(",")
+  return left.replacementActive === right.replacementActive && pairs(left) === pairs(right)
+}
+
 export type RuntimeEvent =
   | { readonly type: "chooseEnvironment"; readonly environment: Environment }
   | { readonly type: "setReleaseVariable"; readonly variable: boolean }
@@ -335,12 +366,12 @@ function specEvent(held: Held, event: RuntimeEvent): { readonly event: Event; re
       const wallets = registered(held.wallets, [event.config.evmWallet, event.config.solanaWallet])
       return { event: { type: "publish", config: workerConfig(event.config, event.source, wallets) }, wallets }
     }
-    case "verifyReadiness":
-      return { event: { type: "verifyReadiness", network: event.network }, wallets: held.wallets }
     case "chooseEnvironment":
       return { event: { type: "chooseEnvironment", environment: event.environment }, wallets: held.wallets }
     case "setReleaseVariable":
       return { event: { type: "setReleaseVariable", variable: event.variable }, wallets: held.wallets }
+    case "verifyReadiness":
+      return { event: { type: "verifyReadiness", network: event.network }, wallets: held.wallets }
     case "withdrawReadiness":
       return { event: { type: "withdrawReadiness", network: event.network }, wallets: held.wallets }
     case "setReplacement":

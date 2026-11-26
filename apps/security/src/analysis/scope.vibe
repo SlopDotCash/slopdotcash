@@ -11,17 +11,17 @@ schema Bounty { scope?: Scope }
 schema ManifestScope { securityBounty?: Bounty }
 
 export type ReceiptScope =
-  | { readonly kind: "scope"; readonly scope: ProgramScope | null; readonly ownerLines: ReadonlyArray<number> }
+  | { readonly kind: "scope"; readonly scope: ProgramScope | null; readonly ownerLines: ReadonlyArray<number>; readonly scoped: boolean }
   | { readonly kind: "unreadable" }
 
-const noScope: ReceiptScope = { kind: "scope", scope: null, ownerLines: [] }
+const noScope: ReceiptScope = { kind: "scope", scope: null, ownerLines: [], scoped: false }
 
 export effect function scopeOfManifest(manifest: string | null | undefined) {
   if (manifest === null || manifest === undefined) return noScope
   const parsed = Schema.decodeUnknownEffect(ManifestScope)(jsonValue(manifest)) catch () => undefined
   if (parsed === undefined) return { kind: "unreadable" } satisfies ReceiptScope as ReceiptScope
   const scope = parsed.securityBounty?.scope
-  return { kind: "scope", scope: analysisScope(scope), ownerLines: exclusionLengths(scope) } satisfies ReceiptScope as ReceiptScope
+  return { kind: "scope", scope: analysisScope(scope), ownerLines: exclusionLengths(scope), scoped: scope !== undefined } satisfies ReceiptScope as ReceiptScope
 }
 
 export function receiptManifest(caseId: string): Statement {
@@ -40,5 +40,7 @@ export effect function receiptScope(projectId: string, policyRevision: number | 
 }
 
 export function withOwnerLines(terms: ReceiptTerms, scope: ReceiptScope): ReceiptTerms {
-  return terms.paidTerms && scope.kind === "scope" ? { ...terms, excludedFindings: [...scope.ownerLines] } : terms
+  if (scope.kind !== "scope") return terms
+  if (terms.paidTerms) return { ...terms, excludedFindings: [...scope.ownerLines] }
+  return scope.scoped ? { ...terms, scoped: true, excludedFindings: [...scope.ownerLines] } : terms
 }

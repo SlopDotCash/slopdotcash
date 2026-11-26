@@ -1,0 +1,328 @@
+// spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"
+import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type ProviderAnswer, type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
+import { noticePorts } from "@repo/operations/live"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ReportingReadiness } from "@repo/ports/slopbot"
+import { Request as WorkerRequest } from "miniflare"
+import { analysisPrompt, jsonValue, screeningPrompt } from "../src/analysis/prompts.ts"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { FORWARDED_TOO_LONG, forwardedDescription, proofFileNameProblem, proofPatchProblem } from "../src/client/proof.ts"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
+import { IntakeApp } from "../src/forwarding/grant.vibe"
+import { forwardingRoutes } from "../src/forwarding/routes.vibe"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { intakeRoutes } from "../src/intake/routes.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { screeningRoutes } from "../src/screening/routes.vibe"
+import { type World, digest, maintainer, origin, other, reporter, request, rows, started as startedWorld, storedObject } from "./support/intake/harness.ts"
+
+type WebHandler = (request: globalThis.Request) => Promise<globalThis.Response>
+
+interface Answer {
+  readonly status: number
+  readonly body: Readonly<Record<string, unknown>>
+  readonly cookie: string | null
+  readonly location: string | null
+}
+
+service Proofs {
+  readonly world: World
+  readonly github: GitHubFake
+  readonly provider: ProviderFake
+  readonly clock: SettableClock
+  readonly handler: WebHandler
+  readonly pending: Array<Promise<unknown>>
+}
+
+const project = "intake-fixture"
+const login = `member-${reporter}`
+const grantKey = `${"P".repeat(42)}A`
+const surplusKey = "surplus-proof-key"
+
+const fixture: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900", stewardAccount: "UserSteward", listing: { fromApplication: false },
+  repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+function ports(clock: SettableClock) {
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => succeed(projectId === project ? fixture : undefined),
+      byRepository: () => succeed(undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([fixture]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: () => succeed({ banned: false }),
+      project: () => succeed({ restricted: false }),
+      fence: () => succeed(sql`SELECT 1`),
+      unbanned: () => succeed(sql`1`),
+    } satisfies Restrictions.Shape),
+    Layer.succeed(ReportingReadiness, {
+      current: () => sync(() => {
+        const verifiedAt = new Date(clock.now()).toISOString()
+        return {
+          target: { revision: 1, repositoryKey: "slop-test/intake", repositoryId: "1001", repositoryNodeId: "R_intake" },
+          observation: { repositoryId: "1001", repositoryNodeId: "R_intake", enabled: true, verifiedAt, attemptedAt: verifiedAt, failure: "NoFailure" as const },
+        }
+      }),
+    } satisfies ReportingReadiness.Shape),
+  )
+}
+
+function shellOf(world: World, github: GitHubFake, provider: ProviderFake, clock: SettableClock, pending: Array<Promise<unknown>>) {
+  const viaFakes: Fetcher = {
+    fetch: (sent) => {
+      const outbound = sent as unknown as Parameters<Handler>[0]
+      const fake = new URL(outbound.url).origin === new URL(github.authority).origin || new URL(outbound.url).origin === new URL(github.webAuthority).origin ? github : provider
+      return Promise.resolve(fake.handler(outbound)) as unknown as ReturnType<Fetcher["fetch"]>
+    },
+  }
+  const app = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.mergeAll(outboundVia(viaFakes), webCrypto, clock.layer))
+  const base = Layer.mergeAll(
+    d1(world.db),
+    webCrypto,
+    clock.layer,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: "801", PROJECT_MODERATOR_GITHUB_IDS: "801" }),
+    intakeSettings({ mode: "on", automatic: true }),
+    outboundVia(viaFakes),
+    Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: github.app.clientId, clientSecret: Redacted.make(github.app.clientSecret), webOrigin: github.webAuthority, apiOrigin: github.authority } }),
+    ports(clock),
+    reportDepositSettings("off"),
+    Layer.succeed(Execution, { context: { waitUntil: (work) => { pending.push(work) } } satisfies ExecutionContext }),
+  )
+  const route = Layer.provide(privateRoute({ apiKey: surplusKey }), Layer.merge(outboundVia(viaFakes), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, noticePorts, app, route, SubmissionFeeRatesLive, ProjectParticipationLive), base)
+}
+
+const Started = Layer.effect(Proofs, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const clock = settableClock(Date.now())
+  const provider = providerFake({ holdMs: 10 })
+  const github = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+  try orDie(Effect.try(() => {
+    github.world.addOrg({ id: 5000, login: "slop-test" })
+    github.world.addUser({ id: Number(reporter), login })
+    github.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
+    github.world.setPrivateReporting("slop-test/intake", true)
+    github.world.addInstallation({ id: 4402, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
+  }))
+  const pending: Array<Promise<unknown>> = []
+  const routes = Layer.mergeAll(forwardingRoutes, intakeRoutes, screeningRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, github, provider, clock, pending)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return { world, github, provider, clock, handler: web.handler as unknown as WebHandler, pending }
+})
+
+const sessions = new Map<string, string>()
+
+async function sessionCookie(world: World, githubId: string): Promise<string> {
+  const known = sessions.get(githubId)
+  if (known !== undefined) return known
+  const token = `p${githubId.padStart(20, "0")}${String(sessions.size + 1).padStart(8, "0")}${"r".repeat(35)}`
+  await world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date().toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 86_400_000).toISOString()),
+  ])
+  const cookie = `__Host-slop_points=${token}`
+  sessions.set(githubId, cookie)
+  return cookie
+}
+
+function cookieValue(setCookie: string | null) {
+  return setCookie === null ? undefined : setCookie.split(";")[0]
+}
+
+async function drained(pending: Array<Promise<unknown>>): Promise<void> {
+  for (let work = pending.shift(); work !== undefined; work = pending.shift()) await work
+}
+
+async function called(proofs: Proofs.Shape, path: string, as: string, jar: ReadonlyArray<string>, body?: unknown): Promise<Answer> {
+  const session = await sessionCookie(proofs.world, as)
+  const headers: Record<string, string> = { cookie: [session, ...jar].join("; "), "x-slop-expected-github-id": as }
+  if (body !== undefined) {
+    headers["content-type"] = "application/json"
+    headers.origin = origin
+  }
+  const sent = new WorkerRequest(`${origin}${path}`, { method: body === undefined ? "GET" : "POST", headers, redirect: "manual", ...body === undefined ? {} : { body: JSON.stringify(body) } })
+  const response = await proofs.handler(sent as unknown as globalThis.Request)
+  const type = response.headers.get("content-type") ?? ""
+  const answer = {
+    status: response.status,
+    body: type.startsWith("application/json") ? await response.json() as Readonly<Record<string, unknown>> : {},
+    cookie: response.headers.get("set-cookie"),
+    location: response.headers.get("location"),
+  }
+  await drained(proofs.pending)
+  return answer
+}
+
+effect function call(proofs: Proofs.Shape, path: string, as: string, jar: ReadonlyArray<string>, body?: unknown) {
+  return try promise(() => called(proofs, path, as, jar, body))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const proof = {
+  fileName: "Drain.t.sol",
+  patch: "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\ncontract DrainTest {\n  /// ```solidity\n  /// vault.withdraw(type(uint256).max);\n  /// ```\n  function testDrain() public {}\n}",
+}
+
+const description = "A stale oracle read lets any caller withdraw more than their balance from the vault."
+
+function reportOf(summary: string, extra: Readonly<Record<string, unknown>> = {}) {
+  return { summary, description, proofOfConcept: proof, severity: "high", ...extra }
+}
+
+function submitted(world: World, as: string, key: string, report: unknown) {
+  return promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+}
+
+effect function created(world: World, as: string, key: string, report: unknown) {
+  const answer = try submitted(world, as, key, report)
+  if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
+  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
+}
+
+function said(call: ProviderCall | undefined) {
+  return call?.messages[0]?.content ?? ""
+}
+
+function sentFile(call: ProviderCall | undefined) {
+  return (jsonValue(said(call)) as { readonly report?: { readonly reporterProofOfConceptFile?: unknown } } | undefined)?.report?.reporterProofOfConceptFile
+}
+
+function callOf(system: string, summary: string) {
+  return (call: ProviderCall) => call.system === system && said(call).includes(summary)
+}
+
+function decided(decision: string, reason: string): ProviderAnswer {
+  return { text: JSON.stringify({ decision, reason, duplicateCaseIds: [] }) }
+}
+
+function assessed(summary: string): ProviderAnswer {
+  return { text: JSON.stringify({ summary, severity: "high", potentialLoss: "likely", duplicateCaseIds: [], rootCauseKey: null, remediation: "Read a fresh price before every withdrawal." }) }
+}
+
+effect function consented(proofs: Proofs.Shape, id: string) {
+  const authorized = try call(proofs, `/api/v1/security-submissions/${id}/authorize`, reporter, [], {})
+  const flow = cookieValue(authorized.cookie)
+  const authorizeUrl = authorized.body.authorizeUrl
+  if (authorized.status !== 200 || flow === undefined || typeof authorizeUrl !== "string") return try die(new Error(`authorization refused: ${authorized.status}`))
+  const redirected = try promise(() => Promise.resolve(proofs.github.handler(new WorkerRequest(authorizeUrl, { redirect: "manual" }) as unknown as Parameters<Handler>[0])))
+  const back = URL.parse(redirected.headers.get("location") ?? "")
+  if (back === null) return try die(new Error("GitHub did not redirect back"))
+  const callback = try call(proofs, `${back.pathname}${back.search}`, reporter, [flow])
+  const grant = cookieValue(callback.cookie)
+  if (grant === undefined) return try die(new Error("no grant cookie"))
+  return grant
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A private report carries a proof-of-concept file to its readers, every model call and GitHub (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/forwarding.md, "Story: Forward the approved saved report using the researcher\'s consent"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/reportNotices.md, "Report bodies stay out of every record and never reach a public issue")', () => effect {
+    const proofs = try Proofs
+    const { world, provider, github } = proofs
+
+    const refusedReports = [
+      { key: "proof-refused-0001", report: reportOf("Proof refused for its name", { proofOfConcept: { ...proof, fileName: "../Drain.t.sol" } }), message: proofFileNameProblem("../Drain.t.sol") },
+      { key: "proof-refused-0002", report: reportOf("Proof refused for its ending", { proofOfConcept: { ...proof, fileName: "Drain.exe" } }), message: proofFileNameProblem("Drain.exe") },
+      { key: "proof-refused-0003", report: reportOf("Proof refused as binary", { proofOfConcept: { ...proof, patch: "PK\u0003\u0004\u0000\u0000" } }), message: proofPatchProblem("PK\u0003\u0004\u0000\u0000") },
+      { key: "proof-refused-0004", report: reportOf("Proof refused for its size", { proofOfConcept: { ...proof, patch: "a".repeat(60_001) } }), message: proofPatchProblem("a".repeat(60_001)) },
+      { key: "proof-refused-0005", report: reportOf("Proof refused for the combined length", { description: "d".repeat(64_900) }), message: FORWARDED_TOO_LONG },
+      { key: "proof-refused-0006", report: reportOf("Proof refused for an extra field", { proofOfConcept: { ...proof, path: "test/Drain.t.sol" } }), message: "Invalid proofOfConcept" },
+    ]
+    const refusals = try Effect.forEach(refusedReports, (entry) => submitted(world, other, entry.key, entry.report))
+    const leftovers = try promise(() => rows(world, `SELECT COUNT(*) AS n FROM security_submissions WHERE idempotency_key LIKE 'proof-refused-%'`))
+
+    const readReport = reportOf("Vault drain proven by a test file")
+    const saved = try created(world, reporter, "proof-journey-0001", readReport)
+    const stored = try promise(() => rows(world, "SELECT version, content_sha256, byte_count FROM security_intake_reports WHERE submission_id=? ORDER BY version", saved.id))
+    const exact = JSON.stringify({ summary: readReport.summary, description, proofOfConcept: proof, severity: "high" })
+    const exactSha = try promise(() => digest(exact))
+    const object = try promise(() => storedObject(world, `security-reports/${saved.id}/1-${exactSha}.json`))
+    const detailPath = `/api/v1/security-submissions/${saved.id}`
+    const readerAnswer = try promise(() => request(world, detailPath, { as: reporter }))
+    const approverAnswer = try promise(() => request(world, detailPath, { as: maintainer }))
+    const strangerAnswer = try promise(() => request(world, detailPath, { as: "49999" }))
+    const audited = try promise(() => rows(world, "SELECT actor_github_id FROM security_intake_access_log WHERE submission_id=? AND action='read' ORDER BY rowid", saved.id))
+
+    const screenedReport = reportOf("Oracle staleness proven by a patch")
+    const screened = try created(world, "41101", "proof-journey-0002", screenedReport)
+    provider.reply(callOf(screeningPrompt, screenedReport.summary), decided("legitimate", "The test file reproduces the drain against the named vault."))
+    provider.reply(callOf(analysisPrompt, screenedReport.summary), assessed("A stale oracle read lets callers over-withdraw."))
+    const screen = try call(proofs, `/api/v1/security-submissions/${screened.id}/screen`, "41101", [], { expectedRevision: 1 })
+    const screeningCall = provider.calls.find(callOf(screeningPrompt, screenedReport.summary))
+    const analysisCall = provider.calls.find(callOf(analysisPrompt, screenedReport.summary))
+    const plain = { summary: "Oracle staleness without a proof file", description, severity: "high" }
+    const unproven = try created(world, "41102", "proof-journey-0003", plain)
+    provider.reply(callOf(screeningPrompt, plain.summary), decided("legitimate", "The report names the vault and the stale read."))
+    provider.reply(callOf(analysisPrompt, plain.summary), assessed("A stale oracle read lets callers over-withdraw."))
+    try call(proofs, `/api/v1/security-submissions/${unproven.id}/screen`, "41102", [], { expectedRevision: 1 })
+    const plainCall = provider.calls.find(callOf(screeningPrompt, plain.summary))
+
+    const forwardedReport = reportOf("Vault drain forwarded with its proof")
+    const forwarded = try created(world, reporter, "proof-journey-0004", forwardedReport)
+    try promise(() => world.db.prepare("UPDATE security_submission_intake SET screening_state='legitimate', revision=revision+1 WHERE submission_id=?").bind(forwarded.id).run())
+    const grant = try consented(proofs, forwarded.id)
+    const sent = try call(proofs, `/api/v1/security-submissions/${forwarded.id}/send`, reporter, [grant], { expectedRevision: 1 })
+    const advisories = try orDie(Effect.try(() => github.world.repo("slop-test/intake").advisories))
+    const filed = advisories.find((advisory) => advisory.summary === forwardedReport.summary)
+    const expectedDescription = forwardedDescription(description, proof)
+
+    try same({
+      refusals: refusals.map((answer) => [answer.status, answer.body]),
+      leftovers,
+      stored: stored.map((row) => [row.version, row.content_sha256, row.byte_count]),
+      object: object?.text,
+      reads: [readerAnswer, approverAnswer].map((answer) => [answer.status, (answer.body as { readonly report?: { readonly proofOfConcept?: unknown } }).report?.proofOfConcept]),
+      stranger: strangerAnswer.status,
+      audited: audited.map((row) => row.actor_github_id),
+      screen: screen.status,
+      models: [sentFile(screeningCall), sentFile(analysisCall), sentFile(plainCall)],
+      sent: sent.status < 300,
+      forwarded: filed?.description.startsWith(`${expectedDescription}\n\n`),
+    }, {
+      refusals: refusedReports.map((entry) => [400, { error: "invalid_report", message: entry.message }]),
+      leftovers: [{ n: 0 }],
+      stored: [[1, exactSha, new TextEncoder().encode(exact).byteLength]],
+      object: exact,
+      reads: [[200, proof], [200, proof]],
+      stranger: 404,
+      audited: [reporter, maintainer],
+      screen: 200,
+      models: [{ fileName: proof.fileName, content: proof.patch }, { fileName: proof.fileName, content: proof.patch }, undefined],
+      sent: true,
+      forwarded: true,
+    })
+  })
+})

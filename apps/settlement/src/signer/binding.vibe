@@ -329,7 +329,7 @@ effect function retireRevertedAttempt(scope: Scope, deployment: Deployment, key:
     const retiring = record === undefined ? 0 : attemptOf(record, attempt.transactionId)
     if (record !== undefined && !record.state.retired.includes(retiring)) {
       const block = Number(receipt.blockNumber)
-      try advance(entries, key, record, [{ event: { type: "retireReverted", receipt: { attempt: retiring, reverted: true, block, canonicalBlock: block } }, by: "attester" }])
+      try advance(entries, key, record, [{ event: { type: "retireReverted", receipt: { attempt: retiring, reverted: true, block, canonicalBlock: block, bindingLanded: false } }, by: "attester" }])
     }
     if (deployment.consentNonceLimit || current.bindingConsentBudgetKey !== undefined) return false
     try entries.put(key, null)

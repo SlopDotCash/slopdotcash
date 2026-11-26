@@ -5,9 +5,15 @@
   "type": "module",
   "exports": {
     "./client": "./src/client/index.vibe",
+    "./controlPlane": "./src/qualification/recovery/account.vibe",
+    "./evidence/records": "./src/release/evidence/records.schema.vibe",
     "./live": "./src/live.vibe",
     "./notify": "./src/workers/notify.vibe",
-    "./rpc": "./src/release/rpc/command.vibe"
+    "./recoveryFixture": "./src/qualification/recovery/fixture.vibe",
+    "./recoveryPlan": "./src/qualification/recovery/plan.vibe",
+    "./retired": "./src/release/retired.ts",
+    "./rpc": "./src/release/rpc/command.vibe",
+    "./wrangler": "./src/release/wrangler/cloudflare.vibe"
   },
   "scripts": {
     "build": "vite build",
@@ -31,6 +37,7 @@
     "vibelang": "0.0.13",
     "vibestack": "workspace:*",
     "vite": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yaml": "2.9.1"
   }
 }

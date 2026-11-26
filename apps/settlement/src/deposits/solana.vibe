@@ -1,0 +1,68 @@
+// spec/settlement/solanaVaultDeposits.md, "Story: Record every finalized deposit of an ordinary Solana vault once"; spec/settlement/solanaVaultDeposits.md, "A run reads newest first below the interval it resumes and above the covered position"; spec/settlement/solanaVaultDeposits.md, "Rules"
+import { type Address, type Signature, SolanaRpc, address, chainIdentity, isSignature, solanaRpc } from "@repo/platform/chain/solana"
+import { worker } from "../../gen/settlement__solanaVaultDeposits.effect.vibe"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+import { solanaDeposits } from "./decode.ts"
+import { DepositReadFailed, type DepositKey, type SolanaDepositSession, type VaultDepositRecord, openSolanaDeposits } from "./store.vibe"
+
+export type SolanaDepositDeployment = Extract<RegisteredDeployment, { family: "solana" }>
+
+export const SOLANA_DEPOSIT_TRANSACTIONS_PER_RUN = 25
+
+const SLOT = 1
+
+function signatureOf(text: string | null): Signature | undefined {
+  return text !== null && isSignature(text) ? text : undefined
+}
+
+effect function transactionRecords(program: Address, project: Address, signature: Signature) {
+  const fetched = try (try SolanaRpc).transaction(signature, "finalized")
+  if (fetched === undefined || fetched.meta.err) throw new DepositReadFailed({ message: "Finalized transaction unavailable" })
+  const blockTime = fetched.blockTime
+  if (blockTime === undefined || !Number.isSafeInteger(fetched.slot) || !Number.isSafeInteger(blockTime)) throw new DepositReadFailed({ message: "Finalized transaction time unavailable" })
+  const deposits = solanaDeposits(fetched, program, project)
+  if (deposits.kind === "malformed") throw new DepositReadFailed({ message: deposits.issue })
+  const blockNumber = try orDie(Effect.try(() => BigInt(fetched.slot)))
+  return deposits.value.map((deposit) => ({ transactionId: signature, eventIndex: deposit.index, depositor: deposit.depositor, amount: deposit.amount, blockNumber, blockTime }) satisfies VaultDepositRecord)
+}
+
+effect function listedRecords(program: Address, project: Address, entry: { readonly signature: Signature; readonly err: boolean }, session: SolanaDepositSession) {
+  if (entry.err) return []
+  return transactionRecords(program, project, entry.signature) catch effect (error) => {
+    try session.fail(SLOT, worker)
+    throw error
+  }
+}
+
+effect function readInterval(program: Address, project: Address, session: SolanaDepositSession) {
+  const at = try session.cursor()
+  const listed = try (try SolanaRpc).signatures(project, { before: signatureOf(at.resumeBefore), until: signatureOf(at.position), limit: SOLANA_DEPOSIT_TRANSACTIONS_PER_RUN }, "finalized")
+  try session.start(SLOT, worker, at, listed.map((entry) => entry.signature))
+  let recorded = 0
+  for (const entry of listed) {
+    const records = try listedRecords(program, project, entry, session)
+    if ((try session.read(SLOT, worker, records)) === "Overtaken") return recorded
+    recorded += records.length
+  }
+  try session.finish(SLOT, worker)
+  return recorded
+}
+
+export effect function scanSolanaDeposits(deployment: SolanaDepositDeployment) {
+  const configured = try PaymentRpc
+  const urls = configured.urls[deployment.network]
+  if (urls === undefined) throw new DepositReadFailed({ message: "Private RPC configuration unavailable" })
+  const program = address(deployment.programId)
+  const project = address(deployment.projectPda)
+  if (program === undefined || project === undefined) throw new DepositReadFailed({ message: "Solana project deployment missing" })
+  const options = { urls, genesis: configured.genesis[deployment.network] ?? "" }
+  const identity = try chainIdentity(options)
+  if (identity === "MissingPin") throw new DepositReadFailed({ message: "Solana genesis trust root unavailable" })
+  if (identity !== "PinnedGenesis") throw new DepositReadFailed({ message: "Wrong Solana cluster" })
+  const key = { projectId: deployment.projectId, network: deployment.network, chain: deployment.chain, vault: deployment.vault } satisfies DepositKey
+  const session = try openSolanaDeposits(key, SOLANA_DEPOSIT_TRANSACTIONS_PER_RUN)
+  provide solanaRpc(options) {
+    return try readInterval(program, project, session)
+  }
+}

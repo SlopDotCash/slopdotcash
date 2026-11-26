@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"
 import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { type Statement, first, rows, sql } from "@repo/platform/d1"
 import { type Actor, Refused } from "@repo/platform/http"
@@ -6,9 +6,9 @@ import type { Refusal } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
-import { type AuthorityFact, type Event, type Monthly, Rejected, belowProposal, canAdjust, canCut, canFinalize, canObserveSettings, cutNoticeElapsed, cutNoticeSeconds, cutReasonMax, cutReasonMin, cutWindowOpen, cutoff, financialTermsSame, hasActor, manages, monthEnd, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
+import { type AuthorityFact, type Event, type Monthly, Rejected, belowProposal, canAdjust, canCut, canFinalize, canObserveSettings, cutNoticeElapsed, cutNoticeSeconds, cutReasonMax, cutReasonMin, cutWindowOpen, cutoff, financialTermsSame, freezesAtCutoff, hasActor, manages, monthEnd, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
 import { excludedIn } from "../../gen/settlement__payoutExclusions.effect.vibe"
-import type { SettingsAuthority } from "../../gen/settlement__monthlySettings.effect.vibe"
+import { type SettingsAuthority, Rejected as SettingRejected } from "../../gen/settlement__monthlySettings.effect.vibe"
 import { type MonthlyAwardState, type MonthlyAwardView, type MonthlyCut, type MonthlyOwnerView } from "../client/monthly.vibe"
 import { getPaymentsProjectsByIdMonthlyByPeriod as viewRows, getPaymentsProjectsByIdMonthlyByPeriodCuts as cutRows, postPaymentsProjectsByIdMonthlyByPeriodAllocations as changeRows, postPaymentsProjectsByIdMonthlyByPeriodFinalize as finalizeRows, postPaymentsProjectsByIdMonthlySettings as settingRows } from "../client/refusals.vibe"
 import { formatBaseUnits, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
@@ -185,7 +185,7 @@ effect function cutNoticeStatements(notice: CutNotice, actor: number, sequence: 
       actionPath: `/cycles/${projectId}/${period}`,
       sourceAt: try isoAt(notice.cutAt * 1000),
     }],
-    onlyIf: sql`EXISTS (SELECT 1 FROM monthly_allocation_cut_reasons WHERE project_id = ${projectId} AND period = ${period} AND sequence = ${sequence})`,
+    onlyIf: sql`EXISTS (SELECT 1 FROM monthly_allocation_cut_reasons WHERE project_id = ${projectId} AND period = ${period} AND sequence = ${sequence} AND github_user_id = ${String(actor)})`,
   })
 }
 
@@ -260,6 +260,7 @@ export effect function monthView(authorized: Authorized, loaded: Loaded) {
     asset: vault === undefined ? null : { network: vault.network, assetAddress: vault.asset_address, assetDecimals: vault.asset_decimals, symbol: fields.rewardAsset?.symbol ?? null },
     proposal: base === undefined ? null : {
       capBase: base.cap_base,
+      ...(state.earlyCloseAt > 0 ? { earlyCloseAt: try isoAt(state.earlyCloseAt * 1000) } : {}),
       allocationSequence: state.sequence,
       allocations: monthRows.proposed.map((row) => ({ githubUserId: row.github_user_id, login: row.github_login, grossBase: shares.get(row.github_user_id) ?? row.gross_base, sourceDigest: row.source_digest, proposedGrossBase: row.gross_base })),
       latestCutAt: latestCut,
@@ -288,10 +289,10 @@ effect function changeRefusal(state: Monthly, target: number, amount: ReturnType
   if (!manages(fact, state)) return refused(fact.revision !== state.eligibility.revision ? changeRows.projectChanged : authorityRefusals.ownerRequired)
   if (request.expectedSequence !== state.sequence) return refused(changeRows.allocationsChanged)
   if (target === fact.actor) return new Refused({ ...refusalOf(changeRows.invalidAllocation, "You cannot change your own allocation."), status: 403 })
-  if (state.automatic && state.now >= cutoff(state)) return refused(changeRows.cutoffPassed)
+  if (freezesAtCutoff(state) && state.now >= cutoff(state)) return refused(changeRows.cutoffPassed)
   if (cutting && !cutWindowOpen(state)) {
     const closes = try utcMinute(cutoff(state) - cutNoticeSeconds)
-    return refused(changeRows.cutNoticeWindowPrivateNoStore, `A contributor gets 24 hours of notice before a cut takes effect. With automatic finalization on, cuts close at ${closes}, 24 hours before the cutoff.`)
+    return refused(changeRows.cutNoticeWindowPrivateNoStore, `A contributor gets 24 hours of notice before a cut takes effect. Because this month freezes at the cutoff, cuts close at ${closes}, 24 hours before the cutoff.`)
   }
   const gross = fromAmount(amount)
   if (gross > 0n && excludedIn(state.exclusions, target, state.period)) return refused(changeRows.invalidAllocation, "This person has a payout exclusion for this month.")
@@ -320,13 +321,40 @@ effect function eventFor(state: Monthly, request: ChangeRequest, fact: Authority
   return { event, reason, gross, target }
 }
 
-effect function afterRace(authorized: Authorized, fallback: ParityRow) {
+effect function raceRefusal(authorized: Authorized) {
   const standing = try (try Restrictions).account(String(authorized.fact.actor))
   if (standing.banned) return refused(changeRows.accountBanned)
   const current = try (try Registry).project(authorized.project.projectId)
   if (current === undefined) return refused(changeRows.paymentRegistryUnavailable)
   if (current.revision !== authorized.project.revision || current.manifestSha256 !== authorized.project.manifestSha256) return refused(changeRows.projectChanged)
-  return refused(fallback)
+  return undefined
+}
+
+effect function afterRace(authorized: Authorized, fallback: ParityRow) {
+  return (try raceRefusal(authorized)) ?? refused(fallback)
+}
+
+effect function changeRaced(authorized: Authorized, key: MonthKey, request: ChangeRequest) {
+  const blocked = try raceRefusal(authorized)
+  if (blocked !== undefined) return blocked
+  const loaded = try loadedMonth(key, authorized.facts)
+  if (loaded.rows.run !== undefined) return refused(changeRows.allocationsChanged)
+  const outcome = eventFor(loaded.state, request, authorized.fact) catch effect (error) => match (error) {
+    when Refused: error;
+    default: throw error;
+  }
+  return outcome instanceof Refused ? outcome : refused(changeRows.allocationsChanged)
+}
+
+effect function freezeGuard(authorized: Authorized, key: MonthKey, state: Monthly, cutting: boolean) {
+  const deployment = authorized.facts.eligibility.retired ? undefined : servedDeploymentOf(authorized.manifest, authorized.facts.served)
+  const closesAt = cutoff(state)
+  const deadline = closesAt - cutNoticeSeconds
+  const clock = sql`strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
+  const open = sql`(${state.now >= closesAt ? 1 : 0} = 0 AND ${clock} < ${try isoAt(closesAt * 1000)} AND (${cutting ? 1 : 0} = 0 OR (${state.now >= deadline ? 1 : 0} = 0 AND ${clock} < ${try isoAt(deadline * 1000)})))`
+  const automatic = sql`coalesce((SELECT automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence DESC LIMIT 1), 1) <> 0`
+  const pledged = deployment === undefined ? sql`0` : sql`EXISTS (SELECT 1 FROM vault_month_pledges WHERE project_id = ${key.projectId} AND network = ${deployment.network} AND vault = ${deployment.vault} AND period = ${formatPeriod(key.period)} AND amount <> '0')`
+  return sql`SELECT CASE WHEN NOT (${automatic} OR ${pledged}) OR ${open} THEN 1 ELSE json('month freezes at the cutoff') END AS open`
 }
 
 export effect function changeAllocation(projectId: string, periodText: string, actor: Actor, request: ChangeRequest) {
@@ -338,15 +366,16 @@ export effect function changeAllocation(projectId: string, periodText: string, a
   const loaded = try loadedMonth(key, authorized.facts)
   if (loaded.rows.run !== undefined) throw refused(changeRows.monthFrozen)
   if (loaded.rows.base === undefined) throw refused(changeRows.proposalUnavailable)
+  if (loaded.state.earlyCloseAt > 0) throw refused(changeRows.closeoutAllocationsFixed)
   const { event, reason, gross, target } = try eventFor(loaded.state, request, authorized.fact)
-  const guards = try participationGuards(authorized)
+  const guards = [...(try participationGuards(authorized)), try freezeGuard(authorized, key, loaded.state, event.type === "cut")]
   const proposed = loaded.rows.proposed.find((row) => row.github_user_id === String(target))
   const notices = event.type === "cut"
-    ? try cutNoticeStatements({ key, manifestText: authorized.facts.current?.manifest ?? "", proposed: parseBaseUnits(proposed?.gross_base ?? "0") ?? 0n, gross, reason, cutAt: loaded.state.now, automatic: loaded.state.automatic }, target, loaded.state.sequence + 1)
+    ? try cutNoticeStatements({ key, manifestText: authorized.facts.current?.manifest ?? "", proposed: parseBaseUnits(proposed?.gross_base ?? "0") ?? 0n, gross, reason, cutAt: loaded.state.now, automatic: freezesAtCutoff(loaded.state) }, target, loaded.state.sequence + 1)
     : []
   sendMonth(key, event, { reason: event.type === "cut" ? reason : undefined, alongside: [...guards, ...notices] }) catch effect (error) => match (error) {
-    when Rejected: throw refused(changeRows.allocationsChanged);
-    when Conflict: throw (try afterRace(authorized, changeRows.allocationsChanged));
+    when Rejected: throw (try changeRaced(authorized, key, request));
+    when Conflict: throw (try changeRaced(authorized, key, request));
     when CutReasonMissing: throw refused(changeRows.cutReasonRequired);
     default: throw error;
   }
@@ -379,7 +408,7 @@ export effect function finalizeMonth(projectId: string, periodText: string, acto
   const loaded = try loadedMonth(key, authorized.facts)
   if (loaded.rows.run === undefined) {
     const state = loaded.state
-    if (state.now < monthEnd(state.period)) throw refused(finalizeRows.monthOpen)
+    if (state.now < monthEnd(state.period) && !(state.earlyCloseAt > 0 && state.now >= state.earlyCloseAt)) throw refused(finalizeRows.monthOpen)
     if (loaded.rows.base === undefined) throw refused(finalizeRows.proposalUnavailable)
     if (!canFinalize(state, expectedSequence, authorized.fact)) {
       const refusal = try finalizeRefusal(state, expectedSequence, authorized.fact)
@@ -419,11 +448,10 @@ export effect function setMonthlyAutomatic(projectId: string, actor: Actor, auto
   const expectedSequence = (try loadSettings(projectId)).state.sequence
   const authorized = try authorize(projectId, actor, "owner")
   if (authorized.fact.banned) throw refused(settingRows.accountBanned)
-  if (automatic) {
-    const blocked = try noticeBlocks(projectId, authorized.facts, expectedSequence + 1)
-    if (blocked !== undefined) throw refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
-  }
-  const next = setAutomatic(projectId, { automatic, expectedSequence, authority: settingsAuthority(authorized) }) catch effect (error) => match (error) {
+  const blocked = try noticeBlocks(projectId, authorized.facts, expectedSequence + 1)
+  if (automatic && blocked !== undefined) throw refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
+  const next = setAutomatic(projectId, { automatic, expectedSequence, authority: settingsAuthority(authorized), lateCutNotice: blocked !== undefined }) catch effect (error) => match (error) {
+    when SettingRejected: throw (try afterRace(authorized, settingRows.settingChanged));
     when Conflict: throw (try afterRace(authorized, settingRows.settingChanged));
     when ProjectChanged: throw (try afterRace(authorized, settingRows.settingChanged));
     default: throw error;

@@ -82,7 +82,15 @@ Routing a qualified version saves, in the same step, one case notice under
 that version for each current technical approver other than the reporter.
 A notice records no report text or amount. Delivery to a verified
 destination stays with the Inbox; the acting maintainer and missing contacts
-stay with screening.
+stay with screening. No owner notice is written while the report waits for
+its [deposit](./reportDeposit.md): routing waits for the screening it holds
+back (`routedNotice` in `backend/security/report-intake.ts`), and a receipt
+linked from GitHub writes its owner notice only when it does not wait
+(`recordPrivateReports` and `createCase` in `backend/security/handler.ts`).
+Once the deposit no longer holds, the deposit sweep writes for such a receipt
+exactly the notice its receipt would have written, keyed by the receipt event
+(`submit`, `submit-direct`, `receive` or `verify-link`), so a repeated sweep
+writes it once (`ownerNotice` in `backend/security/report-deposit.ts`).
 
 ```quint
 pure def routeKey(version: int): int = noticeKey(OwnersRouted, version)
@@ -361,7 +369,7 @@ pure val observationValues = Set(S::Proposal({ phase: S::Legitimate, validRespon
 pure val resultValues = Set(C::Drafted({ returnCase: false, confidencePercent: 95, exclusions: offerExclusions }),
   C::TriageFailedResult)
 pure val decisionValues = Set({ finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0,
-  duplicateOf: 0, declareRelated: false })
+  duplicateOf: 0, declareRelated: false, spam: false })
 pure val attemptValues = Set(1)
 pure val completeValues = Set(true)
 pure val elapsedMsValues = Set(1000)

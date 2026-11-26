@@ -24,7 +24,7 @@ schema Rate {
   cacheCreationNanoUsdPerToken: string
   outputNanoUsdPerToken: string
 }
-schema RateCards { primary: Rate; specialist: Rate }
+export schema RateCards { primary: Rate; specialist: Rate }
 schema BridgeHealth { ok?: boolean; revision?: string; imageSha256?: string }
 
 const rateKeys = ["uncachedInputNanoUsdPerToken", "cachedInputNanoUsdPerToken", "cacheCreationNanoUsdPerToken", "outputNanoUsdPerToken"] as const

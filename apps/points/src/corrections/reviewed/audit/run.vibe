@@ -1,0 +1,220 @@
+// spec/points/assessmentAudit.md, "Story: Audit the assessments of a historical scope before owner review"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"
+import { GitHub } from "@repo/platform/github"
+import { textBytes } from "@repo/platform/git/bytes"
+import type { Journal } from "../../../kernels/records/canonical.ts"
+import { batchDigest } from "../../../kernels/records/ids.vibe"
+import { publishedJournal, publishedRegistry } from "../../collect/published.vibe"
+import { type SourceAudit, digestPattern, digestText, refusal, require } from "../packet.vibe"
+import { exactMainHead } from "../transport.vibe"
+import { PublicRepository, historicalSourceAudit } from "../verify.vibe"
+import type { AssessmentAudit, AuditStatus } from "../../../../gen/points__assessmentAudit.ts"
+import { apply, canSeal, catalogsComplete, initial } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { type HistoricalAssessmentCatalog, type HistoricalAssessmentHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, readHistoricalAssessmentCatalog } from "./catalog.vibe"
+import { type ClassifiedScope, type ReceiptStatus, classifyHistoricalAssessmentScope } from "./reconcile.vibe"
+import { boundCut, historicalEvidence } from "../replay/bindings.vibe"
+
+export type AuditPhase =
+  | "main source verification"
+  | "project and repository verification"
+  | "historical census verification"
+  | "complete assessment catalog read"
+  | "public Points read"
+  | "assessment source reconciliation"
+  | "assessment qualification recheck"
+  | "assessment receipt"
+
+export interface AuditInputs {
+  readonly projectId: string
+  readonly sourceDigest: string
+  readonly expectedPointsDigest: string
+  readonly stageReview: boolean
+}
+
+export interface AuditReport {
+  readonly schemaVersion: "1"
+  readonly projectId: string
+  readonly mode: "assessment-replay" | "assessment-audit"
+  readonly status: ReceiptStatus
+  readonly sourceDigest: string
+  readonly sourceCount: number
+  readonly sourceRepositoryNodeId: string
+  readonly sourceFrom: string
+  readonly sourceThrough: string
+  readonly sourceCommit: string
+  readonly expectedPointsDigest: string
+  readonly baselineRevisionCount: number
+  readonly registryRevision: number
+  readonly registryManifestSha256: string
+  readonly enforcementGeneration: number
+  readonly jointThrough: number
+  readonly legacyThrough: number
+  readonly jointRecords: number
+  readonly legacyRecords: number
+  readonly receiptDigest: string
+}
+
+export interface AuditedScope {
+  readonly inputs: AuditInputs
+  readonly repository: string
+  readonly integrationBranch: string | undefined
+  readonly scope: HistoricalAssessmentScope
+  readonly sourceAudit: SourceAudit
+  readonly catalog: HistoricalAssessmentCatalog
+  readonly baseline: Journal
+  readonly classified: ClassifiedScope
+  readonly state: AssessmentAudit
+  readonly report: AuditReport
+}
+
+schema AuditRepository { readonly id: string; readonly integrationBranch?: string }
+schema AuditAuthority { readonly repositoryId?: string; readonly repositoryNodeId?: string }
+schema AuditProject { readonly id: string; readonly repositories: ReadonlyArray<AuditRepository>; readonly authority?: AuditAuthority }
+schema AuditRevision { readonly projectId: string; readonly revision: number; readonly manifestSha256: string; readonly manifest: Schema.Unknown }
+
+const projectPattern = /^[a-z0-9][a-z0-9-]{0,63}$/u
+const isProject = Schema.is(AuditProject)
+const isRevision = Schema.is(AuditRevision)
+const dispatch = "TrustedMainDispatch" as const
+const sealedStatus: Readonly<Record<AuditStatus, ReceiptStatus | undefined>> = {
+  AuditUnsealed: undefined,
+  NoScopedActiveAssessments: "no-scoped-active-assessments",
+  RequiresValueReplay: "requires-value-replay",
+  AuditIncomplete: "incomplete",
+}
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function historicalAssessmentAuditInputs(replay: boolean) {
+  const applyFlag = try Config.withDefault(Config.String("HISTORICAL_POINTS_APPLY"), "false")
+  try require(applyFlag === "false" && (try environment("REVIEWED_PACKET_SHA256")) === "", "Assessment audit requires a read-only invocation without a packet")
+  const projectId = try environment("HISTORICAL_ASSESSMENT_PROJECT")
+  const sourceDigest = try environment("HISTORICAL_SOURCE_AUDIT_SHA256")
+  const expectedPointsDigest = try environment("HISTORICAL_POINTS_BASELINE_SHA256")
+  const review = try Config.withDefault(Config.String("HISTORICAL_ASSESSMENT_STAGE_REVIEW"), "false")
+  try require(projectPattern.test(projectId) && [sourceDigest, expectedPointsDigest].every((digest) => digestPattern.test(digest)), "Assessment audit requires exact scope and baseline digests")
+  if (review !== "false") {
+    const repository = try environment("GITHUB_REPOSITORY")
+    const sha = try environment("GITHUB_SHA")
+    try require(review === "true" && replay && repository !== "" &&
+      (try environment("GITHUB_WORKFLOW_REF")) === `${repository}/.github/workflows/reviewed-historical-points.yml@refs/heads/main` &&
+      (try environment("GITHUB_WORKFLOW_SHA")) === sha && /^[a-f0-9]{40}$/u.test(sha), "Historical review staging requires the exact replay workflow")
+  }
+  return { projectId, sourceDigest, expectedPointsDigest, stageReview: review === "true" } satisfies AuditInputs
+}
+
+export effect function currentProjectScope(projectId: string) {
+  const registry = try publishedRegistry()
+  const project = registry.projects.find((row) => isProject(row) && row.id === projectId)
+  const revision = registry.revisions.filter((row) => isRevision(row) && row.projectId === projectId).sort((a, b) => (b as AuditRevision).revision - (a as AuditRevision).revision)[0]
+  try require(isProject(project) && isRevision(revision) && !registry.withheld.includes(projectId) && project.repositories.length === 1 &&
+    digestText(project) === revision.manifestSha256 && digestText(revision.manifest) === revision.manifestSha256 && JSON.stringify(project) === JSON.stringify(revision.manifest),
+    "Assessment audit requires the complete current project scope")
+  const listed = project as AuditProject
+  const current = revision as AuditRevision
+  const [first] = listed.repositories
+  const githubId = listed.authority?.repositoryId ?? ""
+  const nodeId = listed.authority?.repositoryNodeId ?? ""
+  try require(first !== undefined && githubId !== "" && nodeId !== "", "Historical repository identity unavailable")
+  return { repository: first?.id ?? "", integrationBranch: first?.integrationBranch, githubId, nodeId, revision: current.revision, manifestSha256: current.manifestSha256 }
+}
+
+effect function liveRepository(repository: string, githubId: string, nodeId: string) {
+  const live = try (try GitHub).json(`/repos/${repository}`, PublicRepository)
+  try require(live.node_id === nodeId && String(live.id) === githubId && live.full_name.toLowerCase() === repository.toLowerCase() && !live.private, "Historical repository identity changed")
+}
+
+export effect function capturedCut(classified: ClassifiedScope, heads: HistoricalAssessmentHeads) {
+  let state = try apply(initial, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount }, dispatch)
+  for (const observation of classified.observations) state = try apply(state, observation, dispatch)
+  return state
+}
+
+export effect function sealedCut(state: AssessmentAudit, fresh: boolean) {
+  const checked = try apply(state, { type: "changeCheckpoint", affectsScope: !fresh }, dispatch)
+  try require(canSeal(checked), "Historical assessment catalog: assessment qualification changed during collection")
+  return try apply(checked, { type: "seal" }, dispatch)
+}
+
+export effect function auditedScope(setPhase: (phase: AuditPhase) => void, replay: boolean) {
+  const inputs = try historicalAssessmentAuditInputs(replay)
+  setPhase("project and repository verification")
+  const project = try currentProjectScope(inputs.projectId)
+  try liveRepository(project.repository, project.githubId, project.nodeId)
+  setPhase("historical census verification")
+  const sourceAudit = try historicalSourceAudit(project.repository, project.nodeId)
+  try require(digestText(sourceAudit) === inputs.sourceDigest, "Assessment audit source digest changed")
+  setPhase("complete assessment catalog read")
+  const scope: HistoricalAssessmentScope = {
+    projectId: inputs.projectId,
+    repositoryNodeId: project.nodeId,
+    revision: project.revision,
+    manifestSha256: project.manifestSha256,
+    expectedPointsDigest: inputs.expectedPointsDigest,
+  }
+  const catalog = try readHistoricalAssessmentCatalog(scope)
+  setPhase("public Points read")
+  const baseline = try publishedJournal()
+  try require((try batchDigest(baseline)) === inputs.expectedPointsDigest && baseline.revisions.length === catalog.heads.d1PointsCount, "Assessment audit Points baseline differs from the public journal")
+  setPhase("assessment source reconciliation")
+  const classified = try classifyHistoricalAssessmentScope(catalog, sourceAudit, inputs.projectId, historicalEvidence({ baseline, integrationBranch: project.integrationBranch }, inputs.projectId))
+  const state = try boundCut(try capturedCut(classified, catalog.heads), classified.receipt)
+  const { heads } = catalog
+  const report: AuditReport = {
+    schemaVersion: "1",
+    projectId: inputs.projectId,
+    mode: replay ? "assessment-replay" : "assessment-audit",
+    status: classified.receipt.status,
+    sourceDigest: inputs.sourceDigest,
+    sourceCount: sourceAudit.sources.length,
+    sourceRepositoryNodeId: scope.repositoryNodeId,
+    sourceFrom: sourceAudit.from,
+    sourceThrough: sourceAudit.through,
+    sourceCommit: try environment("GITHUB_SHA"),
+    expectedPointsDigest: inputs.expectedPointsDigest,
+    baselineRevisionCount: baseline.revisions.length,
+    registryRevision: heads.registryRevision,
+    registryManifestSha256: heads.registryManifestSha256,
+    enforcementGeneration: heads.enforcementGeneration,
+    jointThrough: heads.jointThrough,
+    legacyThrough: heads.legacyThrough,
+    jointRecords: heads.jointScopedCount,
+    legacyRecords: heads.legacyRepoCount,
+    receiptDigest: classified.receipt.receiptSha256,
+  }
+  if (!catalogsComplete(state) || classified.receipt.status === "incomplete") {
+    const sealed = try apply(state, { type: "seal" }, dispatch)
+    try require(sealedStatus[sealed.status] === "incomplete" && classified.receipt.status === "incomplete", "Assessment catalog could not be reconciled")
+    try Console.log(JSON.stringify({ ...report, blockerCodes: classified.receipt.blockers }))
+    throw refusal("Assessment catalog could not be reconciled")
+  }
+  return { inputs, repository: project.repository, integrationBranch: project.integrationBranch, scope, sourceAudit, catalog, baseline, classified, state, report } satisfies AuditedScope
+}
+
+effect function writeReceipt(output: unknown) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const directory = files.join(try environment("RUNNER_TEMP"), "historical-assessment-audit")
+  try fs.makeDirectory(directory, { recursive: true, mode: 0o700 })
+  try fs.writeFile(files.join(directory, "receipt.json"), textBytes(`${JSON.stringify(output)}\n`), { flag: "wx", mode: 0o600 })
+}
+
+export effect function sealedReceipt(setPhase: (phase: AuditPhase) => void, audited: AuditedScope, state: AssessmentAudit, output: unknown) {
+  setPhase("assessment qualification recheck")
+  try exactMainHead("Historical publication source changed")
+  const fresh = historicalAssessmentFreshness(audited.scope, audited.catalog.heads) catch () => false
+  const sealed = try sealedCut(state, fresh)
+  try require(sealedStatus[sealed.status] === audited.classified.receipt.status, "Assessment catalog could not be reconciled")
+  setPhase("assessment receipt")
+  try writeReceipt(output)
+  return sealed
+}
+
+export effect function auditAssessments(setPhase: (phase: AuditPhase) => void) {
+  setPhase("main source verification")
+  try exactMainHead("Historical publication source changed")
+  const audited = try auditedScope(setPhase, false)
+  try sealedReceipt(setPhase, audited, audited.state, audited.report)
+  try Console.log(JSON.stringify(audited.report))
+}

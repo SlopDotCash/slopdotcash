@@ -1,0 +1,456 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
+import { noticePorts } from "@repo/operations/live"
+import { Request as WorkerRequest } from "miniflare"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ReportingReadiness } from "@repo/ports/slopbot"
+import { screeningPrompt } from "../src/analysis/prompts.ts"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { caseRoutes } from "../src/cases/routes.vibe"
+import { markPaid } from "../src/deposit/port.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
+import { runDepositSweep } from "../src/deposit/sweep.vibe"
+import { IntakeApp } from "../src/forwarding/grant.vibe"
+import { forwardingRoutes } from "../src/forwarding/routes.vibe"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { submissionReadRoutes } from "../src/intake/list.vibe"
+import { intakeRoutes } from "../src/intake/routes.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { screeningRoutes } from "../src/screening/routes.vibe"
+import { type World, digest, maintainer, origin, rows, started as startedWorld } from "./support/intake/harness.ts"
+
+type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+interface Answer {
+  readonly status: number
+  readonly body: unknown
+}
+
+service Deposits {
+  readonly world: World
+  readonly fake: ProviderFake
+  readonly github: GitHubFake
+  readonly clock: SettableClock
+  readonly pending: Array<Promise<unknown>>
+  readonly live: WebHandler
+  readonly dryRun: WebHandler
+  readonly off: WebHandler
+}
+
+const admin = "801"
+const steward = "900"
+const hour = 3_600_000
+const day = 24 * hour
+const slop = 10n ** 18n
+const importedReporter = "53204"
+const grantKey = `${"D".repeat(42)}A`
+
+function fixture(projectId: string): ProjectView {
+  return {
+    projectId,
+    revision: 1,
+    manifestSha256: "a".repeat(64),
+    rowStatus: "Active",
+    manifestStatus: "Active",
+    listingTier: "Community",
+    retirement: "NotRetired",
+    stewardGithubId: steward,
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
+    repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+function portsOf(clock: SettableClock) {
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => succeed(projectId === "intake-fixture" || projectId === "intake-full" ? fixture(projectId) : undefined),
+      byRepository: () => succeed(undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([fixture("intake-fixture"), fixture("intake-full")]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: read.actorGithubId === "53990" ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: () => succeed({ banned: false }),
+      project: () => succeed({ restricted: false }),
+      fence: () => succeed(sql`SELECT 1`),
+      unbanned: () => succeed(sql`1`),
+    } satisfies Restrictions.Shape),
+    Layer.succeed(ReportingReadiness, {
+      current: () => sync(() => {
+        const verifiedAt = new Date(clock.now()).toISOString()
+        return {
+          target: { revision: 1, repositoryKey: "slop-test/intake", repositoryId: "1001", repositoryNodeId: "R_intake" },
+          observation: { repositoryId: "1001", repositoryNodeId: "R_intake", enabled: true, verifiedAt, attemptedAt: verifiedAt, failure: "NoFailure" as const },
+        }
+      }),
+    } satisfies ReportingReadiness.Shape),
+  )
+}
+
+function shellOf(world: World, fake: ProviderFake, github: GitHubFake, clock: SettableClock, mode: string, db: D1Database = world.db) {
+  const viaFakes: Fetcher = {
+    fetch: (sent) => {
+      const outbound = sent as unknown as Parameters<Handler>[0]
+      const target = new URL(outbound.url).origin
+      const answering = target === new URL(github.authority).origin || target === new URL(github.webAuthority).origin ? github : fake
+      return Promise.resolve(answering.handler(outbound)) as unknown as ReturnType<Fetcher["fetch"]>
+    },
+  }
+  const app = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.mergeAll(outboundVia(viaFakes), webCrypto, clock.layer))
+  const base = Layer.mergeAll(
+    d1(db),
+    webCrypto,
+    clock.layer,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: admin, PROJECT_MODERATOR_GITHUB_IDS: admin }),
+    portsOf(clock),
+    reportDepositSettings(mode),
+    intakeSettings({ mode: "on", automatic: true }),
+    outboundVia(viaFakes),
+    Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: github.app.clientId, clientSecret: Redacted.make(github.app.clientSecret), webOrigin: github.webAuthority, apiOrigin: github.authority } }),
+  )
+  const route = Layer.provide(privateRoute({ apiKey: "surplus-deposit-key" }), Layer.merge(outboundVia(viaFakes), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, app, noticePorts, CallerLive, SubmissionFeeRatesLive, ProjectParticipationLive), base)
+}
+
+effect function webHandler(world: World, fake: ProviderFake, github: GitHubFake, clock: SettableClock, mode: string) {
+  const routes = Layer.mergeAll(caseRoutes, intakeRoutes, submissionReadRoutes, screeningRoutes, forwardingRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, fake, github, clock, mode)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return web.handler as WebHandler
+}
+
+const Started = Layer.effect(Deposits, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const fake = providerFake({ holdMs: 10 })
+  const clock = settableClock(Date.now())
+  const github = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+  try orDie(Effect.try(() => {
+    github.world.addOrg({ id: 5000, login: "slop-test" })
+    github.world.addUser({ id: Number(importedReporter), login: `member-${importedReporter}` })
+    github.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
+    github.world.addInstallation({ id: 4403, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
+  }))
+  const rateHour = new Date(Math.floor(Date.now() / hour) * hour - hour).toISOString()
+  try promise(() => world.db.prepare("INSERT INTO submission_fee_rates(effective_at, slop_per_usd, source, created_at) VALUES(?, '395', 'test', ?)").bind(rateHour, rateHour).run())
+  return {
+    world,
+    fake,
+    github,
+    clock,
+    pending: [],
+    live: try webHandler(world, fake, github, clock, "live"),
+    dryRun: try webHandler(world, fake, github, clock, "dry_run"),
+    off: try webHandler(world, fake, github, clock, "off"),
+  }
+})
+
+const cookies = new Map<string, string>()
+
+async function sessionCookie(world: World, githubId: string): Promise<string> {
+  const known = cookies.get(githubId)
+  if (known !== undefined) return known
+  const token = `d${githubId.padStart(20, "0")}${String(cookies.size + 1).padStart(8, "0")}${"z".repeat(35)}`
+  await world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date().toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 30 * day).toISOString()),
+  ])
+  const cookie = `__Host-slop_points=${token}`
+  cookies.set(githubId, cookie)
+  return cookie
+}
+
+async function sent(deposits: Deposits.Shape, handler: WebHandler, path: string, as: string, body?: unknown): Promise<Answer> {
+  const cookie = await sessionCookie(deposits.world, as)
+  const execution: ExecutionContext = { waitUntil: (work) => { deposits.pending.push(work) } }
+  const headers = { cookie, "x-slop-expected-github-id": as, ...body === undefined ? {} : { "content-type": "application/json", origin } }
+  const init = body === undefined ? { method: "GET", headers } : { method: "POST", headers, body: JSON.stringify(body) }
+  const response = await handler(new WorkerRequest(`${origin}${path}`, init) as unknown as globalThis.Request, Context.make(Execution, { context: execution }))
+  return { status: response.status, body: await response.json() as unknown }
+}
+
+effect function exchanged(deposits: Deposits.Shape, handler: WebHandler, path: string, as: string, body?: unknown) {
+  const answer = try promise(() => sent(deposits, handler, path, as, body))
+  while (deposits.pending.length > 0) try promise(() => Promise.all(deposits.pending.splice(0)))
+  return answer
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+let advisories = 0
+
+function advisory() {
+  advisories += 1
+  const digits = [...advisories.toString(8).padStart(4, "0")].map((digit) => "23456789"[Number(digit)] ?? "2").join("")
+  return `GHSA-${digits}-cfgh-jmpq`
+}
+
+effect function claim(deposits: Deposits.Shape, handler: WebHandler, as: string, projectId = "intake-fixture") {
+  const answer = try exchanged(deposits, handler, "/api/v1/security-cases", as, { mode: "claim", projectId, advisory: advisory(), idempotencyKey: `deposit-claim-${as}-${advisories}`.padEnd(20, "0") })
+  if (answer.status !== 201) return try die(new Error(`claim not recorded: ${answer.status} ${JSON.stringify(answer.body)}`))
+  return (answer.body as { readonly case: { readonly id: string } }).case.id
+}
+
+effect function depositRow(world: World, caseId: string) {
+  const [found] = try promise(() => rows(world, "SELECT mode, slop_amount AS amount, length(item) AS itemLength, paid_at IS NOT NULL AS paid, outcome, outcome_reason AS reason FROM security_report_deposits WHERE case_id=?", caseId))
+  return found ?? null
+}
+
+effect function listedIds(deposits: Deposits.Shape, as: string) {
+  const listed = try exchanged(deposits, deposits.live, "/api/v1/security-cases", as)
+  return ((listed.body as { readonly cases: ReadonlyArray<{ readonly id: string }> }).cases).map((entry) => entry.id)
+}
+
+effect function settled(deposits: Deposits.Shape) {
+  try promise(async () => {
+    while (deposits.pending.length > 0) await Promise.allSettled(deposits.pending.splice(0))
+  })
+}
+
+effect function swept(deposits: Deposits.Shape, mode: string, db: D1Database = deposits.world.db) {
+  const background: ExecutionContext = { waitUntil: (work) => { deposits.pending.push(work) } }
+  const sweep = try Effect.provide(provideService(runDepositSweep(), Execution, { context: background }), shellOf(deposits.world, deposits.fake, deposits.github, deposits.clock, mode, db))
+  try settled(deposits)
+  return sweep
+}
+
+function appealBeforeWrite(db: D1Database, caseId: string, appeal: () => Promise<void>): D1Database {
+  const race = { open: true }
+  return {
+    prepare: (text) => {
+      const statement = db.prepare(text)
+      if (!text.includes("SET outcome =")) return statement
+      return {
+        bind: (...values) => {
+          const bound = statement.bind(...values)
+          if (!(race.open && values[0] === "kept_due" && values[3] === caseId)) return bound
+          return {
+            bind: (...more) => bound.bind(...more),
+            all: () => bound.all(),
+            run: async () => {
+              race.open = false
+              await appeal()
+              return bound.run()
+            },
+          }
+        },
+        all: () => statement.all(),
+        run: () => statement.run(),
+      }
+    },
+    batch: (statements) => db.batch(statements),
+    exec: (query) => db.exec(query),
+  }
+}
+
+function said(call: ProviderCall) {
+  return call.messages[0]?.content ?? ""
+}
+
+function screenedCalls(fake: ProviderFake, summary: string) {
+  return fake.calls.filter((call) => call.system === screeningPrompt && said(call).includes(summary)).length
+}
+
+function refusal(answer: Answer) {
+  return [answer.status, (answer.body as { readonly error?: unknown }).error ?? null]
+}
+
+effect function save(deposits: Deposits.Shape, as: string, key: string, summary: string, description: string) {
+  const answer = try exchanged(deposits, deposits.live, "/api/v1/security-submissions", as, { projectId: "intake-fixture", idempotencyKey: key, origin: "slop", report: { summary, description, severity: "high" } })
+  if (answer.status !== 201) return try die(new Error(`report not saved: ${answer.status} ${JSON.stringify(answer.body)}`))
+  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string; readonly deposit: unknown } }).submission
+}
+
+effect function intakeOf(world: World, submissionId: string) {
+  const [found] = try promise(() => rows(world, "SELECT report_version AS version, screening_state AS state, revision FROM security_submission_intake WHERE submission_id=?", submissionId))
+  return found
+}
+
+effect function routeNotices(world: World, submissionId: string) {
+  return (try promise(() => rows(world, "SELECT recipient_github_id AS recipient FROM notifications WHERE instr(event_key, ?) > 0 ORDER BY recipient_github_id", `security-route:${submissionId}:`))).map((row) => row.recipient)
+}
+
+effect function submissionIds(deposits: Deposits.Shape, as: string) {
+  const listed = try exchanged(deposits, deposits.live, "/api/v1/security-submissions", as)
+  return ((listed.body as { readonly submissions?: ReadonlyArray<{ readonly id: string }> }).submissions ?? []).map((entry) => entry.id)
+}
+
+effect function paid(world: World, caseId: string, depositId: number, at: string) {
+  const statement = markPaid({ network: "robinhood-mainnet", depositId }, caseId, at)
+  try promise(() => world.db.prepare(statement.text).bind(...statement.params).run())
+}
+
+effect function closed(world: World, caseId: string, receipt: string, at: string, detail: Readonly<Record<string, unknown>>, actor: string, appeal = "none") {
+  try promise(() => world.db.batch([
+    world.db.prepare("UPDATE security_cases SET submission_state='verified', receipt_state=?, appeal_state=?, revision=revision+1 WHERE id=?").bind(receipt, appeal, caseId),
+    world.db.prepare("INSERT INTO security_case_events(case_id,case_revision,kind,actor_github_id,actor_role,idempotency_key,reason,evidence_reference,detail,at) SELECT id, revision, 'decide', ?, 'security-maintainer', ?, 'Closed.', NULL, ?, ? FROM security_cases WHERE id=?").bind(actor, `deposit-decide-${caseId}`, JSON.stringify(detail), at, caseId),
+  ]))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect(`Hold a private report until its refundable deposit is recorded (spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/cases.md, "A report that waits for its deposit is its reporter's alone"; spec/security/reportDeposit.md, "Unpaid asks are released when the switch or the project turns the deposit off")`, () => effect {
+    const deposits = try Deposits
+    const { world, clock } = deposits
+    const held = try claim(deposits, deposits.live, "53001")
+    const asked = try depositRow(world, held)
+    const reporterRead = try exchanged(deposits, deposits.live, `/api/v1/security-cases/${held}`, "53001")
+    const shown = (reporterRead.body as { readonly case: { readonly deposit?: { readonly state: string; readonly amount: string; readonly payPath: string } } }).case.deposit
+    const ownerRead = try exchanged(deposits, deposits.live, `/api/v1/security-cases/${held}`, maintainer)
+    const ownerList = try listedIds(deposits, maintainer)
+    const reporterList = try listedIds(deposits, "53001")
+    try same(
+      { asked, shown, owner: ownerRead.status, ownerLists: ownerList.includes(held), reporterLists: reporterList.includes(held) },
+      { asked: { mode: "asked", amount: (1975n * slop).toString(), itemLength: 66, paid: 0, outcome: null, reason: null }, shown: { state: "needed", amount: (1975n * slop).toString(), payPath: `/fee/report/${held}` }, owner: 404, ownerLists: false, reporterLists: true },
+    )
+
+    const stewardCase = try claim(deposits, deposits.live, steward)
+    const writerCase = try claim(deposits, deposits.live, "53990")
+    const recordOnly = try claim(deposits, deposits.dryRun, "53002")
+    const switchedOff = try claim(deposits, deposits.off, "53003")
+    const recordedRead = try exchanged(deposits, deposits.live, `/api/v1/security-cases/${recordOnly}`, maintainer)
+    try same(
+      { steward: try depositRow(world, stewardCase), writer: try depositRow(world, writerCase), recorded: (try depositRow(world, recordOnly))?.mode, off: try depositRow(world, switchedOff), recordedRead: recordedRead.status },
+      { steward: null, writer: null, recorded: "recorded", off: null, recordedRead: 200 },
+    )
+
+    try paid(world, held, 1, new Date(clock.now()).toISOString())
+    const released = try exchanged(deposits, deposits.live, `/api/v1/security-cases/${held}`, maintainer)
+    const unpaid = try claim(deposits, deposits.live, "53004", "intake-full")
+    try promise(() => world.db.batch([
+      world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT id, 2, json_set(manifest, '$.security', json('{\"reportDeposit\":false}')), ?, 'Deposit off', ? FROM projects WHERE id='intake-full'").bind("c".repeat(64), new Date(clock.now()).toISOString()),
+      world.db.prepare("UPDATE projects SET revision=2, manifest=(SELECT manifest FROM project_revisions WHERE project_id='intake-full' AND revision=2), manifest_sha256=? WHERE id='intake-full'").bind("c".repeat(64)),
+    ]))
+    const sweep = try swept(deposits, "live")
+    try same(
+      { released: released.status, unpaid: try depositRow(world, unpaid), stillPaid: (try depositRow(world, held))?.mode, sweep: sweep.released },
+      { released: 200, unpaid: { mode: "recorded", amount: (1975n * slop).toString(), itemLength: 66, paid: 0, outcome: null, reason: "turned-off" }, stillPaid: "asked", sweep: 1 },
+    )
+
+    const { fake, github } = deposits
+    const saver = "53201"
+    const thin = "Share rounding drains the vault through previewShares"
+    const fuller = "Share rounding drains the vault, with a runnable proof"
+    const saved = try save(deposits, saver, "deposit-saved-0000001", thin, "previewShares() rounds in the depositor's favour, so repeated small deposits drain the vault.")
+    const waiting = try intakeOf(world, saved.id)
+    const ownerSaved = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}`, maintainer)
+    const ownerListed = try submissionIds(deposits, maintainer)
+    const retried = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}/screen`, saver, { expectedRevision: waiting?.revision })
+    const forwarded = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}/authorize`, saver, {})
+    const revised = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}/report`, saver, { expectedRevision: waiting?.revision, report: { summary: fuller, description: "previewShares() rounds in the depositor's favour. The attached test deposits 1 wei 1,000 times at commit abc with synthetic funds and withdraws more than it paid.", severity: "high" } })
+    const revisedIntake = try intakeOf(world, saved.id)
+    const asks = try promise(() => rows(world, "SELECT COUNT(*) AS count FROM security_report_deposits WHERE case_id=?", saved.caseId))
+    try same(
+      {
+        deposit: try depositRow(world, saved.caseId),
+        shown: saved.deposit,
+        waiting: waiting?.state,
+        owner: [ownerSaved.status, ownerListed.includes(saved.id)],
+        notices: try routeNotices(world, saved.id),
+        screened: screenedCalls(fake, thin) + screenedCalls(fake, fuller),
+        retried: refusal(retried),
+        forwarded: refusal(forwarded),
+        revised: [revised.status, revisedIntake?.version, revisedIntake?.state, asks[0]?.count],
+      },
+      {
+        deposit: { mode: "asked", amount: (1975n * slop).toString(), itemLength: 66, paid: 0, outcome: null, reason: null },
+        shown: { state: "needed", amount: (1975n * slop).toString(), payPath: `/fee/report/${saved.caseId}` },
+        waiting: "queued",
+        owner: [404, false],
+        notices: [],
+        screened: 0,
+        retried: [409, "deposit_required"],
+        forwarded: [409, "deposit_required"],
+        revised: [200, 2, "queued", 1],
+      },
+    )
+
+    fake.reply((call) => call.system === screeningPrompt && said(call).includes(fuller), { text: JSON.stringify({ decision: "legitimate", reason: "The report names previewShares() and carries a runnable proof.", duplicateCaseIds: [] }) })
+    try paid(world, saved.caseId, 50, new Date(clock.now()).toISOString())
+    const started = try swept(deposits, "live")
+    const screenedIntake = try intakeOf(world, saved.id)
+    const ownerAfter = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}`, maintainer)
+    const ownerListedAfter = try submissionIds(deposits, maintainer)
+    const notified = try routeNotices(world, saved.id)
+    const repeated = try swept(deposits, "live")
+    try same(
+      { started, screened: [screenedCalls(fake, thin), screenedCalls(fake, fuller)], state: screenedIntake?.state, owner: [ownerAfter.status, ownerListedAfter.includes(saved.id)], notified: notified.includes(maintainer), repeated: repeated.started },
+      { started: { released: 0, decided: 0, started: 1 }, screened: [0, 1], state: "legitimate", owner: [200, true], notified: true, repeated: 0 },
+    )
+
+    try orDie(Effect.try(() => github.world.addAdvisory("slop-test/intake", { author: `member-${importedReporter}`, summary: "Permit signature replays on another chain", description: "The permit signature has no domain separator, so it replays on another deployment." })))
+    const imported = try promise(() => sent(deposits, deposits.live, "/api/v1/security-cases", maintainer, { mode: "import", projectId: "intake-fixture" }))
+    try settled(deposits)
+    const [importedCase] = try promise(() => rows(world, "SELECT id, submission_state AS state, received_at_source AS source FROM security_cases WHERE reporter_github_id=?", importedReporter))
+    try same(
+      { imported: [imported.status, imported.body], importedCase: [importedCase?.state, importedCase?.source], deposit: try depositRow(world, String(importedCase?.id ?? "")) },
+      { imported: [200, { state: "ok", received: 1 }], importedCase: ["verified", "github-verified"], deposit: null },
+    )
+  })
+
+  it.effect('A paid deposit is sent back on a first response and kept only after a keeping close stood seven days (spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness")', () => effect {
+    const deposits = try Deposits
+    const { world, clock } = deposits
+    const start = clock.now()
+    const at = (ms: number) => new Date(ms).toISOString()
+    const acknowledged = try claim(deposits, deposits.live, "53101")
+    const silent = try claim(deposits, deposits.live, "53102")
+    const noProof = try claim(deposits, deposits.live, "53103")
+    const spam = try claim(deposits, deposits.live, "53104")
+    const appealed = try claim(deposits, deposits.live, "53105")
+    const racing = try claim(deposits, deposits.live, "53106")
+    const cases = [acknowledged, silent, noProof, spam, appealed, racing]
+    for (const [index, caseId] of cases.entries()) try paid(world, caseId, 100 + index, at(start))
+    try closed(world, acknowledged, "triaging", at(start), { automatic: true }, "slop")
+    try promise(() => world.db.prepare("UPDATE security_cases SET submission_state='verified' WHERE id=?").bind(silent).run())
+    try closed(world, noProof, "rejected", at(start), { outcome: "rejected" }, "slop")
+    try closed(world, spam, "rejected", at(start), { outcome: "rejected", spam: true }, maintainer)
+    try closed(world, appealed, "duplicate", at(start), { outcome: "duplicate" }, maintainer, "open")
+    try closed(world, racing, "out-of-scope", at(start), { outcome: "out-of-scope" }, maintainer)
+    const first = try swept(deposits, "live")
+    const early: Record<string, unknown> = {}
+    for (const caseId of cases) early[caseId] = (try depositRow(world, caseId))?.outcome ?? null
+    try same(early, { [acknowledged]: "refund_due", [silent]: null, [noProof]: "refund_due", [spam]: null, [appealed]: null, [racing]: null })
+
+    clock.set(start + 7 * day + hour)
+    const landed: Array<number> = []
+    const appealLands = async () => {
+      const [current] = await rows(world, "SELECT revision FROM security_cases WHERE id=?", racing)
+      const answer = await sent(deposits, deposits.live, `/api/v1/security-cases/${racing}/actions`, "53106", { action: "appeal", expectedRevision: current?.revision, idempotencyKey: "deposit-race-appeal-00001", reason: "This is a different root cause from the closed report." })
+      landed.push(answer.status)
+    }
+    try swept(deposits, "live", appealBeforeWrite(world.db, racing, appealLands))
+    const [raced] = try promise(() => rows(world, "SELECT appeal_state AS appeal FROM security_cases WHERE id=?", racing))
+    clock.set(start + 14 * day + hour)
+    try swept(deposits, "live")
+    const late: Record<string, unknown> = {}
+    for (const caseId of cases) {
+      const row = try depositRow(world, caseId)
+      late[caseId] = row === null ? null : [row.outcome, row.reason]
+    }
+    try same(
+      { decidedFirst: first.decided, landed, racedAppeal: raced?.appeal, late },
+      { decidedFirst: 2, landed: [200], racedAppeal: "open", late: { [acknowledged]: ["refund_due", "responded"], [silent]: ["refund_due", "silent"], [noProof]: ["refund_due", "responded"], [spam]: ["kept_due", "spam"], [appealed]: [null, null], [racing]: [null, null] } },
+    )
+  })
+})

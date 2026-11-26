@@ -1,0 +1,233 @@
+// spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event"; spec/settlement/vaultDeposits.md, "A run reads pages up to the finalized block and stores each page with its cursor"; spec/settlement/vaultDeposits.md, "Rules"; spec/settlement/solanaVaultDeposits.md, "A run reads newest first below the interval it resumes and above the covered position"; spec/settlement/solanaVaultDeposits.md, "Rules"
+import { isoNow } from "@repo/platform/clock"
+import { D1, type D1Error, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { type SolanaDeposits, type SolanaRun, Rejected as SolanaRejected, apply as applySolana, idleRun as idleSolanaRun, initial as solanaStart } from "../../gen/settlement__solanaVaultDeposits.effect.vibe"
+import { type Event as EvmEvent, type EvmDeposits, type Run, type VaultPurpose, Rejected as EvmRejected, apply as applyEvm, initial as evmStart, runOf, validDepositRow, withRun } from "../../gen/settlement__vaultDeposits.effect.vibe"
+import { toAmount } from "../kernels/amounts.ts"
+import { type Chain, type NetworkKey, chainFamily, maxBaseUnitsForChain } from "../kernels/networks.ts"
+
+export interface DepositKey {
+  readonly projectId: string
+  readonly network: NetworkKey
+  readonly chain: Chain
+  readonly vault: string
+}
+
+export interface VaultDepositRecord {
+  readonly transactionId: string
+  readonly eventIndex: number
+  readonly depositor: string
+  readonly amount: bigint
+  readonly blockNumber: bigint
+  readonly blockTime: number
+}
+
+export interface SolanaCursor {
+  readonly position: string | null
+  readonly pendingTop: string | null
+  readonly resumeBefore: string | null
+}
+
+export interface SolanaPlan {
+  readonly startPosition: string | null
+  readonly top: string | null
+  readonly remaining: ReadonlyArray<string>
+  readonly shortPage: boolean
+}
+
+export type SolanaRead = "Read" | "Overtaken"
+
+export error InvalidDeposit { message: string }
+
+export error DepositReadFailed { message: string }
+
+schema EvmCursorRow { readonly position: string | null }
+
+schema SolanaCursorRow {
+  readonly position: string | null
+  readonly pending_top: string | null
+  readonly resume_before: string | null
+}
+
+schema SyncedRow {
+  readonly project_id: string
+  readonly network: string
+  readonly vault: string
+  readonly synced_at: string
+}
+
+const PROJECT = /^[a-z0-9][a-z0-9-]*$/u
+const EVM_TRANSACTION = /^0x[0-9a-f]{64}$/u
+const SOLANA_TRANSACTION = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/u
+const EVM_DEPOSITOR = /^0x[0-9a-f]{40}$/u
+const SOLANA_DEPOSITOR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u
+const BLOCK = /^(0|[1-9][0-9]{0,19})$/u
+
+function where(key: DepositKey): Statement {
+  return sql`project_id = ${key.projectId} AND network = ${key.network} AND vault = ${key.vault}`
+}
+
+effect function wellFormed(key: DepositKey, record: VaultDepositRecord) {
+  const amount = try orDie(Effect.try(() => toAmount(record.amount > 0n ? record.amount : 0n)))
+  const evm = chainFamily(key.chain) === "evm"
+  return PROJECT.test(key.projectId)
+    && (evm ? EVM_TRANSACTION.test(record.transactionId) : SOLANA_TRANSACTION.test(record.transactionId))
+    && (evm ? EVM_DEPOSITOR.test(record.depositor) : SOLANA_DEPOSITOR.test(record.depositor))
+    && Number.isSafeInteger(record.eventIndex)
+    && record.amount <= maxBaseUnitsForChain(key.chain)
+    && BLOCK.test(record.blockNumber.toString())
+    && Number.isSafeInteger(record.blockTime)
+    && validDepositRow({
+      network: key.network,
+      transaction: record.transactionId,
+      eventIndex: record.eventIndex,
+      depositor: record.depositor,
+      amount,
+      block: Number(record.blockNumber),
+      blockTime: record.blockTime,
+    })
+}
+
+export effect function depositInsert(key: DepositKey, record: VaultDepositRecord, recordedAt: string) {
+  if (!(try wellFormed(key, record))) throw new InvalidDeposit({ message: "Invalid finalized vault deposit" })
+  return sql`INSERT INTO vault_deposits (project_id, network, chain, vault, transaction_id, event_index, depositor, amount, block_number, block_time, recorded_at)
+    VALUES (${key.projectId}, ${key.network}, ${key.chain}, ${key.vault}, ${record.transactionId}, ${record.eventIndex}, ${record.depositor}, ${record.amount.toString()}, ${record.blockNumber.toString()}, ${new Date(record.blockTime * 1000).toISOString()}, ${recordedAt})
+    ON CONFLICT (network, transaction_id, event_index) DO NOTHING`
+}
+
+export effect function storedEvmCursor(key: DepositKey) {
+  const row = try first(EvmCursorRow, sql`SELECT position FROM vault_deposit_cursors WHERE ${where(key)}`)
+  const position = row?.position ?? null
+  if (position === null) return undefined
+  if (!BLOCK.test(position) || !Number.isSafeInteger(Number(position))) throw new RowMismatch({ text: "vault_deposit_cursors.position", issue: "not a block number" })
+  return Number(position)
+}
+
+effect function writeEvmPage(key: DepositKey, run: Run, found: ReadonlyArray<VaultDepositRecord>) {
+  const now = try isoNow()
+  const [from, to] = try orDie(Effect.try(() => [BigInt(run.fromBlock), BigInt(run.toBlock)]))
+  const statements: Statement[] = []
+  for (const record of found) {
+    if (record.blockNumber < from || record.blockNumber > to) throw new InvalidDeposit({ message: "Invalid finalized vault deposit" })
+    statements.push(try depositInsert(key, record, now))
+  }
+  statements.push(sql`INSERT INTO vault_deposit_cursors (project_id, network, vault, position, synced_at) VALUES (${key.projectId}, ${key.network}, ${key.vault}, ${String(run.toBlock)}, ${now})
+    ON CONFLICT (project_id, network, vault) DO UPDATE SET position = excluded.position, synced_at = excluded.synced_at
+    WHERE vault_deposit_cursors.position IS NULL OR length(excluded.position) > length(vault_deposit_cursors.position) OR (length(excluded.position) = length(vault_deposit_cursors.position) AND excluded.position >= vault_deposit_cursors.position)`)
+  try (try D1).batch(statements)
+}
+
+export interface EvmDepositSession {
+  current(): EvmDeposits!(RowMismatch | D1Error)!D1
+  observe(finalized: number): EvmDeposits!(RowMismatch | D1Error)!D1
+  send(event: EvmEvent, by: string, found: ReadonlyArray<VaultDepositRecord>): EvmDeposits!(EvmRejected | InvalidDeposit | RowMismatch | D1Error)!D1
+}
+
+export effect function openEvmDeposits(key: DepositKey, options: { readonly purpose: VaultPurpose; readonly origin: number; readonly pageBlocks: number }) {
+  const opened = (try storedEvmCursor(key)) ?? options.origin - 1
+  let held: EvmDeposits = { ...evmStart, purpose: options.purpose, cursor: opened, finalized: opened }
+  effect function current() {
+    const stored = try storedEvmCursor(key)
+    return stored === undefined || stored <= held.cursor ? held : { ...held, cursor: stored }
+  }
+  effect function observe(finalized: number) {
+    const now = try current()
+    held = finalized > now.finalized ? { ...now, finalized } : now
+    return held
+  }
+  effect function send(event: EvmEvent, by: string, found: ReadonlyArray<VaultDepositRecord>) {
+    const now = try current()
+    const next = try applyEvm(now, event, by)
+    if (event.type === "startPage") {
+      const end = now.cursor + options.pageBlocks
+      held = withRun(event.slot, next, { active: true, fromBlock: now.cursor + 1, toBlock: end < now.finalized ? end : now.finalized })
+      return held
+    }
+    if (event.type === "completePage") try writeEvmPage(key, runOf(now, event.slot), found)
+    held = { ...next, recorded: [] }
+    return held
+  }
+  return { current, observe, send } satisfies EvmDepositSession
+}
+
+export effect function storedSolanaCursor(key: DepositKey) {
+  const row = try first(SolanaCursorRow, sql`SELECT position, pending_top, resume_before FROM vault_deposit_cursors WHERE ${where(key)}`)
+  return { position: row?.position ?? null, pendingTop: row?.pending_top ?? null, resumeBefore: row?.resume_before ?? null } satisfies SolanaCursor
+}
+
+function modelRun(plan: SolanaPlan | undefined): SolanaRun {
+  return plan === undefined ? idleSolanaRun : { active: true, startPosition: 0, top: 0, cursorAt: 0, remaining: plan.remaining.length, shortPage: plan.shortPage }
+}
+
+export interface SolanaDepositSession {
+  cursor(): SolanaCursor!(RowMismatch | D1Error)!D1
+  start(slot: number, by: string, at: SolanaCursor, listed: ReadonlyArray<string>): SolanaPlan!SolanaRejected
+  read(slot: number, by: string, found: ReadonlyArray<VaultDepositRecord>): SolanaRead!(SolanaRejected | InvalidDeposit | RowMismatch | D1Error)!D1
+  fail(slot: number, by: string): void!SolanaRejected
+  finish(slot: number, by: string): void!(SolanaRejected | D1Error)!D1
+}
+
+export effect function openSolanaDeposits(key: DepositKey, limit: number) {
+  const opened = try isoNow()
+  try (try D1).run(sql`INSERT OR IGNORE INTO vault_deposit_cursors (project_id, network, vault, synced_at) VALUES (${key.projectId}, ${key.network}, ${key.vault}, ${opened})`)
+  const plans = new Map<number, SolanaPlan>()
+  function model(): SolanaDeposits {
+    return { ...solanaStart, first: modelRun(plans.get(1)), second: modelRun(plans.get(2)) }
+  }
+  function fence(plan: SolanaPlan): Statement {
+    return sql`${where(key)} AND position IS ${plan.startPosition}`
+  }
+  effect function cursor() {
+    return try storedSolanaCursor(key)
+  }
+  effect function start(slot: number, by: string, at: SolanaCursor, listed: ReadonlyArray<string>) {
+    try applySolana(model(), { type: "startRun", slot }, by)
+    const plan = { startPosition: at.position, top: at.pendingTop ?? listed[0] ?? null, remaining: listed, shortPage: listed.length < limit } satisfies SolanaPlan
+    plans.set(slot, plan)
+    return plan
+  }
+  effect function read(slot: number, by: string, found: ReadonlyArray<VaultDepositRecord>) {
+    try applySolana(model(), { type: "readTransaction", slot }, by)
+    const plan = plans.get(slot)
+    const signature = plan?.remaining[0]
+    if (plan === undefined || signature === undefined) throw new SolanaRejected({ event: { type: "readTransaction", slot }, state: model(), by })
+    const now = try isoNow()
+    const statements: Statement[] = []
+    for (const record of found) {
+      if (record.transactionId !== signature) throw new InvalidDeposit({ message: "Invalid finalized vault deposit" })
+      statements.push(try depositInsert(key, record, now))
+    }
+    statements.push(sql`UPDATE vault_deposit_cursors SET pending_top = ${plan.top}, resume_before = ${signature}, synced_at = ${now} WHERE ${fence(plan)}`)
+    const outcomes = try (try D1).batch(statements)
+    if (outcomes[outcomes.length - 1]?.changes !== 1) {
+      plans.delete(slot)
+      return "Overtaken" satisfies SolanaRead
+    }
+    plans.set(slot, { ...plan, remaining: plan.remaining.slice(1) })
+    return "Read" satisfies SolanaRead
+  }
+  effect function fail(slot: number, by: string) {
+    try applySolana(model(), { type: "failRun", slot }, by)
+    plans.delete(slot)
+  }
+  effect function finish(slot: number, by: string) {
+    try applySolana(model(), { type: "finishRun", slot }, by)
+    const plan = plans.get(slot)
+    plans.delete(slot)
+    if (plan === undefined || !plan.shortPage) return
+    const now = try isoNow()
+    try (try D1).run(sql`UPDATE vault_deposit_cursors SET position = COALESCE(${plan.top}, position), pending_top = NULL, resume_before = NULL, synced_at = ${now} WHERE ${fence(plan)}`)
+  }
+  return { cursor, start, read, fail, finish } satisfies SolanaDepositSession
+}
+
+export effect function touchCursor(key: DepositKey) {
+  const now = try isoNow()
+  try (try D1).run(sql`INSERT INTO vault_deposit_cursors (project_id, network, vault, synced_at) VALUES (${key.projectId}, ${key.network}, ${key.vault}, ${now})
+    ON CONFLICT (project_id, network, vault) DO UPDATE SET synced_at = excluded.synced_at`)
+}
+
+export effect function syncedAt() {
+  const synced = try rows(SyncedRow, sql`SELECT project_id, network, vault, synced_at FROM vault_deposit_cursors`)
+  return new Map<string, string>(synced.map((row) => [`${row.project_id}\n${row.network}\n${row.vault}`, row.synced_at]))
+}

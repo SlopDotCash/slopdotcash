@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"; spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
 import type { D1Error, RowMismatch, Statement } from "@repo/platform/d1"
 
 export type ReadFailure = D1Error | RowMismatch
@@ -110,7 +110,7 @@ export interface VaultRegistered {
 }
 
 export error VaultRegistrationRefused {
-  code: "github_unavailable" | "slopbot_required" | "authority_required" | "vault_authority_required" | "maintainer_banned" | "project_restricted" | "vault_already_registered" | "vault_policy_changed" | "stale_revision"
+  code: "github_unavailable" | "slopbot_required" | "authority_required" | "vault_authority_required" | "maintainer_banned" | "project_restricted" | "vault_already_registered" | "vault_policy_changed" | "vault_setup_unavailable" | "stale_revision"
 }
 
 export service Registry {
@@ -240,4 +240,41 @@ export schema ReferralAttribution {
 
 export service ReferralAttributions {
   referred(): ReadonlyArray<ReferralAttribution>!ReadFailure
+}
+
+export schema IntakeCount {
+  readonly openOutside: number
+  readonly observedAt: string
+}
+
+export service IntakeCounts {
+  counts(): ReadonlyMap<string, ReadonlyArray<IntakeCount>>!ReadFailure
+}
+
+export service IntakePause {
+  paused(projectId: string, at: string): boolean!ReadFailure
+}
+
+export schema SlopRate {
+  readonly effectiveAt: string
+  readonly slopPerUsd: string
+}
+
+export interface SlopRateRow extends SlopRate {
+  readonly source: string
+  readonly createdAt: string
+}
+
+export service SubmissionFeeRates {
+  all(): ReadonlyArray<SlopRate>!ReadFailure
+  newest(): (SlopRate | null)!ReadFailure
+  append(row: SlopRateRow): Statement!!
+}
+
+export service SubmissionFeeSetting {
+  since(projectId: string): (string | null)!ReadFailure
+}
+
+export service ProjectParticipation {
+  participated(projectId: string, githubId: string): boolean!ReadFailure
 }

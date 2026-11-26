@@ -6,6 +6,7 @@ import { processVariable } from "../keeper/environment.ts"
 import { configuredStart, keeperCore } from "../keeper/lifecycle.vibe"
 import { keeperTick } from "../keeper/run.vibe"
 import { operatorKey } from "../keeper/signer.vibe"
+import { operatorSolanaSeed } from "../keeper/solana.vibe"
 import { IDENTITY_KEY, openKeeperStore, recordOf } from "../keeper/store.vibe"
 
 export error KeeperArguments { message: string }
@@ -39,7 +40,7 @@ export effect function keeperCommand(args: ReadonlyArray<string>) {
   const text = (try FileSystem.FileSystem).readFileString(options.config) catch effect () => { throw new KeeperArguments({ message: USAGE }) }
   const config = try keeperConfig(text, undefined)
   const mode = options.execute ? "Execute" as const : "DryRun" as const
-  provide Layer.mergeAll(fileJournal(options.journal), operatorKey(() => options.execute ? processVariable("KEEPER_EVM_PRIVATE_KEY") : undefined)) {
+  provide Layer.mergeAll(fileJournal(options.journal), operatorKey(() => options.execute ? processVariable("KEEPER_EVM_PRIVATE_KEY") : undefined), operatorSolanaSeed(() => options.execute ? processVariable("KEEPER_SOLANA_SIGNER_SEED") : undefined)) {
     try openKeeperStore()
     const stored = try recordOf(IDENTITY_KEY)
     const core = try keeperCore(try configuredStart(modelConfiguration(mode, config, 0), journalRegistry(stored, config)))

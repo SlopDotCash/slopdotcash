@@ -1,0 +1,487 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"
+import { sha256Hex } from "@repo/platform/crypto"
+import {
+  type CopiedClaim,
+  type CorrectionClaim,
+  type CorrectionCommit,
+  type CorrectionSource,
+  type OctoberPartsProof,
+  type OctoberUnitProof,
+  type OrdinaryProof,
+  type OriginalContributorBinding,
+  type OriginalContributorFollowup,
+  type ReviewedOriginal,
+  CreatedPull,
+  matchedAccepted,
+  originalContributorClaimScope,
+  originalContributorPrecedesFollowups,
+  originalContributorSource,
+  sameRepositoryCommitHints,
+  soleOriginalPrimary,
+  verifiedHuman,
+} from "@repo/points/corrections"
+import type { Evidence } from "../evidence/types.vibe"
+import { retainedCopyBindings } from "../retained/copy.vibe"
+import { sourceDigestOf } from "../workUnits/prepare.vibe"
+import { answer } from "../workUnits/source.vibe"
+import type { WorkUnitSource } from "../workUnits/types.vibe"
+import { acknowledgedOriginalRepairs, authenticateNativeAcceptedRange, authenticateOriginalFollowupParents, nativeComparison } from "./authenticate.vibe"
+import { bindRetained, refused, richSource } from "./bind.vibe"
+import { originalContributorFollowupProof } from "./followup.vibe"
+import { exactOctoberOriginalContributorProof, reviewedOriginalCommit } from "./original.vibe"
+
+type NativeCommit = Evidence["commits"][number]
+
+interface Ancestry {
+  readonly repository: string
+  readonly commits: ReadonlyMap<string, NativeCommit>
+  readonly cache: Map<string, boolean>
+}
+
+function originalPrimary(source: CorrectionSource) {
+  const primary = soleOriginalPrimary(source)
+  if (primary === undefined) return undefined
+  return [source.author, ...source.commits.map((commit) => commit.author)].find((actor) => actor?.id === primary.id) ?? undefined
+}
+
+effect function copiedOriginalContributorUnitProof(
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: ReadonlyArray<CorrectionClaim>,
+) {
+  if (original.evidence.pull.merged_at !== null) return undefined
+  const rawSource = try richSource(original.evidence, owners)
+  const primary = originalPrimary(rawSource)
+  const originatingActor = primary?.id !== rawSource.author?.id ? primary : undefined
+  const source = try originalContributorSource(rawSource, originatingActor)
+  if (claims.some((claim) =>
+    source.commits.some((commit) => commit.sha === claim.commitSha) ||
+    original.evidence.reviews.some((review) => review.commit_id === claim.commitSha))) return undefined
+  if (!originalContributorPrecedesFollowups(source, accepted.author)) return undefined
+  const retained = retainedCopyBindings([integration, original], { ordinaryCommitsOnly: true, acceptedSubset: true })
+  if (retained.limitations.length > 0) throw refused("Copied unit source is incomplete")
+  const copiedClaims: CopiedClaim[] = []
+  for (const claim of claims) {
+    const matches = [...retained.bindings.values()].filter((binding) =>
+      binding.original === original && binding.integration === integration &&
+      binding.acceptedCommitSha === claim.commitSha && binding.path === claim.path)
+    const [binding] = matches
+    if (binding === undefined) continue
+    if (matches.length !== 1) throw refused("Copied unit has ambiguous original claims")
+    copiedClaims.push({
+      claimId: claim.id,
+      originalCommitSha: binding.originalCommitSha,
+      acceptedCommitSha: binding.acceptedCommitSha,
+      path: binding.path,
+      bindingDigest: try sha256Hex(JSON.stringify(binding)),
+    })
+  }
+  if (!copiedClaims.some((claim) => claim.originalCommitSha !== claim.acceptedCommitSha)) return undefined
+  const merge = integration.evidence.mergeCommitEvidence
+  if (merge === null || merge.parents.length !== 2) throw refused("Copied unit lacks native acceptance")
+  const range = try authenticateNativeAcceptedRange(accepted, integration.evidence, merge, claims.map((claim) => claim.commitSha))
+  const acceptedSource = range.source
+  const boundOriginal = try authenticateOriginalFollowupParents(source, original.evidence)
+  const boundRaw = { ...rawSource, commits: boundOriginal.commits } satisfies CorrectionSource
+  const repairs = try acknowledgedOriginalRepairs(original, integration, boundOriginal, acceptedSource, claims)
+  let anchor: CopiedClaim | undefined
+  for (const candidate of copiedClaims) {
+    const scoped = try originalContributorClaimScope({
+      original: boundOriginal,
+      accepted: acceptedSource,
+      claims,
+      followups: [],
+      anchorSha: candidate.originalCommitSha,
+      acceptedAnchorSha: candidate.acceptedCommitSha,
+      repairs,
+      copiedClaims,
+      resolutionAcceptance: undefined,
+    })
+    if (scoped) {
+      anchor = candidate
+      break
+    }
+  }
+  if (anchor === undefined) throw refused("Copied unit has an unrelated selected follow-up")
+  const originalPull = try answer(`/repos/${boundOriginal.repository}/pulls/${original.evidence.pull.number}`, CreatedPull)
+  const acceptedPull = try answer(`/repos/${acceptedSource.repository}/pulls/${integration.evidence.pull.number}`, CreatedPull)
+  if (!(
+    originalPull !== undefined && originalPull.node_id === boundOriginal.sourceId && originalPull.number === original.evidence.pull.number &&
+    originalPull.html_url === boundOriginal.sourceUrl && originalPull.state === "closed" && originalPull.merged_at === null &&
+    originalPull.user.node_id === original.evidence.pull.user.node_id && originalPull.head.sha === boundOriginal.headSha &&
+    originalPull.updated_at === original.evidence.pull.updated_at &&
+    acceptedPull !== undefined && acceptedPull.node_id === acceptedSource.sourceId && acceptedPull.number === integration.evidence.pull.number &&
+    acceptedPull.html_url === acceptedSource.sourceUrl && acceptedPull.user.node_id === integration.evidence.pull.user.node_id &&
+    acceptedPull.merged_at === integration.evidence.pull.merged_at && acceptedPull.head.sha === acceptedSource.headSha &&
+    acceptedPull.merge_commit_sha === merge.sha && acceptedPull.updated_at === integration.evidence.pull.updated_at
+  )) throw refused("Copied unit source changed during verification")
+  const originalDigest = try sourceDigestOf(original.evidence, original.policy)
+  const acceptedDigest = try sourceDigestOf(integration.evidence, integration.policy)
+  const bindingDigest = try sha256Hex(JSON.stringify({
+    original: originalDigest,
+    accepted: acceptedDigest,
+    claims,
+    copiedClaims,
+    repairs,
+    originalPull,
+    acceptedPull,
+  }))
+  const proof: OrdinaryProof = {
+    sources: [acceptedSource, boundRaw],
+    originalContributor: {
+      ...(originatingActor === undefined ? {} : { originatingActor }),
+      originalSourceId: boundOriginal.sourceId,
+      originalCommitSha: anchor.originalCommitSha,
+      acceptedCommitSha: anchor.acceptedCommitSha,
+      boundPaths: acceptedSource.commits.find((commit) => commit.sha === anchor.acceptedCommitSha)?.files?.map((file) => file.path) ?? [],
+      claimIds: claims.map((claim) => claim.id),
+      copiedClaims,
+      ...(repairs.length > 0 ? { repairs } : {}),
+      bindingDigest,
+    },
+  }
+  return proof
+}
+
+effect function singleOriginalContributorUnitProof(
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: ReadonlyArray<CorrectionClaim>,
+  followups: ReadonlyArray<WorkUnitSource> = [],
+  contextSources: ReadonlyArray<WorkUnitSource> = [],
+) {
+  const supplied = new Map([original, integration, ...followups, ...contextSources].map((source) => [source.evidence.pull.node_id, source] as const))
+  const verified = try bindRetained([...supplied.values()], owners, true)
+  const converted = verified.find((source) => source.sourceId === original.evidence.pull.node_id)
+  const integrationSource = verified.find((source) => source.sourceId === integration.evidence.pull.node_id)
+  if (converted === undefined || integrationSource === undefined) throw refused("Native unit source is missing")
+  const primary = originalPrimary(converted)
+  const originatingActor = primary?.id !== converted.author?.id ? primary : undefined
+  const currentRead = try originalContributorSource(converted, originatingActor)
+  const canonical = try matchedAccepted(accepted, integrationSource)
+  const recorded = try reviewedOriginalCommit(original, currentRead, canonical, integration, claims)
+  const currentSource = recorded === undefined ? currentRead : try authenticateOriginalFollowupParents(currentRead, original.evidence)
+  const rawSource = { ...converted, commits: currentSource.commits } satisfies CorrectionSource
+  let reviewedOriginal: ReviewedOriginal | undefined
+  if (recorded !== undefined) {
+    const { digest: _recordedDigest, ...recordedPayload } = recorded
+    const payload = { ...recordedPayload, currentSourceDigest: try sha256Hex(JSON.stringify(currentSource)) }
+    reviewedOriginal = { ...payload, digest: try sha256Hex(JSON.stringify(payload)) }
+  }
+  const source = reviewedOriginal === undefined
+    ? currentSource
+    : { ...currentSource, headSha: reviewedOriginal.commits.at(-1)?.sha ?? currentSource.headSha, commitCount: reviewedOriginal.commits.length, commits: reviewedOriginal.commits } satisfies CorrectionSource
+  const scopedClaims = claims.filter((claim) => claim.sourceId === accepted.sourceId)
+  const exact = try exactOctoberOriginalContributorProof(canonical, source, integration, original, true, scopedClaims, reviewedOriginal)
+  const found = exact ?? (try copiedOriginalContributorUnitProof(canonical, original, integration, owners, scopedClaims))
+  if (found === undefined || found.originalContributor === undefined) throw refused("Reviewed unit lacks verified original acceptance")
+  const bound = exact?.sources.find((item) => item.sourceId === source.sourceId) ?? source
+  const originalContributor: OriginalContributorBinding = originatingActor === undefined ? found.originalContributor : { ...found.originalContributor, originatingActor }
+  const actored = originatingActor === undefined ? found.sources : found.sources.map((item) => item.sourceId === rawSource.sourceId ? { ...item, author: rawSource.author } : item)
+  const sources = reviewedOriginal === undefined ? actored : actored.map((item) => item.sourceId === currentSource.sourceId ? rawSource : item)
+  if (followups.length === 0) {
+    if (!claims.every((claim) => claim.sourceId === accepted.sourceId)) throw refused("Reviewed unit lacks complete follow-up sources")
+    const proof: OrdinaryProof = { sources, originalContributor }
+    return proof
+  }
+  const authenticated = sources.find((item) => item.sourceId === accepted.sourceId)
+  const origin = bound.author
+  if (authenticated === undefined || !verifiedHuman(origin)) throw refused("Native accepted proof disappeared")
+  const followed: Array<{ readonly source: CorrectionSource; readonly binding: OriginalContributorFollowup }> = []
+  const nativeAcceptance: unknown[] = []
+  for (const followup of followups) {
+    const convertedFollowup = verified.find((item) => item.sourceId === followup.evidence.pull.node_id)
+    if (convertedFollowup === undefined) throw refused("Native follow-up source is missing")
+    const proved = try originalContributorFollowupProof(
+      authenticated,
+      convertedFollowup,
+      followup.evidence,
+      followup.policy,
+      claims.filter((claim) => claim.sourceId === convertedFollowup.sourceId),
+      { anchorSha: originalContributor.originalCommitSha, origin },
+    )
+    if (proved.nativeAcceptance !== undefined) nativeAcceptance.push(proved.nativeAcceptance)
+    followed.push({ source: proved.source, binding: proved.binding })
+  }
+  const scoped = try originalContributorClaimScope({
+    original: bound,
+    accepted: authenticated,
+    claims,
+    followups: followed,
+    anchorSha: originalContributor.originalCommitSha,
+    acceptedAnchorSha: originalContributor.acceptedCommitSha,
+    repairs: originalContributor.repairs ?? [],
+    copiedClaims: [],
+    resolutionAcceptance: originalContributor.resolutionAcceptance,
+  })
+  if (!scoped) throw refused("Reviewed native unit has an unverified selected follow-up")
+  const followupSourceDigests: string[] = []
+  for (const followup of followups) followupSourceDigests.push(try sourceDigestOf(followup.evidence, followup.policy))
+  const bindings = followed.map((item) => item.binding)
+  const proof: OrdinaryProof = {
+    sources: [...sources, ...followed.map((item) => item.source)],
+    originalContributor: {
+      ...originalContributor,
+      claimIds: claims.map((claim) => claim.id),
+      followups: bindings,
+      bindingDigest: try sha256Hex(JSON.stringify({
+        original: originalContributor.bindingDigest,
+        claims,
+        followups: bindings,
+        nativeAcceptance,
+        followupSourceDigests,
+      })),
+    },
+  }
+  return proof
+}
+
+effect function reaches(ancestry: Ancestry, head: string, ancestor: string) {
+  const key = `${ancestor}\u0000${head}`
+  const cached = ancestry.cache.get(key)
+  if (cached !== undefined) return cached
+  const pending = [head]
+  const seen = new Set<string>()
+  for (const sha of pending) {
+    if (sha === ancestor) {
+      ancestry.cache.set(key, true)
+      return true
+    }
+    if (seen.has(sha)) continue
+    seen.add(sha)
+    pending.push(...(ancestry.commits.get(sha)?.parents.map((parent) => parent.sha) ?? []))
+  }
+  const comparison = try nativeComparison(ancestry.repository, ancestor, head)
+  const result = ["ahead", "identical"].includes(comparison.status) && comparison.behind_by === 0 && comparison.merge_base_commit.sha === ancestor
+  ancestry.cache.set(key, result)
+  return result
+}
+
+function claimedChain(commits: ReadonlyMap<string, NativeCommit>, claims: ReadonlyArray<CorrectionClaim>, head: string, authorNodeId: string | undefined) {
+  let current: string | undefined = head
+  const seen = new Set<string>()
+  const chain: string[] = []
+  while (current !== undefined && current !== "" && !seen.has(current)) {
+    seen.add(current)
+    const sha = current
+    const commit = commits.get(sha)
+    if (commit === undefined || commit.parents.length !== 1 || commit.author?.type !== "User" || (authorNodeId !== undefined && commit.author.node_id !== authorNodeId)) break
+    if (claims.some((claim) => claim.commitSha === sha)) chain.unshift(sha)
+    current = commit.parents[0]?.sha
+  }
+  return chain
+}
+
+export effect function octoberOriginalContributorUnitProof(
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: ReadonlyArray<CorrectionClaim>,
+  followups: ReadonlyArray<WorkUnitSource> = [],
+  contextSources: ReadonlyArray<WorkUnitSource> = [],
+) {
+  const evidence = [integration, ...followups]
+  if (original.evidence.pull.merged_at !== null && !evidence.some((source) => source.evidence.pull.node_id === original.evidence.pull.node_id)) {
+    evidence.push(original)
+  }
+  const commits = new Map<string, NativeCommit>()
+  for (const source of evidence) {
+    for (const commit of source.evidence.commits) {
+      const previous = commits.get(commit.sha)
+      if (previous !== undefined && JSON.stringify(previous) !== JSON.stringify(commit)) throw refused("Reviewed revision has conflicting native commit evidence")
+      commits.set(commit.sha, commit)
+    }
+  }
+  const ancestry: Ancestry = { repository: accepted.repository, commits, cache: new Map<string, boolean>() }
+  const anchors: string[] = []
+  const reviews = [...original.evidence.reviews].sort((left, right) =>
+    Date.parse(left.submitted_at ?? "") - Date.parse(right.submitted_at ?? "") || left.id - right.id)
+  for (const review of reviews) {
+    if (
+      review.user?.type !== "User" ||
+      original.evidence.commits.some((commit) => commit.sha === review.commit_id) ||
+      !claims.some((claim) => claim.commitSha === review.commit_id)
+    ) continue
+    const [first] = claimedChain(commits, claims, review.commit_id, original.evidence.pull.user.node_id)
+    if (first !== undefined && !anchors.includes(first)) anchors.push(first)
+  }
+  const bodyMetadata = original.evidence.repairBodyEdit
+  if (bodyMetadata !== undefined && Date.parse(bodyMetadata.lastEditedAt ?? "") < Date.parse(accepted.occurredAt ?? "")) {
+    for (const head of sameRepositoryCommitHints(original.evidence.repository, bodyMetadata.body)) {
+      if (original.evidence.commits.some((commit) => commit.sha === head) || !claims.some((claim) => claim.commitSha === head)) continue
+      const [first] = claimedChain(commits, claims, head, undefined)
+      if (first !== undefined && !anchors.includes(first)) anchors.push(first)
+    }
+  }
+  const partitions: CorrectionClaim[][] = []
+  const assigned = new Set<string>()
+  for (const anchor of anchors) {
+    const selected: CorrectionClaim[] = []
+    for (const claim of claims) {
+      if (!assigned.has(claim.id) && (try reaches(ancestry, claim.commitSha, anchor))) selected.push(claim)
+    }
+    if (selected.length === 0) continue
+    partitions.push(selected)
+    for (const claim of selected) assigned.add(claim.id)
+  }
+  const remaining = claims.filter((claim) => !assigned.has(claim.id))
+  if (remaining.length > 0) partitions.push(remaining)
+  if (partitions.length <= 1) {
+    const single: OctoberUnitProof = try singleOriginalContributorUnitProof(accepted, original, integration, owners, claims, followups, contextSources)
+    return single
+  }
+  const sources = new Map<string, CorrectionSource>()
+  const parts: OriginalContributorBinding[] = []
+  for (const selected of partitions) {
+    const [first] = evidence
+      .filter((source) => selected.some((claim) => claim.sourceId === source.evidence.pull.node_id))
+      .sort((left, right) => Date.parse(left.evidence.pull.merged_at ?? "") - Date.parse(right.evidence.pull.merged_at ?? ""))
+    if (first === undefined) throw refused("Reviewed revision lacks its first acceptance")
+    const firstSource = try richSource(first.evidence, owners)
+    const [lead] = selected
+    const later: WorkUnitSource[] = []
+    for (const source of evidence) {
+      if (source === first) continue
+      if (selected.some((claim) => claim.sourceId === source.evidence.pull.node_id)) {
+        later.push(source)
+        continue
+      }
+      if (
+        lead !== undefined &&
+        source.evidence.pull.node_id === original.evidence.pull.node_id &&
+        source.evidence.pull.merged_at !== null &&
+        !selected.some((claim) => claim.commitSha === source.evidence.pull.head.sha) &&
+        (try reaches(ancestry, source.evidence.pull.head.sha, lead.commitSha))
+      ) later.push(source)
+    }
+    const proof = try singleOriginalContributorUnitProof(firstSource, original, first, owners, selected, later, contextSources)
+    if (proof.originalContributor === undefined) throw refused("Reviewed revision lacks a native binding")
+    parts.push({ ...proof.originalContributor, acceptedSourceId: firstSource.sourceId })
+    for (const source of proof.sources) sources.set(source.sourceId, source)
+  }
+  const result: OctoberUnitProof = { sources: [...sources.values()], originalContributorParts: parts }
+  return result
+}
+
+export effect function octoberOriginalContributorPartsProof(
+  sourceEvidence: ReadonlyArray<WorkUnitSource>,
+  owners: ReadonlyMap<string, string>,
+  claims: ReadonlyArray<CorrectionClaim>,
+  originatingClaims: ReadonlyMap<string, ReadonlyArray<string>>,
+  completionSourceId: string,
+) {
+  if (originatingClaims.size < 2) throw refused("Native unit needs multiple originals")
+  const originals: WorkUnitSource[] = []
+  for (const id of originatingClaims.keys()) {
+    const source = sourceEvidence.find((item) => item.evidence.pull.node_id === id)
+    if (source === undefined || source.evidence.pull.user.type !== "User") throw refused("Native unit original identity is unavailable")
+    originals.push(source)
+  }
+  const sources: CorrectionSource[] = []
+  for (const source of try bindRetained(sourceEvidence, owners, true)) {
+    const evidence = sourceEvidence.find((item) => item.evidence.pull.node_id === source.sourceId)
+    if (evidence === undefined) throw refused("Native original source disappeared")
+    const commits: CorrectionCommit[] = []
+    for (const commit of source.commits) {
+      const native = evidence.evidence.commits.find((item) => item.sha === commit.sha)
+      if (native === undefined) throw refused("Native original commit disappeared")
+      commits.push({ ...commit, parentShas: native.parents.map((parent) => parent.sha) })
+    }
+    sources.push({ ...source, commits })
+  }
+  const graph = new Map<string, ReadonlyArray<string>>()
+  for (const source of sources) {
+    for (const commit of source.commits) {
+      const parents = commit.parentShas
+      if (parents === undefined) throw refused("Native original partition lacks parent edges")
+      const previous = graph.get(commit.sha)
+      if (previous !== undefined && JSON.stringify(previous) !== JSON.stringify(parents)) throw refused("Native original partition has inconsistent parent edges")
+      graph.set(commit.sha, parents)
+    }
+  }
+  const reachesIn = (head: string, ancestor: string) => {
+    const pending = [head]
+    const seen = new Set<string>()
+    for (const sha of pending) {
+      if (sha === ancestor) return true
+      if (seen.has(sha)) continue
+      seen.add(sha)
+      pending.push(...(graph.get(sha) ?? []))
+    }
+    return false
+  }
+  const partition = new Map<string, CorrectionClaim[]>()
+  const assigned = new Set<string>()
+  for (const [id, claimIds] of originatingClaims) {
+    const ownClaims = claims.filter((claim) => claimIds.includes(claim.id))
+    if (!(ownClaims.length === claimIds.length && ownClaims.length > 0 && ownClaims.every((claim) => !assigned.has(claim.id)))) {
+      throw refused("Native original claims overlap or are unavailable")
+    }
+    for (const claim of ownClaims) assigned.add(claim.id)
+    partition.set(id, ownClaims)
+  }
+  const independentClaimIds: string[] = []
+  for (const claim of claims) {
+    if (assigned.has(claim.id)) continue
+    const samePath = (originalClaims: ReadonlyArray<CorrectionClaim>) => originalClaims.some((item) => item.path === claim.path)
+    const matching = [...partition]
+      .filter(([, originalClaims]) => originalClaims.some((item) => reachesIn(claim.commitSha, item.commitSha)))
+      .sort(([leftId, leftClaims], [rightId, rightClaims]) => Number(samePath(rightClaims)) - Number(samePath(leftClaims)) || leftId.localeCompare(rightId))
+    if (matching.length === 0) {
+      independentClaimIds.push(claim.id)
+      continue
+    }
+    const strongest = matching.filter(([, originalClaims]) => samePath(originalClaims))
+    const candidates = strongest.length > 0 ? strongest : matching
+    const candidateSources = candidates.map(([id]) => sources.find((source) => source.sourceId === id))
+    const recipients = new Set(candidateSources.map((source) => source?.author?.id))
+    const originators = new Set(candidateSources.map((source) => source === undefined ? undefined : (soleOriginalPrimary(source) ?? source.author)?.id))
+    if (recipients.size !== 1 || originators.size !== 1) throw refused("Native follow-up has multiple originating contributors")
+    candidates[0]?.[1].push(claim)
+  }
+  const authenticated = new Map<string, CorrectionSource>()
+  const parts: OriginalContributorBinding[] = []
+  for (const original of originals) {
+    const originalId = original.evidence.pull.node_id
+    const originId = original.evidence.pull.user.node_id
+    const selected = partition.get(originalId)
+    if (selected === undefined || selected.length === 0) throw refused("Native original partition disappeared")
+    const [accepted] = sources
+      .filter((source) => selected.some((claim) => claim.sourceId === source.sourceId))
+      .sort((left, right) => (left.occurredAt ?? "").localeCompare(right.occurredAt ?? "") || left.sourceId.localeCompare(right.sourceId))
+    const integration = sourceEvidence.find((source) => source.evidence.pull.node_id === accepted?.sourceId)
+    if (accepted === undefined || integration === undefined || accepted.author?.id === originId) throw refused("Native original partition lacks an accepted carrier")
+    const completes = (source: WorkUnitSource) => {
+      const pull = source.evidence.pull
+      return pull.node_id === completionSourceId && pull.node_id !== originalId &&
+        (pull.user.node_id === originId || pull.user.node_id === accepted.author?.id) && pull.merged_at !== null &&
+        (originatingClaims.get(originalId)?.some((claimId) => {
+          const claim = claims.find((item) => item.id === claimId)
+          return claim !== undefined && reachesIn(pull.head.sha, claim.commitSha)
+        }) ?? false) &&
+        Date.parse(pull.merged_at) >= Date.parse(accepted.occurredAt ?? "")
+    }
+    const followups = sourceEvidence.filter((source) =>
+      source.evidence.pull.node_id !== accepted.sourceId &&
+      (selected.some((claim) => claim.sourceId === source.evidence.pull.node_id) || completes(source)))
+    const proof = try octoberOriginalContributorUnitProof(accepted, original, integration, owners, selected, followups, sourceEvidence)
+    if (proof.originalContributorParts !== undefined) {
+      parts.push(...proof.originalContributorParts)
+    } else {
+      if (proof.originalContributor === undefined) throw refused("Native original partition proof is missing")
+      parts.push({ ...proof.originalContributor, acceptedSourceId: accepted.sourceId })
+    }
+    for (const source of proof.sources) authenticated.set(source.sourceId, source)
+  }
+  const result: OctoberPartsProof = {
+    sources: sources.map((source) => authenticated.get(source.sourceId) ?? source),
+    originalContributorParts: parts,
+    independentClaimIds,
+  }
+  return result
+}

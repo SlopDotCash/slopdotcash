@@ -1,29 +1,41 @@
 import { assert, layer } from "@effect/vitest"
+import { Response as WebResponse } from "miniflare"
 import { type Address, type Hex, encodeAbiParameters, encodeEventTopics, encodeFunctionData, erc20Abi, parseAbi } from "viem"
 import type { D1Database } from "@repo/platform/bindings"
+import { base64Encode } from "@repo/platform/chain/solana"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
 import { isoAt } from "@repo/platform/clock"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
 import { type Anvil, anvil, artifact, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
-import { internet } from "@repo/platform/testing/internet"
+import { type Handler, internet } from "@repo/platform/testing/internet"
 import { type QuotesFake, asFetch, kyberNative, quotesFake } from "@repo/platform/testing/quotes"
 import type { Event } from "../gen/fees__buyback.ts"
 import type { Network, Sender, WorkerConfig } from "../gen/fees__runtime.ts"
 import { type IncomeEntry, type Leg, incomeKey } from "../src/buyback/codec.vibe"
 import { incomeEvidence } from "../src/buyback/income.vibe"
+import { keptFees } from "../src/submissionFee/income.vibe"
 import { type LegResult, type LegSettings, arrivals, bridgeLeg } from "../src/buyback/leg.vibe"
 import { type Facts, ledgerOf, send } from "../src/buyback/store.vibe"
 import { decodedApproval } from "../src/evm/abi.ts"
 import { feeChain } from "../src/evm/client.vibe"
+import { sanitizeFeeTail } from "../src/programs/feeTail.ts"
 import { runText } from "../src/journal/codec.vibe"
 import { journal, send as journalSend } from "../src/journal/store.vibe"
 import type { BuybackLimits, NativeLimits } from "../src/runtime/config.vibe"
 import { circleUsdc, dln, kyberswap, robinhoodUsdg } from "../src/runtime/pins.ts"
 import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
 import { feeSolana } from "../src/solana/client.vibe"
+import { TOKEN_PROGRAM } from "../src/solana/wire.vibe"
 import { fromAmount } from "@repo/settlement/kernels/amounts"
 import { type GenerationNames, dayMs, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+
+interface SolanaFailure { readonly method: string; readonly status: number }
+
+interface SolanaFake {
+  failure: SolanaFailure | undefined
+  readonly asked: Array<string>
+}
 
 service Fixture {
   readonly db: D1Database
@@ -31,6 +43,7 @@ service Fixture {
   readonly robinhood: Anvil
   readonly fetch: typeof globalThis.fetch
   readonly quotes: QuotesFake
+  readonly solana: SolanaFake
 }
 
 const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
@@ -57,6 +70,11 @@ const buybackLimits: BuybackLimits = {
   minBurnMicro: 1_000_000n, maxSlippageBps: 100, maxPriceImpactBps: 100, runCapMicro: giveAmount, dailyCapMicro: 5_000_000_000n, unfilledAlertSeconds: 3_600n, solanaBridgeNative: undefined,
 }
 const dryRunEthereum = { source: 1, converterMode: "Live", buybackMode: "DryRun", networks: ["Ethereum", "Robinhood"], keys: ["Ethereum", "Robinhood"], nativeLimits: ["Ethereum", "Robinhood"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
+const dryRunSolana = { source: 1, converterMode: "Live", buybackMode: "DryRun", networks: ["Solana", "Robinhood"], keys: ["Solana", "Robinhood"], nativeLimits: ["Solana", "Robinhood"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
+const solanaUrl = "https://solana.invalid"
+const solanaGenesis = "11111111111111111111111111111111"
+const unretained = "fixture-body-must-not-be-retained"
+const feeWorker = "slop-fee-converter"
 
 function push(value: number) {
   const digits = value.toString(16)
@@ -122,6 +140,26 @@ async function installed(ethereum: Anvil, robinhood: Anvil, out: string) {
   return deployer.address
 }
 
+function mintAccount() {
+  const data = new Uint8Array(82)
+  data[44] = 6
+  data[45] = 1
+  return { owner: TOKEN_PROGRAM, lamports: 10_000_000, data: [base64Encode(data), "base64"], executable: false }
+}
+
+function solanaAnswers(fake: SolanaFake): Handler {
+  return async (request) => {
+    const { method, params } = JSON.parse(await request.text()) as { readonly method: string; readonly params: ReadonlyArray<unknown> }
+    fake.asked.push(method)
+    if (fake.failure?.method === method) return new WebResponse(unretained, { status: fake.failure.status })
+    const context = { slot: 100 }
+    if (method === "getGenesisHash") return WebResponse.json({ jsonrpc: "2.0", id: 1, result: solanaGenesis })
+    if (method === "getAccountInfo") return WebResponse.json({ jsonrpc: "2.0", id: 1, result: { context, value: params[0] === circleUsdc.solana ? mintAccount() : null } })
+    if (method === "getTokenAccountsByOwner") return WebResponse.json({ jsonrpc: "2.0", id: 1, result: { context, value: [] } })
+    return WebResponse.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+  }
+}
+
 const Started = Layer.effect(Fixture, effect {
   const started = try acquireRelease(promise(() => journalDatabase("fees-buyback")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
   const ethereum = try acquireRelease(promise(() => anvil({ chainId: 1, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
@@ -135,8 +173,9 @@ const Started = Layer.effect(Fixture, effect {
   try promise(() => robinhood.mine(3))
   const quotes = quotesFake()
   quotes.kyberswap.route({ chain: "ethereum", tokenIn: kyberNative, tokenOut: ethereumUsdc, amountOut: (wei) => (wei * 3n) / 1_000_000_000_000n, routerAddress: kyberswap.router as Hex, gasUsd: "0", l1FeeUsd: null })
-  const net = try orDie(Effect.try(() => internet({ quotes: quotes.handler, rpc: { [ethereum.url]: forward(ethereum.url), [robinhood.url]: forward(robinhood.url) } })))
-  return { db: started.db, ethereum, robinhood, fetch: asFetch(net.handler), quotes }
+  const solana: SolanaFake = { failure: undefined, asked: [] }
+  const net = try orDie(Effect.try(() => internet({ quotes: quotes.handler, rpc: { [ethereum.url]: forward(ethereum.url), [robinhood.url]: forward(robinhood.url), [solanaUrl]: solanaAnswers(solana) } })))
+  return { db: started.db, ethereum, robinhood, fetch: asFetch(net.handler), quotes, solana }
 })
 
 interface World {
@@ -211,7 +250,7 @@ effect function bridged(world: World, runId: string) {
   const settings = settingsOf(world, runId)
   const chain = feeChain({ network: "Ethereum", wallet: wallet(world), urls: Redacted.make([ethereum.url]), timeoutMs: 10_000 })
   const signing = Layer.provideMerge(evmFeeWallet({ network: "Ethereum", wallet: wallet(world), key: Redacted.make(keyOf(world.generation)), runtime: world.leg.held.runtime, limits: ethereumLimits, gasMultiple: 10n, kyber: settings.kyber }), chain)
-  const solana = feeSolana({ wallet: world.leg.held.wallets[1] ?? "", urls: Redacted.make(["https://solana.invalid"]), genesis: "11111111111111111111111111111111", timeoutMs: 10_000 })
+  const solana = feeSolana({ wallet: world.leg.held.wallets[1] ?? "", urls: Redacted.make([solanaUrl]), genesis: solanaGenesis, timeoutMs: 10_000 })
   const ran = try Effect.provideService(Effect.provide(Effect.provide(bridgeLeg(world.leg, settings), Layer.mergeAll(services(world), signing, solana)), FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
   world.leg = ran.leg
   return ran
@@ -238,9 +277,31 @@ function recorded(run: LegResult) {
   return [...run.records]
 }
 
+effect function logged<A, E, R>(program: A!E!R) {
+  const lines: Array<ReadonlyArray<unknown>> = []
+  const capture = Logger.layer([Logger.make((options) => {
+    const message: unknown = options.message
+    const parts: ReadonlyArray<unknown> = Array.isArray(message) ? message : [message]
+    const [name] = parts
+    if (typeof name === "string" && name.startsWith("fee_")) lines.push(parts)
+  })], { mergeWithExisting: true })
+  const value = try Effect.provide(program, capture)
+  return { value, lines }
+}
+
+function diagnosis(error: string, errorCategory: string, providerFailure: Readonly<Record<string, unknown>>) {
+  return {
+    records: [],
+    phase: "NoOrder",
+    lines: [["fee_buyback_error", { network: "Solana", leg: "bridge", error, providerFailure }]],
+    tail: [{ event: "fee_buyback_error", network: "solana", leg: "bridge", errorCategory, providerFailure }],
+  }
+}
+
 schema SendCheck { kind: string; state: string; mode: string; reason: string | null; tx_id: string | null }
 schema OutcomeCheck { outcome: string; amount: string; evidence_network: string; run_id: string }
 schema BalanceCheck { kind: string; state: string; reason: string | null; amount_in: string; token_balance_before: string | null }
+schema WrittenCheck { conversions: number; gas: number; outcomes: number }
 
 function dlnQuotes(quotes: QuotesFake) {
   return quotes.calls.filter((call) => call.service === "dln").length
@@ -263,12 +324,34 @@ effect function seed(db: D1Database, generation: number, id: string, kind: "conv
   }, d1(db))
 }
 
+interface KeptRow {
+  readonly network?: string
+  readonly token?: string
+  readonly amount?: string
+  readonly keptTo?: string
+  readonly state?: string
+  readonly accepted?: number
+  readonly finalizedAt?: string | null
+  readonly resolveTx?: string | null
+  readonly resolvedAt?: string | null
+}
+
+effect function deposited(world: World, id: number, fields: KeptRow = {}) {
+  const at = try isoAt(world.leg.offset + start + hour)
+  const resolvedAt = fields.resolvedAt === undefined ? at : fields.resolvedAt
+  const finalizedAt = fields.finalizedAt === undefined ? at : fields.finalizedAt
+  const resolveTx = fields.resolveTx === undefined ? `0x${(1000 + id).toString(16).padStart(64, "0")}` : fields.resolveTx
+  try Effect.provide(effect {
+    try (try D1).run(sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state, resolve_tx, resolved_at) VALUES (${fields.network ?? "base-mainnet"}, ${id}, ${`0x${"1".repeat(64)}`}, ${`0x${"a".repeat(40)}`}, ${fields.token ?? usdc}, ${fields.amount ?? "2000000"}, ${fields.keptTo ?? wallet(world).toLowerCase()}, ${`0x${id.toString(16).padStart(64, "0")}`}, ${100 + id}, ${at}, ${finalizedAt}, ${fields.accepted ?? 1}, ${fields.state ?? "kept"}, ${resolveTx}, ${resolvedAt})`)
+  }, d1(world.db))
+}
+
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a received USDC payout fee, a finalized conversion output or a booked direct-award fee")', () => effect {
+  it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee")', () => effect {
     const { db } = try Fixture
     try seed(db, 1, "1a", "conversion", usdc, "900000000", start - dayMs)
     try seed(db, 1, "1b", "conversion", usdc, "1200000000", start + hour)
@@ -277,8 +360,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const world = try opened(2, "Base")
     const booked = [{ receipt: "g1-direct-7", amount: 200000000n, chainTime: start + hour / 2 }, { receipt: "g1-direct-8", amount: 300000000n, chainTime: start - 1 }]
     const query = { network: "Base", wallet: generationInstance(1).held.wallets[0] ?? "", usdc, scope: "g1:", offset: offsetOf(1) } as const
-    const evidence = try Effect.provide(incomeEvidence(query, booked), services(world))
-    const doubled = Effect.as(Effect.provide(incomeEvidence(query, [{ receipt: `0x${"1c".padStart(64, "0")}`, amount: 1n, chainTime: start + hour }]), services(world)), "counted") catch (error) => error._tag
+    const evidence = try Effect.provide(incomeEvidence(query, booked, []), services(world))
+    const doubled = Effect.as(Effect.provide(incomeEvidence(query, [{ receipt: `0x${"1c".padStart(64, "0")}`, amount: 1n, chainTime: start + hour }], []), services(world)), "counted") catch (error) => error._tag
     world.leg = { ...world.leg, evidence }
     const [first] = evidence
     const early = first === undefined ? "missing" : try tried(world, { type: "recordIncome", key: incomeKey(world.leg, first), incomeAmount: first.amount, chainTime: start - 1 })
@@ -307,6 +390,55 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       income: [0, 0, 0, 2],
       sources: ["DirectFee", "ConversionOutput", "UsdcClaim"],
       repeated: "RowMismatch",
+    })
+  })
+
+  it.effect('A kept stablecoin submission fee sent to the fee wallet counts once as Base income from its finalized resolution at or after activation (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee")', () => effect {
+    const world = try opened(7, "Base")
+    const since = try isoAt(world.leg.offset + start)
+    const before = try isoAt(world.leg.offset + start - 1000)
+    try deposited(world, 701)
+    try deposited(world, 702, { amount: "5000000" })
+    try deposited(world, 703, { network: "robinhood-mainnet", token: robinhoodUsdg, amount: "3000000" })
+    try deposited(world, 704, { token: robinhoodUsdg })
+    try deposited(world, 705, { keptTo: `0x${"7".repeat(40)}` })
+    try deposited(world, 706, { state: "refunded" })
+    try deposited(world, 707, { state: "reclaimed" })
+    try deposited(world, 708, { state: "kept_due", resolveTx: null, resolvedAt: null })
+    try deposited(world, 709, { state: "open", resolveTx: null, resolvedAt: null })
+    try deposited(world, 710, { finalizedAt: null })
+    try deposited(world, 711, { resolveTx: null })
+    try deposited(world, 712, { accepted: 0 })
+    try deposited(world, 713, { resolvedAt: before })
+    try deposited(world, 714, { resolvedAt: since, amount: "1000000" })
+    const base = try Effect.provide(keptFees({ network: "base-mainnet", since }), services(world))
+    const robinhood = try Effect.provide(keptFees({ network: "robinhood-mainnet", since }), services(world))
+    const kept = [...base, ...robinhood]
+    const query = { network: "Base", wallet: wallet(world), usdc, scope: world.leg.scope, offset: world.leg.offset } as const
+    const evidence = try Effect.provide(incomeEvidence(query, [], kept), services(world))
+    const ethereum = try Effect.provide(incomeEvidence({ ...query, network: "Ethereum", usdc: ethereumUsdc }, [], kept.map((fee) => ({ ...fee, token: ethereumUsdc }))), services(world))
+    world.leg = { ...world.leg, evidence }
+    for (const entry of evidence) try step(world, { type: "recordIncome", key: incomeKey(world.leg, entry), incomeAmount: entry.amount, chainTime: entry.chainTime })
+    const forged: IncomeEntry = { kind: "KeptSubmissionFee", text: "base-mainnet:705", amount: [0, 0, 2], chainTime: start + hour }
+    const unbacked = try tried(world, { type: "recordIncome", key: incomeKey(world.leg, forged), incomeAmount: forged.amount, chainTime: forged.chainTime })
+    const state = (try Effect.provide(ledgerOf(world.leg), services(world))).state
+    try deposited(world, 715, { amount: "2.5" })
+    const fractional = Effect.as(Effect.provide(keptFees({ network: "base-mainnet", since }), services(world)), "read") catch (error) => error._tag
+
+    try same({
+      evidence: evidence.map((entry) => [entry.kind, entry.text, fromAmount(entry.amount), entry.chainTime - start]),
+      ethereum,
+      unbacked,
+      income: fromAmount(state.income),
+      sources: state.sources.map((key) => key.kind),
+      fractional,
+    }, {
+      evidence: [["KeptSubmissionFee", "base-mainnet:714", 1_000_000n, 0], ["KeptSubmissionFee", "base-mainnet:701", 2_000_000n, hour], ["KeptSubmissionFee", "base-mainnet:702", 5_000_000n, hour]],
+      ethereum: [],
+      unbacked: "BuybackRefused",
+      income: 8_000_000n,
+      sources: ["KeptSubmissionFee", "KeptSubmissionFee", "KeptSubmissionFee"],
+      fractional: "RowMismatch",
     })
   })
 
@@ -466,6 +598,49 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         ["bridge", "submitted", null, "25000000", "30000000"],
       ],
       replay: ["RowMismatch", "RowMismatch", "loaded"],
+    })
+  })
+
+  it.effect('A Solana bridge leg reports the provider and method of a failed provider read without signing (spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"; spec/fees/diagnostics.md, "A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing")', () => effect {
+    const { ethereum, solana } = try Fixture
+    const income: IncomeEntry = { kind: "ConversionOutput", text: "g9-output", amount: [0, 0, 40], chainTime: start + hour }
+    const world = try opened(9, "Solana", [income])
+    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+    try step(world, { type: "publishWorker", config: dryRunSolana }, "ReleaseWorkflow")
+    const failures: ReadonlyArray<SolanaFailure> = [
+      { method: "getTokenAccountsByOwner", status: 403 },
+      { method: "getAccountInfo", status: 502 },
+      { method: "getTokenAccountsByOwner", status: 502 },
+      { method: "getTokenAccountsByOwner", status: 200 },
+    ]
+    const runs: Array<Readonly<Record<string, unknown>>> = []
+    for (const failure of failures) {
+      solana.failure = failure
+      const ran = try logged(bridged(world, `${world.leg.scope}bridge-diagnostic`))
+      const inspected = sanitizeFeeTail({ scriptName: feeWorker, logs: ran.lines.map((message) => ({ message })) }, feeWorker)
+      runs.push({ records: recorded(ran.value), phase: ran.value.state.orderPhase, lines: ran.lines, tail: inspected?.records })
+    }
+    solana.failure = undefined
+    const written = try Effect.provide(rows(WrittenCheck, sql`SELECT (SELECT COUNT(*) FROM fee_conversions WHERE network = 'solana') AS conversions, (SELECT COUNT(*) FROM fee_native_gas WHERE network = 'solana') AS gas, (SELECT COUNT(*) FROM fee_bridge_outcomes WHERE source_network = 'solana') AS outcomes`), d1(world.db))
+    const evmNonce = try promise(() => ethereum.rpc("eth_getTransactionCount", [wallet(world), "latest"]))
+
+    try same({
+      runs,
+      written,
+      signed: solana.asked.filter((method) => method === "simulateTransaction" || method === "sendTransaction"),
+      evmNonce,
+      retained: JSON.stringify(runs).includes(unretained),
+    }, {
+      runs: [
+        diagnosis("HTTP 403", "authentication", { provider: "solana-rpc", stage: "rpc-response", method: "getTokenAccountsByOwner", httpStatus: 403 }),
+        diagnosis("HTTP 502", "rpc-unavailable", { provider: "solana-rpc", stage: "rpc-response", method: "getAccountInfo", httpStatus: 502 }),
+        diagnosis("HTTP 502", "rpc-unavailable", { provider: "solana-rpc", stage: "rpc-response", method: "getTokenAccountsByOwner", httpStatus: 502 }),
+        diagnosis("unparseable response", "response-json", { provider: "solana-rpc", stage: "response-json", method: "getTokenAccountsByOwner" }),
+      ],
+      written: [{ conversions: 0, gas: 0, outcomes: 0 }],
+      signed: [],
+      evmNonce: "0x0",
+      retained: false,
     })
   })
 })

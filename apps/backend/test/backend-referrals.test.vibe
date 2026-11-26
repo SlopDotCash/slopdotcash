@@ -1,12 +1,15 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Response } from "miniflare"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, type GitHubRequest, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
 
 const codePath = "/api/v1/referrals/code"
 const projectsPath = "/api/v1/referrals/projects"
+const requestsPath = "/api/v1/repo-requests"
 const site = "https://slop.test"
+const day = 86_400_000
 
 service World {
   readonly github: GitHubFake
@@ -24,14 +27,19 @@ const Built = Layer.effect(World, effect {
   return { github, net: internet({ github: github.handler }) }
 })
 
+// The project routes need the security area's enforcement ports, so they are served by the composed backend and
+// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
+// Worker entry serves only the account, binding and referral-code routes.
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const { github, net } = try World
   const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
   return areaLayer({
-    root: new URL("..", import.meta.url).pathname,
-    entry: "worker",
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
     d1: { SLOP_DB: "slop-private" },
     vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader },
+    services: { ASSETS: () => new Response("Not found", { status: 404 }) },
     internet: net,
   })
 }), Built)
@@ -52,8 +60,8 @@ function outcome(answer: Answer) {
 effect function member(githubId: string) {
   const area = try Area
   const token = `referral-session-${githubId}-`.padEnd(48, "x")
-  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
   return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
 }
 
@@ -96,7 +104,78 @@ effect function project(id: string, status: string, listingTier: string, created
   try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, referrer_github_id, referrer_github_login) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)", id, status, text, digest, createdAt, createdAt, referrer?.[0] ?? null, referrer?.[1] ?? null)
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+function instant(millis: number) {
+  return new Date(millis).toISOString()
+}
+
+function full(answer: Answer) {
+  return [answer.status, answer.body]
+}
+
+function counted(answer: Answer) {
+  return [answer.status, field(answer, "count") ?? null]
+}
+
+function entry(answer: Answer, repo: string): unknown {
+  const repos = field(answer, "repos")
+  return Array.isArray(repos) ? repos.find((each: { readonly repo?: unknown }) => each.repo === repo) ?? null : null
+}
+
+function newest(...instants: ReadonlyArray<string>) {
+  return [...instants].sort().at(-1)
+}
+
+function repoReads(github: GitHubFake) {
+  return github.requests.filter((request) => new URL(request.url).pathname.startsWith("/repos/")).length
+}
+
+effect function award(id: string, source: string, githubId: string, category: string, amount: number, previous: string | null = null) {
+  try (try Area).sql("INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, ?, ?, ?)", id, source, previous, "2026-11-02T00:00:00.000Z", JSON.stringify({ id, award: { actor: { id: `actor-${githubId}` }, category, amount } }))
+}
+
+effect function contributor(githubId: string) {
+  const session = try member(githubId)
+  try award(`merged-${githubId}`, `source-merged-${githubId}`, githubId, "merged-pull-request", 10)
+  return session
+}
+
+effect function write(json: unknown, as?: Session, origin?: string) {
+  return try (try Area).request(requestsPath, { json, ...as === undefined ? {} : { as }, ...origin === undefined ? {} : { origin } })
+}
+
+effect function flagAs(as: Session | undefined, repo: string) {
+  return try write({ repo, action: "flag" }, as)
+}
+
+effect function withdrawAs(as: Session, repo: string) {
+  return try write({ repo, action: "withdraw" }, as)
+}
+
+effect function boardAs(as?: Session) {
+  return try (try Area).request(requestsPath, as === undefined ? {} : { as })
+}
+
+effect function flagRow(repoId: number, githubId: string) {
+  const [row] = try (try Area).sql("SELECT full_name, created_at, flagged_at, expires_at FROM repo_requests WHERE repo_id = ? AND github_id = ?", String(repoId), githubId)
+  const expiresAt = String(row?.expires_at)
+  const flaggedAt = String(row?.flagged_at)
+  return { fullName: String(row?.full_name), createdAt: String(row?.created_at), flaggedAt, expiresAt, life: Date.parse(expiresAt) - Date.parse(flaggedAt) }
+}
+
+function flaggedAnswer(repo: string, count: number, row: { readonly expiresAt: string }) {
+  return [200, { repo, count, flagged: true, expiresAt: row.expiresAt }]
+}
+
+effect function sqlRefusal(text: string) {
+  const area = try Area
+  const ended = try exit(area.sql(text))
+  if (Exit.isSuccess(ended)) return "applied"
+  const error = Cause.squash(ended.cause)
+  const message = error instanceof Error ? error.message : String(error)
+  return ["repo requests are permanent", "repo request identity is permanent"].find((expected) => message.includes(expected)) ?? message
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('A member chooses, replaces and reuses referral names, and a followed link opens the project form for the current active name (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read")', () => effect {
     const area = try Area
     const { github, net } = try World
@@ -279,7 +358,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('Only public registrations with complete referral attribution are listed, in registry order, and a retired row carrying a referrer is not (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order")', () => effect {
+  it.effect('Only registrations with complete referral attribution are listed, in registry order, and a retired row carrying a referrer is listed too (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order")', () => effect {
     const area = try Area
     const empty = try area.request(projectsPath)
     try project("referred-paused", "paused", "community", "2026-11-01T00:00:00.000Z", 7002, ["42", "member-42"])
@@ -298,6 +377,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       schema: "slop-referred-projects-v1",
       projects: [
         { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+        // The query filters no listing or restriction: a retired row with a referrer appears (spec/backend/referralProjects.md).
+        { projectId: "referred-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
         { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
         { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
       ],
@@ -316,6 +397,242 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       head: [200, "", "public, max-age=300"],
       child: [404, { error: "not_found" }, "public, max-age=300"],
       write: [405, { error: "method_not_allowed" }, "public, max-age=300"],
+    })
+  })
+
+  it.effect('Members with merged work flag, renew and withdraw repositories, and the public board counts them without naming anyone (spec/backend/repoRequests.md, "Story: Flag a repository a member would work on"; spec/backend/repoRequests.md, "Only a member with merged work flags a public, original, unarchived repository that is not theirs and not on Slop"; spec/backend/repoRequests.md, "A flag counts for 90 days, renews in place and is withdrawn without being deleted"; spec/backend/repoRequests.md, "A flag write is a same-origin JSON request naming exactly a repository and an action"; spec/backend/repoRequests.md, "Story: See which repositories members would work on"; spec/backend/repoRequests.md, "The public board counts active flags per repository, never names who flagged, and leaves out a repository on Slop")', () => effect {
+    const area = try Area
+    const { github, net } = try World
+    const alice = "900000100"
+    const bob = "900000200"
+    const newbie = "900000300"
+    const carol = "900000400"
+    const dave = "900000500"
+    try orDie(Effect.try(() => {
+      github.world.addUser({ id: 900000100, login: "alice-gh" })
+      github.world.addOrg({ id: 8101, login: "acme" })
+      github.world.addOrg({ id: 8102, login: "slop" })
+      github.world.addOrg({ id: 8103, login: "many" })
+      github.world.addRepo({ id: 501, owner: "acme", name: "widgets" })
+      github.world.addRepo({ id: 502, owner: "acme", name: "gadgets" })
+      github.world.addRepo({ id: 503, owner: "acme", name: "forked", fork: true })
+      github.world.addRepo({ id: 504, owner: "acme", name: "old", archived: true })
+      github.world.addRepo({ id: 505, owner: "acme", name: "secret", private: true })
+      github.world.addRepo({ id: 506, owner: "alice-gh", name: "mine" })
+      github.world.addRepo({ id: 507, owner: "slop", name: "listed" })
+      github.world.addRepo({ id: 508, owner: "acme", name: "sprockets" })
+      github.world.addRepo({ id: 509, owner: "acme", name: "gizmos" })
+      for (let n = 0; n <= 10; n++) github.world.addRepo({ id: 600 + n, owner: "many", name: `r${n}` })
+    }))
+    const aliceAs = try contributor(alice)
+    const bobAs = try contributor(bob)
+
+    const start = Date.now()
+    const first = full(try flagAs(aliceAs, "acme/widgets"))
+    const aliceWidgets = try flagRow(501, alice)
+    const upper = full(try flagAs(bobAs, "ACME/Widgets"))
+    const bobWidgets = try flagRow(501, bob)
+    const gadgets = full(try flagAs(bobAs, "acme/gadgets"))
+    const bobGadgets = try flagRow(502, bob)
+    const publicBoard = try boardAs()
+    const ownBoard = try boardAs(aliceAs)
+    try same({
+      first,
+      life: aliceWidgets.life,
+      fresh: Date.parse(aliceWidgets.flaggedAt) >= start,
+      upper,
+      stored: bobWidgets.fullName,
+      gadgets,
+      publicBoard: [publicBoard.status, publicBoard.headers["cache-control"] ?? null, publicBoard.body],
+      namesNobody: ["alice", alice, bob, "member-900000100", "member-900000200"].filter((name) => JSON.stringify(publicBoard.body).includes(name)),
+      ownBoard: [ownBoard.status, ownBoard.headers["cache-control"] ?? null, field(ownBoard, "mine")],
+    }, {
+      first: flaggedAnswer("acme/widgets", 1, aliceWidgets),
+      life: 90 * day,
+      fresh: true,
+      upper: flaggedAnswer("acme/widgets", 2, bobWidgets),
+      stored: "acme/widgets",
+      gadgets: flaggedAnswer("acme/gadgets", 1, bobGadgets),
+      publicBoard: [200, "public, max-age=300", {
+        repos: [
+          { repo: "acme/widgets", count: 2, newestAt: newest(aliceWidgets.flaggedAt, bobWidgets.flaggedAt) },
+          { repo: "acme/gadgets", count: 1, newestAt: bobGadgets.flaggedAt },
+        ],
+        mine: null,
+      }],
+      namesNobody: [],
+      ownBoard: [200, "private, no-store", [{ repo: "acme/widgets", expiresAt: aliceWidgets.expiresAt, listedAs: null }]],
+    })
+
+    const newbieAs = try member(newbie)
+    try award("review-newbie", "source-review-newbie", newbie, "substantive-review", 30)
+    const teamAs = try contributor("7")
+    const beforeRefusals = repoReads(github)
+    const noMergedWork = full(try flagAs(newbieAs, "acme/widgets"))
+    const teamAccount = outcome(try flagAs(teamAs, "acme/widgets"))
+    const signedOut = full(try flagAs(undefined, "acme/widgets"))
+    const refusedReads = repoReads(github) - beforeRefusals
+    try award("merged-newbie", "source-merged-newbie", newbie, "merged-pull-request", 10)
+    const merged = counted(try flagAs(newbieAs, "acme/widgets"))
+    const newbieWithdrew = counted(try withdrawAs(newbieAs, "acme/widgets"))
+    try award("corrected-newbie", "source-merged-newbie", newbie, "merged-pull-request", 0, "merged-newbie")
+    const corrected = outcome(try flagAs(newbieAs, "acme/widgets"))
+    const membershipReads = repoReads(github) - beforeRefusals
+    try same({ noMergedWork, teamAccount, signedOut, refusedReads, merged, newbieWithdrew, corrected, membershipReads }, {
+      noMergedWork: [403, { error: "no_merged_work", message: "Flag a repo after your first pull request is merged on a Slop project." }],
+      teamAccount: [403, "team_account"],
+      signedOut: [401, { error: "unauthorized", message: "Sign in with GitHub" }],
+      refusedReads: 0,
+      merged: [200, 3],
+      newbieWithdrew: [200, 2],
+      corrected: [403, "no_merged_work"],
+      membershipReads: 1,
+    })
+
+    try project("listed-one", "active", "community", "2026-11-20T00:00:00.000Z", 507, undefined)
+    const facts = {
+      fork: outcome(try flagAs(aliceAs, "acme/forked")),
+      archived: outcome(try flagAs(aliceAs, "acme/old")),
+      secret: outcome(try flagAs(aliceAs, "acme/secret")),
+      missing: outcome(try flagAs(aliceAs, "acme/nothing")),
+      listed: full(try flagAs(aliceAs, "slop/listed")),
+      own: outcome(try flagAs(aliceAs, "alice-gh/mine")),
+      dotted: outcome(try flagAs(aliceAs, "acme/../x")),
+      spaced: outcome(try flagAs(aliceAs, "not a repo")),
+    }
+    const rowsBeforeOutage = try area.sql("SELECT count(*) AS n FROM repo_requests")
+    try orDie(Effect.try(() => { github.failNext(/\/repos\//, { disconnect: true }); github.failNext(/\/repos\//, { disconnect: true }) }))
+    const down = full(try flagAs(aliceAs, "acme/gadgets"))
+    const rowsAfterOutage = try area.sql("SELECT count(*) AS n FROM repo_requests")
+    try same({ facts, down, rowsAfterOutage }, {
+      facts: {
+        fork: [422, "fork"],
+        archived: [422, "archived"],
+        secret: [422, "not_found"],
+        missing: [422, "not_found"],
+        listed: [409, { error: "already_listed", message: `slop/listed is already on Slop. See ${site}/projects/listed-one.` }],
+        own: [409, "own_repo"],
+        dotted: [422, "invalid_repo"],
+        spaced: [422, "invalid_repo"],
+      },
+      down: [503, { error: "github_unavailable", message: "GitHub did not answer. Try again." }],
+      rowsAfterOutage: rowsBeforeOutage,
+    })
+
+    const carolAs = try contributor(carol)
+    const placed = Date.now()
+    try area.sql("INSERT INTO repo_requests (repo_id, github_id, full_name, created_at, flagged_at, expires_at, withdrawn_at) VALUES (?, ?, ?, ?, ?, ?, NULL)", "508", carol, "acme/sprockets", instant(placed - 180 * day), instant(placed - 89 * day), instant(placed + day))
+    const aged = entry(try boardAs(), "acme/sprockets")
+    const renewed = full(try flagAs(carolAs, "acme/sprockets"))
+    const renewedRow = try flagRow(508, carol)
+    const lapsed = Date.now()
+    try area.sql("UPDATE repo_requests SET flagged_at = ?, expires_at = ? WHERE repo_id = ? AND github_id = ?", instant(lapsed - 91 * day), instant(lapsed - day), "508", carol)
+    const expiredBoard = entry(try boardAs(), "acme/sprockets")
+    const expiredMine = field(try boardAs(carolAs), "mine")
+    const reflagged = counted(try flagAs(carolAs, "acme/sprockets"))
+    const withdrawn = full(try withdrawAs(carolAs, "acme/sprockets"))
+    const withdrawnAgain = full(try withdrawAs(carolAs, "acme/sprockets"))
+    const flaggedAgain = counted(try flagAs(carolAs, "acme/sprockets"))
+    const kept = try area.sql("SELECT count(*) AS n FROM repo_requests WHERE repo_id = '508'")
+    const deleted = try sqlRefusal("DELETE FROM repo_requests")
+    const moved = try sqlRefusal(`UPDATE repo_requests SET github_id = '${bob}' WHERE github_id = '${carol}'`)
+    try same({
+      aged,
+      renewed,
+      renewedCreatedAt: renewedRow.createdAt,
+      renewedLife: renewedRow.life,
+      renewedFresh: Date.parse(renewedRow.flaggedAt) >= placed,
+      expiredBoard,
+      expiredMine,
+      reflagged,
+      withdrawn,
+      withdrawnAgain,
+      flaggedAgain,
+      kept,
+      deleted,
+      moved,
+    }, {
+      aged: { repo: "acme/sprockets", count: 1, newestAt: instant(placed - 89 * day) },
+      renewed: flaggedAnswer("acme/sprockets", 1, renewedRow),
+      renewedCreatedAt: instant(placed - 180 * day),
+      renewedLife: 90 * day,
+      renewedFresh: true,
+      expiredBoard: null,
+      expiredMine: [],
+      reflagged: [200, 1],
+      withdrawn: [200, { repo: "acme/sprockets", count: 0, flagged: false, expiresAt: null }],
+      withdrawnAgain: [404, { error: "not_flagged", message: "You do not flag that repository." }],
+      flaggedAgain: [200, 1],
+      kept: [{ n: 1 }],
+      deleted: "repo requests are permanent",
+      moved: "repo request identity is permanent",
+    })
+
+    const daveAs = try contributor(dave)
+    const filled: number[] = []
+    for (let n = 0; n < 10; n++) filled.push((try flagAs(daveAs, `many/r${n}`)).status)
+    const atLimit = repoReads(github)
+    const limited = full(try flagAs(daveAs, "many/r10"))
+    const limitReads = repoReads(github) - atLimit
+    const renewalAtLimit = counted(try flagAs(daveAs, "many/r0"))
+    const freed = counted(try withdrawAs(daveAs, "many/r0"))
+    const eleventh = counted(try flagAs(daveAs, "many/r10"))
+    const otherAccount = counted(try flagAs(bobAs, "many/r0"))
+    try same({ filled, limited, limitReads, renewalAtLimit, freed, eleventh, otherAccount }, {
+      filled: Array.from({ length: 10 }, () => 200),
+      limited: [409, { error: "request_limit", message: "You already flag 10 repos. Withdraw one first." }],
+      limitReads: 0,
+      renewalAtLimit: [200, 1],
+      freed: [200, 0],
+      eleventh: [200, 1],
+      otherAccount: [200, 1],
+    })
+
+    const aliceGizmos = counted(try flagAs(aliceAs, "acme/gizmos"))
+    const aliceGizmosRow = try flagRow(509, alice)
+    try orDie(Effect.try(() => github.world.renameRepo("acme/gizmos", "acme/gizmos-two")))
+    const renamed = full(try flagAs(bobAs, "acme/gizmos-two"))
+    const bobGizmosRow = try flagRow(509, bob)
+    const beforeListing = try boardAs()
+    try project("gizmos", "active", "community", "2026-11-21T00:00:00.000Z", 509, undefined)
+    const afterListing = try boardAs()
+    const aliceMine = field(try boardAs(aliceAs), "mine")
+    try same({
+      aliceGizmos,
+      renamed,
+      shown: entry(beforeListing, "acme/gizmos-two"),
+      oldName: entry(beforeListing, "acme/gizmos"),
+      listedLater: entry(afterListing, "acme/gizmos-two"),
+      aliceMine,
+    }, {
+      aliceGizmos: [200, 1],
+      renamed: flaggedAnswer("acme/gizmos-two", 2, bobGizmosRow),
+      shown: { repo: "acme/gizmos-two", count: 2, newestAt: newest(aliceGizmosRow.flaggedAt, bobGizmosRow.flaggedAt) },
+      oldName: null,
+      listedLater: null,
+      aliceMine: [
+        { repo: "acme/gizmos", expiresAt: aliceGizmosRow.expiresAt, listedAs: "gizmos" },
+        { repo: "acme/widgets", expiresAt: aliceWidgets.expiresAt, listedAs: null },
+      ],
+    })
+
+    const admission = {
+      crossOrigin: full(try write({ repo: "acme/widgets", action: "flag" }, aliceAs, "https://evil.test")),
+      missingAction: full(try write({ repo: "acme/widgets" }, aliceAs)),
+      unknownAction: full(try write({ repo: "acme/widgets", action: "boost" }, aliceAs)),
+      extraKey: full(try write({ repo: "acme/widgets", action: "flag", x: 1 }, aliceAs)),
+      otherPath: full(try area.request(`${requestsPath}/x`)),
+    }
+    try same({ admission, unexpected: net.unexpected, outboundErrors: area.outboundErrors }, {
+      admission: {
+        crossOrigin: [403, { error: "origin_forbidden" }],
+        missingAction: [400, { error: "invalid_request", message: "Request body has unexpected fields" }],
+        unknownAction: [400, { error: "invalid_request", message: "Action must be flag or withdraw." }],
+        extraKey: [400, { error: "invalid_request", message: "Request body has unexpected fields" }],
+        otherPath: [404, "Not found"],
+      },
+      unexpected: [],
+      outboundErrors: [],
     })
   })
 })

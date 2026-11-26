@@ -1,5 +1,6 @@
 // spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"; spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "A deposit is in transit only from its finalized order receipt; a failed order releases its share"; spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"
 import type { Address, EvmRpc, Hex } from "@repo/platform/chain/evm"
+import type { SolanaRpc } from "@repo/platform/chain/solana"
 import { type BridgeOrder, type BridgeQuote, type Buyback, type Event, canDecide, canReportUnfilled, decisionOf, openSend, orderTermsValid, signs, spentInWindow } from "../../gen/fees__buyback.effect.vibe"
 import { unitsOf } from "../journal/codec.vibe"
 import { broadcast as broadcastEvm, attemptStatus, FeeChain, feesPerGas, nativeCost, tokenBalance } from "../evm/client.vibe"
@@ -8,13 +9,14 @@ import { type KyberSettings, nativeValue } from "../kyber/route.vibe"
 import { type EvmOrderProposal, dlnOrderGas, proposeEvmOrder, recheckedEvmOrder } from "../dln/evmOrder.vibe"
 import { createdOrder, evmRefund, fill, solanaOrderDebit, solanaRefund } from "../dln/evidence.vibe"
 import { nativeReceipt } from "../solana/receipt.vibe"
-import { walletBalance } from "../solana/client.vibe"
+import { type FeeSolana, walletBalance } from "../solana/client.vibe"
 import { type EvmSigned, FeeWallet } from "../signer/feeWallet.vibe"
 import type { DlnOrderTerms, PreparationAttempt } from "../signer/intents.ts"
 import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { chainIds, circleUsdc, robinhoodUsdg } from "../runtime/pins.ts"
 import { type Leg, type Ledger, type SendRecord, type Terms, modelBalance } from "./codec.vibe"
 import { orderParties } from "./parties.ts"
+import { providerErrorLog } from "../kernels/providerFailure.ts"
 import { BuybackRefused, type Facts, type SignedFacts, ledgerOf, send, sendFloors } from "./store.vibe"
 
 module verified {
@@ -47,6 +49,7 @@ export interface LegSettings {
   readonly receiver: Address
   readonly kyber: KyberSettings
   readonly robinhood?: Layer.Layer<FeeChain | EvmRpc, unknown, never>
+  readonly solana?: Layer.Layer<FeeSolana | SolanaRpc, unknown, never>
 }
 
 interface Running {
@@ -212,6 +215,11 @@ effect function orderEvm(running: Running, settings: LegSettings) {
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_bridge_submitted", signed.txId)
 }
 
+effect function solanaBalance(settings: LegSettings, usdc: string) {
+  const solana = try present(settings.solana, "decide", "a Solana leg needs the Solana fee wallet services")
+  return try Effect.provide(walletBalance(usdc, 0n), solana)
+}
+
 effect function evaluate(running: Running, settings: LegSettings) {
   const { state, leg } = running
   if (state.runtime.buybackMode === "Off") return
@@ -219,7 +227,7 @@ effect function evaluate(running: Running, settings: LegSettings) {
   const usdc = usdcOf(leg)
   const owed = owedOf(state, settings)
   if (owed === 0n) return
-  const balance = solana ? (try walletBalance(usdc, 0n)) : try tokenBalance(usdc as Address, "finalized")
+  const balance = solana ? (try solanaBalance(settings, usdc)) : try tokenBalance(usdc as Address, "finalized")
   const amount = try sendable(state, settings, owed, balance)
   const probe: BridgeQuote = { route: "RouteFound", amount: Number(amount), takeAmount: Number(amount), costBps: 0, nativeFee: 0 }
   const facts: Facts = { balance: balance.toString() }
@@ -253,21 +261,22 @@ effect function settleEvm(running: Running, record: SendRecord, tx: number) {
   try step(running, { type: "settleOrder", receipt: { tx, succeeded, finalized: true } }, { receipt: { ...receipt, ...paid === undefined ? {} : { paid } } })
 }
 
-effect function settleSolana(running: Running, record: SendRecord, tx: number) {
+effect function settleSolana(running: Running, settings: LegSettings, record: SendRecord, tx: number) {
+  const solana = try present(settings.solana, "settleOrder", "a Solana order needs the Solana fee wallet services")
   const proof = record.gas.find((gas) => gas.tx === record.tx)?.accountProof ?? undefined
-  const landed = try nativeReceipt({ txId: record.tx, rawTx: record.rawTx, wallet: running.wallet, accountProof: proof })
+  const landed = try Effect.provide(nativeReceipt({ txId: record.tx, rawTx: record.rawTx, wallet: running.wallet, accountProof: proof }), solana)
   if (landed.kind === "unseen") return
-  const paid = landed.succeeded ? (try solanaOrderDebit(landed.fetched.meta, circleUsdc.solana, try big(record.amountIn))).toString() : undefined
+  const paid = landed.succeeded ? (try Effect.provide(solanaOrderDebit(landed.fetched.meta, circleUsdc.solana, try big(record.amountIn)), solana)).toString() : undefined
   try step(running, { type: "settleOrder", receipt: { tx, succeeded: landed.succeeded, finalized: true } }, { receipt: { landedTxId: record.tx, actualWei: landed.actualWei, blockHash: landed.blockHash, ...paid === undefined ? {} : { paid } } })
 }
 
-effect function reconcileOpen(running: Running) {
+effect function reconcileOpen(running: Running, settings: LegSettings) {
   const { state } = running
   const open = state.orderPhase === "Approving" && openSend(state.approval) ? state.approval : state.orderPhase === "Ordering" && openSend(state.orderSend) ? state.orderSend : undefined
   if (open === undefined) return
   const record = recordOf(try ledgerOf(running.leg), open.tx, running.leg)
   if (record === undefined) return try refuse("settleOrder", "the open send is not journaled")
-  if (running.leg.network === "Solana") return try settleSolana(running, record, open.tx)
+  if (running.leg.network === "Solana") return try settleSolana(running, settings, record, open.tx)
   try settleEvm(running, record, open.tx)
 }
 
@@ -279,10 +288,11 @@ effect function refundEvm(record: SendRecord) {
 effect function refundSolana(running: Running, settings: LegSettings, record: SendRecord) {
   const { terms, order } = try termsOrder(record)
   const robinhood = try present(settings.robinhood, "observeRefund", "a Solana refund needs the Robinhood Chain cancellation evidence")
+  const solana = try present(settings.solana, "observeRefund", "a Solana refund needs the Solana fee wallet services")
   const filled = try Effect.provide(fill({ orderId: order.orderId, takeAmount: order.takeAmount, receiver: order.receiver }), robinhood)
   if (filled.kind !== "Cancelling") return { kind: "NotRefunded" } as const
   if (running.state.orderPhase === "InTransit") try step(running, { type: "observeCancelling", cancellation: { order: running.state.order, height: Number(filled.height), finalized: true } })
-  return try solanaRefund({ orderId: terms.orderId as Hex, giveAmount: order.giveAmount }, filled)
+  return try Effect.provide(solanaRefund({ orderId: terms.orderId as Hex, giveAmount: order.giveAmount }, filled), solana)
 }
 
 effect function refunds(running: Running, settings: LegSettings) {
@@ -300,12 +310,12 @@ effect function refunds(running: Running, settings: LegSettings) {
 export effect function bridgeLeg(leg: Leg, settings: LegSettings) {
   const running: Running = { leg, state: (try ledgerOf(leg)).state, runId: settings.runId, wallet: settings.wallet, records: [] }
   const ran = effect {
-    try reconcileOpen(running)
+    try reconcileOpen(running, settings)
     if (running.state.orderPhase === "InTransit" || running.state.orderPhase === "Cancelling") try refunds(running, settings)
     if (running.state.orderPhase === "Approving" && running.state.approval.phase === "Finalized") return try orderEvm(running, settings)
     if (running.state.orderPhase === "NoOrder") try evaluate(running, settings)
   }
-  ran catch effect (error) => { try Effect.logWarning("fee_buyback_error", { network: running.leg.network, leg: "bridge", error: tagOf(error) }) }
+  ran catch effect (error) => { try Effect.logWarning("fee_buyback_error", { network: running.leg.network, leg: "bridge", ...(running.leg.network === "Solana" ? providerErrorLog(error, "solana-rpc", tagOf(error)) : { error: tagOf(error) }) }) }
   return { leg: running.leg, state: running.state, records: running.records } satisfies LegResult
 }
 

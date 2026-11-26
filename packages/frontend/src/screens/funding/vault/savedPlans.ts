@@ -64,6 +64,7 @@ export function sameBatch(saved: EvmBatchPlan, expected: EvmBatchPlan): boolean 
 
 /** The setting a saved plan asks for; the chain check verifies the plan against it before it counts. @throws {never} */
 export function savedSetting(plan: OwnerPlan | undefined): MonthlySetting | undefined {
+  if (plan?.kind === "solanaSetting" || plan?.kind === "evmSetting") return { cap: BigInt(plan.cap), enabled: plan.enabled };
   return plan?.kind === "evmCall" ? settingOf(`0x${plan.data.slice(10, 74)}`, `0x${plan.data.slice(74, 138)}`) : undefined;
 }
 
@@ -85,7 +86,7 @@ export function vaultKeys(projectId: string, deployment: FundingDeployment, peri
     batch: `${storageKeys.vaultAction.key}${target}:batch`,
     commitment: `${storageKeys.awardCommitment.key}${projectId}:${period}`,
     setting: `${storageKeys.vaultMonthly.key}${deployment.network}:${deployment.vault}`,
-    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}`,
+    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}:${deployment.network}`,
   };
 }
 

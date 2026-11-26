@@ -32,12 +32,13 @@ found.`. Both are decided before anything else is read.
 import listing as L from "../backend/listing"
 import projections as F from "../frontend/projections"
 type HttpMethod = GetMethod | HeadMethod | OtherMethod
-type RouteKind = DiscoveryRoute | TermsRoute | SkillArtifactRoute | NotArtifactRoute
+type ArtifactRouteKind = DiscoveryRoute | TermsRoute | SkillArtifactRoute | NotArtifactRoute
 type ClearanceRead = ClearanceCleared | ClearanceUnverified | ClearanceRefused
 type Answer = Served | GoneRestricted | ProjectNotFound | SkillsNotPublished | NoUsableClearance
   | ArtifactNotFound | RetryLater | PassThrough
 type ArtifactFacts = { read: L::PublicRead, active: bool, skillFields: bool, clearance: ClearanceRead,
-  templateLoaded: bool, templateVerified: bool, artifactExists: bool, readFailed: bool, monthListing: MonthListing }
+  templateLoaded: bool, templateVerified: bool, artifactExists: bool, readFailed: bool, monthListing: MonthListing,
+  intake: IntakeListing }
 pure def canonicalArtifact(artifactName: str): str =
   if (artifactName == "SKILL.md") "skill.md" else if (artifactName == "review/SKILL.md") "review-skill.md" else artifactName
 pure def answerStatus(answer: Answer): int =
@@ -45,10 +46,10 @@ pure def answerStatus(answer: Answer): int =
   else if (answer == PassThrough) 0 else 404
 pure def projectGate(known: ArtifactFacts): Answer =
   if (known.read == L::Gone) GoneRestricted else if (known.read == L::NotFound) ProjectNotFound else Served
-pure def lawRestrictedIsGone(known: ArtifactFacts, route: RouteKind): bool =
+pure def lawRestrictedIsGone(known: ArtifactFacts, route: ArtifactRouteKind): bool =
   (known.read == L::Gone and not(known.readFailed) and (route == TermsRoute or route == SkillArtifactRoute))
     implies artifactAnswer(route, known) == GoneRestricted
-pure def lawUnlistedIsNotFound(known: ArtifactFacts, route: RouteKind): bool =
+pure def lawUnlistedIsNotFound(known: ArtifactFacts, route: ArtifactRouteKind): bool =
   (known.read == L::NotFound and not(known.readFailed) and (route == TermsRoute or route == SkillArtifactRoute))
     implies artifactAnswer(route, known) == ProjectNotFound
 pure def lawAliasesNameTheSkill(artifactName: str): bool =
@@ -94,7 +95,7 @@ its artifacts for inspection, while discovery and the installer refuse it:
 this asymmetry is the legacy behaviour, kept on purpose.
 
 ```quint
-pure def artifactAnswer(route: RouteKind, known: ArtifactFacts): Answer =
+pure def artifactAnswer(route: ArtifactRouteKind, known: ArtifactFacts): Answer =
   if (route == NotArtifactRoute) PassThrough
   else if (known.readFailed) RetryLater
   else if (route == DiscoveryRoute) Served
@@ -123,14 +124,14 @@ pure def lawPausedClearedProjectStillServes(known: ArtifactFacts): bool =
 `/.well-known/slop/projects.json` is `{ schemaVersion: "1", projects }`. A
 project contributes rows only when its public read is listed, its status is
 active (not paused), it publishes generated skills, it is not left out as
-unfunded this month (below) and its clearance for the index's
+not listed this month or paused at its intake cap (below) and its clearance for the index's
 `templateSha256` is cleared; an unverified clearance leaves it out rather
 than failing the index. Each of its repositories gives one row:
 `project_id`, `project_url` (`https://slop.cash/projects/<id>/`),
 `repository` (the repository's last alias, else its id), `review_skill`,
 `review_skill_manifest`
 (`https://slop.cash/projects/<id>/review-skill-manifest.json`), `skill` and
-`skill_source`. Apart from the month listing, this gate is exactly the
+`skill_source`. Apart from the month listing and the intake cap, this gate is exactly the
 installer's (`frontend/projections.md` `installable`, used by
 [skill authority](./skillAuthority.md)).
 
@@ -139,7 +140,7 @@ type RepositoryEntry = { id: str, lastAlias: str }
 type DiscoveryRow = { projectId: str, repositoryName: str }
 pure def discoverable(known: ArtifactFacts): bool =
   known.read == L::Listed and known.active and known.skillFields and known.clearance == ClearanceCleared
-  and known.monthListing != UnfundedThisMonth
+  and known.monthListing == ListedThisMonth and known.intake != IntakePaused
 pure def discoveryRows(known: ArtifactFacts, projectId: str, repositories: List[RepositoryEntry]): List[DiscoveryRow] =
   if (discoverable(known))
     repositories.listMap(x => { projectId: projectId, repositoryName: if (x.lastAlias != "") x.lastAlias else x.id })
@@ -148,47 +149,68 @@ pure def factsOfView(view: F::ProjectView): ArtifactFacts =
   { read: if (not(F::listed(view))) L::NotFound else if (view.flagged or view.quarantined) L::Gone else L::Listed,
     active: not(view.paused), skillFields: view.skillFields,
     clearance: if (view.cleared) ClearanceCleared else ClearanceRefused,
-    templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth }
+    templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth,
+    intake: IntakeOpen }
 pure def lawDiscoveryMatchesInstallerGate(view: F::ProjectView): bool = discoverable(factsOfView(view)) iff F::installable(view)
 pure def lawOneRowPerRepository(known: ArtifactFacts, projectId: str, repositories: List[RepositoryEntry]): bool =
   discoveryRows(known, projectId, repositories).length() == (if (discoverable(known)) repositories.length() else 0)
 pure def lawPausedProjectNotDiscovered(known: ArtifactFacts): bool = not(known.active) implies not(discoverable(known))
 ```
 
-### Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project
+### Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing
 
-An unfunded monthly pool is not listed this month (operator decision,
-16 November 2026). Discovery reads, on the server and beside the project
-list, the cached vault rows behind `GET /api/v1/pool-funding`. A read that
-throws or returns nothing gives every candidate a pool read of `PoolFailed`,
-which is `FundingUnread`: it logs `project discovery pool
-funding unavailable` and lists every cleared project as before, so a funding
-outage never empties discovery. A successful read, an empty one included,
-gives each candidate `ListedThisMonth` when `listedThisMonth` of the
-[monthly listing](../frontend/poolListing.md) holds for its listing facts on
-that read, and `UnfundedThisMonth` otherwise. The discovery answer is
-`no-store` like every other, so the next request reads the funding again. The month listing changes discovery only:
-the project's skills, guides, archives and `terms.json` keep serving by
-direct link, and the installer's gate is unchanged.
+Discovery reads no vault funding (operator decision, 18 November 2026). The
+month listing comes from the registry alone: a project is listed this month when `listedThisMonth` of the
+[monthly listing](../frontend/poolListing.md) holds for its manifest, so an
+active monthly pool with no open security program and a configured amount of
+zero for the current UTC month (the month's `cycleCaps` override, else
+`monthlyCapMinor`) is `NotListedThisMonth`, whatever any vault holds, and a
+pool with a positive configured amount is listed whether or not it is
+vaulted. Beside the project list, discovery reads the stored intake counts of
+the [merge activity](../backend/mergeActivity.md) once: a project that the
+[intake cap](../backend/intakeCap.md) has paused (its cap is set and a count
+of one of its repositories at or above it was observed no more than 72 hours
+ago) is `IntakePaused` and left out until a later count falls below the cap.
+A read that is absent, empty or null, or that throws, is `IntakeUnread` and
+pauses nothing; one that throws logs `project discovery intake counts
+unavailable`. A project with no stored count pauses nothing. The discovery
+answer is `no-store` like every other, so the next request reads the counts
+again. Both gates change discovery only: the project's skills, guides,
+archives and `terms.json` keep serving by direct link, and the installer's
+gate is unchanged.
 
 ```quint
 import poolListing as PL from "../frontend/poolListing"
-type MonthListing = ListedThisMonth | UnfundedThisMonth | FundingUnread
+import intakeCap as IC from "../backend/intakeCap"
+type MonthListing = ListedThisMonth | NotListedThisMonth
+type IntakeListing = IntakeOpen | IntakePaused | IntakeUnread
 pure def monthListingOf(facts: PL::ListingFacts): MonthListing =
-  if (not(PL::fundingKnown(facts))) FundingUnread else if (PL::listedThisMonth(facts)) ListedThisMonth else UnfundedThisMonth
-pure def lawUnfundedProjectNotDiscovered(known: ArtifactFacts): bool =
-  known.monthListing == UnfundedThisMonth implies not(discoverable(known))
-pure def lawFailedFundingReadListsAsBefore(known: ArtifactFacts): bool =
-  discoverable({ ...known, monthListing: FundingUnread }) iff discoverable({ ...known, monthListing: ListedThisMonth })
-pure def lawFundingReadDecidesOnlyWhenRead(facts: PL::ListingFacts): bool =
-  (not(PL::fundingKnown(facts)) implies monthListingOf(facts) == FundingUnread)
-  and (PL::fundingKnown(facts) implies (monthListingOf(facts) == UnfundedThisMonth iff not(PL::listedThisMonth(facts))))
-pure def lawUnfundedProjectServesByDirectLink(known: ArtifactFacts, route: RouteKind): bool =
+  if (PL::listedThisMonth(facts)) ListedThisMonth else NotListedThisMonth
+pure def intakeListingOf(countsRead: bool, cap: int, projectActive: bool, now: int, counts: List[IC::StoredCount]): IntakeListing =
+  if (not(countsRead)) IntakeUnread
+  else if (IC::paused({ ...IC::initial, cap: cap, active: projectActive, now: now, counts: counts })) IntakePaused
+  else IntakeOpen
+pure def lawNotListedProjectNotDiscovered(known: ArtifactFacts): bool =
+  known.monthListing == NotListedThisMonth implies not(discoverable(known))
+pure def lawMonthListingFollowsTheRegistry(facts: PL::ListingFacts): bool =
+  (monthListingOf(facts) == ListedThisMonth) iff PL::listedThisMonth(facts)
+pure def lawPausedAtCapNotDiscovered(known: ArtifactFacts): bool =
+  known.intake == IntakePaused implies not(discoverable(known))
+pure def lawFailedCountReadPausesNothing(known: ArtifactFacts): bool =
+  discoverable({ ...known, intake: IntakeUnread }) iff discoverable({ ...known, intake: IntakeOpen })
+pure def lawUnreadCountsPauseNothing(cap: int, projectActive: bool, now: int, counts: List[IC::StoredCount]): bool =
+  intakeListingOf(false, cap, projectActive, now, counts) == IntakeUnread
+  and intakeListingOf(true, cap, projectActive, now, List()) == IntakeOpen
+pure def lawRecentCountAtCapPauses(cap: int, now: int, counts: List[IC::StoredCount]): bool =
+  (cap >= IC::minCap and counts.some(c => IC::countAtCap(cap, c, now)))
+    implies intakeListingOf(true, cap, true, now, counts) == IntakePaused
+pure def lawListingGatesServeByDirectLink(known: ArtifactFacts, route: ArtifactRouteKind): bool =
   route != DiscoveryRoute implies
-    artifactAnswer(route, { ...known, monthListing: UnfundedThisMonth })
-      == artifactAnswer(route, { ...known, monthListing: ListedThisMonth })
-pure def lawDiscoveryIsInstallerGateListedThisMonth(view: F::ProjectView, listing: MonthListing): bool =
-  discoverable({ ...factsOfView(view), monthListing: listing }) iff (F::installable(view) and listing != UnfundedThisMonth)
+    artifactAnswer(route, { ...known, monthListing: NotListedThisMonth, intake: IntakePaused })
+      == artifactAnswer(route, { ...known, monthListing: ListedThisMonth, intake: IntakeOpen })
+pure def lawDiscoveryIsInstallerGateListedAndOpen(view: F::ProjectView, listing: MonthListing, intake: IntakeListing): bool =
+  discoverable({ ...factsOfView(view), monthListing: listing, intake: intake })
+    iff (F::installable(view) and listing == ListedThisMonth and intake != IntakePaused)
 ```
 
 ### Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD
@@ -208,17 +230,17 @@ while reading answers 503 `Project artifacts are unavailable. Try again.`.
 
 ```quint
 type ArtifactResponse = { status: int, noStore: bool, anyOrigin: bool, frameAncestorsNone: bool, withBody: bool }
-pure def handled(method: HttpMethod, route: RouteKind): bool =
+pure def handled(method: HttpMethod, route: ArtifactRouteKind): bool =
   (method == GetMethod or method == HeadMethod) and route != NotArtifactRoute
-pure def respond(method: HttpMethod, route: RouteKind, answer: Answer): ArtifactResponse =
+pure def respond(method: HttpMethod, route: ArtifactRouteKind, answer: Answer): ArtifactResponse =
   if (not(handled(method, route))) { status: 0, noStore: false, anyOrigin: false, frameAncestorsNone: false, withBody: false }
   else { status: answerStatus(answer), noStore: true, anyOrigin: true, frameAncestorsNone: true, withBody: method == GetMethod }
-pure def lawHandledResponsesAreUncachedAndUnframed(method: HttpMethod, route: RouteKind, answer: Answer): bool =
+pure def lawHandledResponsesAreUncachedAndUnframed(method: HttpMethod, route: ArtifactRouteKind, answer: Answer): bool =
   handled(method, route) implies
     respond(method, route, answer).noStore and respond(method, route, answer).anyOrigin
     and respond(method, route, answer).frameAncestorsNone
-pure def lawHeadHasNoBody(route: RouteKind, answer: Answer): bool = not(respond(HeadMethod, route, answer).withBody)
-pure def lawOtherMethodsPassThrough(route: RouteKind): bool = not(handled(OtherMethod, route))
+pure def lawHeadHasNoBody(route: ArtifactRouteKind, answer: Answer): bool = not(respond(HeadMethod, route, answer).withBody)
+pure def lawOtherMethodsPassThrough(route: ArtifactRouteKind): bool = not(handled(OtherMethod, route))
   and not(handled(GetMethod, NotArtifactRoute))
 ```
 
@@ -480,7 +502,14 @@ pure def lawGlobalSetNeedsAgreeingTemplatePaths(sources: List[GlobalSource]): bo
 `/protocol/private-trace-v1.md` is `# Private trace privacy contract v1`, a
 blank line, and the one maintained section `## Private trace privacy
 contract` (in the legacy tree, of `backend/trace/README.md`), trimmed, with
-its `###` headings raised to `##`. `/protocol/points-v1.md` and
+its `###` headings raised to `##`. `/protocol/private-trace-v2.md` is
+`# Private trace privacy contract v2`, a blank line, and the one maintained
+section `## Private trace privacy contract v2` of the same file (the version 2
+contract of 22 November 2026), trimmed, with its `###` headings raised to
+`##`. A section ends at the next heading of its depth or shallower, so the
+version 1 section ends at the version 2 heading and stays published byte for
+byte: version 1 keeps governing traces uploaded under it, and each privacy
+document has exactly its own section. `/protocol/points-v1.md` and
 `/protocol/scoring-v2.md` are `# Slop Points`, a link to PRD section 7 on the
 `development` branch, that section with headings raised, and a historical
 record section linking the former document at the immutable commit
@@ -491,18 +520,18 @@ final newline. A missing source section or an invalid identity record fails
 the build; no second copy of any of them is maintained.
 
 ```quint
-type ProtocolDocument = PrivateTraceV1 | PointsV1 | ScoringV2 | IdentityV1
-type DocumentSource = PrivacyContractSection | PrdSectionSeven | IdentityRecordSource
+type ProtocolDocument = PrivateTraceV1 | PrivateTraceV2 | PointsV1 | ScoringV2 | IdentityV1
+type DocumentSource = PrivacyContractSection | PrivacyContractV2Section | PrdSectionSeven | IdentityRecordSource
 pure val historicalProtocolCommit = "ebf468873147a7ec119858915deca6cb3177eb0d"
 pure def documentSource(doc: ProtocolDocument): DocumentSource =
-  if (doc == PrivateTraceV1) PrivacyContractSection else if (doc == IdentityV1) IdentityRecordSource else PrdSectionSeven
+  if (doc == PrivateTraceV1) PrivacyContractSection else if (doc == PrivateTraceV2) PrivacyContractV2Section else if (doc == IdentityV1) IdentityRecordSource else PrdSectionSeven
 pure def historicalLink(doc: ProtocolDocument): str =
   if (doc == PointsV1 or doc == ScoringV2) historicalProtocolCommit else ""
 pure def protocolPublishable(sectionsFound: bool, identityValid: bool): bool = sectionsFound and identityValid
 pure def lawPointsDocumentsKeepImmutableLink(doc: ProtocolDocument): bool =
   documentSource(doc) == PrdSectionSeven implies historicalLink(doc) == historicalProtocolCommit
 pure def lawPrivacyContractHasOneSource(doc: ProtocolDocument): bool =
-  documentSource(doc) == PrivacyContractSection iff doc == PrivateTraceV1
+  (documentSource(doc) == PrivacyContractSection iff doc == PrivateTraceV1) and (documentSource(doc) == PrivacyContractV2Section iff doc == PrivateTraceV2)
 pure def lawMissingSourceFailsBuild(identityValid: bool): bool = not(protocolPublishable(false, identityValid))
 ```
 
@@ -510,9 +539,11 @@ pure def lawMissingSourceFailsBuild(identityValid: bool): bool = not(protocolPub
 
 ```quint
 pure val servedFacts: ArtifactFacts = { read: L::Listed, active: true, skillFields: true, clearance: ClearanceCleared,
-  templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth }
+  templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth,
+  intake: IntakeOpen }
 pure val knownValues = Set(servedFacts, { ...servedFacts, active: false }, { ...servedFacts, read: L::Gone },
-  { ...servedFacts, monthListing: UnfundedThisMonth }, { ...servedFacts, monthListing: FundingUnread },
+  { ...servedFacts, monthListing: NotListedThisMonth }, { ...servedFacts, intake: IntakePaused },
+  { ...servedFacts, intake: IntakeUnread },
   { ...servedFacts, read: L::NotFound }, { ...servedFacts, clearance: ClearanceUnverified },
   { ...servedFacts, clearance: ClearanceRefused }, { ...servedFacts, skillFields: false },
   { ...servedFacts, templateVerified: false }, { ...servedFacts, readFailed: true })
@@ -521,7 +552,12 @@ pure val openProjectView: F::ProjectView = { registered: true, retired: false, l
 pure val viewValues = Set(openProjectView, { ...openProjectView, paused: true }, { ...openProjectView, flagged: true },
   { ...openProjectView, retired: true }, { ...openProjectView, cleared: false })
 pure val repositoriesValues = Set(List(), List({ id: "o/r", lastAlias: "" }, { id: "o/s", lastAlias: "n/s" }))
-pure val listingValues = Set(ListedThisMonth, UnfundedThisMonth, FundingUnread)
+pure val listingValues = Set(ListedThisMonth, NotListedThisMonth)
+pure val intakeValues = Set(IntakeOpen, IntakePaused, IntakeUnread)
+pure val capValues = Set(0, 1, 3, 4)
+pure val nowValues = Set(0)
+pure val countsValues = Set(List(), List(IC::unread), List({ read: true, count: 3, observedAt: 0 }),
+  List(IC::unread, { read: true, count: 3, observedAt: -72 }), List({ read: true, count: 3, observedAt: -73 }))
 pure val factsValues = PL::listingValues
 pure val projectIdValues = Set("p")
 pure val artifactNameValues = Set("SKILL.md", "review/SKILL.md", "terms.json")
@@ -549,4 +585,68 @@ pure val sourcesValues = Set(List(entrySource, contributorSource, maintainerSour
   List(entrySource, maintainerSource, contributorSource), List())
 pure val filesValues = Set(List({ indexed: "a", servedSha256: "a", size: 1, present: true }),
   List({ indexed: "a", servedSha256: "b", size: 1, present: true }))
+```
+
+## Story: Publish the sitemap from the route list, the registry and the cycle index
+
+The site build writes `/sitemap.xml` (development
+`scripts/generate-sitemap.ts`, `src/lib/site-routes.ts` `sitemapPaths`): a
+`urlset` of the sitemaps.org 0.9 schema with one `url` whose `loc` is
+`https://slop.cash` followed by the path, for each indexable page and no
+other. The build reads the published cycle index and refuses one that does
+not validate, so it never writes a sitemap from a malformed index.
+
+### The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route
+
+The sitemap lists, in this order, the seven fixed indexed pages `/`,
+`/how-it-works`, `/sponsors`, `/cycles`, `/points`, `/projects/new` and
+`/requested` (development's `STATIC_PAGE_TITLES` order); then `/projects/<slug>` for each
+listed registry project (registered, neither retired nor legacy), in registry
+order, paused or flagged ones included; then `/cycles/<projectId>/<cycleId>`
+for each entry of the published cycle index, in the index's order. Each entry
+is the [app shell](../app/index.md)'s route, and its path is
+[routes](../frontend/routes.md) `canonicalPath` of its kind with `:project`
+and `:cycle` filled in: the seven fixed pages are exactly the route kinds with
+a static title, and their paths equal `canonicalPath` of `Home`, `HowItWorks`,
+`Sponsors`, `CycleArchive`, `Points`, `NewProject` and `Requested`. The rule lives here,
+in the contributor spec that builds the site files, because `@repo/frontend`
+depends on `@repo/contributor`, so the contributor site program reads these
+routes from its own generated copy. A retired or legacy project is never
+listed. No private page (account, login, earnings, inbox, admin, private
+vetting evidence, `/security` cases), no fee or report-deposit page, no
+project management or security-program page, no contributor profile and no
+unknown path is ever listed.
+
+```quint
+import app as A from "../app"
+import routes as RT from "../frontend/routes"
+type SitemapProject = { slug: str, view: F::ProjectView }
+type PublishedCycle = { projectId: str, cycleId: str }
+pure val sitemapFixedKinds = List(A::Home, A::HowItWorks, A::Sponsors, A::CycleArchive, A::Points, A::NewProject, A::Requested)
+pure val sitemapFixedPaths = List("/", "/how-it-works", "/sponsors", "/cycles", "/points", "/projects/new", "/requested")
+pure def sitemapRoutes(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): List[A::Route] =
+  sitemapFixedKinds.listMap(k => A::page(k))
+    .concat(sitemapProjects.select(x => F::listed(x.view)).listMap(x => { ...A::page(A::Project), projectId: x.slug }))
+    .concat(publishedCycles.listMap(x => { ...A::page(A::Cycle), projectId: x.projectId, cycleId: x.cycleId }))
+pure def sitemapIndexable(r: A::Route): bool =
+  RT::privateTitle(r.kind) == "" and RT::payTitle(r.kind) == ""
+  and (sitemapFixedKinds.includes(r.kind) or r.kind == A::Project or r.kind == A::Cycle)
+pure def lawSitemapFixedPagesAreTheStaticPages(routeKind: A::RouteKind): bool =
+  ((RT::staticTitle(routeKind) != "") iff sitemapFixedKinds.includes(routeKind))
+  and sitemapFixedKinds.listMap(k => RT::canonicalPath(k)) == sitemapFixedPaths
+pure def lawSitemapStartsWithTheFixedPages(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): bool =
+  List(0, 1, 2, 3, 4, 5, 6).every(i => sitemapRoutes(sitemapProjects, publishedCycles).nthOr(i, A::page(A::Unknown))
+    == A::page(sitemapFixedKinds.nthOr(i, A::Unknown)))
+pure def lawSitemapListsListedProjectsAndPublishedCycles(sitemapProjects: List[SitemapProject],
+  publishedCycles: List[PublishedCycle]): bool =
+  val listedRoutes = sitemapRoutes(sitemapProjects, publishedCycles)
+  sitemapProjects.every(x => F::listed(x.view) implies listedRoutes.includes({ ...A::page(A::Project), projectId: x.slug }))
+  and publishedCycles.every(x => listedRoutes.includes({ ...A::page(A::Cycle), projectId: x.projectId, cycleId: x.cycleId }))
+  and listedRoutes.every(r => (r.kind == A::Project) implies sitemapProjects.some(x => F::listed(x.view) and x.slug == r.projectId))
+pure def lawSitemapHasNoPrivateRoute(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): bool =
+  sitemapRoutes(sitemapProjects, publishedCycles).every(r => sitemapIndexable(r))
+pure val routeValues = Set(DiscoveryRoute, TermsRoute, SkillArtifactRoute, NotArtifactRoute)
+pure val sitemapProjectsValues = Set(List(), List({ slug: "eliza", view: openProjectView },
+  { slug: "old", view: { ...openProjectView, retired: true } }, { slug: "quiet", view: { ...openProjectView, paused: true } }))
+pure val publishedCyclesValues = Set(List(), List({ projectId: "eliza", cycleId: "2026-11" }, { projectId: "eliza", cycleId: "2026-10" }))
 ```

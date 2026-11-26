@@ -98,6 +98,7 @@ export async function rpc(url: string, method: string, params: ReadonlyArray<unk
   return body.result;
 }
 
+/** @throws {never} */
 export function forward(url: string): Handler {
   return async (request) => fetch(url, { method: "POST", headers: json, body: new Uint8Array(await request.arrayBuffer()), signal: request.signal });
 }

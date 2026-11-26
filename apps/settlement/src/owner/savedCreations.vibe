@@ -1,0 +1,95 @@
+// spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
+import { canEndSavedRefused, canExpireSaved, canRepeatSaved, savedLimit } from "../../gen/settlement__vaultSnapshots.effect.vibe"
+import { VaultSetupBody } from "../client/vaultSetup.vibe"
+import { type DueSaved, dueSavedCreations, noteSavedCreation } from "../vault/store.vibe"
+import { REQUEST_ID, type VaultActor, authorizeOwner, inputOf, loadProject, registerBegun, registrySession } from "./vaultSetup.vibe"
+
+export const SAVED_SWEEP_MILLIS = 60_000
+
+export type SavedOutcome = "registered" | "waiting" | "ended" | "skipped"
+
+export interface SavedSweep {
+  readonly registered: number
+  readonly waiting: number
+  readonly ended: number
+}
+
+const sweep = { nextAt: 0 }
+
+function codeOf(error: { readonly _tag: string; readonly code?: unknown }): string {
+  return error._tag === "Refused" && typeof error.code === "string" ? error.code : error._tag
+}
+
+effect function savedBody(row: DueSaved) {
+  return Schema.decodeUnknownEffect(Schema.fromJsonString(VaultSetupBody))(row.request_json) catch () => undefined
+}
+
+effect function repeated(row: DueSaved, now: number) {
+  const body = try savedBody(row)
+  const project = loadProject(row.project_id) catch () => undefined
+  if (body === undefined || project === undefined) {
+    try noteSavedCreation(row.id, body === undefined ? "invalid_request" : "not_found")
+    return "waiting" satisfies SavedOutcome
+  }
+  const input = try inputOf(body)
+  const session = try registrySession(project, input.expectedRevision)
+  const savedId = try session.savedIdOf(row.id)
+  const state = try session.current()
+  if (canExpireSaved(state, savedId, now)) {
+    try session.send({ type: "expireSaved", savedId, now })
+    return "ended" satisfies SavedOutcome
+  }
+  const actor: VaultActor = { githubId: row.actor_github_id, login: row.actor_github_login }
+  const refusal = authorizeOwner(project, actor) catch effect (error) => {
+    if (error._tag === "Refused") return error
+    throw error
+  }
+  const authorized = refusal === undefined
+  if (!canRepeatSaved(state, savedId, REQUEST_ID, now, authorized)) return "skipped" satisfies SavedOutcome
+  const claimed = session.send({ type: "repeatSaved", savedId, requestId: REQUEST_ID, now, authorized }) catch effect (error) => {
+    if (error._tag === "SavedClaimLost") return undefined
+    throw error
+  }
+  if (claimed === undefined) return "skipped" satisfies SavedOutcome
+  if (refusal !== undefined) {
+    try noteSavedCreation(row.id, refusal.code)
+    return "waiting" satisfies SavedOutcome
+  }
+  const answer = registerBegun({ project, actor, input, session, requestId: REQUEST_ID, path: "saved", requestJson: row.request_json }) catch effect (error) => ({ status: "refused", code: codeOf(error) } as const)
+  if (answer.status === "registered") return "registered" satisfies SavedOutcome
+  if (answer.status === "pending") return "waiting" satisfies SavedOutcome
+  if (canEndSavedRefused(try session.current(), savedId, REQUEST_ID)) {
+    try session.send({ type: "endSavedRefused", savedId, requestId: REQUEST_ID }, { code: answer.code })
+    return "ended" satisfies SavedOutcome
+  }
+  try noteSavedCreation(row.id, answer.code)
+  return "waiting" satisfies SavedOutcome
+}
+
+export effect function finishSavedVaultCreations() {
+  const now = try nowSeconds()
+  const due = try dueSavedCreations(try isoAt(now * 1000), savedLimit)
+  let registered = 0
+  let waiting = 0
+  let ended = 0
+  for (const row of due) {
+    const outcome = repeated(row, now) catch effect (error) => {
+      noteSavedCreation(row.id, codeOf(error)) catch () => undefined
+      return "waiting" satisfies SavedOutcome
+    }
+    if (outcome === "registered") registered++
+    if (outcome === "waiting") waiting++
+    if (outcome === "ended") ended++
+  }
+  return { registered, waiting, ended } satisfies SavedSweep
+}
+
+export effect function sweepSavedVaultCreations() {
+  const now = try Clock.currentTimeMillis
+  if (now < sweep.nextAt) return
+  sweep.nextAt = now + SAVED_SWEEP_MILLIS
+  finishSavedVaultCreations() catch effect (error) => {
+    try Effect.logError("saved vault creation sweep failed", error._tag)
+  }
+}

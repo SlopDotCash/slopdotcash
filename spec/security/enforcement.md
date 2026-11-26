@@ -200,11 +200,13 @@ pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestO
    else if (requestOrigin == AdminInvestigation) e.administrators.contains(by)
    else by == vettingService and e.restriction == FlagQuarantine and
      (not(freshClean(e, repository)) or not(coversActiveFlags(e, repository))))
+pure def pendingAssessment(e: Enforcement, repository: int, assessmentId: int): Assessment =
+  { id: assessmentId, repository: repository, identity: identityOf(e, repository), state: APending,
+    revision: e.revision, requestedAt: e.clockDay, requestEpoch: e.epoch, requeued: false, reused: false, verified: false,
+    snapshot: activeReceipts(e), chainRequestedAt: e.clockDay }
 pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): Enforcement =
   { ...e, seq: e.seq + 1, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
-    latest: e.latest.put(repository, { id: assessmentId, repository: repository, identity: identityOf(e, repository), state: APending,
-      revision: e.revision, requestedAt: e.clockDay, requestEpoch: e.epoch, requeued: false, reused: false, verified: false,
-      snapshot: activeReceipts(e), chainRequestedAt: e.clockDay }) }
+    latest: e.latest.put(repository, pendingAssessment(e, repository, assessmentId)) }
 pure def canRequeueTemplate(e: Enforcement, by: int, repository: int, assessmentId: int): bool =
   by == vettingService and e.repositories.includes(repository) and latestOf(e, repository).state == APending and
   assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and
@@ -327,11 +329,13 @@ and mirrors each new registry revision, its steward and the listing account
 never grows to an appended repository. The project API's repository read
 observes a new node id for a listed repository id (deleted and recreated, or
 transferred) as a new identity epoch; the earlier identity's assessments and
-grants then control nothing.
+grants then control nothing. A restricted project gains a repository only
+through an administrator's exception that keeps it paused and retired; the
+composition refuses every owner append while it is restricted.
 
 ```quint
 pure def canAppendRepository(e: Enforcement, repository: int): bool =
-  repository > 0 and not(e.repositories.includes(repository)) and e.restriction == Clear
+  repository > 0 and not(e.repositories.includes(repository))
 pure def appendRepository(e: Enforcement, repository: int): Enforcement =
   { ...e, repositories: e.repositories.append(repository), latest: e.latest.put(repository, unassessed) }
 pure def lawMissingAssessmentIsUnassessed(e: Enforcement, repository: int): bool =

@@ -1,0 +1,51 @@
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+import type { Journal } from "../../../kernels/records/canonical.ts"
+import { validateSnapshot } from "../../../client/snapshot/validate.vibe"
+import { type HistoricalPacket, refusal } from "../packet.vibe"
+import { type HistoricalAssessmentScope, assertHistoricalAssessmentFreshness, readHistoricalAssessmentCatalog } from "../audit/catalog.vibe"
+import { classifyHistoricalAssessmentScope } from "../audit/reconcile.vibe"
+import { historicalEvidence } from "./bindings.vibe"
+import type { HistoricalReplayReceipt } from "./receipt.vibe"
+import { type ReplayContext, verifyHistoricalClosedReviews, verifyHistoricalValueReplay } from "./value.vibe"
+
+const digest = /^[a-f0-9]{64}$/u
+const head = /^[a-f0-9]{40}$/u
+
+effect function holds(condition: boolean, message: string) {
+  if (!condition) throw refusal(message)
+}
+
+export effect function verifyHistoricalReplayQualification(packet: HistoricalPacket, baseline: Journal, donor: HistoricalReplayReceipt, sourceCommit: string, enforcementGeneration: number, context: ReplayContext, integrationBranch: string | undefined) {
+  const audit = packet.sourceAudit
+  const qualification = packet.replayQualification?.qualificationSha256 ?? ""
+  try holds(digest.test(qualification) && head.test(sourceCommit) && donor.schemaVersion === "1" && donor.mode === "assessment-replay" && donor.sourceCommit === sourceCommit &&
+    donor.projectId === packet.projectId && donor.sourceRepositoryNodeId === audit.repositoryNodeId && donor.sourceFrom === audit.from && donor.sourceThrough === audit.through &&
+    donor.sourceCount === audit.sources.length && donor.expectedPointsDigest === packet.baselineDigest && donor.baselineRevisionCount === packet.baselineRevisionCount &&
+    donor.registryRevision === packet.revision && donor.registryManifestSha256 === packet.manifestSha256 && donor.enforcementGeneration === enforcementGeneration &&
+    donor.replay.qualificationSha256 === qualification, "Trusted replay receipt differs from the reviewed packet")
+  const scope: HistoricalAssessmentScope = {
+    projectId: packet.projectId,
+    repositoryNodeId: audit.repositoryNodeId,
+    revision: packet.revision,
+    manifestSha256: packet.manifestSha256,
+    expectedPointsDigest: packet.baselineDigest,
+  }
+  const catalog = try readHistoricalAssessmentCatalog(scope, { jointThrough: donor.jointThrough, legacyThrough: donor.legacyThrough })
+  const { heads } = catalog
+  const classified = try classifyHistoricalAssessmentScope(catalog, audit, scope.projectId, historicalEvidence(integrationBranch !== undefined && integrationBranch !== "" ? { baseline, integrationBranch } : undefined, scope.projectId))
+  const { receipt } = classified
+  try holds(heads.enforcementGeneration === donor.enforcementGeneration && heads.jointScopedCount === donor.jointRecords && heads.legacyRepoCount === donor.legacyRecords &&
+    receipt.scope.sourceAuditSha256 === donor.sourceDigest && receipt.receiptSha256 === donor.receiptDigest && receipt.status === donor.status,
+    "Trusted replay differs from the protected assessment catalog")
+  const snapshot = packet.valueSnapshot as { readonly valueAssessmentCoverage?: ReadonlyArray<unknown>; readonly ledger?: ReadonlyArray<{ readonly scoreDecisionSourceId?: string }>; readonly source?: { readonly counts?: { readonly closedUnmergedPullRequests?: number } } } | null
+  const coverageCount = snapshot?.valueAssessmentCoverage?.length ?? 0
+  const eventCount = (snapshot?.ledger ?? []).filter((row) => row.scoreDecisionSourceId?.startsWith("value:") === true).length
+  try holds(donor.replay.closedUnmergedCoverageCount === (snapshot?.source?.counts?.closedUnmergedPullRequests ?? 0) && donor.replay.valueCoverageCount === coverageCount &&
+    donor.replay.valueEventCount === eventCount && (snapshot !== null ? typeof donor.replay.snapshotSha256 === "string" && digest.test(donor.replay.snapshotSha256) : donor.replay.snapshotSha256 === null),
+    "Trusted replay output differs from the reviewed scope")
+  const closedReviews = try verifyHistoricalClosedReviews(snapshot === null ? null : (try validateSnapshot(packet.valueSnapshot, context.registry)), receipt, catalog)
+  const qualified = try verifyHistoricalValueReplay(packet, baseline, receipt, packet.valueSnapshot, closedReviews, context)
+  try holds(qualified === qualification, "Reviewed value projection differs from the trusted qualification")
+  try assertHistoricalAssessmentFreshness(scope, heads)
+  return { heads, closedReviews, receipt }
+}

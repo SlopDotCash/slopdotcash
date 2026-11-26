@@ -1,6 +1,7 @@
-// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
+// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"
 import { Graphql, type GraphqlFailure, type JsonRecord, graphqlPageSize } from "../../ingestion/graphql.vibe"
 import type { Actor } from "../../score/facts.vibe"
+import type { CommitLineMemo } from "../memo/memo.vibe"
 import { type MergedOutcome, MergedRecordInvalid, type NodeReference, type OutcomeCommit, type OutcomeCommitIdentity, OutcomeCommitConnection, arrayAt, chunks, commitSha, decoded, moreOutcomeCommitsQuery, outcomeCommitLinesQuery, outcomeCommitsOf, recordAt } from "./wire.vibe"
 
 export const pullRequestCommitListLimit = 250
@@ -38,7 +39,7 @@ function sameIdentity(left: Pick<OutcomeCommit, "oid" | "parentCount">, right: O
   return left.oid === right.oid && left.parentCount === right.parentCount
 }
 
-export function commitLineLoader<E = never, R = never>(recover?: RecoverStatistics<E, R>) {
+export function commitLineLoader<E = never, R = never>(recover?: RecoverStatistics<E, R>, memo?: CommitLineMemo) {
   const byId = new Map<string, Cached>()
   const idBySha = new Map<string, string>()
   return {
@@ -89,7 +90,12 @@ export function commitLineLoader<E = never, R = never>(recover?: RecoverStatisti
           return { ...error.data, nodes }
         }
       }
-      for (const batch of chunks([...pending.values()], graphqlPageSize)) {
+      for (const commit of pending.values()) {
+        const known = memo?.lookup(repositoryNodeId, commit.id, commit.oid)
+        if (known === undefined) continue
+        staged.set(commit.id, { repositoryNodeId, outcome: { oid: commit.oid, parentCount: commit.parentCount, author: commit.author, additions: known.additions, deletions: known.deletions } })
+      }
+      for (const batch of chunks([...pending.values()].filter((commit) => !staged.has(commit.id)), graphqlPageSize)) {
         const data = try statisticsBatch(batch.map((commit) => commit.id))
         const nodes = try arrayAt(data.nodes, "data.nodes")
         if (nodes.length !== batch.length) throw new MergedRecordInvalid({ message: "Commit statistics are incomplete" })
@@ -102,6 +108,7 @@ export function commitLineLoader<E = never, R = never>(recover?: RecoverStatisti
             repositoryNodeId,
             outcome: { oid: expected.oid, parentCount: expected.parentCount, author: recoveredAuthors.has(expected.id) ? recoveredAuthors.get(expected.id) ?? null : expected.author, additions: node.additions, deletions: node.deletions },
           })
+          memo?.record([repositoryNodeId, expected.id, expected.oid, node.additions, node.deletions])
         }
       }
       for (const [id, author] of authorUpdates) {

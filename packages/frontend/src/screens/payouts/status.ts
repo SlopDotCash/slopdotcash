@@ -1,5 +1,5 @@
 // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
-import type { AccountMonthlyAward, AccountPayment, AllocationState, UnreservedAwardState } from "@repo/settlement/client";
+import type { AccountMonthlyAward, AccountPayment, UnreservedAwardState } from "@repo/settlement/client";
 import type { StatusProps } from "@repo/ui";
 import { type AwardFacts, paymentPresentation, settlementDisplay } from "../../../gen/frontend__projections.ts";
 
@@ -46,10 +46,3 @@ export function awardStatus(award: Pick<AccountMonthlyAward, "state">): { readon
 }
 
 export const receivedStatus: Presentation = { tone: "Positive", icon: "Check", label: "Received" };
-
-export const allocationStatus: Readonly<Record<AllocationState, Presentation>> = {
-  sent: { tone: "Positive", icon: "Check", label: "Sent" },
-  scheduled: { tone: "Notice", icon: "Clock", label: "Scheduled" },
-  "awaiting-wallet": { tone: "Notice", icon: "Wallet", label: "Awaiting wallet" },
-  unclaimed: { tone: "Neutral", icon: "Alert", label: "Unclaimed" },
-};

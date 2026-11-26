@@ -1,0 +1,53 @@
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+import type { ValueCoverage } from "../../client/snapshot/schema.vibe"
+import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import type { ScoreEvent, ScoredSnapshot, ScoringFacts } from "../facts.vibe"
+import { compareCodeUnits, implementationHistory } from "../facts.vibe"
+import { commitOwners, timedPulls } from "../merges.vibe"
+import type { AssemblyInputs, CoverageSource } from "./inputs.vibe"
+import { underValuePolicy } from "./inputs.vibe"
+
+effect function fallbackOwners(facts: ScoringFacts) {
+  const history = implementationHistory(facts)
+  const rolling = history.mode === "rolling"
+  const owners = commitOwners(try timedPulls(facts.merged), rolling)
+  return rolling && history.previousAcceptedOrdinaryOwners.size > 0 ? new Map([...owners, ...history.previousAcceptedOrdinaryOwners]) : owners
+}
+
+function verifiedActors(source: CoverageSource, owners: ReadonlyMap<string, string>, ledger: ReadonlyArray<ScoreEvent>) {
+  const commits = source.merged?.commits ?? null
+  if (commits === null || commits.length === 0 || commits.some((commit) => commit.parentCount < 0)) return undefined
+  const primary = commits.filter((commit) => commit.parentCount <= 1)
+  const repository = source.repository.toLowerCase()
+  if (primary.length === 0 || !primary.every((commit) => isCreditEligibleCommitAuthor(commit.author) && owners.get(`${repository}\u0000${commit.oid}`) === source.id)) return undefined
+  const verified = [...new Set(primary.flatMap((commit) => commit.author === null ? [] : [commit.author.id]))].sort(compareCodeUnits)
+  const published = ledger.filter((event) => event.category === "merged-pull-request" && event.source.id === source.id).map((event) => event.actor.id)
+  return verified.length > 0 && verified.length === published.length && verified.every((id) => published.includes(id)) ? verified : undefined
+}
+
+export effect function valueCoverage(inputs: AssemblyInputs, scoring: ScoredSnapshot) {
+  const owners = try fallbackOwners(inputs.facts)
+  return inputs.sources.map((source) => {
+    const legacy = !underValuePolicy(source.acceptedAt)
+    const decision = legacy ? undefined : inputs.joint.get(source.id) ?? inputs.decisions.get(source.id)
+    const unavailable = inputs.unavailableHeld.has(source.id)
+    const attributionHeld = inputs.attributionHeld.has(source.id)
+    const implementationHeld = scoring.implementationHeld.has(source.id)
+    const status = unavailable ? "unresolved"
+      : attributionHeld || (!legacy && implementationHeld) ? "incomplete"
+      : inputs.ratified.has(source.id) ? "human-ratified"
+      : legacy ? "legacy-policy"
+      : decision?.status ?? "missing"
+    const latest = decision?.latestDigest ?? null
+    const verified = status === "missing" && source.merged !== undefined ? verifiedActors(source, owners, scoring.ledger) : undefined
+    return {
+      pullRequestId: source.id,
+      repository: source.repository,
+      pullRequestNumber: source.number,
+      status,
+      recordDigest: (attributionHeld || implementationHeld) && !unavailable ? null : latest,
+      ...(scoring.standaloneReview.has(source.id) && latest !== null ? { reviewAssessmentDigest: latest } : {}),
+      ...(verified === undefined ? {} : { verifiedImplementationActorNodeIds: verified }),
+    } satisfies ValueCoverage
+  })
+}

@@ -1,10 +1,12 @@
-// spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+// spec/app/index.md, "The shell shows one route, opened from the address"; spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over"; spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"
 import { Cause, Exit } from "effect";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { Route } from "../../gen/app.ts";
-import { signInShownInPlace } from "../../gen/frontend__navigation.ts";
+import { privatePage, signInShownInPlace } from "../../gen/frontend__navigation.ts";
 import { useMachine } from "../../gen/frontend__navigation.react.ts";
-import { loadRegistry } from "../reads/registry.vibe";
+import { pageOf } from "../../gen/frontend__routes.ts";
+import { alignFragments } from "../platform/fragment.vibe";
+import { loadRegistry, type RegistryBoot } from "../reads/registry.vibe";
 import { settingsShownSignedOut } from "../screens/account/index.ts";
 import { InboxEmailLink } from "../screens/inbox/index.ts";
 import { projectRuntime } from "../screens/projects/reads.vibe";
@@ -22,9 +24,11 @@ export function RoutePage({ runtime, route, frame }: { runtime: PageRuntime; rou
   const { state, cause } = useMachine(runtime);
   const shown = useSession(runtime);
   const address = useAddress();
+  useOnce(runtime, "fragment", () => alignFragments());
   if (cause) throw Cause.squash(cause);
-  if (state === undefined || shown === undefined) return frame();
   const kind = route.kind === "Unknown" ? undefined : route.kind;
+  if (kind && !privatePage(pageOf(kind))) return <Gated kind={kind} Page={pages[kind]} runtime={runtime} route={route} frame={frame} />;
+  if (state === undefined || shown === undefined) return frame();
   if (signInShownInPlace(state) && !(kind === "Account" && settingsShownSignedOut(address))) {
     const view = shown.view.status === "signedIn" ? { status: "checking" as const } : shown.view;
     return frame(
@@ -46,6 +50,11 @@ function Gated({ kind, Page, runtime, route, frame }: { kind: PageKind; Page: Re
       {page}
     </RegistryGate>
   );
+}
+
+export function RegistryBootOf({ runtime, children }: { runtime: PageRuntime; children: (boot: RegistryBoot) => ReactNode }) {
+  const boot = useOnce(projectRuntime(runtime), "registry", () => loadRegistry());
+  return boot.status === "done" ? children(boot.value) : null;
 }
 
 type SignOut = "idle" | "signingOut" | "failed";

@@ -260,7 +260,12 @@ attempt finalized. The checks run in the pinned order: no route; remaining
 network value cap (the run cap and the rolling 24-hour cap shared by every
 token of the network); quote above the remaining cap; unsafe integer value;
 below 5 USDC or ten times the gas cost (dust, which waits in the wallet);
-unknown or high price impact; minimum output outside 1% slippage. A dry run
+unknown or high price impact; minimum output outside 1% slippage. A
+KyberSwap route refusal with HTTP 4xx while quoting is no route, except an
+authentication refusal (HTTP 401 or 403), which is a provider fault: the
+evaluation records no row and the run logs the failure. A Jupiter quote
+refusal with any HTTP 4xx, 403 included, is no route. A refusal of the
+route read again at signing is never no route. A dry run
 records the quote, counts it against the run cap and never signs. A
 repeated waiting outcome with the same amount, reason and mode adds no row.
 A run handles one token's live quote at a time.
@@ -491,19 +496,22 @@ send is imported only while no unsettled signed send of the journal holds
 its nonce. An imported send is then reconciled like any
 other. Development also imports the worst case of a recorded send whose row
 already settled, to charge its receipt's fee; a settled row is loaded as it
-is, and only an open one is imported here. The journal store brings each
+is, and only an open one is imported here. Each send is imported under the
+fee wallet its record names, so a send of an earlier fee wallet stays that
+wallet's: no receipt read for the current wallet settles it, and it keeps
+its token blocked. The journal store brings each
 such open row in through this event, the row and its reservation together,
 so a loaded journal never holds an open send without a reservation.
 
 ```quint
 type RecordedSend = { token: int, kind: SendKind, tx: int, nonce: int, gasLimit: int, fees: EvmFees, amountIn: int, valueMicro: int,
-  minimumOutput: int, deadline: int }
+  minimumOutput: int, deadline: int, wallet: int }
 pure def recordedMaximum(f: Fee, recorded: RecordedSend): int = recorded.gasLimit * recorded.fees.maxFee + additionalReserve(f.network)
 pure def canImportRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sender): bool =
   val h = holding(f, recorded.token)
   by == R::Worker and leaseHeld(f, runId) and f.network != R::Solana and validToken(f, recorded.token)
     and openRows(f, recorded.token) == 0 and pendingIntent(f, runId).id == 0 and ownReservation(f, runId).id == 0
-    and recorded.tx > 0 and not(txUsed(f, recorded.tx)) and not(f.rows.some(r => landedIn(r, recorded.tx)))
+    and recorded.wallet > 0 and recorded.tx > 0 and not(txUsed(f, recorded.tx)) and not(f.rows.some(r => landedIn(r, recorded.tx)))
     and not(f.gas.some(g => g.state == Signed and not(g.settled) and g.nonce == recorded.nonce)) and recorded.nonce >= 0 and recorded.gasLimit > 0 and recorded.fees.maxFee > 0 and recorded.fees.priority >= 0
     and recorded.fees.priority <= recorded.fees.maxFee and recorded.amountIn > 0 and recorded.valueMicro >= 0
     and (recorded.kind == Conversion implies evaluated(f, recorded.token) and recorded.amountIn <= spendable(f, recorded.token)
@@ -513,7 +521,7 @@ pure def importRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sende
   val id = f.rows.length() + 1
   val h = holding(f, recorded.token)
   { ...f, rows: f.rows.append({ ...noRow, id: id, token: recorded.token, kind: recorded.kind, live: true, state: Submitted, runId: runId,
-      wallet: wallet(f), amountIn: recorded.amountIn, valueMicro: recorded.valueMicro,
+      wallet: recorded.wallet, amountIn: recorded.amountIn, valueMicro: recorded.valueMicro,
       minimumOutput: if (recorded.kind == Conversion) recorded.minimumOutput else 0, nonce: recorded.nonce, gasLimit: recorded.gasLimit,
       deadline: recorded.deadline, createdAt: f.clock,
       attempts: List({ tx: recorded.tx, maxFee: recorded.fees.maxFee, priority: recorded.fees.priority, at: f.clock }) }),
@@ -522,16 +530,21 @@ pure def importRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sende
     holdings: if (recorded.kind == Claim) withHolding(recorded.token, { ...h, accrued: h.accrued - recorded.amountIn }, f) else f.holdings }
 pure def sometimesImportedAboveCeiling(f: Fee): bool = f.gas.some(g => g.imported and g.maximum > R::transactionCeilingOf(f.network))
 pure def sometimesImportedSettled(f: Fee): bool = f.gas.some(g => g.imported and g.settled)
+pure def sometimesImportedForeignWalletOpen(f: Fee): bool = f.rows.some(r => isOpen(r) and r.wallet != wallet(f))
 pure val recordedValues = Set(
   { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 },
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 },
   { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 100000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 },
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 },
   { token: 1, kind: Approval, tx: 12, nonce: 1, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 0, deadline: 9000000000 },
+    valueMicro: 450000000, minimumOutput: 0, deadline: 9000000000, wallet: 1 },
   { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 60000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 })
-pure val weight_importRecorded = 4
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 },
+  { token: 1, kind: Conversion, tx: 13, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 9 },
+  { token: 1, kind: Conversion, tx: 14, nonce: 1, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 18000000000, wallet: 1 })
+pure val weight_importRecorded = 12
 ```
 
 ## Story: Reconcile every send from finalized evidence before another starts
@@ -762,7 +775,10 @@ A claim runs only in a recovery scan of a live network. It names a
 registered reviewed vault and its deployment, pays the token that vault
 accrues to this network's fee wallet, and needs a value of at least 5 USDC
 and ten times its gas cost, and its final priced native fee times ten must
-not exceed that value. It claims at most the accrued amount observed
+not exceed that value. A claim whose value exceeds safe integer accounting
+or is below 5 USDC is skipped before its network fee is priced, so no fee
+estimate is read for it; a fee that cannot be priced skips only a claim at
+or above that floor. It claims at most the accrued amount observed
 from that vault, and only while the fee wallet holds and is proposed for
 none of the vault's roles at the pinned block (`verifiedVault`, which throws
 "The fee wallet holds or is proposed for a vault role").
@@ -832,6 +848,57 @@ pure def alwaysRowIdentity(f: Fee): bool = f.rows.every(r => r.id > 0 and f.rows
 pure def alwaysDryRowsNeverSign(f: Fee): bool = f.rows.every(r => not(r.live) implies r.attempts.length() == 0 and r.state != Submitted and r.state != Unknown)
 ```
 
+Discovered by simulation: a Solana expiry proof needs the instance chosen as
+Solana before the first token or run, a live publication that lasts through
+signing, and two complete matching scans, so random traces of 20 events
+almost never reached it. The samples therefore include a later live
+publication after the dry-run one and a second-revision rescan by the second
+operator after an incomplete or mismatched scan, and recording scans and
+expiring a Solana send are weighted up.
+
+Discovered by simulation: even so, the whole check's search for that proof
+did not finish within its hour. Of 900 traces of 20 events none reached it:
+publication, readiness, the lease and a spendable balance came only after
+about 10 to 12 events, because the setup events were outweighed by adding
+tokens and by choosing the instance again, and the one Solana send that fits
+the reservation is a single sample of eleven. The setup events (release
+variable, publication, readiness, lease, evaluation, reservation, signing)
+and the fee and balance observations are therefore weighted well above
+adding tokens and choosing the instance.
+
+Discovered by simulation: with the setup weighted that way, the search for a
+fallen accrual took 36 of its 60 minutes, and none of 900 traces reached it,
+because registering a vault, accruing, claiming and finalizing the claim
+were outweighed by the conversion events. Registering vaults, accruals,
+claims, finalizing sends, and expiring and settling expired EVM sends are
+weighted up with them.
+
+Discovered by simulation: with signing weighted up, a live quote is rarely
+still open when its run's lease is lost, and none of 1200 traces reached a
+quote abandoned by a later run. Abandoning a quote is enabled only in that
+state, so it is weighted up too.
+
+Discovered by simulation: the whole check's search for a conversion
+finalized after a replacement did not finish within its hour, and no random
+trace of 20 events reached one. Only a Base send with headroom under the
+per-transaction ceiling can step its fees (the other samples sat exactly at
+the ceiling), the only node fee reads were taken three minutes after time
+zero, the only replacement transaction with a receipt was the first one,
+and nearly every send was finalized from its own receipt or expired at its
+router deadline before the clock moved. The samples therefore add a signed
+and a recorded Base send of the second nonce with that headroom and a later
+router deadline, node fee reads three minutes after the second run's hour
+and after a day, and a receipt for the second replacement transaction;
+replacing, activating replacement, importing a recorded send, finalizing,
+and advancing the clock are weighted up. With the final samples and weights,
+`quint run` at 20 events with seeds 1, 2 and 3 finds a converted
+replacement within about 21 seconds of processor time each (the search had
+not finished within its hour before), and with seeds 7 and
+119877137077956 it also finds a Solana expiry proof, a fallen accrual, a
+late revert charged to an expired send, a finalized claim, a quote
+abandoned by a later run, an overrun and a shared nonce sequence within 18
+to 35 seconds each, most of which is loading the model.
+
 ```quint
 pure val elapsedValues = Set(180000, 3600001, 86400000)
 pure val runIdValues = Set(1, 2)
@@ -843,7 +910,8 @@ pure val maximumValues = Set(55000000, 100000000, 5000000)
 pure val amountValues = Set(1000000000)
 pure val tokenValues = Set(1, 2)
 pure val networkFeeValues = Set({ maxFeeNeeded: 1000000, observedAt: 180000, pricedFeeMicro: 1000 },
-  { maxFeeNeeded: 1000000, observedAt: 0, pricedFeeMicro: 1000 }, { maxFeeNeeded: 1000000, observedAt: 180000, pricedFeeMicro: -1 })
+  { maxFeeNeeded: 1000000, observedAt: 0, pricedFeeMicro: 1000 }, { maxFeeNeeded: 1000000, observedAt: 180000, pricedFeeMicro: -1 },
+  { maxFeeNeeded: 1000000, observedAt: 3780001, pricedFeeMicro: 1000 }, { maxFeeNeeded: 1000000, observedAt: 86580000, pricedFeeMicro: 1000 })
 pure val balanceValues = Set(0, 1000000000)
 pure val acceptedValues = Set(true, false)
 pure val activeValues = Set(true)
@@ -851,7 +919,8 @@ pure val variableValues = Set(true)
 pure val networkValues = Set(R::Base, R::Solana, R::Robinhood)
 pure val assetValues = Set(ProjectToken, NativeAsset, TargetStable)
 pure val byValues = Set(R::ReleaseWorkflow, R::Owner, R::Worker)
-pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::Off })
+pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::Off },
+  { ...R::liveAll, source: 3 })
 pure val reviewedValues = Set({ vault: 7, deployment: 70, token: 1 })
 pure val accrualValues = Set({ vault: 7, recipient: 1, accrued: 1000000000, height: 5, finalized: true, roleFree: true },
   { vault: 7, recipient: 9, accrued: 1000000000, height: 5, finalized: true, roleFree: true },
@@ -871,6 +940,7 @@ pure val sendValues = Set(
   { kind: Conversion, tx: 11, nonce: 0, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
   { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
   { kind: Conversion, tx: 14, nonce: 1, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
+  { kind: Conversion, tx: 14, nonce: 1, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 18000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
   { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
   { kind: Approval, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 500000000, allowance: 0, pricedFeeMicro: 1000 },
   { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Unresolved, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 },
@@ -889,13 +959,15 @@ pure val receiptValues = Set({ tx: 11, succeeded: true, output: 450000000, actua
   { tx: 11, succeeded: true, output: 450000000, actualNative: 40000000, finalized: false, roleFree: true, allowanceAtBlock: 0 },
   { tx: 12, succeeded: true, output: 1000000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 },
   { tx: 12, succeeded: true, output: 1000000000, actualNative: 40000000, finalized: true, roleFree: false, allowanceAtBlock: 0 },
-  { tx: 11, succeeded: true, output: 0, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 499999999 })
+  { tx: 11, succeeded: true, output: 0, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 499999999 },
+  { tx: 13, succeeded: true, output: 450000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 })
 pure val deadlineValues = Set({ finalizedTime: 9000000001, included: false }, { finalizedTime: 9000000001, included: true })
 pure val scanValues = Set(
   { tx: 11, operator: 1, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 },
   { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 },
   { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 8, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 },
-  { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: false, blockhashSlot: 40, runId: 1 })
+  { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: false, blockhashSlot: 40, runId: 1 },
+  { tx: 11, operator: 2, revision: 2, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 })
 pure val proofValues = Set(
   { tx: 11, a: { operator: 1, invalidBlockhash: true, signatureFound: false, transactionFound: false },
     b: { operator: 2, invalidBlockhash: true, signatureFound: false, transactionFound: false }, blockhashSlot: 40,
@@ -914,24 +986,28 @@ pure val vaultClaimValues = Set(
     fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: -1 },
   { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
     fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 100000000 })
-pure val weight_evaluate = 8
-pure val weight_reserveGas = 8
-pure val weight_sign = 10
-pure val weight_finalizeSend = 8
-pure val weight_acquireLease = 8
-pure val weight_publishWorker = 6
-pure val weight_setReleaseVariable = 6
-pure val weight_verifyReadiness = 6
-pure val weight_receiveFee = 6
-pure val weight_addToken = 4
-pure val weight_setReplacement = 3
-pure val weight_replace = 6
+pure val weight_evaluate = 30
+pure val weight_reserveGas = 40
+pure val weight_sign = 80
+pure val weight_finalizeSend = 20
+pure val weight_acquireLease = 30
+pure val weight_publishWorker = 30
+pure val weight_setReleaseVariable = 20
+pure val weight_verifyReadiness = 30
+pure val weight_receiveFee = 30
+pure val weight_addToken = 2
+pure val weight_setReplacement = 10
+pure val weight_replace = 40
+pure val weight_advanceClock = 2
 pure val weight_broadcastFail = 4
-pure val weight_expireEvm = 4
-pure val weight_settleExpired = 4
-pure val weight_recordScan = 4
-pure val weight_expireSolana = 4
-pure val weight_claim = 4
-pure val weight_accrue = 3
-pure val weight_registerVault = 3
+pure val weight_expireEvm = 12
+pure val weight_settleExpired = 12
+pure val weight_recordScan = 40
+pure val weight_expireSolana = 40
+pure val weight_chooseInstance = 10
+pure val weight_claim = 20
+pure val weight_accrue = 10
+pure val weight_registerVault = 8
+pure val weight_observeBalance = 10
+pure val weight_abandonIntent = 30
 ```

@@ -6,10 +6,13 @@
     "SLOP_ENVIRONMENT": "production",
     "PUBLIC_SITE_URL": "https://slop.cash",
     "ADMIN_GITHUB_IDS": "18633264,202660855",
+    "OWNER_SESSION_GITHUB_ID": "18633264",
     "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855",
     "MONTHLY_PAYMENT_SCHEDULE": "{\"firstPeriod\":\"2026-11\",\"cutoffSecondsAfterPeriodEnd\":259200}",
     "PAYMENT_NETWORKS": "[]",
-    "SLOP_PRIVATE_INTAKE_MODE": "on"
+    "SLOP_PRIVATE_INTAKE_MODE": "on",
+    "SECURITY_ROUTINE_DECISIONS": "live",
+    "SECURITY_REPORT_DEPOSIT": "live"
   },
   "d1_databases": [
     {
@@ -26,7 +29,7 @@
   "services": [
     { "binding": "SLOPBOT", "service": "slop-slopbot" },
     { "binding": "SLOPBOT_VALUE_IMPORT", "service": "slop-slopbot", "entrypoint": "HistoricalValuePublisher" },
-    { "binding": "SANDBOX", "service": "slop-vetting-sandbox" },
+    { "binding": "VETTING_SANDBOX", "service": "slop-vetting-sandbox" },
     { "binding": "SLOP_IDENTITY", "service": "slop-identity" },
     { "binding": "SLOP_NOTIFY", "service": "slop-notify" }
   ],
@@ -47,7 +50,9 @@
     "GITHUB_INTAKE_APP_CLIENT_SECRET",
     "GITHUB_INTAKE_APP_ID",
     "GITHUB_INTAKE_APP_PRIVATE_KEY",
+    "OPERATOR_FEED_TOKEN",
     "PAYMENT_RPC_URLS",
+    "POINTS_PROTECTION_TOKEN",
     "REWARD_RPC_SOLANA",
     "SLOP_GITHUB_READ_TOKEN",
     "SLOP_INTAKE_GRANT_KEY",

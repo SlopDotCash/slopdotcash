@@ -1,11 +1,12 @@
-// spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off"; spec/slopbot/closureActivation.md, "Each closable category needs its own reviewed real cases and counterexamples, recorded by the decided qualifier"; spec/slopbot/closureActivation.md, "Objective low-quality closure also needs a qualified verifier profile, which launch keeps unset"
+// spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/closureActivation.md, "Each closable category needs its own reviewed real cases and counterexamples, recorded by the decided qualifier"; spec/slopbot/closureActivation.md, "Objective low-quality closure also needs a qualified verifier profile, which launch keeps unset"
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
 import type { Category } from "../../gen/slopbot__categories.effect.vibe"
 import type { ActivationView } from "../../gen/slopbot__closure.effect.vibe"
-import { type Activation, type Event, type OwnerDecision, type QualificationReview, type QualityTrust, type ReleaseEvidence, type VerifierReview, Machine, canActivate, canDeactivate, initial, machineOver, qualified } from "../../gen/slopbot__closureActivation.effect.vibe"
+import { type Activation, type Event, type OwnerDecision, type QualificationReview, type QualityTrust, type ReleaseEvidence, type VerifierReview, Machine, canActivate, canActivateEvidence, canDeactivate, canDeactivateEvidence, initial, machineOver, qualified } from "../../gen/slopbot__closureActivation.effect.vibe"
 
 export interface ActivationVars {
   readonly SLOPBOT_CLOSURE_ENABLED?: string
+  readonly SLOPBOT_EVIDENCE_CLOSURE_ENABLED?: string
   readonly SLOPBOT_RELEASE?: string
   readonly SLOPBOT_QUALITY_VERIFIER_KEY?: string
   readonly SLOPBOT_QUALITY_PROFILE_SHA256?: string
@@ -54,6 +55,7 @@ export effect function releaseOf(vars: ActivationVars) {
     reviewedPullRequest: release.reviewedPullRequest,
     sourceSha: release.sourceSha,
     closureEnabled: vars.SLOPBOT_CLOSURE_ENABLED === "true",
+    evidenceClosureEnabled: vars.SLOPBOT_EVIDENCE_CLOSURE_ENABLED === "true",
   } satisfies ReleaseEvidence
 }
 
@@ -68,10 +70,17 @@ effect function recorded(ledger: Machine.Shape, event: Event, by: number) {
   }
 }
 
-export effect function applyRelease(ledger: Machine.Shape, release: ReleaseEvidence) {
+effect function applyGeneralRelease(ledger: Machine.Shape, release: ReleaseEvidence) {
   const current = try ledger.get()
-  if (canActivate(current, release)) return try ledger.send({ type: "activate", release }, 0)
-  if (canDeactivate(current, release)) return try ledger.send({ type: "deactivate", release }, 0)
+  if (canActivate(current, release)) try ledger.send({ type: "activate", release }, 0)
+  else if (canDeactivate(current, release)) try ledger.send({ type: "deactivate", release }, 0)
+}
+
+export effect function applyRelease(ledger: Machine.Shape, release: ReleaseEvidence) {
+  try applyGeneralRelease(ledger, release)
+  const current = try ledger.get()
+  if (canActivateEvidence(current, release)) return try ledger.send({ type: "activateEvidence", release }, 0)
+  if (canDeactivateEvidence(current, release)) return try ledger.send({ type: "deactivateEvidence", release }, 0)
   return current
 }
 
@@ -94,6 +103,6 @@ export function closureActivation(vars: ActivationVars) {
 }
 
 export function activationView(activation: Activation, category: Category, verifierQualified: boolean): ActivationView {
-  return { enabled: activation.enabled, category, categoryQualified: qualified(activation, category), verifierQualified }
+  return { enabled: activation.enabled, category, categoryQualified: qualified(activation, category), verifierQualified, evidenceEnabled: activation.evidenceEnabled }
 }
 

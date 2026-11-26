@@ -1,8 +1,7 @@
-// spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order"
+// spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order"
 import { rows, sql } from "@repo/platform/d1"
-import { answered, fixedHeaders, json } from "@repo/platform/http"
+import { answerSubtree, fixedHeaders, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
-import { Restrictions } from "@repo/ports/backend"
 import { type Method, type Path, type PublicProject, type Registration, publicRead, referredProjects as visibleProjects, responseHasBody } from "../../gen/backend__referralProjects.effect.vibe"
 import { getReferralsProjects } from "../client/refusals.vibe"
 import { type ReferredProject, type ReferredProjects, referredProjects } from "../client/referrals.vibe"
@@ -13,7 +12,6 @@ schema ReferredRow {
   created_at: string
   referrer_github_id: string
   referrer_github_login: string
-  retired: number
 }
 
 const listing = "slop-referred-projects-v1"
@@ -31,21 +29,15 @@ function pathOf(pathname: string): Path {
 }
 
 effect function registrations() {
-  const restrictions = try Restrictions
-  const found = try rows(ReferredRow, sql`SELECT id, status, created_at, referrer_github_id, referrer_github_login, coalesce(json_extract(manifest, '$.listingTier'), '') = 'retired' AS retired FROM projects WHERE referrer_github_id IS NOT NULL AND referrer_github_login IS NOT NULL ORDER BY created_at, id`)
-  const registered: Registration[] = []
-  for (const row of found) {
-    const hidden = row.retired === 0 ? (try restrictions.project(row.id)).restricted : true
-    registered.push({
-      projectId: row.id,
-      status: row.status === "active" ? "Active" : "Paused",
-      listedAt: row.created_at,
-      publicListing: !hidden,
-      referrerId: row.referrer_github_id,
-      referrerLogin: row.referrer_github_login,
-    })
-  }
-  return registered
+  const found = try rows(ReferredRow, sql`SELECT id, status, created_at, referrer_github_id, referrer_github_login FROM projects WHERE referrer_github_id IS NOT NULL AND referrer_github_login IS NOT NULL ORDER BY created_at, id`)
+  return found.map((row): Registration => ({
+    projectId: row.id,
+    status: row.status === "active" ? "Active" : "Paused",
+    listedAt: row.created_at,
+    publicListing: true,
+    referrerId: row.referrer_github_id,
+    referrerLogin: row.referrer_github_login,
+  }))
 }
 
 effect function registry(method: Method, path: Path) {
@@ -95,4 +87,4 @@ effect function answer() {
   }
 }
 
-export const ReferredProjectRoutes = HttpRouter.add("*", `${referredProjects.path}/*`, answered(answer()))
+export const ReferredProjectRoutes = answerSubtree(referredProjects.path, answer())

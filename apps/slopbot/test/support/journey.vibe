@@ -1,0 +1,5 @@
+// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"
+export const journeyBuild = {
+  root: new URL("../..", import.meta.url).pathname,
+  config: "test/support/vite.config.ts",
+} as const

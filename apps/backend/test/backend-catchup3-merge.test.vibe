@@ -1,0 +1,234 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { type Answer, Area, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { refreshMergeActivity } from "../src/projects/mergeActivity/job.vibe"
+import { mergeActivityAnswer } from "../src/projects/mergeActivity/routes.vibe"
+
+module fakes {
+  import { Response as WebResponse } from "miniflare"
+  import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+  import type { Handler } from "@repo/platform/testing"
+
+  /** @throws {never} */
+  export function membersGithub(): GitHubFake {
+    const fake = githubFake()
+    fake.world.addUser({ id: 9201, login: "early", nodeId: "U_early" })
+    fake.world.addUser({ id: 9202, login: "fresh", nodeId: "U_fresh" })
+    return fake
+  }
+
+  /** @throws {never} */
+  export function quietNotify(): Handler {
+    return async () => new WebResponse(JSON.stringify({ available: false, enrollmentAvailable: false }), { status: 200, headers: { "content-type": "application/json" } })
+  }
+}
+import { membersGithub, quietNotify } from fakes
+
+const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
+
+const hour = 3_600_000
+const start = 1_794_916_800_000
+const t0 = "2026-11-17T12:00:00.000Z"
+const owner = "slop-test"
+const gamma = `${owner}/gamma`
+const waitingPulls = 301
+
+service World {
+  readonly fake: GitHubFake
+  readonly clock: SettableClock
+  readonly db: D1Database
+}
+
+error MigrationFailed { file: string }
+
+function iso(hours: number) {
+  return new Date(start + hours * hour).toISOString()
+}
+
+effect function populate(fake: GitHubFake) {
+  const world = fake.world
+  try orDie(Effect.try(() => {
+    world.addOrg({ id: 5000, login: owner })
+    world.addUser({ id: 5001, login: "maint" })
+    world.addUser({ id: 5002, login: "alice" })
+    world.addUser({ id: 5003, login: "bob" })
+    world.addUser({ id: 5004, login: "carol" })
+    world.addMember(owner, "maint")
+    world.addRepo({ id: 7201, owner, name: "gamma" })
+    world.addInstallation({ id: 78, account: owner, repositories: "all", permissions: { pull_requests: "read", issues: "write" } })
+    for (let index = 0; index < waitingPulls; index += 1) world.addPull({ repo: gamma, author: "alice", createdAt: iso(-400 + index / 4) })
+    world.addPull({ repo: gamma, author: "bob", createdAt: iso(-72), mergedAt: iso(-24) })
+    world.addPull({ repo: gamma, author: "carol", createdAt: iso(-10), mergedAt: iso(-20) })
+  }))
+}
+
+const Started = Layer.effect(World, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "merge-activity-catchup3" } })), (running) => promise(() => running.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) throw new MigrationFailed({ file: broken.file })
+  const db = try promise(() => database(mf, "SLOP_DB"))
+  const clock = settableClock(start)
+  const fake = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+  try populate(fake)
+  return { fake, clock, db }
+})
+
+const Shell = Layer.unwrap(effect {
+  const { fake, clock, db } = try World
+  const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
+  const http = outboundVia(viaFake)
+  const app = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority, userAgent: "slop.cash-merge-activity" }), Layer.mergeAll(http, webCrypto, clock.layer))
+  return Layer.mergeAll(d1(db), http, app)
+})
+
+effect function project(id: string, paths: ReadonlyArray<string>) {
+  const text = try orDie(Effect.try(() => JSON.stringify({ id, status: "active", listingTier: "community", repositories: paths.map((path) => ({ id: path, githubUrl: `https://github.com/${path}` })) })))
+  const digest = "a".repeat(64)
+  try (try D1).run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, 1, ${text}, ${digest}, 'Seeded', '1', 'member-1', ${t0})`)
+  try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'active', 1, ${text}, ${digest}, ${t0}, ${t0})`)
+}
+
+effect function refreshed(clock: SettableClock) {
+  provide clock.layer {
+    return try refreshMergeActivity()
+  }
+}
+
+layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Merge activity reads six pages of open pull requests at most, counts every open outside pull request beyond them and counts a merge stamped before its opening (spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not")', () => effect {
+    const { fake, clock } = try World
+    try project("gamma", [gamma])
+    const before = fake.requests.length
+    const counts = try refreshed(clock)
+    const graphql = fake.requests.slice(before).filter((request) => request.method === "POST" && request.url.endsWith("/graphql")).length
+    const served = try mergeActivityAnswer()
+    try Effect.try(() => assert.deepStrictEqual({ counts, graphql, served }, {
+      counts: { read: 1, failed: 0 },
+      graphql: 8,
+      served: {
+        schema: "slop-merge-activity-v1",
+        waitingDays: 7,
+        medianWindowDays: 30,
+        projects: [{
+          projectId: "gamma",
+          repositories: [{ repository: gamma, observedAt: t0, lastAttemptFailed: false, lastMergedAt: iso(-20), waitingOutside: 300, waitingCapped: true, mergedOutsideLast30Days: 2, medianHoursToMerge: 48, openOutside: waitingPulls, openOutsideCapped: false }],
+        }],
+      },
+    }))
+  })
+})
+
+const github = membersGithub()
+const origin = "http://localhost:8787"
+
+const Backend = areaLayer({
+  root: new URL("..", import.meta.url).pathname,
+  entry: "worker",
+  origin,
+  identity: { origin },
+  d1: { SLOP_DB: "slop-private" },
+  vars: {
+    ADMIN_GITHUB_IDS: "7",
+    PROJECT_MODERATOR_GITHUB_IDS: "",
+    SLOP_ENVIRONMENT: "local",
+    PAYMENTS_ALLOWED_ORIGIN: origin,
+    TRACE_AUTH_SECRET: "trace-auth-secret-for-the-participation-journey-1",
+    X_CLIENT_ID: "x-client",
+    X_CLIENT_SECRET: "x-client-secret",
+  },
+  services: { SLOP_NOTIFY: quietNotify() },
+  internet: internet({ github: github.handler }),
+  workers: {
+    SLOP_IDENTITY: {
+      name: "identity",
+      root: new URL("..", import.meta.url).pathname,
+      entry: "identity",
+      d1: { IDENTITY_DB: "slop-private" },
+      ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+      vars: {
+        SLOP_ENVIRONMENT: "local",
+        IDENTITY_PUBLIC_ORIGIN: origin,
+        IDENTITY_ALLOW_LOOPBACK: "1",
+        GITHUB_APP_CLIENT_ID: github.app.clientId,
+        GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+        IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      },
+    },
+  },
+})
+
+type Body = Readonly<Record<string, unknown>>
+
+function fields(answer: Answer): Body {
+  return typeof answer.body === "object" && answer.body !== null ? answer.body as Body : {}
+}
+
+effect function request(path: string, address: string, json?: unknown, as?: Session) {
+  return try (try Area).request(path, { headers: { "cf-connecting-ip": address }, ...json === undefined ? {} : { json }, ...as === undefined ? {} : { as } })
+}
+
+effect function assertion(githubId: string, login: string, nodeId: string, suffix: string) {
+  const token = `slop_assert_v1_${suffix.padEnd(43, "A")}`
+  const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+  try (try Area).sql("INSERT INTO identity_assertions (token_hash, github_actor_id, github_login, github_node_id, audience, created_at, expires_at, consumed_at) VALUES (?, ?, ?, ?, 'slop-points-web', ?, ?, NULL)", try sha256Hex(token), githubId, login, nodeId, try isoAt(now * 1000), try isoAt((now + 90) * 1000))
+  return token
+}
+
+effect function historicMember() {
+  const area = try Area
+  const token = "participation-early-session-".padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES ('U_early', '9201', 'early', '2026-10-01T00:00:00.000Z', 1, 5)")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, 'U_early', ?)", try sha256Hex(token), sessionExpiry)
+  try area.sql("INSERT INTO points_x_claims (x_id, actor_id, claimed_at) VALUES ('x-early', 'U_early', '2026-10-20T00:00:00.000Z')")
+  try area.sql("INSERT INTO points_x_awards (actor_id, x_id, awarded_at, points) VALUES ('U_early', 'x-early', '2026-10-20T00:00:00.000Z', 10)")
+  try area.sql("INSERT INTO points_x_links (actor_id, x_id, username, verified_at, public) VALUES ('U_early', 'x-early', 'early_x', '2026-10-20T00:00:00.000Z', 1)")
+  return { cookie: `__Host-slop_points=${token}`, actorId: "U_early", githubId: "9201", login: "early" } satisfies Session
+}
+
+function totals(body: Body) {
+  return [body.joinedAt, body.welcome, body.socialPoints]
+}
+
+function listed(answer: Answer) {
+  const people = fields(answer).people
+  return Array.isArray(people)
+    ? people.filter((person: { readonly actor: { readonly id: string } }) => person.actor.id === "U_early" || person.actor.id === "U_fresh").map((person: { readonly actor: { readonly id: string }; readonly welcome: unknown; readonly socialPoints: unknown; readonly x: unknown }) => [person.actor.id, person.welcome, person.socialPoints, person.x])
+    : []
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Participation totals survive closing and reopening after 24 October and a later member earns none (spec/points/participation.md, "Membership keeps its join instant and its stored welcome value"; spec/points/participation.md, "An X account is claimed once, forever, by its first actor"; spec/points/participation.md, "Earlier awards, claims and membership facts never change"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Telegram stays retired and historical participation awards stay frozen")', () => effect {
+    const area = try Area
+    const early = try historicMember()
+    const before = totals(fields(try request("/api/v1/points/me", "203.0.113.41", undefined, early)))
+    const listedBefore = listed(try request("/api/v1/points/people", "203.0.113.41"))
+    const closed = (try request("/api/v1/points/account/close", "203.0.113.42", { login: "early" }, early)).status
+    const kept = try area.sql("SELECT (SELECT COUNT(*) FROM points_x_awards WHERE actor_id = 'U_early') AS awards, (SELECT COUNT(*) FROM points_x_claims WHERE actor_id = 'U_early') AS claims, (SELECT COUNT(*) FROM points_x_links WHERE actor_id = 'U_early') AS links")
+    const reopened = totals(fields(try request("/api/v1/points/join", "203.0.113.43", { assertion: try assertion("9201", "early", "U_early", "early-reopen"), public: true, reopen: true })))
+    const fresh = totals(fields(try request("/api/v1/points/join", "203.0.113.44", { assertion: try assertion("9202", "fresh", "U_fresh", "fresh-join"), public: true })))
+    const listedAfter = listed(try request("/api/v1/points/people", "203.0.113.45"))
+    const freshJoinedAt = fresh[0]
+    try Effect.try(() => assert.deepStrictEqual({ before, listedBefore, closed, kept, reopened, fresh: fresh.slice(1), freshAfterCutoff: typeof freshJoinedAt === "string" && freshJoinedAt >= "2026-10-24T00:00:00.000Z", listedAfter }, {
+      before: ["2026-10-01T00:00:00.000Z", 5, 10],
+      listedBefore: [["U_early", 5, 10, { id: "x-early", username: "early_x", verifiedAt: "2026-10-20T00:00:00.000Z" }]],
+      closed: 200,
+      kept: [{ awards: 1, claims: 1, links: 0 }],
+      reopened: ["2026-10-01T00:00:00.000Z", 5, 10],
+      fresh: [0, 0],
+      freshAfterCutoff: true,
+      listedAfter: [["U_early", 5, 10, null], ["U_fresh", 0, 0, null]],
+    }))
+  })
+})

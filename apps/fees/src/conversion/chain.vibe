@@ -22,7 +22,7 @@ export error FeeCapTooLow { operation: string; detail: string }
 export const rawTxLimit = 262146
 
 export function detailOf(error: ChainUnavailable | SendRefused | FeeCapTooLow) {
-  return `${error.operation}: ${error.detail}`
+  return error.detail
 }
 
 export function chainFailure<A>(outcome: A | ChainUnavailable | SendRefused | FeeCapTooLow) {
@@ -75,6 +75,10 @@ export interface Signed {
   readonly minimumOutput: bigint
   readonly deadline: number
   readonly blockhashSlot: number
+  readonly toPinnedRouter: boolean
+  readonly approvedAmount: bigint
+  readonly allowance: bigint
+  readonly pricedFeeMicro: bigint
   readonly expiresAt?: number
 }
 
@@ -85,6 +89,7 @@ export interface OpenSend {
   readonly token: string
   readonly nonce: number
   readonly deadline: number
+  readonly valueMicro: number
   readonly attempts: ReadonlyArray<SendAttempt>
 }
 

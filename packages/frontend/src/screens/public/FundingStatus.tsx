@@ -1,7 +1,7 @@
 // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
-import { cn, Status } from "@repo/ui";
+import { cn, Status, type StatusProps } from "@repo/ui";
 import type { ListedProject } from "../home/listing.ts";
-import { type NetworkPays, paymentsOn, vaultStateLabel } from "./funding.ts";
+import { type NetworkPays, paymentsOn } from "./funding.ts";
 
 export type FundingStatusProps = {
   project: ListedProject;
@@ -10,13 +10,18 @@ export type FundingStatusProps = {
   className?: string;
 };
 
-/** A project's vault and whether it may pay: two independent facts, side by side. */
+/** @throws {never} */
+function vaultPresentation(project: ListedProject, networkPays: NetworkPays): StatusProps["presentation"] {
+  if (!project.escrow?.deployments.length) return { tone: "Neutral", icon: "Lock", label: "No vault" };
+  return paymentsOn(project, networkPays) ? { tone: "Positive", icon: "Lock", label: "Live" } : { tone: "Caution", icon: "Lock", label: "Payments off" };
+}
+
+/** One badge: a recorded vault that can pay, one whose payments are off, or none; nothing for an external prize. */
 export function FundingStatus({ project, networkPays, className }: FundingStatusProps) {
-  const paying = paymentsOn(project, networkPays);
+  if (project.reward.kind === "external-prize-share") return null;
   return (
-    <div className={cn("flex flex-wrap gap-x-4 gap-y-1", className)}>
-      <Status presentation={{ tone: project.escrow?.deployments.length ? "Notice" : "Neutral", icon: "Lock", label: `Vault: ${vaultStateLabel(project, networkPays)}` }} />
-      <Status presentation={{ tone: paying ? "Positive" : "Neutral", icon: paying ? "Check" : "Pause", label: `Payments: ${paying ? "Enabled" : "Disabled"}` }} />
+    <div className={cn("flex", className)}>
+      <Status presentation={vaultPresentation(project, networkPays)} />
     </div>
   );
 }

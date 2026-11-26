@@ -57,18 +57,57 @@ pure val publishedValues = Set(
 
 ### A manual main release on retained data prepares in its own concurrency group
 
-Preparation is grouped per pull request or ref and event, and only a pull
-request cancels a running preparation. A manual dispatch on `main` with
-`use_published_data` adds the suffix `-retained` to its group, so it can
-prepare beside a live collection of the same ref; the publication lock is
-unchanged.
+Preparation (the `prepare` job's concurrency group
+`slop-quality-<pull request number or ref>-<lane>` in
+`.github/workflows/deploy.yml`) is grouped per pull request, and per ref and
+event elsewhere, and only a pull request cancels a running preparation. On
+`main`, every run that is not a pull request shares one of three lanes: every
+fresh collection, a push, a schedule or a manual dispatch, shares the
+`collect` lane, because they spend one collector App allowance and a second
+waits for the first (operator decision, 19 November 2026); a run with
+`use_published_data` takes the `retained` lane, so it can prepare beside a
+live collection; a run with `parallel_collection` (a manual input, false on
+every other run) and without `use_published_data` takes the
+`collect-parallel` lane and collects on a GitHub-hosted runner beside a
+running collection (operator decision, 20 November 2026; main 18d909f0c,
+development 7f71c6ce9). Only a fresh main collection outside a pull request,
+without `use_published_data` or `parallel_collection`, runs on the
+configured collector runner (`vars.SLOP_COLLECTOR_RUNNER`, main 31f766f7d);
+every other preparation, and every one while the variable is unset (main PRD
+section 9, 22 November 2026), runs on a GitHub-hosted runner
+(`ubuntu-24.04`). A preparation on the collector runner has a 72,000-second
+collection deadline (`SLOP_COLLECTION_DEADLINE_S`) and a 1,440-minute job
+timeout; every other one 19,200 seconds and 360 minutes. The publication
+lock is unchanged.
 
 ```quint
-pure def retainedPreparationGroup(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
-  eventKind == R::WorkflowDispatch and branch == "main" and usePublishedData
+type PrepLane = PullRequestLane | MainCollect | MainCollectParallel | MainRetained | RefEvent
+pure def preparationLane(eventKind: R::RefKind, branch: str, usePublishedData: bool, parallel: bool): PrepLane =
+  if (eventKind == R::PullRequestRef) PullRequestLane
+  else if (branch == "main") (if (usePublishedData) MainRetained else if (parallel) MainCollectParallel else MainCollect)
+  else RefEvent
+pure def collectorRunner(eventKind: R::RefKind, branch: str, usePublishedData: bool, parallel: bool, configured: bool): bool =
+  configured and eventKind != R::PullRequestRef and branch == "main" and not(usePublishedData) and not(parallel)
 pure def cancelsRunningPreparation(eventKind: R::RefKind): bool = eventKind == R::PullRequestRef
-pure def lawOnlyManualMainRetainedSeparates(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
-  retainedPreparationGroup(eventKind, branch, usePublishedData) implies
-    (eventKind == R::WorkflowDispatch and not(cancelsRunningPreparation(eventKind)))
+pure def lawOnlyRetainedMainSeparates(eventKind: R::RefKind, branch: str, usePublishedData: bool, parallel: bool): bool =
+  preparationLane(eventKind, branch, usePublishedData, parallel) == MainRetained implies
+    (branch == "main" and usePublishedData and not(cancelsRunningPreparation(eventKind)))
+pure def lawFreshMainCollectionsShareOneLane(eventKind: R::RefKind): bool =
+  eventKind != R::PullRequestRef implies
+    preparationLane(eventKind, "main", false, false) == preparationLane(R::BranchPush, "main", false, false)
+pure def lawRetainedNeverSharesFreshLane(eventKind: R::RefKind, otherKind: R::RefKind, parallel: bool, otherParallel: bool): bool =
+  preparationLane(eventKind, "main", true, parallel) != preparationLane(otherKind, "main", false, otherParallel) or
+    eventKind == R::PullRequestRef
+pure def lawParallelLaneOnlyForParallelFreshMain(eventKind: R::RefKind, branch: str, usePublishedData: bool, parallel: bool): bool =
+  preparationLane(eventKind, branch, usePublishedData, parallel) == MainCollectParallel implies
+    (branch == "main" and parallel and not(usePublishedData) and not(cancelsRunningPreparation(eventKind)))
+pure def lawParallelOrRetainedNeverUsesCollectorRunner(eventKind: R::RefKind, branch: str, usePublishedData: bool,
+  parallel: bool, configured: bool): bool =
+  (usePublishedData or parallel or not(configured)) implies not(collectorRunner(eventKind, branch, usePublishedData, parallel, configured))
+pure def lawCollectorRunnerOnlyInCollectLane(eventKind: R::RefKind, branch: str, usePublishedData: bool, parallel: bool): bool =
+  collectorRunner(eventKind, branch, usePublishedData, parallel, true) implies
+    preparationLane(eventKind, branch, usePublishedData, parallel) == MainCollect
+pure def lawOnlyPullRequestLaneCancels(eventKind: R::RefKind, branch: str, usePublishedData: bool, parallel: bool): bool =
+  cancelsRunningPreparation(eventKind) iff preparationLane(eventKind, branch, usePublishedData, parallel) == PullRequestLane
 pure val branchValues = Set("main", "development")
 ```

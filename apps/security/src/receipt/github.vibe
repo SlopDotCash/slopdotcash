@@ -1,0 +1,112 @@
+// spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import type { AnalysisReport } from "../analysis/prompts.ts"
+import { ghsaPattern, markerLine } from "../forwarding/advisories.vibe"
+
+export interface PrivateReport {
+  readonly ghsa: string
+  readonly createdAt: string
+  readonly author: { readonly githubId: string; readonly login: string }
+  readonly report: AnalysisReport
+  readonly referenceLines: ReadonlyArray<string>
+}
+
+const repositoryPath = /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})$/u
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const referencePrefix = markerLine("")
+const maxPages = 20
+const limitBytes = 8 * 1024 * 1024
+const maxDescription = 60_000
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function text(value: unknown, max: number) {
+  return typeof value === "string" ? value.slice(0, max) : ""
+}
+
+function packagesOf(value: unknown) {
+  const entries = Array.isArray(value) ? value : []
+  return entries.map((entry) => record(record(entry)?.package)).map((found) => found === undefined ? "" : `${text(found.ecosystem, 40)}:${text(found.name, 200)}`).filter((name) => name.length > 1).slice(0, 20)
+}
+
+export function privateReportOf(value: unknown): PrivateReport | undefined {
+  const advisory = record(value)
+  if (advisory === undefined || record(advisory.submission) === undefined) return undefined
+  const author = record(advisory.author)
+  const ghsa = advisory.ghsa_id
+  const created = typeof advisory.created_at === "string" ? Date.parse(advisory.created_at) : Number.NaN
+  const id = author?.id
+  const login = author?.login
+  if (typeof ghsa !== "string" || !ghsaPattern.test(ghsa) || !Number.isFinite(created) || author?.type !== "User"
+    || typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 || typeof login !== "string" || !loginPattern.test(login)) return undefined
+  const description = typeof advisory.description === "string" ? advisory.description : ""
+  return {
+    ghsa,
+    createdAt: new Date(created).toISOString(),
+    author: { githubId: String(id), login },
+    report: {
+      summary: text(advisory.summary, 1024),
+      description: description.slice(0, maxDescription),
+      severity: typeof advisory.severity === "string" ? advisory.severity : null,
+      cvss: null,
+      cweIds: Array.isArray(advisory.cwe_ids) ? advisory.cwe_ids.filter((cwe): cwe is string => typeof cwe === "string").slice(0, 20) : [],
+      packages: packagesOf(advisory.vulnerabilities),
+    },
+    referenceLines: description.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.startsWith(referencePrefix)),
+  }
+}
+
+effect function advisoryReader(owner: string, name: string) {
+  const app = try GitHubApp
+  const installation = try app.installationFor(owner, name, { followRenamed: false })
+  return { path: `/repos/${owner}/${name}/security-advisories`, layer: app.asInstallation(installation, { repositories: [name], permissions: { repository_advisories: "read" } }) }
+}
+
+effect function listed(owner: string, name: string) {
+  const reader = try advisoryReader(owner, name)
+  provide reader.layer {
+    return try (try GitHub).pages(`${reader.path}?sort=created&direction=asc`, Schema.Unknown, { maxPages, perPage: 100, limitBytes })
+  }
+}
+
+effect function one(owner: string, name: string, ghsa: string) {
+  const reader = try advisoryReader(owner, name)
+  provide reader.layer {
+    return try (try GitHub).json(`${reader.path}/${ghsa}`, Schema.Unknown, { limitBytes, followRenamed: false })
+  }
+}
+
+effect function installed() {
+  const app = try Effect.serviceOption(GitHubApp)
+  const client = try Effect.serviceOption(HttpClient.HttpClient)
+  return Option.isNone(app) || Option.isNone(client) ? undefined : { app: app.value, client: client.value }
+}
+
+export effect function privateReports(repository: string) {
+  const parts = repositoryPath.exec(repository)
+  const services = try installed()
+  if (parts === null || services === undefined) return undefined
+  provide GitHubApp = services.app, HttpClient.HttpClient = services.client {
+    const read = try exit(listed(parts[1] ?? "", parts[2] ?? ""))
+    if (!Exit.isSuccess(read)) return undefined
+    const reports: PrivateReport[] = []
+    for (const item of read.value) {
+      const report = privateReportOf(item)
+      if (report !== undefined) reports.push(report)
+    }
+    return reports.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.ghsa.localeCompare(right.ghsa))
+  }
+}
+
+export effect function advisoryReport(repository: string, ghsa: string) {
+  const parts = repositoryPath.exec(repository)
+  const services = try installed()
+  if (parts === null || services === undefined || !ghsaPattern.test(ghsa)) return undefined
+  provide GitHubApp = services.app, HttpClient.HttpClient = services.client {
+    const read = try exit(one(parts[1] ?? "", parts[2] ?? "", ghsa))
+    return Exit.isSuccess(read) ? privateReportOf(read.value)?.report : undefined
+  }
+}

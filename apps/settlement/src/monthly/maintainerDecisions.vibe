@@ -1,0 +1,266 @@
+// spec/settlement/maintainerShare.md, "Only another person's outside pull request, merged or closed by a person, is a decision"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { type Decision, closedByHeadDeletion, countedDecision, deletionWindowSeconds } from "../../gen/settlement__maintainerShare.effect.vibe"
+import { type Period, formatPeriod, periodEndSeconds, periodStartSeconds } from "../kernels/calendar.ts"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export const decisionsQuery = `query($owner: String!, $name: String!, $first: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    id
+    pullRequests(states: [CLOSED, MERGED], first: $first, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        updatedAt
+        closedAt
+        mergedAt
+        authorAssociation
+        author { __typename login }
+        mergedBy { __typename login ... on User { id databaseId } }
+        isCrossRepository
+        headRepository { id }
+        headRepositoryOwner { login }
+        timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) {
+          nodes { ... on ClosedEvent { createdAt actor { __typename login ... on User { id databaseId } } } }
+        }
+        refDeletions: timelineItems(last: 10, itemTypes: [HEAD_REF_DELETED_EVENT]) {
+          nodes { ... on HeadRefDeletedEvent { createdAt actor { login } } }
+        }
+      }
+    }
+  }
+}`
+
+const pageSize = 50
+const maxPages = 400
+const maintainerAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"])
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const deletionWindowMs = deletionWindowSeconds * 1000
+
+schema Account { readonly __typename: string; readonly login?: string; readonly id?: string; readonly databaseId?: number }
+schema CloseEvent { readonly createdAt?: string; readonly actor?: Account | null }
+schema CloseEvents { readonly nodes: ReadonlyArray<CloseEvent> }
+schema Named { readonly login?: string }
+schema Deletion { readonly createdAt?: string; readonly actor?: Named | null }
+schema Deletions { readonly nodes: ReadonlyArray<Deletion> }
+schema HeadRepository { readonly id: string }
+schema PullNode {
+  readonly number: number
+  readonly updatedAt: string
+  readonly closedAt: string | null
+  readonly mergedAt: string | null
+  readonly authorAssociation: string
+  readonly author: Account | null
+  readonly mergedBy: Account | null
+  readonly isCrossRepository: boolean
+  readonly headRepository: HeadRepository | null
+  readonly headRepositoryOwner: Named | null
+  readonly timelineItems: CloseEvents
+  readonly refDeletions: Deletions
+}
+schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
+schema PullRequests { readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<PullNode> }
+schema RepositoryPage { readonly id: string; readonly pullRequests: PullRequests }
+schema DecisionsPage { readonly repository: RepositoryPage }
+
+export error DecisionsUnread { reason: string }
+
+export interface CountedRepository {
+  readonly id: string
+  readonly nodeId: string | undefined
+}
+
+export interface DecisionMonth {
+  readonly projectId: string
+  readonly period: Period
+  readonly repositories: ReadonlyArray<CountedRepository>
+}
+
+export interface MaintainerDecision {
+  readonly repository: string
+  readonly number: number
+  readonly outcome: "merged" | "closed"
+  readonly decidedAt: string
+  readonly author: string
+  readonly githubUserId: string
+  readonly nodeId: string
+  readonly login: string
+}
+
+export interface DecisionFile {
+  readonly schemaVersion: "1"
+  readonly projectId: string
+  readonly period: string
+  readonly repositories: ReadonlyArray<string>
+  readonly decisions: ReadonlyArray<MaintainerDecision>
+}
+
+export interface DecisionsRead {
+  readonly file: DecisionFile
+  readonly decisions: ReadonlyArray<Decision>
+}
+
+export service MaintainerDecisions {
+  read(month: DecisionMonth): DecisionsRead!DecisionsUnread
+}
+
+interface Found {
+  readonly file: MaintainerDecision
+  readonly decision: Decision
+}
+
+function unread(reason: string) {
+  return new DecisionsUnread({ reason })
+}
+
+function sameLogin(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase()
+}
+
+function reasonOf(error: GitHubFailure): string {
+  if (error._tag === "GitHubMalformed") return `GitHub refused the maintainer decision read: ${error.issue}`
+  if (error._tag === "GitHubUnavailable") return `GitHub maintainer decision read failed: ${error.status === undefined ? "network failure" : `HTTP ${error.status}`}`
+  if (error._tag === "RateLimited") return `GitHub maintainer decision read failed: HTTP ${error.status}`
+  if (error._tag === "GitHubRefused") return error.status === 403 ? "GitHub maintainer decision read failed: HTTP 403" : `GitHub answered HTTP ${error.status}`
+  return `GitHub answered HTTP 404 for ${error.path}`
+}
+
+effect function instant(value: string | null | undefined, field: string) {
+  const parsed = value === null || value === undefined ? Number.NaN : millisOf(value)
+  if (!Number.isFinite(parsed)) throw unread(`GitHub returned an invalid ${field}`)
+  return parsed
+}
+
+effect function closer(node: PullNode, merged: boolean) {
+  if (merged) return { actor: node.mergedBy, closedAt: 0 }
+  const close = node.timelineItems.nodes.at(-1)
+  const actor = close?.actor ?? null
+  return { actor, closedAt: actor === null ? 0 : try instant(close?.createdAt, "close time") }
+}
+
+effect function headDeletion(node: PullNode, login: string, closedAt: number) {
+  const headForkMissing = node.isCrossRepository && node.headRepository === null
+  const owner = node.headRepositoryOwner?.login
+  const headForkOwnedByDecider = node.isCrossRepository && !headForkMissing && (owner === undefined || sameLogin(owner, login))
+  let deciderDeletedHeadWithinWindow = false
+  if (!headForkMissing && !headForkOwnedByDecider) {
+    for (const entry of node.refDeletions.nodes) {
+      const deleter = entry.actor?.login
+      if (deleter === undefined || !sameLogin(deleter, login)) continue
+      const at = try instant(entry.createdAt, "branch deletion time")
+      if (Math.abs(at - closedAt) <= deletionWindowMs) {
+        deciderDeletedHeadWithinWindow = true
+        break
+      }
+    }
+  }
+  return { headForkOwnedByDecider, headForkMissing, deciderDeletedHeadWithinWindow }
+}
+
+effect function judged(node: PullNode, merged: boolean, repository: string, index: number, period: Period) {
+  const authorOutside = node.author?.__typename !== "Bot" && !maintainerAssociations.has(node.authorAssociation)
+  const unjudged: Decision = {
+    repository: index,
+    pull: node.number,
+    author: 0,
+    authorOutside,
+    decider: 0,
+    deciderBot: true,
+    kind: merged ? "MergedByMaintainer" : "ClosedByMaintainer",
+    period,
+    headForkOwnedByDecider: false,
+    headForkMissing: false,
+    deciderDeletedHeadWithinWindow: false,
+  }
+  if (!authorOutside) return { decision: unjudged, account: undefined }
+  const { actor, closedAt } = try closer(node, merged)
+  if (actor === null || actor.__typename !== "User") return { decision: unjudged, account: undefined }
+  const head = merged || actor.login === undefined ? {} : try headDeletion(node, actor.login, closedAt)
+  const byPerson: Decision = { ...unjudged, deciderBot: false, ...head }
+  if (closedByHeadDeletion(byPerson)) return { decision: byPerson, account: undefined }
+  const { login, id, databaseId } = actor
+  if (login === undefined || id === undefined || databaseId === undefined || !Number.isSafeInteger(databaseId) || databaseId <= 0) throw unread("GitHub returned an incomplete deciding account")
+  const author = node.author?.login ?? "ghost"
+  const decision: Decision = { ...byPerson, decider: databaseId, author: sameLogin(author, login) ? databaseId : 0 }
+  if (!countedDecision(decision)) return { decision, account: undefined }
+  if (!Number.isSafeInteger(node.number) || node.number <= 0) throw unread("GitHub returned an invalid pull request number")
+  if (!loginPattern.test(login) || !loginPattern.test(author) || githubUserIdFromNodeId(id) !== (try orDie(Effect.try(() => BigInt(databaseId))))) throw unread(`Maintainer decision record has an invalid decision: ${repository}#${node.number}`)
+  return { decision, account: { author, githubUserId: String(databaseId), nodeId: id, login } }
+}
+
+effect function page(github: GitHub.Shape, variables: Readonly<Record<string, unknown>>) {
+  const answered = retry(github.graphql(decisionsQuery, variables, DecisionsPage), {
+    times: 3,
+    schedule: Schedule.exponential("2 seconds"),
+    while: (error: GitHubFailure) => error._tag === "GitHubUnavailable" || error._tag === "RateLimited" || (error._tag === "GitHubRefused" && error.status === 403),
+  })
+  return answered catch effect (error) => {
+    throw unread(reasonOf(error))
+  }
+}
+
+effect function repositoryDecisions(github: GitHub.Shape, month: DecisionMonth, repository: CountedRepository, index: number) {
+  const [owner, name, ...rest] = repository.id.split("/")
+  if (owner === undefined || owner === "" || name === undefined || name === "" || rest.length > 0) throw unread(`Repository ${repository.id} is not owner/name`)
+  const from = periodStartSeconds(month.period) * 1000
+  const to = periodEndSeconds(month.period) * 1000
+  const found: Found[] = []
+  const seen = new Set<number>()
+  let after: string | null = null
+  for (let read = 0; ; read += 1) {
+    if (read >= maxPages) throw unread(`Repository ${repository.id} has more closed pull requests than one read covers`)
+    const listed: RepositoryPage = (try page(github, { owner, name, first: pageSize, after })).repository
+    if (repository.nodeId !== undefined && listed.id !== repository.nodeId) throw unread(`Repository ${repository.id} is not the registered repository`)
+    let older = false
+    for (const node of listed.pullRequests.nodes) {
+      if ((try instant(node.updatedAt, "update time")) < from) {
+        older = true
+        break
+      }
+      const merged = node.mergedAt !== null
+      const decidedAt = try instant(merged ? node.mergedAt : node.closedAt, "decision time")
+      if (decidedAt < from || decidedAt >= to) continue
+      const { decision, account } = try judged(node, merged, repository.id, index, month.period)
+      if (account === undefined || seen.has(node.number)) continue
+      seen.add(node.number)
+      found.push({
+        file: { repository: repository.id, number: node.number, outcome: merged ? "merged" : "closed", decidedAt: try isoAt(decidedAt), author: account.author, githubUserId: account.githubUserId, nodeId: account.nodeId, login: account.login },
+        decision,
+      })
+    }
+    const info: PageInfo = listed.pullRequests.pageInfo
+    if (older || !info.hasNextPage) break
+    if (info.endCursor === null) throw unread("GitHub returned no next page")
+    after = info.endCursor
+  }
+  return found
+}
+
+effect function collected(github: GitHub.Shape, month: DecisionMonth) {
+  const repositories = [...month.repositories].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+  const found: Found[] = []
+  for (const [index, repository] of repositories.entries()) found.push(...(try repositoryDecisions(github, month, repository, index + 1)))
+  found.sort((left, right) => left.file.repository.localeCompare(right.file.repository) || left.file.number - right.file.number)
+  return {
+    file: { schemaVersion: "1", projectId: month.projectId, period: formatPeriod(month.period), repositories: repositories.map((repository) => repository.id), decisions: found.map((entry) => entry.file) },
+    decisions: found.map((entry) => entry.decision),
+  } satisfies DecisionsRead
+}
+
+export const maintainerDecisions = Layer.effect(MaintainerDecisions, effect {
+  const github = try GitHub
+  return { read: (month) => collected(github, month) } satisfies MaintainerDecisions.Shape
+})
+
+export const noDecisionReader = Layer.succeed(MaintainerDecisions, {
+  read: () => effect {
+    throw unread("no GitHub reader was configured")
+  },
+})

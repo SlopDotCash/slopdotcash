@@ -147,6 +147,11 @@ function hidden(binding: VersionBinding): VersionBinding {
   return binding.type === "secret_text" ? { name: binding.name, type: binding.type } : binding;
 }
 
+function uploadToken(project: string): string {
+  const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${part({ alg: "none", typ: "JWT" })}.${part({ sub: `upload-token-${project}`, max_file_count_allowed: 20_000 })}.`;
+}
+
 function sha256(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -179,6 +184,14 @@ async function metadataOf(form: Form): Promise<typeof VersionMetadata.Type> {
   const entry = form.get("metadata");
   const raw = entry === null ? "{}" : typeof entry === "string" ? entry : await entry.text();
   return Schema.decodeUnknownSync(VersionMetadata)(JSON.parse(raw));
+}
+
+async function bundleBindings(bundle: { arrayBuffer(): Promise<ArrayBuffer> }): Promise<ReadonlyArray<typeof Binding.Type>> {
+  const bytes = new Uint8Array(await bundle.arrayBuffer());
+  const opening = new TextDecoder().decode(bytes.subarray(0, 256)).split("\r\n")[0] ?? "";
+  if (!opening.startsWith("--")) return [];
+  const form = await new Response(bytes, { headers: { "content-type": `multipart/form-data; boundary=${opening.slice(2)}` } }).formData();
+  return (await metadataOf(form)).bindings ?? [];
 }
 
 /** @throws {never} */
@@ -220,6 +233,14 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
     const named = new Set(given.map((binding) => binding.name));
     const uploaded = Object.keys(modules).length === 0 ? previous?.modules ?? {} : modules;
     return record(script, metadata.annotations ?? {}, uploaded, [...inherited.filter((binding) => !named.has(binding.name)), ...given], given);
+  }
+
+  function secretVersion(script: string, name: string, binding: VersionBinding | undefined): void {
+    const latest = versions[script]?.at(-1);
+    if (latest === undefined) return;
+    const added = binding === undefined ? [] : [binding];
+    const version = record(script, { "workers/triggered_by": "secret" }, latest.modules, [...latest.bindings.filter((kept) => kept.name !== name), ...added], added);
+    deploy(script, [{ versionId: version.id, percentage: 100 }], {});
   }
 
   function patchLatest(script: string, patch: typeof LatestPatch.Type): WorkerVersion {
@@ -310,12 +331,12 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
 
   function query(databaseId: string, sql: string) {
     return statements(sql).map((statement) => {
-      if (/^\s*INSERT\s+INTO\s+d1_migrations\b/iu.test(statement)) {
+      if (/^\s*INSERT\s+INTO\s+"?d1_migrations\b/iu.test(statement)) {
         const names = [...statement.matchAll(/'([^']+\.sql)'/gu)].map(([, name]) => name ?? "");
         (d1Migrations[databaseId] ??= []).push(...names);
         return { results: [], success: true, meta: { changes: names.length } };
       }
-      if (/^\s*SELECT\b[\s\S]*\bFROM\s+d1_migrations\b/iu.test(statement)) {
+      if (/^\s*SELECT\b[\s\S]*\bFROM\s+"?d1_migrations\b/iu.test(statement)) {
         const applied = d1Migrations[databaseId] ?? [];
         return { results: applied.map((name, index) => ({ id: index + 1, name, applied_at: "2026-11-16 00:00:00" })), success: true, meta: { changes: 0 } };
       }
@@ -362,11 +383,13 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
       const body = await decoded(SecretBody, request);
       const names = secrets[script] ??= [];
       if (!names.includes(body.name)) names.push(body.name);
+      secretVersion(script, body.name, { name: body.name, type: "secret_text" });
       return envelope({ name: body.name, type: body.type });
     }
     if (resource === "secrets" && method === "GET") return envelope((secrets[script] ?? []).map((name) => ({ name, type: "secret_text" })));
     if (resource === "secrets" && method === "DELETE" && item !== undefined) {
       secrets[script] = (secrets[script] ?? []).filter((name) => name !== item);
+      secretVersion(script, item, undefined);
       return envelope(null);
     }
     if (resource === "schedules" && method === "PUT") {
@@ -405,15 +428,21 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
     }
     if (resource === undefined && request.method === "GET") return envelope(projectView(project));
     if (resource === "domains" && item !== undefined && request.method === "GET") return envelope({ name: item, status: "active" });
-    if (resource === "upload-token" && request.method === "GET") return envelope({ jwt: `upload-token-${project}` });
+    if (resource === "upload-token" && request.method === "GET") return envelope({ jwt: uploadToken(project) });
     if (resource === "deployments" && request.method === "POST") {
       const form = await request.formData();
       const branch = text(form.get("branch")) ?? "main";
-      const worker = form.get("_worker.js");
+      const worker = form.get("_worker.bundle") ?? form.get("_worker.js");
+      const environment = branch === configured.productionBranch ? "production" : "preview";
+      if (worker !== null && typeof worker !== "string" && text(form.get("wrangler_config_hash")) !== undefined) {
+        const vars = Object.fromEntries((await bundleBindings(worker)).flatMap((binding) => binding.type === "plain_text" && typeof binding.text === "string" ? [[binding.name, { type: "plain_text", value: binding.text } satisfies EnvVar]] : []));
+        const current = projectOf(project);
+        pagesProjects[project] = { ...current, [environment]: { ...current[environment], ...vars } };
+      }
       const deployment: PagesDeployment = {
         id: next(),
         createdOn: createdOn(),
-        environment: branch === configured.productionBranch ? "production" : "preview",
+        environment,
         branch,
         commitHash: text(form.get("commit_hash")) ?? "",
         commitDirty: text(form.get("commit_dirty")) === "true",

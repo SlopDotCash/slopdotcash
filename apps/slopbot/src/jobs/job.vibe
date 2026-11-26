@@ -1,4 +1,4 @@
-// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
+// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"
 import type { Queue } from "@repo/platform/bindings"
 
 export const appealCommands = ["accept", "reject", "uphold", "deny"] as const
@@ -69,21 +69,55 @@ export schema MaintainerHoldJob {
   readonly number: number
 }
 
-export const JobSchema = Schema.Union([ReviewJob, AppealJob, AppealCommandJob, AppealDueJob, MaintainerHoldJob])
+export schema ReadyLabelJob {
+  readonly kind: "ready_label"
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: "pull_request"
+  readonly number: number
+}
+
+export schema SubmissionFeeJob {
+  readonly kind: "submission_fee"
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: "pull_request"
+  readonly number: number
+}
+
+export const JobSchema = Schema.Union([ReviewJob, AppealJob, AppealCommandJob, AppealDueJob, MaintainerHoldJob, ReadyLabelJob, SubmissionFeeJob])
 
 export type Job = typeof JobSchema.Type
+
+export type ReadyBase = Omit<ReadyLabelJob, "kind" | "itemKind">
+
+export function readyJob(base: ReadyBase): ReadyLabelJob {
+  return { kind: "ready_label", itemKind: "pull_request", ...base }
+}
+
+export type FeeBase = Omit<SubmissionFeeJob, "kind" | "itemKind">
+
+export function feeJob(base: FeeBase): SubmissionFeeJob {
+  return { kind: "submission_fee", itemKind: "pull_request", ...base }
+}
 
 export error NotAJob { reason: string }
 
 export error QueueUnavailable { kind: string }
 
 export service JobQueue {
-  send(job: Job): void!QueueUnavailable
+  send(job: Job, delaySeconds: number): void!QueueUnavailable
 }
 
 export function jobQueue(binding: Queue<Job>) {
   return Layer.succeed(JobQueue, {
-    send: (job) => tryPromise({ try: () => binding.send(job), catch: () => new QueueUnavailable({ kind: job.kind }) }),
+    send: (job, delaySeconds) => tryPromise({ try: () => binding.send(job, delaySeconds > 0 ? { delaySeconds } : undefined), catch: () => new QueueUnavailable({ kind: job.kind }) }),
   })
 }
 
@@ -97,6 +131,6 @@ export effect function parseJob(text: string) {
   return try decodeJob(value)
 }
 
-export effect function send(job: Job) {
-  try (try JobQueue).send(job)
+export effect function send(job: Job, delaySeconds: number = 0) {
+  try (try JobQueue).send(job, delaySeconds)
 }

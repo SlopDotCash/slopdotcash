@@ -1,31 +1,42 @@
 import { assert, layer } from "@effect/vitest"
-import type { Fetcher } from "@repo/platform/bindings"
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
 import { isoNow } from "@repo/platform/clock"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
 import { Refused, outboundVia } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import type { Handler } from "@repo/platform/testing"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
+import { Request as WorkerRequest } from "miniflare"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { jsonValue } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { planned } from "../src/cases/actions.vibe"
 import { AwardClearances } from "../src/cases/clearance.vibe"
 import { caseRecord } from "../src/cases/rows.vibe"
-import { acted, opened } from "../src/cases/routes.vibe"
+import { acted, caseRoutes, created, opened } from "../src/cases/routes.vibe"
 import { committed, observedCase } from "../src/cases/store.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../src/client/refusals.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
-import { type World, maintainer, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { submissionReadRoutes } from "../src/intake/list.vibe"
+import { type World, digest, maintainer, origin, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 import { receiptNotices } from "./support/intake/notices.vibe"
 
 service Cases {
   readonly world: World
   readonly fake: ProviderFake
   readonly bans: Set<string>
+  readonly github: GitHubFake
+  readonly pending: Array<Promise<unknown>>
 }
 
 const surplusKey = "surplus-cases-key"
@@ -35,11 +46,29 @@ const moderator = "801"
 const secondModerator = "804"
 const paid = "intake-fixture"
 const unpaid = "intake-unpaid"
+const recordedReporter = "404"
+const importedReporter = "405"
+const secondImported = "406"
+const claimant = "407"
+const mismatched = "408"
+const advisoryList = "GET /repos/slop-test/intake/security-advisories?"
+const registered = ["registered-a", "registered-b", "registered-c", "registered-d"]
 let keys = 0
+
+function loginOf(githubId: string) {
+  return `member-${githubId}`
+}
 
 const Started = Layer.effect(Cases, effect {
   const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
-  return { world, fake: providerFake(), bans: new Set<string>() }
+  const github = try orDie(Effect.try(() => githubFake({ now: () => Date.now() })))
+  try orDie(Effect.try(() => {
+    github.world.addOrg({ id: 5000, login: "slop-test" })
+    for (const id of [recordedReporter, importedReporter, secondImported, claimant, mismatched]) github.world.addUser({ id: Number(id), login: loginOf(id) })
+    github.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
+    github.world.addInstallation({ id: 4401, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
+  }))
+  return { world, fake: providerFake(), bans: new Set<string>(), github, pending: [] }
 })
 
 function fixture(projectId: string): ProjectView {
@@ -54,23 +83,27 @@ function fixture(projectId: string): ProjectView {
     stewardGithubId: "900",
     stewardAccount: "UserSteward",
     listing: { fromApplication: false },
-    repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+    repositories: [registered.includes(projectId) ? { id: `2${registered.indexOf(projectId)}01`, nodeId: `R_${projectId}`, fullName: `slop-test/${projectId}`, integrationBranch: "main", aliases: [] } : { id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
     closureConsent: false,
   }
 }
 
-function portsOf(bans: ReadonlySet<string>) {
+const deniedAuthority: Authority.Shape = {
+  repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+}
+
+function portsOf(bans: ReadonlySet<string>, authority: Authority.Shape) {
   return Layer.mergeAll(
     Layer.succeed(Registry, {
       project: (projectId) => succeed(fixture(projectId)),
       byRepository: () => succeed(undefined),
       byPath: () => succeed(undefined),
       active: () => succeed([fixture(paid), fixture(unpaid)]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => succeed(sql`1`),
     } satisfies Registry.Shape),
-    Layer.succeed(Authority, {
-      repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
-    } satisfies Authority.Shape),
+    Layer.succeed(Authority, authority),
     Layer.succeed(Restrictions, {
       account: (id) => succeed({ banned: bans.has(id) }),
       project: () => succeed({ restricted: false }),
@@ -89,7 +122,7 @@ const directClearances = Layer.succeed(AwardClearances, {
   }),
 } satisfies AwardClearances.Shape)
 
-function shellOf(cases: Cases.Shape) {
+function shellOf(cases: Cases.Shape, authority: Authority.Shape = deniedAuthority) {
   const viaFake: Fetcher = {
     fetch: (sent) => cases.fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]>,
   }
@@ -98,12 +131,16 @@ function shellOf(cases: Cases.Shape) {
     webCrypto,
     reportBucket(cases.world.reports),
     rolesFrom({ ADMIN_GITHUB_IDS: `${moderator},${secondModerator}`, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${secondModerator}` }),
-    portsOf(cases.bans),
+    portsOf(cases.bans, authority),
     receiptNotices,
     directClearances,
+    reportDepositSettings("off"),
   )
   const route = Layer.provide(privateRoute({ apiKey: surplusKey }), Layer.merge(outboundVia(viaFake), webCrypto))
-  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route), base)
+  const viaGitHub: Fetcher = { fetch: (sent) => Promise.resolve(cases.github.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
+  const github = Layer.provide(githubApp({ appId: cases.github.app.id, privateKey: Redacted.make(cases.github.app.privateKeyPem), authority: cases.github.authority }), Layer.merge(outboundVia(viaGitHub), webCrypto))
+  const execution: ExecutionContext = { waitUntil: (work) => { cases.pending.push(work) } }
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, github, outboundVia(viaGitHub), SubmissionFeeRatesLive, ProjectParticipationLive, Layer.succeed(Execution, { context: execution })), base)
 }
 
 effect function same(actual: unknown, expected: unknown) {
@@ -121,8 +158,9 @@ interface Outcome<A> {
 
 effect function outcome<A, E, R>(program: A!E!R) {
   return Effect.map(program, (value): Outcome<A> => ({ value })) catch effect (error) => {
-    if (error instanceof Refused) return { refused: [error.status, error.code, error.message] } satisfies Outcome<A>
-    throw error
+    if (!(error instanceof Refused)) throw error
+    const refused: Outcome<A> = { refused: [error.status, error.code, error.message] }
+    return refused
   }
 }
 
@@ -291,6 +329,156 @@ effect function appealScope(cases: Cases.Shape) {
   })
 }
 
+function proposalAbout(summary: string) {
+  return JSON.stringify({ summary, severity: "high", potentialLoss: "likely", duplicateCaseIds: [], rootCauseKey: "paused-queue-settlement", remediation: "Check the pause flag before settling a queued withdrawal." })
+}
+
+effect function createdAs(as: string, body: Readonly<Record<string, unknown>>) {
+  const answer = try outcome(created(actor(as), body))
+  return answer.refused?.slice(0, 2) ?? [answer.value?.status]
+}
+
+effect function advisoryBy(cases: Cases.Shape, author: string, summary: string) {
+  return try orDie(Effect.try(() => cases.github.world.addAdvisory("slop-test/intake", { author: loginOf(author), summary, description: `${summary}, described with enough detail to reproduce it safely.` }).ghsaId))
+}
+
+effect function casesOf(cases: Cases.Shape, reporterGithubId: string) {
+  return try promise(() => rows(cases.world, "SELECT id, submission_state, received_at_source FROM security_cases WHERE project_id=? AND reporter_github_id=? ORDER BY created_at", paid, reporterGithubId))
+}
+
+effect function settledWork(cases: Cases.Shape) {
+  try promise(() => Promise.allSettled(cases.pending.splice(0)))
+}
+
+effect function legacyReceipts(cases: Cases.Shape) {
+  const recordedAdvisory = try advisoryBy(cases, recordedReporter, "Withdrawal queue skips the pause flag")
+  keys += 1
+  const record = { mode: "record", projectId: paid, advisory: recordedAdvisory, idempotencyKey: `cases-record-key-${keys}`.padEnd(20, "0"), reporterGithubId: recordedReporter, reporterGithubLogin: loginOf(recordedReporter), receivedAt: new Date(Date.now() - 60_000).toISOString(), confirmation: true }
+  const notMaintainer = try createdAs(finance, record)
+  const unconfirmed = try createdAs(maintainer, { ...record, confirmation: false })
+  const own = try createdAs(maintainer, { ...record, reporterGithubId: maintainer, reporterGithubLogin: "maintainer" })
+  cases.fake.reply(draftAbout("skips the pause flag"), { text: proposalAbout("Queued withdrawals settle while the vault is paused.") })
+  const recorded = try createdAs(maintainer, record)
+  const replayed = try createdAs(maintainer, record)
+  try settledWork(cases)
+  const [recordedCase] = try casesOf(cases, recordedReporter)
+  const analysed = try act(maintainer, String(recordedCase?.id ?? ""), "analyze")
+  const recordedView = (try read(maintainer, String(recordedCase?.id ?? ""))).value?.case as { readonly analysis: { readonly summary: string | null; readonly sourceReportVersion: number | null } | null } | undefined
+
+  const imports = { mode: "import", projectId: paid }
+  try advisoryBy(cases, importedReporter, "Fee rounding lets small transfers skip the protocol fee")
+  try advisoryBy(cases, secondImported, "Permit signature replays on another chain")
+  const importRefused = try createdAs(finance, imports)
+  const imported = try createdAs(maintainer, imports)
+  const reimported = try createdAs(maintainer, imports)
+  try settledWork(cases)
+
+  const claimedAdvisory = try advisoryBy(cases, claimant, "Claim path pays out before marking the claim spent")
+  keys += 1
+  try createdAs(claimant, { mode: "claim", projectId: paid, advisory: claimedAdvisory, idempotencyKey: `cases-claim-key-${keys}`.padEnd(20, "0") })
+  keys += 1
+  try createdAs(mismatched, { mode: "claim", projectId: paid, advisory: "GHSA-2345-6789-cfgh", idempotencyKey: `cases-claim-key-${keys}`.padEnd(20, "0") })
+  const [claimedCase] = try casesOf(cases, claimant)
+  const [mismatchedCase] = try casesOf(cases, mismatched)
+  const claimedId = String(claimedCase?.id ?? "")
+  const mismatchedId = String(mismatchedCase?.id ?? "")
+  const offered = (try read(claimant, claimedId)).value?.case as { readonly allowedActions: ReadonlyArray<string> } | undefined
+  try orDie(Effect.try(() => cases.github.failNext(advisoryList, { status: 403, message: "Resource not accessible by integration" })))
+  const unreadable = try act(claimant, claimedId, "check-receipt")
+  const afterUnreadable = try casesOf(cases, claimant)
+  const byReporter = try act(claimant, claimedId, "check-receipt")
+  const byMaintainer = try act(maintainer, mismatchedId, "check-receipt")
+  try settledWork(cases)
+  const settled = [...try casesOf(cases, claimant), ...try casesOf(cases, mismatched)]
+  const importedCases = [...try casesOf(cases, importedReporter), ...try casesOf(cases, secondImported)]
+
+  try same({
+    record: [notMaintainer, unconfirmed, own, recorded, replayed],
+    recordedCase: [recordedCase?.submission_state, recordedCase?.received_at_source ?? null],
+    recordedAnalysis: [analysed.refused, recordedView?.analysis?.summary, recordedView?.analysis?.sourceReportVersion],
+    imports: [importRefused, imported, reimported],
+    importedCases: importedCases.map((found) => [found.submission_state, found.received_at_source]),
+    offered: offered?.allowedActions.includes("check-receipt"),
+    unreadable: [unreadable.refused?.slice(0, 2), afterUnreadable.map((found) => found.submission_state)],
+    checked: [byReporter.refused, byMaintainer.refused],
+    settled: settled.map((found) => [found.submission_state, found.received_at_source]),
+  }, {
+    record: [[403, "forbidden"], [400, "confirmation_required"], [403, "conflicted"], [201], [200]],
+    recordedCase: ["verified", null],
+    recordedAnalysis: [undefined, "Queued withdrawals settle while the vault is paused.", 1],
+    imports: [[403, "forbidden"], [200], [200]],
+    importedCases: [["verified", "github-verified"], ["verified", "github-verified"]],
+    offered: true,
+    unreadable: [[503, "receipt_check_unavailable"], ["claimed"]],
+    checked: [undefined, undefined],
+    settled: [["verified", "github-verified"], ["link-rejected", null]],
+  })
+}
+
+type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+interface AuthorityReads {
+  readonly repositories: string[]
+  inFlight: number
+  peak: number
+}
+
+function slowAuthority(reads: AuthorityReads): Authority.Shape {
+  return {
+    repository: (read) => effect {
+      reads.repositories.push(read.repositoryId)
+      reads.inFlight += 1
+      reads.peak = Math.max(reads.peak, reads.inFlight)
+      try Effect.sleep(Duration.millis(50))
+      reads.inFlight -= 1
+      return { ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }
+    },
+  }
+}
+
+async function listedBy(cases: Cases.Shape, handler: WebHandler, path: string, as: string) {
+  keys += 1
+  const token = `c${as.padStart(20, "0")}${String(keys).padStart(8, "0")}${"x".repeat(35)}`
+  await cases.world.db.batch([
+    cases.world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${as}`, as, loginOf(as), new Date().toISOString()),
+    cases.world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${as}`, new Date(Date.now() + 3_600_000).toISOString()),
+  ])
+  const response = await handler(new WorkerRequest(`${origin}${path}`, { method: "GET", headers: { cookie: `__Host-slop_points=${token}`, "x-slop-expected-github-id": as } }) as unknown as globalThis.Request, Context.make(Execution, { context: { waitUntil: (work) => { cases.pending.push(work) } } }))
+  return response.status
+}
+
+effect function listedAtOnce(cases: Cases.Shape) {
+  const { world } = cases
+  const own = try submit(world, reporter, paid, "Withdrawal queue skips the pause check")
+  const at = new Date(Date.now() - 86_400_000).toISOString()
+  const [ownRow] = try promise(() => rows(world, "SELECT * FROM security_cases WHERE id = ?", own))
+  const columns = Object.keys(ownRow ?? {})
+  for (const id of registered) {
+    const manifest = JSON.stringify({ id, status: "active", repositories: [{ id: `slop-test/${id}` }] })
+    try promise(() => world.db.batch([
+      world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,'Fixture',?)").bind(id, manifest, "c".repeat(64), at),
+      world.db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(id, manifest, "c".repeat(64), at, at),
+      world.db.prepare(`INSERT INTO security_cases(${columns.join(",")}) SELECT ${columns.map((column) => column === "id" ? "?1" : column === "project_id" ? "?2" : column).join(",")} FROM security_cases WHERE id = ?3`).bind(`sc_${id.replace("-", "_")}_fixture0001`, id, own),
+    ]))
+  }
+  const reads: AuthorityReads = { repositories: [], inFlight: 0, peak: 0 }
+  const routes = Layer.mergeAll(caseRoutes, submissionReadRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const services = Layer.provideMerge(Layer.mergeAll(CallerLive, intakeSettings({ mode: "on", automatic: true })), shellOf(cases, slowAuthority(reads)))
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, services), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  const handler = web.handler as WebHandler
+  const listing = (path: string) => effect {
+    reads.repositories.length = 0
+    reads.peak = 0
+    const status = try promise(() => listedBy(cases, handler, path, reporter))
+    const perProject = registered.map((id) => reads.repositories.filter((repository) => repository === `2${registered.indexOf(id)}01`).length)
+    return { status, eachRegisteredProjectOnce: perProject, allAtOnce: reads.peak === reads.repositories.length }
+  }
+  try same(
+    { cases: try listing("/api/v1/security-cases"), submissions: try listing("/api/v1/security-submissions") },
+    { cases: { status: 200, eachRegisteredProjectOnce: [1, 1, 1, 1], allAtOnce: true }, submissions: { status: 200, eachRegisteredProjectOnce: [1, 1, 1, 1], allAtOnce: true } },
+  )
+}
+
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Receipt-time terms stay frozen and an unpaid receipt creates no award (spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance")', () => effect {
     const cases = try Cases
@@ -319,4 +507,15 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       try appealScope(cases)
     }
   })
+  it.effect('A maintainer records or imports GitHub-first reports and a claimed link settles against GitHub (spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version")', () => effect {
+    const cases = try Cases
+    provide shellOf(cases) {
+      try legacyReceipts(cases)
+    }
+  })
+
+  it.effect('The case and report lists read every registered project\'s GitHub authority at once (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision")', () => scoped(effect {
+    const cases = try Cases
+    try listedAtOnce(cases)
+  }))
 })

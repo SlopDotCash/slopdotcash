@@ -1,0 +1,1 @@
+export const testPrompt = { system: "Review the one item you are shown.", policy: "Spam is unsolicited promotion.", item: "Buy cheap tokens now." }

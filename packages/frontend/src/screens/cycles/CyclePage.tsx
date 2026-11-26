@@ -1,4 +1,4 @@
-// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/views.md, "A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"
+// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/views.md, "A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
 import type { CycleIndex, CycleIndexEntry } from "@repo/settlement/client";
 import { parsePeriod, type Period } from "@repo/settlement/kernels/calendar";
 import { Alert, DataState, Disclosure, EmptyState, NotFound, PageHeader, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
@@ -7,6 +7,8 @@ import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import type { PageProps } from "../../app/pages.ts";
+import { formatDateTime } from "../../app/format.ts";
+import { NotFoundHead } from "../../app/notFoundHead.ts";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
 import { type ProjectCycleView, projectActivityCollected, projectCycleHasOpened, projectCycleView } from "../../projections/projectView.ts";
 import { cutsKey } from "../../reads/payments.vibe";
@@ -19,7 +21,7 @@ import { capOf } from "../projects/summary.ts";
 import { contributorReads, contributorRuntime, registryBoot } from "../points/reads.vibe";
 import type { ProjectTermsOf } from "../profiles/profile.ts";
 import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
-import { indexStale } from "./CycleArchivePage.tsx";
+import { indexStale, StaleSince } from "./CycleArchivePage.tsx";
 import { CycleAllocation } from "./CycleAllocation.tsx";
 import { amountPhases, CycleAmountHistory, usdcText } from "./CycleAmountHistory.tsx";
 import { contributorStateLabel, cycleLifecyclePresentation, percentText, pointsText } from "./labels.ts";
@@ -52,6 +54,14 @@ type Found = {
   sectionReads: ProjectSection;
   reads: ContributorSection;
 };
+
+function CycleUnavailable() {
+  return (
+    <NotFound title="Cycle unavailable">
+      <NotFoundHead />
+    </NotFound>
+  );
+}
 
 function Notice({ project, cycleId, status, onRetry, message }: { project: ShownProject; cycleId: string; status: ReadStatus; onRetry?: () => void; message?: string }) {
   return (
@@ -149,7 +159,7 @@ function CycleView({ found, record, view, index, snapshotAt, freshness }: { foun
   const nowMs = Date.now();
   const reviewEndsMs = record?.state === "review" && record.reviewEndsAt ? Date.parse(record.reviewEndsAt) : undefined;
   useBoundary(section, nextBoundary(nowMs, [reviewEndsMs, ownerCutoffMs(period), index ? staleFrom(index.generatedAt) : undefined, to ? Date.parse(to) - reminderLeadMs : undefined]));
-  if (!from || !to) return <NotFound title="Cycle unavailable" />;
+  if (!from || !to) return <CycleUnavailable />;
   const facts: CycleFacts = { record, view, period, capMinor: capOf(project, period), from, to, nowMs };
   const lifecycle = lifecycleOf(facts);
   const { stages, current } = stagesOf(facts);
@@ -160,18 +170,24 @@ function CycleView({ found, record, view, index, snapshotAt, freshness }: { foun
   const noFunding = record !== undefined && record.state !== "paid" && basis !== undefined && (basis.fundingState !== "committed" || basis.committedMinor === "0");
   return (
     <main className={pageClass}>
-      {record && index ? indexStale(index, nowMs) ? <p role="status">Cycles stale · {formatDate(index.generatedAt)}</p> : null : freshness}
-      <p>
-        <a href={projectHref} className={linkClass}>
-          {project.name}
-        </a>
-      </p>
+      {record && index ? indexStale(index, nowMs) ? <StaleSince generatedAt={index.generatedAt} /> : null : freshness}
       <section className="flex flex-col gap-4">
-        <PageHeader icon={<CalendarDays aria-hidden />} title={`${project.name} · ${formatMonth(cycleId)}`} />
-        <p className="text-muted-foreground">
-          {formatDate(from)}–{formatDate(to)}
-        </p>
-        <Status presentation={record ? cycleLifecyclePresentation(record, nowMs) : { tone: lifecycle === "live" ? "Notice" : "Caution", icon: "Clock", label: lifecycle.replaceAll("-", " ") }} />
+        <PageHeader
+          icon={<CalendarDays aria-hidden />}
+          title={`${project.name} · ${formatMonth(cycleId)}`}
+          eyebrow={
+            <a href={projectHref} className={linkClass}>
+              {project.name}
+            </a>
+          }
+          lead={
+            <>
+              {formatDate(from)}–{formatDate(to)}
+            </>
+          }
+        >
+          <Status className="mt-4 self-start" presentation={record ? cycleLifecyclePresentation(record, nowMs) : { tone: lifecycle === "live" ? "Notice" : "Caution", icon: "Clock", label: lifecycle.replaceAll("-", " ") }} />
+        </PageHeader>
         <div className="flex flex-col gap-1">
           <strong className="font-mono text-3xl tabular-nums">{top.amount}</strong>
           <span className="text-sm text-muted-foreground">{top.caption}</span>
@@ -240,7 +256,7 @@ function Live({ found, force, onRetry }: { found: Found; force: boolean; onRetry
   if (loaded.status !== "done") return <Notice project={project} cycleId={cycleId} status={workStatus(loaded)} onRetry={onRetry} />;
   const { work, index } = loaded.value;
   const status = workStatus(loaded);
-  const freshness = status === "Stale" ? <DataState status="Stale" onRetry={onRetry} /> : null;
+  const freshness = status === "Stale" ? <StaleSince generatedAt={work.board.snapshot.generatedAt} shown={formatDateTime(work.board.snapshot.generatedAt)} onRetry={onRetry} /> : null;
   const record = index.cycles.find((cycle) => cycle.projectId === project.id && cycle.cycleId === cycleId);
   if (record) return <CycleView found={found} record={record} view={undefined} index={index} snapshotAt={work.board.snapshot.generatedAt} freshness={freshness} />;
   const live = liveView(work, found, cycleId);
@@ -249,6 +265,7 @@ function Live({ found, force, onRetry }: { found: Found; force: boolean; onRetry
     const listed = findProject(boot, project.id) !== undefined;
     return (
       <NotFound title={`No ${formatMonth(cycleId)} cycle record`}>
+        <NotFoundHead />
         <p>
           {live.collected ? "" : "Not collected yet · "}
           <a href={listed ? `/projects/${project.slug}` : `/cycles?project=${encodeURIComponent(project.id)}`} className={linkClass}>
@@ -280,7 +297,7 @@ export function CyclePage(props: CyclePageProps) {
   const sectionReads = useOnce(section, "reads", () => projectReads());
   const reads = useOnce(contributorRuntime(runtime), "reads", () => contributorReads());
   const period = monthPattern.test(route.cycleId) ? parsePeriod(route.cycleId) : undefined;
-  if (period === undefined) return <NotFound title="Cycle unavailable" />;
+  if (period === undefined) return <CycleUnavailable />;
   if (registry.status === "running" || sectionReads.status === "running" || reads.status === "running") {
     return (
       <main className={pageClass}>

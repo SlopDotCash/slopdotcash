@@ -1,0 +1,92 @@
+import { assert, layer } from "@effect/vitest"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { Authority, type Permission, type ProjectView, Registry } from "@repo/ports/backend"
+import { type OwnerReleaseRequest, type RegisteredSolanaDeployment, refuseUnsupportedNetwork } from "../src/reserveRelease/release.vibe"
+import { type ReleaseScope, release, releaseKey } from "../src/reserveRelease/store.vibe"
+
+const steward = "77"
+const stranger = "78"
+const projectId = "solana-release"
+const manifestSha256 = "a".repeat(64)
+const vault = "Gq2rk4nHSZZFpw9Lx4H9rwzEwLmFJYQAQHX4Lr4n9rCX"
+const programId = "BPFLoaderUpgradeab1e11111111111111111111111"
+const repository = { id: "601", nodeId: "R_601", fullName: "owner/solana-release", integrationBranch: "main", aliases: [] }
+const view: ProjectView = { projectId, revision: 3, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [repository], closureConsent: false }
+
+const deployment: RegisteredSolanaDeployment = {
+  projectId, scope: "ordinary", network: "solana-mainnet", vault, asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", owner: "SysvarRent111111111111111111111111111111111",
+  identityAuthority: programId, feeRecipient: programId, deploymentTransaction: "1".repeat(88), sourceCommit: "0".repeat(40), codeSha256: "b".repeat(64), bindingDelaySeconds: "0",
+  family: "solana", chain: "solana", genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", programId, upgradeAuthority: null, projectPda: "SysvarRent111111111111111111111111111111111",
+  networkDomain: "d".repeat(64), rotationAuthority: programId, rotationDelaySeconds: "0", revision: 3,
+}
+
+const request: OwnerReleaseRequest = { projectId, period: "2026-11", network: "solana-mainnet", manifestSha256 }
+const scope: ReleaseScope = { network: "solana-mainnet", vault, period: "2026-11" }
+
+const organisation = "900"
+const organisationProjectId = "solana-organisation-release"
+const organisationVault = "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7D4xWLs4gDB4T"
+const organisationView: ProjectView = { ...view, projectId: organisationProjectId, stewardGithubId: organisation, stewardAccount: "OrganizationSteward", repositories: [{ ...repository, id: "602", nodeId: "R_602", fullName: "organisation/solana-release" }] }
+const organisationDeployment: RegisteredSolanaDeployment = { ...deployment, projectId: organisationProjectId, vault: organisationVault }
+const organisationRequest: OwnerReleaseRequest = { ...request, projectId: organisationProjectId }
+const organisationScope: ReleaseScope = { ...scope, vault: organisationVault }
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (id) => effect { return id === projectId ? view : id === organisationProjectId ? organisationView : undefined },
+    byRepository: () => effect { return undefined },
+    byPath: () => effect { return undefined },
+    active: () => effect { return [view, organisationView] },
+    pausedProjects: () => effect { return [] },
+    fence: () => Effect.die(new Error("the network refusal reads no fence")),
+    appendVaultRegistration: () => Effect.die(new Error("the network refusal registers no vault")),
+  }),
+  Layer.succeed(Authority, {
+    repository: (read) => effect {
+      const permission: Permission = read.actorGithubId === steward && read.repositoryId === repository.id ? "PermissionVerified" : "PermissionDenied"
+      return { ...read, permission, installation: "Installed" as const }
+    },
+  }),
+)
+
+layer(Layer.mergeAll(ports, KeyValueStore.layerMemory))((it) => {
+  it.effect('A Solana release is refused by name after the owner check, and an outsider writes nothing (spec/settlement/reserveRelease.md, "Only an EVM vault\'s release reaches service approval")', () => effect {
+    const outsider = try refuseUnsupportedNetwork(request, deployment, { githubId: stranger }).pipe(Effect.flip)
+    const untouched = try release(scope)
+    const owner = try refuseUnsupportedNetwork(request, deployment, { githubId: steward }).pipe(Effect.flip)
+    const refused = try release(scope)
+    const again = try refuseUnsupportedNetwork(request, deployment, { githubId: steward }).pipe(Effect.flip)
+    const kept = try release(scope)
+    const admin = try refuseUnsupportedNetwork(organisationRequest, organisationDeployment, { githubId: stranger }).pipe(Effect.flip)
+    const organisationRefused = try release(organisationScope)
+    try Effect.try(() => assert.deepStrictEqual({
+      outsider: [outsider._tag, outsider.message],
+      untouched: [untouched.phase, untouched.network, untouched.pinRevision, untouched.refusal],
+      owner: [owner._tag, owner.message],
+      refused: [refused.phase, refused.network, refused.pinRevision, refused.reviewedImplementation, refused.refusal],
+      again: again._tag,
+      kept: [kept.phase, kept.network, kept.pinRevision, kept.refusal],
+      admin: [admin._tag, admin.message],
+      organisationRefused: [organisationRefused.phase, organisationRefused.network, organisationRefused.pinRevision, organisationRefused.reviewedImplementation, organisationRefused.refusal],
+    }, {
+      outsider: ["ReleaseRefused", "Only the current project steward can manage this project's awards."],
+      untouched: ["Absent", "Unpinned", 0, "NoRefusal"],
+      owner: ["ReleaseRefused", "Monthly reserve release is not available on this network"],
+      refused: ["Absent", "Solana", 3, programId, "NetworkUnsupported"],
+      again: "ReleaseRefused",
+      kept: ["Absent", "Solana", 3, "NetworkUnsupported"],
+      admin: ["ReleaseRefused", "Monthly reserve release is not available on this network"],
+      organisationRefused: ["Absent", "Solana", 3, programId, "NetworkUnsupported"],
+    }))
+  })
+
+  it.effect('A release key keeps a Solana vault exactly and lowers an EVM vault (spec/settlement/reserveRelease.md, "A reserve retains the admitted root and complete allocation")', () => effect {
+    try Effect.try(() => assert.deepStrictEqual([
+      releaseKey(scope),
+      releaseKey({ network: "base-mainnet", vault: "0xAbCdEf0000000000000000000000000000000001", period: "2026-11" }),
+    ], [
+      `monthly-release-state:solana-mainnet:${vault}:2026-11`,
+      "monthly-release-state:base-mainnet:0xabcdef0000000000000000000000000000000001:2026-11",
+    ]))
+  })
+})

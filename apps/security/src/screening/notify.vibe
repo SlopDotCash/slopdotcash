@@ -1,4 +1,4 @@
-// spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+// spec/security/reportNotices.md, "Routing saves one private case notice per eligible technical recipient"; spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
 import { rows, sql } from "@repo/platform/d1"
 import { Authority, Registry } from "@repo/ports/backend"
 import { Rejected, qualified } from "../../gen/security__screening.effect.vibe"
@@ -44,7 +44,7 @@ export effect function routingContext(read: { readonly caseId: string; readonly 
 
 export effect function routeQualified(submissionId: string, projectId: string, actorGithubId?: string) {
   const current = try screeningAt(submissionId)
-  if (!qualified(current.screening) || current.screening.routed) return current.screening
+  if (!qualified(current.screening) || current.screening.routed || current.screening.depositHeld) return current.screening
   const context = try routingContext({ caseId: current.row.case_id, projectId, reporterGithubId: current.reporterGithubId, actorGithubId })
   return routed(submissionId, current.screening.revision, context) catch effect (error) => {
     if (error instanceof Rejected) return error.state

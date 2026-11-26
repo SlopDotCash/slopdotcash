@@ -1,5 +1,5 @@
 // spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/frontend/views.md, "Model outcome statistics aggregate self-reported identities against accepted outcomes and never change a score"
-import { DataState, Disclosure, ExternalLink, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
+import { DataState, Disclosure, ExternalLink, Metric, MetricGrid, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
 import { SOURCE_REPOSITORY } from "../../platform/site.ts";
 import type { Shown } from "../home/listing.ts";
 
@@ -46,18 +46,7 @@ function percent(part: number, whole: number): string {
 
 /** @throws {never} */
 function massNote(excluded: number): string {
-  if (excluded === 0) return "";
-  if (excluded === 1) return ", one mass pull-request account excluded";
-  return `, ${excluded === 2 ? "two" : count.format(excluded)} mass pull-request accounts excluded`;
-}
-
-function Figure({ value, children }: { value: string; children: string }) {
-  return (
-    <p className="flex flex-col gap-1">
-      <strong className="font-mono text-3xl font-semibold tabular-nums text-foreground">{value}</strong>
-      <span className="text-sm text-muted-foreground">{children}</span>
-    </p>
-  );
+  return excluded === 0 ? "" : ` · ${count.format(excluded)} mass ${excluded === 1 ? "account" : "accounts"} excluded`;
 }
 
 export type WhoBuildsProps = {
@@ -77,22 +66,22 @@ export function WhoBuilds({ snapshot, live, branch }: WhoBuildsProps) {
   return (
     <section aria-labelledby="who-builds-heading" className="flex flex-col gap-6">
       <h2 id="who-builds-heading" className="text-xl font-semibold text-foreground">
-        Who builds on Slop.
+        Who builds on Slop
       </h2>
       <p className="text-muted-foreground">
-        What the {count.format(all.size)} contributors on the leaderboard as of {whoBuildsDateLabel(snapshot.generatedAt)} did elsewhere on GitHub in 2026.
+        {count.format(all.size)} contributors · {whoBuildsDateLabel(snapshot.generatedAt)}
       </p>
       <DataState status={live.status} onRetry={live.onRetry} skeleton={[]} />
-      <div className="grid gap-6 sm:grid-cols-2">
-        <Figure value={percent(all.aiPrimary, all.classifiable)}>{`build AI agents or LLM tooling as their primary focus (${count.format(all.aiPrimary)} of the ${count.format(all.classifiable)} with classifiable public work)`}</Figure>
-        <Figure value={percent(all.aiExternalPr, all.size)}>{`merged into an outside AI repository this year (${count.format(all.aiExternalPr)} of ${count.format(all.size)})`}</Figure>
-      </div>
+      <MetricGrid>
+        <Metric label="build AI tooling" value={percent(all.aiPrimary, all.classifiable)} detail={`${count.format(all.aiPrimary)} of ${count.format(all.classifiable)} classifiable`} />
+        <Metric label="merged into AI repos" value={percent(all.aiExternalPr, all.size)} detail={`${count.format(all.aiExternalPr)} of ${count.format(all.size)}`} />
+      </MetricGrid>
       <Disclosure summary="Research details">
         <div className="flex flex-col gap-6 pt-2">
-          <div className="grid gap-6 sm:grid-cols-2">
-            <Figure value={count.format(snapshot.externalPrsExMass)}>{`merged pull requests across ${count.format(snapshot.externalReposExMass)} outside repositories since 1 January 2026`}</Figure>
-            <Figure value={count.format(snapshot.aiRepoMedianStars)}>{`stars is the median outside AI repository they work in; ${percentOfRatio(snapshot.aiRepoShareUnder10)} have fewer than ten`}</Figure>
-          </div>
+          <MetricGrid>
+            <Metric label={`outside PRs · ${count.format(snapshot.externalReposExMass)} repos`} value={count.format(snapshot.externalPrsExMass)} detail={`since 1 Jan 2026${massNote(snapshot.massAccounts.length)}`} />
+            <Metric label="median AI repo" value={`${count.format(snapshot.aiRepoMedianStars)}★`} detail={`${percentOfRatio(snapshot.aiRepoShareUnder10)} under 10 stars`} />
+          </MetricGrid>
           <div className="grid gap-6 lg:grid-cols-2">
             <section aria-labelledby="who-builds-focus-heading" className="flex flex-col gap-3">
               <h3 id="who-builds-focus-heading" className="font-semibold text-foreground">
@@ -125,7 +114,7 @@ export function WhoBuilds({ snapshot, live, branch }: WhoBuildsProps) {
             </section>
             <section aria-labelledby="who-builds-known-heading" className="flex flex-col gap-3">
               <h3 id="who-builds-known-heading" className="font-semibold text-foreground">
-                Well-known repositories they merged into this year
+                Notable repos
               </h3>
               <Table label="Well-known repositories outside Slop">
                 <TableHeader>
@@ -152,21 +141,24 @@ export function WhoBuilds({ snapshot, live, branch }: WhoBuildsProps) {
             </section>
           </div>
           {footprint && footprint.scoredEvents > 0 ? (
-            <p>
-              Inside Slop, live: {count.format(footprint.contributors)} contributors scored in the last {footprint.windowDays} days, and {percent(footprint.mergedPullRequestsWithModel, footprint.mergedPullRequests)} of merged pull requests name the model that did
-              the work ({count.format(footprint.mergedPullRequestsWithModel)} of {count.format(footprint.mergedPullRequests)}).
-            </p>
+            <MetricGrid>
+              <Metric label={`active · ${footprint.windowDays}d`} value={count.format(footprint.contributors)} />
+              <Metric
+                label="PRs name model"
+                value={percent(footprint.mergedPullRequestsWithModel, footprint.mergedPullRequests)}
+                detail={`${count.format(footprint.mergedPullRequestsWithModel)} of ${count.format(footprint.mergedPullRequests)}`}
+              />
+            </MetricGrid>
           ) : null}
         </div>
       </Disclosure>
       <p className="text-sm text-muted-foreground">
-        Public GitHub data since 1 January 2026{massNote(snapshot.massAccounts.length)}.{" "}
         <ExternalLink className={link} href={pinned("snapshot.json")}>
-          Snapshot JSON, {snapshot.generatedAt}
+          Snapshot
         </ExternalLink>
         {" · "}
         <ExternalLink className={link} href={pinned("METHOD.md")}>
-          Method and caveats
+          Method
         </ExternalLink>
       </p>
     </section>

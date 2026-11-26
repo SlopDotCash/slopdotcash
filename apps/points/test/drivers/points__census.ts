@@ -1,3 +1,4 @@
+// spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"
 import { Effect } from "effect";
 import type { Driver, Options } from "../../gen/points__census.conformance.ts";
 import type { Machine } from "../../gen/points__census.effect.vibe";

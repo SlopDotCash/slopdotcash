@@ -1,5 +1,6 @@
-// spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
-import { type Quote, type RowState, canEvaluate, outcomeOf, remaining, spendable } from "../../gen/fees__conversion.effect.vibe"
+// spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"
+import { type Quote, type RowState, canEvaluate, holding, outcomeOf, remaining, spendable } from "../../gen/fees__conversion.effect.vibe"
+import { observeBalance } from "../receipts/discover.vibe"
 import { ConversionChain, type QuoteFound, type QuoteRead, quoteNumber, safeNumber, wideNumber } from "./chain.vibe"
 import { type Session, step } from "./session.vibe"
 
@@ -41,9 +42,10 @@ effect function factOf(token: number, address: string, amountIn: number, read: Q
 
 export effect function evaluateToken(session: Session, token: number, address: string, target: string) {
   const chain = try ConversionChain
+  try observeBalance(session, token, address)
   const available = spendable(session.state, token)
   if (available <= 0 || !canEvaluate(session.state, session.runId, probe(token, available), "Worker")) return undefined
-  const held = try chain.balance(address)
+  const held = holding(session.state, token).asset === "NativeAsset" ? try chain.balance(address) : wideNumber(available)
   let input = held < wideNumber(available) ? held : wideNumber(available)
   if (input <= 0n) return undefined
   const targetBalanceBefore = (try chain.balance(target)).toString()

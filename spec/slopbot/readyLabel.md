@@ -141,7 +141,10 @@ a running row is running, a row not completed or without a readable verdict
 is missing, a verdict with a finding is a finding, a verdict whose action
 was not the comment is missing, a verdict whose limitations are not an
 empty list is limited, and otherwise there is no finding. The order is:
-open, not a draft, the verdict, changed lines (additions plus deletions)
+open, not a draft, no unpaid submission fee ("its submission fee has not
+been paid": the live fee was asked and is not paid, `unpaidAsk` of the
+[submission fee gate](./submissionFeeGate.md); development `8008b4617`,
+#3058), the verdict, changed lines (additions plus deletions)
 within the line cap, changed files within the file cap, at most 300
 deleted lines, the whole file list read (at most four pages of 100) and as
 long as GitHub's count, no protected file, no change request by a writer,
@@ -159,10 +162,10 @@ type MergeState = MergeClean | MergeHasHooks | MergeUnknown | MergeUnstable | Me
   | MergeDirty | MergeDraft | MergeNotReported
 type ReadyReason = NotChecked | NotOpen | IsDraft | StillReviewing | NotReviewed | LimitedCoverage | HasFinding
   | OverLineCap | OverFileCap | LargeDeletion | FileListIncomplete | TouchesProtectedPath | WriterRequestedChanges
-  | TooFewApprovals | NotMergeable | CommentUnavailable | AllConditionsHold | LabelOff | HeadMoved
+  | TooFewApprovals | NotMergeable | CommentUnavailable | AllConditionsHold | LabelOff | HeadMoved | FeeUnpaid
 type ReadyFacts = { open: bool, draft: bool, mergeable: bool, mergeState: MergeState, verdict: ReviewVerdict,
   additions: int, deletions: int, changedFiles: int, filesRead: bool, files: List[ChangedFile], approvals: int,
-  changesRequested: bool }
+  changesRequested: bool, feeUnpaid: bool }
 type ReadyDecision = { ready: bool, pending: bool, reason: ReadyReason }
 pure val largeDeletionLines = 300
 pure val changedFilePageLimit = 4
@@ -181,6 +184,7 @@ pure def notReady(reason: ReadyReason, pending: bool): ReadyDecision = { ready: 
 pure def readyDecision(f: ReadyFacts, s: RLS::ReadyLabelConfig): ReadyDecision =
   if (not(f.open)) notReady(NotOpen, false)
   else if (f.draft) notReady(IsDraft, false)
+  else if (f.feeUnpaid) notReady(FeeUnpaid, false)
   else if (f.verdict == VerdictRunning) notReady(StillReviewing, true)
   else if (f.verdict == VerdictMissing) notReady(NotReviewed, false)
   else if (f.verdict == VerdictLimited) notReady(LimitedCoverage, false)
@@ -195,7 +199,8 @@ pure def readyDecision(f: ReadyFacts, s: RLS::ReadyLabelConfig): ReadyDecision =
   else if (not(f.mergeable and mergeableState(f.mergeState))) notReady(NotMergeable, mergePending(f.mergeState))
   else { ready: true, pending: false, reason: AllConditionsHold }
 pure def lawReadyNeedsEveryCondition(facts: ReadyFacts, settings: RLS::ReadyLabelConfig): bool =
-  readyDecision(facts, settings).ready implies (facts.open and not(facts.draft) and facts.verdict == VerdictNone
+  readyDecision(facts, settings).ready implies (facts.open and not(facts.draft) and not(facts.feeUnpaid)
+    and facts.verdict == VerdictNone
     and facts.additions + facts.deletions <= settings.maxChangedLines and facts.changedFiles <= settings.maxChangedFiles
     and facts.deletions <= largeDeletionLines and facts.filesRead and facts.files.length() == facts.changedFiles
     and not(protectedChange(facts.files)) and not(facts.changesRequested) and facts.approvals >= settings.approvals
@@ -207,14 +212,14 @@ pure def lawLimitationsMakeTheVerdictLimited(reviewRow: SlopbotReviewRow): bool 
     and reviewRow.commented and reviewRow.limitations > 0) implies verdictOf(reviewRow) == VerdictLimited
 pure val readyFacts: ReadyFacts = { open: true, draft: false, mergeable: true, mergeState: MergeClean,
   verdict: VerdictNone, additions: 10, deletions: 2, changedFiles: 1, filesRead: true, files: List(cleanFile),
-  approvals: 1, changesRequested: false }
+  approvals: 1, changesRequested: false, feeUnpaid: false }
 pure val enabledSettings: RLS::ReadyLabelConfig = { enabled: true, approvals: RLS::defaultApprovals,
   maxChangedLines: RLS::defaultMaxChangedLines, maxChangedFiles: RLS::defaultMaxChangedFiles, protectedPaths: List() }
 pure val factsValues = Set(readyFacts, { ...readyFacts, verdict: VerdictRunning },
   { ...readyFacts, mergeable: false, mergeState: MergeUnknown }, { ...readyFacts, mergeState: MergeDirty },
   { ...readyFacts, files: List({ ...cleanFile, defaultProtected: true }) }, { ...readyFacts, approvals: 0 },
   { ...readyFacts, additions: 399, deletions: 2 }, { ...readyFacts, changedFiles: 2 },
-  { ...readyFacts, changesRequested: true })
+  { ...readyFacts, changesRequested: true }, { ...readyFacts, feeUnpaid: true })
 pure val settingsValues = Set(enabledSettings, { ...enabledSettings, approvals: 2, maxChangedLines: 5000 })
 pure val reviewRowValues = Set({ found: true, running: false, completed: true, parsed: true, finding: false,
   commented: true, limitationsListed: true, limitations: 0 },

@@ -1,22 +1,31 @@
-// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
 import { isoAt } from "@repo/platform/clock"
-import { ConstraintViolation, first, rows, sql } from "@repo/platform/d1"
+import { randomId, randomToken, utf8 } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
 import { type Actor, Caller, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
 import { Authority, Registry, Restrictions } from "@repo/ports/backend"
-import type { AdvisoryRead, Copy, Listing, Request, SendClaim, SendGate } from "../../gen/security__forwarding.ts"
-import { canClaimSend, canReadReceipt, canReconcile, readReceipt, withReadiness } from "../../gen/security__forwarding.effect.vibe"
+import { Notices } from "@repo/ports/operations"
+import { Rejected as CaseRejected, apply as applyCase, githubReceiptService, initial as noCase } from "../../gen/security__cases.effect.vibe"
+import type { AdvisoryRead, Copy, DirectCheck, DirectRequest, Listing, Request, SendClaim, SendGate } from "../../gen/security__forwarding.ts"
+import { canClaimSend, canReadReceipt, canReconcile, directReceiptCheck, readReceipt, withReadiness } from "../../gen/security__forwarding.effect.vibe"
 import { qualified } from "../../gen/security__screening.effect.vibe"
 import { jsonDocument } from "../admission/binding.ts"
-import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding } from "../client/forwarding.vibe"
-import { getSecuritySubmissionsAuthorizeCallback as callbackRows, postSecuritySubmissionsByIdAuthorize as authorizeRows, postSecuritySubmissionsByIdReconcile as reconcileRows, postSecuritySubmissionsByIdSend as sendRows } from "../client/refusals.vibe"
-import { type ReportingCache, reportingCache } from "../intake/availability.vibe"
+import { scheduleReceiptAnalysis } from "../assessment/routes.vibe"
+import { caseNotices } from "../cases/store.vibe"
+import { depositAsk } from "../deposit/ask.vibe"
+import { depositHeld } from "../deposit/held.vibe"
+import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding, verifyForwarding } from "../client/forwarding.vibe"
+import { getSecuritySubmissionsAuthorizeCallback as callbackRows, postSecuritySubmissions as createRows, postSecuritySubmissionsByIdAuthorize as authorizeRows, postSecuritySubmissionsByIdReconcile as reconcileRows, postSecuritySubmissionsByIdSend as sendRows, postSecuritySubmissionsByIdVerify as verifyRows } from "../client/refusals.vibe"
+import { type ReportingCache, projectId as projectPattern, reportingCache } from "../intake/availability.vibe"
 import { parseReport } from "../intake/report.vibe"
-import { type StoredIntake, type SubmissionRow, decorated, reportVersions, screeningOf, storedIntake, submission } from "../intake/rows.vibe"
+import { type StoredIntake, type SubmissionRow, decorated, reportVersions, screeningOf, storedIntake, submission, submissionByKey } from "../intake/rows.vibe"
 import { githubNumber, reportBytes } from "../privacy/reads.vibe"
-import { ReportingPrograms } from "../receipt/program.vibe"
-import { type AdvisoryFacts, type FailureCode, type MarkerListing, type PostOutcome, createReport, findByMarker, getAdvisory, ghsaRank, markerLine, sameRepository } from "./advisories.vibe"
+import { ReportingPrograms, termsAtReceipt } from "../receipt/program.vibe"
+import { caseEvent, caseInsert } from "../receipt/statements.vibe"
+import { analyzerId, noAnalysis } from "./analysis.vibe"
+import { type AdvisoryFacts, type FailureCode, type MarkerListing, type PostOutcome, createReport, findByMarker, getAdvisory, ghsaPattern, ghsaRank, installed, markerLine, sameRepository } from "./advisories.vibe"
 import { IntakeApp, type IntakeAppConfig, type ReporterGrant, beginAuthorization, clearGrantCookie, completeAuthorization, readGrant } from "./grant.vibe"
-import { type Loaded, type Shell, type Volatile, claimed, copyOf, forwarded, linkedTransition, loaded, noVolatile, phaseOf, reloaded, settled, stepped, written } from "./store.vibe"
+import { type Loaded, type Shell, type Volatile, claimed, copyOf, failedTransition, forwarded, linkedTransition, loaded, noVolatile, phaseOf, reloaded, settled, stayTransition, stepped, transitionStatements, written } from "./store.vibe"
 
 interface Row {
   readonly status: number
@@ -37,9 +46,14 @@ interface Current {
 
 schema Candidate { github_id: string }
 schema Found { id: string }
+schema DuplicateDetail { detail: string | null }
+schema Blocker { state: string }
 
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
 const submissionId = /^ss_[A-Za-z0-9_-]{8,72}$/u
+const idempotencyPattern = /^[A-Za-z0-9_-]{16,80}$/u
+const unread: Copy = { ghsa: 0, repository: 0, author: 0, marker: 0, createdAtMs: 0, digest: "" }
+const directFailures: Readonly<Record<Exclude<DirectCheck, "DirectReceipt" | "DirectInconclusive">, FailureCode>> = { DirectMissing: "not-found", DirectInvalid: "invalid", DirectWrongAuthor: "author-mismatch", DirectNotPrivate: "not-private-report" }
 const reconcileWindowMs = 10 * 60 * 1000
 const notFound = callbackRows.notFoundSubmissionNotFound
 const stale = sendRows.staleRevisionTheSubmissionChangedSince
@@ -228,7 +242,7 @@ function factsByRank(all: ReadonlyArray<AdvisoryFacts>, rank: number) {
 
 function shellFor(row: SubmissionRow, all: ReadonlyArray<AdvisoryFacts>, code: FailureCode = "invalid", retryAfterSeconds: number | null = null): Shell {
   return {
-    factsOf: (copy) => factsByRank(all, copy.ghsa) ?? { ghsa: "", repository: row.repository, authorId: null, privateReport: false, state: "unknown", createdAt: "", markerFound: false, evidenceDigest: "" },
+    factsOf: (copy) => factsByRank(all, copy.ghsa) ?? { ghsa: "", repository: row.repository, authorId: null, privateReport: false, state: "unknown", createdAt: "", markerFound: false, evidenceDigest: "", analysis: noAnalysis },
     code,
     retryAfterSeconds,
     actorGithubId: row.reporter_github_id,
@@ -307,6 +321,7 @@ effect function sendSubmission(actor: Actor, id: string) {
   if (failureClosed(forwarding, row)) throw refused(sendRows.submissionClosedThisSubmissionCannotBe)
   const stored = try storedIntake(row.id)
   if (stored === undefined || forwarding === undefined) throw refused(sendRows.screeningRequiredThisDraftNeedsMore)
+  if (try depositHeld(stored.case_id)) throw refused(sendRows.depositRequired)
   const digests = (try reportVersions(row.id)).map((version) => version.content_sha256)
   const screening = screeningOf(stored, githubNumber(row.reporter_github_id), digests)
   if (!qualified(screening)) throw refused(sendRows.screeningRequired)
@@ -383,6 +398,7 @@ effect function authorizeSubmission(actor: Actor, id: string) {
   if (row.state === "receipt-verified" || row.state === "abandoned") throw refused(authorizeRows.submissionClosed)
   if (row.state !== "submitting" && row.state !== "uncertain" && row.state !== "submitted") {
     const stored = try storedIntake(row.id)
+    if (stored !== undefined && (try depositHeld(stored.case_id))) throw refused(authorizeRows.depositRequired)
     if (stored !== undefined && !qualified(screeningOf(stored, githubNumber(row.reporter_github_id), []))) throw refused(authorizeRows.screeningRequired)
   }
   const flow = try beginAuthorization(app, { submissionId: row.id, githubId: actor.githubId, githubLogin: actor.login })
@@ -410,9 +426,175 @@ effect function authorizationCallback() {
   })
 }
 
+effect function directAuthorized(app: IntakeAppConfig, actor: Actor, row: SubmissionRow, status: number, extra: Readonly<Record<string, unknown>>) {
+  const flow = try beginAuthorization(app, { submissionId: row.id, githubId: actor.githubId, githubLogin: actor.login })
+  if (flow === undefined) throw refused(createRows.unauthorized)
+  return try answer({ status, row, extra: { ...extra, authorizeUrl: flow.authorizeUrl } }, flow.cookie)
+}
+
+export effect function directCreated(actor: Actor, body: Readonly<Record<string, unknown>>) {
+  const { app } = try IntakeApp
+  if (app === undefined) throw refused(createRows.intakeUnavailableAutomaticPrivateIntakeIs)
+  if ((try (try Restrictions).account(actor.githubId)).banned) throw refused(createRows.participationBannedThisAccountCannotStart)
+  if (!exactKeys(body, ["projectId", "idempotencyKey", "origin"], ["advisory"])) throw refused(createRows.invalidRequestRequestBodyHasUnexpected)
+  const projectId = body.projectId
+  if (typeof projectId !== "string" || !projectPattern.test(projectId)) throw refused(createRows.invalidRequestInvalidProjectId)
+  const key = body.idempotencyKey
+  if (typeof key !== "string" || !idempotencyPattern.test(key)) throw refused(createRows.invalidRequestInvalidIdempotencyKey)
+  if (body.origin !== "direct") throw refused(createRows.invalidRequestInvalidOrigin)
+  const advisory = body.advisory
+  if (typeof advisory !== "string" || !ghsaPattern.test(advisory)) throw refused(createRows.invalidRequestInvalidAdvisory)
+  const ledger = try Ref.make(noVolatile)
+  const prior = try submissionByKey(actor.githubId, key)
+  if (prior !== undefined) {
+    if (prior.project_id !== projectId || prior.origin !== "direct" || prior.advisory_ghsa !== advisory) throw refused(createRows.idempotencyConflict)
+    const { row } = try current(prior, ledger)
+    if (row.state === "receipt-verified" || row.state === "abandoned") throw refused(createRows.submissionClosed)
+    return try directAuthorized(app, actor, row, 200, { replayed: true })
+  }
+  const programs = try ReportingPrograms
+  const program = try programs.current(projectId)
+  const project = try (try Registry).project(projectId)
+  if (program === undefined || project === undefined || project.listingTier === "Retired") throw refused(createRows.projectNotFound)
+  if ((try installed(program.repository)) !== "yes") throw refused(createRows.intakeUnavailableAutomaticPrivateIntakeIs)
+  const blockers = try rows(Found, sql`SELECT id FROM security_submissions WHERE project_id = ${projectId} AND reporter_github_id = ${actor.githubId} AND state IN ('submitting', 'uncertain', 'submitted')`)
+  for (const blocker of blockers) {
+    const found = try submission(blocker.id)
+    if (found === undefined) continue
+    const moved = current(found, ledger) catch () => undefined
+    const settledRow = moved?.row ?? found
+    if (settledRow.state === "submitting" || settledRow.state === "uncertain" || settledRow.state === "submitted") throw refused(createRows.submissionInFlight)
+  }
+  const id = `ss_${(try randomId()).replaceAll("-", "")}`
+  const marker = try randomToken(16)
+  const at = try isoAt(try Clock.currentTimeMillis)
+  const unbanned = try programs.unbanned(actor.githubId)
+  const inserted = (try D1).batch([
+    sql`INSERT INTO security_submissions (id, project_id, repository, reporter_github_id, reporter_github_login, origin, idempotency_key, marker, state, attempt, attempt_started_at, advisory_ghsa, github_created_at, evidence_digest, failure_code, case_id, revision, created_at, updated_at)
+      SELECT ${id}, ${projectId}, ${program.repository}, ${actor.githubId}, ${actor.login}, 'direct', ${key}, ${marker}, 'draft', 0, NULL, ${advisory}, NULL, NULL, NULL, NULL, 1, ${at}, ${at} WHERE ${unbanned}`,
+    sql`INSERT INTO security_submission_events (submission_id, revision, kind, detail, actor_github_id, at) SELECT ${id}, 1, 'create', ${JSON.stringify({ origin: "direct", advisory })}, ${actor.githubId}, ${at} WHERE EXISTS (SELECT 1 FROM security_submissions WHERE id = ${id})`,
+  ]) catch effect (error) => {
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) throw refused(createRows.idempotencyConflict)
+    throw error
+  }
+  const row = inserted === undefined ? undefined : try submission(id)
+  if (row === undefined) {
+    if ((try (try Restrictions).account(actor.githubId)).banned) throw refused(createRows.participationBannedThisAccountCannotStart)
+    throw refused(createRows.submissionChanged)
+  }
+  return try directAuthorized(app, actor, row, 201, {})
+}
+
+effect function duplicatesListed(submissionId: string) {
+  const found = try first(DuplicateDetail, sql`SELECT detail FROM security_submission_events WHERE submission_id = ${submissionId} AND kind = 'duplicate-advisories' ORDER BY revision DESC LIMIT 1`)
+  const listed = found === undefined || found.detail === null ? undefined : jsonDocument(utf8(found.detail))
+  const ghsas = typeof listed === "object" && listed !== null && !Array.isArray(listed) ? (listed as Readonly<Record<string, unknown>>).ghsas : undefined
+  return Array.isArray(ghsas) ? ghsas.filter((ghsa): ghsa is string => typeof ghsa === "string") : []
+}
+
+effect function directCase(row: SubmissionRow, facts: AdvisoryFacts, nowMs: number) {
+  const program = try (try ReportingPrograms).current(row.project_id)
+  const receipt = try termsAtReceipt(row.project_id, facts.createdAt)
+  const reporter = { githubId: row.reporter_github_id, login: row.reporter_github_login }
+  const event = { type: "receive" as const, source: "GithubVerified" as const, terms: receipt.receiptTerms, history: "NewReceipt" as const, gross: receipt.receiptTerms.offeredGross, reportVersion: 1 }
+  const received = applyCase({ ...noCase, reporter: githubNumber(row.reporter_github_id) }, event, githubReceiptService) catch effect (error) => {
+    if (!(error instanceof CaseRejected)) throw error
+    return undefined
+  }
+  if (received === undefined) return failedTransition("invalid", "verify-failed", try isoAt(nowMs))
+  const at = try isoAt(nowMs)
+  const caseId = `sc_${(try randomId()).replaceAll("-", "")}`
+  const acknowledgeHours = program?.acknowledgeHours ?? 0
+  const guard = sql`(SELECT revision FROM security_submissions WHERE id = ${row.id}) = ${row.revision} AND (SELECT state FROM security_submissions WHERE id = ${row.id}) = ${row.state}`
+  const ask = try depositAsk({ caseId, projectId: row.project_id, reporterGithubId: row.reporter_github_id, at })
+  const duplicateAdvisories = try duplicatesListed(row.id)
+  const notices = try caseNotices({ caseId, revision: 1, kind: "submit-direct", idempotencyKey: `intake-${row.id}`, actorGithubId: row.reporter_github_id, reporterGithubId: row.reporter_github_id, detail: {}, program: ask.held ? undefined : program, relatedReview: false, at })
+  const receiptNotice = try (try Notices).statements({
+    notices: [{ eventKey: `security-receipt:${caseId}`, recipientGithubId: row.reporter_github_id, kind: "SecurityReportReceived", subject: caseId, actionPath: `/inbox?submission=${row.id}`, sourceAt: at }],
+    onlyIf: sql`EXISTS(SELECT 1 FROM security_cases WHERE id=${caseId} AND submission_state='verified' AND verified_at IS NOT NULL)`,
+  })
+  const transition = { state: "receipt-verified" as const, set: { case_id: caseId, advisory_ghsa: facts.ghsa, github_created_at: facts.createdAt, evidence_digest: facts.evidenceDigest }, kind: "receipt-verified", detail: { caseId, advisory: facts.ghsa }, actorGithubId: null, at }
+  const statements = [
+    caseInsert({ id: caseId, projectId: row.project_id, repository: row.repository, advisory: facts.ghsa, reporter, ownerGithubId: program?.approvers?.technical[0] ?? null, nextAction: "Triage new private report",
+      nextActionDueAt: acknowledgeHours > 0 ? try isoAt(nowMs + acknowledgeHours * 3600000) : null, at, guard,
+      verified: { receivedAt: facts.createdAt, verifiedBy: "github", policyRevision: receipt.policyRevision, terms: receipt.terms, award: received.award, source: "github-verified", receiptEvidenceDigest: facts.evidenceDigest } }),
+    caseEvent({ caseId, revision: 1, kind: "submit-direct", actorGithubId: row.reporter_github_id, role: "reporter", idempotencyKey: `intake-${row.id}`, reason: null, evidenceReference: null, at, guard: true,
+      detail: { submissionId: row.id, advisory: facts.ghsa, receivedAt: facts.createdAt, receivedAtSource: "github-verified", verifiedBy: "github", policyRevision: receipt.policyRevision,
+        autoAnalysis: { ...facts.analysis, analyzer: analyzerId }, ...duplicateAdvisories.length > 0 ? { duplicateAdvisories } : {} } }),
+    sql`INSERT INTO security_case_access_log (case_id, actor_github_id, actor_role, action, at) SELECT ${caseId}, ${row.reporter_github_id}, 'reporter', 'write', ${at} WHERE EXISTS (SELECT 1 FROM security_cases WHERE id = ${caseId})`,
+    ...ask.statements,
+    ...receiptNotice,
+    ...notices,
+    ...transitionStatements(row, transition),
+  ]
+  const results = (try D1).batch(statements) catch effect (error) => {
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined
+    throw error
+  }
+  if (results === undefined) return failedTransition("already-recorded", "verify-failed", at)
+  try scheduleReceiptAnalysis(caseId)
+  return undefined
+}
+
+effect function directVerified(app: IntakeAppConfig, row: SubmissionRow, grant: ReporterGrant) {
+  const ghsa = row.advisory_ghsa ?? ""
+  const fetched = try getAdvisory(app, grant, row.repository, ghsa, undefined)
+  const nowMs = try Clock.currentTimeMillis
+  const at = try isoAt(nowMs)
+  const program = (try ReportingPrograms).current(row.project_id) catch () => undefined
+  const facts = fetched.kind === "found" ? fetched.facts : undefined
+  const read: AdvisoryRead = {
+    status: fetched.kind === "found" ? "Found" : fetched.kind === "not-found" ? "NotFound" : "ReadError",
+    facts: facts === undefined ? unread : factsCopy(row, facts),
+    currentRepository: program !== undefined && sameRepository(program.repository, row.repository) ? 1 : 2,
+    checkedAtMs: nowMs,
+    currentContacts: false,
+    competingCase: false,
+    writeCommitted: false,
+    privateReport: facts?.privateReport ?? false,
+    githubState: githubStateOf(facts?.state ?? ""),
+  }
+  const direct: DirectRequest = { ghsa: ghsaRank(ghsa), repository: 1, reporter: 1 }
+  const check = directReceiptCheck(direct, read)
+  const stay = effect (kind: string) => {
+    try written(row, stayTransition(row, kind, null, at))
+    return { status: 202, row: (try submission(row.id)) ?? row } satisfies Outcome
+  }
+  if (check === "DirectInconclusive") return try stay("verify-inconclusive")
+  if (check !== "DirectReceipt") {
+    try written(row, failedTransition(directFailures[check], "verify-failed", at))
+    return { status: 200, row: (try submission(row.id)) ?? row } satisfies Outcome
+  }
+  if (facts === undefined || !(try contacts(row.project_id))) return try stay("contacts-unavailable")
+  const failure = try directCase(row, facts, nowMs)
+  if (failure !== undefined) {
+    try written(row, failure)
+    const failed = (try submission(row.id)) ?? row
+    if (failed.state === "receipt-verified" || (failed.state === "failed" && failed.failure_code === "invalid")) return { status: 200, row: failed } satisfies Outcome
+    if (failed.state === "failed" && failed.failure_code === "already-recorded") throw refused(verifyRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+    throw refused(verifyRows.staleRevisionTheSubmissionChangedSince)
+  }
+  const after = (try submission(row.id)) ?? row
+  if (after.state !== "receipt-verified") throw refused(verifyRows.staleRevisionTheSubmissionChangedSince)
+  return { status: 200, row: after } satisfies Outcome
+}
+
+effect function verifySubmission(actor: Actor, id: string) {
+  const app = try configured()
+  const ownedRow = try owned(actor, id)
+  const body = try requestObject(sendRows.invalidRequestRequestBodyMustBe, ["expectedRevision"], [], sendRows.invalidRequestRequestBodyHasUnexpected)
+  if ((try expectedRevision(body)) !== ownedRow.revision) throw refused(verifyRows.staleRevisionTheSubmissionChangedSince)
+  const ledger = try Ref.make(noVolatile)
+  const { row } = try current(ownedRow, ledger)
+  if (row.origin !== "direct" || row.state !== "draft") throw refused(verifyRows.actionNotAllowedThisSubmissionCannotBe)
+  const grant = try grantFor(app, row, Math.floor((try Clock.currentTimeMillis) / 1000))
+  return try answer(try directVerified(app, row, grant))
+}
+
 export const forwardingRoutes = Layer.mergeAll(
   handleRaw(authorizeForwarding, (input) => authorizeSubmission(input.actor, input.params.id ?? "")),
   handleRaw(forwardingCallback, () => authorizationCallback()),
   handleRaw(sendForwarding, (input) => sendSubmission(input.actor, input.params.id ?? "")),
   handleRaw(reconcileForwarding, (input) => reconcileSubmission(input.actor, input.params.id ?? "")),
+  handleRaw(verifyForwarding, (input) => verifySubmission(input.actor, input.params.id ?? "")),
 )

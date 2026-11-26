@@ -39,7 +39,7 @@ const declaredLength = /^[0-9]+$/u
 const unreachable = { status: 0, error: "network_error", message: "The network request failed. Try again.", fields: {} }
 
 export error BodyTooLarge { label: string; limitBytes: number }
-export error BodyUnreadable { label: string; reason: string }
+export error BodyUnreadable { label: string; reason: string; cause?: unknown }
 
 export effect function boundedBytes(response: HttpClientResponse.HttpClientResponse, limitBytes: number, label: string) {
   const declared = response.headers["content-length"]
@@ -47,7 +47,7 @@ export effect function boundedBytes(response: HttpClientResponse.HttpClientRespo
   if (declared !== undefined && Number(declared) > limitBytes) throw new BodyTooLarge({ label, limitBytes })
   const chunks: Uint8Array[] = []
   let size = 0
-  const body = Stream.mapError(response.stream, () => new BodyUnreadable({ label, reason: `${label} returned no readable body` }))
+  const body = Stream.mapError(response.stream, (cause) => new BodyUnreadable({ label, reason: `${label} returned no readable body`, cause }))
   for try (const chunk of body) {
     size += chunk.byteLength
     if (size > limitBytes) throw new BodyTooLarge({ label, limitBytes })

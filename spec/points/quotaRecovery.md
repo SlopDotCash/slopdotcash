@@ -107,8 +107,11 @@ pure def lawParallelResetUsesLatest(old: Refusal, seen: Refusal): bool =
 
 Use the read-only canonical transport. Every returned response retains its
 immutable attempt identity and body digest. A rate failure remains raw
-evidence, without becoming an indexed success. A complete successful reply
-or the recognized recoverable GraphQL statistics response may be indexed.
+evidence, without entering the request index. The index accepts a complete
+successful reply, the recognized recoverable GraphQL statistics response,
+or an exact REST 404 or 422 for the linked accepted Git object. The adapter
+recognizes that absence only for the request it made to verify that object.
+This preserves the original held disposition when replaying the census.
 Indexing verifies exact request identity and bytes. Retained reads do not
 spend the live budget or update the current GitHub quota from an old
 rate snapshot. Retry scope and the invocation-wide request and reported
@@ -155,8 +158,11 @@ pure def canObserve(r: Run, reply: Reply): bool = (r.phase == Collecting or r.ph
   and r.outstanding.includes(reply.attempt) and reply.digest > 0 and reply.cost >= 0
 pure def observe(r: Run, reply: Reply): Run =
   val refusal = quotaRefusal(reply.hint, r.now)
-  val save = refusal.kind == None and reply.hint.status >= 200 and reply.hint.status < 300
+  val success = reply.hint.status >= 200 and reply.hint.status < 300
     and (reply.acceptableSuccess or (reply.hint.graphql and reply.recoverableStatistics))
+  val acceptedObjectUnavailable = not(reply.hint.graphql) and Set(404, 422).contains(reply.hint.status)
+    and reply.acceptableSuccess
+  val save = refusal.kind == None and (success or acceptedObjectUnavailable)
   { ...r, phase: if (refusal.kind == None) r.phase else Draining,
     cost: r.cost + reply.cost, refusal: combineRefusal(r.refusal, refusal), retained: r.retained.append(reply),
     outstanding: r.outstanding.select(attempt => attempt != reply.attempt),
@@ -291,7 +297,9 @@ pure val replyValues = tuples(1.to(4), Set(1, 2)).map(t => {
   { attempt: attempt, digest: 2, cost: 2, acceptableSuccess: false, recoverableStatistics: false,
     hint: { ...noHint, status: 429, retryAt: 10000 } },
   { attempt: attempt, digest: 3, cost: 0, acceptableSuccess: false, recoverableStatistics: false,
-    hint: { ...noHint, status: 403, remainingZero: true } })
+    hint: { ...noHint, status: 403, remainingZero: true } },
+  { attempt: attempt, digest: 4, cost: 1, acceptableSuccess: true, recoverableStatistics: false,
+    hint: { ...noHint, status: 404 } })
 }).flatten()
 pure val timeValues = Set(4000, 12000, 16000, 75000, 175000, 181000)
 pure val outputValues = Set({ manifest: 1, receipt: 2, boundManifest: 1, scope: scopeSample, checkedExact: true, ownershipComplete: true, missingMonths: 0 })

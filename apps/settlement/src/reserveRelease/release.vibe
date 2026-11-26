@@ -1,14 +1,14 @@
-// spec/settlement/reserveRelease.md, "Only complete, untouched, finalized retained evidence admits an allocation"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
+// spec/settlement/reserveRelease.md, "Only complete, untouched, finalized retained evidence admits an allocation"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"
 import { type Address, type Hex, EvmRpc, recoverDigest } from "@repo/platform/chain/evm"
-import { Authority, type ProjectView, Registry } from "@repo/ports/backend"
+import { type ProjectView, Registry } from "@repo/ports/backend"
 import type { Amount } from "../../gen/settlement__money.ts"
-import { type Event, type RetainedAllocation, type ReserveRelease, canAdmitRetained, canChangeOwner, canCheck, canObserve, canPinImplementation, canQualifyUpgrade } from "../../gen/settlement__reserveRelease.effect.vibe"
+import { type DeploymentPin, type Event, type RetainedAllocation, type ReserveRelease, canAdmitRetained, canChangeOwner, canCheck, canObserve, canPinImplementation, canQualifyUpgrade, canRefuseNetwork } from "../../gen/settlement__reserveRelease.effect.vibe"
 import { type Bytes32, type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
 import { decodeMonthlyReserve, monthlyReleaseDigest, monthlyReserveCall, releaseMonthlyReserveCalldata } from "../chain/evm/monthlyRoot.ts"
 import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
 import { type Period, parsePeriod } from "../kernels/calendar.ts"
 import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
-import type { EvmDeployment } from "../vault/policy.vibe"
+import type { EvmDeployment, SolanaDeployment } from "../vault/policy.vibe"
 import { type Capture, type FinalizedMonth, type ReleaseRequest, type Retained, EvidenceUnreadable, captureOf, finalizedMonth, matchesMonth, retainedAllocation, retainedAllocations } from "./evidence.vibe"
 import { type ReleaseScope, attemptTransaction, planOf, recordAttempt, release, retainPlan, send } from "./store.vibe"
 
@@ -37,6 +37,8 @@ export interface ReleaseCheckRequest extends OwnerReleaseRequest {
 }
 
 export type RegisteredEvmDeployment = EvmDeployment & { readonly revision: number }
+
+export type RegisteredSolanaDeployment = SolanaDeployment & { readonly revision: number }
 
 export interface ReleaseOwner {
   readonly githubId: string
@@ -98,12 +100,7 @@ effect function unchangedProject(request: OwnerReleaseRequest) {
 
 effect function ownedProject(request: OwnerReleaseRequest, owner: ReleaseOwner) {
   const project = try unchangedProject(request)
-  if (project.stewardGithubId !== owner.githubId) throw refused("Only the current project steward can manage this project's awards.")
-  const repositoryId = project.repositories[0]?.id
-  if (repositoryId === undefined) throw refused("Current GitHub maintainer authority could not be verified.")
-  const read = try (try Authority).repository({ actorGithubId: owner.githubId, repositoryId })
-  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") throw refused("GitHub authority could not be checked. Retry.")
-  if (read.permission !== "PermissionVerified" || read.installation !== "Installed") throw refused("Current GitHub maintainer authority could not be verified.")
+  if (project.stewardAccount === "UserSteward" && project.stewardGithubId !== owner.githubId) throw refused("Only the current project steward can manage this project's awards.")
   return project
 }
 
@@ -144,7 +141,7 @@ function unencodable() {
   return refused("The release plan could not be encoded")
 }
 
-effect function admitted(scope: ReleaseScope, capture: Capture, observed: FinalizedMonth, pin: { readonly revision: number; readonly implementation: EvmAddress }, revision: number) {
+effect function admitted(scope: ReleaseScope, capture: Capture, observed: FinalizedMonth, pin: DeploymentPin, revision: number) {
   const height = Number(observed.height)
   let state = try release(scope)
   state = try step(scope, state, { type: "observe", height }, "attester", canObserve(state, height))
@@ -171,7 +168,8 @@ effect function pinned(deployment: RegisteredEvmDeployment, request: OwnerReleas
   const implementation = deployment.evmUpgrade === undefined ? undefined : evmAddress(deployment.evmUpgrade.vaultImplementation)
   if (vault === undefined || owner === undefined || implementation === undefined || deployment.network !== request.network || deployment.projectId !== request.projectId)
     throw refused("Monthly deployment unavailable")
-  return { vault, owner, pin: { revision: deployment.revision, implementation } }
+  const pin: DeploymentPin = { revision: deployment.revision, implementation, network: "Evm" }
+  return { vault, owner, pin }
 }
 
 effect function retainedFor(request: OwnerReleaseRequest, vault: EvmAddress) {
@@ -184,6 +182,19 @@ effect function simulated(deployment: RegisteredEvmDeployment, transaction: { re
   try verifyEvmDeployment(deployment, "latest")
   const answer = try (try EvmRpc).call({ from: transaction.from as Address, to: transaction.to as Address, data: transaction.data, block: "latest" })
   if (answer !== "0x") throw refused("Monthly release simulation returned unexpected data")
+}
+
+export effect function refuseUnsupportedNetwork(request: OwnerReleaseRequest, deployment: RegisteredSolanaDeployment, owner: ReleaseOwner) {
+  try periodOf(request.period)
+  if (deployment.network !== request.network || deployment.projectId !== request.projectId || deployment.vault === "" || deployment.programId === "")
+    throw refused("Monthly deployment unavailable")
+  try ownedProject(request, owner)
+  const scope: ReleaseScope = { network: request.network, vault: deployment.vault, period: request.period }
+  const pin: DeploymentPin = { revision: deployment.revision, implementation: deployment.programId, network: "Solana" }
+  let state = try release(scope)
+  state = try step(scope, state, { type: "pinImplementation", pin }, "attester", canPinImplementation(state, pin))
+  try step(scope, state, { type: "refuseNetwork" }, "attester", canRefuseNetwork(state, "attester"))
+  throw refused("Monthly reserve release is not available on this network")
 }
 
 export effect function prepareRelease(request: OwnerReleaseRequest, deployment: RegisteredEvmDeployment, owner: ReleaseOwner) {

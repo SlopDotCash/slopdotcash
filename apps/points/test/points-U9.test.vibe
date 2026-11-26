@@ -1,13 +1,20 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import type { ScoreEvent } from "../src/client/snapshot/schema.vibe"
-import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
-import { journalText } from "../src/kernels/records/canonical.ts"
+import { decodeSnapshot, validateSnapshot } from "../src/client/snapshot/validate.vibe"
+import { type Journal, type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
+import { instantOf } from "../src/kernels/records/instants.ts"
+import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
 import { type Repositories, finish, journalOf, openStore } from "../src/journal/ledger.vibe"
 import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
-import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
-import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
+import { applySnapshots, batchOwnedKeys, jointHoldReasons, octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
+import { planCorrections } from "../src/corrections/apply/apply.vibe"
+import { projectOfRegistry } from "../src/corrections/apply/derive.vibe"
+import { collectionOf, verifyCollection } from "../src/corrections/apply/manifest.vibe"
+import { periodOf } from "../gen/points__periods.ts"
+import { historyText, legacyHeldReview, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
+import { A, C, type Manifest, SOURCE, amounts, award as poolAward, competingContributor, correctedAt as octoberCorrectedAt, correctionRegistry, exactGroupedReplacement, groupedFaults, independentClaimUnit, laterAcceptedFollowup, laterAt, latest, legacyAfter, malformedFollowup, mergedDonorGroupedReplacement, multiOriginalFaults, multiOriginalPrUnit, nativeUnitFaults, octoberGroupedReplacement, octoberOriginalWithFollowup, octoberReplacement, overlappingIndependentClaim, scopedUnlinkedOriginal, totalOf, unauthenticatedFollowups, unpartitionedIndependentClaims, unrelatedAnchor } from "./support/u9/october.ts"
 
 const recordedAt = "2026-11-17T06:00:00.000Z"
 const holdReasons = [
@@ -21,6 +28,7 @@ const holdReasons = [
   "an unchanged debit request appends no revision for new reversal evidence",
   "the recorded history of this award is outside the journal model",
   "the journal refused",
+  ...Object.values(jointHoldReasons),
 ]
 
 const valueDecision = `value:${"b".repeat(64)}`
@@ -57,7 +65,314 @@ effect function retainedOmission(history: string, repositories: Repositories, re
   }
 }
 
+interface CorrectionRun {
+  readonly eligible?: boolean
+  readonly at?: string
+  readonly bans?: ReadonlyMap<string, string>
+}
+
+function messageOf(failure: unknown) {
+  return typeof failure === "object" && failure !== null && "message" in failure ? String((failure as { readonly message: unknown }).message) : String(failure)
+}
+
+effect function corrected(journal: Journal, input: Manifest, run: CorrectionRun = {}) {
+  const text = JSON.stringify(input)
+  const complete = input.candidates.filter((candidate) => candidate.proof.status === "complete").length
+  const receipt = JSON.stringify({
+    schemaVersion: "slop-implementation-correction-collection-v1",
+    manifestDigest: try sha256Hex(text),
+    through: input.generatedAt,
+    projects: ["asi"],
+    totalPositivePools: input.candidates.length,
+    completeProofs: complete,
+    heldProofs: input.candidates.length - complete,
+    ownershipComplete: true,
+    registryDigest: try sha256Hex(correctionRegistry),
+  })
+  const collection = try collectionOf(`${text}\n`, receipt)
+  const registryValue: unknown = try Effect.try(() => JSON.parse(correctionRegistry) as unknown)
+  try verifyCollection(collection, registryValue, true)
+  const periods = [...new Set(input.candidates.map((candidate) => periodOf(instantOf(candidate.occurredAt) ?? -1)))]
+  const phase = run.eligible === false ? "Frozen" as const : "Collecting" as const
+  return try planCorrections({
+    journal,
+    collection,
+    protection: periods.map((period) => ({ project: "asi", period, phase, obligationExists: false })),
+    bans: run.bans ?? new Map(),
+    recordedAt: run.at ?? octoberCorrectedAt,
+    mode: "apply",
+    reviewedDigest: collection.manifestDigest,
+    projectOf: projectOfRegistry([{ id: "asi", repositories: [{ id: "SlopDotCash/asi" }] }]),
+  })
+}
+
+effect function kept(journal: Journal, input: Manifest, run: CorrectionRun = {}) {
+  const planned = corrected(journal, input, run) catch (failure) => messageOf(failure)
+  return typeof planned === "string" ? planned : journalText(planned.journal) === journalText(journal)
+}
+
+effect function outcome(journal: Journal, input: Manifest) {
+  const planned = corrected(journal, input) catch (failure) => messageOf(failure)
+  return typeof planned === "string" ? (planned.startsWith("Implementation correction: ") ? "refused" : planned) : journalText(planned.journal) === journalText(journal) ? "unchanged" : planned.dispositions[0]?.status
+}
+
+effect function preserved(journal: Journal, input: Manifest, sourceId = SOURCE) {
+  const planned = try corrected(journal, input)
+  return {
+    journal: planned.journal,
+    summary: {
+      status: planned.dispositions[0]?.status,
+      amounts: amounts(planned.journal, sourceId),
+      total: totalOf(planned.journal) === totalOf(journal),
+      prefix: JSON.stringify(planned.journal.revisions.slice(0, journal.revisions.length)) === JSON.stringify(journal.revisions),
+      replay: try kept(planned.journal, input, { at: laterAt }),
+      ineligible: try kept(journal, input, { eligible: false }),
+    },
+  }
+}
+
 layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('October replacements apply through the correction plan exactly as development applies them: the sole original keeps the whole pool, follow-ups need authenticated ancestry, competing contributors hold, and grouped, merged-donor, later-follow-up, native and multi-original units preserve the recorded value, and an independent carrier claim keeps its changed-line credit beside the original parts (spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor")', () => effect {
+    const whole = { [A.id]: 30, [C.id]: 0 }
+    const settled = { status: "applied" as const, amounts: whole, total: true, prefix: true, replay: true, ineligible: true }
+
+    const sole = try Effect.try(() => octoberReplacement())
+    const soleResult = try preserved(sole.journal, sole.input)
+    const legacyReplay = try kept(soleResult.journal, (try Effect.try(() => legacyAfter(soleResult.journal))), { at: laterAt })
+    const banned = try kept(sole.journal, sole.input, { bans: new Map([[A.id, "2026-10-01T00:00:00.000Z"]]) })
+
+    const correct = try Effect.try(() => octoberReplacement(undefined, [poolAward(A, 30)]))
+    const recorded = try corrected(correct.journal, correct.input)
+    const marker = recorded.journal.revisions.at(-1)
+    const recordedOnce = {
+      amounts: amounts(recorded.journal),
+      delta: marker?.decision?.delta,
+      appended: recorded.journal.revisions.length - correct.journal.revisions.length,
+      replay: try kept(recorded.journal, correct.input, { at: laterAt }),
+    }
+
+    const followup = try Effect.try(() => octoberOriginalWithFollowup())
+    const followed = try corrected(followup.journal, followup.input)
+    const unauthenticated: unknown[] = []
+    for (const mutate of unauthenticatedFollowups) {
+      const sample = try Effect.try(() => octoberOriginalWithFollowup())
+      try Effect.try(() => mutate(sample))
+      const planned = try corrected(sample.journal, sample.input)
+      unauthenticated.push([planned.dispositions[0]?.status, journalText(planned.journal) === journalText(sample.journal)])
+    }
+    const malformed = try Effect.try(() => malformedFollowup())
+    const competing = try Effect.try(() => competingContributor())
+    const anchored = try Effect.try(() => unrelatedAnchor())
+    const september = try Effect.try(() => octoberReplacement("2026-09-23T00:00:00.000Z"))
+
+    const grouped = try Effect.try(() => octoberGroupedReplacement())
+    const exact = try Effect.try(() => exactGroupedReplacement())
+    const exactAmounts = amounts((try corrected(exact.journal, exact.input)).journal)
+    delete exact.next.parentShas
+    const groupedRefusals: unknown[] = []
+    for (const [fault, mutate] of groupedFaults) {
+      const sample = try Effect.try(() => octoberGroupedReplacement())
+      try Effect.try(() => mutate(sample))
+      groupedRefusals.push([fault, try outcome(sample.journal, sample.input)])
+    }
+
+    const donor = try Effect.try(() => mergedDonorGroupedReplacement())
+    const later = try Effect.try(() => laterAcceptedFollowup())
+    const laterResult = try preserved(later.journal, later.input, later.followup.sourceId)
+    const native = try Effect.try(() => scopedUnlinkedOriginal())
+    const nativeRefusals: unknown[] = []
+    for (const [fault, mutate] of nativeUnitFaults) {
+      const sample = try Effect.try(() => scopedUnlinkedOriginal())
+      try Effect.try(() => mutate(sample))
+      nativeRefusals.push([fault, try outcome(sample.journal, sample.input)])
+    }
+    const multi = try Effect.try(() => multiOriginalPrUnit())
+    const multiRefusals: unknown[] = []
+    for (const [fault, mutate] of multiOriginalFaults) {
+      const sample = try Effect.try(() => multiOriginalPrUnit())
+      try Effect.try(() => mutate(sample))
+      multiRefusals.push([fault, try outcome(sample.journal, sample.input)])
+    }
+    const independent = try Effect.try(() => independentClaimUnit())
+    const independentResult = try corrected(independent.journal, independent.input)
+    const independentSummary = { amounts: amounts(independentResult.journal), total: totalOf(independentResult.journal) === totalOf(independent.journal) }
+    try Effect.try(() => overlappingIndependentClaim(independent))
+    const unpartitioned = try Effect.try(() => unpartitionedIndependentClaims())
+
+    const actual = {
+      sole: soleResult.summary,
+      legacyReplay,
+      banned,
+      recordedOnce,
+      followed: { status: followed.dispositions[0]?.status, amounts: amounts(followed.journal), total: totalOf(followed.journal) === totalOf(followup.journal) },
+      unauthenticated,
+      malformed: try kept(malformed.journal, malformed.input),
+      competing: try kept(competing.journal, competing.input),
+      anchored: try kept(anchored.journal, anchored.input),
+      september: try kept(september.journal, september.input),
+      grouped: (try preserved(grouped.journal, grouped.input)).summary,
+      exact: { amounts: exactAmounts, unparented: try kept(exact.journal, exact.input) },
+      groupedRefusals,
+      donor: (try preserved(donor.journal, donor.input)).summary,
+      later: {
+        original: laterResult.summary.amounts[A.id],
+        total: laterResult.summary.total,
+        moved: [...latest(laterResult.journal).values()].every((row) => row.award.sourceId === later.followup.sourceId && row.award.occurredAt === later.followup.occurredAt),
+        replay: laterResult.summary.replay,
+      },
+      native: (try preserved(native.journal, native.input)).summary,
+      nativeRefusals,
+      multi: (try preserved(multi.journal, multi.input)).summary,
+      multiRefusals,
+      independent: { ...independentSummary, overlapping: try kept(independent.journal, independent.input) },
+      unpartitioned: try kept(unpartitioned.journal, unpartitioned.input),
+    }
+    try Effect.try(() => assert.deepStrictEqual(actual, {
+      sole: settled,
+      legacyReplay: true,
+      banned: true,
+      recordedOnce: { amounts: { [A.id]: 30 }, delta: 0, appended: 1, replay: true },
+      followed: { status: "applied", amounts: whole, total: true },
+      unauthenticated: unauthenticatedFollowups.map(() => ["held", true]),
+      malformed: "Implementation correction: invalid commit proof",
+      competing: true,
+      anchored: "Implementation correction: original-contributor proof does not bind verified accepted work",
+      september: "Implementation correction: original-contributor proof is invalid outside the October replacement rule",
+      grouped: settled,
+      exact: { amounts: whole, unparented: "Implementation correction: exact original-contributor proof does not bind the original head" },
+      groupedRefusals: groupedFaults.map(([fault]) => [fault, fault === "third-author" ? "unchanged" : "refused"]),
+      donor: settled,
+      later: { original: 30, total: true, moved: true, replay: true },
+      native: settled,
+      nativeRefusals: nativeUnitFaults.map(([fault]) => [fault, "refused"]),
+      multi: settled,
+      multiRefusals: multiOriginalFaults.map(([fault]) => [fault, "refused"]),
+      independent: { amounts: { [A.id]: 15, [C.id]: 15 }, total: true, overlapping: "Implementation correction: native subproofs do not partition the complete unit" },
+      unpartitioned: "Implementation correction: independent claims require a complete original partition",
+    }))
+  })
+
+  it.effect('A later joint assessment cannot re-award an October correction through a different completion PR (spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window")', () => effect {
+    const snapshot = try decodeSnapshot((try promise(() => snapshotFile())).value)
+    const sourceId = "PR_kwDOoriginal"
+    const completion = "PR_kwDOreplacement"
+    const repository = "elizaOS/eliza"
+    const original = { id: "U_kgDOoriginal", login: "original", kind: "User", avatarUrl: "", url: "https://github.com/original" }
+    const carrier = { id: "U_kgDOcarrier", login: "carrier", kind: "User", avatarUrl: "", url: "https://github.com/carrier" }
+    const occurredAt = "2026-10-30T00:00:00.000Z"
+    const correctedAt = "2026-11-01T00:00:00.000Z"
+    const originalKey = try pointKey({ projectId: "eliza", actorId: original.id, category: "merged-pull-request", sourceId })
+    const originalRow: RevisionBody = {
+      previous: null, recordedAt: correctedAt, sourceDigest: "a".repeat(64), sourceRule: "slop-score-v2",
+      award: { key: originalKey, actor: { id: original.id, login: original.login }, projectId: "eliza", category: "merged-pull-request", amount: 30, occurredAt, sourceId, sourceUrl: `https://github.com/${repository}/pull/1`, workUnitId: "wu_eliza_eliza_pr_1", provisional: true },
+      decision: { sourceId, effectiveAt: correctedAt, reason: octoberOriginalContributorDecision, delta: 30 },
+    }
+    const row = { id: try pointRevisionId(originalRow), ...originalRow }
+    const history = `${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: correctedAt, coverage: [], revisions: [row] })}\n`
+    const recordDigest = "b".repeat(64)
+    const overlapping = { recordDigest, workUnitId: `wu_${"c".repeat(64)}`, groupId: "e".repeat(64) }
+    const independent = { recordDigest, workUnitId: `wu_${"d".repeat(64)}`, groupId: "f".repeat(64) }
+    const ledger = [overlapping, independent].map(({ workUnitId }) => ({
+      id: `${completion}:joint:${workUnitId}:merged:${carrier.id}`,
+      actor: carrier, category: "merged-pull-request", points: 1, scoreThirds: 3, workUnitId,
+      scoreDecisionSourceId: `value:${recordDigest}`, scoreDecisionAt: correctedAt, occurredAt, repository,
+      source: { id: completion, kind: "pull-request", number: 2, title: "Reviewed completion", url: `https://github.com/${repository}/pull/2` },
+      reason: "Reviewed implementation",
+    }))
+    const coverage = [sourceId, completion].map((id, index) => ({ pullRequestId: id, pullRequestNumber: index + 1, repository, status: "assessed", recordDigest }))
+    const membership = [
+      { repository, pullRequestId: sourceId, units: [overlapping] },
+      { repository, pullRequestId: completion, units: [overlapping, independent] },
+    ]
+    const repositories = repositoriesOf(registry, {})
+    const disjoint = try openStore(history, null, [])
+    const legacy = try openStore(history, null, [])
+    const base = { ...snapshot, generatedAt: correctedAt, ledger, reviewExclusions: [], valueAssessmentCoverage: coverage }
+    const precise = { ...base, reviewedImplementationUnits: membership }
+    try applySnapshots(disjoint, repositories, [{ snapshot: precise, digest: "1".repeat(64) }], recordedAt)
+    try applySnapshots(legacy, repositories, [{ snapshot: base, digest: "2".repeat(64) }], recordedAt)
+    const allocations = (rows: typeof disjoint.revisions) => rows.map((revision) => [revision.award.sourceId, revision.award.workUnitId, revision.award.actor.login, revision.award.amount])
+    const protectedCredit = [sourceId, originalRow.award.workUnitId, original.login, 30]
+    try Effect.try(() => assert.deepStrictEqual({ precise: allocations(disjoint.revisions), legacy: allocations(legacy.revisions) }, {
+      precise: [protectedCredit, [completion, independent.workUnitId, carrier.login, 30]],
+      legacy: [protectedCredit],
+    }))
+    const prior = [...disjoint.revisions]
+    const relinked = { ...precise, reviewedImplementationUnits: [{ ...membership[0], units: [overlapping, independent] }, membership[1]] }
+    try applySnapshots(disjoint, repositories, [{ snapshot: relinked, digest: "3".repeat(64) }], recordedAt)
+    try Effect.try(() => assert.deepStrictEqual(disjoint.revisions, prior))
+
+    const fallback = {
+      ...base,
+      window: { ...base.window, from: "2026-10-15T00:00:00.000Z", to: correctedAt },
+      ledger: [{
+        id: `${sourceId}:merged:${carrier.id}`, actor: carrier, category: "merged-pull-request", points: 1,
+        occurredAt, repository,
+        source: { id: sourceId, kind: "pull-request", number: 1, title: "Previously accepted", url: originalRow.award.sourceUrl },
+        reason: "Legacy merge assessment",
+      }],
+      valueAssessmentCoverage: [{
+        pullRequestId: sourceId, pullRequestNumber: 1, repository, status: "legacy-policy", recordDigest: null,
+        implementationAllocation: { rule: "changed-lines-v1", totalScoreThirds: 3, weights: [{ actorNodeId: carrier.id, actorLogin: carrier.login, changedLines: "15" }] },
+      }],
+    }
+    effect function storeWithReason(reason: string) {
+      const body = { ...originalRow, decision: { sourceId, effectiveAt: correctedAt, reason, delta: 30 } }
+      const row = { id: try pointRevisionId(body), ...body }
+      const store = try openStore(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: correctedAt, coverage: [], revisions: [row] })}\n`, null, [])
+      return { row, store }
+    }
+    const { store: accepted, row: historicalRow } = try storeWithReason(verifiedHistoricalAllocationDecision)
+    const { store: ordinary } = try storeWithReason("Previously credited implementation")
+    try applySnapshots(accepted, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    try applySnapshots(ordinary, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    const current = [...ordinary.latest.values()].filter(({ award }) => award.amount > 0)
+    try Effect.try(() => assert.deepStrictEqual({
+      historical: accepted.revisions,
+      ordinary: current.map(({ award }) => [award.actor.login, award.amount]),
+    }, { historical: [historicalRow], ordinary: [[carrier.login, 30]] }))
+  })
+
+  it.effect('A legacy assessed review can retire while its implementation stays held (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews")', () => effect {
+    const fixture = try promise(() => legacyHeldReview())
+    const targets = fixture.before.repositories.map((repository) => ({
+      ...repository, nodeId: fixture.before.source.repositories.find((row) => row.id === repository.id)?.repositoryId ?? "",
+      aliases: repository.id === `${repository.owner}/${repository.name}` ? [] : [`${repository.owner}/${repository.name}`],
+    }))
+    const compatible = { registered: targets, targets, projects: targets.map((repository) => ({ id: repository.projectId, skillSourcePath: "SKILL.md" })) }
+    try validateSnapshot(fixture.before, compatible)
+    const held = try validateSnapshot(fixture.held, compatible)
+    const revoked = try validateSnapshot(fixture.revoked, compatible)
+    const forgedMerge = Effect.as(validateSnapshot({ ...fixture.before, valueAssessmentCoverage: held.valueAssessmentCoverage }, compatible), "") catch (error) => error.message
+    const forgedCoverage = Effect.as(validateSnapshot({
+      ...fixture.held,
+      valueAssessmentCoverage: held.valueAssessmentCoverage?.map((row) => row.reviewAssessmentDigest === undefined ? row : { ...row, status: "legacy-policy" }),
+    }, compatible), "") catch (error) => error.message
+    const unboundReview = (decision: string, status: "incomplete" | "human-ratified") => ({
+      ...fixture.held,
+      ledger: held.ledger.map((event) => event.category !== "substantive-review" ? event : { ...event, scoreDecisionSourceId: decision }),
+      valueAssessmentCoverage: held.valueAssessmentCoverage?.map((row) => row.reviewAssessmentDigest === undefined ? row : {
+        pullRequestId: row.pullRequestId, pullRequestNumber: row.pullRequestNumber, repository: row.repository, recordDigest: null, status,
+      }),
+    })
+    const forgedMissingDigest = Effect.as(validateSnapshot(unboundReview("value:undefined", "incomplete"), compatible), "") catch (error) => error.message
+    const forgedNullDigest = Effect.as(validateSnapshot(unboundReview("value:null", "human-ratified"), compatible), "") catch (error) => error.message
+    const history = `${journalText(fixture.prior)}\n`
+    const store = try openStore(history, null, [])
+    const repositories = repositoriesOf(compatible, {})
+    try applySnapshots(store, repositories, [{ snapshot: held, digest: "9".repeat(64) }], fixture.prior.generatedAt)
+    const retained = store.revisions.length
+    const zeroed = { snapshot: revoked, digest: "a".repeat(64) }
+    try applySnapshots(store, repositories, [zeroed, zeroed], fixture.prior.generatedAt)
+    try Effect.try(() => assert.deepStrictEqual({ retained, revisions: store.revisions, forgedMerge, forgedCoverage, forgedMissingDigest, forgedNullDigest }, {
+      retained: fixture.prior.revisions.length, revisions: fixture.retired.revisions,
+      forgedMerge: "Held implementation source cannot publish merge credit",
+      forgedCoverage: "Review assessment coverage requires a held implementation source",
+      forgedMissingDigest: "Value score event is not bound to its assessment coverage",
+      forgedNullDigest: "Value score event is not bound to its assessment coverage",
+    }))
+  })
+
   it.effect('Journal build from history.json plus snapshots appends only, chains per key, and the checked-in history stays an ancestor (spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "A frozen reward period, a removed PR and a ban never rewrite recorded Points"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month")', () => effect {
     const history = try promise(() => historyText())
     const file = try promise(() => snapshotFile())

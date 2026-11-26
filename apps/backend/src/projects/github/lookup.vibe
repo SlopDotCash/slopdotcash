@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
 import { sha256Hex } from "@repo/platform/crypto"
 import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import { Refused } from "@repo/platform/http"
@@ -146,7 +146,26 @@ const licenseQuery = `
     }
   }`
 
-interface Identity {
+const integrationBranchAuthorityQuery = `
+  query ProjectIntegrationBranchAuthority(
+    $id: ID!, $qualifiedName: String!, $expression: String!
+  ) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        ref(qualifiedName: $qualifiedName) {
+          name prefix target { __typename oid }
+        }
+        object(expression: $expression) {
+          __typename
+          ... on Blob { byteSize text }
+        }
+      }
+    }
+  }`
+
+export interface Identity {
   readonly numericId: number
   readonly nodeId: string
 }
@@ -296,4 +315,18 @@ export effect function factsByPath(path: string) {
   const repository = try restJson(`/repos/${path}`)
   if (repository === undefined || !positiveId(repository.id) || typeof repository.full_name !== "string") return undefined
   return { id: String(repository.id), fullName: repository.full_name, public: repository.private === false, archived: repository.archived !== false, fork: repository.fork !== false, defaultBranch: validIntegrationBranch(repository.default_branch) ? repository.default_branch : undefined } satisfies PublicFacts
+}
+
+export effect function readIntegrationBranchAuthority(identity: Identity, branch: string, commit: string) {
+  if (!(try ReadToken).configured) throw refusal({ ...putProjectsById.githubUnavailableNoStore, message: "GitHub repository verification is unavailable." })
+  const node = try repositoryNode(identity, integrationBranchAuthorityQuery, { qualifiedName: `refs/heads/${branch}`, expression: `${commit}:.github/slop-project.json` })
+  const ref = record(node.ref)
+  const target = record(ref?.target)
+  if (ref?.name !== branch || ref.prefix !== "refs/heads/" || target?.__typename !== "Commit" || target.oid !== commit) throw refusal(putProjectsById.branchHeadChanged)
+  const blob = record(node.object)
+  const text = blob?.text
+  const byteSize = blob?.byteSize
+  if (blob?.__typename !== "Blob" || typeof text !== "string" || typeof byteSize !== "number" || byteSize < 1 || byteSize > 4096 || new TextEncoder().encode(text).length !== byteSize) return null
+  const parsed: unknown = Effect.try(() => JSON.parse(text) as unknown) catch () => null
+  return parsed
 }

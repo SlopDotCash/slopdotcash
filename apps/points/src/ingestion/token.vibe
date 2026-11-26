@@ -1,5 +1,6 @@
-// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"
 import { ConfigInvalid } from "@repo/platform/config"
+export { collectorRenewal } from "./appToken.vibe"
 
 export effect function actionsToken() {
   const primary = (try Config.withDefault(Config.String("GITHUB_TOKEN"), "")).trim()

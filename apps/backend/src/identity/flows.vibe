@@ -1,14 +1,14 @@
-// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
 import type { RateLimit } from "@repo/platform/bindings"
 import { Refused, bytesBody, json, refuse } from "@repo/platform/http"
-import { type PollOutcome, type RateScope, Rejected } from "../../gen/backend__identity.effect.vibe"
+import { type PollOutcome, type RateScope, Rejected, flowLifetime, websiteFlow } from "../../gen/backend__identity.effect.vibe"
 import { identityPostV1AssertionsConsume as bodyRows, identityPostV1LocalStart as localStartRows, identityPostV1OauthPoll as pollRows, identityPostV1OauthStart as startRows } from "../client/refusals.vibe"
 import { localFlowId, localFlowOrigin, returnOriginOf } from "../local/origin.vibe"
 import { IdentitySettings } from "./config.vibe"
-import { randomText } from "./pkce.vibe"
-import { audienceOf } from "./projection.vibe"
+import { digestOf, randomText, sameText } from "./pkce.vibe"
+import { type FlowRow, audienceOf, modeOf } from "./projection.vibe"
 import { principalOf } from "./rateWindow.vibe"
-import { FlowNotStored, LimiterFailed, OverLimit, type PollFacts, type Polled, WindowFull, countUnmodelled, issueAssertion, poll, refuseRateLimited, start } from "./store.vibe"
+import { FlowNotStored, LimiterFailed, OverLimit, type PollFacts, type Polled, WindowFull, bindingHashOf, countUnmodelled, issueAssertion, poll, refuseOriginRequired, refuseRateLimited, start } from "./store.vibe"
 
 export service EdgeLimiters {
   readonly start: RateLimit
@@ -27,12 +27,30 @@ const pollAfterSeconds = 2
 const edgeRetryAfterSeconds = 60
 const bodyLimitBytes = 4096
 const bodyTypes: readonly [string, ...string[]] = ["application/json", "text/plain", ""]
+const bindingCookieName = "__Host-slop_oauth_bind_"
 
 const pollRefusals: Readonly<Record<Exclude<PollOutcome, "PollPending" | "PollReady">, Row>> = {
   PollUnavailable: pollRows.flowUnavailableIdentityFlowIsUnavailable,
   PollWrongMode: pollRows.wrongFlow,
+  PollBrowserMismatch: pollRows.browserMismatch,
   PollCallbackFailed: pollRows.callbackFailed,
   PollConsumed: pollRows.flowConsumed,
+}
+
+function bindingCookie(flowId: string, value: string, maxAge: number) {
+  return `${bindingCookieName}${flowId}=${value}; Path=/; Max-Age=${maxAge}; Secure; HttpOnly; SameSite=None`
+}
+
+effect function bindingPresented(flowId: string) {
+  const secret = (try HttpServerRequest.HttpServerRequest).cookies[`${bindingCookieName}${flowId}`]
+  if (secret === undefined || !capabilityShape.test(secret)) return false
+  const stored = try bindingHashOf(flowId)
+  return stored !== undefined && sameText(try digestOf(secret), stored)
+}
+
+export effect function browserBound(flow: FlowRow) {
+  if (!websiteFlow(audienceOf[flow.audience], modeOf(flow.id))) return true
+  return try bindingPresented(flow.id)
 }
 
 export function refusedBy(row: Row) {
@@ -140,13 +158,22 @@ effect function startRequest(local: boolean) {
 effect function startAdmitted(local: boolean, principal: string) {
   const settings = try IdentitySettings
   const { audience, returnOrigin } = try validated("StartScope", principal, startRequest(local))
+  const mode = local ? "LocalHandoff" : "Production"
+  const website = websiteFlow(audience, mode)
+  const origin = (try HttpServerRequest.HttpServerRequest).headers.origin !== undefined
+  if (website && !origin) {
+    try refuseOriginRequired(principal)
+    throw refusedBy(startRows.originRequired)
+  }
+  const binding = website ? try randomText(32) : undefined
   const flowId = returnOrigin === undefined ? `flow_${try randomText(18)}` : localFlowId(returnOrigin, try randomText(24))
   const secrets = { flowId, state: try randomText(32), capability: try randomText(32), verifier: try randomText(64) }
-  const { expiresAt } = try start(principal, audience, local ? "LocalHandoff" : "Production", secrets)
+  const { expiresAt } = try start(principal, { audience, mode, origin, binding }, secrets)
   const authorizationUrl = new URL("/v1/oauth/authorize", settings.publicOrigin)
   authorizationUrl.searchParams.set("flow_id", flowId)
   authorizationUrl.searchParams.set("state", secrets.state)
-  return json({ flowId, authorizationUrl: authorizationUrl.toString(), pollCapability: secrets.capability, expiresAt, pollAfterSeconds }, 201)
+  const cookie: Readonly<Record<string, string>> = binding === undefined ? {} : { "set-cookie": bindingCookie(flowId, binding, flowLifetime) }
+  return json({ flowId, authorizationUrl: authorizationUrl.toString(), pollCapability: secrets.capability, expiresAt, pollAfterSeconds }, 201, cookie)
 }
 
 effect function issued(facts: PollFacts, token: string) {
@@ -154,7 +181,8 @@ effect function issued(facts: PollFacts, token: string) {
     when Rejected: throw refusedBy(pollRows.flowConsumed);
     default: throw error;
   }
-  return json({ status: "complete", assertion: token, assertionType: "SlopIdentity", expiresAt: assertion.expires_at })
+  const cleared: Readonly<Record<string, string>> = facts.audience === "PointsWeb" ? { "set-cookie": bindingCookie(facts.flowId, "", 0) } : {}
+  return json({ status: "complete", assertion: token, assertionType: "SlopIdentity", expiresAt: assertion.expires_at }, 200, cleared)
 }
 
 effect function delivered(polled: Extract<Polled, { readonly kind: "pollLocal" }>) {
@@ -175,7 +203,7 @@ effect function pollRequest(local: boolean) {
   const { flowId, pollCapability, audience } = body
   if (typeof flowId !== "string" || !flowShape.test(flowId) || typeof pollCapability !== "string" || !capabilityShape.test(pollCapability)) throw refusedBy(pollRows.invalidRequestInvalidPollRequest)
   if ((audience !== "private-trace-api" && audience !== "slop-points-web") || Object.keys(body).length !== 3) throw refusedBy(pollRows.invalidRequestInvalidPollRequest)
-  return { flowId, capability: pollCapability, audience: audienceOf[audience], localRoute: local } satisfies PollFacts
+  return { flowId, capability: pollCapability, audience: audienceOf[audience], localRoute: local, binding: try bindingPresented(flowId) } satisfies PollFacts
 }
 
 effect function pollAdmitted(local: boolean, principal: string) {

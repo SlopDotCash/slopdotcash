@@ -9,7 +9,7 @@ assertions from, every membership, every web session, the
 [X connection registry](./xConnection.md) and each member's
 [email enrollment](./email.md), together with the
 [notice outbox](../operations/notifications.md) whose consent snapshot and
-closure cancellation it commits in the same write. Wallets, obligations, settlement history,
+closure suppression it commits in the same write. Wallets, obligations, settlement history,
 private cases and historical Points stay attached to the immutable actor and
 are not changed by any transition here.
 
@@ -50,7 +50,9 @@ the trace API's per-route browser headers.
 A member's actor key is the GitHub node ID asserted at first join; later
 sign-ins look the member up by numeric GitHub ID and reuse the stored actor
 even when GitHub spells the node differently. A web session lasts exactly
-one hour from sign-in. Session IDs are issued in order and never reused.
+one hour from sign-in, or seven days for the configured owner
+([below](#only-the-configured-owner-while-a-current-administrator-gets-a-seven-day-session)).
+Session IDs are issued in order and never reused.
 
 ```quint
 import identity as I from "./identity"
@@ -65,7 +67,7 @@ type HistoricalAward = { actor: int, at: int, points: int }
 type Accounts = { now: int, identity: I::Identity, members: List[Member], sessions: List[Session], lastSession: int,
   xRegistry: X::XRegistry, xConfigured: bool, mailAvailable: bool, telegramClaims: List[str],
   xAwards: List[HistoricalAward], refusedSignIns: List[int], lastEmailId: int, lastVersion: int, lastUnsubscribe: int,
-  inbox: N::Inbox }
+  inbox: N::Inbox, ownerSession: int }
 pure val sessionLifetime = 60 * 60
 pure val participationPointsEnd = 1792800000
 pure val launchClock = 1794614400
@@ -89,7 +91,7 @@ pure def alwaysMembersIdentified(s: Accounts): bool = s.members.every(m =>
     and s.members.select(o => o.githubId == m.githubId).length() == 1
     and s.members.select(o => o.actor == m.actor).length() == 1)
 pure def alwaysSessionsBelongToOpenMembers(s: Accounts): bool = s.lastSession >= 0 and s.sessions.every(x =>
-  x.id > 0 and x.id <= s.lastSession and x.expiresAt <= s.now + sessionLifetime
+  x.id > 0 and x.id <= s.lastSession and x.expiresAt <= s.now + ownerSessionLifetime
     and s.sessions.select(o => o.id == x.id).length() == 1
     and s.members.some(m => m.actor == x.actor and m.membership == Open))
 pure def alwaysClockShared(s: Accounts): bool = s.identity.now == s.now and s.now >= launchClock
@@ -98,6 +100,7 @@ pure def alwaysIdentityStoreValid(s: Accounts): bool =
     and I::alwaysIssuedOnce(s.identity) and I::alwaysIssuedFlowsClosed(s.identity) and I::alwaysConsumedOnce(s.identity)
     and I::alwaysIdentityAfterCallback(s.identity) and I::alwaysAssertionsMatchTheirFlow(s.identity)
     and I::alwaysVerifierOnlyWhilePending(s.identity) and I::alwaysLocalFlowsHaveNoAssertion(s.identity)
+    and I::alwaysBoundOnlyForWebsite(s.identity)
 pure def stepMembersPermanent(before: Accounts, after: Accounts): bool = before.members.every(m =>
   after.members.some(n => n.actor == m.actor and n.githubId == m.githubId and n.joinedAt == m.joinedAt))
 pure def stepSessionIdsFresh(before: Accounts, after: Accounts): bool =
@@ -112,7 +115,7 @@ The browser posts the assertion. Joining consumes it for the
 assertion is refused as `identity_expired` and changes nothing. The
 assertion's GitHub identity is the only identity source. The batch then
 upserts the member, publishes the membership and any existing X link, issues
-a one-hour session and deletes every expired session. A first join records
+a session and deletes every expired session. A first join records
 `joinedAt`; later sign-ins keep it and only update the login. Existing
 private memberships and X links become public here and only here; a public
 read never publishes. A joined node ID that already keys another GitHub
@@ -127,8 +130,9 @@ pure def actorKeyFor(s: Accounts, token: int): int =
 pure def actorKeyFree(s: Accounts, token: int): bool =
   val g = assertedGithub(s, token)
   hasGithubMember(s, g.actor) or not(s.members.some(m => m.actor == g.nodeId))
-pure def openSession(s: Accounts, actor: int): List[Session] =
-  s.sessions.select(x => x.expiresAt > s.now).append({ id: s.lastSession + 1, actor: actor, expiresAt: s.now + sessionLifetime })
+pure def openSession(s: Accounts, m: Member): List[Session] =
+  s.sessions.select(x => x.expiresAt > s.now)
+    .append({ id: s.lastSession + 1, actor: m.actor, expiresAt: s.now + lifetimeFor(s, m.githubId) })
 pure def joined(s: Accounts, token: int): Member =
   val g = assertedGithub(s, token)
   val prior = memberByGithub(s, g.actor)
@@ -139,7 +143,7 @@ pure def joined(s: Accounts, token: int): Member =
     closedAt: 0, xLink: X::noLink, telegramLinked: false, email: E::newEnrollment(g.actor, 0) }
 pure def admitMember(token: int, s: Accounts): Accounts =
   val m = joined(s, token)
-  { ...s, identity: I::consume(s.identity, token, I::PointsWeb), sessions: openSession(s, m.actor),
+  { ...s, identity: I::consume(s.identity, token, I::PointsWeb), sessions: openSession(s, m),
     lastSession: s.lastSession + 1,
     members: if (hasGithubMember(s, m.githubId)) replaceMember(s.members, m) else s.members.append(m) }
 pure def canSignIn(s: Accounts, token: int): bool =
@@ -165,6 +169,28 @@ pure def lawLateJoinHasNoWelcome(t: int): bool =
   t >= participationPointsEnd implies welcomeShown({ ...absentMember, actor: 1, githubId: 1, login: "a", joinedAt: t }) == 0
 pure def lawEarlyJoinKeepsWelcome(t: int): bool =
   (t > 0 and t < participationPointsEnd) implies welcomeShown({ ...absentMember, actor: 1, githubId: 1, login: "a", joinedAt: t }) == 5
+```
+
+### Only the configured owner, while a current administrator, gets a seven-day session
+
+`ownerSession` is the numeric GitHub ID of the configured production owner
+(`OWNER_SESSION_GITHUB_ID`) when the current administrator list
+(`ADMIN_GITHUB_IDS`) also holds it, and 0 otherwise; the shell resolves it on
+each request, as it does `xConfigured`. A sign-in or explicit reopen by that
+identity opens a session of exactly seven days; every other one opens a
+session of exactly one hour. Each privileged action still checks current
+authority itself. A session keeps its recorded expiry when the configuration
+changes, and the identity flow and one-use assertion keep their own
+lifetimes (PRD section 3, owner decision of 17 November 2026).
+
+```quint
+pure val ownerSessionLifetime = 7 * 24 * 60 * 60
+pure def lifetimeFor(s: Accounts, githubId: int): int =
+  if (s.ownerSession > 0 and githubId == s.ownerSession) ownerSessionLifetime else sessionLifetime
+pure def stepSessionLifetimeFixedAtSignIn(before: Accounts, after: Accounts): bool =
+  after.sessions.every(x => before.sessions.includes(x)
+    or x.expiresAt == before.now + lifetimeFor(before, memberByActor(after, x.actor).githubId))
+pure def sometimesOwnerWeekSession(s: Accounts): bool = s.sessions.some(x => x.expiresAt > s.now + sessionLifetime)
 ```
 
 ### An ordinary sign-in cannot reopen a closed account; explicit reopening can
@@ -482,13 +508,17 @@ private X link, a historical Telegram link, a historical X award and an
 activity-pilot destination, plus issued assertions: two web assertions for
 that member under a re-spelled node ID, one web assertion for a new GitHub
 account and one contributor-session assertion that web sign-in must refuse. The
-full identity flow is also reachable through the wrapped identity events.
+full identity flow is also reachable through the wrapped identity events:
+web sign-in starts from Slop's own page and is polled by the browser that
+started it, so the wrapped start carries a browser origin and the wrapped
+poll the flow's browser binding ([identity](./identity.md), "A website flow
+belongs to the browser that started it").
 The sample sets bound simulation only.
 
 ```quint
 pure def identityStart(s: Accounts, client: int, audience: I::Audience): Accounts =
-  { ...s, identity: I::start(s.identity, client, audience, I::Production) }
-pure def canIdentityStart(s: Accounts, client: int, audience: I::Audience): bool = I::canStart(s.identity, client, audience, I::Production)
+  { ...s, identity: I::start(s.identity, client, audience, I::Production, true) }
+pure def canIdentityStart(s: Accounts, client: int, audience: I::Audience): bool = I::canStart(s.identity, client, audience, I::Production, true)
 pure def canIdentityClaimCallback(s: Accounts, oauthState: int, cookie: int): bool = I::canClaimCallback(s.identity, oauthState, cookie)
 pure def identityClaimCallback(s: Accounts, oauthState: int, cookie: int): Accounts = { ...s, identity: I::claimCallback(s.identity, oauthState, cookie) }
 pure def canIdentityFailCallback(s: Accounts, by: int, flowId: int): bool = I::canFailCallback(s.identity, by, flowId)
@@ -498,21 +528,22 @@ pure def canIdentityCompleteCallback(s: Accounts, by: int, flowId: int, github: 
 pure def identityCompleteCallback(s: Accounts, by: int, flowId: int, github: I::GitHubIdentity): Accounts =
   { ...s, identity: I::completeCallback(s.identity, by, flowId, github) }
 pure def canIdentityPoll(s: Accounts, client: int, flowId: int, capability: int, audience: I::Audience): bool =
-  I::canStoreAssertion(s.identity, client, flowId, capability, audience)
-    and I::canIssueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience), flowId, capability, audience)
+  I::canStoreAssertion(s.identity, client, flowId, capability, audience, true)
+    and I::canIssueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience, true), flowId, capability, audience, true)
 pure def identityPoll(s: Accounts, client: int, flowId: int, capability: int, audience: I::Audience): Accounts =
-  { ...s, identity: I::issueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience), flowId, capability, audience) }
+  { ...s, identity: I::issueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience, true), flowId, capability,
+    audience, true) }
 pure val launchGithubOld: I::GitHubIdentity = { actor: 11, login: "octo", nodeId: 1102 }
 pure val launchGithubNew: I::GitHubIdentity = { actor: 22, login: "newcomer", nodeId: 2201 }
 pure val launchIdentity: I::Identity = { now: launchClock, lastFlow: 4, windows: List(),
   flows: List({ id: 1, oauthState: 1, capability: 1, audience: I::PointsWeb, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime },
+      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: true },
     { id: 2, oauthState: 2, capability: 2, audience: I::PointsWeb, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime },
+      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: true },
     { id: 3, oauthState: 3, capability: 3, audience: I::PointsWeb, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime },
+      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: true },
     { id: 4, oauthState: 4, capability: 4, audience: I::PrivateTrace, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime }),
+      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: false }),
   assertions: List({ token: 1, audience: I::PointsWeb, github: launchGithubOld, createdAt: launchClock,
       expiresAt: launchClock + I::assertionLifetime, consumed: false, consumedAt: 0 },
     { token: 2, audience: I::PointsWeb, github: launchGithubNew, createdAt: launchClock,
@@ -532,7 +563,7 @@ pure val initial: Accounts = { now: launchClock, identity: launchIdentity, membe
   xConfigured: true, mailAvailable: true, telegramClaims: List("tg-legacy"),
   xAwards: List({ actor: 1101, at: participationPointsEnd - 900, points: 10 }), refusedSignIns: List(),
   lastEmailId: 0, lastVersion: 1000, lastUnsubscribe: 0,
-  inbox: { ...N::initial, enrollments: List(legacyMember.email) } }
+  inbox: { ...N::initial, enrollments: List(legacyMember.email) }, ownerSession: 22 }
 pure def sometimesLegacyPublished(s: Accounts): bool = memberByActor(s, 1101).public and memberByActor(s, 1101).xLink.public
 pure def sometimesStoredActorReused(s: Accounts): bool = s.sessions.some(x => x.actor == 1101)
 pure def sometimesTwoSessions(s: Accounts): bool = s.sessions.select(x => x.actor == 1101 and x.expiresAt > s.now).length() >= 2

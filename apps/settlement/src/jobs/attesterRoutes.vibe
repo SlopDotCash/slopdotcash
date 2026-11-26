@@ -1,0 +1,182 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"
+import type { DurableObjectState, ScheduledController } from "@repo/platform/bindings"
+import { json, jsonBody } from "@repo/platform/http"
+import { evmRpc } from "@repo/platform/chain/evm"
+import { durableJournal } from "@repo/platform/journal"
+import { attesterPostV1BindDestinations, attesterPostV1MonthlyReserveRelease, attesterPostV1Pay, attesterPostV1ReconcileBinding } from "../client/refusals.vibe"
+import type { RecoveryScope } from "../client/operator.vibe"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { ReleaseCall, ReserveReleases, reserveReleaseJournal } from "../reserveRelease/routes.vibe"
+import { durableValues } from "../reserveRelease/store.vibe"
+import { bindDestinations, failureKind } from "../signer/binding.vibe"
+import { AttesterConfig, DeploymentRefused, signerMarker } from "../signer/evm.vibe"
+import { releaseApprover } from "../signer/reserveRelease.vibe"
+import { RecoveryRefused, type RecoveryServices, reconcileRequested } from "../signer/operatorReconcile.vibe"
+import { type SignerScope, scopeOfPath } from "../signer/privateScope.vibe"
+import { BindingRequest, SolanaAttesterConfig, completeSolanaBinding, prepareSolanaBinding, solanaSignerMarker } from "../signer/solana.vibe"
+import { type AttesterEnv, attesterNetwork, attesterRun, evmConfig, familyOf, pinnedScopes, solanaConfig } from "./attester.vibe"
+import { type LedgerVars, ledgerServices } from "./services.vibe"
+
+export interface AttesterObjectEnv extends AttesterEnv, LedgerVars {}
+
+export error TransactionRequired
+
+const requestKib = 4
+const recoveryKib = 2
+const releaseKib = 2
+const projectPattern = /^[a-z0-9][a-z0-9-]*$/u
+const periodPattern = /^[2-9][0-9]{3}-(0[1-9]|1[0-2])$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+
+const notFound = HttpServerResponse.text("Not found", { status: attesterPostV1Pay.notFoundV2.status })
+
+function refusedWith(row: { readonly status: number; readonly error: string }) {
+  return json({ error: row.error }, row.status)
+}
+
+const pendingOrRejected = refusedWith(attesterPostV1BindDestinations.executionPendingOrRejected)
+
+effect function rejected(route: string, error: unknown) {
+  try Effect.logError("attester_request_rejected", { route, kind: failureKind(error), signer: signerMarker, solanaSigner: solanaSignerMarker })
+  return pendingOrRejected
+}
+
+effect function recoveryServices(env: AttesterObjectEnv, scope: SignerScope) {
+  const config = evmConfig(env, scope) catch () => undefined
+  return config === undefined ? undefined : { journal: scope.journal, config } satisfies RecoveryServices
+}
+
+function recoveryRow(code: RecoveryRefused["code"]) {
+  if (code === "invalid_request") return attesterPostV1ReconcileBinding.invalidRequestS400
+  if (code === "binding_recovery_unavailable") return attesterPostV1ReconcileBinding.bindingRecoveryUnavailable
+  return attesterPostV1ReconcileBinding.bindingRecoveryPendingOrRejected
+}
+
+effect function recoveryRefusal(error: unknown) {
+  if (error instanceof RecoveryRefused) return refusedWith(recoveryRow(error.code))
+  try rejected("/v1/reconcile-binding", error)
+  return refusedWith(attesterPostV1ReconcileBinding.bindingRecoveryPendingOrRejected)
+}
+
+effect function reconcile(env: AttesterObjectEnv, scopes: ReadonlyArray<SignerScope>) {
+  const network = try attesterNetwork(env)
+  if (env.SIGNER_STACK !== "production" || familyOf(network) !== "evm") return notFound
+  const body = jsonBody(recoveryKib) catch () => undefined
+  if (body === undefined) return refusedWith(attesterPostV1ReconcileBinding.bindingRecoveryPendingOrRejected)
+  const services: Partial<Record<RecoveryScope, RecoveryServices>> = {}
+  for (const scope of scopes) {
+    const found = try recoveryServices(env, scope)
+    if (found !== undefined) services[scope.kind] = found
+  }
+  const answer = reconcileRequested(body, (scope) => services[scope]) catch effect (error) => try recoveryRefusal(error)
+  return HttpServerResponse.isHttpServerResponse(answer) ? answer : json(answer)
+}
+
+effect function bound(env: AttesterObjectEnv, scope: SignerScope) {
+  const config = try evmConfig(env, scope)
+  provide AttesterConfig = config {
+    return json(try bindDestinations(scope.journal, scope.tables))
+  }
+}
+
+schema SolanaCall {
+  readonly obligationId: string
+  readonly network: string
+  readonly vault: string
+  readonly githubUserId: string
+  readonly claimId: string
+  readonly claimDigest: string
+  readonly destination: string
+  readonly idempotencyKey: string
+  readonly transaction?: string
+}
+
+effect function solanaBinding(env: AttesterObjectEnv, scope: SignerScope, step: "pay" | "complete-bind") {
+  const request = try HttpServerRequest.HttpServerRequest
+  const body = try jsonBody(requestKib)
+  const call = try Schema.decodeUnknownEffect(SolanaCall)(body, { onExcessProperty: "error" })
+  if (request.headers["idempotency-key"] !== call.idempotencyKey) return HttpServerResponse.text(attesterPostV1Pay.idempotencyKeyRequired.text, { status: attesterPostV1Pay.idempotencyKeyRequired.status })
+  const { transaction, ...binding } = call
+  const payment: BindingRequest = binding
+  const config = try solanaConfig(env, scope)
+  provide SolanaAttesterConfig = config {
+    if (step === "pay") return json(try prepareSolanaBinding(scope, payment))
+    if (transaction === undefined) throw new TransactionRequired()
+    return json(try completeSolanaBinding(scope, payment, transaction))
+  }
+}
+
+function wellFormed(call: ReleaseCall, network: NetworkKey) {
+  const { request } = call
+  const reviewed = projectPattern.test(request.projectId) && periodPattern.test(request.period) && request.network === network && digestPattern.test(request.manifestSha256)
+  return reviewed && (!("planId" in request) || (digestPattern.test(request.planId) && request.transactionId.length <= 130))
+}
+
+effect function releaseCallOf(network: NetworkKey) {
+  const body = try jsonBody(releaseKib)
+  const call = Schema.decodeUnknownEffect(ReleaseCall)(body, { onExcessProperty: "error" }) catch () => undefined
+  return call !== undefined && wellFormed(call, network) ? call : undefined
+}
+
+effect function releaseRpc(config: AttesterConfig.Shape, network: NetworkKey) {
+  const registry = NETWORKS[network]
+  const url = Redacted.value(config.rpcUrls)[network]
+  if (registry.family !== "evm" || url === undefined || url === "") throw new DeploymentRefused({ reason: "Private RPC configuration missing" })
+  return evmRpc({ urls: Redacted.make([url]), chainId: try orDie(Effect.try(() => BigInt(registry.chainId))) })
+}
+
+effect function releaseAnswer(call: ReleaseCall) {
+  return json(try (try ReserveReleases).release(call))
+}
+
+effect function monthlyRelease(env: AttesterObjectEnv, scope: SignerScope, network: NetworkKey) {
+  if (scope.kind !== "ordinary") return notFound
+  const call = try releaseCallOf(network)
+  if (call === undefined) return refusedWith(attesterPostV1MonthlyReserveRelease.invalidRequestS400)
+  if (familyOf(network) === "solana") {
+    provide reserveReleaseJournal([network]) {
+      return try releaseAnswer(call)
+    }
+  }
+  const config = try evmConfig(env, scope)
+  const rpc = try releaseRpc(config, network)
+  provide AttesterConfig = config {
+    provide Layer.provide(reserveReleaseJournal([network]), Layer.mergeAll(releaseApprover, rpc)) {
+      return try releaseAnswer(call)
+    }
+  }
+}
+
+effect function served(env: AttesterObjectEnv) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const url = new URL(request.url, "https://attester.internal")
+  if (request.method !== "POST") return notFound
+  if (url.pathname === "/v1/reconcile-binding") return try reconcile(env, try pinnedScopes(env))
+  const { scope, path } = scopeOfPath(url.pathname)
+  const scopes = try pinnedScopes(env)
+  if (!scopes.some((pinned) => pinned.kind === scope.kind)) return notFound
+  const network = try attesterNetwork(env)
+  const family = familyOf(network)
+  if (path === "/v1/monthly-reserve-release") return monthlyRelease(env, scope, network) catch effect (error) => try rejected(path, error)
+  if (path === "/v1/bind-destinations" && family === "evm") return bound(env, scope) catch effect (error) => try rejected(path, error)
+  if ((path === "/v1/pay" || path === "/v1/complete-bind") && family === "solana") return solanaBinding(env, scope, path === "/v1/pay" ? "pay" : "complete-bind") catch effect (error) => try rejected(path, error)
+  return notFound
+}
+
+export function attesterRoutes(env: AttesterObjectEnv) {
+  return Layer.mergeAll(
+    HttpRouter.add("POST", "/v1/*", effect {
+      return served(env) catch effect (error) => try rejected("/v1", error)
+    }),
+    HttpRouter.add("*", "*", notFound),
+  )
+}
+
+export function attesterServices(state: DurableObjectState, env: AttesterObjectEnv) {
+  const network = env.PAYMENT_NETWORK ?? ""
+  return Layer.mergeAll(durableJournal(state), durableValues(state.storage), ledgerServices(env, isNetworkKey(network) ? [network] : []))
+}
+
+export function attesterScheduled(env: AttesterObjectEnv) {
+  return (_controller: ScheduledController) => attesterRun(env)
+}

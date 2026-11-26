@@ -1,5 +1,4 @@
 // spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
-import { type TypedDataDefinition, canonicalSignature, recoverTypedData } from "@repo/platform/chain/evm";
 import { type Address, type Blockhash, base58Encode, isAddress, isBlockhash } from "@repo/platform/chain/solana";
 import { bytes32, evmAddress } from "@repo/settlement/chain/evm/abi";
 import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks";
@@ -70,26 +69,6 @@ export function expectedEvmBinding(terms: EvmBindingTerms): unknown {
   } catch {
     return undefined;
   }
-}
-
-/** @throws {never} */
-export function evmBindingSigner(terms: EvmBindingTerms, signature: string): string {
-  const parsed = parsedEvmTerms(terms);
-  const stored = canonicalSignature(signature);
-  if (parsed === undefined || stored === undefined) return "";
-  let typed;
-  try {
-    typed = bindingTypedData(parsed.domain, parsed.input);
-  } catch {
-    return "";
-  }
-  const definition: TypedDataDefinition = {
-    types: { EIP712Domain: typed.types.EIP712Domain, DestinationBinding: typed.types.DestinationBinding },
-    primaryType: "DestinationBinding",
-    domain: { name: typed.domain.name, version: typed.domain.version, chainId: parsed.domain.chainId, verifyingContract: parsed.domain.vault },
-    message: { ...parsed.input, actorId: parsed.input.actor },
-  };
-  return recoverTypedData(definition, stored)?.toLowerCase() ?? "";
 }
 
 /** @throws {never} */

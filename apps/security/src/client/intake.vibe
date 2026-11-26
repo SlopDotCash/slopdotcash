@@ -1,7 +1,11 @@
-// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
+// spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
 import { type AnyRoute, route } from "@repo/platform/route"
 
 export schema Advisory { ghsa: string; url: string }
+
+export schema ProofOfConcept { fileName: string; patch: string }
+
+export schema ReportDeposit { state: "needed" | "paid" | "refund_due" | "refunded" | "kept_due" | "kept"; amount: string; payPath: string }
 
 export schema IntakeView {
   state: string
@@ -35,9 +39,10 @@ export schema SubmissionView {
   createdAt: string
   updatedAt: string
   intake: IntakeView | null
+  deposit?: ReportDeposit | null
 }
 
-export schema Submitted { replayed?: boolean; submission: SubmissionView }
+export schema Submitted { replayed?: boolean; authorizeUrl?: string; submission: SubmissionView }
 
 export schema IntakeReadiness {
   projectId: string

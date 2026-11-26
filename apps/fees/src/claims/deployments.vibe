@@ -1,6 +1,15 @@
 // spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { EvmRpc } from "@repo/platform/chain/evm"
 import type { RpcFailure } from "@repo/platform/chain/rpc"
+import { SolanaRpc } from "@repo/platform/chain/solana"
+import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"
+import { DeploymentUnverified, reviewedDeployment, verifiedDeployment } from "@repo/settlement/owner/solanaDeployment"
+import { DeploymentMismatch, verifyEvmDeployment } from "@repo/settlement/vault/evmTotals"
+import { PolicyInvalid } from "@repo/settlement/vault/policy"
+import { FeeChain } from "../evm/client.vibe"
+import { definitions } from "../runtime/networks.vibe"
 import type { VaultFact } from "../runtime/reviewed.vibe"
+import { FeeSolana } from "../solana/client.vibe"
 
 export error DeploymentRefused { message: string }
 
@@ -27,3 +36,70 @@ export service VaultDeployments {
   evm(vault: VaultFact, block: bigint): EvmVaultDeployment!(DeploymentRefused | RpcFailure)
   solana(vault: VaultFact, executedAtSlot: number | undefined): SolanaVaultDeployment!(DeploymentRefused | RpcFailure)
 }
+
+const otherNetwork = "Vault differs from its reviewed network or deployment"
+
+const publicClusters: ReadonlySet<string> = new Set(Object.values(NETWORKS).flatMap((network) => network.family === "solana" ? [network.genesisHash] : []))
+
+effect function reviewed(fact: VaultFact) {
+  const record = fact.deployment
+  const network = typeof record === "object" && record !== null && "network" in record ? record.network : undefined
+  if (typeof network !== "string" || !isNetworkKey(network)) throw new DeploymentRefused({ message: otherNetwork })
+  return reviewedDeployment(fact.projectId, fact.payoutPolicy, NETWORKS[network].chain, record) catch effect (error) => match (error) {
+    when PolicyInvalid: throw new DeploymentRefused({ message: error.message });
+    default: throw error;
+  }
+}
+
+effect function evmDeployment(fact: VaultFact, block: bigint) {
+  const chain = try FeeChain
+  const deployment = try reviewed(fact)
+  if (deployment.family !== "evm" || !definitions[chain.network].escrowNetworks.includes(deployment.network) || deployment.vault.toLowerCase() !== fact.vault.toLowerCase())
+    throw new DeploymentRefused({ message: otherNetwork })
+  verifyEvmDeployment(deployment, block) catch effect (error) => match (error) {
+    when DeploymentMismatch: throw new DeploymentRefused({ message: error.message });
+    default: throw error;
+  }
+  return {
+    vault: deployment.vault,
+    asset: deployment.asset,
+    owner: deployment.owner,
+    registrar: deployment.registrar,
+    factory: deployment.factory,
+    feeRecipient: deployment.feeRecipient,
+    upgradeAuthority: deployment.evmUpgrade?.authority,
+  } satisfies EvmVaultDeployment
+}
+
+effect function solanaDeployment(fact: VaultFact, executedAtSlot: number | undefined) {
+  const { wallet } = try FeeSolana
+  const deployment = try reviewed(fact)
+  if (deployment.family !== "solana") throw new DeploymentRefused({ message: `reviewed deployment network ${deployment.network} is not Solana` })
+  const recorded = { program: deployment.programId, project: deployment.projectPda, vault: deployment.vault, mint: deployment.asset, feeRecipient: deployment.feeRecipient, upgradeAuthority: deployment.upgradeAuthority } satisfies SolanaVaultDeployment
+  if (deployment.feeRecipient !== wallet) return recorded
+  const cluster = try (try SolanaRpc).genesisHash()
+  if (cluster !== deployment.genesisHash && publicClusters.has(cluster)) throw new DeploymentRefused({ message: "Wrong Solana cluster" })
+  const verified = verifiedDeployment(deployment, executedAtSlot) catch effect (error) => match (error) {
+    when DeploymentUnverified: throw new DeploymentRefused({ message: error.message });
+    default: throw error;
+  }
+  return { ...recorded, program: verified.program, project: verified.project, vault: verified.vault } satisfies SolanaVaultDeployment
+}
+
+export const evmVaultDeployments = Layer.effect(VaultDeployments, effect {
+  const services = try Effect.context<EvmRpc | FeeChain | Experimental.Crypto.Crypto>()
+  const shape: VaultDeployments.Shape = {
+    evm: (fact, block) => Effect.provideContext(evmDeployment(fact, block), services),
+    solana: () => effect { throw new DeploymentRefused({ message: otherNetwork }) },
+  }
+  return shape
+})
+
+export const solanaVaultDeployments = Layer.effect(VaultDeployments, effect {
+  const services = try Effect.context<SolanaRpc | FeeSolana | Experimental.Crypto.Crypto>()
+  const shape: VaultDeployments.Shape = {
+    evm: () => effect { throw new DeploymentRefused({ message: otherNetwork }) },
+    solana: (fact, executedAtSlot) => Effect.provideContext(solanaDeployment(fact, executedAtSlot), services),
+  }
+  return shape
+})

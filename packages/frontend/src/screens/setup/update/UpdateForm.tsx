@@ -1,13 +1,16 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
 import { Button, Disclosure } from "@repo/ui";
 import { X } from "lucide-react";
 import { formatDate } from "../../projects/summary.ts";
 import { contributionLabels, skillRuleFields } from "../fields/contribution.ts";
 import { ProjectImageField } from "../fields/ProjectImageField.tsx";
 import { TextField } from "../fields/ProjectFields.tsx";
+import { maxShareBasisPoints } from "../../../../gen/settlement__maintainerShare.ts";
 import { ClosureConsent } from "../proposal/ClosureConsent.tsx";
+import { ContributionSettings } from "../proposal/ContributionSettings.tsx";
 import { type FundingField, FundingFields } from "../proposal/FundingFields.tsx";
 import type { ManagedManifest, PendingRepository } from "./manifest.schema.ts";
+import { IntegrationBranch, type IntegrationBranchControl } from "./IntegrationBranch.tsx";
 import { ReadyLabelFields } from "./ReadyLabelFields.tsx";
 import type { FormGroup, UpdateField, UpdateReview } from "./revision.ts";
 
@@ -27,12 +30,13 @@ export type UpdateFormProps = {
   onRepository: (value: string) => void;
   onAdd: () => void;
   publishing: boolean;
+  branch: IntegrationBranchControl;
 };
 
 const fundingFields = { mode: "fundingMode", network: "network", assetKind: "assetKind", tokenAddress: "tokenAddress", tokenSymbol: "tokenSymbol", monthlyAmount: "monthlyAmount" } as const satisfies Record<FundingField, UpdateField>;
 
-/** The owner's edit of the current revision: listing and its links, contribution rules with the ready label, added repositories and monthly rewards. */
-export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, onPending, repository, addition, onRepository, onAdd, publishing }: UpdateFormProps) {
+/** The owner's edit of the current revision: listing and its links, the contribution settings, contribution rules with the ready label and intake cap, repositories with the integration branch, and monthly rewards with the maintainer share. */
+export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, onPending, repository, addition, onRepository, onAdd, publishing, branch }: UpdateFormProps) {
   const { value, added, choice } = review;
   const group = (name: FormGroup, summary: string) => ({ summary, open: open.has(name), onOpenChange: (next: boolean) => onOpen(name, next) });
   return (
@@ -49,6 +53,12 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
         </div>
       </Disclosure>
       <ClosureConsent value={value.automaticClosure} onChange={(entry) => onChange("automaticClosure", entry)} />
+      <ContributionSettings
+        bountyOnly={review.bountyOnly}
+        value={value}
+        onChange={onChange}
+        amount={{ value: value.submissionFeeAmount, error: shown("submissionFeeAmount"), onChange: (entry) => onChange("submissionFeeAmount", entry) }}
+      />
       <Disclosure summary="Contribution rules" open={open.has("rules") || open.has("moreRules")} onOpenChange={(next) => {
           onOpen("rules", next);
           if (!next) onOpen("moreRules", false);
@@ -57,6 +67,7 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
         <div className="flex flex-col gap-4 pt-2 text-foreground">
           <TextField label="Acceptance criteria" name="criteria" multiline value={value.criteria} error={shown("criteria")} onChange={(entry) => onChange("criteria", entry)} />
           <ReadyLabelFields value={value} shown={shown} onChange={onChange} />
+          <TextField label="Pause new contributors when this many outside pull requests are open (optional)" name="intakeCap" inputMode="numeric" value={value.intakeCap} error={shown("intakeCap")} onChange={(entry) => onChange("intakeCap", entry)} />
           <Disclosure {...group("moreRules", "More rules")}>
             <div className="flex flex-col gap-4 pt-2">
               {skillRuleFields.map((field) => (
@@ -69,9 +80,14 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
       <Disclosure {...group("repositories", "Repositories")}>
         <div className="flex flex-col gap-4 pt-2 text-foreground">
           <ul className="flex flex-col gap-3">
-            {manifest.repositories.map((entry) => (
+            {manifest.repositories.map((entry, index) => (
               <li key={entry.id} className="flex flex-wrap items-baseline gap-x-3">
                 <span className="font-medium">{entry.id}</span>
+                {index === 0 && review.primary ? (
+                  <span className="text-sm text-muted-foreground">
+                    Integration branch <code>{review.primary.integrationBranch}</code>
+                  </span>
+                ) : null}
                 {entry.countsFrom ? <span className="text-sm text-muted-foreground">Counts from {formatDate(entry.countsFrom)}</span> : null}
               </li>
             ))}
@@ -99,6 +115,7 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
               </li>
             ))}
           </ul>
+          <IntegrationBranch stored={review.primary} choices={branch.choices} name={branch.name} error={review.errors.integrationBranch} disabled={publishing} onLoad={branch.load} onChoose={branch.choose} />
           <TextField label="GitHub repository" name="addRepository" placeholder="owner/repository or GitHub URL" value={repository} error={addition.state === "error" ? addition.message : undefined} onChange={onRepository} />
           <Button variant="secondary" className="self-start" loading={addition.state === "loading"} disabled={repository.trim() === "" || publishing} onClick={onAdd}>
             Add
@@ -107,8 +124,25 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
       </Disclosure>
       {review.monthly && !review.bountyOnly ? (
         <Disclosure {...group("rewards", "Monthly rewards")}>
-          <div className="pt-2 text-foreground">
-            <FundingFields choice={choice} networkFixed={review.assetFixed} error={shown} onChange={(field, entry) => onChange(fundingFields[field], entry)} />
+          <div className="flex flex-col gap-4 pt-2 text-foreground">
+            <FundingFields
+              choice={choice}
+              networkFixed={review.assetFixed}
+              error={shown}
+              onChange={(field, entry) => onChange(fundingFields[field], entry)}
+              promise={{ checked: value.honorSystem === "true", onChange: (checked) => onChange("honorSystem", String(checked)) }}
+            />
+            {choice.mode === "monthly" ? (
+              <TextField
+                label={`Maintainer share (%, 0 to ${maxShareBasisPoints / 100}, optional)`}
+                name="maintainerShare"
+                inputMode="numeric"
+                hint="Percent of the monthly amount for the people who merge or close outside pull requests. Starts next UTC month."
+                value={value.maintainerShare}
+                error={shown("maintainerShare")}
+                onChange={(entry) => onChange("maintainerShare", entry)}
+              />
+            ) : null}
           </div>
         </Disclosure>
       ) : null}

@@ -1,5 +1,6 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
+  "globalPassThroughEnv": ["QUINT_HOME"],
   "globalDependencies": [
     ".nvmrc",
     "pnpm-workspace.yaml",
@@ -14,6 +15,7 @@
     "!vibestack/**/{node_modules,.cache}/**",
     "!vibestack/selftest.ts",
     "!vibestack/remote-cache.ts",
+    "!vibestack/proof/lib.dfy",
     "!vibestack/{testing,stories,design}/test/**",
     ".cache/toolchain.json"
   ],
@@ -62,6 +64,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "test:browser": {
@@ -70,7 +75,10 @@
         "//#gen",
         "^build"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "check": {
       "dependsOn": [
@@ -92,10 +100,13 @@
       "cache": false
     },
     "//#gen": {
+      "env": ["!VITE_*"],
       "inputs": [
         "spec/**",
         "apps/*/package.json",
+        "apps/*/spec/**",
         "packages/*/package.json",
+        "packages/*/spec/**",
         "package.json"
       ],
       "outputs": [
@@ -110,6 +121,10 @@
       ],
       "inputs": [
         "vibestack/**",
+        "!vibestack/selftest.ts",
+        "!vibestack/selftests/**",
+        "!vibestack/{testing,stories,design}/test/**",
+        "!vibestack/fixtures/**",
         "!vibestack/examples/**",
         "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
         "!**/.DS_Store",
@@ -148,9 +163,11 @@
       ],
       "inputs": [
         "*",
+        "!.git",
         "!*.md",
         "vibestack/**",
         "!vibestack/{examples,studio}/**",
+        "!vibestack/selftests/{docs,examples}.ts",
         "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
         "!**/.DS_Store",
         "spec/**",
@@ -160,6 +177,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "//#selftest:tools:a": {
@@ -173,24 +193,24 @@
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/{assistant,dashboard,fullstack}/**",
+        "!vibestack/selftests/{docs,examples}.ts",
         "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static,__traces__}/**",
         "!**/.DS_Store",
-        "!{apps,packages,vibestack/studio,vibestack/examples}/**/gen/**",
-        "apps/*/package.json",
-        "packages/**",
+        "!vibestack/{studio,examples}/**/gen/**",
         ".agents/**",
         "AGENTS.md",
         "SPEC.md",
-        "README.md",
         "LICENSE",
-        "spec/**",
         "package.json",
         "pnpm-lock.yaml",
         "turbo.json",
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "//#selftest:tools:b": {
       "dependsOn": [
@@ -203,24 +223,24 @@
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/{assistant,dashboard,fullstack}/**",
+        "!vibestack/selftests/{docs,examples}.ts",
         "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static,__traces__}/**",
         "!**/.DS_Store",
-        "!{apps,packages,vibestack/studio,vibestack/examples}/**/gen/**",
-        "apps/*/package.json",
-        "packages/**",
+        "!vibestack/{studio,examples}/**/gen/**",
         ".agents/**",
         "AGENTS.md",
         "SPEC.md",
-        "README.md",
         "LICENSE",
-        "spec/**",
         "package.json",
         "pnpm-lock.yaml",
         "turbo.json",
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "//#selftest:tools:rest": {
       "dependsOn": [
@@ -231,11 +251,14 @@
         "vibestack-studio#test:browser"
       ],
       "inputs": [
+        ".gitignore",
+        "eslint.config.js",
         "vibestack/**",
         "!vibestack/examples/{assistant,dashboard,fullstack}/**",
+        "!vibestack/selftests/{docs,examples}.ts",
         "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static,__traces__}/**",
         "!**/.DS_Store",
-        "!{apps,packages,vibestack/studio,vibestack/examples}/**/gen/**",
+        "!{packages,vibestack/studio,vibestack/examples}/**/gen/**",
         "apps/*/package.json",
         "packages/**",
         ".agents/**",
@@ -250,7 +273,10 @@
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "//#selftest:docs": {
       "inputs": [
@@ -264,6 +290,8 @@
     "//#selftest:examples": {
       "inputs": [
         "vibestack/**",
+        "!vibestack/selftest.ts",
+        "!vibestack/selftests/{docs,tools}.ts",
         "!vibestack/{studio,fixtures}/**",
         "!vibestack/{testing,stories,design}/test/**",
         "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static,__traces__}/**",
@@ -271,7 +299,12 @@
         "!{apps,packages,vibestack/studio,vibestack/examples}/**/gen/**",
         "package.json"
       ],
-      "outputs": []
+      "outputs": [
+        "vibestack/examples/*/.spec-cache/tests-*.json.{gz,zst}"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "//#check": {
       "dependsOn": [
@@ -289,6 +322,17 @@
       "dependsOn": [
         "@repo/design-system#build",
         "@repo/app#typecheck",
+        "@repo/backend#typecheck",
+        "@repo/contributor#typecheck",
+        "@repo/fees#typecheck",
+        "@repo/frontend#typecheck",
+        "@repo/operations#typecheck",
+        "@repo/platform#typecheck",
+        "@repo/points#typecheck",
+        "@repo/ports#typecheck",
+        "@repo/security#typecheck",
+        "@repo/settlement#typecheck",
+        "@repo/slopbot#typecheck",
         "vibestack-studio#typecheck"
       ],
       "inputs": [
@@ -323,6 +367,7 @@
       "outputs": []
     },
     "//#analyze": {
+      "dependsOn": ["//#gen", "@repo/design-system#build", "@repo/ui#gen", "vibestack-studio#gen"],
       "inputs": [
         "apps/**",
         "packages/**",
@@ -349,6 +394,10 @@
     "//#studio": {
       "cache": false,
       "persistent": true
+    },
+    "vibestack-studio#gen": {
+      "env": ["!VITE_*"],
+      "outputs": ["gen/**", "generated/**"]
     },
     "vibestack-studio#dev": {
       "dependsOn": [
@@ -388,10 +437,14 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/vibestack/fixtures/**",
+        "$TURBO_ROOT$/vibestack/proof/lib.dfy",
         "!$TURBO_ROOT$/vibestack/fixtures/**/.DS_Store"
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "vibestack-studio#test:browser": {
@@ -400,11 +453,20 @@
         "^build",
         "//#gen"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "@repo/ui#build": {
       "dependsOn": [
         "^build"
+      ],
+      "inputs": [
+        "package.json",
+        "src/**",
+        "styles.css",
+        "tsconfig.json"
       ],
       "outputs": []
     },
@@ -413,9 +475,7 @@
         "^build",
         "//#gen"
       ],
-      "outputs": [
-        ".vibe/declarations/**"
-      ]
+      "outputs": []
     },
     "@repo/design-system#build": {
       "dependsOn": [
@@ -427,22 +487,21 @@
       ]
     },
     "@repo/contracts#build": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.github/actions/setup/action.yml"],
       "outputs": [
         "evm/out/**"
       ]
     },
-    "@repo/contracts#test": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
+    "@repo/contracts#typecheck": {
+      "dependsOn": [],
       "outputs": []
+    },
+    "@repo/contracts#test": {
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.github/actions/setup/action.yml"],
+      "outputs": [],
+      "env": []
     },
     "@repo/platform#test": {
       "dependsOn": [
@@ -477,6 +536,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "@repo/backend#test": {
@@ -492,6 +554,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "@repo/operations#test": {
@@ -507,6 +572,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "@repo/security#test": {
@@ -522,6 +590,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "@repo/contributor#test": {
@@ -540,6 +611,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "@repo/points#test": {
@@ -555,6 +629,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "@repo/slopbot#test": {
@@ -570,6 +647,26 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
+    },
+    "@repo/settlement#build": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "@repo/backend#build",
+        "@repo/operations#build",
+        "@repo/platform#build",
+        "@repo/points#build",
+        "@repo/ports#build",
+        "@repo/security#build"
+      ],
+      "outputs": [
+        "dist/**",
+        "generated/**",
+        "storybook-static/**"
       ]
     },
     "@repo/settlement#test": {
@@ -592,6 +689,25 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
+    },
+    "@repo/fees#build": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "@repo/backend#build",
+        "@repo/operations#build",
+        "@repo/platform#build",
+        "@repo/ports#build",
+        "@repo/settlement#build"
+      ],
+      "outputs": [
+        "dist/**",
+        "generated/**",
+        "storybook-static/**"
       ]
     },
     "@repo/fees#test": {
@@ -608,6 +724,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "@repo/frontend#test": {
@@ -623,6 +742,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "//#formal:check": {

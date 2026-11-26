@@ -63,6 +63,12 @@ observations to the census digest. A verified distinct squash SHA prevents
 duplicate credit in later PRs without adding line weights to the earlier pool.
 Unavailable evidence holds the source and any proven conflicting later claim.
 
+A rolling standalone assessment that overlaps verified earlier accepted
+commits holds its implementation credit for joint review. Its qualifying
+reviews keep their own assessment binding. Use a release reader that supports
+this coverage when reusing the snapshot or a retained donor. Earlier validators
+refuse this coverage before Points generation.
+
 An ordinary PR uses its accepted commit changes. A grouped work unit requires
 the exact retained valuation decision and claim paths. A retained-copy fallback
 requires the canonical verified original-source binding; a description link
@@ -74,6 +80,9 @@ IDs for largest-remainder ties. A sole verified recipient needs no line ratio.
 Use the workflow's default `apply=false` to collect and preview. `month` limits
 one census piece; `candidate_month` limits which pools get new proofs without
 removing the rest from the inventory. Blank month collects the complete census.
+Collect month pieces in calendar order: a repository's later month reuses the
+commit statistics its earlier months loaded, so the collector refuses a later
+month while an earlier month of that repository has no piece.
 Bounded month runs collect and preview only. Apply once from the complete resumed
 historical scope, without either month filter. The workflow leaves time to upload checkpoints before its job limit. Resume
 with `resume_run` from this repository's same manual workflow on main. The

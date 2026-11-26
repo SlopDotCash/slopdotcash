@@ -176,8 +176,8 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     ]
     const later = [
       try revision({ actor: ada, login: "ada", category: "resolved-issue", source: "105", amount: 10, occurredAt: "2026-10-08T09:00:00.000Z", recordedAt: november, previous: issue }),
-      try revision({ actor: grace, login: "grace", category: "slopbot-penalty", source: "penalty-1", amount: -30, occurredAt: "2026-10-20T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 3, reversedAt: null, reversal: null } }),
-      try revision({ actor: idle, login: "idle", category: "slopbot-penalty", source: "penalty-2", amount: -30, occurredAt: "2026-10-21T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 3, reversedAt: null, reversal: null } }),
+      try revision({ actor: grace, login: "grace", category: "slopbot-penalty", source: "penalty-1", amount: -30, occurredAt: "2026-10-20T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 30, reversedAt: null, reversal: null } }),
+      try revision({ actor: idle, login: "idle", category: "slopbot-penalty", source: "penalty-2", amount: -30, occurredAt: "2026-10-21T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 30, reversedAt: null, reversal: null } }),
     ]
     try registered(widgets, 1, { payoutExclusions: [{ actorId: String(owner), relationship: "owner", fromCycle: "2026-09", untilCycle: null }] })
     try imported("1".repeat(64), "2026-10-31T23:30:00.000Z", first)

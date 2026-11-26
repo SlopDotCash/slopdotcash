@@ -2,13 +2,12 @@
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { D1 } from "@repo/platform/d1"
-import { d1Http } from "@repo/platform/d1Http"
+import { d1Http, registryDatabases } from "@repo/platform/d1Http"
 import { gitBytes } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { type Journal, journalText } from "../../kernels/records/canonical.ts"
 import { batchDigest } from "../../kernels/records/ids.vibe"
 import { participationBans } from "../../collect/feeds/bans.vibe"
-import { databases } from "../../evaluations/check.vibe"
 import { actionsToken } from "../../ingestion/token.vibe"
 import { protectionEvidence } from "../../publication/protection.vibe"
 import { publishedJournal, publishedRegistry } from "../collect/published.vibe"
@@ -155,7 +154,7 @@ export effect function applyCorrections(args: ReadonlyArray<string>) {
   const journal = try during("public Points read", publishedJournal())
   const accountId = try during("private financial protection read", Config.String("CLOUDFLARE_ACCOUNT_ID"))
   const apiToken = try during("private financial protection read", Config.Redacted("CLOUDFLARE_API_TOKEN"))
-  const database = d1Http({ accountId, databaseId: databases.production, token: apiToken })
+  const database = d1Http({ accountId, databaseId: registryDatabases.production, token: apiToken })
   const protection = try during("private financial protection read", protectionRead(database, collection))
   const actors = retainedActors(collection)
   const token = try during("participation restrictions read", actionsToken())

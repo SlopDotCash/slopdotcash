@@ -180,5 +180,5 @@ function Intake({ section, project, form }: { section: ProgramRuntime; project: 
   useOnce(section, `readiness:${project.id}`, () => checkReadiness(project.id));
   const readiness = useView(section, watchReadiness) ?? { status: "checking" as const };
   const shown = readiness.status === "checking" || readiness.projectId === project.id ? readiness : { status: "checking" as const };
-  return <IntakePanel readiness={shown} form={form} onCheck={() => void run(section, checkReadiness(project.id))} />;
+  return <IntakePanel readiness={shown} project={project} form={form} onCheck={() => void run(section, checkReadiness(project.id))} />;
 }

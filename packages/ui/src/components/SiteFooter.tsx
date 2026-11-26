@@ -1,29 +1,36 @@
 import type { ComponentProps, ReactNode } from "react";
 import { childFocusRing, childTarget, cn } from "../lib/cn.ts";
+import { shell } from "./SiteHeader.tsx";
 
 export type SiteFooterProps = ComponentProps<"footer"> & {
   /** The links of the community: repository, documentation, X and the like. */
   children?: ReactNode;
   /** The name of the links' navigation landmark. */
   label?: string;
-  /** Shown before the links, usually a small `Logo`. */
+  /** Shown before the links, usually a `Logo`. */
   brand?: ReactNode;
-  /** One tight row, for a page that needs the room. */
+  /** One tight row on a card's surface, for a page that needs the room. */
   compact?: boolean;
 };
 
 /**
- * The page's closing row of community links: on the accent, as development's marketing footer, or on a card's surface
- * when compact. On the accent the focus ring takes the accent's text color, which the ring token would match.
+ * The page's closing row: the brand at the start and the community links in a right-aligned column, on the accent
+ * as development's marketing footer, or on a card's surface when compact. On the accent the focus ring takes the
+ * accent's text color, which the ring token would match.
  */
 export function SiteFooter({ label = "Community", brand, compact = false, className, children, ...props }: SiteFooterProps) {
   return (
-    <footer className={cn("text-sm", compact ? "border-t border-border bg-card text-card-foreground" : "bg-primary text-primary-foreground", className)} {...props}>
-      <div className={cn("mx-auto flex max-w-(--breakpoint-lg) flex-wrap items-center gap-x-6 gap-y-3 px-4", compact ? "py-3" : "py-12")}>
-        {brand}
+    <footer className={cn("overflow-x-clip", compact ? "bg-card text-card-foreground" : "bg-primary text-primary-foreground", className)} {...props}>
+      <div className={cn(shell, "flex flex-wrap justify-between", compact ? "items-center gap-4 py-6" : "items-end gap-8 py-12")}>
+        {brand ? <div className="flex min-w-0 flex-col items-start gap-5">{brand}</div> : null}
         <nav
           aria-label={label}
-          className={cn(childFocusRing, childTarget, "flex flex-wrap gap-x-4 gap-y-2 *:rounded-sm *:underline-offset-4 *:hover:underline", !compact && "*:focus-visible:ring-primary-foreground")}
+          className={cn(
+            childFocusRing,
+            childTarget,
+            "ml-auto flex min-w-0 max-w-full flex-col items-end gap-3 font-semibold *:w-fit *:max-w-full *:rounded-sm *:wrap-anywhere *:underline-offset-4 *:hover:underline",
+            compact ? "text-sm" : "text-base leading-page *:focus-visible:ring-primary-foreground",
+          )}
         >
           {children}
         </nav>

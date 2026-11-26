@@ -1,0 +1,355 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { type Hex, concat, encodeAbiParameters, encodeEventTopics, erc20Abi, toHex } from "viem"
+import { SubmissionFeeRatesLive } from "@repo/backend/live"
+import type { D1Database } from "@repo/platform/bindings"
+import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { type Served, serve } from "@repo/platform/testing/chains"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { internet } from "@repo/platform/testing/internet"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { asFetch } from "@repo/platform/testing/quotes"
+import type { SubmissionFeeRates } from "@repo/ports/backend"
+import type { ReportDeposits } from "@repo/ports/security"
+import type { SubmissionFeeItems } from "@repo/ports/slopbot"
+import { ReportDepositsLive } from "@repo/security/live"
+import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
+import { askItem, dueOutcome } from "@repo/slopbot/fee/items"
+import { burnAddress, depositContract, feeWallet } from "../gen/backend__submissionFeeTerms.ts"
+import { submissionDepositsAbi } from "../src/submissionFee/abi.ts"
+import { submissionFeeChain } from "../src/submissionFee/chain.vibe"
+import type { NetworkConfig } from "../src/submissionFee/config.vibe"
+import { keptFees, keptSubmissionFees } from "../src/submissionFee/income.vibe"
+import { judgeDeposits } from "../src/submissionFee/judge.vibe"
+import { planResolutions } from "../src/submissionFee/plan.vibe"
+import { scan } from "../src/submissionFee/scan.vibe"
+
+const network = "robinhood-mainnet"
+const contract = depositContract.toLowerCase() as Hex
+const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as Hex
+const slop = "0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae" as Hex
+const foreign = "0x000000000000000000000000000000000000beef" as Hex
+const payer = "0x00000000000000000000000000000000000000a1" as Hex
+const wallet = feeWallet.toLowerCase() as Hex
+const burn = burnAddress.toLowerCase() as Hex
+const start = Date.parse("2026-11-22T00:00:00.000Z")
+const day = 24 * 60 * 60 * 1000
+
+interface Deposit {
+  readonly id: bigint
+  readonly item: Hex
+  readonly token: Hex
+  readonly amount: bigint
+  readonly keptTo: Hex
+  readonly block: number
+}
+
+interface Resolution {
+  readonly id: bigint
+  readonly refunded: boolean
+  readonly block: number
+  readonly token: Hex
+  readonly to: Hex
+  readonly amount: bigint
+}
+
+interface Ledger {
+  latest: number
+  finalized: number
+  deposits: Deposit[]
+  resolutions: Resolution[]
+}
+
+interface Wire {
+  readonly block: number
+  readonly tx: Hex
+  readonly logs: ReadonlyArray<{ readonly address: Hex; readonly topics: ReadonlyArray<Hex>; readonly data: Hex }>
+}
+
+service World {
+  readonly db: D1Database
+  readonly clock: SettableClock
+  readonly ledger: Ledger
+  readonly fetch: typeof globalThis.fetch
+  readonly network: NetworkConfig
+}
+
+function item(n: number) {
+  return toHex(n, { size: 32 })
+}
+
+function blockHash(n: number) {
+  return concat([toHex(1, { size: 7 }), toHex(n, { size: 25 })])
+}
+
+function txOf(kind: number, id: bigint, block: number, amount: bigint) {
+  return concat([toHex(kind, { size: 12 }), toHex(id, { size: 8 }), toHex(block, { size: 4 }), toHex(amount & 0xffffffffffffffffn, { size: 8 })])
+}
+
+function wires(ledger: Ledger): ReadonlyArray<Wire> {
+  const deposited = ledger.deposits.map((deposit) => ({
+    block: deposit.block,
+    tx: txOf(1, deposit.id, deposit.block, deposit.amount),
+    logs: [{
+      address: contract,
+      topics: encodeEventTopics({ abi: submissionDepositsAbi, eventName: "Deposited", args: { id: deposit.id, item: deposit.item, payer } }) as ReadonlyArray<Hex>,
+      data: encodeAbiParameters([{ type: "address" }, { type: "uint128" }, { type: "address" }], [deposit.token, deposit.amount, deposit.keptTo]),
+    }],
+  }))
+  const resolved = ledger.resolutions.map((resolution) => ({
+    block: resolution.block,
+    tx: txOf(2, resolution.id, resolution.block, resolution.amount),
+    logs: [
+      {
+        address: contract,
+        topics: encodeEventTopics({ abi: submissionDepositsAbi, eventName: "Resolved", args: { id: resolution.id } }) as ReadonlyArray<Hex>,
+        data: encodeAbiParameters([{ type: "bool" }], [resolution.refunded]),
+      },
+      {
+        address: resolution.token,
+        topics: encodeEventTopics({ abi: erc20Abi, eventName: "Transfer", args: { from: contract, to: resolution.to } }) as ReadonlyArray<Hex>,
+        data: encodeAbiParameters([{ type: "uint256" }], [resolution.amount]),
+      },
+    ],
+  }))
+  return [...deposited, ...resolved]
+}
+
+function logsOf(wire: Wire) {
+  return wire.logs.map((log, index) => ({ ...log, blockNumber: toHex(wire.block), blockHash: blockHash(wire.block), transactionHash: wire.tx, transactionIndex: "0x0", logIndex: toHex(index), removed: false }))
+}
+
+function blockOf(ledger: Ledger, n: number) {
+  return { number: toHex(n), hash: blockHash(n), parentHash: blockHash(n - 1), timestamp: toHex(1_800_000_000 + n * 2), transactions: wires(ledger).filter((wire) => wire.block === n).map((wire) => wire.tx), baseFeePerGas: "0x1" }
+}
+
+function chainRpc(ledger: Ledger): Handler {
+  return async (request) => {
+    const call = JSON.parse(await request.text()) as { readonly id: unknown; readonly method: string; readonly params: ReadonlyArray<unknown> }
+    const answered = (result: unknown) => Response.json({ jsonrpc: "2.0", id: call.id, result })
+    switch (call.method) {
+      case "eth_chainId": return answered(toHex(4663))
+      case "eth_getBlockByNumber": {
+        const tag = String(call.params[0])
+        return answered(blockOf(ledger, tag === "latest" ? ledger.latest : tag === "finalized" ? ledger.finalized : Number(BigInt(tag))))
+      }
+      case "eth_getLogs": {
+        const filter = call.params[0] as { readonly fromBlock: string; readonly toBlock: string }
+        const [from, to] = [Number(BigInt(filter.fromBlock)), Number(BigInt(filter.toBlock))]
+        return answered(wires(ledger).filter((wire) => wire.block >= from && wire.block <= to).flatMap((wire) => logsOf(wire).filter((log) => log.address === contract)))
+      }
+      case "eth_getTransactionReceipt": {
+        const wire = wires(ledger).find((each) => each.tx === String(call.params[0]))
+        return answered(wire === undefined ? null : { transactionHash: wire.tx, blockHash: blockHash(wire.block), blockNumber: toHex(wire.block), transactionIndex: "0x0", status: "0x1", from: payer, to: contract, gasUsed: "0x1", logs: logsOf(wire) })
+      }
+      default: return Response.json({ jsonrpc: "2.0", id: call.id, error: { code: -32601, message: `unexpected ${call.method}` } })
+    }
+  }
+}
+
+const Started = Layer.effect(World, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { FEE_DB: "fees-submission-fee" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "FEE_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  const db = try promise(() => database(mf, "FEE_DB"))
+  const ledger: Ledger = { latest: 0, finalized: 0, deposits: [], resolutions: [] }
+  const handler = chainRpc(ledger)
+  const served: Served = try acquireRelease(promise(() => serve(handler)), (server) => promise(() => server.close()))
+  const net = internet({ rpc: { [served.url]: handler } })
+  const config: NetworkConfig = { network, chainId: 4663, contract, startBlock: 1, rpcUrl: Redacted.make(served.url), confirmations: 2, scanPageBlocks: 8, gas: { perTransactionWei: 1n, perDayWei: 1n } }
+  return { db, clock: settableClock(start), ledger, fetch: asFetch(net.handler), network: config }
+})
+
+effect function provided<A, E>(program: A!E!(D1 | HttpClient.HttpClient | SubmissionFeeItems | ReportDeposits | SubmissionFeeRates)) {
+  const world = try World
+  const storage = d1(world.db)
+  const services = Layer.mergeAll(storage, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), storage), world.clock.layer, FetchHttpClient.layer)
+  return try Effect.provideService(Effect.provide(program, services), FetchHttpClient.Fetch, world.fetch)
+}
+
+effect function runOnce() {
+  const world = try World
+  return try provided(effect {
+    const chain = try submissionFeeChain({ network: world.network, signer: null })
+    const scanned = try scan(world.network, chain)
+    const judged = try judgeDeposits(network)
+    const planned = try planResolutions(network)
+    return { scanned, judged, planned }
+  })
+}
+
+effect function write(statement: Statement) {
+  return try provided(effect { return try (try D1).run(statement) })
+}
+
+schema DepositSeen { readonly deposit_id: number; readonly accepted: number | null; readonly reject_reason: string | null; readonly state: string; readonly final: number; readonly amount: string }
+schema PaidSeen { readonly key: string; readonly paid_deposit_id: number | null; readonly outcome: string | null }
+schema CursorSeen { readonly next_block: number }
+
+effect function seen() {
+  return try provided(effect {
+    const deposits = try rows(DepositSeen, sql`SELECT deposit_id, accepted, reject_reason, state, finalized_at IS NOT NULL AS final, amount FROM submission_fee_deposits ORDER BY deposit_id`)
+    const paid = try rows(PaidSeen, sql`SELECT 'pull:' || pull_number AS key, paid_deposit_id, outcome FROM submission_fee_items
+      UNION ALL SELECT 'case:' || case_id AS key, paid_deposit_id, outcome FROM security_report_deposits ORDER BY key`)
+    const cursor = try rows(CursorSeen, sql`SELECT next_block FROM submission_fee_cursors WHERE network = ${network}`)
+    return { deposits, paid, cursor: cursor[0]?.next_block ?? null }
+  })
+}
+
+effect function ask(pullNumber: number, itemNumber: number, stableMinor = "2000000") {
+  try write(askItem({ pull: { repositoryId: 900, pullNumber }, projectId: "pr_submission_fee", item: item(itemNumber), stableMinor, askedAt: "2026-11-21T00:00:00.000Z" }))
+}
+
+function deposit(ledger: Ledger, made: Deposit) {
+  ledger.deposits = [...ledger.deposits.filter((each) => each.id !== made.id), made]
+}
+
+function heads(ledger: Ledger, latest: number, finalized: number) {
+  ledger.latest = latest
+  ledger.finalized = finalized
+}
+
+layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('A pull request is paid by a confirmed deposit, follows reorganisations and keeps its judgement at finality (spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges")', () => effect {
+    const { ledger } = try World
+    try ask(1, 1)
+    try ask(2, 2)
+    deposit(ledger, { id: 1n, item: item(1), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 10 })
+    heads(ledger, 13, 5)
+    const confirmed = try runOnce()
+    const paidBeforeFinal = try seen()
+    deposit(ledger, { id: 1n, item: item(1), token: usdg, amount: 1_000_000n, keptTo: wallet, block: 10 })
+    try runOnce()
+    const changedShort = try seen()
+    deposit(ledger, { id: 1n, item: item(1), token: usdg, amount: 2_500_000n, keptTo: wallet, block: 10 })
+    try runOnce()
+    const changedAgain = try seen()
+    heads(ledger, 22, 20)
+    const finalized = try runOnce()
+    const atFinality = try seen()
+    deposit(ledger, { id: 2n, item: item(2), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 24 })
+    heads(ledger, 27, 20)
+    try runOnce()
+    const secondPaid = try seen()
+    ledger.deposits = ledger.deposits.filter((each) => each.id !== 2n)
+    heads(ledger, 28, 20)
+    try runOnce()
+    const reorganised = try seen()
+    try Effect.try(() => assert.deepStrictEqual({
+      confirmed: confirmed.judged,
+      paidBeforeFinal: [paidBeforeFinal.deposits, paidBeforeFinal.paid, paidBeforeFinal.cursor],
+      changedShort: [changedShort.deposits[0], changedShort.paid[0]],
+      changedAgain: [changedAgain.deposits[0], changedAgain.paid[0]],
+      finalized: [finalized.scanned, atFinality.deposits[0], atFinality.paid[0], atFinality.cursor],
+      secondPaid: secondPaid.paid[1],
+      reorganised: [reorganised.deposits.length, reorganised.paid[1]],
+    }, {
+      confirmed: { judged: 1, paid: 1 },
+      paidBeforeFinal: [[{ deposit_id: 1, accepted: 1, reject_reason: null, state: "open", final: 0, amount: "2000000" }], [{ key: "pull:1", paid_deposit_id: 1, outcome: null }, { key: "pull:2", paid_deposit_id: null, outcome: null }], 6],
+      changedShort: [{ deposit_id: 1, accepted: 0, reject_reason: "amount_below_due", state: "open", final: 0, amount: "1000000" }, { key: "pull:1", paid_deposit_id: null, outcome: null }],
+      changedAgain: [{ deposit_id: 1, accepted: 1, reject_reason: null, state: "open", final: 0, amount: "2500000" }, { key: "pull:1", paid_deposit_id: 1, outcome: null }],
+      finalized: [{ finalizedThrough: 20, recorded: 1, resolved: 0 }, { deposit_id: 1, accepted: 1, reject_reason: null, state: "open", final: 1, amount: "2500000" }, { key: "pull:1", paid_deposit_id: 1, outcome: null }, 21],
+      secondPaid: { key: "pull:2", paid_deposit_id: 2, outcome: null },
+      reorganised: [1, { key: "pull:2", paid_deposit_id: null, outcome: null }],
+    }))
+  })
+
+  it.effect('Short, foreign, unknown and second deposits are refused, and only accepted tokens are refunded once final (spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row\'s due outcome or a refund"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract\'s finalized events")', () => effect {
+    const { ledger, clock } = try World
+    try ask(3, 3)
+    try ask(4, 4)
+    deposit(ledger, { id: 3n, item: item(3), token: usdg, amount: 1_000_000n, keptTo: wallet, block: 30 })
+    deposit(ledger, { id: 4n, item: item(3), token: foreign, amount: 5_000_000n, keptTo: wallet, block: 31 })
+    deposit(ledger, { id: 5n, item: item(99), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 32 })
+    deposit(ledger, { id: 6n, item: item(4), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 33 })
+    deposit(ledger, { id: 7n, item: item(4), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 33 })
+    heads(ledger, 40, 36)
+    const first = try runOnce()
+    const judgedAtOnce = try seen()
+    clock.set(start + day + 60_000)
+    const later = try runOnce()
+    const afterGrace = try seen()
+    ledger.resolutions = [...ledger.resolutions, { id: 3n, refunded: true, block: 41, token: usdg, to: payer, amount: 1_000_000n }]
+    heads(ledger, 46, 44)
+    try runOnce()
+    const refunded = try seen()
+    const state = (id: number, view: typeof refunded) => view.deposits.find((row) => row.deposit_id === id)
+    try Effect.try(() => assert.deepStrictEqual({
+      first: [first.judged, first.planned],
+      atOnce: [3, 4, 5, 6, 7].map((id) => state(id, judgedAtOnce)),
+      later: [later.judged, later.planned],
+      afterGrace: state(5, afterGrace),
+      refunded: [state(3, refunded)?.state, state(4, refunded)?.state, refunded.paid.find((row) => row.key === "pull:4")],
+    }, {
+      first: [{ judged: 4, paid: 1 }, [{ id: 3, refund: true }, { id: 7, refund: true }]],
+      atOnce: [
+        { deposit_id: 3, accepted: 0, reject_reason: "amount_below_due", state: "refund_due", final: 1, amount: "1000000" },
+        { deposit_id: 4, accepted: 0, reject_reason: "token_not_accepted", state: "open", final: 1, amount: "5000000" },
+        { deposit_id: 5, accepted: null, reject_reason: null, state: "open", final: 1, amount: "2000000" },
+        { deposit_id: 6, accepted: 1, reject_reason: null, state: "open", final: 1, amount: "2000000" },
+        { deposit_id: 7, accepted: 0, reject_reason: "item_already_paid", state: "refund_due", final: 1, amount: "2000000" },
+      ],
+      later: [{ judged: 1, paid: 0 }, [{ id: 3, refund: true }, { id: 5, refund: true }, { id: 7, refund: true }]],
+      afterGrace: { deposit_id: 5, accepted: 0, reject_reason: "unknown_item", state: "refund_due", final: 1, amount: "2000000" },
+      refunded: ["refunded", "open", { key: "pull:4", paid_deposit_id: 6, outcome: null }],
+    }))
+  })
+
+  it.effect('A report\'s SLOP deposit pays its asked row and a recorded row is never paid (spec/fees/submissionFeeReportDeposits.md, "A deposit pays a report only as SLOP to the burn address on Robinhood Chain for an asked row"; spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain")', () => effect {
+    const { ledger, clock } = try World
+    try write(sql`INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at)
+      VALUES ('sc_asked', 'pr_submission_fee', ${item(50)}, 'asked', '75000000000000000000', '15', '2026-11-21T00:00:00.000Z'),
+             ('sc_recorded', 'pr_submission_fee', ${item(51)}, 'recorded', '75000000000000000000', '15', '2026-11-21T00:00:00.000Z')`)
+    deposit(ledger, { id: 8n, item: item(50), token: slop, amount: 75_000_000_000_000_000_000n, keptTo: burn, block: 50 })
+    deposit(ledger, { id: 9n, item: item(51), token: slop, amount: 75_000_000_000_000_000_000n, keptTo: burn, block: 51 })
+    heads(ledger, 56, 54)
+    const ran = try runOnce()
+    clock.set(start + 3 * day)
+    try runOnce()
+    const after = try seen()
+    try Effect.try(() => assert.deepStrictEqual({
+      judged: ran.judged,
+      deposits: after.deposits.filter((row) => row.deposit_id >= 8).map((row) => [row.deposit_id, row.accepted, row.reject_reason, row.state]),
+      reports: after.paid.filter((row) => row.key.startsWith("case:")),
+    }, {
+      judged: { judged: 1, paid: 1 },
+      deposits: [[8, 1, null, "open"], [9, 0, "unknown_item", "refund_due"]],
+      reports: [{ key: "case:sc_asked", paid_deposit_id: 8, outcome: null }, { key: "case:sc_recorded", paid_deposit_id: null, outcome: null }],
+    }))
+  })
+
+  it.effect('Only a finalized kept stablecoin deposit counts as kept fee income (spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract\'s finalized events")', () => effect {
+    const { ledger } = try World
+    try ask(5, 5)
+    deposit(ledger, { id: 10n, item: item(5), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 60 })
+    heads(ledger, 64, 62)
+    try runOnce()
+    try write(dueOutcome({ repositoryId: 900, pullNumber: 5 }, "kept_due", "2026-11-25T00:00:00.000Z"))
+    const due = try runOnce()
+    ledger.resolutions = [...ledger.resolutions, { id: 10n, refunded: false, block: 66, token: usdg, to: wallet, amount: 2_000_000n }]
+    heads(ledger, 68, 65)
+    const unfinalized = try runOnce()
+    const beforeFinal = try provided(keptSubmissionFees({ networks: [network], token: usdg, feeWallet: wallet, since: "2026-01-01T00:00:00.000Z" }))
+    heads(ledger, 70, 68)
+    try runOnce()
+    const after = try seen()
+    const counted = try provided(keptSubmissionFees({ networks: [network], token: usdg.toUpperCase().replace("0X", "0x"), feeWallet: wallet, since: "2026-01-01T00:00:00.000Z" }))
+    const listed = try provided(keptFees({ network, since: "2026-01-01T00:00:00.000Z" }))
+    try Effect.try(() => assert.deepStrictEqual({
+      due: due.planned.filter((entry) => entry.id === 10),
+      unfinalized: unfinalized.scanned.resolved,
+      beforeFinal,
+      kept: [after.deposits.find((row) => row.deposit_id === 10)?.state, after.paid.find((row) => row.key === "pull:5")],
+      counted,
+      listed: listed.map((fee) => [fee.deposit, fee.amount]),
+    }, {
+      due: [{ id: 10, refund: false }],
+      unfinalized: 0,
+      beforeFinal: 0n,
+      kept: ["kept", { key: "pull:5", paid_deposit_id: 10, outcome: "kept" }],
+      counted: 2_000_000n,
+      listed: [[`${network}:10`, 2_000_000n]],
+    }))
+  })
+})

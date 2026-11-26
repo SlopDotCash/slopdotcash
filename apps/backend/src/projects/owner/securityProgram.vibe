@@ -1,0 +1,104 @@
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"
+import type { Actor } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { type ProgramStatus, ProgramRefused, SecurityProgramPublication } from "@repo/ports/security"
+import type { Checked } from "../../authority/live.vibe"
+import { postProjects, putProjectsById } from "../../client/refusals.vibe"
+import { type StoredAsset, verifiedAsset } from "../tokens/metadata.vibe"
+import { monthlyAmount, refusal } from "./manifest.vibe"
+import { type Json, objectOf } from "./revisionChanges.ts"
+
+const refusals = {
+  ProgramRequired: putProjectsById.securityProgramRequired,
+  SplitRestricted: putProjectsById.securitySplitRestrictedOnlyAnAdminCan,
+  NewSplitRestricted: postProjects.securitySplitRestricted,
+  ContactsRestricted: putProjectsById.securityContactsRestrictedOnlyTheProjectSteward,
+  ContactsRestrictedNew: postProjects.securityContactsRestricted,
+  VaultRestricted: putProjectsById.securityVaultRestricted,
+  AssetRestricted: putProjectsById.securityAssetRestricted,
+  FundingUnavailable: putProjectsById.securityFundingUnavailable,
+  InvalidManifest: putProjectsById.invalidManifest,
+} as const satisfies Readonly<Record<ProgramRefused["kind"], Parameters<typeof refusal>[0]>>
+
+const statuses: ReadonlyArray<ProgramStatus> = ["draft", "pending-approval", "open", "paused", "closed"]
+
+export function requestedStatus(manifest: Json): ProgramStatus | undefined {
+  const status = objectOf(manifest.securityBounty)?.status
+  return statuses.find((known) => known === status)
+}
+
+export function stagedProgram(manifest: Json): Json {
+  const program = objectOf(manifest.securityBounty)
+  if (program === undefined) return manifest
+  return { ...manifest, securityBounty: { ...program, status: program.status === "open" ? "paused" : program.status, funding: { state: "pledged" } } }
+}
+
+export function managesContacts(manifest: Json, actor: Actor, checked: Checked): boolean {
+  const steward = objectOf(objectOf(manifest.steward)?.github)
+  const access = checked.access
+  return actor.githubId === String(steward?.actorId) || (access.state === "read" && access.access.installation === "installed" && access.access.permission === "admin")
+}
+
+export interface ProgramRevision {
+  readonly projectId: string
+  readonly actor: Actor
+  readonly previous: Json | undefined
+  readonly next: Json
+  readonly status: ProgramStatus | undefined
+  readonly canManageContacts: boolean
+}
+
+export effect function publishedProgram(revision: ProgramRevision) {
+  const { projectId, actor, previous, next, status, canManageContacts } = revision
+  const administrator = try (try Roles).has(actor.githubId, "administrator")
+  const port = try SecurityProgramPublication
+  const published = port.publish({
+    projectId,
+    actor: { githubId: actor.githubId, login: actor.login },
+    administrator,
+    canManageContacts,
+    creating: previous === undefined,
+    previous,
+    next,
+    ...(status === undefined ? {} : { status }),
+  }) catch effect (error) => {
+    if (error instanceof ProgramRefused) throw refusal(refusals[error.kind], error.message)
+    throw error
+  }
+  const { securityBounty: _submitted, ...rest } = next
+  return (published.securityBounty === undefined ? rest : { ...rest, securityBounty: published.securityBounty }) satisfies Json
+}
+
+function storedAsset(value: unknown): (StoredAsset & Json) | undefined {
+  const asset = objectOf(value)
+  if (asset === undefined || typeof asset.network !== "string" || typeof asset.address !== "string" || typeof asset.decimals !== "number") return undefined
+  return { ...asset, network: asset.network, address: asset.address, decimals: asset.decimals }
+}
+
+const bountyAmountPattern = /^(0|[1-9]\d{0,12})(?:\.(\d{1,36}))?$/u
+
+effect function grossMinorOf(amount: string, decimals: number) {
+  const fraction = bountyAmountPattern.exec(amount)?.[2] ?? ""
+  if (bountyAmountPattern.test(amount) && !(fraction.length > decimals) && !(Number.isInteger(decimals) && decimals >= 0 && decimals <= 36)) throw refusal(putProjectsById.invalidManifestNoStore, "The bounty amount is invalid: asset decimals must be an integer from 0 to 36")
+  const parsed = try monthlyAmount(amount, { decimals })
+  if (parsed.kind === "invalid") throw refusal(putProjectsById.invalidManifestNoStore, `The bounty amount is invalid: ${parsed.reason}`)
+  return parsed.minor
+}
+
+export effect function withBountyAmount(manifest: Json, prior: unknown, amount: string | undefined) {
+  const program = objectOf(manifest.securityBounty)
+  if (program === undefined) {
+    if (amount !== undefined) throw refusal(putProjectsById.invalidManifestABountyAmountNeeds)
+    return manifest
+  }
+  const terms = objectOf(program.amount)
+  if (terms === undefined) return manifest
+  const priorAmount = objectOf(objectOf(prior)?.amount)
+  const priorAsset = storedAsset(priorAmount?.asset)
+  const asset = terms.asset === undefined ? undefined : try verifiedAsset(terms.asset, priorAsset)
+  const sameAsset = asset !== undefined && priorAsset !== undefined && asset.network === priorAsset.network && asset.kind === priorAsset.kind && asset.address === priorAsset.address
+  if (asset !== undefined && amount === undefined && (!sameAsset || terms.grossMinor !== priorAmount?.grossMinor)) throw refusal(putProjectsById.invalidManifestSendTheBountyAmount)
+  const grossMinor = amount === undefined ? terms.grossMinor : try grossMinorOf(amount, asset?.decimals ?? Number(terms.decimals))
+  const verified = asset === undefined ? {} : { asset, currency: asset.symbol, decimals: asset.decimals, network: asset.network }
+  return { ...manifest, securityBounty: { ...program, amount: { ...terms, grossMinor, ...verified } } } satisfies Json
+}

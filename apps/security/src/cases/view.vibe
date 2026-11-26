@@ -1,12 +1,14 @@
-// spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+// spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/settlement/privateAward.md, "Exact amounts are shown before authorization"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { first, sql } from "@repo/platform/d1"
 import type { Json } from "@repo/ports/backend"
 import type { PrivateCase } from "../../gen/security__cases.ts"
-import { awardOpen, canAppeal, canRejectLink, receiptOpen } from "../../gen/security__cases.effect.vibe"
+import { awardOpen, canAppeal, canRejectLink, mayRequestReceiptCheck, receiptOpen, routineAppealable } from "../../gen/security__cases.effect.vibe"
 import { assessmentRead } from "../assessment/routes.vibe"
+import { depositNextStep, depositNeeded, depositView } from "../deposit/view.vibe"
 import { reporterView, storedIntake, submission } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
+import { routineProofNextAction } from "../routine/reasons.ts"
 import type { CaseRole } from "../receipt/statements.vibe"
 import { sharesOf } from "../terms/receipt.vibe"
 import { type CaseRecord, type EventRow, detailOf } from "./rows.vibe"
@@ -19,10 +21,11 @@ export interface NextStep {
 }
 
 export interface PaymentView {
-  readonly nextStep?: NextStep
-  readonly paymentState?: string
+  readonly nextStep?: string
+  readonly settlementState?: string | null
+  readonly railAvailable?: boolean
   readonly paymentRail?: "direct" | "escrow" | "unavailable"
-  readonly settlement?: Json
+  readonly settlement?: Json | null
   readonly paymentNetworks?: ReadonlyArray<string>
 }
 
@@ -45,11 +48,16 @@ function has(roles: ReadonlySet<CaseRole>, role: CaseRole) {
 
 export function caseActions(observed: Observed, viewer: number): ReadonlyArray<string> {
   const { model, roles, epoch } = observed
+  if (!observed.record.valid) return []
   const maintainer = has(roles, "security-maintainer")
-  if (model.submission !== "Verified") return model.submission === "Claimed" && maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link"] : []
+  if (model.submission !== "Verified") {
+    if (model.submission !== "Claimed") return []
+    const check = mayRequestReceiptCheck(model, viewer, epoch) ? ["check-receipt"] : []
+    return maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link", ...check] : check
+  }
   const actions: string[] = []
   const open = receiptOpen(model)
-  if (has(roles, "reporter") && canAppeal(model, viewer)) actions.push("appeal")
+  if (has(roles, "reporter") && (canAppeal(model, viewer) || routineAppealable(model, viewer))) actions.push("appeal")
   if (maintainer) {
     if (open) actions.push("request-information", "decide")
     if (model.terms.paidTerms && (awardOpen(model) || (model.award === "Reserved" && model.appeal !== "AppealOpen"))) actions.push("award")
@@ -61,11 +69,29 @@ export function caseActions(observed: Observed, viewer: number): ReadonlyArray<s
 }
 
 effect function dueAt(row: CaseRecord["row"], acknowledgeHours: number | undefined) {
-  if (row.receipt_state !== "received" || row.received_at === null || acknowledgeHours === undefined) return null
-  return try isoAt(millisOf(row.received_at) + acknowledgeHours * 3600000)
+  if (row.receipt_state !== "received" || row.verified_at === null || acknowledgeHours === undefined) return null
+  return try isoAt(millisOf(row.verified_at) + acknowledgeHours * 3600000)
 }
 
-effect function nextStep(observed: Observed): NextStep!! {
+function paymentStep(observed: Observed, payment: PaymentView): NextStep {
+  const { row } = observed.record
+  const roles = observed.roles
+  const dueAt = row.payment_deadline
+  const state = payment.settlementState ?? null
+  if (state === null && payment.railAvailable !== true) return { text: "The award is approved and reserved. Payment is not available yet.", dueAt }
+  if (state === null) {
+    const text = has(roles, "reporter") ? "Accept payment visibility so the payer can prepare your payment."
+      : has(roles, "security-maintainer") || has(roles, "financial") ? "Prepare the private payment after the reporter accepts visibility."
+      : "Waiting for payment preparation."
+    return { text, dueAt }
+  }
+  if (state === "held") return { text: "The payment is held.", dueAt }
+  if (state === "needs-wallet") return { text: has(roles, "reporter") ? "Register and authorize a payout wallet." : "Waiting for the reporter to register and authorize a payout wallet.", dueAt }
+  if (state === "awaiting-owner-commitment") return { text: has(roles, "security-maintainer") || has(roles, "triager") ? "Sign the owner commitment to release the payment." : "Waiting for the vault owner to sign the payment commitment.", dueAt }
+  return { text: "The payment is in progress.", dueAt }
+}
+
+effect function nextStep(observed: Observed, payment: PaymentView): NextStep!! {
   const { row } = observed.record
   const roles = observed.roles
   const owner = has(roles, "security-maintainer") || has(roles, "triager")
@@ -82,12 +108,12 @@ effect function nextStep(observed: Observed): NextStep!! {
   }
   if (row.receipt_state === "needs-information") {
     const text = reporter ? row.received_at_source === "slop-received" ? "Add the requested evidence to your saved report in Inbox." : "Answer the owner's question in the GitHub advisory." : "Waiting for the reporter's answer; decide when ready."
-    return { text, dueAt: null }
+    return { text, dueAt: row.next_action === routineProofNextAction ? row.next_action_due_at : null }
   }
   if (row.related_party_review === "pending" && row.award_state === "pending") return { text: dispute ? "Review the proposed related-party award." : "An independent reviewer is reviewing the proposed award.", dueAt: null }
   if (row.award_state === "pending" && row.award_gross_minor !== null) return { text: owner ? "The award amount is chosen. Arrange funding to pay the award." : "The owner chose an award amount. It is awaiting verified funding.", dueAt: row.payment_deadline }
   if (awardOpen(observed.model)) return { text: has(roles, "security-maintainer") ? "Choose an award amount or no award." : "Waiting for the owner's award decision.", dueAt: null }
-  if (row.award_state === "approved") return { text: "The award is approved and reserved. Payment is not available yet.", dueAt: row.payment_deadline }
+  if (row.award_state === "approved" && payment.settlementState !== "paid") return paymentStep(observed, payment)
   if (owner && row.receipt_state === "confirmed" && row.remediation_state !== "resolved" && row.remediation_state !== "mitigation-verified") return { text: "Fix the issue and record remediation.", dueAt: null }
   return { text: "No action needed.", dueAt: null }
 }
@@ -110,14 +136,15 @@ export effect function caseView(observed: Observed, viewerGithubId: string, incl
   const { row } = record
   const viewer = githubNumber(viewerGithubId)
   const reservation = try first(Reservation, sql`SELECT root_cause_key, policy_revision, gross_minor, currency, reserved_at FROM security_award_reservations WHERE case_id = ${row.id}`)
-  const step = extra.view.nextStep === undefined ? try nextStep(observed) : extra.view.nextStep
+  const deposit = has(roles, "reporter") ? try depositView(row.id) : null
+  const step = try nextStep(observed, extra.view)
   const base = {
     id: row.id,
     projectId: row.project_id,
     revision: row.revision,
     viewerRoles: [...roles].sort(),
     allowedActions: [...caseActions(observed, viewer), ...extra.allowed],
-    nextStep: step.text,
+    nextStep: extra.view.nextStep ?? (deposit !== null && depositNeeded(deposit) ? depositNextStep(deposit) : step.text),
     nextStepDueAt: step.dueAt,
     submissionState: row.submission_state,
     receivedAt: row.received_at,
@@ -128,7 +155,7 @@ export effect function caseView(observed: Observed, viewerGithubId: string, incl
     award: sharesOf(record.frozen, reservation?.gross_minor ?? row.award_gross_minor),
     relatedParty: row.related_party,
     relatedPartyReview: row.related_party_review,
-    paymentState: extra.view.paymentState ?? row.payment_state,
+    paymentState: extra.view.settlementState ?? row.payment_state,
     paymentRail: extra.view.paymentRail ?? "unavailable",
     settlement: extra.view.settlement ?? null,
     paymentNetworks: extra.view.paymentNetworks ?? [],
@@ -161,11 +188,11 @@ export effect function caseView(observed: Observed, viewerGithubId: string, incl
     appealState: row.appeal_state,
   }
   const events = includeHistory ? record.events : []
-  if (!full) return { ...shared, view: "reporter", events: events.filter((event) => reporterKinds.has(event.kind)).map((event) => ({ revision: event.case_revision, kind: event.kind, at: event.at, reason: event.reason })) }
+  if (!full) return { ...shared, view: "reporter", deposit, events: events.filter((event) => reporterKinds.has(event.kind)).map((event) => ({ revision: event.case_revision, kind: event.kind, at: event.at, reason: event.reason })) }
   const nowMs = try Clock.currentTimeMillis
-  const assessed = includeHistory && row.submission_state === "verified" ? try assessmentRead({ record: row, roles: observed.snapshot, viewerGithubId }) : undefined
+  const assessed = includeHistory && record.valid && row.submission_state === "verified" ? try assessmentRead({ record: row, roles: observed.snapshot, viewerGithubId }) : undefined
   const triage = includeHistory ? triageView(record, nowMs) : null
-  const retriable = includeHistory && has(roles, "dispute") && triageMayStart(observed.model, viewer, observed.epoch, nowMs)
+  const retriable = includeHistory && record.valid && has(roles, "dispute") && triageMayStart(observed.model, viewer, observed.epoch, nowMs)
   return {
     ...shared,
     allowedActions: [...shared.allowedActions, ...assessed?.analyze === true ? ["analyze"] : [], ...retriable ? ["triage-appeal"] : []],

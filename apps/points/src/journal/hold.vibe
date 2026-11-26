@@ -1,0 +1,85 @@
+// spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"
+import type { LeaderboardSnapshot } from "../client/snapshot/schema.vibe"
+import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
+import { pointKey } from "../kernels/records/ids.vibe"
+import { type CandidateRevision, type PoolKey, type Protection, type ReviewedMembership, heldRevisions, mergePoolKeys } from "../../gen/points__protectedMonths.effect.vibe"
+import { type Repositories, type Store, index, instant, projectOf } from "./ledger.vibe"
+
+export type ReviewedMergeGroups = ReadonlyMap<string, ReadonlyArray<ReviewedMembership>>
+
+const valueDecision = /^value:[a-f0-9]{64}$/u
+
+function economic(award: Award) {
+  return JSON.stringify([
+    award.key,
+    award.actor.id,
+    award.projectId,
+    award.category,
+    award.amount,
+    award.occurredAt,
+    award.sourceId,
+    award.workUnitId,
+    award.category === "substantive-review" ? award.provisional : null,
+    award.category === "substantive-review" || award.category === "evaluated-contribution" ? award.sourceUrl : null,
+  ])
+}
+
+function coverageKey(snapshot: string, project: string, source: string) {
+  return JSON.stringify([snapshot, project, source])
+}
+
+export function reviewedMergeGroups(snapshots: ReadonlyArray<{ readonly snapshot: LeaderboardSnapshot; readonly digest: string }>, repositories: Repositories): ReviewedMergeGroups {
+  const groups = new Map<string, ReadonlyArray<ReviewedMembership>>()
+  for (const { snapshot, digest } of snapshots) {
+    for (const row of snapshot.reviewedImplementationUnits ?? []) {
+      const project = projectOf(repositories, row.repository)
+      if (project === undefined) continue
+      groups.set(coverageKey(digest, project, row.pullRequestId), row.units.map((unit) => ({ groupId: unit.groupId, valueSource: `value:${unit.recordDigest}`, workUnit: unit.workUnitId })))
+    }
+  }
+  return groups
+}
+
+effect function poolsOf(row: Row | undefined, snapshot: string, groups: ReviewedMergeGroups) {
+  if (row === undefined || row.award.category !== "merged-pull-request") return [] as PoolKey[]
+  const { award, decision } = row
+  const memberships = groups.get(coverageKey(snapshot, award.projectId, award.sourceId))
+  const ownRecord = memberships !== undefined && (try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId })) === award.key
+  const decided = decision?.sourceId ?? ""
+  return mergePoolKeys({
+    merged: true, project: award.projectId, source: award.sourceId, workUnit: award.workUnitId, valueDecision: valueDecision.test(decided) ? decided : "",
+    ownRecord, snapshot, membershipKnown: memberships !== undefined, memberships: [...memberships ?? []],
+  })
+}
+
+export effect function holdProtected(store: Store, known: ReadonlySet<string>, protection: Protection, groups: ReviewedMergeGroups = new Map()) {
+  const numbers = new Map(store.revisions.map((row, position) => [row.id, position + 1]))
+  const byId = new Map(store.revisions.map((row) => [row.id, row] as const))
+  const candidates: CandidateRevision[] = []
+  const published: CandidateRevision[] = []
+  for (const row of store.revisions) {
+    const fresh = !known.has(row.id)
+    const previous = row.previous === null ? undefined : byId.get(row.previous)
+    const candidate = {
+      id: numbers.get(row.id) ?? 0,
+      previous: row.previous === null ? 0 : numbers.get(row.previous) ?? 0,
+      payoutReceived: row.award.category === "payout-received",
+      economic: economic(row.award),
+      project: row.award.projectId,
+      occurredAt: try instant(row.award.occurredAt),
+      pools: fresh ? [...(try poolsOf(row, row.sourceDigest, groups)), ...(try poolsOf(previous, row.sourceDigest, groups))] : [],
+    } satisfies CandidateRevision
+    candidates.push(candidate)
+    if (!fresh) published.push(candidate)
+  }
+  const held = new Set(heldRevisions(published, protection, candidates))
+  if (held.size === 0) return 0
+  const kept = store.revisions.filter((row) => !held.has(numbers.get(row.id) ?? 0))
+  store.revisions.splice(0, store.revisions.length, ...kept)
+  store.latest.clear()
+  store.keysBySource.clear()
+  store.units.clear()
+  store.unitsBySource.clear()
+  for (const row of store.revisions) try index(store, row)
+  return held.size
+}

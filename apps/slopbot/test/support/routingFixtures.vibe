@@ -1,0 +1,4 @@
+export const installationId = 9100
+export const leaseRepository = 7100
+export const leaseAuthor = 400
+export const routingProject = "routing-project"

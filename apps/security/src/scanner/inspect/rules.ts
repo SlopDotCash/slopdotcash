@@ -123,21 +123,21 @@ const RULES: Rule[] = [
     threat: "prompt-injection",
     severity: "medium",
     pattern:
-      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)/iu,
+      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|\b(?:do\s+not|don['\u2019]?t)\s+(?:tell|inform|show|alert|notify)\s+the\s+(?:user|operator|human)\s+(?:about|that|what|this|these|it\b|anything)|\b(?:hide|conceal|keep)\s+(?:this|it|these|them)\s+(?:secret\s+)?from\s+the\s+(?:user|operator|human)\b|\b(?:do\s+not|don['\u2019]?t)\s+let\s+the\s+(?:user|operator|human)\s+(?:know|see|find\s+out)\b/iu,
     summary: "Text matches wording used to override agent instructions",
   },
   {
     threat: "prompt-injection",
     severity: "medium",
     pattern:
-      /\b(?:send|post|upload|exfiltrate|paste)\b[^\n]{0,80}\b(?:api[ _-]?key|token|secret|credential|password|private key|\.env)\b/iu,
+      /(?<![^\n])(?![^\n]*\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b)[^\n]*\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b[^\n]{0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)[^\n]{0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))/iu,
     summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
   {
     threat: "prompt-injection",
     severity: "medium",
-    pattern: /[​-‏‪-‮⁦-⁩]/u,
+    pattern: /[\u200b\u2060\u202a-\u202e\u2066-\u2069\u{E0000}-\u{E007F}]/u,
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
   },
@@ -184,8 +184,10 @@ export const RULE_POLICY_SHA256 = sha256Of(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
-    localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    localInstallHelpers: "literal-shell-exec-wrapper-closure-substitution-branch-v3",
     sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
+    imageFormats: "png-jpeg-gif-webp-sfnt-woff-woff2-whole-structure-v2",
+    templateReview: "queued-canonical-template-deterministic-only-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },

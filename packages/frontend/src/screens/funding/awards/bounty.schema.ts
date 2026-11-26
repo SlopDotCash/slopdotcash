@@ -1,7 +1,8 @@
-// spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"
+// spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
 import { Result, Schema } from "effect";
+import { FundingDeployment, type FundingProject } from "../vault/project.schema.ts";
 
-export const BountyDeployment = Schema.Struct({ network: Schema.String, vault: Schema.String });
+export const BountyDeployment = FundingDeployment;
 
 export const BountyTerms = Schema.Struct({
   amount: Schema.Struct({ network: Schema.NullOr(Schema.String) }),
@@ -25,4 +26,9 @@ export function bountyProjectOf(record: unknown): BountyProject | undefined {
 /** @throws {never} */
 export function bountyChainOf(project: BountyProject): string | null {
   return project.securityBounty.settlement?.chain ?? project.securityBounty.amount.network;
+}
+
+/** The bounty vault as a vault its owner funds: its own reward kind, so no monthly pool promise applies to it. @throws {never} */
+export function bountyFundingOf(project: BountyProject): FundingProject {
+  return { id: project.id, slug: project.slug, reward: { kind: "security-bounty" } };
 }

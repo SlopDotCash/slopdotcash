@@ -1,0 +1,162 @@
+// spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/settlement/privateAward.md, "A vault-backed award reserves its bounty vault in the same step"; spec/settlement/privateAward.md, "Exact amounts are shown before authorization"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/security/remediation.md, "Remediation acts under the case's current roles"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { DatabaseFailure, type Statement, sql } from "@repo/platform/d1"
+import { refuse } from "@repo/platform/http"
+import type { Json } from "@repo/ports/backend"
+import { type CaseContext, type DirectPaymentAction, DirectPayments, DirectRefused, type PaymentViewer, RecoveryRefused, SolanaPayerRefused } from "@repo/ports/settlement"
+import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { type CaseRole, caseEvent } from "../receipt/statements.vibe"
+import { remediationAct, remediationContribution } from "../remediation/routes.vibe"
+import { common, exactKeys } from "./actions.vibe"
+import { type CaseActionInput, CaseActionHandlers, opened } from "./routes.vibe"
+import { type Observed, type Refusal, accessLog, caseNotices, notAllowed, refused } from "./store.vibe"
+import { type ExtraActions, type PaymentView, noExtraActions } from "./view.vibe"
+
+export interface CaseActionSet<R> {
+  readonly contribution: (observed: Observed, viewerGithubId: string) => ExtraActions!unknown!R
+  readonly act: (action: string, input: CaseActionInput) => (unknown | undefined)!unknown!R
+}
+
+const paymentActions: ReadonlyArray<DirectPaymentAction> = ["consent-payment", "prepare-payment", "verify-payment", "recover-payment"]
+const payerActions: ReadonlyArray<DirectPaymentAction> = ["prepare-payment", "verify-payment", "recover-payment"]
+const staleCase = "stale case revision"
+const paymentKeys: Readonly<Record<DirectPaymentAction, { readonly required: ReadonlyArray<string>; readonly optional: ReadonlyArray<string> }>> = {
+  "consent-payment": { required: [...common, "network", "confirmation"], optional: [] },
+  "prepare-payment": { required: [...common, "network", "confirmation"], optional: [] },
+  "verify-payment": { required: [...common, "transactionIds", "confirmation"], optional: [] },
+  "recover-payment": { required: [...common, "confirmation"], optional: ["cancellationTransactionId", "signatures"] },
+}
+const railMissing: Readonly<Record<DirectPaymentAction, Refusal>> = {
+  "consent-payment": actionRows.railUnavailableTheProgramHasNo,
+  "prepare-payment": actionRows.railUnavailableTheProgramHasNo,
+  "verify-payment": actionRows.railUnavailableDirectReceiptVerificationIs,
+  "recover-payment": actionRows.confirmationRequiredConfirmTheReviewedPayment,
+}
+
+function paymentActionOf(action: string): DirectPaymentAction | undefined {
+  return paymentActions.find((known) => known === action)
+}
+
+function isPayer(observed: Observed) {
+  return observed.roles.has("security-maintainer") || observed.roles.has("financial")
+}
+
+function roleActions(observed: Observed): ReadonlyArray<DirectPaymentAction> {
+  const { record } = observed
+  if (!record.valid || record.row.submission_state !== "verified" || record.row.award_state !== "approved") return []
+  return [...observed.roles.has("reporter") ? ["consent-payment" as const] : [], ...isPayer(observed) ? payerActions : []]
+}
+
+function contextOf(observed: Observed, actorGithubId: string): CaseContext {
+  const { row } = observed.record
+  return { caseId: row.id, revision: row.revision, reporterGithubId: row.reporter_github_id, actorGithubId }
+}
+
+function viewerOf(observed: Observed): PaymentViewer {
+  return { payer: isPayer(observed), reporter: observed.roles.has("reporter") }
+}
+
+effect function paymentContribution(observed: Observed, viewerGithubId: string) {
+  const payments = try Effect.serviceOption(DirectPayments)
+  if (Option.isNone(payments) || !observed.record.valid || observed.record.row.submission_state !== "verified") return noExtraActions
+  const shown = try payments.value.view({ caseContext: contextOf(observed, viewerGithubId), viewer: viewerOf(observed) })
+  const permitted = roleActions(observed)
+  const view: PaymentView = {
+    paymentRail: shown.paymentRail,
+    railAvailable: shown.railAvailable,
+    settlementState: shown.settlementState,
+    settlement: shown.settlement,
+    paymentNetworks: shown.paymentNetworks,
+    ...shown.nextStep === undefined ? {} : { nextStep: shown.nextStep },
+  }
+  return { allowed: shown.actions.filter((action) => permitted.includes(action)), view } satisfies ExtraActions
+}
+
+function revisionGuard(caseId: string, revision: number): Statement {
+  return sql`SELECT CASE WHEN (SELECT revision FROM security_cases WHERE id = ${caseId}) = ${revision} THEN 1 ELSE json(${staleCase}) END AS fresh`
+}
+
+function actingRole(action: DirectPaymentAction, observed: Observed): CaseRole {
+  if (action === "consent-payment") return "reporter"
+  return observed.roles.has("security-maintainer") ? "security-maintainer" : "financial"
+}
+
+function isRecord(detail: Json): detail is { readonly [key: string]: Json } {
+  return typeof detail === "object" && detail !== null && !Array.isArray(detail)
+}
+
+function recoveryProgress(action: DirectPaymentAction, detail: Json) {
+  return action === "recover-payment" && isRecord(detail) && typeof detail.state === "string"
+}
+
+effect function paid(action: DirectPaymentAction, input: CaseActionInput) {
+  const { observed, actor, body, idempotencyKey, at } = input
+  try exactKeys(body, paymentKeys[action].required, paymentKeys[action].optional)
+  if (!roleActions(observed).includes(action)) throw notAllowed(action)
+  const payments = try Effect.serviceOption(DirectPayments)
+  if (Option.isNone(payments)) throw refused(railMissing[action])
+  const { row } = observed.record
+  const revision = row.revision + 1
+  const notices = try caseNotices({ caseId: row.id, revision, kind: action, idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: row.reporter_github_id, detail: {}, program: observed.program, relatedReview: false, at })
+  const alongside = (detail: Json): ReadonlyArray<Statement> => [
+    revisionGuard(row.id, row.revision),
+    sql`UPDATE security_cases SET revision = revision + 1, updated_at = ${at} WHERE id = ${row.id} AND revision = ${row.revision}`,
+    caseEvent({ caseId: row.id, revision, kind: action, actorGithubId: actor.githubId, role: actingRole(action, observed), idempotencyKey, reason: null, evidenceReference: null, detail: isRecord(detail) ? detail : { value: detail }, at, guard: true }),
+    accessLog(row.id, actor.githubId, observed.roles, "write", at),
+    ...recoveryProgress(action, detail) ? [] : notices,
+  ]
+  payments.value.act(action, contextOf(observed, actor.githubId), body, alongside) catch effect (error) => match (error) {
+    when DirectRefused: throw refused(actionRows[error.reason]);
+    when RecoveryRefused: throw refused(actionRows[error.reason]);
+    when SolanaPayerRefused: throw refuse(actionRows.payerRefused.status, actionRows.payerRefused.error, error.message);
+    when DatabaseFailure: throw error.message.includes("malformed JSON") ? refused(actionRows.staleRevision) : error;
+    default: throw error;
+  }
+  return try opened(actor, row.id)
+}
+
+export effect function paymentAct(action: string, input: CaseActionInput) {
+  const payment = paymentActionOf(action)
+  if (payment === undefined) return undefined
+  return try paid(payment, input)
+}
+
+effect function contributed<R>(sets: ReadonlyArray<CaseActionSet<R>>, observed: Observed, viewerGithubId: string) {
+  const allowed: string[] = []
+  let view: PaymentView = {}
+  for (const set of sets) {
+    const part = try set.contribution(observed, viewerGithubId)
+    allowed.push(...part.allowed)
+    view = { ...view, ...part.view }
+  }
+  return { allowed, view } satisfies ExtraActions
+}
+
+effect function chainedAct<R>(sets: ReadonlyArray<CaseActionSet<R>>, action: string, input: CaseActionInput) {
+  for (const set of sets) {
+    const handled = try set.act(action, input)
+    if (handled !== undefined) return handled
+  }
+  return undefined
+}
+
+export function chainedHandlers<R>(sets: ReadonlyArray<CaseActionSet<R>>) {
+  return Layer.effect(CaseActionHandlers, effect {
+    const services = try Effect.context<R>()
+    const handlers: CaseActionHandlers.Shape = {
+      contribution: (observed, viewerGithubId) => Effect.orDie(Effect.provide(contributed(sets, observed, viewerGithubId), services)),
+      act: (action, input) => Effect.provide(Effect.provideService(chainedAct(sets, action, input), CaseActionHandlers, handlers), services),
+    }
+    return handlers
+  })
+}
+
+type Needs =
+  | Effect.Services<ReturnType<typeof remediationAct>>
+  | Effect.Services<ReturnType<typeof remediationContribution>>
+  | Effect.Services<ReturnType<typeof paymentAct>>
+  | Effect.Services<ReturnType<typeof paymentContribution>>
+
+export const caseActionHandlersLive = chainedHandlers<Needs>([
+  { contribution: remediationContribution, act: remediationAct },
+  { contribution: paymentContribution, act: paymentAct },
+])

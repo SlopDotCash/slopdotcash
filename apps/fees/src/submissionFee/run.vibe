@@ -1,0 +1,90 @@
+// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"
+import type { FeeNetwork } from "../../gen/backend__submissionFeeTerms.ts"
+import type { SendConfig } from "../../gen/fees__submissionFeeSends.effect.vibe"
+import { type ResolverEnv, resolverSecret, resolverSigner } from "../signer/resolver.vibe"
+import { type ResolverSigner, submissionFeeChain } from "./chain.vibe"
+import { type NetworkConfig, type SubmissionFeeEnv, SubmissionFeeConfigInvalid, parseConfig, parseMode } from "./config.vibe"
+import { judgeDeposits } from "./judge.vibe"
+import { recheck, sendConfigOf } from "./parked.vibe"
+import { planResolutions } from "./plan.vibe"
+import { ratePass } from "./rate.vibe"
+import { scan } from "./scan.vibe"
+import { type SendOutcome, reconcile, send } from "./sends.vibe"
+import { failureReason, labelled, message, step } from "./steps.vibe"
+
+export interface SubmissionFeeWorkerEnv extends SubmissionFeeEnv, ResolverEnv {}
+
+export interface NetworkResult {
+  readonly network: string
+  readonly status: "ran" | "chain_mismatch"
+  readonly finalizedThrough: number | null
+  readonly recorded: number
+  readonly resolved: number
+  readonly judged: number
+  readonly paid: number
+  readonly send: SendOutcome
+  readonly parked: number
+  readonly released: number
+}
+
+export interface NetworkFailure {
+  readonly network: string
+  readonly error: string
+  readonly reason: string
+}
+
+export type DepositRun =
+  | { readonly status: "off" }
+  | { readonly status: "ran"; readonly mode: "dry_run" | "live"; readonly unset: ReadonlyArray<string>; readonly networks: ReadonlyArray<NetworkResult | NetworkFailure> }
+
+export effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: ResolverSigner | null) {
+  const unread: NetworkResult = { network: network.network, status: "ran", finalizedThrough: null, recorded: 0, resolved: 0, judged: 0, paid: 0, send: "none", parked: 0, released: 0 }
+  const connected = step("chain", submissionFeeChain({ network, signer })) catch effect (error) => {
+    if (error._tag === "WrongChain") return null
+    throw error
+  }
+  if (connected === null) return { ...unread, status: "chain_mismatch" } satisfies NetworkResult
+  const chain = labelled(connected, "chain")
+  if ((try chain.chainId()) !== network.chainId) return { ...unread, status: "chain_mismatch" } satisfies NetworkResult
+  const scanned = try step("scan", scan(network, chain))
+  const judged = try step("judge", judgeDeposits(network.network))
+  const ran = { ...unread, ...scanned, ...judged }
+  if (config.mode !== "Live") {
+    const sent = try step("send", send(network, config, chain, try step("plan", planResolutions(network.network))))
+    return { ...ran, ...sent } satisfies NetworkResult
+  }
+  const released = try step("recheck", recheck(network.network, config, chain))
+  if (try step("reconcile", reconcile(network, config, chain))) return { ...ran, released, send: "in_flight" } satisfies NetworkResult
+  const sent = try step("send", send(network, config, chain, try step("plan", planResolutions(network.network))))
+  return { ...ran, ...sent, released } satisfies NetworkResult
+}
+
+export effect function depositPass(env: SubmissionFeeWorkerEnv, terms: ReadonlyArray<FeeNetwork>) {
+  if ((try parseMode(env)) === "off") return { status: "off" } satisfies DepositRun
+  const config = try parseConfig(env, terms)
+  if (config.mode === "off") return { status: "off" } satisfies DepositRun
+  const mode = config.mode
+  for (const network of config.unset) {
+    try Effect.logInfo("submission_fee_contract_unset", { network })
+  }
+  const secret = mode === "live" ? resolverSecret(env) : undefined
+  if (mode === "live" && config.networks.length > 0 && secret === undefined)
+    throw new SubmissionFeeConfigInvalid({ issue: "live mode needs SUBMISSION_FEE_RESOLVER_KEY" })
+  const networks: (NetworkResult | NetworkFailure)[] = []
+  for (const network of config.networks) {
+    const ran = effect {
+      const signer = secret === undefined ? null : try resolverSigner(network.network, secret)
+      return try runNetwork(network, sendConfigOf(mode, signer !== null, network.gas), signer)
+    }
+    const result = ran catch effect (error) => {
+      return { network: network.network, error: message(error), reason: failureReason(error) } satisfies NetworkFailure
+    }
+    networks.push(result)
+  }
+  return { status: "ran", mode, unset: config.unset, networks } satisfies DepositRun
+}
+
+export effect function ratePassOf(env: SubmissionFeeEnv, terms: ReadonlyArray<FeeNetwork>) {
+  if ((try parseMode(env)) === "off") return null
+  return try ratePass(try parseConfig(env, terms))
+}

@@ -34,7 +34,7 @@ export effect function recovery(args: ReadonlyArray<string>, root = ".") {
   const checkout = files.resolve(root)
   return try scoped(effect {
     const workspace = try (try FileSystem.FileSystem).makeTempDirectoryScoped({ prefix: `${run}-` })
-    const hosted = { run, source, names, root: checkout, bundle: files.join(checkout, "apps/operations/dist/recovery.js"), workspace }
+    const hosted = { run, source, names, root: checkout, bundle: files.join(checkout, "apps/security/dist/recovery.js"), workspace }
     provide controlPlane, cloudflare({ root: checkout, wrangler: pinnedWrangler(checkout) }) {
       const report = try hostedQualification(hosted)
       const path = try reported(report, workspace)

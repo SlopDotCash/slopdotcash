@@ -1,0 +1,101 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "GET /api/v1/operator/protected-point-months",
+ "source": {
+  "branch": "origin/development",
+  "commit": "f3f2725e0789b6bb19b3fe5606023d69ea18dd81",
+  "entry": "pages",
+  "mount": "functions/api/v1/[[path]].ts"
+ },
+ "recorded": "each response was read from the handler code of that commit, not run: backend/payments/protected-point-months.ts, its bearer check bearerTokenAuthorized in backend/payments/reserved-awards-feed.ts (a token of at least 32 characters, compared in constant time), and the not-found answer of backend/trace/handler.ts that a request without the configured token falls through to; a case that reaches D1 before answering is listed as discarded",
+ "environment": {
+  "SLOP_ENVIRONMENT": "production",
+  "PAYMENT_NETWORKS": "[]",
+  "TRACE_AUTH_SECRET": "<40+ character test value>",
+  "POINTS_PROTECTION_TOKEN": "<32+ character test value>",
+  "bindings": [
+   "SLOP_DB",
+   "PRIVATE_TRACES",
+   "SLOP_IDENTITY",
+   "SLOP_NOTIFY",
+   "SLOPBOT",
+   "VETTING_SANDBOX",
+   "VETTING_EVIDENCE",
+   "ASSETS"
+  ],
+  "unset": "every other variable (no VETTING_RESULT_PUBLIC_KEYS, no private intake, no X client, no GitHub App)"
+ },
+ "cases": [
+  {
+   "name": "read without a bearer token",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://api.slop.cash/api/v1/operator/protected-point-months",
+    "headers": {},
+    "body": null
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store",
+     "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  },
+  {
+   "name": "read with another bearer token",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://api.slop.cash/api/v1/operator/protected-point-months",
+    "headers": {
+     "authorization": "Bearer <another 32+ character value>"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store",
+     "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  },
+  {
+   "name": "DELETE with the configured bearer token",
+   "kind": "request",
+   "request": {
+    "method": "DELETE",
+    "url": "https://api.slop.cash/api/v1/operator/protected-point-months",
+    "headers": {
+     "authorization": "Bearer <POINTS_PROTECTION_TOKEN>"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 405,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"method_not_allowed\"}",
+    "bodySha256": "48ceae43089b9c26f0b2e5e53afe122639812aaa791c84f311d6b992f2332fef"
+   }
+  }
+ ],
+ "discarded": [
+  {
+   "name": "read with the configured bearer token",
+   "reachedBeforeAnswering": [
+    "d1"
+   ]
+  }
+ ]
+}

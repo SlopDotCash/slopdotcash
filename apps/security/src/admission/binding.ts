@@ -1,4 +1,4 @@
-// spec/security/admission.md, "Evidence durability precedes a clean or malicious publication"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"
+// spec/security/admission.md, "Evidence durability precedes a clean or malicious publication"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"
 import { type ScanResult, scanSurfaces } from "./result.ts";
 
 const hex = /^[a-f0-9]{64}$/u;
@@ -130,14 +130,16 @@ function validClassifications(value: unknown): boolean {
 const artifactFields = ["sha256", "parentSha256", "origin", "path", "type"] as const;
 
 /** @throws {never} */
-export function inventoryBinds(source: unknown, final: unknown, result: ScanResult, items: ReadonlyArray<{ readonly id: string; readonly text: string; readonly sha256: string }>): boolean {
+export function inventoryBinds(source: unknown, final: unknown, result: Pick<ScanResult, "artifacts">, items: ReadonlyArray<{ readonly id: string; readonly text: string; readonly sha256: string }>): boolean {
   if (!isRecord(source) || !isRecord(final)) return false;
   const classified = Object.hasOwn(source, "classifications");
   const policyBound = Object.hasOwn(source, "rulePolicySha256");
-  const keys = [...inventoryBase, ...(classified ? ["classifications"] : []), ...(policyBound ? ["rulePolicySha256"] : [])];
+  const imaged = Object.hasOwn(source, "media");
+  const keys = [...inventoryBase, ...(classified ? ["classifications"] : []), ...(policyBound ? ["rulePolicySha256"] : []), ...(imaged ? ["media"] : [])];
   if (!hasKeys(source, keys) || !hasKeys(final, keys)) return false;
   if (classified && (!validClassifications(source.classifications) || JSON.stringify(source.classifications) !== JSON.stringify(final.classifications))) return false;
   if (policyBound && (!classified || typeof source.rulePolicySha256 !== "string" || !hex.test(source.rulePolicySha256) || source.rulePolicySha256 !== final.rulePolicySha256)) return false;
+  if (imaged && (!Array.isArray(source.media) || source.media.length === 0 || JSON.stringify(source.media) !== JSON.stringify(final.media))) return false;
   if (source.schemaVersion !== "slop-scan-inventory-v2" || final.schemaVersion !== source.schemaVersion) return false;
   if (!Array.isArray(source.items) || !Array.isArray(final.items) || JSON.stringify(final.items) !== JSON.stringify([...(source.items as ReadonlyArray<unknown>), ...items])) return false;
   const sourceArtifacts = source.artifacts;

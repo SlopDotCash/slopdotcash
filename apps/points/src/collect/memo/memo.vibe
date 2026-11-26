@@ -1,0 +1,577 @@
+// spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { randomId, sha256Hex, utf8 } from "@repo/platform/crypto"
+import { type CommitLine, type Event, type MemoFile, type MemoRun, type ModeReason, type RunContext, Rejected, commitLineFor, enabled, initial, machineOver, memoWithinBounds, trustedMemoUse } from "../../../gen/points__collectionMemo.effect.vibe"
+
+export const collectionMemoFormat = "slop-collection-memo-v1"
+export const untrustedMemoUse = "Only a trusted main collection may use a collection memo"
+
+const nodeId = /^[A-Za-z0-9_=+/-]{1,128}$/u
+const sha = /^[a-f0-9]{40}$/u
+const codeDigestPattern = /^[a-f0-9]{64}$/u
+const pullStates: ReadonlyArray<string> = ["OPEN", "CLOSED", "MERGED"]
+const topNotReusable = 20
+
+export error MemoInvalid { message: string }
+export error MemoRefused { message: string }
+
+export type CommitLineRow = readonly [repositoryNodeId: string, commitNodeId: string, oid: string, additions: number, deletions: number]
+
+export interface AttributionPullDependency {
+  readonly id: string
+  readonly updatedAt: string
+  readonly state: "OPEN" | "CLOSED" | "MERGED"
+  readonly url: string
+}
+
+export interface AttributionReferenceDependency {
+  readonly owner: string
+  readonly name: string
+  readonly number: number
+  readonly repository: Readonly<Record<string, unknown>>
+}
+
+export type AuthorRow = readonly [sha: string, actorNodeId: string, originalPullRequestId: string, originalPullRequestUrl: string, originalCommitSha: string]
+
+export type AttributionMemoResult = { readonly kind: "none" } | { readonly kind: "authors"; readonly authors: ReadonlyArray<AuthorRow> }
+
+export interface AttributionMemoFence {
+  readonly number: number
+  readonly url: string
+  readonly headRefOid: string
+  readonly mergedAt: string
+  readonly updatedAt: string
+  readonly repositoryNodeId: string
+  readonly eligibleCommitShas: ReadonlyArray<string>
+}
+
+export interface AttributionMemoEntry {
+  readonly outcomeId: string
+  readonly fence: AttributionMemoFence
+  readonly pulls: ReadonlyArray<AttributionPullDependency>
+  readonly references: ReadonlyArray<AttributionReferenceDependency>
+  readonly incoming: ReadonlyArray<string>
+  readonly result: AttributionMemoResult
+}
+
+export interface CollectionMemoFile {
+  readonly format: typeof collectionMemoFormat
+  readonly producedAt: string
+  readonly cutoffAt: string
+  readonly lastFullAt: string
+  readonly attributionCodeDigest: string
+  readonly commitLines: ReadonlyArray<CommitLineRow>
+  readonly attributions: ReadonlyArray<AttributionMemoEntry>
+}
+
+export type LiveAnswer =
+  | { readonly kind: "held" }
+  | { readonly kind: "unfenced"; readonly result: AttributionMemoResult }
+  | { readonly kind: "fenced"; readonly entry: AttributionMemoEntry }
+
+export interface MemoStats {
+  reused: number
+  live: number
+  audited: number
+  auditMismatches: number
+  fenceMisses: number
+}
+
+function invalid(reason: string) {
+  return new MemoInvalid({ message: `Invalid collection memo: ${reason}` })
+}
+
+function isoInstant(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function parsedJson(source: string): { readonly value: unknown } | { readonly failure: string } {
+  try {
+    return { value: JSON.parse(source) as unknown }
+  } catch (error) {
+    return { failure: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`
+  return JSON.stringify(value)
+}
+
+function fenceKey(fence: AttributionMemoFence) {
+  return canonicalJson({ ...fence, eligibleCommitShas: [...fence.eligibleCommitShas].sort() })
+}
+
+export function sameFence(left: AttributionMemoFence, right: AttributionMemoFence) {
+  return fenceKey(left) === fenceKey(right)
+}
+
+function versionKey(entry: AttributionMemoEntry) {
+  return canonicalJson({ fence: fenceKey(entry.fence), pulls: entry.pulls, references: entry.references, incoming: entry.incoming })
+}
+
+effect function objectAt(value: unknown, path: string) {
+  if (!isRecord(value)) throw invalid(`${path} must be an object`)
+  return value
+}
+
+effect function exactKeys(value: Readonly<Record<string, unknown>>, keys: ReadonlyArray<string>, path: string) {
+  if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...keys].sort())) throw invalid(`${path} has unexpected fields`)
+}
+
+effect function text(value: unknown, path: string, max = 2048) {
+  if (typeof value !== "string" || value.length === 0 || value.length > max) throw invalid(`${path} must be a bounded string`)
+  return value
+}
+
+effect function count(value: unknown, path: string) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw invalid(`${path} must be a non-negative integer`)
+  return value
+}
+
+function isNode(value: unknown): value is string {
+  return typeof value === "string" && nodeId.test(value)
+}
+
+function isSha(value: unknown): value is string {
+  return typeof value === "string" && sha.test(value)
+}
+
+effect function commitLineAt(value: unknown, index: number) {
+  const path = `commitLines[${index}]`
+  if (!Array.isArray(value) || value.length !== 5) throw invalid(`${path} shape`)
+  const [repository, commit, oid, additions, deletions] = value as ReadonlyArray<unknown>
+  if (!isNode(repository) || !isNode(commit) || !isSha(oid)) throw invalid(`${path} identity`)
+  return [repository, commit, oid, try count(additions, path), try count(deletions, path)] satisfies CommitLineRow
+}
+
+effect function fenceAt(value: unknown, path: string) {
+  const fence = try objectAt(value, `${path}.fence`)
+  try exactKeys(fence, ["number", "url", "headRefOid", "mergedAt", "updatedAt", "repositoryNodeId", "eligibleCommitShas"], `${path}.fence`)
+  const eligible = fence.eligibleCommitShas
+  if (!Array.isArray(eligible) || eligible.length === 0 || !eligible.every(isSha)) throw invalid(`${path}.fence.eligibleCommitShas`)
+  const { headRefOid, mergedAt, updatedAt, repositoryNodeId } = fence
+  if (!isSha(headRefOid) || !isoInstant(mergedAt) || !isoInstant(updatedAt) || !isNode(repositoryNodeId)) throw invalid(`${path}.fence values`)
+  return {
+    number: try count(fence.number, `${path}.fence.number`),
+    url: try text(fence.url, `${path}.fence.url`),
+    headRefOid,
+    mergedAt,
+    updatedAt,
+    repositoryNodeId,
+    eligibleCommitShas: [...(eligible as ReadonlyArray<string>)],
+  } satisfies AttributionMemoFence
+}
+
+effect function pullsAt(value: unknown, path: string) {
+  if (!Array.isArray(value)) throw invalid(`${path}.pulls`)
+  const pulls: AttributionPullDependency[] = []
+  for (const [index, pull] of (value as ReadonlyArray<unknown>).entries()) {
+    const item = try objectAt(pull, `${path}.pulls[${index}]`)
+    try exactKeys(item, ["id", "updatedAt", "state", "url"], `${path}.pulls`)
+    const { id, updatedAt, state } = item
+    if (!isNode(id) || !isoInstant(updatedAt) || typeof state !== "string" || !pullStates.includes(state)) throw invalid(`${path}.pulls[${index}]`)
+    pulls.push({ id, updatedAt, state: state as AttributionPullDependency["state"], url: try text(item.url, `${path}.pulls[${index}].url`) })
+  }
+  return pulls
+}
+
+effect function referencesAt(value: unknown, path: string) {
+  if (!Array.isArray(value)) throw invalid(`${path}.references`)
+  const references: AttributionReferenceDependency[] = []
+  for (const [index, reference] of (value as ReadonlyArray<unknown>).entries()) {
+    const item = try objectAt(reference, `${path}.references[${index}]`)
+    try exactKeys(item, ["owner", "name", "number", "repository"], `${path}.references`)
+    references.push({
+      owner: try text(item.owner, `${path}.references.owner`, 100),
+      name: try text(item.name, `${path}.references.name`, 100),
+      number: try count(item.number, `${path}.references.number`),
+      repository: try objectAt(item.repository, `${path}.references.repository`),
+    })
+  }
+  return references
+}
+
+effect function resultAt(value: unknown, path: string) {
+  const result = try objectAt(value, `${path}.result`)
+  if (result.kind === "none") {
+    try exactKeys(result, ["kind"], `${path}.result`)
+    return { kind: "none" } satisfies AttributionMemoResult
+  }
+  if (result.kind !== "authors") throw invalid(`${path}.result.kind`)
+  try exactKeys(result, ["kind", "authors"], `${path}.result`)
+  const listed = result.authors
+  if (!Array.isArray(listed) || listed.length === 0) throw invalid(`${path}.result.authors`)
+  const authors: AuthorRow[] = []
+  for (const [index, author] of (listed as ReadonlyArray<unknown>).entries()) {
+    const at = `${path}.result.authors[${index}]`
+    if (!Array.isArray(author) || author.length !== 5) throw invalid(at)
+    const [commit, actor, original, originalUrl, originalCommit] = author as ReadonlyArray<unknown>
+    if (!isSha(commit) || !isNode(actor) || !isNode(original) || !isSha(originalCommit)) throw invalid(at)
+    authors.push([commit, actor, original, try text(originalUrl, at), originalCommit])
+  }
+  return { kind: "authors", authors } satisfies AttributionMemoResult
+}
+
+effect function entryAt(value: unknown, index: number) {
+  const path = `attributions[${index}]`
+  const entry = try objectAt(value, path)
+  try exactKeys(entry, ["outcomeId", "fence", "pulls", "references", "incoming", "result"], path)
+  const fence = try fenceAt(entry.fence, path)
+  const pulls = try pullsAt(entry.pulls, path)
+  const references = try referencesAt(entry.references, path)
+  const incoming = entry.incoming
+  if (!Array.isArray(incoming) || !incoming.every((source) => typeof source === "string")) throw invalid(`${path}.incoming`)
+  const result = try resultAt(entry.result, path)
+  return { outcomeId: try text(entry.outcomeId, `${path}.outcomeId`, 128), fence, pulls, references, incoming: [...(incoming as ReadonlyArray<string>)], result } satisfies AttributionMemoEntry
+}
+
+export effect function parseCollectionMemo(source: string, byteLength: number) {
+  if (!memoWithinBounds(byteLength, 0, 0)) throw invalid("file is too large")
+  const parsed = parsedJson(source)
+  if ("failure" in parsed) throw new MemoInvalid({ message: parsed.failure })
+  const value = try objectAt(parsed.value, "memo")
+  try exactKeys(value, ["format", "producedAt", "cutoffAt", "lastFullAt", "attributionCodeDigest", "commitLines", "attributions"], "memo")
+  if (value.format !== collectionMemoFormat) throw invalid("unsupported format")
+  const { producedAt, cutoffAt, lastFullAt, attributionCodeDigest, commitLines, attributions } = value
+  if (!isoInstant(producedAt) || !isoInstant(cutoffAt) || !isoInstant(lastFullAt) || Date.parse(lastFullAt) > Date.parse(producedAt)) throw invalid("timestamps")
+  if (typeof attributionCodeDigest !== "string" || !codeDigestPattern.test(attributionCodeDigest)) throw invalid("attribution code digest")
+  if (!Array.isArray(commitLines) || !Array.isArray(attributions) || !memoWithinBounds(0, commitLines.length, attributions.length)) throw invalid("collections")
+  const lines: CommitLineRow[] = []
+  for (const [index, row] of (commitLines as ReadonlyArray<unknown>).entries()) lines.push(try commitLineAt(row, index))
+  const entries: AttributionMemoEntry[] = []
+  for (const [index, entry] of (attributions as ReadonlyArray<unknown>).entries()) entries.push(try entryAt(entry, index))
+  const commits = new Set<string>()
+  for (const [repository, commit] of lines) {
+    const key = `${repository}\0${commit}`
+    if (commits.has(key)) throw invalid("commit statistics repeat a commit")
+    commits.add(key)
+  }
+  const outcomes = new Set<string>()
+  for (const entry of entries) {
+    if (outcomes.has(entry.outcomeId)) throw invalid("attributions repeat an outcome")
+    outcomes.add(entry.outcomeId)
+  }
+  return { format: collectionMemoFormat, producedAt, cutoffAt, lastFullAt, attributionCodeDigest, commitLines: lines, attributions: entries } satisfies CollectionMemoFile
+}
+
+function lineKey(repositoryNodeId: string, commitNodeId: string) {
+  return `${repositoryNodeId}\0${commitNodeId}`
+}
+
+function lineOf(row: CommitLineRow): CommitLine {
+  return { repositoryNodeId: row[0], commitNodeId: row[1], oid: row[2], additions: row[3], deletions: row[4] }
+}
+
+export function commitLineMemo(rows: ReadonlyArray<CommitLineRow> = []) {
+  const known = new Map<string, CommitLineRow>()
+  const seen = new Map<string, CommitLineRow>()
+  const counts = { reused: 0, read: 0 }
+  for (const row of rows) known.set(lineKey(row[0], row[1]), row)
+  return {
+    counts,
+    lookup(repositoryNodeId: string, commitNodeId: string, oid: string) {
+      const key = lineKey(repositoryNodeId, commitNodeId)
+      const row = known.get(key)
+      if (row === undefined || !commitLineFor(lineOf(row), repositoryNodeId, commitNodeId, oid)) return undefined
+      counts.reused += 1
+      seen.set(key, row)
+      return { additions: row[3], deletions: row[4] }
+    },
+    record(row: CommitLineRow) {
+      const key = lineKey(row[0], row[1])
+      counts.read += 1
+      known.set(key, row)
+      seen.set(key, row)
+    },
+    beginPass() {
+      seen.clear()
+      counts.reused = 0
+      counts.read = 0
+    },
+    rows() {
+      return [...seen.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map(([, row]) => row)
+    },
+  }
+}
+
+export type CommitLineMemo = ReturnType<typeof commitLineMemo>
+
+export effect function auditSample(outcomeId: string, cutoffAt: string) {
+  const digest = try sha256Hex(`${cutoffAt}\0${outcomeId}`)
+  return Number.parseInt(digest.slice(0, 8), 16)
+}
+
+export interface MemoSession {
+  readonly mode: "full" | "incremental"
+  readonly reason: string
+  readonly codeDigest: string
+  readonly lastFullAt: string
+  readonly commitLines: CommitLineMemo
+  readonly prior: ReadonlyMap<string, AttributionMemoEntry>
+  readonly next: ReadonlyMap<string, AttributionMemoEntry>
+  readonly stats: MemoStats
+  readonly notReusable: ReadonlyMap<string, number>
+  state(): MemoRun
+  beginPass(): void!Rejected
+  noteNotReusable(reasons: ReadonlyArray<string>): void
+  audit(outcomeId: string, sample: number, live: LiveAnswer): boolean!Rejected
+  finishAudit(): void!Rejected
+  canReuse(outcomeId: string, sample: number): boolean
+  reuse(outcomeId: string, sample: number): AttributionMemoEntry!Rejected
+  computeLive(outcomeId: string, live: LiveAnswer): void!Rejected
+  snapshotWritten(): void!Rejected
+  memoKept(kept: boolean, producedAtMs: number): void!Rejected
+  serialize(cutoffAt: string, producedAt: string): string
+}
+
+export interface OpenMemoOptions {
+  readonly memo: CollectionMemoFile | null
+  readonly forceFull: boolean
+  readonly nowMs: number
+  readonly codeDigest: string
+  readonly context: RunContext
+}
+
+export interface OpenedMemo {
+  readonly session: MemoSession
+  readonly output: string | undefined
+}
+
+const reasonText: Readonly<Record<ModeReason, string>> = {
+  NoPreviousMemo: "no previous memo",
+  FullRequested: "full collection requested",
+  WeeklyFull: "weekly full collection",
+  CodeChanged: "attribution code changed",
+  MemoMatches: "previous memo matches",
+}
+
+function interner(first: number) {
+  const ids = new Map<string, number>()
+  return (key: string) => {
+    const known = ids.get(key)
+    if (known !== undefined) return known
+    const assigned = first + ids.size
+    ids.set(key, assigned)
+    return assigned
+  }
+}
+
+function maskedReason(reason: string) {
+  return reason.replace(/[a-f0-9]{40}/gu, "SHA").replace(/\d+/gu, "N").slice(0, 80)
+}
+
+export effect function memoRun() {
+  const held = try Ref.make(initial)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export effect function openSession(options: OpenMemoOptions) {
+  const { memo, codeDigest } = options
+  const outcomeNumber = interner(1)
+  const versionNumber = interner(0)
+  const resultNumber = interner(0)
+  const memoFile: MemoFile = memo === null
+    ? { usable: false, producedAt: 0, lastFullAt: 0, sameCode: false, attributions: [] }
+    : {
+        usable: true,
+        producedAt: millisOf(memo.producedAt),
+        lastFullAt: millisOf(memo.lastFullAt),
+        sameCode: memo.attributionCodeDigest === codeDigest,
+        attributions: memo.attributions.map((entry) => ({ outcomeId: outcomeNumber(entry.outcomeId), version: versionNumber(versionKey(entry)), result: resultNumber(canonicalJson(entry.result)) })),
+      }
+  const opening: Event = { type: "openMemo", memo: memoFile, context: options.context, forced: options.forceFull, now: options.nowMs }
+  let machine = try memoRun()
+  const opened = try machine.send(opening)
+  if (opened.refusal === "UntrustedRun") throw new MemoRefused({ message: untrustedMemoUse })
+  if (opened.refusal === "FutureMemo") throw invalid("memo was produced in the future")
+  const mode = opened.mode === "IncrementalCollection" ? "incremental" : "full"
+  const prior = new Map<string, AttributionMemoEntry>(mode === "incremental" && memo !== null ? memo.attributions.map((entry) => [entry.outcomeId, entry] as const) : [])
+  const lastFullAt = memo === null ? try isoAt(options.nowMs) : memo.lastFullAt
+  const commitLines = commitLineMemo(memo === null ? [] : memo.commitLines)
+  const next = new Map<string, AttributionMemoEntry>()
+  const notReusable = new Map<string, number>()
+  const stats: MemoStats = { reused: 0, live: 0, audited: 0, auditMismatches: 0, fenceMisses: 0 }
+  let run = opened
+
+  function resultOf(live: LiveAnswer) {
+    if (live.kind === "held") return resultNumber(canonicalJson({ kind: "held" }))
+    return resultNumber(canonicalJson(live.kind === "fenced" ? live.entry.result : live.result))
+  }
+
+  function recordedEntry(outcomeId: string, live: LiveAnswer) {
+    if (live.kind === "fenced") next.set(outcomeId, live.entry)
+  }
+
+  function priorVersion(outcomeId: string) {
+    const entry = prior.get(outcomeId)
+    return entry === undefined ? versionNumber(`unrecorded\0${outcomeId}`) : versionNumber(versionKey(entry))
+  }
+
+  function reuseEvent(outcomeId: string, sample: number): Event {
+    return { type: "reuse", outcomeId: outcomeNumber(outcomeId), version: priorVersion(outcomeId), sample }
+  }
+
+  effect function answering() {
+    if (run.phase === "Auditing") run = try machine.send({ type: "finishAudit" })
+  }
+
+  return {
+    mode,
+    reason: reasonText[opened.reason],
+    codeDigest,
+    lastFullAt,
+    commitLines,
+    prior,
+    next,
+    stats,
+    notReusable,
+    state() {
+      return run
+    },
+    effect beginPass() {
+      machine = try memoRun()
+      run = try machine.send(opening)
+      commitLines.beginPass()
+      next.clear()
+      notReusable.clear()
+      stats.reused = 0
+      stats.live = 0
+      stats.audited = 0
+      stats.auditMismatches = 0
+      stats.fenceMisses = 0
+    },
+    noteNotReusable(reasons: ReadonlyArray<string>) {
+      const kinds = new Set((reasons.length > 0 ? reasons : ["no reason recorded"]).map(maskedReason))
+      for (const kind of kinds) notReusable.set(kind, (notReusable.get(kind) ?? 0) + 1)
+    },
+    effect audit(outcomeId: string, sample: number, live: LiveAnswer) {
+      const before = run
+      run = try machine.send({ type: "audit", outcomeId: outcomeNumber(outcomeId), version: priorVersion(outcomeId), sample, result: resultOf(live), held: live.kind === "held", fenced: live.kind === "fenced" })
+      recordedEntry(outcomeId, live)
+      stats.audited += 1
+      const differs = run.mismatch && !before.mismatch
+      if (differs) stats.auditMismatches += 1
+      return differs
+    },
+    effect finishAudit() {
+      run = try machine.send({ type: "finishAudit" })
+    },
+    canReuse(outcomeId: string, sample: number) {
+      return enabled(run, reuseEvent(outcomeId, sample))
+    },
+    effect reuse(outcomeId: string, sample: number) {
+      try answering()
+      const event = reuseEvent(outcomeId, sample)
+      const entry = prior.get(outcomeId)
+      if (entry === undefined) throw new Rejected({ event, state: run })
+      run = try machine.send(event)
+      next.set(outcomeId, entry)
+      stats.reused += 1
+      return entry
+    },
+    effect computeLive(outcomeId: string, live: LiveAnswer) {
+      try answering()
+      const version = live.kind === "fenced" ? versionNumber(versionKey(live.entry)) : versionNumber(`unfenced\0${outcomeId}`)
+      run = try machine.send({ type: "computeLive", outcomeId: outcomeNumber(outcomeId), version, result: resultOf(live), held: live.kind === "held", fenced: live.kind === "fenced" })
+      recordedEntry(outcomeId, live)
+    },
+    effect snapshotWritten() {
+      try answering()
+      run = try machine.send({ type: "writeSnapshot" })
+    },
+    effect memoKept(kept: boolean, producedAtMs: number) {
+      run = try machine.send(kept ? { type: "writeMemo", producedAt: producedAtMs } : { type: "failMemoWrite" })
+    },
+    serialize(cutoffAt: string, producedAt: string) {
+      const file: CollectionMemoFile = {
+        format: collectionMemoFormat,
+        producedAt,
+        cutoffAt,
+        lastFullAt: mode === "full" ? producedAt : lastFullAt,
+        attributionCodeDigest: codeDigest,
+        commitLines: commitLines.rows(),
+        attributions: [...next.values()].sort((left, right) => (left.outcomeId < right.outcomeId ? -1 : left.outcomeId > right.outcomeId ? 1 : 0)),
+      }
+      return `${JSON.stringify(file)}\n`
+    },
+  } satisfies MemoSession
+}
+
+function messageOf(error: { readonly _tag: string }) {
+  return "message" in error && typeof error.message === "string" && error.message !== "" ? error.message : error._tag
+}
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function readCollectionMemo(path: string) {
+  const fs = try FileSystem.FileSystem
+  const size = Number((try fs.stat(path)).size)
+  if (!memoWithinBounds(size, 0, 0)) throw invalid("file is too large")
+  const bytes = try fs.readFile(path)
+  return try parseCollectionMemo(new TextDecoder().decode(bytes), bytes.length)
+}
+
+export effect function openMemoFromEnv(codeDigest: string) {
+  const input = try environment("SLOP_COLLECTION_MEMO")
+  const output = try environment("SLOP_COLLECTION_MEMO_OUT")
+  const full = (try environment("SLOP_COLLECTION_FULL")) || "false"
+  if (input === "" && output === "") return undefined
+  if (full !== "true" && full !== "false") throw new MemoRefused({ message: "SLOP_COLLECTION_FULL must be true or false" })
+  const context: RunContext = { actions: (try environment("GITHUB_ACTIONS")) === "true", gitRef: try environment("GITHUB_REF"), eventName: try environment("GITHUB_EVENT_NAME") }
+  if (!trustedMemoUse(context)) throw new MemoRefused({ message: untrustedMemoUse })
+  let memo: CollectionMemoFile | null = null
+  if (input !== "") {
+    memo = readCollectionMemo(input) catch effect (error) => {
+      try Console.error(`[slop.cash] collection memo unusable (${messageOf(error)}); collecting in full`)
+      return null
+    }
+  }
+  const session = try openSession({ memo, forceFull: full === "true", nowMs: try Clock.currentTimeMillis, codeDigest, context })
+  try Console.error(`[slop.cash] collection mode: ${session.mode} (${session.reason})`)
+  return { session, output: output === "" ? undefined : output } satisfies OpenedMemo
+}
+
+effect function kept(output: string, contents: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const target = files.resolve(output)
+  try fs.makeDirectory(files.dirname(target), { recursive: true })
+  const temporary = `${target}.${try randomId()}.tmp`
+  const written = effect {
+    try fs.writeFile(temporary, utf8(contents), { flag: "wx" })
+    try fs.rename(temporary, target)
+  }
+  try ensuring(written, Effect.ignore(fs.remove(temporary, { force: true })))
+}
+
+export effect function writeMemo(opened: OpenedMemo, cutoffAt: string) {
+  const { session } = opened
+  const lines = session.commitLines.counts
+  const { stats } = session
+  try Console.error(`[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${stats.reused} reused, ${stats.live} computed live, ${stats.audited} audited, ${stats.auditMismatches} audit mismatches, ${stats.fenceMisses} changed since the last collection`)
+  if (session.notReusable.size > 0) {
+    const reasons = [...session.notReusable].sort((left, right) => right[1] - left[1]).slice(0, topNotReusable).map(([reason, total]) => `${total} x ${reason}`).join("; ")
+    try Console.error(`[slop.cash] attributions not recorded for reuse: ${reasons}`)
+  }
+  try session.snapshotWritten()
+  if (opened.output === undefined) return
+  const producedAtMs = try Clock.currentTimeMillis
+  const contents = session.serialize(cutoffAt, try isoAt(producedAtMs))
+  const outcome = effect {
+    try kept(opened.output ?? "", contents)
+    return true
+  }
+  const written = outcome catch effect (error) => {
+    try Console.error(`[slop.cash] collection memo not written: ${messageOf(error)}`)
+    return false
+  }
+  try session.memoKept(written, producedAtMs)
+}

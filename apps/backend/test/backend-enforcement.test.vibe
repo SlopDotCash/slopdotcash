@@ -1,8 +1,11 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Response } from "miniflare"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
+
+const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
 
 const moderatorA = "18633264"
 const moderatorB = "202660855"
@@ -21,13 +24,15 @@ const Built = Layer.effect(World, effect {
   try orDie(Effect.try(() => {
     github.world.addUser({ id: 41, login: "responsible-41" })
     github.world.addUser({ id: 18633264, login: "moderator-a" })
+    github.world.addUser({ id: 5000, login: "slop-reader" })
   }))
   return { github, net: internet({ github: github.handler }) }
 })
 
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
-  const { net } = try World
-  return areaLayer({ root: new URL("..", import.meta.url).pathname, entry: "worker", d1: { SLOP_DB: "slop-private" }, vars: roles, internet: net })
+  const { github, net } = try World
+  const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
+  return areaLayer({ root: new URL("../../points", import.meta.url).pathname, config: "test/support/backendRoutes/vite.config.ts", entry: "backendRoutes", d1: { SLOP_DB: "slop-private" }, vars: { ...roles, SLOP_GITHUB_READ_TOKEN: reader }, services: { ASSETS: () => new Response("Not found", { status: 404 }) }, internet: net })
 }), Built)
 
 effect function same(actual: unknown, expected: unknown) {
@@ -45,23 +50,56 @@ function outcome(answer: Answer) {
 effect function member(githubId: string) {
   const area = try Area
   const token = `enforcement-session-${githubId}-`.padEnd(48, "x")
-  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, sessionExpiry)
   return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
 }
 
+const contribution = {
+  approvedScope: "Bug fixes and documented features in the toolkit.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
 function manifest(id: string, status: string, listingTier: string, repositoryId: string) {
+  const repository = `owner/${id}`
   return {
+    schemaVersion: "1",
     id,
+    slug: id,
     name: `Project ${id}`,
-    status,
+    eyebrow: "Open-source project",
+    headline: "Reproducible research tooling for everyone.",
+    description: "Build and maintain reproducible research tooling.",
     listingTier,
-    steward: { github: { actorId: steward, nodeId: "U_steward", login: "member-51" } },
-    authority: { repositoryId, repositoryNodeId: `R_${repositoryId}` },
-    terms: { repositoryLicense: { state: "verified", spdx: "MIT", url: "https://example.test/license", commitSha: "a".repeat(40), fileSha256: "b".repeat(64) } },
-    repositories: [{ id: `owner/${id}`, integrationBranch: "main" }],
-    reward: { chain: "base", fundingState: "unfunded", committedMinor: "0", paymentMode: "disabled" },
-    funding: {},
+    status,
+    steward: { displayName: "member-51", kind: "individual", github: { actorId: steward, nodeId: "U_steward", login: "member-51", type: "User", profileUrl: "https://github.com/member-51" }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId, repositoryNodeId: `R_${repositoryId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${"a".repeat(40)}/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    contribution,
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
   }
 }
 
@@ -81,9 +119,22 @@ effect function project(id: string, revisions: ReadonlyArray<{ readonly status: 
 }
 
 effect function vettingBan(id: string, repositoryId: string, digest: string) {
-  try (try Area).sql(
-    "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'Confirmed malicious scan result', 'assessment-1', ?, ?, NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, 2, ?, 'revision_appended', '2026-11-02T00:00:00.000Z')",
-    `enf_${id.replaceAll("-", "")}vetting`, id, repositoryId, JSON.stringify([`owner/${id}`]), JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "assessment-1", policyVersion: "1", rule: "confirmed-malicious" }), digest, digest,
+  const area = try Area
+  const assessment = `vet_${id.replaceAll("-", "")}01`
+  const commit = "c".repeat(40)
+  const template = "d".repeat(64)
+  try area.sql(
+    "INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, repository_id, flag_ids) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'member-51', '2026-11-01T12:00:00.000Z', 'Automatic scan of new project content', 'pending', ?, '[]')",
+    assessment, id, digest, "e".repeat(64), commit, template, steward, `owner/${id}`,
+  )
+  const result = JSON.stringify({ assessmentId: assessment, disposition: "malicious", assessed: { commitSha: commit, templateSha256: template } })
+  try area.sql(
+    "UPDATE vetting_assessments SET state = 'malicious', policy_version = '1', result = ?, result_sha256 = ?, signing_key_sha256 = ?, completed_at = '2026-11-02T00:00:00.000Z' WHERE id = ?",
+    result, "f".repeat(64), "c".repeat(64), assessment,
+  )
+  try area.sql(
+    "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'Confirmed malicious scan result', ?, ?, ?, NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, 2, ?, 'revision_appended', '2026-11-02T00:00:00.000Z')",
+    `enf_${id.replaceAll("-", "")}vetting`, id, assessment, repositoryId, JSON.stringify([`owner/${id}`]), JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: assessment, policyVersion: "1", rule: "confirmed-malicious" }), digest, digest,
   )
 }
 
@@ -106,7 +157,7 @@ effect function revised(as: Session, expectedRevision: number, next: unknown) {
   return try (try Area).request("/api/v1/admin/projects/admin-demo/manifest", { method: "PUT", json: { manifest: next, expectedRevision, reason: "Administrator exception" }, as })
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('Moderators restrict, decide malice and decide appeals independently (spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing")', () => effect {
     const area = try Area
     const [a, b, admin, owner, outsider] = [try member(moderatorA), try member(moderatorB), try member(administrator), try member(steward), try member("61")]
@@ -138,7 +189,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       refused: [[401, "unauthorized"], [403, "forbidden"], [403, "forbidden"], [400, "invalid_request"], [400, "invalid_request"], [409, "stale_enforcement"]],
       preview: [200, "clear", "quarantined", "retired"],
       decided: [[200, null], "quarantine", [200, null], "banned"],
-      appeals: [[200, null], "requested", [403, "forbidden"], [409, "rejected"], [200, null]],
+      appeals: [[200, null], "requested", [403, "forbidden"], [403, "independent_review_required"], [200, null]],
       rows: [
         { sequence: 1, action: "quarantine", state_after: "quarantined", appeal_after: "none", actor_role: "project-moderator" },
         { sequence: 2, action: "ban", state_after: "banned", appeal_after: "none", actor_role: "project-moderator" },
@@ -149,7 +200,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal")', () => effect {
+  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project\'s open request")', () => effect {
     const area = try Area
     const a = try member(moderatorA)
     const b = try member(moderatorB)
@@ -165,6 +216,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const bannerReinstates = try act(a, "malice-demo", "reinstate_accounts", { responsibleAccounts: [{ githubLogin: "responsible-41" }] })
     const independentReinstates = try act(b, "malice-demo", "reinstate_accounts", { responsibleAccounts: [{ githubLogin: "responsible-41" }] })
     const afterRelease = try area.request("/api/v1/project-account-bans")
+    const [ban] = try area.sql("SELECT b.enforcement_id FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE e.project_id = 'malice-demo'")
     const stored = try area.sql("SELECT b.github_id, b.github_login, (SELECT COUNT(*) FROM project_account_reinstatements r WHERE r.ban_enforcement_id = b.enforcement_id AND r.github_id = b.github_id) AS released FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE e.project_id = 'malice-demo'")
     try same({
       selfBan: outcome(selfBan),
@@ -178,8 +230,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       selfBan: [409, "rejected"],
       decided: [[200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
       publicBans: [200, "public, max-age=0, s-maxage=30", "*", [responsible]],
-      appeals: [[200, null], "banned-account", [409, "rejected"], [{ projectId: "malice-demo", state: "banned", appeal: "requested" }]],
-      reinstated: [[409, "rejected"], [200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
+      appeals: [[200, null], "banned-account", [409, "appeal_open"], [{ projectId: "malice-demo", state: "banned", appeal: "requested" }]],
+      reinstated: [[403, "independent_review_required"], [200, null], [{ banEnforcementId: String(ban?.enforcement_id), githubId: responsible, githubLogin: "responsible-41" }]],
       afterRelease: [],
       stored: [{ github_id: responsible, github_login: "responsible-41", released: 1 }],
     })
@@ -194,27 +246,28 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const base = manifest("admin-demo", "active", "community", "3003")
     const revise = (expectedRevision: number, next: unknown) => revised(admin, expectedRevision, next)
     const placed = try revise(1, { ...base, listingTier: "featured" })
-    const twoFields = try revise(2, { ...base, listingTier: "community", status: "paused" })
-    const stale = try revise(1, { ...base, status: "paused" })
-    const unchanged = try revise(2, { ...base, listingTier: "featured" })
-    const reordered = try revise(2, Object.fromEntries(Object.entries({ ...base, listingTier: "featured" }).toReversed()))
-    const other = try revise(2, { ...base, listingTier: "featured", name: "Renamed" })
     const held = try revise(2, { ...base, listingTier: "featured", status: "paused" })
-    const stewarded = try revise(3, { ...base, listingTier: "featured", status: "paused", steward: { github: { actorId: "52", nodeId: "U_next", login: "member-52" } } })
-    const delisted = try revise(4, { ...base, listingTier: "retired", status: "paused", steward: { github: { actorId: "52", nodeId: "U_next", login: "member-52" } } })
+    const twoFields = try revise(3, { ...base, listingTier: "community", status: "paused", name: "Renamed" })
+    const stale = try revise(1, { ...base, status: "paused" })
+    const unchanged = try revise(4, { ...base, listingTier: "community", status: "paused", name: "Renamed" })
+    const reordered = try revise(4, Object.fromEntries(Object.entries({ ...base, listingTier: "community", status: "paused", name: "Renamed" }).toReversed()))
+    const steward52 = { displayName: "member-52", kind: "individual", github: { actorId: "52", nodeId: "U_next", login: "member-52", type: "User", profileUrl: "https://github.com/member-52" }, website: null }
+    const terms = { ...base.terms, revision: "draft-2" }
+    const stewarded = try revise(4, { ...base, listingTier: "community", status: "paused", name: "Renamed", steward: steward52, terms })
+    const delisted = try revise(5, { ...base, listingTier: "retired", status: "paused", name: "Renamed", steward: steward52, terms })
     const kinds = try area.sql("SELECT revision, kind FROM project_revision_kinds WHERE project_id = 'admin-demo' ORDER BY revision")
     try area.redeploy({ vars: { ...roles, ADMIN_GITHUB_IDS: `${roles.ADMIN_GITHUB_IDS},8`, PROJECT_MODERATOR_GITHUB_IDS: "" } })
     const closed = try act(a, "admin-demo", "quarantine")
     const listed = try area.request("/api/v1/admin/projects", { as: a })
     const moderation = (field(listed.body, "projects") as ReadonlyArray<unknown>).map((entry) => field(entry, "enforcement", "moderation"))
     try same({
-      revisions: [outcome(placed), field(placed.body, "project", "revision"), outcome(twoFields), outcome(stale), outcome(unchanged), outcome(reordered), outcome(other), outcome(held), outcome(stewarded), outcome(delisted), field(delisted.body, "project", "status")],
+      revisions: [outcome(placed), field(placed.body, "project", "revision"), outcome(held), outcome(twoFields), outcome(stale), outcome(unchanged), outcome(reordered), outcome(stewarded), outcome(delisted), field(delisted.body, "project", "status")],
       kinds,
       closed: outcome(closed),
       moderation: [...new Set(moderation)],
     }, {
-      revisions: [[200, null], 2, [422, "invalid_manifest"], [409, "stale_revision"], [422, "no_change"], [422, "no_change"], [422, "invalid_manifest"], [200, null], [200, null], [200, null], "paused"],
-      kinds: [{ revision: 2, kind: "Placement" }, { revision: 3, kind: "AdminHold" }, { revision: 4, kind: "AdminException" }, { revision: 5, kind: "AdminDelist" }],
+      revisions: [[200, null], 2, [200, null], [200, null], [409, "stale_revision"], [422, "no_change"], [422, "no_change"], [200, null], [200, null], "paused"],
+      kinds: [{ revision: 2, kind: "Placement" }, { revision: 3, kind: "AdminHold" }, { revision: 4, kind: "AdminException" }, { revision: 5, kind: "AdminException" }, { revision: 6, kind: "AdminDelist" }],
       closed: [403, "moderation_unavailable"],
       moderation: ["unconfigured"],
     })

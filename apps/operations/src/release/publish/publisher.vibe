@@ -4,14 +4,17 @@ import type { Environment, Service } from "../../../gen/operations__release.effe
 import { bundleSite, pagesManifestName, verifyPagesManifest } from "../manifest/pages.vibe"
 import { retiredScripts } from "../retired.ts"
 import { inheritedMessage } from "../rpc/rotate.vibe"
-import { type ListedSite, PublicationFailed, Publisher, type ServedSite, type Target } from "../run/publisher.vibe"
+import { inheritedSuffix, inspectVersion, workerState } from "../rpc/worker.vibe"
+import { type FeeVersionRead, type FeeVersionsRead, type ListedSite, PublicationFailed, Publisher, type ServedSite, type Target } from "../run/publisher.vibe"
 import { identityApp, identityClientId, identityProbes, slopbotHealth, traceApiOrigin, traceBoundary, tracePatience, verifySchedules } from "../verify/probes.vibe"
 import { type Patience, propagation, providerChecks, servedMismatches } from "../verify/served.vibe"
 import { Cloudflare, cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
 import { pagesSecretNames, tableNames } from "../wrangler/outputs.vibe"
+import { type Attester, attesterPlan, settlementProgram } from "./attesters.vibe"
 import { ConfigRefused, type Reviewed, databaseOf, driftMessage, isolationIssue, mappedScripts, pagesOf, readReviewed, reviewOnlyKeys, secretDrift, siteOrigins } from "./config.vibe"
 import { migrationLedger } from "./migrations.vibe"
 import { type Overrides, type Publication, type SecretValues, checkedSecrets, configsFor, feeSettingsOf, plainRelease, privateBoundary, publicationOrder, publishContainerWorker, publishWorker, releaseSecrets, servingTag, withSecretsFile } from "./order.vibe"
+import { publishSubmissionFee, submissionFeeReviewOf } from "./submissionFee.vibe"
 import { tableOwners, undeclaredTable } from "./tables.vibe"
 
 export interface PublisherOptions {
@@ -31,6 +34,7 @@ interface Prepared {
   readonly slopbot: boolean
   readonly retention: boolean
   readonly scannerKey: string
+  readonly attesters: ReadonlyArray<Attester>
 }
 
 interface SiteBinding {
@@ -40,8 +44,13 @@ interface SiteBinding {
   readonly environment?: string
 }
 
+interface PublishedAttesters {
+  readonly networks: ReadonlyArray<string>
+  readonly bound: ReadonlyArray<{ readonly network: string; readonly service: string }>
+}
+
 interface Published {
-  readonly stacks: ReadonlyArray<string>
+  readonly attesters: PublishedAttesters | undefined
   readonly notify: string | undefined
   readonly clientId: string | undefined
 }
@@ -91,7 +100,6 @@ const branches = { Production: "main", Staging: "development" } as const
 const listingPageSize = 25
 const listingPages = 8
 const migrationSeconds = 900
-const settlementProgram = "apps/settlement/dist/programs/main.js"
 const siteSeconds = 600
 const deploymentIdPattern = /^[0-9a-f-]{20,}$/iu
 const retentionValues: ReadonlySet<string> = new Set(["", "off", "enabled"])
@@ -105,28 +113,22 @@ const workerUploads: { readonly [E in Environment]: { readonly [S in Service]?: 
   Staging: { IdentityWorker: ["GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "IDENTITY_STATE_KEY", "IDENTITY_ASSERTION_KEY"], RepositoryAccess: ["SLOPBOT_APP_ID", "SLOPBOT_APP_PRIVATE_KEY"] },
 }
 
-const attesterBindings: { readonly [E in Environment]: { readonly pattern: RegExp; readonly networks: { readonly [network: string]: ReadonlyArray<readonly [string, string]> } } } = {
+const attesterBindings: { readonly [E in Environment]: { readonly [network: string]: ReadonlyArray<readonly [string, string]> } } = {
   Production: {
-    pattern: /^slop-payments-(.+)-attester$/u,
-    networks: {
-      "base-mainnet": [["BINDING_RECOVERY", "BindingRecovery"], ["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
-      ethereum: [["BINDING_RECOVERY_ETHEREUM", "BindingRecovery"], ["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
-      "robinhood-mainnet": [["BINDING_RECOVERY_ROBINHOOD", "BindingRecovery"], ["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
-      "solana-mainnet": [["SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["SECURITY_SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
-    },
+    "base-mainnet": [["BINDING_RECOVERY", "BindingRecovery"], ["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
+    ethereum: [["BINDING_RECOVERY_ETHEREUM", "BindingRecovery"], ["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
+    "robinhood-mainnet": [["BINDING_RECOVERY_ROBINHOOD", "BindingRecovery"], ["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
+    "solana-mainnet": [["SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["SECURITY_SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
   },
   Staging: {
-    pattern: /^slop-payments-(.+)-staging-attester$/u,
-    networks: {
-      "base-sepolia": [["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
-      "ethereum-sepolia": [["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
-      "robinhood-testnet": [["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
-      "solana-devnet": [["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
-    },
+    "base-sepolia": [["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
+    "ethereum-sepolia": [["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
+    "robinhood-testnet": [["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
+    "solana-devnet": [["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
   },
 }
 
-const reservedBindings: ReadonlySet<string> = new Set(Object.values(attesterBindings).flatMap((tier) => Object.values(tier.networks).flatMap((pairs) => pairs.map(([binding]) => binding))))
+const reservedBindings: ReadonlySet<string> = new Set(Object.values(attesterBindings).flatMap((tier) => Object.values(tier).flatMap((pairs) => pairs.map(([binding]) => binding))))
 
 function refused(message: string) {
   return new ConfigRefused({ message })
@@ -208,7 +210,7 @@ effect function scannerPublicKey() {
   return btoa(String.fromCharCode(...pair.publicKey))
 }
 
-function siteVars(project: PagesProject, site: Reviewed, scannerKey: string) {
+function siteVars(project: PagesProject, site: Reviewed, scannerKey: string, environment: Environment, attesters: PublishedAttesters) {
   const remote = project.deployment_configs.production.env_vars ?? {}
   const existing = remote[scannerKeyName]
   if (existing !== undefined && (existing.type !== "plain_text" || existing.value !== scannerKey)) return "the Pages project holds other scanner public keys; rotation is not authorized"
@@ -222,17 +224,15 @@ function siteVars(project: PagesProject, site: Reviewed, scannerKey: string) {
     if (variable.value === undefined) return "the Pages plaintext configuration is invalid"
     plain[name] = variable.value
   }
-  return { ...plain, ...site.file.vars ?? {}, [scannerKeyName]: scannerKey }
+  const networks: Readonly<Record<string, string>> = environment === "Production" ? { PAYMENT_NETWORKS: JSON.stringify(attesters.networks) } : {}
+  const vars: Readonly<Record<string, string>> = { ...plain, ...site.file.vars ?? {}, ...networks, [scannerKeyName]: scannerKey }
+  return vars
 }
 
-function siteServices(site: Reviewed, environment: Environment, published: Published) {
+function siteServices(site: Reviewed, environment: Environment, published: Published, bound: PublishedAttesters["bound"]) {
   const tier = attesterBindings[environment]
   const kept: SiteBinding[] = (site.file.services ?? []).filter((binding) => !reservedBindings.has(binding.binding))
-  const attesters = published.stacks.flatMap((name) => {
-    const network = tier.pattern.exec(name)?.[1]
-    const pairs = network === undefined ? undefined : tier.networks[network]
-    return (pairs ?? []).map(([binding, entrypoint]) => ({ binding, service: name, entrypoint }))
-  })
+  const attesters = bound.flatMap(({ network, service }) => (tier[network] ?? []).map(([binding, entrypoint]) => ({ binding, service, entrypoint })))
   if (environment === "Production" || published.notify === undefined) return [...kept, ...attesters]
   if (kept.some((binding) => binding.binding === notifyBinding)) return `the reviewed staging Pages configuration already binds ${notifyBinding}`
   return [...kept, ...attesters, { binding: notifyBinding, service: published.notify }]
@@ -252,7 +252,7 @@ effect function storeConfig(store: Store, root: string, workspace: string) {
 effect function migrated(store: Store, config: string, root: string) {
   const cloudflare = try Cloudflare
   try migrationLedger(root)
-  try cloudflare.wrangler("migrations", { args: ["d1", "migrations", "apply", store.database.database_name, "--remote", "--config", config], seconds: migrationSeconds })
+  try cloudflare.wrangler("migrations", { args: ["d1", "migrations", "apply", store.database.database_name, "--remote", "--config", config], seconds: migrationSeconds, quiet: true })
 }
 
 effect function disclosed(store: Store, root: string, bundle: string) {
@@ -276,6 +276,17 @@ effect function releaseVariables() {
   return { slopbot, retention: retention === "enabled" }
 }
 
+const slopbotValueVariables = ["SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD", "SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD", "SLOPBOT_VALUE_START_AT"]
+
+effect function slopbotValueVars() {
+  const vars: Record<string, string> = {}
+  for (const name of slopbotValueVariables) {
+    const value = (try Config.withDefault(Config.String(name), "")).trim()
+    if (value !== "") vars[name] = value
+  }
+  return vars
+}
+
 function customDomain(reviewed: Reviewed) {
   const route = (reviewed.file.routes ?? []).find((entry) => entry.custom_domain === true)
   return route === undefined ? undefined : `https://${route.pattern}`
@@ -295,7 +306,7 @@ export function publisher(options: PublisherOptions) {
     const files = try Path.Path
     const workspace = try fs.makeTempDirectoryScoped({ prefix: "slop-release-" })
     const prepared = try Ref.make<Prepared | undefined>(undefined)
-    const published = try Ref.make<Published>({ stacks: [], notify: undefined, clientId: undefined })
+    const published = try Ref.make<Published>({ attesters: undefined, notify: undefined, clientId: undefined })
     const writtenVars = try Ref.make<Readonly<Record<string, string>> | undefined>(undefined)
     const backupRetention = try Ref.make<boolean | undefined>(undefined)
     const listedUrls = try Ref.make(new Map<string, string>())
@@ -318,6 +329,7 @@ export function publisher(options: PublisherOptions) {
       const store = databaseOf(reviewed, target.environment)
       if (store === undefined) throw new PublicationFailed({ stage: "migrations", message: "no reviewed configuration binds this environment's D1 database" })
       try staged("scripts", scriptsMapped(reviewed))
+      const attesters = try staged("attesters", attesterPlan(reviewed, target.environment, target.bundle))
       const scannerKey = try staged("scanner key", scannerPublicKey())
       try staged("pages", pagesReady(site, target, workspace))
       const config = try staged("migrations", storeConfig(store, options.root, workspace))
@@ -325,23 +337,29 @@ export function publisher(options: PublisherOptions) {
       try staged("tables", tablesOwned(store, config, options.root))
       try staged("disclosures", disclosed(store, options.root, target.bundle))
       const variables = try staged("variables", releaseVariables())
-      try Ref.set(published, { stacks: [], notify: undefined, clientId: undefined })
-      try Ref.set(prepared, { target, reviewed, site, store, storeConfig: config, scannerKey, ...variables })
+      try Ref.set(published, { attesters: undefined, notify: undefined, clientId: undefined })
+      try Ref.set(prepared, { target, reviewed, site, store, storeConfig: config, scannerKey, attesters, ...variables })
     }
 
     effect function publishService(service: Service, target: Target) {
       const ready = try preparedFor(target)
-      const found = configsFor(ready.reviewed, service, target.environment)
       const publication = { root: options.root, bundle: target.bundle, workspace, sourceSha: target.sourceSha, environment: target.environment } satisfies Publication
-      if (typeof found === "string") throw refused(found)
       if (service === "PaymentAttesters") {
         const tags: string[] = []
-        for (const stack of found) {
-          tags.push((try publishWorker(stack, publication, plainRelease)).tag)
-          try Ref.update(published, (current) => ({ ...current, stacks: [...current.stacks, stack.file.name] }))
+        const bound: Array<PublishedAttesters["bound"][number]> = []
+        for (const attester of ready.attesters) {
+          if (!attester.release) continue
+          const overrides = { vars: attester.vars, withoutBindings: [], crons: attester.crons } satisfies Overrides
+          tags.push((try publishWorker(attester.reviewed, publication, { ...plainRelease, overrides })).tag)
+          if (attester.enabled) bound.push({ network: attester.network, service: attester.reviewed.file.name })
         }
+        const networks = ready.attesters.filter((attester) => attester.enabled).map((attester) => attester.network).sort()
+        try Ref.update(published, (current) => ({ ...current, attesters: { networks, bound } }))
+        if (tags.length === 0) return target.sourceSha
         return tags.every((tag) => tag === tags[0]) ? tags[0] ?? "" : `mixed:${tags.join(",")}`
       }
+      const found = configsFor(ready.reviewed, service, target.environment)
+      if (typeof found === "string") throw refused(found)
       const reviewed = onlyConfig(found)
       if (typeof reviewed === "string") throw refused(reviewed)
       if (service === "VettingSandbox") return try publishContainerWorker(reviewed, publication)
@@ -349,6 +367,7 @@ export function publisher(options: PublisherOptions) {
         if ((try Ref.get(backupRetention)) !== true) throw refused("the backup Worker was not published with retention enabled in this run")
         return try servingTag(reviewed.file.name)
       }
+      if (service === "SubmissionFee") return try publishSubmissionFee(reviewed, ready.site, publication)
       const secrets = try releaseSecrets(workerUploads[target.environment][service] ?? [])
       if (service === "VettingBackup") {
         const overrides = { vars: { EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: ready.retention ? "enabled" : "off" }, withoutBindings: [] } satisfies Overrides
@@ -369,7 +388,8 @@ export function publisher(options: PublisherOptions) {
         return identity.tag
       }
       if (service === "Slopbot" || service === "RepositoryAccess") {
-        const overrides = { vars: { SLOPBOT_PRODUCER_REVISION: target.sourceSha }, withoutBindings: [] } satisfies Overrides
+        const values = try slopbotValueVars()
+        const overrides = { vars: { ...(service === "Slopbot" ? values : {}), SLOPBOT_PRODUCER_REVISION: target.sourceSha }, withoutBindings: [] } satisfies Overrides
         const slopbot = try publishWorker(reviewed, publication, { overrides, triggers: true, secrets })
         const origin = customDomain(reviewed)
         if (service === "Slopbot") {
@@ -395,6 +415,13 @@ export function publisher(options: PublisherOptions) {
       return try feeSettingsOf(reviewed, try checkedSecrets(reviewed))
     }
 
+    effect function submissionFee(target: Target) {
+      const ready = try preparedFor(target)
+      const reviewed = onlyConfig(configsFor(ready.reviewed, "SubmissionFee", target.environment))
+      if (typeof reviewed === "string") throw refused(reviewed)
+      return try submissionFeeReviewOf(reviewed, ready.site)
+    }
+
     effect function site(target: Target) {
       const cloudflare = try Cloudflare
       const ready = try preparedFor(target)
@@ -410,9 +437,12 @@ export function publisher(options: PublisherOptions) {
       fs.copyFile(files.join(target.bundle, "apps", "app", "dist", "_worker.js"), files.join(output, "_worker.js")) catch effect () => {
         throw refused("the Pages Worker could not be staged for publication")
       }
-      const vars = siteVars(try pagesProject(ready.site, target), ready.site, ready.scannerKey)
+      const current = try Ref.get(published)
+      const attesters = current.attesters
+      if (attesters === undefined) throw refused("Attester publication is not verified")
+      const vars = siteVars(try pagesProject(ready.site, target), ready.site, ready.scannerKey, target.environment, attesters)
       if (typeof vars === "string") throw refused(vars)
-      const services = siteServices(ready.site, target.environment, try Ref.get(published))
+      const services = siteServices(ready.site, target.environment, current, attesters.bound)
       if (typeof services === "string") throw refused(services)
       const kept = Object.fromEntries(Object.entries(ready.site.raw).filter(([key]) => !reviewOnlyKeys.has(key)))
       try written(files.join(directory, "wrangler.json"), { ...kept, vars, services, pages_build_output_dir: "./site" })
@@ -479,6 +509,17 @@ export function publisher(options: PublisherOptions) {
       return try identityClientId(origin)
     }
 
+    effect function feeVersions() {
+      const state = try workerState()
+      const latest = try inspectVersion(state.latest.id)
+      const activeVersions: FeeVersionRead[] = []
+      for (const split of state.active.versions) {
+        const active = try inspectVersion(split.version_id)
+        activeVersions.push({ versionId: active.id, rotation: try inheritedSuffix(active.annotations) })
+      }
+      return { latestUpload: { versionId: latest.id, rotation: try inheritedSuffix(latest.annotations) }, activeVersions } satisfies FeeVersionsRead
+    }
+
     effect function served(target: Target, deploymentId: string) {
       const ready = try preparedFor(target)
       const url = (try Ref.get(listedUrls)).get(deploymentId)
@@ -506,6 +547,8 @@ export function publisher(options: PublisherOptions) {
       prepare: (target: Target) => staged("prepare", Effect.provide(prepare(target), services)),
       publish: (service: Service, target: Target) => staged(`publish ${service}`, Effect.provide(publishService(service, target), services)),
       feeSettings: (target: Target) => staged("fee settings", Effect.provide(feeSettings(target), services)),
+      feeVersions: () => staged("fee versions", Effect.provide(feeVersions(), services)),
+      submissionFee: (target: Target) => staged("submission fee", Effect.provide(submissionFee(target), services)),
       site: (target: Target) => staged("site", Effect.provide(site(target), services)),
       deployments: (target: Target, sinceMillis: number) => staged("deployments", Effect.provide(deployments(target, sinceMillis), services)),
       served: (target: Target, deploymentId: string) => staged("served", Effect.provide(served(target, deploymentId), services)),

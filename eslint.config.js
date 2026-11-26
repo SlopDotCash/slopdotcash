@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { relative, sep } from "node:path"
 import js from "@eslint/js"
 import react from "@eslint-react/eslint-plugin"
 import tailwind from "eslint-plugin-better-tailwindcss"
@@ -34,7 +35,7 @@ const signing = {
 const curves = ["ed25519", "ed25519ph", "ed25519ctx", "secp256k1", "schnorr", "p256"]
 const signs = curves.flatMap((object) => ["sign", "keygen", "getPublicKey"].map((property) => ({ object, property, message: custody })))
 // The attester, keeper and fee-wallet keys, and the referral root poster, each with its own entry.
-const keys = ["apps/settlement/src/signer/**", "apps/fees/src/signer/**", "apps/settlement/src/workers/{attester,keeper}.*", "apps/fees/src/workers/feeConverter.*"]
+const keys = ["apps/settlement/src/signer/**", "apps/fees/src/signer/**", "apps/settlement/src/workers/{attester,keeper}.*", "apps/settlement/src/keeper/{signer,solana}.*", "apps/fees/src/workers/feeConverter.*"]
 const poster = ["apps/settlement/src/signer/rootPoster*", "apps/settlement/src/programs/referralRoots.*"]
 const imports = {
   patterns: [
@@ -49,6 +50,378 @@ const untyped = ["*.{js,ts}", "**/.storybook/**", "packages/design-system/**", "
 // Every React interface: Studio's page is built on the same theme (vibestack/studio/vite.config.ts).
 const tsx = ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}", "vibestack/studio/src/page/**/*.{ts,tsx}"]
 const design = "packages/design-system"
+const writing = 'AGENTS.md, "Writing code"'
+const citation = String.raw`spec\/\S+\.md, "[^"]+"`
+const suppressible = String.raw`(?!code\/|no-console\b)[\w@/-]+`
+const cited = new RegExp(String.raw`^\s*${citation}(?:; ${citation})*\s*$`)
+const suppression = new RegExp(String.raw`^ eslint-disable(?:-next-line|-line)? ${suppressible}(?:, ${suppressible})* -- \S`)
+const configs = [suppression, /^ eslint-enable\b/]
+const throwsType = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*`
+const throwsDirective = new RegExp(String.raw`^\*(?:[\s*]*@throws \{[ \t]*${throwsType}(?:[ \t]*\|[ \t]*${throwsType})*[ \t]*\})+[\s*]*$`)
+const directives = {
+  Line: [cited, suppression, /^@ (?:backend|requires|ensures|invariant|decreases|assert|pure|type|ghost)(?: |$)/, /^\/ <reference /, /^ @vitest-environment [\w-]+$/],
+  Block: [cited, ...configs, /^\*(?:[\s*]*@(?:model|design) \S+)+[\s*]*$/, throwsDirective],
+  Shebang: [/^/],
+}
+const inline = /^\s*(?:eslint(?:-[a-z]+)*|exported|globals?)(?:\s|$)/
+const guarded = (parser) => ({
+  meta: { name: `${parser.meta.name} with code/inline`, version: parser.meta.version },
+  parseForESLint: (text, options) => {
+    const parsed = parser.parseForESLint(text, options)
+    const loose = parsed.ast.comments.find((comment) => inline.test(comment.value) && !configs.some((form) => form.test(comment.value)))
+    if (loose) throw Object.assign(new SyntaxError(`Inline config here is only "eslint-disable[-next-line|-line] <rule>, … -- <reason>", never for code/* or no-console, and "eslint-enable" (${writing}).`), { lineNumber: loose.loc.start.line, column: loose.loc.start.column + 1 })
+    return parsed
+  },
+})
+const within = (node) => Boolean(node) && (/Function/.test(node.type) || within(node.parent))
+const documented = (context, comment) => context.options[0]?.jsdoc && comment.type === "Block" && comment.value.startsWith("*") && !within(context.sourceCode.getNodeByRangeIndex(comment.range[0]))
+const left = { type: "object", additionalProperties: { type: "integer", minimum: 1 } }
+const excess = (context, found) => found.length > (context.options[0]?.left?.[relative(context.cwd, context.filename).split(sep).join("/")] ?? 0) && found.forEach((problem) => context.report(problem))
+const comments = {
+  meta: { type: "problem", schema: [{ type: "object", properties: { jsdoc: { type: "boolean" }, left }, additionalProperties: false }] },
+  create: (context) => ({
+    Program: () => excess(context, context.sourceCode.getAllComments()
+      .filter((comment) => !directives[comment.type].some((directive) => directive.test(comment.value)) && !documented(context, comment))
+      .map((comment) => ({ loc: comment.loc, message: `No code comments: only spec citations and tool directives (${writing}).` }))),
+  }),
+}
+const uses = (names) => `:matches(Identifier[name=${names}]:not(ImportSpecifier[imported.name=${names}] > Identifier.local):not(ObjectExpression > Property[computed=false][shorthand=false] > Identifier.key), MemberExpression[computed=true] > Literal.property[value=${names}])`
+const scheduling = {
+  [uses(/^use(?:Layout|Insertion)?Effect$/)]: `No effect hooks: shared state lives in the spec-backed Machine (${writing}).`,
+  [uses(/^(?:setTimeout|setInterval|setImmediate|queueMicrotask|requestAnimationFrame|requestIdleCallback)$/)]: `No timers: wait with Effect in VibeLang, or let the Machine say when (${writing}).`,
+}
+const effects = {
+  meta: { type: "problem", schema: [{ type: "object", properties: { left }, additionalProperties: false }] },
+  create: (context) => {
+    const found = []
+    return { ...Object.fromEntries(Object.entries(scheduling).map(([selector, message]) => [selector, (node) => found.push({ node, message })])), "Program:exit": () => excess(context, found) }
+  },
+}
+const code = { rules: { comments, effects } }
+const own = ["apps/**", "packages/**"]
+const commented = {
+  "apps/app/src/App.tsx": 4,
+  "apps/app/src/address.ts": 4,
+  "apps/app/src/head.ts": 2,
+  "apps/app/src/routes.vibe": 3,
+  "apps/app/test/app.browser.test.tsx": 3,
+  "apps/app/test/app.test.vibe": 3,
+  "apps/app/test/drivers/app.ts": 3,
+  "apps/app/vitest.config.ts": 1,
+  "apps/backend/src/accounts/store/store.vibe": 2,
+  "apps/backend/test/backend-binding.test.vibe": 3,
+  "apps/backend/test/backend-enforcement.test.vibe": 10,
+  "apps/backend/test/backend-identity.test.vibe": 8,
+  "apps/backend/test/backend-merge-activity.test.vibe": 1,
+  "apps/backend/test/backend-referrals.test.vibe": 4,
+  "apps/backend/test/backend-registry.test.vibe": 8,
+  "apps/backend/test/backend-session.test.vibe": 3,
+  "apps/backend/test/backend-setup.test.vibe": 6,
+  "apps/backend/test/backend-wallets.test.vibe": 3,
+  "apps/points/src/journal/snapshot.vibe": 1,
+  "apps/points/test/points-U12.test.vibe": 2,
+  "apps/points/test/points.test.vibe": 2,
+  "apps/points/test/support/backendRoutes/worker.vibe": 1,
+  "apps/points/test/support/catchup3-e1/world.ts": 2,
+  "apps/points/test/support/u16/github.ts": 3,
+  "apps/points/test/support/u5/github.ts": 2,
+  "apps/security/src/client/reportDeposit.ts": 5,
+  "apps/settlement/src/reserveRelease/store.vibe": 1,
+  "apps/settlement/src/signer/recoveryBinding.vibe": 3,
+  "apps/settlement/test/drivers/settlement__vaultSnapshots.ts": 1,
+  "apps/settlement/test/support/binding/worker.vibe": 1,
+  "packages/contracts/test/drivers/contracts__evmEscrow.ts": 7,
+  "packages/contracts/test/drivers/contracts__solanaEscrow.ts": 22,
+  "packages/contracts/test/support/anvil.ts": 1,
+  "packages/contracts/test/support/solanaAccounts.ts": 14,
+  "packages/contracts/test/support/solanaChain.ts": 27,
+  "packages/contracts/test/support/solanaState.ts": 3,
+  "packages/design-system/fonts.ts": 1,
+  "packages/frontend/src/app/publicPages.tsx": 2,
+  "packages/frontend/src/kernels/payingNetworks.ts": 1,
+  "packages/frontend/src/kernels/poolPromise.ts": 2,
+  "packages/frontend/src/kernels/projectLinks.ts": 7,
+  "packages/frontend/src/projections/maintainerShare.ts": 2,
+  "packages/frontend/src/projections/projectView.ts": 1,
+  "packages/frontend/src/reads/registryTerms.ts": 2,
+  "packages/frontend/src/referrals/ReferralSettings.tsx": 7,
+  "packages/frontend/src/screens/account/EmailPreferences.tsx": 8,
+  "packages/frontend/src/screens/account/JoinPoints.tsx": 5,
+  "packages/frontend/src/screens/account/LoginPage.tsx": 2,
+  "packages/frontend/src/screens/account/SettingsPage.tsx": 2,
+  "packages/frontend/src/screens/account/WalletManagement.tsx": 9,
+  "packages/frontend/src/screens/account/useView.ts": 1,
+  "packages/frontend/src/screens/admin/ActivationClearance.tsx": 2,
+  "packages/frontend/src/screens/admin/AdminPage.tsx": 1,
+  "packages/frontend/src/screens/admin/AdmissionExemptions.tsx": 2,
+  "packages/frontend/src/screens/admin/AssessmentDetails.tsx": 2,
+  "packages/frontend/src/screens/admin/DelistButton.tsx": 1,
+  "packages/frontend/src/screens/admin/EnforcementPanel.tsx": 1,
+  "packages/frontend/src/screens/admin/EnforcementSummary.tsx": 2,
+  "packages/frontend/src/screens/admin/EvidenceItem.tsx": 1,
+  "packages/frontend/src/screens/admin/EvidenceRunCard.tsx": 1,
+  "packages/frontend/src/screens/admin/ExemptionHistory.tsx": 2,
+  "packages/frontend/src/screens/admin/FeeConversionList.tsx": 2,
+  "packages/frontend/src/screens/admin/FeeConversions.tsx": 1,
+  "packages/frontend/src/screens/admin/ProjectEditor.tsx": 1,
+  "packages/frontend/src/screens/admin/ProjectList.tsx": 4,
+  "packages/frontend/src/screens/admin/ProjectsSection.tsx": 1,
+  "packages/frontend/src/screens/admin/VettingEvidencePage.tsx": 1,
+  "packages/frontend/src/screens/admin/VettingSection.tsx": 2,
+  "packages/frontend/src/screens/admin/editor.ts": 8,
+  "packages/frontend/src/screens/admin/enforcement.ts": 3,
+  "packages/frontend/src/screens/admin/feeReport.ts": 4,
+  "packages/frontend/src/screens/admin/parts.tsx": 4,
+  "packages/frontend/src/screens/admin/projects.ts": 3,
+  "packages/frontend/src/screens/admin/vetting.ts": 11,
+  "packages/frontend/src/screens/cycles/CycleAllocation.tsx": 9,
+  "packages/frontend/src/screens/cycles/CycleAmountHistory.tsx": 3,
+  "packages/frontend/src/screens/cycles/CycleArchivePage.tsx": 1,
+  "packages/frontend/src/screens/cycles/CyclePage.tsx": 3,
+  "packages/frontend/src/screens/cycles/OwnerCuts.tsx": 3,
+  "packages/frontend/src/screens/cycles/boundary.ts": 3,
+  "packages/frontend/src/screens/cycles/filters.ts": 4,
+  "packages/frontend/src/screens/cycles/labels.ts": 7,
+  "packages/frontend/src/screens/cycles/stages.ts": 6,
+  "packages/frontend/src/screens/funding/awards/AwardAmounts.tsx": 4,
+  "packages/frontend/src/screens/funding/awards/BountyFunding.tsx": 5,
+  "packages/frontend/src/screens/funding/awards/BountyFunds.tsx": 7,
+  "packages/frontend/src/screens/funding/awards/BountyIntroduction.tsx": 5,
+  "packages/frontend/src/screens/funding/awards/MonthPanel.tsx": 13,
+  "packages/frontend/src/screens/funding/awards/OwnerAwards.tsx": 5,
+  "packages/frontend/src/screens/funding/awards/OwnerCommitment.tsx": 10,
+  "packages/frontend/src/screens/funding/awards/ReserveRelease.tsx": 16,
+  "packages/frontend/src/screens/funding/awards/bounty.schema.ts": 1,
+  "packages/frontend/src/screens/funding/awards/hooks.ts": 4,
+  "packages/frontend/src/screens/funding/awards/month.ts": 8,
+  "packages/frontend/src/screens/funding/vault/AutomaticMonthlyPayment.tsx": 8,
+  "packages/frontend/src/screens/funding/vault/EscrowFunding.tsx": 16,
+  "packages/frontend/src/screens/funding/vault/PendingCheck.tsx": 12,
+  "packages/frontend/src/screens/funding/vault/PublicVaultFunding.tsx": 8,
+  "packages/frontend/src/screens/funding/vault/VaultActions.tsx": 13,
+  "packages/frontend/src/screens/funding/vault/VaultFunders.tsx": 4,
+  "packages/frontend/src/screens/funding/vault/VaultMonthLock.tsx": 10,
+  "packages/frontend/src/screens/funding/vault/VaultSetup.tsx": 23,
+  "packages/frontend/src/screens/funding/vault/VaultTotals.tsx": 2,
+  "packages/frontend/src/screens/funding/vault/hooks.ts": 6,
+  "packages/frontend/src/screens/funding/vault/pageVisibility.ts": 1,
+  "packages/frontend/src/screens/funding/vault/project.schema.ts": 1,
+  "packages/frontend/src/screens/funding/vault/savedPlans.ts": 2,
+  "packages/frontend/src/screens/home/AgentPrompt.tsx": 6,
+  "packages/frontend/src/screens/home/CampaignHeading.tsx": 2,
+  "packages/frontend/src/screens/home/CommunityRows.tsx": 2,
+  "packages/frontend/src/screens/home/HomePage.tsx": 5,
+  "packages/frontend/src/screens/home/InstallPanel.tsx": 2,
+  "packages/frontend/src/screens/home/ProjectCards.tsx": 5,
+  "packages/frontend/src/screens/home/SecurityOffers.tsx": 2,
+  "packages/frontend/src/screens/home/audience.ts": 2,
+  "packages/frontend/src/screens/home/listing.ts": 20,
+  "packages/frontend/src/screens/home/promise.ts": 3,
+  "packages/frontend/src/screens/inbox/EmailLinkAction.tsx": 4,
+  "packages/frontend/src/screens/inbox/InboxItem.tsx": 3,
+  "packages/frontend/src/screens/inbox/InboxPage.tsx": 1,
+  "packages/frontend/src/screens/inbox/IncompleteAssessments.tsx": 8,
+  "packages/frontend/src/screens/inbox/PointsDisputes.tsx": 3,
+  "packages/frontend/src/screens/inbox/linkSignal.ts": 2,
+  "packages/frontend/src/screens/payouts/ConsentReview.tsx": 9,
+  "packages/frontend/src/screens/payouts/ContributorAllocationRow.tsx": 3,
+  "packages/frontend/src/screens/payouts/PayoutAmount.tsx": 8,
+  "packages/frontend/src/screens/payouts/PayoutConsent.tsx": 5,
+  "packages/frontend/src/screens/payouts/PayoutRow.tsx": 12,
+  "packages/frontend/src/screens/payouts/PayoutsPage.tsx": 10,
+  "packages/frontend/src/screens/payouts/feed.ts": 1,
+  "packages/frontend/src/screens/points/ContributorStandings.tsx": 10,
+  "packages/frontend/src/screens/points/People.tsx": 6,
+  "packages/frontend/src/screens/points/PointsPage.tsx": 1,
+  "packages/frontend/src/screens/points/ProjectStandings.tsx": 3,
+  "packages/frontend/src/screens/points/hooks.ts": 1,
+  "packages/frontend/src/screens/points/pages.ts": 2,
+  "packages/frontend/src/screens/points/peopleRows.ts": 2,
+  "packages/frontend/src/screens/points/query.ts": 2,
+  "packages/frontend/src/screens/points/standings.ts": 5,
+  "packages/frontend/src/screens/profiles/ContributorIdentity.tsx": 3,
+  "packages/frontend/src/screens/profiles/ProfileActivity.tsx": 8,
+  "packages/frontend/src/screens/profiles/ProfilePage.tsx": 3,
+  "packages/frontend/src/screens/profiles/ProfilePayments.tsx": 8,
+  "packages/frontend/src/screens/profiles/ProfilePoints.tsx": 13,
+  "packages/frontend/src/screens/profiles/profile.ts": 7,
+  "packages/frontend/src/screens/projects/FundsAndAwards.tsx": 5,
+  "packages/frontend/src/screens/projects/InstallPanel.tsx": 8,
+  "packages/frontend/src/screens/projects/MergeActivity.tsx": 4,
+  "packages/frontend/src/screens/projects/Participation.tsx": 4,
+  "packages/frontend/src/screens/projects/PaymentHistory.tsx": 5,
+  "packages/frontend/src/screens/projects/PaymentRecord.tsx": 11,
+  "packages/frontend/src/screens/projects/ProjectHeader.tsx": 3,
+  "packages/frontend/src/screens/projects/ProjectLinks.tsx": 2,
+  "packages/frontend/src/screens/projects/ProjectPage.tsx": 5,
+  "packages/frontend/src/screens/projects/ProjectWork.tsx": 4,
+  "packages/frontend/src/screens/projects/RewardSummary.tsx": 6,
+  "packages/frontend/src/screens/projects/hooks.ts": 1,
+  "packages/frontend/src/screens/projects/project.schema.ts": 1,
+  "packages/frontend/src/screens/projects/summary.ts": 17,
+  "packages/frontend/src/screens/public/FundingStatus.tsx": 2,
+  "packages/frontend/src/screens/public/HowItWorksPage.tsx": 1,
+  "packages/frontend/src/screens/public/PaymentLifecycle.tsx": 4,
+  "packages/frontend/src/screens/public/PointsRules.tsx": 2,
+  "packages/frontend/src/screens/public/SponsorsPage.tsx": 2,
+  "packages/frontend/src/screens/public/WhoBuilds.tsx": 4,
+  "packages/frontend/src/screens/security/cases/ActionForm.tsx": 2,
+  "packages/frontend/src/screens/security/cases/AnalysisPanel.tsx": 1,
+  "packages/frontend/src/screens/security/cases/AppealTriage.tsx": 1,
+  "packages/frontend/src/screens/security/cases/CaseActions.tsx": 2,
+  "packages/frontend/src/screens/security/cases/CaseDetail.tsx": 9,
+  "packages/frontend/src/screens/security/cases/LinkReports.tsx": 17,
+  "packages/frontend/src/screens/security/cases/SecurityCasesPage.tsx": 1,
+  "packages/frontend/src/screens/security/cases/SecurityInbox.tsx": 6,
+  "packages/frontend/src/screens/security/cases/actionSpec.ts": 3,
+  "packages/frontend/src/screens/security/cases/amount.ts": 1,
+  "packages/frontend/src/screens/security/cases/case.schema.ts": 2,
+  "packages/frontend/src/screens/security/cases/labels.ts": 13,
+  "packages/frontend/src/screens/security/cases/parts.tsx": 3,
+  "packages/frontend/src/screens/security/payments/CasePayment.tsx": 3,
+  "packages/frontend/src/screens/security/payments/DirectBountyPayment.tsx": 8,
+  "packages/frontend/src/screens/security/payments/SecurityCasesWithPayments.tsx": 1,
+  "packages/frontend/src/screens/security/payments/SolanaBountyPayment.tsx": 5,
+  "packages/frontend/src/screens/security/payments/SolanaBountyRecovery.tsx": 3,
+  "packages/frontend/src/screens/security/payments/SubmittedPayments.tsx": 3,
+  "packages/frontend/src/screens/security/payments/UnsignedRequest.tsx": 3,
+  "packages/frontend/src/screens/security/payments/hooks.ts": 2,
+  "packages/frontend/src/screens/security/payments/parts.tsx": 2,
+  "packages/frontend/src/screens/security/payments/request.ts": 6,
+  "packages/frontend/src/screens/security/program/ClaimForm.tsx": 5,
+  "packages/frontend/src/screens/security/program/DepositLine.tsx": 3,
+  "packages/frontend/src/screens/security/program/DepositNotice.tsx": 1,
+  "packages/frontend/src/screens/security/program/IntakePanel.tsx": 3,
+  "packages/frontend/src/screens/security/program/ProgramExclusions.tsx": 1,
+  "packages/frontend/src/screens/security/program/ProgramTerms.tsx": 4,
+  "packages/frontend/src/screens/security/program/ReportComposer.tsx": 3,
+  "packages/frontend/src/screens/security/program/ReportDetail.tsx": 2,
+  "packages/frontend/src/screens/security/program/ReportForm.tsx": 1,
+  "packages/frontend/src/screens/security/program/ReportProofFields.tsx": 2,
+  "packages/frontend/src/screens/security/program/SecurityOffer.tsx": 4,
+  "packages/frontend/src/screens/security/program/SecurityProgramPage.tsx": 9,
+  "packages/frontend/src/screens/security/program/SubmissionCard.tsx": 13,
+  "packages/frontend/src/screens/security/program/SubmissionsPanel.tsx": 6,
+  "packages/frontend/src/screens/security/program/amounts.ts": 1,
+  "packages/frontend/src/screens/security/program/hooks.ts": 3,
+  "packages/frontend/src/screens/security/program/summary.ts": 8,
+  "packages/frontend/src/screens/security/program/terms.schema.ts": 1,
+  "packages/frontend/src/screens/security/settings/ProgramEditor.tsx": 2,
+  "packages/frontend/src/screens/security/settings/SecuritySettings.tsx": 2,
+  "packages/frontend/src/screens/security/settings/editor.ts": 8,
+  "packages/frontend/src/screens/setup/fields/ProjectFields.tsx": 4,
+  "packages/frontend/src/screens/setup/fields/ProjectImageField.tsx": 1,
+  "packages/frontend/src/screens/setup/fields/RewardAssetFields.tsx": 1,
+  "packages/frontend/src/screens/setup/fields/SkillPreview.tsx": 1,
+  "packages/frontend/src/screens/setup/proposal/ClosureConsent.tsx": 2,
+  "packages/frontend/src/screens/setup/proposal/ContributionSettings.tsx": 3,
+  "packages/frontend/src/screens/setup/proposal/FundingFields.tsx": 5,
+  "packages/frontend/src/screens/setup/proposal/ProjectStep.tsx": 3,
+  "packages/frontend/src/screens/setup/proposal/ProposalPage.tsx": 3,
+  "packages/frontend/src/screens/setup/proposal/RepositoryChoice.tsx": 1,
+  "packages/frontend/src/screens/setup/proposal/RepositoryPicker.tsx": 1,
+  "packages/frontend/src/screens/setup/proposal/ReviewStep.tsx": 3,
+  "packages/frontend/src/screens/setup/proposal/SetupSteps.tsx": 1,
+  "packages/frontend/src/screens/setup/proposal/form.ts": 2,
+  "packages/frontend/src/screens/setup/proposal/run.ts": 1,
+  "packages/frontend/src/screens/setup/proposal/wizard.ts": 1,
+  "packages/frontend/src/screens/setup/status/NewProjectPage.tsx": 1,
+  "packages/frontend/src/screens/setup/status/PendingApplications.tsx": 2,
+  "packages/frontend/src/screens/setup/status/ScanClearance.tsx": 2,
+  "packages/frontend/src/screens/setup/status/SetupStatusPanel.tsx": 4,
+  "packages/frontend/src/screens/setup/status/SetupSummary.tsx": 2,
+  "packages/frontend/src/screens/setup/status/checks.ts": 4,
+  "packages/frontend/src/screens/setup/status/funding.schema.ts": 1,
+  "packages/frontend/src/screens/setup/update/ChangeReview.tsx": 4,
+  "packages/frontend/src/screens/setup/update/IntegrationBranch.tsx": 4,
+  "packages/frontend/src/screens/setup/update/ReadyLabelFields.tsx": 2,
+  "packages/frontend/src/screens/setup/update/RemoveProject.tsx": 4,
+  "packages/frontend/src/screens/setup/update/UpdateForm.tsx": 2,
+  "packages/frontend/src/screens/setup/update/UpdatePage.tsx": 2,
+  "packages/frontend/src/screens/setup/update/editStore.ts": 2,
+  "packages/frontend/src/screens/setup/update/readyLabel.ts": 8,
+  "packages/frontend/src/screens/setup/update/revision.ts": 9,
+  "packages/platform/src/testing/area.ts": 2,
+  "packages/platform/src/testing/paths.ts": 1,
+  "packages/platform/test/spike/worker/routesCheck.vibe": 1,
+  "packages/ui/.storybook/preview.ts": 1,
+  "packages/ui/src/components/AccountMenu.meta.tsx": 2,
+  "packages/ui/src/components/AccountMenu.tsx": 1,
+  "packages/ui/src/components/Address.meta.tsx": 4,
+  "packages/ui/src/components/Address.tsx": 1,
+  "packages/ui/src/components/AgentMark.meta.tsx": 1,
+  "packages/ui/src/components/AgentMark.tsx": 2,
+  "packages/ui/src/components/Alert.meta.tsx": 1,
+  "packages/ui/src/components/Avatar.meta.tsx": 1,
+  "packages/ui/src/components/BarChart.meta.tsx": 1,
+  "packages/ui/src/components/Button.meta.tsx": 5,
+  "packages/ui/src/components/Button.tsx": 1,
+  "packages/ui/src/components/Card.meta.tsx": 3,
+  "packages/ui/src/components/CommandBlock.meta.tsx": 1,
+  "packages/ui/src/components/CompareChange.meta.tsx": 2,
+  "packages/ui/src/components/ConfirmDialog.meta.tsx": 1,
+  "packages/ui/src/components/ConfirmDialog.tsx": 1,
+  "packages/ui/src/components/CopyButton.meta.tsx": 2,
+  "packages/ui/src/components/DataState.meta.tsx": 6,
+  "packages/ui/src/components/DataState.tsx": 1,
+  "packages/ui/src/components/Dialog.meta.tsx": 1,
+  "packages/ui/src/components/Dialog.tsx": 1,
+  "packages/ui/src/components/ExternalLink.meta.tsx": 3,
+  "packages/ui/src/components/Field.tsx": 1,
+  "packages/ui/src/components/FileField.meta.tsx": 1,
+  "packages/ui/src/components/FileField.tsx": 1,
+  "packages/ui/src/components/Identity.meta.tsx": 3,
+  "packages/ui/src/components/Identity.tsx": 2,
+  "packages/ui/src/components/Label.meta.tsx": 1,
+  "packages/ui/src/components/Leaderboard.meta.tsx": 1,
+  "packages/ui/src/components/Leaderboard.tsx": 1,
+  "packages/ui/src/components/ListItem.meta.tsx": 1,
+  "packages/ui/src/components/Logo.tsx": 1,
+  "packages/ui/src/components/Metric.meta.tsx": 1,
+  "packages/ui/src/components/NetworkMark.meta.tsx": 1,
+  "packages/ui/src/components/NetworkMark.tsx": 3,
+  "packages/ui/src/components/NotFound.meta.tsx": 2,
+  "packages/ui/src/components/Pagination.meta.tsx": 3,
+  "packages/ui/src/components/Pagination.tsx": 3,
+  "packages/ui/src/components/Progress.tsx": 1,
+  "packages/ui/src/components/ProjectCard.meta.tsx": 3,
+  "packages/ui/src/components/RadioGroup.meta.tsx": 2,
+  "packages/ui/src/components/SegmentedControl.meta.tsx": 1,
+  "packages/ui/src/components/SegmentedControl.tsx": 1,
+  "packages/ui/src/components/SiteHeader.meta.tsx": 2,
+  "packages/ui/src/components/Status.meta.tsx": 1,
+  "packages/ui/src/components/Table.meta.tsx": 1,
+  "packages/ui/src/lib/cn.ts": 10,
+  "packages/ui/src/lib/control.ts": 1,
+  "packages/ui/src/lib/exact.ts": 2,
+  "packages/ui/src/lib/live.ts": 2,
+  "packages/ui/src/lib/overlay.ts": 6,
+  "packages/ui/src/lib/tone.ts": 1,
+  "packages/ui/src/vite-env.d.ts": 1,
+  "packages/ui/test/controls.browser.test.tsx": 12,
+  "packages/ui/test/drivers/ui__confirmation.ts": 1,
+  "packages/ui/test/drivers/ui__copy.ts": 1,
+  "packages/ui/test/drivers/ui__pagination.ts": 1,
+  "packages/ui/test/inventory.test.ts": 3,
+  "packages/ui/test/ui.test.ts": 1,
+  "packages/ui/vite.config.ts": 1,
+  "packages/ui/vitest.config.ts": 1
+}
+const scheduled = {
+  "apps/contributor/test/support/scripts/fixture.ts": 1,
+  "apps/settlement/test/support/solana/program.ts": 1,
+  "packages/contracts/test/drivers/contracts__solanaEscrow.ts": 1,
+  "packages/contracts/test/support/solanaChain.ts": 1,
+  "packages/frontend/src/platform/fragment.vibe": 1,
+  "packages/frontend/test/support/ui/textSize.ts": 2,
+  "packages/platform/src/testing/chains/anvil.ts": 1,
+  "packages/platform/src/testing/chains/validator.ts": 1,
+  "packages/ui/src/components/CopyButton.tsx": 3,
+  "packages/ui/src/components/Pagination.tsx": 2,
+  "packages/ui/test/drivers/ui__confirmation.ts": 1,
+  "packages/ui/test/drivers/ui__copy.ts": 4
+}
+
 
 // The tool reads Quint's JSON and the TypeScript compiler API as `any` at its boundaries; packages and apps stay strict.
 const loose = Object.fromEntries(["no-explicit-any", "no-unsafe-argument", "no-unsafe-assignment", "no-unsafe-call", "no-unsafe-member-access", "no-unsafe-return"].map((rule) => [`@typescript-eslint/${rule}`, "off"]))
@@ -152,4 +525,43 @@ export default defineConfig(
       "no-restricted-syntax": ["error", { selector: "JSXOpeningElement[name.name=/^(input|textarea)$/]", message: "Use Input, Textarea or Checkbox from @repo/ui." }],
     },
   },
+  { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(tseslint.parser) } },
+  { files: ["{apps,packages}/**/*.{vibe,vibex}"], languageOptions: { parser: guarded(vibelang) } },
+  { files: own, plugins: { code }, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
+  { files: ["packages/ui/src/components/**"], ignores: ["**/*.meta.tsx"], rules: { "code/comments": ["error", { jsdoc: true, left: commented }] } },
 )
+
+if (import.meta.main) {
+  const { spawnSync } = await import("node:child_process")
+  const { constants } = await import("node:os")
+  const { default: process } = await import("node:process")
+  const vibeFiles = "**/*.{vibe,vibex}"
+  const groups = [
+    ["packages/frontend"],
+    ["packages/contracts", "packages/design-system", "packages/platform", "packages/ports", "packages/ui"],
+    ["apps/app", "apps/backend", "apps/contributor", "apps/fees", "apps/operations"],
+    ["apps/points", "apps/security", "apps/settlement", "apps/slopbot"],
+  ]
+  const ignoreVibe = ["--ignore-pattern", vibeFiles]
+  const ignoreGroups = groups.flat().flatMap((dir) => ["--ignore-pattern", `${dir}/`])
+  const extra = process.argv.slice(2)
+  const hasTarget = extra.some((arg) => !arg.startsWith("-"))
+  const passes = extra.length
+    ? [[...(hasTarget ? [] : ["."]), "--max-warnings", "0", ...extra]]
+    : [
+      [vibeFiles, "--no-error-on-unmatched-pattern", "--max-warnings", "0"],
+      ...groups.map((group) => [...group, ...ignoreVibe, "--no-error-on-unmatched-pattern", "--max-warnings", "0"]),
+      [".", ...ignoreVibe, ...ignoreGroups, "--max-warnings", "0"],
+    ]
+  let status = 0
+  for (const args of passes) {
+    const result = spawnSync("eslint", args, { stdio: "inherit" })
+    if (result.error) throw result.error
+    if (result.signal) {
+      status = 128 + constants.signals[result.signal]
+      break
+    }
+    status = Math.max(status, result.status ?? 2)
+  }
+  process.exitCode = status
+}

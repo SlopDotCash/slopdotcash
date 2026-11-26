@@ -1,0 +1,145 @@
+// spec/settlement/asiNovemberCloseout.md, "The closeout is exactly ASI's November 2026 pool up to its cutoff"; spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision"
+import { millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Packet } from "../../gen/settlement__asiNovemberCloseout.ts"
+import { closeoutAsset, closeoutCutoff, closeoutDecimals, closeoutFeeBasisPoints, closeoutGross, closeoutNetwork, closeoutPeriod, closeoutProject, packetApproved } from "../../gen/settlement__asiNovemberCloseout.effect.vibe"
+import { type Period, formatPeriod, isPeriod, periodEndSeconds, periodStartSeconds } from "../kernels/calendar.ts"
+import { NETWORKS, defaultAsset, isNetworkKey } from "../kernels/networks.ts"
+import { type MonthKey, type MonthlyManifest, monthlyCapOf } from "../monthly/store.vibe"
+import { digestPattern, refusal } from "./heldSources.vibe"
+
+export schema ReviewedPacketFields {
+  readonly schemaVersion: string
+  readonly kind: string
+  readonly projectId: string
+  readonly period: string
+  readonly cutoff: string
+  readonly grossBase: string
+  readonly reviewedAt: string
+  readonly producerGithubId: string
+  readonly reviewerGithubId: string
+  readonly snapshotSha256: string
+  readonly pointsBatch: string
+  readonly manifestSha256: string
+  readonly revision: number
+  readonly enforcementGeneration: number
+}
+
+export type ReviewedPacket = ReviewedPacketFields
+
+export interface RegistryCapture {
+  readonly capturedAt: string
+  readonly now: string
+  readonly enforcementGeneration: number
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly manifestText: string
+  readonly restricted: boolean
+}
+
+const exactUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const githubId = /^[1-9][0-9]{0,19}$/u
+const notBound = "The packet does not bind the approved ASI November closeout."
+
+export const cutoffIso = new Date(closeoutCutoff * 1000).toISOString()
+
+export effect function closeoutKey() {
+  if (!isPeriod(closeoutPeriod)) throw refusal(notBound)
+  return { projectId: closeoutProject, period: closeoutPeriod } satisfies MonthKey
+}
+
+effect function digest(value: string) {
+  if (!digestPattern.test(value)) throw refusal("Expected an exact SHA-256 digest.")
+  return value
+}
+
+effect function timestamp(value: string) {
+  const millis = exactUtc.test(value) ? millisOf(value) : Number.NaN
+  if (!Number.isFinite(millis) || new Date(millis).toISOString() !== value) throw refusal("Expected an exact UTC timestamp.")
+  return value
+}
+
+effect function integer(value: number, min: number) {
+  if (!Number.isSafeInteger(value) || value < min) throw refusal("Invalid registry revision or enforcement generation.")
+  return value
+}
+
+effect function actorId(value: string) {
+  if (!githubId.test(value) || (try orDie(Effect.try(() => BigInt(value)))) > (1n << 64n) - 1n) throw refusal("Record the producer and reviewer by numeric GitHub ID.")
+  return value
+}
+
+function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+export function modelPacket(packet: ReviewedPacket, packetDigest: string): Packet {
+  return {
+    project: packet.projectId,
+    period: packet.period === formatPeriodOf(closeoutPeriod) ? closeoutPeriod : 0,
+    cutoff: seconds(packet.cutoff),
+    gross: Number(packet.grossBase),
+    producer: Number(packet.producerGithubId),
+    reviewer: Number(packet.reviewerGithubId),
+    reviewedAt: seconds(packet.reviewedAt),
+    digest: packetDigest,
+  }
+}
+
+function formatPeriodOf(value: number) {
+  return isPeriod(value) ? formatPeriod(value) : ""
+}
+
+export effect function reviewedPacket(bytes: Uint8Array, packetDigest: string, snapshotSha256: string) {
+  try digest(packetDigest)
+  if ((try sha256Hex(bytes)) !== packetDigest) throw refusal("Reviewed ASI packet digest does not match.")
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw refusal("The reviewed ASI packet is not UTF-8 JSON.")
+  }
+  const packet = Schema.decodeUnknownEffect(ReviewedPacketFields)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw refusal("The reviewed ASI packet has an unexpected shape.")
+  }
+  if (packet.schemaVersion !== "1" || packet.kind !== "reviewed-asi-november-closeout" || packet.projectId !== closeoutProject || packet.period !== formatPeriodOf(closeoutPeriod) || packet.cutoff !== cutoffIso || packet.grossBase !== String(closeoutGross)) throw refusal(notBound)
+  const reviewer = try actorId(packet.reviewerGithubId)
+  if ((try actorId(packet.producerGithubId)) === reviewer) throw refusal("The producer and independent reviewer must be different.")
+  try timestamp(packet.reviewedAt)
+  if ((try digest(packet.snapshotSha256)) !== snapshotSha256) throw refusal("The verified snapshot differs from the reviewed packet.")
+  try digest(packet.pointsBatch)
+  try digest(packet.manifestSha256)
+  try integer(packet.revision, 1)
+  try integer(packet.enforcementGeneration, 0)
+  if (!packetApproved(modelPacket(packet, packetDigest))) throw refusal(notBound)
+  return packet
+}
+
+export effect function verifyCapture(packet: ReviewedPacket, capture: RegistryCapture) {
+  try timestamp(capture.capturedAt)
+  if (capture.enforcementGeneration !== packet.enforcementGeneration || packet.reviewedAt < cutoffIso || capture.capturedAt < packet.reviewedAt || capture.capturedAt > capture.now) {
+    throw refusal("The production registry capture or review time is stale.")
+  }
+  if (capture.revision !== packet.revision || capture.manifestSha256 !== packet.manifestSha256 || capture.restricted || (try sha256Hex(capture.manifestText)) !== packet.manifestSha256) {
+    throw refusal("The production ASI registry capture differs from the reviewed revision.")
+  }
+}
+
+effect function proratedCap(manifest: MonthlyManifest, period: Period) {
+  const [start, cutoff, end] = try orDie(Effect.try(() => [BigInt(periodStartSeconds(period)), BigInt(closeoutCutoff), BigInt(periodEndSeconds(period))]))
+  return (monthlyCapOf(manifest, period) * (cutoff - start)) / (end - start)
+}
+
+export effect function verifyPool(manifest: MonthlyManifest, text: string, period: Period) {
+  const canonical = Effect.try(() => JSON.stringify(JSON.parse(text))) catch () => ""
+  const deployments = manifest.escrow?.deployments ?? []
+  const deployment = deployments[0]
+  const asset = manifest.rewardAsset
+  const network = isNetworkKey(closeoutNetwork) ? NETWORKS[closeoutNetwork] : undefined
+  const reference = network === undefined ? undefined : defaultAsset(network)
+  if (canonical !== text || manifest.id !== closeoutProject || manifest.status !== "active" || manifest.authority?.state !== "verified" ||
+    manifest.terms?.receiptPolicy?.state !== "active" || manifest.reward.kind !== "monthly-pool" || (try proratedCap(manifest, period)) !== (try orDie(Effect.try(() => BigInt(closeoutGross)))) ||
+    deployments.length !== 1 || deployment === undefined || deployment.network !== closeoutNetwork || network === undefined || reference === undefined ||
+    asset === undefined || asset.network !== network.chain || asset.symbol !== closeoutAsset || reference.symbol !== closeoutAsset || asset.decimals !== closeoutDecimals ||
+    asset.address !== reference.address || deployment.asset !== asset.address || manifest.escrow?.feeBasisPoints !== closeoutFeeBasisPoints) {
+    throw refusal("The registered ASI pool, asset, or vault differs from the approved closeout.")
+  }
+  return deployment
+}

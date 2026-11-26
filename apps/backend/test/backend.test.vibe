@@ -1,28 +1,69 @@
 import { assert, layer } from "@effect/vitest"
-import type { D1Database } from "@repo/platform/bindings"
-import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { type Applied, type ScheduledOutcome, bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
-import { Response } from "miniflare"
-import { migrationsDir } from "@repo/platform/testing/paths"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { deploymentOrigins } from "@repo/platform/config"
+import { base64Encode } from "@repo/platform/chain/solana"
+import { ed25519Sign, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { type Applied, type Handler, bundle, database, migrate, startWorker } from "@repo/platform/testing"
+import { type Answer, Area, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, type GitHubRequest, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+import { migrationCount, migrationsDir } from "@repo/platform/testing/paths"
+import { IntakeCounts, IntakePause, ProjectParticipation, type SlopRate, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
+import { Request, Response } from "miniflare"
+import { Started as StartedFlow } from "../src/client/identity.vibe"
+import { submissionFeeOptions } from "../src/client/submissionFee.vibe"
+import { IntakePauseLive, SubmissionFeeSettingLive } from "../src/projects/feeGateReads.vibe"
+import { IntakeCountsLive } from "../src/projects/mergeActivity/intakeCounts.vibe"
+import { refreshMergeActivity } from "../src/projects/mergeActivity/job.vibe"
+import { mergeActivityAnswer } from "../src/projects/mergeActivity/routes.vibe"
+import { ProjectParticipationLive } from "../src/projects/participation.vibe"
+import { SubmissionFeeRatesLive } from "../src/submissionFee/rates.vibe"
+module fakes {
+  /** @throws {never} */
+  export function foreignIssues(response: globalThis.Response): Promise<globalThis.Response> {
+    return response.clone().json().then((body: unknown) => {
+      const data = typeof body === "object" && body !== null && "data" in body ? body.data : undefined
+      const repository = typeof data === "object" && data !== null && "repository" in data ? data.repository : undefined
+      const issues = typeof repository === "object" && repository !== null && "issues" in repository ? repository.issues : undefined
+      if (typeof issues !== "object" || issues === null || !("nodes" in issues) || !Array.isArray(issues.nodes)) return response
+      const nodes = issues.nodes.map((node: unknown) => ({ ...(typeof node === "object" && node !== null ? node : {}), url: "https://github.com/someone/else/issues/7" }))
+      return new globalThis.Response(JSON.stringify({ data: { repository: { issues: { nodes } } } }), { status: response.status, headers: { "content-type": "application/json" } })
+    })
+  }
+
+  /** @throws {never} */
+  export function labelCreated(): Promise<globalThis.Response> {
+    return Promise.resolve(new globalThis.Response(JSON.stringify({ name: "slop-wanted", color: "f97316" }), { status: 201, headers: { "content-type": "application/json" } }))
+  }
+}
+import { foreignIssues, labelCreated } from fakes
+
+error MigrationFailed { file: string }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
 
 const origin = "https://slop.test"
-const member = "t".repeat(48)
-const other = "o".repeat(48)
-const expired = "e".repeat(48)
+const memberToken = "t".repeat(48)
+const otherToken = "o".repeat(48)
 
-interface Answer { readonly status: number; readonly body: Record<string, unknown> }
+interface ApiAnswer { readonly status: number; readonly body: Record<string, unknown> }
 
-service Backend {
+service ApiWorker {
   readonly db: D1Database
   readonly applied: ReadonlyArray<Applied>
   readonly github: ReadonlyArray<string>
-  request(path: string, init?: { readonly body?: unknown; readonly token?: string; readonly origin?: string }): Answer!!
-  scheduled(cron: string): ScheduledOutcome!!
+  request(path: string, init?: { readonly body?: unknown; readonly token?: string; readonly origin?: string }): ApiAnswer!!
 }
 
 const githubUsers: Record<string, number> = { "Fresh-name": 0, taken: 999 }
 
-const Started = Layer.effect(Backend, effect {
+const ApiStarted = Layer.effect(ApiWorker, effect {
   const github: string[] = []
   const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "worker" }))
   const mf = try acquireRelease(sync(() => startWorker({
@@ -49,19 +90,18 @@ const Started = Layer.effect(Backend, effect {
         method: init.body === undefined ? "GET" : "POST",
         headers: {
           origin: init.origin ?? origin,
-          cookie: `__Host-slop_points=${init.token ?? member}`,
+          cookie: `__Host-slop_points=${init.token ?? memberToken}`,
           ...init.body === undefined ? {} : { "content-type": "application/json" },
         },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
       })
       return { status: response.status, body: (await response.json()) as Record<string, unknown> }
     }),
-    scheduled: (cron) => promise(() => scheduled(mf, cron)),
   }
 })
 
 effect function run(statement: string, ...params: ReadonlyArray<string | number>) {
-  const { db } = try Backend
+  const { db } = try ApiWorker
   return (try promise(() => db.prepare(statement).bind(...params).all())).results
 }
 
@@ -70,17 +110,17 @@ effect function signIn(actor: string, githubId: string, sessionToken: string, ex
   try run("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(sessionToken), actor, expiresAt)
 }
 
-effect function choose(code: unknown, token = member) {
-  const answer = try (try Backend).request("/api/v1/referrals/code", { body: { code }, token })
+effect function choose(code: unknown, token = memberToken) {
+  const answer = try (try ApiWorker).request("/api/v1/referrals/code", { body: { code }, token })
   return [answer.status, answer.body.code ?? answer.body.error]
 }
 
-layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(ApiStarted, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Choose a name for a member\'s referral link over HTTP (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together")', () => effect {
-    const backend = try Backend
-    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [138, []]))
-    try signIn("actor-1", "1", member, "2099-01-01T00:00:00.000Z")
-    try signIn("actor-2", "2", other, "2099-01-01T00:00:00.000Z")
+    const backend = try ApiWorker
+    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [migrationCount(), []]))
+    try signIn("actor-1", "1", memberToken, "2099-01-01T00:00:00.000Z")
+    try signIn("actor-2", "2", otherToken, "2099-01-01T00:00:00.000Z")
 
     const crossSite = try backend.request("/api/v1/referrals/code", { body: { code: "valid-name" }, origin: "https://elsewhere.test" })
     const anonymous = try backend.request("/api/v1/referrals/code", { body: { code: "valid-name" }, token: "x".repeat(48) })
@@ -92,7 +132,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       try choose("down"),
       try choose("Fresh-name"),
       try choose("my_name"),
-      try choose("fresh-name", other),
+      try choose("fresh-name", otherToken),
       try choose("FRESH-NAME"),
     ]
     const raced = try.all [choose("alpha1"), choose("bravo1")]
@@ -123,12 +163,1146 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       github: ["Fresh-name", "alpha1", "bravo1", "down", "taken"].map((login) => `GET https://api.github.com/users/${login}`),
     }))
   })
+})
 
-  it.effect('Expired sessions end at the scheduled maintenance (spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account")', () => effect {
-    const backend = try Backend
-    try signIn("actor-3", "3", expired, "2020-01-01T00:00:00.000Z")
-    const outcome = try backend.scheduled("17 * * * *")
-    const sessions = try run("SELECT actor_id FROM points_sessions ORDER BY actor_id")
-    try Effect.try(() => assert.deepStrictEqual([outcome.outcome, sessions], ["ok", [{ actor_id: "actor-1" }, { actor_id: "actor-2" }]]))
+const stewardId = 41
+const primaryId = 9001
+const appendedId = 9002
+const otherId = 9003
+const rpcUrl = "https://rpc.base.test"
+
+interface AccessScript {
+  permission: string
+  missing: ReadonlyArray<number>
+}
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+  readonly access: AccessScript
+  readonly slopbot: (request: Request) => Response
+}
+
+function owner() {
+  return { id: stewardId, node_id: `U_${stewardId}`, login: `member-${stewardId}`, type: "User" }
+}
+
+function repositoryAnswer(url: URL, access: AccessScript) {
+  const id = Number(url.searchParams.get("repositoryId"))
+  if (access.missing.includes(id)) return { installation: "missing" }
+  const path = url.searchParams.get("repository") ?? ""
+  return { installation: "installed", installationId: 77, permission: url.searchParams.get("login") === `member-${stewardId}` ? access.permission : "read", roleName: null, repository: { id, node_id: `R_${id}`, full_name: path, private: false, owner: owner() } }
+}
+
+function rpcAnswer(body: { readonly id: number; readonly method: string; readonly params: ReadonlyArray<{ readonly data?: string }> }) {
+  const data = body.params[0]?.data
+  const result = body.method === "eth_chainId" ? "0x2105" : body.method === "eth_getCode" ? "0x6080" : data === "0x313ce567" ? `0x${"12".padStart(64, "0")}` : `0x${"20".padStart(64, "0")}${"4".padStart(64, "0")}${"534c4f50".padEnd(64, "0")}`
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), { headers: { "content-type": "application/json" } })
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: stewardId, login: `member-${stewardId}`, nodeId: `U_${stewardId}` })
+    github.world.addUser({ id: 5000, login: "slop-reader" })
+    github.world.addRepo({ id: primaryId, nodeId: `R_${primaryId}`, owner: `member-${stewardId}`, name: "tool", defaultBranch: "main", license: { spdx: "MIT" } })
+    github.world.addRepo({ id: appendedId, nodeId: `R_${appendedId}`, owner: `member-${stewardId}`, name: "extra", defaultBranch: "main", license: { spdx: "MIT" } })
+    github.world.addRepo({ id: otherId, nodeId: `R_${otherId}`, owner: `member-${stewardId}`, name: "other", defaultBranch: "main", license: { spdx: "MIT" } })
+  }))
+  const access: AccessScript = { permission: "admin", missing: [] }
+  const slopbot = (request: Request) => new Response(JSON.stringify(repositoryAnswer(new URL(request.url), access)), { headers: { "content-type": "application/json" } })
+  const net = internet({ github: github.handler, rpc: { [rpcUrl]: async (request) => rpcAnswer(await request.json() as never) } })
+  return { github, net, access, slopbot }
+})
+
+const localOrigin = "http://localhost:8787"
+
+function backendAt(site: { readonly origin?: string; readonly vars?: Readonly<Record<string, string>> }) {
+  return Layer.provideMerge(Layer.unwrap(effect {
+    const world = try World
+    const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
+    return areaLayer({
+      root: new URL("../../points", import.meta.url).pathname,
+      config: "test/support/backendRoutes/vite.config.ts",
+      entry: "backendRoutes",
+      ...site.origin === undefined ? {} : { origin: site.origin },
+      d1: { SLOP_DB: "slop-private" },
+      vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl, ...site.vars },
+      services: { SLOPBOT: (request) => world.slopbot(request), ASSETS: () => new Response("Not found", { status: 404 }) },
+      internet: world.net,
+    })
+  }), Built)
+}
+
+const Backend = backendAt({})
+
+const LocalSite = backendAt({ origin: localOrigin, vars: { SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: localOrigin, TRACE_AUTH_SECRET: "trace-auth-secret-for-the-member-journey-0001" } })
+
+function field(value: unknown, name: string): unknown {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>)[name] : undefined
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer.body, "error") ?? null]
+}
+
+effect function member(githubId: number) {
+  const area = try Area
+  const session = `owner-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  const expiresAt = new Date((try Clock.currentTimeMillis) + 24 * 60 * 60 * 1000).toISOString()
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, expiresAt)
+  return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
+}
+
+const contribution = {
+  approvedScope: "Bug fixes and documented features in the toolkit.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
+const usdc = { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" }
+
+interface Listed {
+  readonly id: string
+  readonly name: string
+  readonly githubId: number
+  readonly commitSha: string
+  readonly fileSha256: string
+}
+
+effect function listed(id: string, name: string, githubId: number) {
+  const world = try World
+  const commitSha = (try orDie(Effect.try(() => world.github.world.repo(`member-${stewardId}/${name}`).branches.get("main")))) ?? ""
+  return { id, name, githubId, commitSha, fileSha256: try sha256Hex("MIT license\n") } satisfies Listed
+}
+
+function manifest(project: Listed, extra: Readonly<Record<string, unknown>> = {}) {
+  const { id } = project
+  const repository = `member-${stewardId}/${project.name}`
+  return {
+    schemaVersion: "1",
+    id,
+    slug: id,
+    name: `Project ${id}`,
+    eyebrow: "Open-source project",
+    headline: "Reproducible research tooling for everyone.",
+    description: "Build and maintain reproducible research tooling.",
+    listingTier: "community",
+    status: "paused",
+    steward: { displayName: `member-${stewardId}`, kind: "individual", github: { actorId: String(stewardId), nodeId: `U_${stewardId}`, login: `member-${stewardId}`, type: "User", profileUrl: `https://github.com/member-${stewardId}` }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(project.githubId), repositoryNodeId: `R_${project.githubId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${project.commitSha}/LICENSE`, commitSha: project.commitSha, fileSha256: project.fileSha256 },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    rewardAsset: usdc,
+    contribution,
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+    ...extra,
+  }
+}
+
+effect function revise(as: Session, id: string, json: unknown) {
+  return try (try Area).request(`/api/v1/projects/${id}`, { method: "PUT", json, as })
+}
+
+effect function stored(id: string) {
+  const rows = try (try Area).sql("SELECT revision, status, manifest, manifest_sha256 FROM projects WHERE id = ?", id)
+  const row = rows[0] ?? {}
+  return { revision: Number(row.revision ?? 0), status: String(row.status ?? ""), manifest: (try orDie(Effect.try(() => JSON.parse(String(row.manifest ?? "{}"))))) as Record<string, unknown>, sha256: String(row.manifest_sha256 ?? "") }
+}
+
+function rewardOf(manifest: Record<string, unknown>): Record<string, unknown> {
+  return (field(manifest, "reward") ?? {}) as Record<string, unknown>
+}
+
+function message(answer: Answer): string {
+  return String(field(answer.body, "message") ?? "")
+}
+
+function openCycle(now: number): string {
+  return new Date(now).toISOString().slice(0, 7)
+}
+
+function declaration(id: string, branch: string) {
+  return { kind: "slop-project-authority", schemaVersion: "1", projectId: id, policyRevision: "draft-1", repository: { fullName: `member-${stewardId}/other`, id: String(otherId), integrationBranch: branch }, steward: { actorId: String(stewardId), nodeId: `U_${stewardId}` } }
+}
+
+effect function branchAt(name: string, parent: string, files: Readonly<Record<string, string>>) {
+  const world = try World
+  return try orDie(Effect.try(() => world.github.world.addCommit(`member-${stewardId}/other`, { branch: name, parents: [parent], files })))
+}
+
+function refusedNaming(answer: Answer, name: string) {
+  return [...outcome(answer), String(field(answer.body, "message") ?? "").includes(name)]
+}
+
+function withSlopbot(manifest: Record<string, unknown>, setting: Readonly<Record<string, unknown>>) {
+  return { ...manifest, slopbot: { ...((field(manifest, "slopbot") ?? {}) as Record<string, unknown>), ...setting } }
+}
+
+function externalPrize(manifest: Record<string, unknown>) {
+  const reward = { kind: "external-prize-share", currency: null, chain: null, rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "0", monthlyCapDisplay: "$0 platform pool", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 1000, unusedFunds: "not-applicable", fundingState: "external-opportunity", externalOpportunity: { name: "Research prize", advertisedAmountDisplay: "$10,000", url: "https://prize.example.org/rules" }, maintainerShare: 1000 }
+  return { ...Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== "rewardAsset")), reward }
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('An owner turns the report deposit off and on, published at once as presentation (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("deposit-tool", "tool", primaryId)
+    const id = tool.id
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(tool) }, as: steward })
+    const fresh = try stored(id)
+    const refused: Array<ReadonlyArray<unknown>> = []
+    for (const security of [{ reportDeposit: "false" }, { reportDeposit: 0 }, { reportDeposit: null }, { reportDeposit: false, amount: "1" }, { deposit: false }, [], "off", null, false]) {
+      refused.push(outcome(try revise(steward, id, { manifest: { ...fresh.manifest, security }, expectedRevision: 1 })))
+    }
+    const off = try revise(steward, id, { manifest: { ...fresh.manifest, security: { reportDeposit: false } }, expectedRevision: 1 })
+    const afterOff = try stored(id)
+    const on = try revise(steward, id, { manifest: { ...afterOff.manifest, security: { reportDeposit: true } }, expectedRevision: 2 })
+    const afterOn = try stored(id)
+    const changes = { presentation: ["security"], executable: [], financial: [] }
+    try same({
+      created: [created.status, fresh.revision, Object.hasOwn(fresh.manifest, "security")],
+      refused,
+      off: [off.status, field(off.body, "changes"), afterOff.revision, afterOff.status, afterOff.manifest.security],
+      on: [on.status, field(on.body, "changes"), afterOn.revision, afterOn.manifest.security],
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      created: [201, 1, false],
+      refused: Array.from({ length: 9 }, () => [422, "invalid_manifest"]),
+      off: [200, changes, 2, fresh.status, { reportDeposit: false }],
+      on: [200, changes, 3, { reportDeposit: true }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+
+  it.effect('An owner sets the intake cap, wanted issues, submission fee and maintainer share within their limits (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const other = try listed("settings-other", "other", otherId)
+    const id = other.id
+    const base = manifest(other, { slopbot: { automaticClosure: false } })
+    const prizeShare = try area.request("/api/v1/projects", { json: { manifest: externalPrize(base) }, as: steward })
+    const zeroShare = try area.request("/api/v1/projects", { json: { manifest: { ...base, reward: { ...base.reward, maintainerShare: 0 } } }, as: steward })
+    const created = try area.request("/api/v1/projects", { json: { manifest: { ...base, reward: { ...base.reward, maintainerShare: 2000 } } }, as: steward })
+    const fresh = try stored(id)
+    const capZero = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 0 }), expectedRevision: 1 })
+    const capHigh = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 501 }), expectedRevision: 1 })
+    const capWithoutConsent = try revise(steward, id, { manifest: { ...fresh.manifest, slopbot: { intakeCap: 25 } }, expectedRevision: 1 })
+    const afterCap = try stored(id)
+    const wanted = try revise(steward, id, { manifest: withSlopbot(afterCap.manifest, { wantedIssues: true }), expectedRevision: 2 })
+    const afterWanted = try stored(id)
+    const feeHigh = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "20000000" } }), expectedRevision: 3 })
+    const feeShape = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amount: "2000000" } }), expectedRevision: 3 })
+    const fee = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "2500000" } }), expectedRevision: 3 })
+    const after = try stored(id)
+    const slopbot = (field(after.manifest, "slopbot") ?? {}) as Record<string, unknown>
+    const changes = { presentation: ["slopbot"], executable: [], financial: [] }
+    try same({
+      prizeShare: refusedNaming(prizeShare, "maintainerShare"),
+      zeroShare: refusedNaming(zeroShare, "maintainerShare"),
+      created: [created.status, fresh.revision, field(field(fresh.manifest, "reward"), "maintainerShare"), Object.hasOwn((field(fresh.manifest, "reward") ?? {}) as object, "maintainerShareHistory")],
+      capZero: refusedNaming(capZero, "intakeCap"),
+      capHigh: refusedNaming(capHigh, "intakeCap"),
+      capWithoutConsent: field(afterCap.manifest, "slopbot"),
+      capped: [capWithoutConsent.status, field(capWithoutConsent.body, "changes"), afterCap.revision],
+      wanted: [wanted.status, field(wanted.body, "changes"), afterWanted.revision],
+      feeHigh: refusedNaming(feeHigh, "submissionFee"),
+      feeShape: refusedNaming(feeShape, "submissionFee"),
+      fee: [fee.status, field(fee.body, "changes"), after.revision],
+      slopbot: [slopbot.intakeCap, slopbot.wantedIssues, slopbot.submissionFee, typeof slopbot.automaticClosure],
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      prizeShare: [422, "invalid_manifest", true],
+      zeroShare: [422, "invalid_manifest", true],
+      created: [201, 1, 2000, false],
+      capZero: [422, "invalid_manifest", true],
+      capHigh: [422, "invalid_manifest", true],
+      capWithoutConsent: { intakeCap: 25 },
+      capped: [200, changes, 2],
+      wanted: [200, changes, 3],
+      feeHigh: [422, "invalid_manifest", true],
+      feeShape: [422, "invalid_manifest", true],
+      fee: [200, changes, 4],
+      slopbot: [25, true, { enabled: true, amountMinor: "2500000" }, "undefined"],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Creating an already listed repository or a taken id points the owner to the listing, and a new project cannot submit a share history (spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("open-registry", "tool", primaryId)
+    const other = try listed("open-registry", "other", otherId)
+    const withHistory = manifest(tool)
+    const history = try area.request("/api/v1/projects", { json: { manifest: { ...withHistory, reward: { ...withHistory.reward, maintainerShare: 2000, maintainerShareHistory: [{ throughCycle: "2026-10", basisPoints: 1000 }] } } }, as: steward })
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(tool) }, as: steward })
+    const again = try area.request("/api/v1/projects", { json: { manifest: manifest(tool) }, as: steward })
+    const renamed = try area.request("/api/v1/projects", { json: { manifest: manifest({ ...tool, id: "open-registry-two" }) }, as: steward })
+    const taken = try area.request("/api/v1/projects", { json: { manifest: manifest(other) }, as: steward })
+    const projects = try area.sql("SELECT id FROM projects ORDER BY id")
+    try same({
+      history: [...outcome(history), message(history)],
+      created: created.status,
+      again: [...outcome(again), message(again).includes(`member-${stewardId}/tool is already listed on Slop as open-registry`), message(again).includes("/projects/open-registry/manage")],
+      renamed: [...outcome(renamed), message(renamed).includes("/projects/open-registry/manage")],
+      taken: [...outcome(taken), message(taken)],
+      projects,
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      history: [422, "invalid_manifest", "A new project has no maintainer share history; set only the maintainer share"],
+      created: 201,
+      again: [409, "registry_conflict", true, true],
+      renamed: [409, "registry_conflict", true],
+      taken: [409, "registry_conflict", "The project id open-registry is already used by another project. Choose a different project id."],
+      projects: [{ id: "open-registry" }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+
+  it.effect('A changed maintainer share starts next month and only the server writes its history (spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const extra = try listed("share-tool", "extra", appendedId)
+    const base = manifest(extra)
+    const created = try area.request("/api/v1/projects", { json: { manifest: { ...base, reward: { ...base.reward, maintainerShare: 2000 } } }, as: steward })
+    const first = try stored(extra.id)
+    const lowered = try revise(steward, extra.id, { manifest: { ...first.manifest, reward: { ...rewardOf(first.manifest), maintainerShare: 1000 } }, expectedRevision: 1 })
+    const second = try stored(extra.id)
+    const again = try revise(steward, extra.id, { manifest: { ...second.manifest, reward: { ...rewardOf(second.manifest), maintainerShare: 1500 } }, expectedRevision: 2 })
+    const third = try stored(extra.id)
+    const edited = try revise(steward, extra.id, { manifest: { ...third.manifest, reward: { ...rewardOf(third.manifest), maintainerShareHistory: [{ throughCycle: openCycle(try Clock.currentTimeMillis), basisPoints: 3000 }] } }, expectedRevision: 3 })
+    const recorded = [{ throughCycle: openCycle(try Clock.currentTimeMillis), basisPoints: 2000 }]
+    try same({
+      created: [created.status, rewardOf(first.manifest).maintainerShare, Object.hasOwn(rewardOf(first.manifest), "maintainerShareHistory")],
+      lowered: [lowered.status, field(field(lowered.body, "changes"), "financial"), rewardOf(second.manifest).maintainerShare, rewardOf(second.manifest).maintainerShareHistory, rewardOf(second.manifest).monthlyCapMinor],
+      again: [again.status, rewardOf(third.manifest).maintainerShare, rewardOf(third.manifest).maintainerShareHistory],
+      edited: [...outcome(edited), message(edited), (try stored(extra.id)).revision],
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      created: [201, 2000, false],
+      lowered: [200, ["reward"], 1000, recorded, "1000000000"],
+      again: [200, 1500, recorded],
+      edited: [422, "financial_change_restricted", "The maintainer share history cannot change", 3],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+
+  it.effect('A current administrator moves the integration branch to a commit that declares the project (spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("branch-tool", "other", otherId)
+    const id = tool.id
+    const declared = try branchAt("next", tool.commitSha, { ".github/slop-project.json": JSON.stringify(declaration(id, "next")) })
+    const bare = try branchAt("bare", tool.commitSha, { "notes.md": "No declaration here.\n" })
+    const foreign = try branchAt("foreign", tool.commitSha, { ".github/slop-project.json": JSON.stringify({ ...declaration(id, "foreign"), projectId: "someone-else" }) })
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(tool) }, as: steward })
+    const before = try stored(id)
+    const move = (integrationBranch: unknown, extra: Readonly<Record<string, unknown>> = {}) => revise(steward, id, { integrationBranch, expectedRevision: 1, ...extra })
+    world.access.permission = "write"
+    const writer = try move({ name: "next", commitSha: declared })
+    world.access.permission = "admin"
+    const stale = try move({ name: "next", commitSha: declared }, { expectedRevision: 9 })
+    const malformed = try move({ name: "next", commitSha: "not-a-sha" })
+    const unchanged = try move({ name: "main", commitSha: tool.commitSha })
+    const moved = try move({ name: "next", commitSha: tool.commitSha })
+    const missing = try move({ name: "bare", commitSha: bare })
+    const mismatched = try move({ name: "foreign", commitSha: foreign })
+    const untouched = try stored(id)
+    const contribution = { ...(before.manifest.contribution as Record<string, unknown>), requiredTests: "Run the full test suite on the next branch." }
+    const changed = try move({ name: "next", commitSha: declared }, { contribution, reason: "Release work moved." })
+    const after = try stored(id)
+    const reasons = try area.sql("SELECT reason FROM project_revisions WHERE project_id = ? AND revision = 2", id)
+    const repositories = after.manifest.repositories as ReadonlyArray<Record<string, unknown>>
+    try same({
+      created: created.status,
+      writer: outcome(writer),
+      stale: outcome(stale),
+      malformed: [...outcome(malformed), message(malformed)],
+      unchanged: [...outcome(unchanged), message(unchanged)],
+      moved: [...outcome(moved), message(moved)],
+      missing: outcome(missing),
+      mismatched: outcome(mismatched),
+      untouched: [untouched.revision, untouched.sha256 === before.sha256],
+      changed: [changed.status, field(changed.body, "changes")],
+      after: [after.revision, after.status, repositories[0]?.integrationBranch, field(after.manifest.contribution, "requiredTests"), JSON.stringify(after.manifest.terms) === JSON.stringify(before.manifest.terms), JSON.stringify(after.manifest.funding) === JSON.stringify(before.manifest.funding), JSON.stringify(rewardOf(after.manifest)) === JSON.stringify(rewardOf(before.manifest))],
+      reasons,
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      created: 201,
+      writer: [403, "authority_required"],
+      stale: [409, "stale_revision"],
+      malformed: [400, "invalid_request", "Expected an integration branch and its GitHub commit."],
+      unchanged: [422, "no_change", "The integration branch is unchanged."],
+      moved: [409, "branch_head_changed", "The GitHub branch moved. Reload and verify its current head."],
+      missing: [422, "branch_proof_required"],
+      mismatched: [422, "branch_proof_required"],
+      untouched: [1, true],
+      changed: [200, { presentation: [], executable: ["repositories", "contribution"], financial: [] }],
+      after: [2, "paused", "next", "Run the full test suite on the next branch.", true, true, true],
+      reasons: [{ reason: `Owner integration branch change by @member-${stewardId}: main to next at ${declared}. Release work moved.` }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})
+
+effect function activated(id: string) {
+  const area = try Area
+  const current = try stored(id)
+  const next = current.revision + 1
+  const text = JSON.stringify({ ...current.manifest, status: "active" })
+  const digest = try sha256Hex(text)
+  const at = new Date(try Clock.currentTimeMillis).toISOString()
+  try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, 'Setup check activated the project.', NULL, NULL, ?)", id, next, text, digest, at)
+  try area.sql("INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES (?, ?, 'Activated')", id, next)
+  try area.sql("UPDATE projects SET status = 'active', revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", next, text, digest, at, id)
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A branch move on an active project without current clearance is refused and writes nothing (spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const other = try listed("vetting-branch", "other", otherId)
+    const id = other.id
+    const declared = try branchAt("next", other.commitSha, { ".github/slop-project.json": JSON.stringify(declaration(id, "next")) })
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(other) }, as: steward })
+    try activated(id)
+    const before = try stored(id)
+    const refused = try revise(steward, id, { integrationBranch: { name: "next", commitSha: declared }, expectedRevision: 2 })
+    const after = try stored(id)
+    const revisions = try area.sql("SELECT count(*) AS revisions FROM project_revisions WHERE project_id = ?", id)
+    try same({
+      created: created.status,
+      before: [before.revision, before.status],
+      refused: [...outcome(refused), message(refused).startsWith("Security vetting is "), message(refused).endsWith("A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.")],
+      after: [after.revision, after.status, after.sha256 === before.sha256, (after.manifest.repositories as ReadonlyArray<Record<string, unknown>>)[0]?.integrationBranch],
+      revisions,
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      created: 201,
+      before: [2, "active"],
+      refused: [422, "vetting_required", true, true],
+      after: [2, "active", true, "main"],
+      revisions: [{ revisions: 2 }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+
+  it.effect('A stored application that submits a maintainer share history is refused and publishes nothing (spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("history-application", "tool", primaryId)
+    const base = manifest(tool)
+    const text = JSON.stringify({ ...base, reward: { ...base.reward, maintainerShare: 2000, maintainerShareHistory: [{ throughCycle: "2026-10", basisPoints: 1000 }] } })
+    const application = "app_sharehistory01"
+    try area.sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, expected_revision, change_reason) VALUES (?, ?, ?, ?, ?, 'Accepted pull requests with tests.', ?, ?, '2026-11-02T00:00:00.000Z', 'pending', 'sent', '2026-11-02T00:00:00.000Z', NULL, NULL)", application, tool.id, `member-${stewardId}/tool`, text, try sha256Hex(text), String(stewardId), `member-${stewardId}`)
+    const published = try area.request(`/api/v1/project-applications/${application}/publish`, { json: {}, as: steward })
+    try same({
+      published: [...outcome(published), message(published)],
+      projects: try area.sql("SELECT id FROM projects WHERE id = ?", tool.id),
+      revisions: try area.sql("SELECT revision FROM project_revisions WHERE project_id = ?", tool.id),
+      application: try area.sql("SELECT status FROM project_applications WHERE id = ?", application),
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      published: [422, "invalid_manifest", "A new project has no maintainer share history; set only the maintainer share"],
+      projects: [],
+      revisions: [],
+      application: [{ status: "pending" }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})
+
+const payoutWallet = {
+  jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" }),
+  address: "FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+}
+
+layer(Layer.merge(LocalSite, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A signed-in member creates a project, chooses a referral name, registers a payout wallet and closes the account (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/accounts.md, "Story: Close and reopen an account without losing history"; spec/backend/accounts.md, "Every account outcome is reachable from the launch state"; spec/backend/projects.md, "Reachable registry outcomes"; spec/backend/projectComposition.md, "Reachable composed outcomes")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("journey-tool", "tool", primaryId)
+    const session = try area.request("/api/v1/project-session", { as: steward })
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(tool) }, as: steward })
+    const chosen = try area.request("/api/v1/referrals/code", { json: { code: "journey-name" }, as: steward })
+    const registered = try area.request("/api/v1/payments/wallets/register", { json: { chain: "solana", address: payoutWallet.address }, as: steward })
+    const claimId = String(field(registered.body, "claimId") ?? "")
+    const challenged = try area.request("/api/v1/payments/wallets/challenge", { json: { claimId }, as: steward })
+    const signature = base64Encode(try ed25519Sign(Redacted.make(payoutWallet.jwk), utf8(String(field(challenged.body, "message") ?? ""))))
+    const authorized = try area.request("/api/v1/payments/wallets/authorize", { json: { claimId, challengeId: field(challenged.body, "challengeId"), signature }, as: steward })
+    const closed = try area.request("/api/v1/points/account/close", { json: { login: `member-${stewardId}` }, as: steward })
+    const closedMe = try area.request("/api/v1/points/me", { as: steward })
+    const afterClose = try area.request("/api/v1/payments/wallets/register", { json: { chain: "solana", address: payoutWallet.address }, as: steward })
+    try same({
+      session: [session.status, field(field(session.body, "session"), "githubId")],
+      created: created.status,
+      project: (try stored(tool.id)).revision,
+      chosen: [chosen.status, field(chosen.body, "code")],
+      wallet: [registered.status, challenged.status, authorized.status, field(authorized.body, "authorized")],
+      effective: try area.sql("SELECT id FROM effective_payment_wallet_claims WHERE github_user_id = ?", String(stewardId)),
+      closed: [closed.status, field(closed.body, "closed")],
+      closedMe: [closedMe.status, closedMe.body],
+      afterClose: afterClose.status,
+      claims: try area.sql("SELECT count(*) AS claims FROM wallet_claims WHERE github_user_id = ?", String(stewardId)),
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      session: [200, String(stewardId)],
+      created: 201,
+      project: 1,
+      chosen: [200, "journey-name"],
+      wallet: [200, 200, 200, true],
+      effective: [{ id: claimId }],
+      closed: [200, true],
+      closedMe: [200, null],
+      afterClose: 401,
+      claims: [{ claims: 1 }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})
+
+const staging = deploymentOrigins("staging")
+const identity = staging.identity
+const site = staging.site
+const foreign = "https://attacker.example"
+const bindingName = "__Host-slop_oauth_bind_"
+const stateName = "__Host-slop_oauth_state"
+
+interface IdentityAnswer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly text: string
+  readonly body: unknown
+}
+
+interface Fetching {
+  readonly method?: string
+  readonly json?: unknown
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+interface Flow {
+  readonly flowId: string
+  readonly authorizationUrl: string
+  readonly pollCapability: string
+}
+
+service Identity {
+  readonly db: D1Database
+  readonly net: Internet
+  fetch(url: string, init?: Fetching): IdentityAnswer!!
+}
+
+const IdentityStarted = Layer.effect(Identity, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => github.world.addUser({ id: 7, login: "octo", nodeId: "U_octo" })))
+  const net = internet({ github: github.handler })
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "identity" }))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { IDENTITY_DB: "slop-private" },
+    ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+    vars: {
+      SLOP_ENVIRONMENT: "staging",
+      GITHUB_APP_CLIENT_ID: github.app.clientId,
+      GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+      IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+    },
+    outbound: net.handler,
+  })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "IDENTITY_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  const db = try promise(() => database(mf, "IDENTITY_DB"))
+  return {
+    db,
+    net,
+    fetch: (url, init = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(url, {
+        method: init.method ?? (init.json === undefined ? "GET" : "POST"),
+        headers: { ...init.json === undefined ? {} : { "content-type": "application/json" }, ...init.headers },
+        redirect: "manual",
+        ...init.json === undefined ? {} : { body: JSON.stringify(init.json) },
+      })
+      const text = await response.text()
+      const json = (response.headers.get("content-type") ?? "").includes("json") && text !== ""
+      return { status: response.status, headers: Object.fromEntries(response.headers), text, body: json ? JSON.parse(text) as unknown : text }
+    }),
+  }
+})
+
+schema BindingHash { browser_binding_hash: string | null }
+
+effect function bindingHash(db: D1Database, flowId: string) {
+  const found = try promise(() => db.prepare("SELECT browser_binding_hash FROM identity_oauth_flows WHERE id = ?").bind(flowId).all())
+  const [row] = try orDie(Schema.decodeUnknownEffect(Schema.Array(BindingHash))(found.results))
+  return row?.browser_binding_hash
+}
+
+effect function call(url: string, init: Fetching = {}) {
+  return try (try Identity).fetch(url, init)
+}
+
+function errorOf(answer: IdentityAnswer) {
+  return typeof answer.body === "object" && answer.body !== null && "error" in answer.body ? answer.body.error : undefined
+}
+
+function cookieAttributes(header: string | undefined) {
+  return (header ?? "").split("; ").slice(1)
+}
+
+effect function begin(audience: string, address: string, origin: string | undefined = site) {
+  const answer = try call(`${identity}/v1/oauth/start`, { json: { audience }, headers: { "cf-connecting-ip": address, ...origin === undefined ? {} : { origin } } })
+  const flow: Flow = try orDie(Schema.decodeUnknownEffect(StartedFlow)(answer.body))
+  const binding = (answer.headers["set-cookie"] ?? "").split(";")[0] ?? ""
+  return { answer, flow, binding }
+}
+
+effect function poll(flow: Flow, audience: string, address: string, headers: Readonly<Record<string, string>> = {}) {
+  return try call(`${identity}/v1/oauth/poll`, { json: { flowId: flow.flowId, pollCapability: flow.pollCapability, audience }, headers: { "cf-connecting-ip": address, ...headers } })
+}
+
+effect function authorize(flow: Flow, cookie: string | undefined) {
+  return try call(flow.authorizationUrl, { headers: cookie === undefined ? {} : { cookie } })
+}
+
+effect function consented(answer: IdentityAnswer) {
+  const state = new RegExp(`${stateName}=([^;]+)`, "u").exec(answer.headers["set-cookie"] ?? "")?.[1] ?? ""
+  const consent = new URL(answer.headers.location ?? `${identity}/missing-location`)
+  consent.searchParams.set("login", "octo")
+  const { net } = try Identity
+  const redirected = try promise(async () => net.handler(new Request(consent.toString(), { redirect: "manual" })))
+  return { state, callback: redirected.headers.get("location") ?? "" }
+}
+
+effect function callback(url: string, cookies: ReadonlyArray<string>) {
+  return try call(url, { headers: { cookie: cookies.join("; ") } })
+}
+
+layer(Layer.merge(IdentityStarted, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A website sign-in completes only in the browser that started it, and the terminal keeps its unbound protocol (spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity")', () => effect {
+    const { db } = try Identity
+    const originless = try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { "cf-connecting-ip": "198.51.100.10" } })
+
+    const own = try begin("slop-points-web", "198.51.100.11")
+    const secret = own.binding.split("=")[1] ?? ""
+    const stored = try bindingHash(db, own.flow.flowId)
+    const waiting = try poll(own.flow, "slop-points-web", "198.51.100.11", { origin: site, cookie: own.binding })
+    const strangerAuthorize = try authorize(own.flow, undefined)
+    const other = try begin("slop-points-web", "198.51.100.12")
+    const borrowed = try authorize(own.flow, other.binding.replace(other.flow.flowId, own.flow.flowId))
+    const authorized = try authorize(own.flow, own.binding)
+    const signIn = try consented(authorized)
+    const completed = try callback(signIn.callback, [`${stateName}=${signIn.state}`, own.binding])
+    const mismatched = [
+      try poll(own.flow, "slop-points-web", "198.51.100.13"),
+      try poll(own.flow, "slop-points-web", "198.51.100.13", { origin: site }),
+    ]
+    const issued = try poll(own.flow, "slop-points-web", "198.51.100.11", { origin: site, cookie: own.binding })
+
+    const hijacked = try begin("slop-points-web", "198.51.100.14")
+    const hijackSignIn = try consented(try authorize(hijacked.flow, hijacked.binding))
+    const hijackCallback = try callback(hijackSignIn.callback, [`${stateName}=${hijackSignIn.state}`])
+    const hijackStarter = try poll(hijacked.flow, "slop-points-web", "198.51.100.14", { origin: site, cookie: hijacked.binding })
+
+    const refused = try begin("slop-points-web", "198.51.100.15")
+    const refusedAuthorized = try authorize(refused.flow, refused.binding)
+    const refusedState = new RegExp(`${stateName}=([^;]+)`, "u").exec(refusedAuthorized.headers["set-cookie"] ?? "")?.[1] ?? ""
+    const githubError = try callback(`${identity}/v1/oauth/callback?state=${refusedState}&error=access_denied`, [`${stateName}=${refusedState}`, refused.binding])
+    const refusedStarter = try poll(refused.flow, "slop-points-web", "198.51.100.15", { origin: site, cookie: refused.binding })
+
+    const unbound = try begin("slop-points-web", "198.51.100.16")
+    try promise(() => db.prepare("UPDATE identity_oauth_flows SET browser_binding_hash = NULL WHERE id = ?").bind(unbound.flow.flowId).run())
+    const unboundAuthorize = try authorize(unbound.flow, unbound.binding)
+
+    const expiring = try begin("slop-points-web", "198.51.100.17")
+    try promise(() => db.prepare("UPDATE identity_oauth_flows SET created_at = '2026-01-01T00:00:00.000Z', expires_at = '2026-01-01T00:05:00.000Z' WHERE id = ?").bind(expiring.flow.flowId).run())
+    const expired = try poll(expiring.flow, "slop-points-web", "198.51.100.17", { origin: site, cookie: expiring.binding })
+
+    const terminal = try begin("private-trace-api", "198.51.100.18", undefined)
+    const terminalAuthorize = try authorize(terminal.flow, undefined)
+    const terminalWaiting = try poll(terminal.flow, "private-trace-api", "198.51.100.18")
+    const terminalStored = try bindingHash(db, terminal.flow.flowId)
+
+    const preflights = [
+      try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } }),
+      try call(`${identity}/v1/oauth/poll`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } }),
+    ]
+    const foreignPreflight = try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: foreign, "access-control-request-method": "POST" } })
+
+    try same({
+      originless: [originless.status, errorOf(originless), originless.headers["set-cookie"]],
+      started: [own.answer.status, own.binding.startsWith(`${bindingName}${own.flow.flowId}=`), cookieAttributes(own.answer.headers["set-cookie"]), own.answer.headers["access-control-allow-origin"], own.answer.headers["access-control-allow-credentials"], own.answer.text.includes(secret), secret.length, stored?.length, stored === secret ? "secret stored" : "hash stored"],
+      waiting: [waiting.status, waiting.headers["access-control-allow-credentials"]],
+      strangerAuthorize: [strangerAuthorize.status, strangerAuthorize.headers.location, strangerAuthorize.headers["set-cookie"]],
+      borrowed: [borrowed.status, borrowed.headers.location],
+      authorized: [authorized.status, new URL(authorized.headers.location ?? identity).origin, completed.status],
+      mismatched: mismatched.map((answer) => [answer.status, errorOf(answer)]),
+      issued: [issued.status, issued.headers["access-control-allow-credentials"], issued.headers["set-cookie"]],
+      hijacked: [hijackCallback.status, hijackCallback.headers.location, hijackStarter.status, errorOf(hijackStarter)],
+      githubError: [githubError.status, refusedStarter.status, errorOf(refusedStarter)],
+      unboundAuthorize: [unboundAuthorize.status, unboundAuthorize.headers.location],
+      expired: [expired.status, errorOf(expired)],
+      terminal: [terminal.answer.status, terminal.answer.headers["set-cookie"], terminalAuthorize.status, terminalWaiting.status, terminalStored],
+      preflights: preflights.map((answer) => [answer.status, answer.headers["access-control-allow-origin"], answer.headers["access-control-allow-credentials"]]),
+      foreignPreflight: [foreignPreflight.status, foreignPreflight.headers["access-control-allow-origin"]],
+    }, {
+      originless: [403, "origin_required", undefined],
+      started: [201, true, ["Path=/", "Max-Age=300", "Secure", "HttpOnly", "SameSite=None"], site, "true", false, 43, 64, "hash stored"],
+      waiting: [202, "true"],
+      strangerAuthorize: [403, undefined, undefined],
+      borrowed: [403, undefined],
+      authorized: [302, "https://github.com", 200],
+      mismatched: [[403, "browser_mismatch"], [403, "browser_mismatch"]],
+      issued: [200, "true", `${bindingName}${own.flow.flowId}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=None`],
+      hijacked: [403, undefined, 410, "callback_failed"],
+      githubError: [400, 410, "callback_failed"],
+      unboundAuthorize: [403, undefined],
+      expired: [410, "flow_unavailable"],
+      terminal: [201, undefined, 302, 202, null],
+      preflights: [[204, site, "true"], [204, site, "true"]],
+      foreignPreflight: [403, undefined],
+    })
+  })
+})
+
+const day = (date: number) => `2026-11-${String(date).padStart(2, "0")}T12:00:00.000Z`
+const rateA = { effectiveAt: day(17), slopPerUsd: "250", source: "pool", createdAt: day(17) }
+const rateB = { effectiveAt: day(18), slopPerUsd: "300", source: "pool", createdAt: day(18) }
+
+service FeeWorld {
+  readonly db: D1Database
+}
+
+function feeStarted(name: string) {
+  const world = Layer.effect(FeeWorld, effect {
+    const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (running) => promise(() => running.dispose()))
+    const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+    const broken = applied.find((file) => file.error !== undefined)
+    if (broken !== undefined) throw new MigrationFailed({ file: broken.file })
+    return { db: try promise(() => database(mf, "SLOP_DB")) }
+  })
+  const shell = Layer.unwrap(effect {
+    const { db } = try FeeWorld
+    return d1(db)
+  })
+  return Layer.provideMerge(shell, world)
+}
+
+effect function revision(id: string, number: number, status: string, slopbot: Readonly<Record<string, unknown>>, actor: string | null, at: string) {
+  const text = try orDie(Effect.try(() => JSON.stringify({ id, status, slopbot })))
+  try (try D1).run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, ${number}, ${text}, ${String(number).repeat(64)}, 'Changed', ${actor}, ${actor === null ? null : `member-${actor}`}, ${at})`)
+  return text
+}
+
+effect function feeProject(id: string, status: string, slopbot: Readonly<Record<string, unknown>>, applicant: string | null) {
+  const application = applicant === null ? null : `app-${id}-0001`
+  if (application !== null) {
+    const applied = try orDie(Effect.try(() => JSON.stringify({ id, status: "paused" })))
+    try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, decided_at, decided_by_github_id, decided_by_github_login) VALUES (${application}, ${id}, ${`slop-test/${id}`}, ${applied}, ${"f".repeat(64)}, 'The tests pass.', ${applicant}, ${`member-${applicant}`}, ${day(1)}, 'approved', 'sent', ${day(1)}, ${day(1)}, '9000', 'admin')`)
+  }
+  const text = try revision(id, 1, status, slopbot, null, day(1))
+  try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id) VALUES (${id}, ${status}, 1, ${text}, ${"1".repeat(64)}, ${day(1)}, ${day(1)}, ${application})`)
+}
+
+effect function count(id: string, repository: string, observedAt: string | null, openOutside: number | null) {
+  try (try D1).run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, open_outside) VALUES (${id}, ${repository}, ${observedAt}, ${day(21)}, ${openOutside === null ? "read failed" : null}, ${openOutside})`)
+}
+
+effect function settingSince(id: string) {
+  provide SubmissionFeeSettingLive {
+    return try (try SubmissionFeeSetting).since(id)
+  }
+}
+
+effect function pausedAt(id: string, at: string) {
+  provide Layer.provide(IntakePauseLive, IntakeCountsLive) {
+    return try (try IntakePause).paused(id, at)
+  }
+}
+
+effect function participated(id: string, githubId: string) {
+  provide ProjectParticipationLive {
+    return try (try ProjectParticipation).participated(id, githubId)
+  }
+}
+
+function slopOption(stableMinor: string, rates: ReadonlyArray<SlopRate>, at: string) {
+  const found = submissionFeeOptions(stableMinor, rates, at).find((option) => option.symbol === "SLOP")
+  return found === undefined ? null : { amount: found.amount, minimumAccepted: found.minimumAccepted, keptTo: found.keptTo }
+}
+
+layer(feeStarted("backend-catchup5-fee"), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('The SLOP rate store appends each rate once and serves it by effective time (spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"; spec/backend/submissionFeeTerms.md, "Story: Every part reads the same published fee terms")', () => effect {
+    provide SubmissionFeeRatesLive {
+      const rates = try SubmissionFeeRates
+      const db = try D1
+      assert.deepStrictEqual(try rates.newest(), null)
+      assert.deepStrictEqual(slopOption("2000000", try rates.all(), day(19)), null)
+      const written = [try db.run(try rates.append(rateB)), try db.run(try rates.append(rateA)), try db.run(try rates.append(rateA)), try db.run(try rates.append({ ...rateA, slopPerUsd: "999" }))]
+      assert.deepStrictEqual(written, [1, 1, 0, 0])
+      const stored = try rates.all()
+      assert.deepStrictEqual(stored, [{ effectiveAt: rateA.effectiveAt, slopPerUsd: "250" }, { effectiveAt: rateB.effectiveAt, slopPerUsd: "300" }])
+      assert.deepStrictEqual(try rates.newest(), { effectiveAt: rateB.effectiveAt, slopPerUsd: "300" })
+      const burn = "0x000000000000000000000000000000000000dEaD"
+      assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-19T00:00:00.000Z"), { amount: "300000000000000000000", minimumAccepted: "250000000000000000000", keptTo: burn })
+      assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-21T00:00:00.000Z"), { amount: "300000000000000000000", minimumAccepted: "300000000000000000000", keptTo: burn })
+      assert.deepStrictEqual(slopOption("2000000", stored, "2026-11-17T11:59:59.999Z"), null)
+    }
+  })
+
+  it.effect('The fee setting counts from the first revision after the latest one that had it off (spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount")', () => effect {
+    const on = { submissionFee: { enabled: true } }
+    try revision("fees", 1, "active", {}, "100", day(2))
+    assert.deepStrictEqual(try settingSince("fees"), null)
+    try revision("fees", 2, "active", on, "100", day(3))
+    try revision("fees", 3, "active", { submissionFee: { enabled: true, amountMinor: "3000000" } }, "100", day(4))
+    assert.deepStrictEqual(try settingSince("fees"), day(3))
+    try revision("fees", 4, "active", { submissionFee: { enabled: false } }, "100", day(5))
+    assert.deepStrictEqual(try settingSince("fees"), null)
+    try revision("fees", 5, "active", on, "100", day(6))
+    assert.deepStrictEqual(try settingSince("fees"), day(6))
+    try revision("always", 1, "active", on, "100", day(2))
+    assert.deepStrictEqual(try settingSince("always"), day(2))
+  })
+
+  it.effect('Only a recent count at or above the cap of an active project pauses it (spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it")', () => effect {
+    const at = day(21)
+    try feeProject("full", "active", { intakeCap: 3 }, null)
+    try count("full", "slop-test/full-a", day(20), 1)
+    try count("full", "slop-test/full-b", day(20), 3)
+    try feeProject("unread", "active", { intakeCap: 3 }, null)
+    try count("unread", "slop-test/unread", null, null)
+    try feeProject("stale", "active", { intakeCap: 3 }, null)
+    try count("stale", "slop-test/stale", day(17), 9)
+    try feeProject("under", "active", { intakeCap: 3 }, null)
+    try count("under", "slop-test/under", day(20), 2)
+    try feeProject("resting", "paused", { intakeCap: 3 }, null)
+    try count("resting", "slop-test/resting", day(20), 9)
+    try feeProject("uncapped", "active", {}, null)
+    try count("uncapped", "slop-test/uncapped", day(20), 9)
+    const paused = [try pausedAt("full", at), try pausedAt("unread", at), try pausedAt("stale", at), try pausedAt("under", at), try pausedAt("resting", at), try pausedAt("uncapped", at), try pausedAt("missing", at)]
+    assert.deepStrictEqual(paused, [true, false, false, false, false, false, false])
+  })
+
+  it.effect('Only a revision author or the applicant of a project counts as its participant (spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records")', () => effect {
+    try feeProject("applied", "active", {}, "200")
+    try revision("applied", 2, "active", { intakeCap: 5 }, "300", day(2))
+    const found = [try participated("applied", "200"), try participated("applied", "300"), try participated("applied", "400"), try participated("fees", "100"), try participated("fees", "200")]
+    assert.deepStrictEqual(found, [true, true, false, true, false])
+  })
+})
+
+const hour = 3_600_000
+const start = 1_794_916_800_000
+const t0 = "2026-11-17T12:00:00.000Z"
+const org = "slop-test"
+const wantedLabelPath = "/labels/slop-wanted"
+
+service ActivityWorld {
+  readonly fake: GitHubFake
+  readonly clock: SettableClock
+  readonly db: D1Database
+}
+
+schema StoredWanted { failure: string | null; wanted_label: string | null; wanted_issues: string | null; wanted_label_ready: string | null }
+
+function iso(hours: number) {
+  return new Date(start + hours * hour).toISOString()
+}
+
+function graphqlCalls(requests: ReadonlyArray<GitHubRequest>) {
+  return requests.filter((request) => request.method === "POST" && request.url.endsWith("/graphql")).length
+}
+
+function labelCalls(requests: ReadonlyArray<GitHubRequest>, method: string, path: string) {
+  return requests.filter((request) => request.method === method && new URL(request.url).pathname.endsWith(path)).length
+}
+
+effect function people(fake: GitHubFake) {
+  const world = fake.world
+  try orDie(Effect.try(() => {
+    world.addOrg({ id: 5000, login: org })
+    world.addUser({ id: 5001, login: "maint" })
+    world.addUser({ id: 5002, login: "alice" })
+    world.addUser({ id: 5003, login: "bob" })
+    world.addUser({ id: 5004, login: "carol" })
+    world.addUser({ id: 5005, login: "helper[bot]", type: "Bot" })
+    world.addMember(org, "maint")
+    world.addInstallation({ id: 79, account: org, repositories: "all", permissions: { pull_requests: "read", issues: "write" } })
+  }))
+}
+
+effect function countsWorld(fake: GitHubFake) {
+  const world = fake.world
+  try people(fake)
+  try orDie(Effect.try(() => {
+    world.addRepo({ id: 7301, owner: org, name: "open1" })
+    world.addPull({ repo: `${org}/open1`, author: "alice", createdAt: iso(-400) })
+    const answered = world.addPull({ repo: `${org}/open1`, author: "bob", createdAt: iso(-390) })
+    world.addComment(`${org}/open1`, answered, { author: "maint", body: "Looking at it.", createdAt: iso(-380) })
+    world.addPull({ repo: `${org}/open1`, author: "carol", createdAt: iso(-10) })
+    world.addPull({ repo: `${org}/open1`, author: "alice", createdAt: iso(-300), draft: true })
+    world.addPull({ repo: `${org}/open1`, author: "maint", createdAt: iso(-300) })
+    world.addPull({ repo: `${org}/open1`, author: "helper[bot]", createdAt: iso(-300) })
+    world.addRepo({ id: 7302, owner: org, name: "count" })
+    world.addRepo({ id: 7303, owner: org, name: "floor" })
+    for (const [name, beyond] of [["count", 120], ["floor", 701]] as const) {
+      for (let index = 0; index < 49; index += 1) world.addPull({ repo: `${org}/${name}`, author: "alice", createdAt: iso(-400 + index / 10) })
+      world.addPull({ repo: `${org}/${name}`, author: "carol", createdAt: iso(-10) })
+      for (let index = 0; index < beyond; index += 1) world.addPull({ repo: `${org}/${name}`, author: "bob", createdAt: iso(-9 + index / 1000), draft: name === "count" && index === 0 })
+    }
+    world.addRepo({ id: 7304, owner: org, name: "capped" })
+    world.addPull({ repo: `${org}/capped`, author: "carol", createdAt: iso(-10) })
+  }))
+}
+
+effect function wantedWorld(fake: GitHubFake) {
+  const world = fake.world
+  try people(fake)
+  try orDie(Effect.try(() => {
+    world.addRepo({ id: 7401, owner: org, name: "plain" })
+    world.addPull({ repo: `${org}/plain`, author: "carol", createdAt: iso(-10) })
+    world.addRepo({ id: 7402, owner: org, name: "wanted" })
+    world.addIssue({ repo: `${org}/wanted`, number: 7, author: "maint", title: "Port the baseline to JAX 0.6", createdAt: iso(-100), labels: ["slop-wanted"] })
+    world.addIssue({ repo: `${org}/wanted`, number: 8, author: "maint", title: "Not wanted", createdAt: iso(-90) })
+    world.addIssue({ repo: `${org}/wanted`, number: 9, author: "maint", title: "Seed-controlled comparison for PPO", createdAt: iso(-50), labels: ["slop-wanted"] })
+    world.addPull({ repo: `${org}/wanted`, number: 20, author: "alice", body: "Fixes #9", createdAt: iso(-5) })
+    world.addRepo({ id: 7403, owner: org, name: "wanted2" })
+    world.addIssue({ repo: `${org}/wanted2`, number: 3, author: "maint", title: "Write the guide", createdAt: iso(-40), labels: ["slop-wanted"] })
+    world.addRepo({ id: 7501, owner: org, name: "foreign" })
+    world.addIssue({ repo: `${org}/foreign`, number: 7, author: "maint", title: "Elsewhere", createdAt: iso(-40), labels: ["slop-wanted"] })
+  }))
+}
+
+function activityStarted(name: string, populate: (fake: GitHubFake) => void!!) {
+  const world = Layer.effect(ActivityWorld, effect {
+    const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (running) => promise(() => running.dispose()))
+    const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+    const broken = applied.find((file) => file.error !== undefined)
+    if (broken !== undefined) throw new MigrationFailed({ file: broken.file })
+    const db = try promise(() => database(mf, "SLOP_DB"))
+    const clock = settableClock(start)
+    const fake = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+    try populate(fake)
+    return { fake, clock, db }
+  })
+  const shell = Layer.unwrap(effect {
+    const { fake, clock, db } = try ActivityWorld
+    const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
+    const http = outboundVia(viaFake)
+    const app = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority, userAgent: "slop.cash-merge-activity" }), Layer.mergeAll(http, webCrypto, clock.layer))
+    return Layer.mergeAll(d1(db), http, app)
+  })
+  return Layer.provideMerge(shell, world)
+}
+
+schema Latest { revision: number }
+
+effect function activityProject(id: string, slopbot?: Readonly<Record<string, unknown>>) {
+  const path = `${org}/${id}`
+  const text = try orDie(Effect.try(() => JSON.stringify({ id, status: "active", listingTier: "community", repositories: [{ id: path, githubUrl: `https://github.com/${path}` }], ...(slopbot === undefined ? {} : { slopbot }) })))
+  const [latest] = try rows(Latest, sql`SELECT coalesce(max(revision), 0) AS revision FROM project_revisions WHERE project_id = ${id}`)
+  const revision = (latest?.revision ?? 0) + 1
+  const digest = String(revision).padStart(64, "a")
+  try (try D1).run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, ${revision}, ${text}, ${digest}, 'Seeded', '1', 'member-1', ${t0})`)
+  if (revision === 1) {
+    try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'active', 1, ${text}, ${digest}, ${t0}, ${t0})`)
+  } else {
+    try (try D1).run(sql`UPDATE projects SET revision = ${revision}, manifest = ${text}, manifest_sha256 = ${digest}, updated_at = ${t0} WHERE id = ${id}`)
+  }
+}
+
+effect function refreshedAt(hours: number) {
+  const { fake, clock } = try ActivityWorld
+  try sync(() => clock.set(start + hours * hour))
+  const before = fake.requests.length
+  provide clock.layer {
+    const counts = try refreshMergeActivity()
+    return { counts, requests: fake.requests.slice(before) }
+  }
+}
+
+effect function storedWanted(id: string) {
+  return try rows(StoredWanted, sql`SELECT failure, wanted_label, wanted_issues, wanted_label_ready FROM repository_merge_activity WHERE project_id = ${id}`)
+}
+
+effect function servedRepository(id: string) {
+  const served = try mergeActivityAnswer()
+  return served.projects.find((found) => found.projectId === id)?.repositories[0]
+}
+
+effect function intakeCounts() {
+  provide IntakeCountsLive {
+    return Object.fromEntries(try (try IntakeCounts).counts())
+  }
+}
+
+function readRow(repository: string, waitingOutside: number, openOutside: number | null, openOutsideCapped: boolean) {
+  return { repository, observedAt: t0, lastAttemptFailed: false, lastMergedAt: null, waitingOutside, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null, openOutside, openOutsideCapped }
+}
+
+layer(activityStarted("merge-activity-catchup5-counts", countsWorld), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('Merge activity stores every open outside pull request for the intake cap and serves it (spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it")', () => effect {
+    try activityProject("open1")
+    try activityProject("count")
+    try activityProject("floor")
+    try activityProject("legacy")
+    try (try D1).run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours) VALUES ('legacy', ${`${org}/legacy`}, ${t0}, ${t0}, NULL, NULL, 0, 0, 0, NULL)`)
+    const { counts, requests } = try refreshedAt(0)
+    const served = try mergeActivityAnswer()
+    const intake = try intakeCounts()
+    try Effect.try(() => assert.deepStrictEqual({ counts, graphql: graphqlCalls(requests), served: served.projects, intake }, {
+      counts: { read: 3, failed: 0 },
+      graphql: 15,
+      served: [
+        { projectId: "count", repositories: [readRow(`${org}/count`, 49, 169, false)] },
+        { projectId: "floor", repositories: [readRow(`${org}/floor`, 49, 750, true)] },
+        { projectId: "legacy", repositories: [readRow(`${org}/legacy`, 0, null, false)] },
+        { projectId: "open1", repositories: [readRow(`${org}/open1`, 1, 3, false)] },
+      ],
+      intake: {
+        count: [{ openOutside: 169, observedAt: t0 }],
+        floor: [{ openOutside: 750, observedAt: t0 }],
+        open1: [{ openOutside: 3, observedAt: t0 }],
+      },
+    }))
+  })
+
+  it.effect('A project with an intake cap is read again at the next hourly run (spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it")', () => effect {
+    try activityProject("capped", { intakeCap: 20 })
+    const first = (try refreshedAt(0)).counts
+    const soon = (try refreshedAt(0.5)).counts
+    const nextHour = (try refreshedAt(1)).counts
+    try Effect.try(() => assert.deepStrictEqual({ first, soon, nextHour }, { first: { read: 1, failed: 0 }, soon: { read: 0, failed: 0 }, nextHour: { read: 1, failed: 0 } }))
+  })
+})
+
+layer(activityStarted("merge-activity-catchup5-wanted", wantedWorld), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('Wanted issues off reads no label and creates none, and turning them on reads at the next run (spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects")', () => effect {
+    try activityProject("plain")
+    const off = try refreshedAt(0)
+    const stored = try storedWanted("plain")
+    try activityProject("plain", { wantedIssues: true })
+    const on = try refreshedAt(1)
+    try Effect.try(() => assert.deepStrictEqual({
+      off: { counts: off.counts, graphql: graphqlCalls(off.requests), labels: off.requests.filter((request) => request.url.includes("/labels")).length, stored },
+      on: { counts: on.counts, graphql: graphqlCalls(on.requests) },
+    }, {
+      off: { counts: { read: 1, failed: 0 }, graphql: 2, labels: 0, stored: [{ failure: null, wanted_label: null, wanted_issues: null, wanted_label_ready: null }] },
+      on: { counts: { read: 1, failed: 0 }, graphql: 3 },
+    }))
+  })
+
+  it.effect('The read lists labelled issues, creates the label once and serves the list (spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date")', () => effect {
+    const { fake } = try ActivityWorld
+    try activityProject("wanted", { wantedIssues: true })
+    try sync(() => {
+      fake.failNext(`GET /repos/${org}/wanted${wantedLabelPath}`, { status: 404 })
+      fake.alterNext(`POST /repos/${org}/wanted/labels`, () => labelCreated())
+    })
+    const first = try refreshedAt(2)
+    const served = try servedRepository("wanted")
+    const later = try refreshedAt(8)
+    const stored = try storedWanted("wanted")
+    try Effect.try(() => assert.deepStrictEqual({
+      first: { counts: first.counts, checked: labelCalls(first.requests, "GET", `/repos/${org}/wanted${wantedLabelPath}`), created: labelCalls(first.requests, "POST", `/repos/${org}/wanted/labels`) },
+      wanted: { label: served?.wantedLabel, issues: served?.wantedIssues, openOutside: served?.openOutside },
+      later: { checked: labelCalls(later.requests, "GET", `/repos/${org}/wanted${wantedLabelPath}`), created: labelCalls(later.requests, "POST", `/repos/${org}/wanted/labels`) },
+      ready: stored.map((row) => row.wanted_label_ready),
+    }, {
+      first: { counts: { read: 1, failed: 0 }, checked: 1, created: 1 },
+      wanted: {
+        label: "slop-wanted",
+        issues: [
+          { number: 7, title: "Port the baseline to JAX 0.6", url: `https://github.com/${org}/wanted/issues/7`, openPullRequests: 0 },
+          { number: 9, title: "Seed-controlled comparison for PPO", url: `https://github.com/${org}/wanted/issues/9`, openPullRequests: 1 },
+        ],
+        openOutside: 1,
+      },
+      later: { checked: 0, created: 0 },
+      ready: ["slop-wanted"],
+    }))
+  })
+
+  it.effect('A label that cannot be created keeps the list and is tried at the next read (spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once")', () => effect {
+    const { fake } = try ActivityWorld
+    try activityProject("wanted2", { wantedIssues: true })
+    try sync(() => fake.failNext(`GET /repos/${org}/wanted2${wantedLabelPath}`, { status: 500 }))
+    const first = try refreshedAt(9)
+    const kept = try storedWanted("wanted2")
+    try sync(() => fake.failNext(`GET /repos/${org}/wanted2${wantedLabelPath}`, { status: 500 }))
+    const next = try refreshedAt(15)
+    try Effect.try(() => assert.deepStrictEqual({
+      kept: kept.map((row) => ({ failure: row.failure, label: row.wanted_label, ready: row.wanted_label_ready, listed: row.wanted_issues !== null })),
+      checks: labelCalls(first.requests, "GET", `/repos/${org}/wanted2${wantedLabelPath}`) + labelCalls(next.requests, "GET", `/repos/${org}/wanted2${wantedLabelPath}`),
+    }, {
+      kept: [{ failure: null, label: "slop-wanted", ready: null, listed: true }],
+      checks: 2,
+    }))
+  })
+
+  it.effect('An issue URL outside the repository fails the read instead of being stored (spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date")', () => effect {
+    const { fake } = try ActivityWorld
+    try activityProject("foreign", { wantedIssues: true })
+    try sync(() => {
+      for (let call = 0; call < 3; call += 1) fake.alterNext("POST /graphql", (response) => foreignIssues(response))
+    })
+    const read = try refreshedAt(16)
+    const stored = try storedWanted("foreign")
+    try Effect.try(() => assert.deepStrictEqual({ counts: read.counts, stored }, {
+      counts: { read: 0, failed: 1 },
+      stored: [{ failure: "github-wanted-issue-invalid", wanted_label: null, wanted_issues: null, wanted_label_ready: null }],
+    }))
   })
 })

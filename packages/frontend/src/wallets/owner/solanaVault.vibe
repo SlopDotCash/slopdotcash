@@ -1,6 +1,6 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
 import { base58Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
-import { type FundingAction, type FundingPlan, paymentsSolanaFunding } from "@repo/settlement/client"
+import { type FundingAction, type FundingPlan, paymentsSolanaFunding, projectVaultSolanaFunding } from "@repo/settlement/client"
 import { parseDecimalAmount } from "@repo/settlement/kernels/amounts"
 import { ordinaryFeeBase } from "@repo/settlement/kernels/fees"
 import { call } from "../../platform/api.vibe"
@@ -17,6 +17,7 @@ export interface SolanaVault {
   readonly network: string
   readonly vault: string
   readonly terms: SolanaVaultTerms
+  readonly purpose?: "security-bounty"
 }
 
 export interface ReviewedFunding {
@@ -48,7 +49,8 @@ function refused(message: string) {
 }
 
 effect function asked(vault: SolanaVault, body: FundingAction) {
-  const answer = call(paymentsSolanaFunding, { params: { id: vault.projectId }, body }, { limitBytes, deadlineMs }) catch effect (failure) => {
+  const route = vault.purpose === "security-bounty" ? projectVaultSolanaFunding : paymentsSolanaFunding
+  const answer = call(route, { params: { id: vault.projectId }, body }, { limitBytes, deadlineMs }) catch effect (failure) => {
     throw refused(failure._tag === "Refused" && failure.status === 422 && failure.message !== "" ? failure.message : solanaFundingMessages.unavailable)
   }
   return answer

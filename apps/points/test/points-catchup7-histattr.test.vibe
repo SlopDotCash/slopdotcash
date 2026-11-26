@@ -1,0 +1,325 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { gitBytes, systemGit, withPublicGitObjects } from "@repo/platform/git"
+import { lossyText, parsedJson, sha256Of } from "@repo/platform/git/bytes"
+import { webCrypto } from "@repo/platform/crypto"
+import { github } from "@repo/platform/github"
+import type { Journal } from "../src/kernels/records/canonical.ts"
+import { instantOf } from "../src/kernels/records/instants.ts"
+import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import type { CorrectionSource } from "../src/corrections/apply/manifest.vibe"
+import { type BeforeImportCheck, assertHistoricalNetOutcome, verifyHistoricalNetOutcomes } from "../src/corrections/reviewed/netOutcome.vibe"
+import { type HistoricalNetOutcome, type HistoricalPacket, type NetOutcomeSource, type PacketRetirement, type SourceAudit, digestText, pullUrl } from "../src/corrections/reviewed/packet.vibe"
+import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
+import { periodOf } from "../gen/points__periods.effect.vibe"
+import { jsonAnswer } from "./support/u3/github.ts"
+import { type Packet, type Retirement, appended, baselineOf, batchDigestOf, duplicateReason, fixture as reviewedFixture, hash, keyOf, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
+
+const repository = { id: 12, node_id: "R_test", private: false, full_name: "owner/repo" }
+const firstAward = "1".repeat(64)
+const secondAward = "2".repeat(64)
+const firstAcceptedAt = "2026-10-02T00:00:00.000Z"
+const secondAcceptedAt = "2026-10-03T00:00:00.000Z"
+const targetAcceptedAt = "2026-10-04T00:00:00.000Z"
+const identities = {
+  GIT_AUTHOR_NAME: "Fixture",
+  GIT_AUTHOR_EMAIL: "fixture@example.test",
+  GIT_AUTHOR_DATE: "1794088867 +0000",
+  GIT_COMMITTER_NAME: "Fixture",
+  GIT_COMMITTER_EMAIL: "fixture@example.test",
+  GIT_COMMITTER_DATE: "1794088900 +0000",
+}
+
+interface ObjectRead { readonly repository: unknown; readonly objects: ReadonlyArray<string> }
+
+interface Fixture {
+  readonly directory: string
+  readonly unrelatedMerge: string
+  readonly proof: HistoricalNetOutcome
+  readonly retirement: PacketRetirement
+  readonly audit: SourceAudit
+  readonly nodes: Map<string, unknown>
+  readonly reads: ObjectRead[]
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function messageOf(failure: unknown) {
+  return typeof failure === "object" && failure !== null && "message" in failure ? String((failure as { readonly message: unknown }).message) : String(failure)
+}
+
+effect function fixtureGit(directory: string, args: ReadonlyArray<string>, input?: string) {
+  return try gitBytes({ args: ["-C", directory, ...args], env: identities, ...(input === undefined ? {} : { input }), limit: 16 * 1024 * 1024, seconds: 60 }, `git ${args[0] ?? ""} failed`)
+}
+
+effect function fixtureText(directory: string, args: ReadonlyArray<string>, input?: string) {
+  return lossyText(try fixtureGit(directory, args, input)).trim()
+}
+
+effect function commit(directory: string, content: string, parents: ReadonlyArray<string>, message: string) {
+  const blob = try fixtureText(directory, ["hash-object", "-w", "--stdin"], content)
+  const tree = try fixtureText(directory, ["mktree"], `100644 blob ${blob}\ta\n100644 blob ${blob}\tb\n`)
+  return try fixtureText(directory, ["commit-tree", tree, ...parents.flatMap((sha) => ["-p", sha]), "-m", message])
+}
+
+function url(number: number) {
+  return `https://github.com/${repository.full_name}/pull/${number}`
+}
+
+effect function fixture() {
+  const fs = try FileSystem.FileSystem
+  const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-historical-net-outcome-" })
+  try gitBytes({ args: ["init", "--bare", "--quiet", "--template=", directory], limit: 1024 * 1024, seconds: 60 }, "git init failed")
+  const root = try commit(directory, "first\n", [], "root")
+  const earlier = try commit(directory, "middle\n", [root], "prior accepted one")
+  const unrelatedMerge = try commit(directory, "middle\n", [root], "independent identical patch")
+  const head = try commit(directory, "last\n", [earlier], "prior accepted two")
+  const accepted = try commit(directory, "last\n", [root, head], "later carried net result")
+  const raw = try fixtureGit(directory, ["diff-tree", "--no-commit-id", "--raw", "--no-abbrev", "--no-renames", "-r", "-z", root, accepted])
+  const sourceId = "PR_target"
+  const source: CorrectionSource = {
+    repository: repository.full_name,
+    repositoryNodeId: repository.node_id,
+    sourceId,
+    sourceUrl: url(3),
+    headSha: head,
+    occurredAt: targetAcceptedAt,
+    author: null,
+    complete: true,
+    commitCount: 2,
+    commits: [[earlier, root], [head, earlier]].map(([sha = "", parent = ""]) => ({
+      sha, parentCount: 1, parentShas: [parent], author: null, additions: 2, deletions: 2, firstAcceptedSourceId: "PR_earlier",
+    })),
+  }
+  const anchors: NetOutcomeSource[] = [
+    { id: "PR_earlier", number: 1, mergedAt: firstAcceptedAt, mergeSha: earlier, awardKey: firstAward, awardRevisionId: firstAward },
+    { id: "PR_later", number: 2, mergedAt: secondAcceptedAt, mergeSha: head, awardKey: secondAward, awardRevisionId: secondAward },
+  ]
+  const proof: HistoricalNetOutcome = {
+    mergeSha: accepted,
+    firstParentSha: root,
+    rawDiffSha256: sha256Of(raw),
+    sources: anchors,
+    paths: ["a", "b"].map((path) => ({ path, sourceIds: anchors.map(({ id }) => id) })),
+  }
+  const retirement: PacketRetirement = {
+    sourceId,
+    workUnitId: "ordinary",
+    source,
+    earlierSources: [],
+    coverage: [],
+    netOutcome: proof,
+    evidence: "{}",
+    evidenceSha256: firstAward,
+    expectedPredecessors: [],
+  }
+  const audit: SourceAudit = {
+    repository: repository.full_name,
+    repositoryNodeId: repository.node_id,
+    from: "2026-09-27T00:00:00.000Z",
+    through: "2026-11-01T00:00:00.000Z",
+    sources: [{ id: sourceId, number: 3, headSha: head, mergedAt: targetAcceptedAt }],
+  }
+  const nodes = new Map<string, unknown>([{ id: sourceId, number: 3, mergedAt: targetAcceptedAt, mergeSha: accepted }, ...anchors].map(({ id, number, mergedAt, mergeSha }) => [id, {
+    id,
+    number,
+    url: url(number),
+    state: "MERGED",
+    mergedAt,
+    headRefOid: number === 1 ? earlier : head,
+    repository: { id: repository.node_id, isPrivate: false, nameWithOwner: repository.full_name },
+    mergeCommit: { oid: mergeSha },
+    commits: { totalCount: number === 3 ? 2 : 1 },
+  }]))
+  const reads: ObjectRead[] = []
+  return { directory, unrelatedMerge, proof, retirement, audit, nodes, reads } satisfies Fixture
+}
+
+function api(world: Fixture) {
+  return HttpClient.make((request) => {
+    const path = request.url.replace("https://api.github.com", "")
+    const body = request.body._tag === "Uint8Array" ? parsedJson(lossyText(request.body.body))?.value : undefined
+    const ids = (body as { readonly variables?: { readonly ids?: ReadonlyArray<string> } } | undefined)?.variables?.ids
+    const answer = path === `/repos/${repository.full_name}` ? repository : path === "/graphql" && ids !== undefined ? { data: { nodes: ids.map((id) => world.nodes.get(id) ?? null) } } : undefined
+    const response = jsonAnswer(answer ?? { message: "Not Found" }, { status: answer === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
+    return succeed(HttpClientResponse.fromWeb(request, response))
+  })
+}
+
+function objectsOf(world: Fixture): typeof withPublicGitObjects {
+  return (actual, objects, read) => {
+    world.reads.push({ repository: actual, objects })
+    return scoped(read(world.directory))
+  }
+}
+
+effect function refusalOf<A, E, R>(run: A!E!R) {
+  return run catch effect (failure) => messageOf(failure)
+}
+
+effect function attempt<A, E, R>(world: Fixture, run: A!E!R) {
+  provide Layer.provide(github({ userAgent: "slop-points-test" }), Layer.succeed(HttpClient.HttpClient, api(world))) {
+    return try refusalOf(run)
+  }
+}
+
+effect function scopedRun(world: Fixture, retirement: PacketRetirement, checks: Array<BeforeImportCheck> = []) {
+  const outcome = try attempt(world, verifyHistoricalNetOutcomes({ sourceAudit: world.audit, duplicateRetirements: [retirement] }, objectsOf(world), checks))
+  return typeof outcome === "string" ? outcome : [...outcome]
+}
+
+function withProof(retirement: PacketRetirement, change: (proof: HistoricalNetOutcome) => HistoricalNetOutcome): PacketRetirement {
+  return retirement.netOutcome === undefined ? retirement : { ...retirement, netOutcome: change(retirement.netOutcome) }
+}
+
+const registry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
+const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
+const exclusive = "Net outcome must be the exclusive trusted native duplicate proof"
+
+interface NetPacket {
+  readonly packet: Packet
+  readonly baseline: Journal
+  readonly retirement: Retirement
+  readonly expected: Journal
+}
+
+type ReviewedFixture = ReturnType<typeof reviewedFixture>
+
+effect function netPacket(change: (retirement: Retirement) => void = () => undefined) {
+  const f = try Effect.try(() => reviewedFixture())
+  const [candidate] = f.packet.corrections.candidates
+  const [source] = candidate?.proof.status === "complete" ? candidate.proof.sources : []
+  if (candidate === undefined || source === undefined) throw new Error("fixture source")
+  return netPacketOf(f, candidate, source, change)
+}
+
+function netPacketOf(f: ReviewedFixture, candidate: ReviewedFixture["packet"]["corrections"]["candidates"][number], source: Retirement["source"], change: (retirement: Retirement) => void): NetPacket {
+  let baseline = f.baseline
+  const anchors: Array<{ id: string; number: number; mergedAt: string; mergeSha: string; awardKey: string; awardRevisionId: string }> = []
+  for (const [index, id] of ["PR_earlier", "PR_later"].entries()) {
+    const number = index + 2
+    const mergedAt = index === 0 ? firstAcceptedAt : secondAcceptedAt
+    baseline = appended(baseline, { ...f.award, key: keyOf(id), sourceId: id, sourceUrl: pullUrl(f.packet.sourceAudit.repository, number), workUnitId: id, occurredAt: mergedAt }, "e".repeat(64))
+    anchors.push({ id, number, mergedAt, mergeSha: String(number).repeat(40), awardKey: keyOf(id), awardRevisionId: baseline.revisions[baseline.revisions.length - 1]?.id ?? "" })
+  }
+  const retirement: Retirement = {
+    sourceId: source.sourceId,
+    workUnitId: f.award.workUnitId,
+    source: structuredClone(source),
+    earlierSources: [],
+    netOutcome: { mergeSha: "c".repeat(40), firstParentSha: "a".repeat(40), rawDiffSha256: "d".repeat(64), sources: anchors, paths: ["a.ts", "b.ts"].map((path) => ({ path, sourceIds: anchors.map(({ id }) => id) })) },
+    coverage: [],
+    evidence: "",
+    evidenceSha256: "",
+    expectedPredecessors: [{ key: f.award.key, revisionId: baseline.revisions[0]?.id ?? "" }],
+  }
+  change(retirement)
+  retirement.evidence = JSON.stringify({
+    sourceId: retirement.sourceId,
+    workUnitId: retirement.workUnitId,
+    sourceSha256: hash(retirement.source),
+    earlierSourcesSha256: hash(retirement.earlierSources),
+    coverageSha256: hash(retirement.coverage),
+    netOutcomeSha256: hash(retirement.netOutcome),
+  })
+  retirement.evidenceSha256 = sha256Of(retirement.evidence)
+  f.packet.baselineDigest = batchDigestOf(baseline)
+  f.packet.baselineRevisionCount = baseline.revisions.length
+  f.packet.corrections.baseline = baselineOf(baseline)
+  f.packet.corrections.candidates = [{ ...structuredClone(candidate), proof: { status: "held" as const } }]
+  f.packet.duplicateRetirements = [retirement]
+  const expected = appended(baseline, { ...f.award, amount: 0 }, hash(retirement), { sourceId: `owner_duplicate_${retirement.evidenceSha256}`, reason: duplicateReason })
+  f.packet.candidateDigest = batchDigestOf(expected)
+  return { packet: f.packet, baseline, retirement, expected }
+}
+
+effect function rebuiltNet(world: NetPacket, trusted: ReadonlyArray<Retirement>) {
+  return try reconstructHistoricalPoints({
+    packet: world.packet as HistoricalPacket,
+    baseline: world.baseline,
+    now: time,
+    bans: new Map(),
+    protection: try Effect.try(() => protectionFor(october)),
+    registry,
+    repositories: repositoriesOf(registry, {}),
+    projectOf: () => "feed",
+    qualified: true,
+    preview: false,
+    verifiedRetirements: { duplicates: new Set(trusted.map((retirement) => digestText(retirement))), order: new Map() },
+  })
+}
+
+layer(Layer.mergeAll(systemGit, NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A net outcome is authenticated against the whole native first-parent diff, and the recheck before import refuses once an earlier source disappears (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const world = try fixture()
+    const checking: Array<BeforeImportCheck> = []
+    const verified = try scopedRun(world, world.retirement, checking)
+    const reads = [...world.reads]
+    const prior = world.nodes.get("PR_later")
+    world.nodes.delete("PR_later")
+    const recheck = checking[0]
+    const rechecked = recheck === undefined ? "no recheck" : try attempt(world, recheck)
+    world.nodes.set("PR_later", prior)
+    try same([verified, reads, checking.length, rechecked], [
+      [digestText(world.retirement)],
+      [{ repository, objects: [world.proof.mergeSha] }],
+      1,
+      "Reviewed net outcome source lifecycle changed",
+    ])
+  }))
+
+  it.effect('A net outcome refuses missing final paths, an unbound first-parent delta and a partial submitted range (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const world = try fixture()
+    const fewer = withProof(world.retirement, (proof) => ({ ...proof, paths: proof.paths.slice(0, -1) }))
+    const altered = withProof(world.retirement, (proof) => ({ ...proof, rawDiffSha256: "9".repeat(64) }))
+    const partial: PacketRetirement = { ...world.retirement, source: { ...world.retirement.source, commits: world.retirement.source.commits.slice(0, -1) } }
+    try same([try scopedRun(world, fewer), try scopedRun(world, altered), try scopedRun(world, partial)], [
+      "Reviewed net outcome does not cover the complete accepted first-parent diff",
+      "Reviewed net outcome does not cover the complete accepted first-parent diff",
+      "Net outcome submission range is incomplete",
+    ])
+  }))
+
+  it.effect('A net outcome refuses a path whose earlier edges omit its exact preimage or reverse chronology (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const world = try fixture()
+    const bad = withProof(world.retirement, (proof) => ({ ...proof, paths: proof.paths.map((row, index) => index === 0 ? { ...row, sourceIds: ["PR_later"] } : row) }))
+    const reversed = withProof(world.retirement, (proof) => ({ ...proof, paths: proof.paths.map((row, index) => index === 0 ? { ...row, sourceIds: [...row.sourceIds].reverse() } : row) }))
+    const order = try refusalOf(assertHistoricalNetOutcome(reversed.netOutcome ?? world.proof, reversed.source))
+    try same([try scopedRun(world, bad), order], [
+      "Earlier net outcome does not match the native path preimage",
+      "Net outcome source order changed",
+    ])
+  }))
+
+  it.effect('A net outcome refuses an identical earlier patch outside the target native range (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const world = try fixture()
+    const unrelated = withProof(world.retirement, (proof) => ({ ...proof, sources: proof.sources.map((row, index) => index === 0 ? { ...row, mergeSha: world.unrelatedMerge } : row) }))
+    const prior = world.nodes.get("PR_earlier")
+    world.nodes.set("PR_earlier", { ...(prior as object), mergeCommit: { oid: world.unrelatedMerge } })
+    const outcome = try scopedRun(world, unrelated)
+    world.nodes.set("PR_earlier", prior)
+    try same(outcome, "Earlier net outcome is outside the native submitted range")
+  }))
+
+  it.effect('A trusted, exclusive net outcome zeroes the October pool only while the earlier ordinary awards it names are retained (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => effect {
+    provide webCrypto {
+      const accepted = try netPacket()
+      const moved = try netPacket((retirement) => {
+        const [first] = retirement.netOutcome?.sources ?? []
+        if (first !== undefined) first.awardRevisionId = "9".repeat(64)
+      })
+      const covered = try netPacket((retirement) => {
+        retirement.coverage = [{ commitSha: "b".repeat(40), path: "a.ts", sourceId: "PR_earlier" }]
+      })
+      try same([
+        try refusalOf(rebuiltNet(accepted, [accepted.retirement])),
+        try refusalOf(rebuiltNet(accepted, [])),
+        try refusalOf(rebuiltNet(moved, [moved.retirement])),
+        try refusalOf(rebuiltNet(covered, [covered.retirement])),
+      ], [accepted.expected, exclusive, "Net outcome earlier ordinary award is not retained", exclusive])
+    }
+  })
+})

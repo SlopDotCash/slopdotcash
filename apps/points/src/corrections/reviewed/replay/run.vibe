@@ -1,0 +1,170 @@
+// spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"
+import type { ValueInputs } from "@repo/ports/points"
+import type { RepositoryRegistry } from "../../../client/snapshot/schema.vibe"
+import type { HistoricalPin, HistoricalProject } from "../../../client/snapshot/validate.vibe"
+import { parsedJson } from "@repo/platform/git/bytes"
+import { nativeProofReader } from "../../../collect/implementation/native.vibe"
+import { type HistoricalRequest, collectHistorical } from "../../../collect/run/historical.vibe"
+import { actionsToken } from "../../../ingestion/token.vibe"
+import { repositoriesOf } from "../../../journal/build.vibe"
+import { PointsJournal } from "../../../kernels/records/records.schema.ts"
+import { readRegistry } from "../../../snapshot/adaptPr.vibe"
+import { publishedRegistry } from "../../collect/published.vibe"
+import { type ReviewedRefused, digestText, refusal, require } from "../packet.vibe"
+import { exactMainHead, trustedMain } from "../transport.vibe"
+import { type AuditPhase, type AuditedScope, auditedScope, sealedReceipt } from "../audit/run.vibe"
+import { assertHistoricalAssessmentFreshness } from "../audit/catalog.vibe"
+import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
+import { apply } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings } from "./bindings.vibe"
+import { historicalAssessmentTransport } from "./history.vibe"
+import { mergedHistoricalReplaySnapshot } from "./merged.vibe"
+import type { ReplaySummary } from "./receipt.vibe"
+import { reviewStorage, stageHistoricalReplayReview } from "./review.vibe"
+import { phased, reviewedServices } from "./services.vibe"
+import { type ReplayContext, projectHistoricalValueChanges, verifyHistoricalClosedReviews, verifyHistoricalValueReplay } from "./value.vibe"
+
+export type ReplayPhase = "trusted invocation" | AuditPhase | "historical assessment replay" | "private replay review staging"
+
+export type HistoryTransport = Layer.Layer<HttpClient.HttpClient, ReviewedRefused, HttpClient.HttpClient>
+
+export type ReplayValueInputs<E, R> = (history: HistoryTransport) => Layer.Layer<ValueInputs, E, R>
+
+schema PinnedProject { readonly id: string; readonly status: string; readonly authority: { readonly repositoryNodeId?: string }; readonly repositories: ReadonlyArray<{ readonly id: string; readonly countsFrom?: string }> }
+
+export const replayUsage = "Usage: slopbot reviewed-replay <repository registry.json>"
+const dispatch = "TrustedMainDispatch" as const
+const isPinnedProject = Schema.is(PinnedProject)
+
+effect function replayArguments(args: ReadonlyArray<string>) {
+  const [registryPath, ...rest] = args
+  try require(registryPath !== undefined && registryPath !== "" && rest.length === 0, replayUsage)
+  return registryPath ?? ""
+}
+
+effect function pinnedProject(audited: AuditedScope) {
+  const registry = try publishedRegistry()
+  const project = registry.projects.find((row) => isPinnedProject(row) && row.id === audited.inputs.projectId)
+  try require(isPinnedProject(project) && digestText(project) === audited.scope.manifestSha256, "Assessment audit requires the complete current project scope")
+  const countsFrom: Record<string, string> = {}
+  for (const entry of registry.projects) {
+    if (!isPinnedProject(entry)) continue
+    for (const repository of entry.repositories) if (repository.countsFrom !== undefined) countsFrom[repository.id] = repository.countsFrom
+  }
+  return { project: project as HistoricalProject, countsFrom }
+}
+
+function contextOf(audited: AuditedScope, registry: RepositoryRegistry, project: HistoricalProject, countsFrom: Readonly<Record<string, string>>, now: number): ReplayContext {
+  const pin: HistoricalPin = { projectId: audited.inputs.projectId, repository: audited.repository, repositoryNodeId: audited.scope.repositoryNodeId, manifestSha256: audited.scope.manifestSha256 }
+  return { registry, repositories: repositoriesOf(registry, countsFrom), protection: [], pin, project, now }
+}
+
+function packetOf(audited: AuditedScope, valueSnapshot: unknown, valueKeys: ReadonlyArray<string>) {
+  return {
+    projectId: audited.inputs.projectId,
+    sourceAudit: audited.sourceAudit,
+    revision: audited.scope.revision,
+    manifestSha256: audited.scope.manifestSha256,
+    baselineDigest: audited.inputs.expectedPointsDigest,
+    baselineRevisionCount: audited.baseline.revisions.length,
+    valueSnapshot,
+    valueKeys,
+  }
+}
+
+effect function historicalCollection<E, R>(inputs: Layer.Layer<ValueInputs, E, R>, request: HistoricalRequest) {
+  provide inputs {
+    return try collectHistorical(request)
+  }
+}
+
+effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valueInputs: ReplayValueInputs<E, R>) {
+  const registry = try readRegistry(registryPath)
+  const { project, countsFrom } = try pinnedProject(audited)
+  const context = contextOf(audited, registry, project, countsFrom, try Clock.currentTimeMillis)
+  const { receipt } = audited.classified
+  if (receipt.status !== "requires-value-replay") {
+    const qualificationSha256 = try verifyHistoricalValueReplay(packetOf(audited, null, []), audited.baseline, receipt, null, new Map(), context)
+    return { summary: { snapshotSha256: null, valueCoverageCount: 0, closedUnmergedCoverageCount: 0, valueEventCount: 0, qualificationSha256 } satisfies ReplaySummary, valueSnapshot: null as unknown, valueKeys: [] as ReadonlyArray<string> }
+  }
+  const approved = historicalClosedContextBindings(receipt)
+  const history = historicalAssessmentTransport(audited.catalog, { projectId: audited.inputs.projectId, repository: audited.repository, repositoryNodeId: audited.scope.repositoryNodeId })
+  const proofs = try nativeProofReader()
+  const baseline = Schema.decodeUnknownEffect(PointsJournal)(audited.baseline) catch effect () => {
+    throw refusal("Assessment audit Points baseline is not a valid points journal")
+  }
+  const collected = try historicalCollection(valueInputs(history), {
+    registryPath,
+    pin: context.pin,
+    project,
+    mergedScope: audited.sourceAudit,
+    heads: audited.catalog.heads,
+    baseline,
+    closedContexts: approved,
+    implementation: { proofs, memo: undefined },
+    evidenceToken: try actionsToken(),
+  })
+  const snapshot = try mergedHistoricalReplaySnapshot({
+    collection: collected.collection,
+    pin: context.pin,
+    project,
+    baseline: audited.baseline,
+    repositories: context.repositories,
+    approved,
+    emptyLegacyClosures: historicalEmptyLegacyClosureBindings(receipt),
+    history: collected.collection.implementation?.history,
+  })
+  const raw: unknown = parsedJson(JSON.stringify(snapshot))?.value
+  const closedReviews = try verifyHistoricalClosedReviews(snapshot, receipt, audited.catalog)
+  const allocation = try projectHistoricalValueChanges(packetOf(audited, raw, []), audited.baseline, raw, closedReviews, context)
+  const valueKeys = allocation.rows.map((row) => row.award.key)
+  const qualificationSha256 = try verifyHistoricalValueReplay(packetOf(audited, raw, valueKeys), audited.baseline, receipt, raw, closedReviews, context)
+  const summary: ReplaySummary = {
+    snapshotSha256: digestText(raw),
+    valueCoverageCount: snapshot.valueAssessmentCoverage?.length ?? 0,
+    closedUnmergedCoverageCount: snapshot.source.counts.closedUnmergedPullRequests ?? 0,
+    valueEventCount: snapshot.ledger.filter((row) => row.scoreDecisionSourceId?.startsWith("value:") === true).length,
+    qualificationSha256,
+  }
+  return { summary, valueSnapshot: raw, valueKeys }
+}
+
+effect function recheckedCut(audited: AuditedScope, state: AssessmentAudit) {
+  try exactMainHead("Historical publication source changed")
+  try assertHistoricalAssessmentFreshness(audited.scope, audited.catalog.heads)
+  return try apply(state, { type: "changeCheckpoint", affectsScope: false }, dispatch)
+}
+
+effect function replayRun<E, R>(setPhase: (phase: ReplayPhase) => void, args: ReadonlyArray<string>, valueInputs: ReplayValueInputs<E, R>) {
+  try trustedMain("Reviewed historical publication requires manual main workflow")
+  const registryPath = try replayArguments(args)
+  setPhase("main source verification")
+  try exactMainHead("Historical publication source changed")
+  const audited = try auditedScope(setPhase, true)
+  setPhase("historical assessment replay")
+  const result = try replayed(audited, registryPath, valueInputs)
+  const summary = { ...audited.report, replay: result.summary }
+  let state = audited.state
+  let output: unknown = summary
+  if (audited.inputs.stageReview) {
+    setPhase("assessment qualification recheck")
+    const qualificationSha256 = result.summary.qualificationSha256
+    try require(qualificationSha256 !== null && qualificationSha256 !== "", "Only a qualified replay can stage a private review")
+    state = try recheckedCut(audited, state)
+    setPhase("private replay review staging")
+    const privateReviewManifest = try stageHistoricalReplayReview({
+      sourceAudit: audited.sourceAudit,
+      valueSnapshot: result.valueSnapshot,
+      valueKeys: result.valueKeys,
+      qualificationSha256: qualificationSha256 ?? "",
+    }, try reviewStorage())
+    state = try apply(state, { type: "stageReview", explicit: true, qualified: true, verifiedReadback: true }, dispatch)
+    output = { ...summary, replay: { ...result.summary, privateReviewManifest } }
+  }
+  try sealedReceipt(setPhase, audited, state, output)
+  try Console.log(JSON.stringify(summary))
+}
+
+export effect function replayAssessments<E, R>(args: ReadonlyArray<string>, valueInputs: ReplayValueInputs<E, R>) {
+  try phased("trusted invocation" as ReplayPhase, (setPhase) => reviewedServices(replayRun(setPhase, args, valueInputs)))
+}

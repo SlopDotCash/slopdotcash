@@ -1,0 +1,14 @@
+// spec/operations/releaseCoverage.md, "A fresh trusted main collection reuses its memo run's discussion reads only when no explicit resume names a run"
+import { github } from "@repo/platform/github"
+import { restoreMemo } from "../collect/memo/restore.vibe"
+import { actionsToken } from "../ingestion/token.vibe"
+
+error MemoUsage { message: string }
+
+export effect function memo(args: ReadonlyArray<string>) {
+  if (args.length !== 1 || args[0] !== "restore") throw new MemoUsage({ message: "Usage: memo restore" })
+  const token = try actionsToken()
+  provide github({ token, userAgent: "slopbot" }) {
+    try restoreMemo({ token })
+  }
+}

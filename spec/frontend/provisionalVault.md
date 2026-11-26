@@ -30,6 +30,7 @@ vault deposit surface retains the normal permissionless deposit policy.
 
 ```quint
 import walletAttempt as WA from "./walletAttempt"
+import batchedDeposit as BD from "./batchedDeposit"
 type VaultKind = OrdinaryEvmToken | EvmNative | BountyEvm | SolanaVault
 type Creation = Missing | Included | Finalized | RevertedCreation
 type FundingForm = Hidden | Provisional | Registered
@@ -37,13 +38,17 @@ type CreationNotice = NoNotice | CreationPending | CreationDropped | CreationFai
 type DepositPhase = NoDeposit | Prompt | Submitted | IncludedEvent | IncludedNoVault | FinalEvent | FinalNoVault | FailedSend | Verified
  type IncludedDepositEvidence = ExactDepositEvent | VerifiedAbsentCode | MissingDepositEvent | MismatchedDepositEvent
 type DepositView = NoView | Waiting | Received | DepositFailed | NoVault | DepositVerified
+type Allowance = AllowanceUnread | AllowanceZero | AllowanceNonzero | AllowanceEnough
+type ApprovalStep = NoApproval | ApprovalPrompt | ApprovalSubmitted | ApprovalConfirmed
  type Setup = { kind: VaultKind, creation: Creation, creationBlock: int, matchingCreation: bool, registered: bool,
   form: FundingForm, notice: CreationNotice, phase: DepositPhase, transaction: int, depositBlock: int,
-  view: DepositView, counted: bool, readUnavailable: bool, slot: WA::Attempt, storageBlocked: bool }
+  view: DepositView, counted: bool, readUnavailable: bool, slot: WA::Attempt, storageBlocked: bool,
+  allowance: Allowance, atomic: bool, approval: ApprovalStep, batched: bool }
 pure val initial: Setup = { kind: OrdinaryEvmToken, creation: Missing, creationBlock: 0, matchingCreation: true,
   registered: false, form: Hidden, notice: NoNotice, phase: NoDeposit, transaction: 0, depositBlock: 0,
-  view: NoView, counted: false, readUnavailable: false, slot: WA::noAttempt, storageBlocked: false }
-pure val byValues = Set("owner", "other")
+  view: NoView, counted: false, readUnavailable: false, slot: WA::noAttempt, storageBlocked: false,
+  allowance: AllowanceUnread, atomic: false, approval: NoApproval, batched: false }
+pure val byValues = Set("owner", "other", "chain")
 pure val blockValues = Set(0, 1, 2)
 pure val transactionValues = Set(0, 1, 2)
 pure val weight_openPrompt = 5
@@ -71,10 +76,11 @@ that creation was dropped. A wallet prompt that is already open retains its
 captured form until it settles, but the page stops offering the provisional
 form and cannot start a new signature with known missing code. A read outage
 without replacement evidence preserves the last known form and reports the
-unavailable read.
+unavailable read. An open token approval prompt is such a prompt too.
 
 ```quint
-pure def canCheckCreation(s: Setup): bool = not(s.registered) and s.phase != Prompt
+pure def promptOpen(s: Setup): bool = s.phase == Prompt or s.approval == ApprovalPrompt
+pure def canCheckCreation(s: Setup): bool = not(s.registered) and not(promptOpen(s))
 pure def checkCreation(s: Setup, readOk: bool): Setup =
   if (not(readOk)) { ...s, readUnavailable: true }
   else if (s.creation == Finalized and s.matchingCreation)
@@ -85,11 +91,11 @@ pure def checkCreation(s: Setup, readOk: bool): Setup =
     if (s.creation == RevertedCreation) CreationFailed else s.notice, readUnavailable: false }
 pure def canReplaceCreation(s: Setup): bool = s.creation == Included and not(s.registered)
 pure def replaceCreation(s: Setup): Setup = { ...s, creation: Missing, creationBlock: 0,
-  form: if (s.phase == Prompt) s.form else Hidden,
+  form: if (promptOpen(s)) s.form else Hidden,
   notice: if (s.form == Provisional) CreationDropped else s.notice,
   phase: if (s.phase == IncludedEvent or s.phase == IncludedNoVault) Submitted else s.phase,
   depositBlock: if (s.phase == IncludedEvent or s.phase == IncludedNoVault) 0 else s.depositBlock }
-pure def canReload(s: Setup): bool = s.phase != Prompt
+pure def canReload(s: Setup): bool = not(promptOpen(s))
 pure def reload(s: Setup): Setup = { ...s, form: if (s.registered) Registered else Hidden,
   notice: NoNotice, view: NoView, readUnavailable: false }
 ```
@@ -109,13 +115,64 @@ prompt opens only after storage creates its empty slot, a storage failure
 blocks the prompt, a decline clears only that attempt, and a terminal check
 settles it.
 
+The form is development's full owner deposit form (`src/OwnerVaultSetup.tsx`
+renders `VaultActions provisional` for the included deployment;
+`src/VaultActions.tsx` steps `approve`, `reset`, `send` and `batch`). Each
+prompt follows a fresh review read (`by` is `"chain"`) of the owner's token
+allowance to the vault and of whether the wallet already sends one atomic
+request ([batched deposit](./batchedDeposit.md)); a prompt uses its read
+once. With an allowance below the amount, a wallet that sends atomically
+gets one request that approves and deposits (`sendVaultBatch`); any other
+wallet first gets the approval step: one exact-amount approval, or a reset
+of a non-zero allowance to zero before it, saved as its own attempt in the
+same slot before its prompt opens. A declined approval clears only that
+attempt. Its transaction settles from a canonical-block read, included or
+final, and a failed one shows the failure; a settled approval moves no funds
+and only lets the deposit review read the allowance again
+(`approvalSettled`). A deposit prompt opens only once that read shows
+enough allowance, or for the atomic request; development's
+"Approve the exact token amount before depositing." refusal is the shell's
+answer to anything else. A vault that takes no token approval (native ETH or
+Solana) reads as enough allowance (`approvalNeeded` is false there). A wallet
+that refuses the atomic request before sending anything (development's
+`VaultBatchUnavailable`) declines that prompt, and the next read reports it
+as not atomic, so the separate approval follows.
+
 ```quint
 pure val depositAttempt: WA::Attempt = { identity: "owner-deposit", bytesId: "reviewed-deposit", hash: "", candidate: "" }
-pure def canOpenPrompt(s: Setup, by: str, stored: bool): bool = s.phase == NoDeposit and by == "owner" and hasVault(s)
+pure def approvalAttempt(reset: bool): WA::Attempt =
+  { identity: "owner-approval", bytesId: if (reset) "reviewed-reset" else "reviewed-approval", hash: "", candidate: "" }
+pure def savedApproval(s: Setup): WA::Attempt = approvalAttempt(s.slot.bytesId == "reviewed-reset")
+pure def approvalIdle(s: Setup): bool = s.approval == NoApproval or s.approval == ApprovalConfirmed
+pure def allowanceShort(s: Setup): bool = s.allowance == AllowanceZero or s.allowance == AllowanceNonzero
+pure def mayPrompt(s: Setup, by: str): bool = s.phase == NoDeposit and approvalIdle(s) and by == "owner" and hasVault(s)
   and (s.form == Registered or (s.form == Provisional and s.kind == OrdinaryEvmToken and not(s.registered)))
   and WA::mayCreate(s.slot)
+pure def canReadAllowance(s: Setup, allowanceRead: Allowance, atomic: bool, by: str): bool = by == "chain"
+  and s.phase == NoDeposit and approvalIdle(s) and allowanceRead != AllowanceUnread
+pure def readAllowance(s: Setup, allowanceRead: Allowance, atomic: bool, by: str): Setup =
+  { ...s, allowance: allowanceRead, atomic: atomic }
+pure def canOpenApproval(s: Setup, by: str, stored: bool): bool = mayPrompt(s, by) and allowanceShort(s) and not(s.atomic)
+pure def openApproval(s: Setup, by: str, stored: bool): Setup =
+  if (stored) { ...s, approval: ApprovalPrompt, allowance: AllowanceUnread, view: NoView,
+    slot: WA::createIfEmpty(s.slot, approvalAttempt(s.allowance == AllowanceNonzero)), storageBlocked: false }
+  else { ...s, storageBlocked: true }
+pure def canDeclineApproval(s: Setup): bool = s.approval == ApprovalPrompt
+pure def declineApproval(s: Setup): Setup = { ...s, approval: NoApproval, form: if (hasVault(s)) s.form else Hidden,
+  slot: WA::compareAndClear(s.slot, savedApproval(s)) }
+pure def canSignApproval(s: Setup, by: str): bool = s.approval == ApprovalPrompt and by == "owner"
+pure def signApproval(s: Setup, by: str): Setup = { ...s, approval: ApprovalSubmitted }
+pure def canReadApproval(s: Setup, approvalRead: BD::ApprovalEvidence, by: str): bool = by == "chain"
+  and s.approval == ApprovalSubmitted and approvalRead != BD::ApprovalPending
+pure def readApproval(s: Setup, approvalRead: BD::ApprovalEvidence, by: str): Setup =
+  val cleared = WA::compareAndClear(s.slot, savedApproval(s))
+  if (BD::approvalSettled(approvalRead)) { ...s, approval: ApprovalConfirmed, slot: cleared }
+  else { ...s, approval: NoApproval, view: DepositFailed, slot: cleared }
+pure def canOpenPrompt(s: Setup, by: str, stored: bool): bool = mayPrompt(s, by)
+  and (s.allowance == AllowanceEnough or (allowanceShort(s) and s.atomic))
 pure def openPrompt(s: Setup, by: str, stored: bool): Setup =
-  if (stored) { ...s, phase: Prompt, view: NoView, slot: WA::createIfEmpty(s.slot, depositAttempt), storageBlocked: false }
+  if (stored) { ...s, phase: Prompt, view: NoView, batched: allowanceShort(s), allowance: AllowanceUnread,
+    slot: WA::createIfEmpty(s.slot, depositAttempt), storageBlocked: false }
   else { ...s, storageBlocked: true }
 pure def canDecline(s: Setup): bool = s.phase == Prompt
 pure def decline(s: Setup): Setup = { ...s, phase: NoDeposit, form: if (hasVault(s)) s.form else Hidden,
@@ -123,6 +180,20 @@ pure def decline(s: Setup): Setup = { ...s, phase: NoDeposit, form: if (hasVault
 pure def canSign(s: Setup, transaction: int, by: str): bool = s.phase == Prompt and transaction > 0 and by == "owner" and hasVault(s)
 pure def sign(s: Setup, transaction: int, by: str): Setup =
   { ...s, phase: Submitted, transaction: transaction, view: Waiting }
+pure def alwaysApprovalPromptOwnsForm(s: Setup): bool = s.approval == ApprovalPrompt implies s.form != Hidden
+pure def sometimesApprovalSaved(s: Setup): bool = s.approval == ApprovalSubmitted
+pure def sometimesDepositAfterApproval(s: Setup): bool = s.approval == ApprovalConfirmed and s.phase == Submitted
+pure def sometimesBatchedDeposit(s: Setup): bool = s.batched and s.phase == Submitted
+pure val allowanceReadValues = Set(AllowanceZero, AllowanceNonzero, AllowanceEnough)
+pure val atomicValues = Set(true, false)
+pure val approvalReadValues = Set(BD::ApprovalIncluded, BD::ApprovalFinal, BD::ApprovalFailed)
+pure val weight_readAllowance = 5
+pure val eval_witness_sometimesDepositAfterApproval = (("includeCreation", 1, "owner"), ("checkCreation", true, "owner"),
+  ("readAllowance", AllowanceZero, false, "chain"), ("openApproval", "owner", true), ("signApproval", "owner"),
+  ("readApproval", BD::ApprovalIncluded, "chain"), ("readAllowance", AllowanceEnough, false, "chain"),
+  ("openPrompt", "owner", true), ("sign", 1, "owner"))
+pure val eval_witness_sometimesBatchedDeposit = (("includeCreation", 1, "owner"), ("checkCreation", true, "owner"),
+  ("readAllowance", AllowanceZero, true, "chain"), ("openPrompt", "owner", true), ("sign", 1, "owner"))
 ```
 
 ### Included deposits are received pending finality only when there is an exact deposit event
@@ -181,7 +252,8 @@ pure def alwaysDepositFinality(s: Setup): bool = (s.phase == FinalEvent or s.pha
 pure def alwaysPromptOwnsForm(s: Setup): bool = s.phase == Prompt implies s.form != Hidden
 pure def alwaysVerifiedViewNeedsEvidence(s: Setup): bool = s.view == DepositVerified implies s.phase == Verified
 pure def alwaysOpenDepositIsSaved(s: Setup): bool =
-  if (s.phase == NoDeposit or s.phase == Verified) s.slot == WA::noAttempt else s.slot == depositAttempt
+  if (s.approval == ApprovalPrompt or s.approval == ApprovalSubmitted) s.phase == NoDeposit and s.slot == savedApproval(s)
+  else if (s.phase == NoDeposit or s.phase == Verified) s.slot == WA::noAttempt else s.slot == depositAttempt
 pure def sometimesStorageBlocksPrompt(s: Setup): bool = s.storageBlocked and s.phase == NoDeposit
 pure def sometimesProvisional(s: Setup): bool = s.form == Provisional
 pure def sometimesReplaced(s: Setup): bool = s.form == Hidden and s.notice == CreationDropped

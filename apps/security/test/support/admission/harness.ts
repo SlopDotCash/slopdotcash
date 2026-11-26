@@ -83,7 +83,10 @@ async function boot(keys: string): Promise<World> {
         return answer({ outcome: "exited" });
       },
       GITHUB: (request) => {
-        const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/main$/u.exec(new URL(request.url).pathname);
+        const path = new URL(request.url).pathname;
+        const repository = /^\/repositories\/(\d+)$/u.exec(path)?.[1];
+        if (repository !== undefined) return answer({ id: Number(repository), node_id: repository === "4101" ? "R_admission" : `R_${repository}` });
+        const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/main$/u.exec(path);
         if (branch?.[1] !== undefined && outage.has(branch[1])) return answer({ message: "Server Error" }, 500);
         const head = branch?.[1] === undefined ? undefined : heads.get(branch[1]);
         return head === undefined ? answer({ message: "Not Found" }, 404) : answer({ commit: { sha: head } });

@@ -1,5 +1,5 @@
 // spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
-import { AccountMenu, AccountMenuItem, Button } from "@repo/ui";
+import { AccountMenu, AccountMenuItem, Button, Spinner } from "@repo/ui";
 import type { SessionView } from "../session/session.vibe";
 
 export type AccountControlProps = {
@@ -15,10 +15,10 @@ const avatarOf = (login: string) => `https://avatars.githubusercontent.com/${enc
 
 export function AccountControl({ view, loginHref, onLoginPage, signingOut, signOutFailed, onSignOut }: AccountControlProps) {
   if (view.status !== "signedIn" && onLoginPage) return null;
-  if (view.status === "checking") return <span role="status" className="text-sm text-muted-foreground">Checking login…</span>;
+  if (view.status === "checking") return <Spinner label="Checking login" />;
   if (view.status !== "signedIn") {
     return (
-      <Button asChild variant="outline" size="sm">
+      <Button asChild variant="inverse" size="sm" className="max-md:h-11">
         <a href={loginHref}>Log in</a>
       </Button>
     );

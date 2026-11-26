@@ -20,6 +20,7 @@ queues, separated local and production environments, and source-bound releases.
 - [Private-reporting intake health](./intakeHealth.md)
 - [Mainnet escrow qualification](./escrowQualification.md)
 - [Release and verification coverage](./releaseCoverage.md)
+- [Daily contribution data collection](./dailyCollection.md)
 - [Independent payment job runs](./paymentJobs.md)
 - [Scheduled payments runs](./paymentRun.md)
 - [Extended escrow acceptance suite](./extendedQualification.md)

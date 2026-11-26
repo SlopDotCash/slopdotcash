@@ -1,13 +1,14 @@
-// spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"
+// spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require"; spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"
 import { isoAt } from "@repo/platform/clock"
 import { GitHub } from "@repo/platform/github"
 import { Registry } from "@repo/ports/backend"
 import { qualityEvidence } from "../activation/quality.vibe"
+import { type Appeal, evidenceDrafted } from "../../gen/slopbot__appeals.effect.vibe"
 import { closeConfidence } from "../../gen/slopbot__categories.effect.vibe"
 import { type GroundingCheck, type ReviewIdentity, type Verdict as ClosureVerdict, groundedBy } from "../../gen/slopbot__closure.effect.vibe"
 import { type ReviewContext, type ReviewTarget, absentOn404, loadContext, relatedOpenItem } from "../context/load.vibe"
 import { scopeAllows } from "../publish/scope.vibe"
-import { prefilter } from "../review/run.vibe"
+import { evidenceVerdictOf, prefilter } from "../review/run.vibe"
 import { buildPrompt, effortOf } from "../review/prompt.vibe"
 import { type CategoryName, type Verdict, findingOf, hundredths, verdictOutput } from "../review/verdict.vibe"
 import { recordCalls } from "../route/calls.vibe"
@@ -15,7 +16,7 @@ import { runRoute } from "../route/route.vibe"
 import { observe } from "../scope/facts.vibe"
 import { publishStage } from "./publication.vibe"
 import { type AppealSession, AppealFailed, writeScopeOf } from "./session.vibe"
-import { categoryNameOf, commitAppeal, loadAppeal } from "./store.vibe"
+import { type Step, categoryNameOf, commitAppeal, loadAppeal } from "./store.vibe"
 
 module verified {
   import { type PolicyText, type RuleRef, evidenceFound as evidence, rulesFound as rules } from "../review/grounding.ts"
@@ -30,10 +31,9 @@ schema CommentUser { readonly id: number }
 schema AppealComment { readonly body?: string | null; readonly issue_url?: string; readonly user?: CommentUser | null }
 schema PageComment { readonly body?: string | null; readonly user?: CommentUser | null }
 
-export interface Drafted {
-  readonly uphold: boolean
-  readonly confidence: number
-}
+export type Drafted =
+  | { readonly kind: "evidence"; readonly evidenceMissing: boolean }
+  | { readonly kind: "judged"; readonly uphold: boolean; readonly confidence: number }
 
 const commandLine = /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\s|$)/u
 const commandPrefix = /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\b)\s*/u
@@ -124,20 +124,29 @@ effect function appealTarget(session: AppealSession) {
   } satisfies ReviewTarget
 }
 
+function draftStep(drafted: Drafted): Step {
+  return drafted.kind === "evidence"
+    ? { event: { type: "draftFromEvidence", evidenceMissing: drafted.evidenceMissing }, by: 0, optional: true }
+    : { event: { type: "draft", uphold: drafted.uphold, confidenceHundredths: hundredths(drafted.confidence) }, by: 0, optional: true, confidence: drafted.confidence }
+}
+
 effect function deterministicCategory(target: ReviewTarget, context: ReviewContext) {
-  const filtered = prefilter(context)
+  const filtered = evidenceVerdictOf(target, context) ?? prefilter(context)
   if (filtered !== undefined) return filtered.category
   return (try relatedOpenItem(target, context)) === undefined ? undefined : "duplicate" satisfies CategoryName
 }
 
-export effect function draftResolution(session: AppealSession, appealKey: string, appellantId: number, finding: CategoryName) {
+export effect function draftResolution(session: AppealSession, appealKey: string, appeal: Appeal) {
   const { job } = session
+  const appellantId = appeal.appellant
+  const finding = categoryNameOf(appeal.subject.category)
   const target = try appealTarget(session)
   const context = try loadContext(target, session.observed)
   if (context === undefined) throw new AppealFailed({ reason: "the appealed item is not readable" })
+  if (evidenceDrafted(appeal)) return { kind: "evidence", evidenceMissing: evidenceVerdictOf(target, context) !== undefined } satisfies Drafted
   const deterministic = try deterministicCategory(target, context)
   if (deterministic !== undefined)
-    return (deterministic === finding ? { uphold: false, confidence: 1 } : { uphold: true, confidence: upholdConfidence(deterministic, 1, finding) }) satisfies Drafted
+    return (deterministic === finding ? { kind: "judged", uphold: false, confidence: 1 } : { kind: "judged", uphold: true, confidence: upholdConfidence(deterministic, 1, finding) }) satisfies Drafted
   const statement = try appealText(session, appellantId)
   const quality = try qualityEvidence(target, context, session.settings.trust, undefined)
   const prompt = buildPrompt({ policy: context.policy, quality, itemText: context.itemText, related: undefined, limitations: context.limitations }, job.itemKind)
@@ -151,19 +160,20 @@ export effect function draftResolution(session: AppealSession, appealKey: string
   if (outcome.kind !== "answered") throw new AppealFailed({ reason: "every model route step failed" })
   const { verdict } = outcome
   const stands = verdict.category === finding && hundredths(verdict.confidence) >= closeConfidence && grounded(target, context, verdict, appealKey)
-  return (stands ? { uphold: false, confidence: verdict.confidence } : { uphold: true, confidence: upholdConfidence(verdict.category, verdict.confidence, finding) }) satisfies Drafted
+  return (stands ? { kind: "judged", uphold: false, confidence: verdict.confidence } : { kind: "judged", uphold: true, confidence: upholdConfidence(verdict.category, verdict.confidence, finding) }) satisfies Drafted
 }
 
 export effect function triageAppeal(session: AppealSession, appealKey: string) {
   const loaded = try loadAppeal(appealKey)
   if (loaded.appeal.draft === "NoDraft") {
-    const drafted = try draftResolution(session, appealKey, loaded.appeal.appellant, categoryNameOf(loaded.appeal.subject.category))
+    const drafted = try draftResolution(session, appealKey, loaded.appeal)
     if (typeof drafted === "string") return drafted
-    const stored = try commitAppeal(appealKey, {}, () => [{ event: { type: "draft", uphold: drafted.uphold, confidenceHundredths: hundredths(drafted.confidence) }, by: 0, optional: true, confidence: drafted.confidence }])
+    const stored = try commitAppeal(appealKey, {}, () => [draftStep(drafted)])
     if (stored.appeal.draft === "NoDraft") throw new AppealFailed({ reason: "Appeal draft was not stored" })
   }
   try commitAppeal(appealKey, {}, (current) => [
     { event: { type: "observeBan", status: current.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+    { event: { type: "observeSibling", siblingStatus: current.sibling }, by: 0, optional: true },
     { event: { type: "escalateByCriteria" }, by: 0, optional: true },
   ])
   try publishStage(session, appealKey, "draft")

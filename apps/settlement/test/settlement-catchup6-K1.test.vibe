@@ -1,0 +1,360 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
+import type { D1Database, SqlValue } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1, decoded, sql } from "@repo/platform/d1"
+import { gitText, systemGit } from "@repo/platform/git"
+import { outbound } from "@repo/platform/http"
+import { program } from "@repo/platform/program"
+import { rolesFrom } from "@repo/platform/roles"
+import { noticePorts } from "@repo/operations/live"
+import { contributorAudience } from "@repo/points/live"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { leaderboardMethodology, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, pointRevisionId } from "@repo/points/client"
+import { EnforcementRowsLive } from "@repo/security/live"
+import { closeoutCutoff } from "../gen/settlement__asiNovemberCloseout.effect.vibe"
+import { closeoutKey } from "../src/closeout/packet.vibe"
+import { guardQueries, holdsAll } from "../src/closeout/run.vibe"
+import { loadMonth, monthlyFacts } from "../src/monthly/store.vibe"
+import { asiNovemberCloseout } from "../src/programs/asiCloseout.vibe"
+import { closeoutFetch } from "./support/web.ts"
+
+service Journey {
+  readonly db: D1Database
+}
+
+interface Repository {
+  readonly id: string
+  readonly nodeId: string
+  readonly githubId: number
+}
+
+interface HeldUnit {
+  readonly recordDigest: string
+  readonly sourceNodeIds: ReadonlyArray<string>
+  readonly unavailableNodeIds: ReadonlyArray<string>
+}
+
+interface World {
+  readonly db: D1Database
+  readonly checkout: string
+  readonly head: string
+  readonly registryPath: string
+  readonly runnerTemp: string
+  readonly hub: GitHubFake
+  readonly requests: string[]
+  published: Uint8Array<ArrayBuffer>
+}
+
+const cutoff = "2026-11-19T00:00:00.000Z"
+const generatedAt = "2026-11-19T00:01:00.000Z"
+const reviewedAt = "2026-11-19T00:02:00.000Z"
+const clock = settableClock(Date.parse("2026-11-20T12:00:00.000Z"))
+const owner = { id: 7100, login: "fixture-owner", nodeId: "U_fixture_owner" }
+const asiRepository: Repository = { id: "fixture-owner/asi", nodeId: "R_fixture_asi", githubId: 1000 }
+const elizaRepository: Repository = { id: "fixture-other/eliza", nodeId: "R_fixture_eliza", githubId: 2000 }
+const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+const vault = `0x${"5".repeat(40)}`
+const served = new Set(["robinhood-mainnet"])
+const gitIdentity = { GIT_AUTHOR_NAME: "fixture", GIT_AUTHOR_EMAIL: "fixture@example.com", GIT_COMMITTER_NAME: "fixture", GIT_COMMITTER_EMAIL: "fixture@example.com" }
+const encoder = new TextEncoder()
+
+const Started = Layer.effect(Journey, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "asi-closeout" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.filter((file) => file.error !== undefined)
+  if (failed.length > 0) return try die(new Error(`migration ${failed[0]?.file} failed: ${failed[0]?.error}`))
+  return { db: try promise(() => database(mf, "SLOP_DB")) }
+})
+
+function manifestOf(id: string, repository: Repository) {
+  return {
+    id,
+    name: id,
+    status: "active",
+    listingTier: "community",
+    steward: { github: { type: "User", actorId: String(owner.id), login: owner.login, nodeId: owner.nodeId } },
+    authority: { state: "verified", repositoryId: String(repository.githubId), repositoryNodeId: repository.nodeId },
+    terms: { receiptPolicy: { state: "active" }, repositoryLicense: { state: "unknown", spdx: null, url: null, commitSha: null, fileSha256: null } },
+    reward: { kind: "monthly-pool", chain: "robinhood", fundingState: "committed", paymentMode: "enabled", committedMinor: "250000000", monthlyCapMinor: "250000000", rewardStartAt: "2026-10-01T00:00:00.000Z" },
+    rewardAsset: { network: "robinhood", symbol: "USDG", decimals: 6, address: usdg },
+    escrow: { chain: "robinhood", effectiveCycle: "2026-11", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "robinhood-mainnet", vault, asset: usdg }] },
+    funding: {},
+    skill: { sourcePath: "SKILL.md" },
+    contribution: { summary: id },
+    repositories: [{ id: repository.id, githubUrl: `https://github.com/${repository.id}`, displayName: repository.id, description: id, integrationBranch: "main" }],
+  }
+}
+
+const asiManifest = JSON.stringify(manifestOf("asi", asiRepository))
+
+effect function seed(db: D1Database, text: string, ...params: ReadonlyArray<SqlValue>) {
+  try promise(() => db.prepare(text).bind(...params).run())
+}
+
+schema Counted { readonly n: number }
+
+effect function count(db: D1Database, table: string) {
+  const text = `SELECT count(*) AS n FROM ${table} WHERE project_id = 'asi' AND period = '2026-11'`
+  const [found] = try decoded(Counted, (try promise(() => db.prepare(text).all())).results, text)
+  return found?.n ?? 0
+}
+
+effect function git(root: string, args: ReadonlyArray<string>) {
+  return (try gitText({ args: ["-C", root, ...args], env: gitIdentity, limit: 1024 * 1024, seconds: 30 }, "fixture Git failed")).trim()
+}
+
+function snapshotOf(held: ReadonlyArray<HeldUnit>, unavailable: ReadonlyArray<string>) {
+  const window = { days: 35, from: "2026-10-15T00:00:00.000Z", to: cutoff }
+  return {
+    schemaVersion: "6",
+    repository: asiRepository.id,
+    repositories: [{ id: asiRepository.id, displayName: asiRepository.id, githubUrl: `https://github.com/${asiRepository.id}`, description: "asi", integrationBranch: "main", owner: "fixture-owner", name: "asi", projectId: "asi", role: "primary" }],
+    ruleVersion: "slop-score-v2",
+    generatedAt,
+    sourceUpdatedAt: generatedAt,
+    stale: false,
+    window,
+    methodology: leaderboardMethodology,
+    source: {
+      provider: "github-graphql",
+      fetchedAt: generatedAt,
+      cutoffAt: cutoff,
+      repositoryId: asiRepository.nodeId,
+      repositories: [{ id: asiRepository.id, repositoryId: asiRepository.nodeId }],
+      requestCount: 1,
+      searchSliceCount: 1,
+      ...(held.length === 0 ? {} : { heldWorkUnits: held }),
+      ...(unavailable.length === 0 ? {} : { unavailableSources: unavailable.map((nodeId) => ({ nodeId, reason: "NOT_FOUND" })) }),
+      rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2026-11-19T01:00:00Z" },
+      counts: { ...(unavailable.length === 0 ? {} : { unavailableSources: unavailable.length, unavailableMergedPullRequests: 0 }), ...(held.length === 0 ? {} : { heldWorkUnits: held.length }), mergedPullRequests: 0, detailedMergedPullRequests: 0, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
+      verificationWindow: window,
+      evidenceVerification: { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 64, maxArtifacts: 64 },
+    },
+    leaders: [],
+    ledger: [],
+    paymentReviewBasisOmitted: { policy: paymentReviewPolicy, effectiveAt: paymentReviewPolicyAt, reason: paymentReviewBasisOmittedReason },
+    opportunities: [],
+    attributions: [],
+    invalidAttributionMarkers: [],
+    attributionCoverage: { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 },
+    workQueue: { issues: [], pullRequests: [] },
+  }
+}
+
+effect function journal<E = never>(db: D1Database, digit: string, sources: ReadonlyArray<{ readonly repository: Repository; readonly pullRequestNodeId: string }>, stored?: (raw: string) => string!E, supersedes: ReadonlyArray<string> = []) {
+  const record = {
+    schemaVersion: "slop-work-unit-record:v1",
+    projectId: "eliza",
+    sourceDigest: digit.repeat(64),
+    sources: sources.map((source, index) => ({ repository: source.repository.id, repositoryNodeId: source.repository.nodeId, repositoryDatabaseId: source.repository.githubId, pullRequestNodeId: source.pullRequestNodeId, pullRequestNumber: index + 1 })),
+    claims: [],
+    supersedes,
+    legacyPredecessors: [],
+    ...(supersedes.length === 0 ? {} : { revisionReason: "Repeated pull request" }),
+  }
+  const raw = JSON.stringify(record)
+  const digest = try sha256Hex(raw)
+  try seed(db, "INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (?, ?, 'eliza', ?, ?, ?)", digest, try sha256Hex(`assessment ${raw}`), record.sourceDigest, stored === undefined ? raw : try stored(raw), generatedAt)
+  return digest
+}
+
+effect function retain(db: D1Database, login: string, actor: number, points: number, occurredAt: string) {
+  const body = {
+    previous: null,
+    recordedAt: generatedAt,
+    sourceDigest: "a".repeat(64),
+    sourceRule: "slop-score-v2",
+    award: {
+      key: try sha256Hex(`award ${actor}`),
+      actor: { id: btoa(`04:User${actor}`), login },
+      projectId: "asi",
+      category: "evaluated-contribution",
+      amount: points,
+      occurredAt,
+      sourceId: `PR_fixture_${actor}`,
+      sourceUrl: `https://github.com/${asiRepository.id}/pull/${points}`,
+      workUnitId: `PR_fixture_${actor}`,
+      provisional: false,
+    },
+  }
+  const id = try pointRevisionId(body)
+  try seed(db, "INSERT OR IGNORE INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, ?, ?, ?)", id, body.award.key, null, body.recordedAt, JSON.stringify({ id, ...body }))
+}
+
+effect function worldOf(db: D1Database) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const root = try fs.makeTempDirectoryScoped({ prefix: "asi-closeout-" })
+  const origin = files.join(root, "origin.git")
+  const checkout = files.join(root, "checkout")
+  try git(root, ["init", "--bare", "-b", "main", origin])
+  try git(root, ["init", "-b", "main", checkout])
+  try git(checkout, ["commit", "--allow-empty", "-m", "fixture"])
+  try git(checkout, ["remote", "add", "origin", origin])
+  try git(checkout, ["push", "origin", "main"])
+  const head = try git(checkout, ["rev-parse", "HEAD"])
+  const manifests = [manifestOf("asi", asiRepository), manifestOf("eliza", elizaRepository)]
+  const revisions = []
+  for (const manifest of manifests) revisions.push({ projectId: manifest.id, revision: 1, manifestSha256: try sha256Hex(JSON.stringify(manifest)), manifest })
+  const registryPath = files.join(root, "snapshot.json")
+  try fs.writeFileString(registryPath, JSON.stringify({ schemaVersion: 1, syncedAt: generatedAt, projects: manifests, revisions }))
+  const manifestSha256 = try sha256Hex(asiManifest)
+  try seed(db, "INSERT OR IGNORE INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('asi', 1, ?, ?, 'Activated automatically', ?)", asiManifest, manifestSha256, generatedAt)
+  try seed(db, "INSERT OR IGNORE INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('asi', 'active', 1, ?, ?, ?, ?)", asiManifest, manifestSha256, generatedAt, generatedAt)
+  try retain(db, "fixture-recipient-1", 7101, 1, "2026-11-18T23:59:59.999Z")
+  try retain(db, "fixture-recipient-2", 7102, 2, "2026-11-10T12:00:00.000Z")
+  try retain(db, "fixture-recipient-3", 7103, 3, cutoff)
+  const hub = try Effect.try(() => githubFake({ now: () => clock.now() }))
+  try Effect.try(() => hub.world.addUser({ id: owner.id, login: owner.login, nodeId: owner.nodeId }))
+  try Effect.try(() => hub.world.addUser({ id: 7200, login: "fixture-producer" }))
+  try Effect.try(() => hub.world.addRepo({ id: asiRepository.githubId, nodeId: asiRepository.nodeId, owner: owner.login, name: "asi" }))
+  try Effect.try(() => hub.world.addInstallation({ id: 77, account: owner.login, repositories: "all", permissions: { metadata: "read" } }))
+  try Effect.try(() => hub.world.setPermission(asiRepository.id, owner.login, "admin"))
+  return { db, checkout, head, registryPath, runnerTemp: root, hub, requests: [], published: new Uint8Array() } satisfies World
+}
+
+function recording(out: string[], errors: string[]): Console.Console {
+  const ignore = () => undefined
+  return {
+    assert: ignore, clear: ignore, count: ignore, countReset: ignore, debug: ignore, dir: ignore, dirxml: ignore,
+    group: ignore, groupCollapsed: ignore, groupEnd: ignore, info: ignore, table: ignore, time: ignore, timeEnd: ignore,
+    timeLog: ignore, trace: ignore, warn: ignore,
+    log: (...args: ReadonlyArray<unknown>) => { out.push(args.join(" ")) },
+    error: (...args: ReadonlyArray<unknown>) => { errors.push(args.join(" ")) },
+  }
+}
+
+const audiences = Layer.mergeAll(noticePorts, contributorAudience, rolesFrom({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" }))
+
+effect function closeoutCommand(world: World, args: ReadonlyArray<string>) {
+  provide systemGit, audiences {
+    try asiNovemberCloseout(args, { database: () => d1(world.db), checkout: world.checkout, served })
+  }
+}
+
+effect function run(world: World, values: Readonly<Record<string, string>>) {
+  const out: string[] = []
+  const errors: string[] = []
+  const runner = program({ services: Layer.mergeAll(webCrypto, outbound), commands: { "asi-november-closeout": (args) => closeoutCommand(world, args) } })
+  const path = try Config.withDefault(Config.String("PATH"), "")
+  const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({
+    PATH: path,
+    GITHUB_EVENT_NAME: "workflow_dispatch",
+    GITHUB_REPOSITORY: "SlopDotCash/slopdotcash",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_SHA: world.head,
+    RUNNER_TEMP: world.runnerTemp,
+    CLOUDFLARE_ACCOUNT_ID: "fixture-account",
+    CLOUDFLARE_API_TOKEN: "fixture-token",
+    SLOPBOT_APP_ID: world.hub.app.id,
+    SLOPBOT_APP_PRIVATE_KEY: world.hub.app.privateKeyPem,
+    ...values,
+  }))
+  provide NodeServices.layer, clock.layer, environment, Console.Console = recording(out, errors), FetchHttpClient.Fetch = closeoutFetch(world) {
+    const status = try runner.run(["asi-november-closeout", world.registryPath])
+    const [line] = out
+    return { status, printed: line === undefined ? undefined : try Effect.try(() => JSON.parse(line) as Readonly<Record<string, unknown>>), stage: errors.join("\n") }
+  }
+}
+
+function refusedDuring(stage: string) {
+  return `ASI closeout refused during ${stage}.`
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect(`Close ASI's November pool early from one reviewed import with another project's work held (spec/settlement/asiNovemberCloseout.md, "Story: Close ASI's November pool early from one reviewed import"; spec/settlement/asiNovemberCloseout.md, "The closeout is exactly ASI's November 2026 pool up to its cutoff"; spec/settlement/asiNovemberCloseout.md, "Only an apply run under the reviewed packet and preview digests writes the closeout base, once"; spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change")`, () => scoped(effect {
+    const { db } = try Journey
+    const path = try Config.withDefault(Config.String("PATH"), "")
+    provide NodeServices.layer, Layer.provide(systemGit, ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: path }))) {
+      const world = try worldOf(db)
+      const held = try journal(db, "1", [{ repository: elizaRepository, pullRequestNodeId: "PR_held_1" }])
+      world.published = encoder.encode(JSON.stringify(snapshotOf([{ recordDigest: held, sourceNodeIds: ["PR_held_1"], unavailableNodeIds: ["PR_held_1"] }], ["PR_held_1"])))
+      const snapshotSha256 = try sha256Hex(world.published)
+      const pointsBatch = "b".repeat(64)
+      try seed(db, "INSERT INTO points_staging (batch_id, sequence, payload) SELECT ?, ROW_NUMBER() OVER (ORDER BY rowid) - 1, payload FROM points_revisions", pointsBatch)
+      try seed(db, "INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (?, ?, ?, 3)", pointsBatch, generatedAt, JSON.stringify([{ repository: asiRepository.id, from: "2026-11-01T00:00:00.000Z", to: cutoff, digest: snapshotSha256 }]))
+
+      const untrustedInvocations: ReadonlyArray<Readonly<Record<string, string>>> = [{ GITHUB_REPOSITORY: "fork/slopdotcash" }, { GITHUB_REF: "refs/heads/vibestack" }, { GITHUB_EVENT_NAME: "workflow_run" }]
+      for (const untrusted of untrustedInvocations) {
+        const refused = try run(world, { ...untrusted, ASI_CLOSEOUT_MODE: "inspect" })
+        try same([refused.status, refused.stage.includes(refusedDuring("trusted invocation"))], [1, true])
+      }
+      try same(world.requests, [])
+
+      const inspected = try run(world, { ASI_CLOSEOUT_MODE: "inspect" })
+      try same([inspected.status, inspected.printed], [0, { schemaVersion: "1", period: "2026-11", mode: "inspect", snapshotSha256, pointsBatch, manifestSha256: try sha256Hex(asiManifest), revision: 1, enforcementGeneration: 0 }])
+      try same(try count(db, "monthly_reward_bases"), 0)
+
+      const packet = JSON.stringify({ schemaVersion: "1", kind: "reviewed-asi-november-closeout", projectId: "asi", period: "2026-11", cutoff, grossBase: "150000000", reviewedAt, producerGithubId: "7200", reviewerGithubId: String(owner.id), snapshotSha256, pointsBatch, manifestSha256: try sha256Hex(asiManifest), revision: 1, enforcementGeneration: 0 })
+      const reviewed = { ASI_CLOSEOUT_REVIEWED_PACKET: packet, REVIEWED_PACKET_SHA256: try sha256Hex(packet) }
+      const previewed = try run(world, { ...reviewed, ASI_CLOSEOUT_MODE: "preview" })
+      const previewSha256 = String(previewed.printed?.previewSha256 ?? "")
+      try same([previewed.status, previewed.printed?.mode, previewed.printed?.recipients, try count(db, "monthly_reward_bases")], [0, "preview", 2, 0])
+
+      const stale = try run(world, { ...reviewed, ASI_CLOSEOUT_MODE: "apply", ASI_CLOSEOUT_PREVIEW_SHA256: "0".repeat(64) })
+      try same([stale.status, stale.stage.includes(refusedDuring("bound preview or import")), try count(db, "monthly_reward_bases")], [1, true, 0])
+
+      const applied = try run(world, { ...reviewed, ASI_CLOSEOUT_MODE: "apply", ASI_CLOSEOUT_PREVIEW_SHA256: previewSha256 })
+      try same([applied.status, applied.printed?.mode, applied.printed?.previewSha256], [0, "applied", previewSha256])
+      const [base] = (try promise(() => db.prepare("SELECT cap_base, early_close_at, source_snapshot_sha256, recipient_count FROM monthly_reward_bases WHERE project_id = 'asi' AND period = '2026-11'").all())).results
+      const rows = try promise(() => db.prepare("SELECT github_user_id, gross_base FROM monthly_reward_base_rows WHERE project_id = 'asi' AND period = '2026-11' ORDER BY github_user_id").all())
+      try same({ base, rows: rows.results }, {
+        base: { cap_base: "150000000", early_close_at: cutoff, source_snapshot_sha256: snapshotSha256, recipient_count: 2 },
+        rows: [{ github_user_id: "7101", gross_base: "50000000" }, { github_user_id: "7102", gross_base: "100000000" }],
+      })
+
+      const replayed = try run(world, { ...reviewed, ASI_CLOSEOUT_MODE: "apply", ASI_CLOSEOUT_PREVIEW_SHA256: previewSha256 })
+      try same([replayed.status, replayed.printed?.mode, try count(db, "monthly_reward_base_rows")], [0, "already-imported", 2])
+
+      provide clock.layer, Layer.provideMerge(monthlyFacts(served), Layer.provideMerge(Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, RegistryManifestsLive), Layer.merge(audiences, d1(db)))) {
+        const month = try loadMonth(try closeoutKey())
+        try same([month.state.phase, month.state.earlyCloseAt], ["Proposed", closeoutCutoff])
+      }
+    }
+  }))
+
+  it.effect(`Unproved held work, a missing or altered journal row, an ASI source, a repeated pull request and an unbound unavailable source stop the closeout (spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision")`, () => scoped(effect {
+    const { db } = try Journey
+    const path = try Config.withDefault(Config.String("PATH"), "")
+    provide NodeServices.layer, Layer.provide(systemGit, ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: path }))) {
+      const world = try worldOf(db)
+      const before = try count(db, "monthly_reward_base_rows")
+      const altered = try journal(db, "2", [{ repository: elizaRepository, pullRequestNodeId: "PR_altered" }], (raw) => Effect.try(() => JSON.stringify(JSON.parse(raw), null, 1)))
+      const asiSource = try journal(db, "3", [{ repository: asiRepository, pullRequestNodeId: "PR_asi" }])
+      const first = try journal(db, "4", [{ repository: elizaRepository, pullRequestNodeId: "PR_twice" }])
+      const second = try journal(db, "5", [{ repository: elizaRepository, pullRequestNodeId: "PR_twice" }], undefined, [first])
+      const bound = try journal(db, "6", [{ repository: elizaRepository, pullRequestNodeId: "PR_bound" }])
+      const coverage = "published cutoff and canonical Points coverage"
+      const cases: ReadonlyArray<readonly [ReadonlyArray<HeldUnit>, ReadonlyArray<string>, string]> = [
+        [[{ recordDigest: "f".repeat(64), sourceNodeIds: ["PR_missing"], unavailableNodeIds: ["PR_missing"] }], ["PR_missing"], "canonical held work source provenance"],
+        [[{ recordDigest: altered, sourceNodeIds: ["PR_altered"], unavailableNodeIds: ["PR_altered"] }], ["PR_altered"], coverage],
+        [[{ recordDigest: asiSource, sourceNodeIds: ["PR_asi"], unavailableNodeIds: ["PR_asi"] }], ["PR_asi"], coverage],
+        [[{ recordDigest: first, sourceNodeIds: ["PR_twice"], unavailableNodeIds: ["PR_twice"] }, { recordDigest: second, sourceNodeIds: ["PR_twice"], unavailableNodeIds: ["PR_twice"] }], ["PR_twice"], coverage],
+        [[{ recordDigest: bound, sourceNodeIds: ["PR_bound"], unavailableNodeIds: ["PR_bound"] }], ["PR_bound", "PR_unbound"], coverage],
+      ]
+      for (const [held, unavailable, stage] of cases) {
+        world.published = encoder.encode(JSON.stringify(snapshotOf(held, unavailable)))
+        const refused = try run(world, { ASI_CLOSEOUT_MODE: "inspect" })
+        try same([refused.status, refused.stage.includes(refusedDuring(stage)), refused.printed], [1, true, undefined])
+      }
+      try same(try count(db, "monthly_reward_base_rows"), before)
+    }
+  }))
+
+  it.effect(`More than five import guards are checked in several bounded queries (spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision")`, () => effect {
+    const { db } = try Journey
+    const passing = [1, 2, 3, 4, 5, 6].map((value) => sql`${value} > 0`)
+    provide d1(db) {
+      try same([guardQueries(passing).length, try holdsAll(passing), try holdsAll([...passing, sql`${0} > 0`])], [2, true, false])
+    }
+  })
+})

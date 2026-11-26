@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"
+// spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/repoRequests.md, "A flag write is a same-origin JSON request naming exactly a repository and an action"
 
 const jsonNoStoreSlopProjectApiContract = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-slop-project-api-contract": "project-registry-v1" } as const
 const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
@@ -151,7 +151,15 @@ const withOriginForbidden = {
   financialChangeRestrictedFundingRoutesDoNot: { status: 422, error: "financial_change_restricted", message: "Funding routes do not change through owner self-service", headers: jsonNoStoreSlopProjectApiContract },
   financialChangeRestrictedUseVaultSetupTo: { status: 422, error: "financial_change_restricted", message: "Use vault setup to register a verified owner vault; a manifest edit cannot change vault records", headers: jsonNoStoreSlopProjectApiContract },
   financialChangeRestrictedAFundedProjectKeeps: { status: 422, error: "financial_change_restricted", message: "A funded project keeps its network, asset and vault", headers: jsonNoStoreSlopProjectApiContract },
-  financialChangeRestrictedOnlyTheMonthlyAmount: { status: 422, error: "financial_change_restricted", message: "Only the monthly amount, network, asset and honor-system promise change through owner self-service", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedOnlyTheMonthlyAmount: { status: 422, error: "financial_change_restricted", message: "Only the monthly amount, network, asset, honor-system promise and maintainer share change through owner self-service", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedTheMaintainerShareHistory: { status: 422, error: "financial_change_restricted", message: "The maintainer share history cannot change", headers: jsonNoStoreSlopProjectApiContract },
+  authorityRequiredTheIntegrationBranchRequires: { status: 403, error: "authority_required", message: "The integration branch requires current GitHub repository admin permission.", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestExpectedAnIntegrationBranch: { status: 400, error: "invalid_request", message: "Expected an integration branch and its GitHub commit.", headers: jsonNoStoreSlopProjectApiContract },
+  noChangeTheIntegrationBranchIsUnchanged: { status: 422, error: "no_change", message: "The integration branch is unchanged.", headers: jsonNoStoreSlopProjectApiContract },
+  projectRestrictedARetiredProjectCannot: { status: 409, error: "project_restricted", message: "A retired project cannot change integration branches.", headers: jsonNoStoreSlopProjectApiContract },
+  branchHeadChanged: { status: 409, error: "branch_head_changed", message: "The GitHub branch moved. Reload and verify its current head.", headers: jsonNoStoreSlopProjectApiContract },
+  branchProofRequired: { status: 422, error: "branch_proof_required", message: "The selected commit must contain a matching .github/slop-project.json declaration.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubRepositoryVerification: { status: 503, error: "github_unavailable", message: "GitHub repository verification is unavailable.", headers: jsonNoStoreSlopProjectApiContract },
 } as const
 
 const withInvalidRequestReasonMustBe1To1000Characters = {
@@ -591,6 +599,9 @@ export const postProjects = {
   invalidReferrerTheProjectStewardCannot: { status: 422, error: "invalid_referrer", message: "The project steward cannot be recorded as its referrer.", headers: jsonNoStoreSlopProjectApiContract },
   invalidReferrerSlopTeamAccountsCannot: { status: 422, error: "invalid_referrer", message: "Slop team accounts cannot be recorded as referrers.", headers: jsonNoStoreSlopProjectApiContract },
   registryConflictTheProjectIdRepository: { status: 409, error: "registry_conflict", message: "The project id, repository or restrictions changed. Reload before creating it.", headers: jsonNoStoreSlopProjectApiContract },
+  registryConflictAlreadyListedOnSlop: { status: 409, error: "registry_conflict", messageFrom: "`${repositoryName} is already listed on Slop as ${project.id}. Open ${origin}/projects/${project.id}/manage to continue its setup instead of creating it again.`", headers: jsonNoStoreSlopProjectApiContract },
+  registryConflictTheProjectIdIsAlreadyUsed: { status: 409, error: "registry_conflict", messageFrom: "`The project id ${candidate.id} is already used by another project. Choose a different project id.`", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifestANewProjectHasNoMaintainerShareHistory: { status: 422, error: "invalid_manifest", message: "A new project has no maintainer share history; set only the maintainer share", headers: jsonNoStoreSlopProjectApiContract },
 } as const
 
 export const putProjectsById = {
@@ -709,6 +720,33 @@ export const getReferralsProjects = {
   otherMethods: {
     methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge300 },
   },
+} as const
+
+export const postRepoRequests = {
+  originForbidden: { status: 403, error: "origin_forbidden", headers: jsonPrivateNoStore },
+  unauthorized: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonPrivateNoStore },
+  invalidExpectedActor: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonPrivateNoStore },
+  actorChanged: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonPrivateNoStore },
+  invalidRequestNotAnObject: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonPrivateNoStore },
+  invalidRequestUnexpectedFields: { status: 400, error: "invalid_request", message: "Request body has unexpected fields", headers: jsonPrivateNoStore },
+  invalidRequestAction: { status: 400, error: "invalid_request", message: "Action must be flag or withdraw.", headers: jsonPrivateNoStore },
+  invalidRepo: { status: 422, error: "invalid_repo", message: "Enter the repository as owner/name.", headers: jsonPrivateNoStore },
+  teamAccount: { status: 403, error: "team_account", message: "Slop team accounts cannot flag repos.", headers: jsonPrivateNoStore },
+  noMergedWork: { status: 403, error: "no_merged_work", message: "Flag a repo after your first pull request is merged on a Slop project.", headers: jsonPrivateNoStore },
+  requestLimit: { status: 409, error: "request_limit", message: "You already flag 10 repos. Withdraw one first.", headers: jsonPrivateNoStore },
+  githubUnavailable: { status: 503, error: "github_unavailable", message: "GitHub did not answer. Try again.", headers: jsonPrivateNoStore },
+  githubIncomplete: { status: 503, error: "github_unavailable", message: "GitHub returned incomplete repository facts. Try again.", headers: jsonPrivateNoStore },
+  notFound: { status: 422, error: "not_found", message: "GitHub has no public repository with that name.", headers: jsonPrivateNoStore },
+  fork: { status: 422, error: "fork", message: "That repository is a fork. Flag the original repository.", headers: jsonPrivateNoStore },
+  archived: { status: 422, error: "archived", message: "That repository is archived.", headers: jsonPrivateNoStore },
+  alreadyListed: { status: 409, error: "already_listed", messageFrom: "`${repo.fullName} is already on Slop. See ${origin}/projects/${listedAs}.`", headers: jsonPrivateNoStore },
+  ownRepo: { status: 409, error: "own_repo", message: "You cannot flag your own repository.", headers: jsonPrivateNoStore },
+  notFlagged: { status: 404, error: "not_flagged", message: "You do not flag that repository.", headers: jsonPrivateNoStore },
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
+} as const
+
+export const getRepoRequests = {
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
 } as const
 
 export const getMergeActivity = {
@@ -1026,6 +1064,7 @@ export const identityPostV1LocalPoll = {
 export const identityPostV1OauthStart = {
   ...withRateLimitedTooManyRequestsTryAndServiceUnavailable,
   ...withOriginForbiddenNoStoreV2,
+  originRequired: { status: 403, error: "origin_required", message: "Website sign-in must start from Slop", headers: jsonNoStore },
   otherMethods: {
     ...withNotFoundNoStore,
   },
@@ -1035,6 +1074,7 @@ export const identityGetV1OauthAuthorize = {
   ...withHttpsRequiredNoStoreAndNotFoundNoStore,
   invalidRequestInvalidAuthorizationLink: { status: 400, error: "invalid_request", message: "Invalid authorization link", headers: jsonNoStore },
   flowExpired: { status: 410, error: "flow_expired", message: "Authorization flow is unavailable", headers: jsonNoStore },
+  signInNotStartedHere: { status: 403, html: { title: "Sign-in not started here", message: "This sign-in link was started in a different browser. Start sign-in again from Slop." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
   otherMethods: {
     ...withNotFoundNoStoreV2,
   },
@@ -1046,6 +1086,7 @@ export const identityGetV1OauthCallback = {
   signInExpired: { status: 410, html: { title: "Sign-in expired", message: "Start sign-in again from Slop or your terminal." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
   signInFailedGitHubIdentityCouldNot: { status: 502, html: { title: "Sign-in failed", message: "GitHub identity could not be verified." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
   signInFailedGitHubAccountIdentityIs: { status: 502, html: { title: "Sign-in failed", message: "GitHub account identity is incomplete." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
+  signInNotStartedHere: { status: 403, html: { title: "Sign-in not started here", message: "This sign-in link was started in a different browser. Start sign-in again from Slop." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
   signInExpiredTheSignInTook: { status: 410, html: { title: "Sign-in expired", message: "The sign-in took too long. Start again from your original tab or terminal." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
   otherMethods: {
     ...withNotFoundNoStoreV2,
@@ -1055,6 +1096,7 @@ export const identityGetV1OauthCallback = {
 export const identityPostV1OauthPoll = {
   ...withRateLimitedTooManyRequestsTry,
   ...withOriginForbiddenNoStoreV2,
+  browserMismatch: { status: 403, error: "browser_mismatch", message: "This sign-in belongs to another browser", headers: jsonNoStore },
   otherMethods: {
     ...withNotFoundNoStore,
   },

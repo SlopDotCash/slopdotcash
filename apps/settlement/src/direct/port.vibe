@@ -1,9 +1,11 @@
-// spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee"
+// spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/settlement/privateAward.md, "A vault-backed award reserves its bounty vault in the same step"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee"
 import { isoNow } from "@repo/platform/clock"
 import { D1, rows, sql } from "@repo/platform/d1"
-import type { Network } from "@repo/ports/backend"
-import { DirectBounty, DirectFeeAward, type DirectLeg, DirectRoutes } from "@repo/ports/settlement"
+import { type Network, Wallets } from "@repo/ports/backend"
+import { ApprovedAwards } from "@repo/ports/security"
+import { DirectBounty, DirectFeeAward, type DirectLeg, DirectPayments, DirectRefused, DirectRoutes, RecoveryRefused } from "@repo/ports/settlement"
 import { NETWORKS } from "../kernels/networks.ts"
+import { paymentAction, paymentView } from "./caseActions.vibe"
 import { EvmDirectRails, evmModel } from "./evm.vibe"
 import { type Journal, currentIntent, journalFor } from "./journal.vibe"
 import { SolanaDirectRails, isSolanaNetwork } from "./solana.vibe"
@@ -87,4 +89,24 @@ export const DirectRoutesLive = Layer.effect(DirectRoutes, effect {
       return { qualified, observedAt: try isoNow() }
     },
   } satisfies DirectRoutes.Shape
+})
+
+export const DirectPaymentsLive = Layer.effect(DirectPayments, effect {
+  const services = try Effect.context<D1 | ApprovedAwards | Wallets | EvmDirectRails | SolanaDirectRails | HttpClient.HttpClient | Experimental.Crypto.Crypto>()
+  return {
+    act: (action, context, body, alongside) => effect {
+      return Effect.provide(paymentAction(action, context, body, alongside), services) catch effect (error) => {
+        if (error._tag === "DirectRefused" || error._tag === "RecoveryRefused" || error._tag === "SolanaPayerRefused") throw error
+        if (error._tag === "Conflict") throw action === "recover-payment" ? new RecoveryRefused({ reason: "paymentRecoveryChanged" }) : new DirectRefused({ reason: "staleRevision" })
+        if (error._tag === "DatabaseFailure" || error._tag === "ConstraintViolation" || error._tag === "RowMismatch") throw error
+        return try die(error)
+      }
+    },
+    view: (context) => effect {
+      return Effect.provide(paymentView(context), services) catch effect (error) => {
+        if (error._tag === "DatabaseFailure" || error._tag === "ConstraintViolation" || error._tag === "RowMismatch") throw error
+        return try die(error)
+      }
+    },
+  } satisfies DirectPayments.Shape
 })

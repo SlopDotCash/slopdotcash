@@ -1,5 +1,4 @@
 // spec/points/census.md, "Collection starts only for a collected project and never moves its window back"
-import { isLegacyProject } from "@repo/backend/legacy"
 import { boundedBytes } from "@repo/platform/browser"
 import { type ProjectView, collected } from "../../gen/points__census.effect.vibe"
 import type { Reward } from "./ranking.ts"
@@ -114,7 +113,7 @@ export effect function registeredProjects(answer: RegistryAnswer) {
       registered: true,
       paused: project.status !== "active",
       retired: project.listingTier === "retired",
-      legacy: isLegacyProject(project.id),
+      legacy: false,
       quarantined: restricted.has(project.id),
     },
   }) satisfies RegisteredProject)

@@ -1,15 +1,14 @@
-// spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/paymentDispatch.md, "Story: Recover uncertainty without opening a competing transfer"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
+// spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/paymentDispatch.md, "Story: Recover uncertainty without opening a competing transfer"; spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import { isoNow } from "@repo/platform/clock"
 import { D1, type Statement, rows, sql } from "@repo/platform/d1"
 import { Wallets } from "@repo/ports/backend"
+import { servedVaults } from "../jobs/payments.vibe"
 import { isChain, type NetworkKey } from "../kernels/networks.ts"
-import { type ExecutorBindings, type ServedVault, executors } from "../payments/dispatch.vibe"
-import { vaultAsset } from "../payments/ledger.vibe"
+import { type ExecutorBindings, executors, runPaymentDispatch } from "../payments/dispatch.vibe"
 import { reconcileFailedAttempts, recoverUncertainAttempts } from "../payments/recovery.vibe"
 import { failureTag, networkOf } from "../payments/terms.vibe"
-import { PaymentIndexerLive, paymentDeploymentOf } from "../scan/index.vibe"
+import { PaymentIndexerLive } from "../scan/index.vibe"
 import { SECURITY_SCOPE } from "../signer/privateScope.vibe"
-import { PaymentRpc } from "../vault/rpc.vibe"
 import { syncRegistryVaults } from "../vault/sync.vibe"
 
 const privateLedger = /\b(payment_obligations|payment_events|payment_outbox|payment_attempts|payment_attempt_failures|payment_chain_cursors|payment_solana_scans|payment_solana_scan_pages|vault_snapshots)\b/gu
@@ -74,24 +73,6 @@ effect function readyAuthorizedHolds() {
   }
 }
 
-effect function servedVaults(networks: ReadonlyArray<NetworkKey>, failures: string[]) {
-  const synced = try syncRegistryVaults(networks, "security-bounty")
-  failures.push(...synced.failures)
-  const rpc = try PaymentRpc
-  const served: ServedVault[] = []
-  for (const registered of synced.deployments) {
-    const deployment = paymentDeploymentOf(registered, rpc)
-    if (deployment === undefined) {
-      failures.push(`${registered.network} ${registered.vault}: private RPC configuration unavailable`)
-      continue
-    }
-    const asset = vaultAsset(deployment) catch (error) => failureTag(error)
-    if (typeof asset === "string") failures.push(`${registered.network} ${registered.vault}: ${asset}`)
-    else served.push({ deployment, asset })
-  }
-  return served
-}
-
 function failuresOf(error: { readonly _tag: string; readonly failures?: unknown }): ReadonlyArray<string> {
   return Array.isArray(error.failures) ? error.failures.filter((failure): failure is string => typeof failure === "string") : [error._tag]
 }
@@ -101,11 +82,18 @@ export effect function runSecurityPayments(networks: ReadonlyArray<NetworkKey>, 
   provide Layer.mergeAll(Layer.provideMerge(PaymentIndexerLive, PrivateLedger), privateExecutors(bindings)) {
     const readied = readyAuthorizedHolds() catch (error) => [failureTag(error)]
     if (Array.isArray(readied)) failures.push(...readied)
-    const vaults = try servedVaults(networks, failures)
+    const synced = try syncRegistryVaults(networks, "security-bounty")
+    failures.push(...synced.failures)
+    const vaults = try servedVaults(synced.deployments, failures)
     const recovered = recoverUncertainAttempts(vaults) catch (error) => failuresOf(error)
     if (Array.isArray(recovered)) failures.push(...recovered)
     const reconciled = reconcileFailedAttempts(networks, vaults) catch (error) => failuresOf(error)
     if (Array.isArray(reconciled)) failures.push(...reconciled)
+    if (bindings.evm === undefined && bindings.solana === undefined) failures.push("Payment execution service unavailable")
+    else {
+      const dispatched = runPaymentDispatch(vaults) catch (error) => failuresOf(error)
+      if (Array.isArray(dispatched)) failures.push(...dispatched)
+    }
   }
   if (failures.length > 0) throw new SecurityPaymentsFailed({ failures })
 }

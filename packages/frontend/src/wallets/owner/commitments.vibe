@@ -1,5 +1,9 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"
-import { type CommitmentPlan, type CommitmentReview, type SolanaCommitmentAction, type SolanaCommitmentReviewed, monthlyCommitment, monthlySolanaCommitment } from "@repo/settlement/client"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"; spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"
+import { address } from "@repo/platform/chain/solana"
+import type { VaultPurpose } from "@repo/settlement/chain/evm/abi"
+import { u64 } from "@repo/settlement/chain/solana/bytes"
+import { setMonthlyCommitment } from "@repo/settlement/chain/solana/instructions"
+import { type CommitmentPlan, type CommitmentReview, type MonthlyCommitmentState, type MonthlySettingAction, type MonthlySettingPlan, type SolanaCommitmentAction, type SolanaCommitmentReviewed, monthlyCommitment, monthlySolanaCommitment, paymentsSolanaMonthlyCommitment } from "@repo/settlement/client"
 import { payoutFeeAccepted } from "@repo/settlement/kernels/fees"
 import { NETWORKS, chainFamily, isNetworkKey, maxBaseUnitsForChain } from "@repo/settlement/kernels/networks"
 import { type CallFailure, call } from "../../platform/api.vibe"
@@ -11,8 +15,8 @@ import { type Call, callPlan, reviewedVaultOf, samePlannedCall } from "./evmCall
 import { type EvmVault, VaultActionRefused, readVault, readWalletTransaction, requireVaultWallet } from "./evmVault.vibe"
 import { expectedOf, vaultEvents } from "./evmEvidence.ts"
 import { settingTarget } from "./ownerDecisions.ts"
-import type { EvmCallPlan, OwnerPlan, SolanaCommitmentPlan } from "./ownerPlans.schema.ts"
-import { type ReviewedWire, type SolanaVaultTerms, commitmentWire } from "./solanaPlans.ts"
+import type { EvmCallPlan, OwnerPlan, SolanaCommitmentPlan, SolanaSettingPlan } from "./ownerPlans.schema.ts"
+import { type PreparedWire, type ReviewedWire, type SolanaVaultTerms, commitmentWire, wireMatches } from "./solanaPlans.ts"
 import { signAndVerify } from "./solanaVault.vibe"
 
 export type { CommitmentPlan, Deployment, MonthlySetting, ProjectReward }
@@ -44,6 +48,12 @@ export const commitmentMessages = {
   assetPolicy: "The vault asset differs from the reviewed policy.",
   planUnreadable: "Saved request unreadable. Check wallet activity.",
   solanaUnverified: "Award not verified. Retry.",
+  settingUnverified: "Monthly payment setting not verified. Retry.",
+  settingResponse: "The monthly payment setting response is invalid.",
+  settingReviewResponse: "The monthly payment review response is invalid.",
+  settingChanged: "Monthly payment setting changed. Review again.",
+  settingWire: "The prepared transaction differs from the reviewed setting.",
+  settingAgain: "Review the monthly payment setting again.",
 } as const
 
 const planLimitBytes = 65_536
@@ -72,9 +82,9 @@ export effect function requestCommitment(projectId: string, period: string, revi
   return { plan, deployment, gross } satisfies VerifiedCommitment
 }
 
-export function evmVaultOf(deployment: Deployment): EvmVault | undefined {
+export function evmVaultOf(deployment: Deployment, purpose: VaultPurpose = "OrdinaryPurpose"): EvmVault | undefined {
   const network = isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined
-  const review = reviewedVaultOf(deployment.network, "OrdinaryPurpose")
+  const review = reviewedVaultOf(deployment.network, purpose)
   return network?.family === "evm" && review !== undefined ? { network: deployment.network, chainId: evmChainIdOf(network.chainId), vault: deployment.vault, asset: deployment.asset, owner: deployment.owner, review } : undefined
 }
 
@@ -119,10 +129,16 @@ export effect function checkEvmCommitment(connection: EvmConnection, vault: EvmV
   return "finalized" satisfies ChainStatus
 }
 
+export interface SolanaSettingPlanned {
+  readonly plan: MonthlySettingPlan
+  readonly wire: ReviewedWire
+}
+
 export interface SettingReview {
   readonly target: MonthlySetting
   readonly current: MonthlySetting
   readonly changes: boolean
+  readonly solana?: SolanaSettingPlanned
 }
 
 export effect function reviewEvmSetting(connection: EvmConnection, vault: EvmVault, automatic: boolean, reward: ProjectReward) {
@@ -153,7 +169,8 @@ export effect function sendEvmSetting<E>(connection: EvmConnection, vault: EvmVa
 }
 
 export effect function checkEvmSetting(connection: EvmConnection, vault: EvmVault, target: MonthlySetting, plan: OwnerPlan | undefined, hash: string) {
-  const planned = try plannedCall(vault, plan, { to: vault.vault, value: "0x0", data: try settingData(target) })
+  const call = { to: vault.vault, value: "0x0", data: try settingData(target) }
+  const planned = plan?.kind === "evmSetting" && baseUnits(plan.cap, false) === target.cap && plan.enabled === target.enabled ? callPlan(plan.from, vault.chainId, call) : try plannedCall(vault, plan, call)
   const read = try readWalletTransaction(connection, vault, hash, expectedOf(planned), true)
   if (read.status === "included" || read.status === "pending" || read.receipt === undefined) return "pending" satisfies ChainStatus
   if (read.status === "failed") return "failed" satisfies ChainStatus
@@ -202,6 +219,77 @@ export effect function checkSolanaCommitment(projectId: string, period: string, 
   if (plan?.kind !== "solanaCommitment") throw refused(commitmentMessages.planUnreadable)
   const { sourceDigest, githubUserId, gross, blockhash } = plan
   const answer = try solanaAction(projectId, period, { step: "check", network: deployment.network, vault: deployment.vault, wallet: connection.address, sourceDigest, githubUserId, gross, blockhash, transactionId }, expectedActor)
+  if (!("status" in answer)) throw new WalletFailed({ message: commitmentMessages.solanaStatus })
+  return answer.status satisfies ChainStatus
+}
+
+const settingLimitBytes = 16_384
+const settingDeadlineMs = 90_000
+const settingCap = /^(0|[1-9][0-9]{0,19})$/u
+
+effect function settingAction(projectId: string, body: MonthlySettingAction) {
+  const answer = call(paymentsSolanaMonthlyCommitment, { params: { id: projectId }, body }, { limitBytes: settingLimitBytes, deadlineMs: settingDeadlineMs }) catch effect (failure) => {
+    throw refused(failure._tag === "Refused" && failure.status === 422 && failure.message !== "" ? failure.message : commitmentMessages.settingUnverified)
+  }
+  return answer
+}
+
+function settingStateOf(state: MonthlyCommitmentState): MonthlySetting | undefined {
+  const cap = settingCap.test(state.cap) ? baseUnits(state.cap, false) : undefined
+  return cap === undefined ? undefined : { cap, enabled: state.enabled }
+}
+
+function settingWireOf(terms: SolanaVaultTerms, target: MonthlySetting, prepared: PreparedWire): ReviewedWire | undefined {
+  const program = address(terms.program)
+  const project = address(terms.project)
+  const owner = address(terms.owner)
+  const cap = u64(target.cap)
+  if (program === undefined || project === undefined || owner === undefined || cap === undefined || prepared.payer !== terms.owner) return undefined
+  const built = setMonthlyCommitment({ program, project, owner, cap, enabled: target.enabled })
+  return built.kind === "built" ? wireMatches(prepared, [built.value]) : undefined
+}
+
+export effect function reviewSolanaSetting(projectId: string, deployment: Deployment, terms: SolanaVaultTerms, connection: SolanaConnection, automatic: boolean, reward: ProjectReward) {
+  if (connection.address !== deployment.owner) throw refused(commitmentMessages.settingOwner)
+  const where = { network: deployment.network, vault: deployment.vault }
+  const read = try settingAction(projectId, { step: "read", ...where })
+  if (!("setting" in read)) throw refused(commitmentMessages.settingResponse)
+  const current = settingStateOf(read.setting.current)
+  const decimals = read.setting.decimals
+  if (current === undefined || !Number.isSafeInteger(decimals) || decimals < 0 || decimals > 36) throw refused(commitmentMessages.settingResponse)
+  const projectCap = automatic ? vaultMonthlyCap(reward, deployment, decimals) : { kind: "cap" as const, cap: 0n }
+  if (projectCap.kind === "refused") throw refused(projectCap.message)
+  if (automatic && projectCap.cap <= 0n) throw refused(commitmentMessages.settingAmount)
+  const target = settingTarget(automatic, projectCap.cap, current)
+  if (target.cap === current.cap && target.enabled === current.enabled) return { target, current, changes: false } satisfies SettingReview
+  const answer = try settingAction(projectId, { step: "review", ...where, wallet: connection.address, cap: target.cap.toString(), enabled: target.enabled })
+  if (!("plan" in answer)) throw refused(commitmentMessages.settingReviewResponse)
+  const plan = answer.plan
+  const planned = settingStateOf(plan.current)
+  if (planned === undefined || plan.decimals !== decimals || plan.wallet !== connection.address || plan.cap !== target.cap.toString() || plan.enabled !== target.enabled) throw refused(commitmentMessages.settingReviewResponse)
+  if (planned.cap !== current.cap || planned.enabled !== current.enabled) throw refused(commitmentMessages.settingChanged)
+  if (plan.transaction === null) throw refused(commitmentMessages.settingAgain)
+  if (!/^(0|[1-9][0-9]*)$/u.test(plan.transaction.networkFeeLamports)) throw refused(commitmentMessages.settingResponse)
+  const wire = settingWireOf(terms, target, { payer: connection.address, blockhash: plan.transaction.blockhash, transaction: plan.transaction.transaction })
+  if (wire === undefined) throw refused(commitmentMessages.settingWire)
+  return { target, current, changes: true, solana: { plan, wire } } satisfies SettingReview
+}
+
+export function solanaSettingPlanOf(target: MonthlySetting, plan: MonthlySettingPlan): SolanaSettingPlan | undefined {
+  return plan.transaction === null ? undefined : { kind: "solanaSetting", cap: target.cap.toString(), enabled: target.enabled, blockhash: plan.transaction.blockhash }
+}
+
+export effect function sendSolanaSetting<E>(network: string, connection: SolanaConnection, review: SettingReview, beforePrompt: (plan: SolanaSettingPlan) => void!E) {
+  const planned = review.solana
+  const saved = planned === undefined ? undefined : solanaSettingPlanOf(review.target, planned.plan)
+  if (planned === undefined || saved === undefined) throw refused(commitmentMessages.settingAgain)
+  if (planned.plan.wallet !== connection.address) throw refused(commitmentMessages.settingOwner)
+  return try signAndVerify(network, connection, planned.wire, saved, beforePrompt)
+}
+
+export effect function checkSolanaSetting(projectId: string, deployment: Deployment, connection: SolanaConnection, plan: OwnerPlan | undefined, transactionId: string) {
+  if (plan?.kind !== "solanaSetting") throw refused(commitmentMessages.planUnreadable)
+  const answer = try settingAction(projectId, { step: "check", network: deployment.network, vault: deployment.vault, wallet: connection.address, cap: plan.cap, enabled: plan.enabled, blockhash: plan.blockhash, transactionId })
   if (!("status" in answer)) throw new WalletFailed({ message: commitmentMessages.solanaStatus })
   return answer.status satisfies ChainStatus
 }

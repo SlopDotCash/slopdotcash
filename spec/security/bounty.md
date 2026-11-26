@@ -16,8 +16,12 @@ of `C::ProjectClearance`.
 
 ### Cases of one project share holds, funds and the route observation
 
-Each case is received once with the terms its program issued at receipt. A
-new verified authority snapshot applies to every case of the project at once.
+Each case is received once with the terms its program issued at receipt:
+by Slop's own receipt, by a current technical approver's attestation or
+verification of a claimed link, or by the GitHub receipt service settling a
+claim ([cases](./cases.md)). A reporter's claim and a rejected link are
+cases of the project too. A new verified authority snapshot applies to every
+case of the project at once.
 
 ```quint
 import money as M from "../settlement/money"
@@ -40,6 +44,25 @@ pure def canReceive(b: Bounty, id: int, source: C::ReceiptSource, terms: T::Rece
   known(id) and C::canReceive(caseOf(b, id), source, terms, C::NewReceipt, M::zero, reportVersion)
 pure def receive(b: Bounty, id: int, source: C::ReceiptSource, terms: T::ReceiptTerms, reportVersion: int): Bounty =
   putCase(id, C::receive(caseOf(b, id), source, terms, C::NewReceipt, M::zero, reportVersion), b)
+pure def canClaim(b: Bounty, id: int, by: int): bool = known(id) and C::canClaim(caseOf(b, id), by)
+pure def claim(b: Bounty, id: int, by: int): Bounty = putCase(id, C::claim(caseOf(b, id), by), b)
+pure def canVerifyLink(b: Bounty, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms): bool =
+  known(id) and C::canVerifyLink(caseOf(b, id), by, checkedEpoch, terms)
+pure def verifyLink(b: Bounty, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms): Bounty =
+  putCase(id, C::verifyLink(caseOf(b, id), by, checkedEpoch, terms), b)
+pure def canRejectLink(b: Bounty, id: int, by: int, checkedEpoch: int): bool = known(id) and C::canRejectLink(caseOf(b, id), by, checkedEpoch)
+pure def rejectLink(b: Bounty, id: int, by: int, checkedEpoch: int): Bounty = putCase(id, C::rejectLink(caseOf(b, id), by, checkedEpoch), b)
+pure def canRecordAttested(b: Bounty, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): bool =
+  known(id) and C::canRecordAttested(caseOf(b, id), by, checkedEpoch, terms, confirmed)
+pure def recordAttested(b: Bounty, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): Bounty =
+  putCase(id, C::recordAttested(caseOf(b, id), by, checkedEpoch, terms, confirmed), b)
+pure def canSettleClaim(b: Bounty, id: int, by: int, listed: bool, terms: T::ReceiptTerms): bool =
+  known(id) and C::canSettleClaim(caseOf(b, id), by, listed, terms)
+pure def settleClaim(b: Bounty, id: int, by: int, listed: bool, terms: T::ReceiptTerms): Bounty =
+  putCase(id, C::settleClaim(caseOf(b, id), by, listed, terms), b)
+pure def sometimesAttestedCase(b: Bounty): bool = caseIds.some(id => caseOf(b, id).source == C::MaintainerAttested)
+pure def sometimesClaimSettledByGithub(b: Bounty): bool = caseIds.some(id => caseOf(b, id).source == C::GithubVerified
+  and caseOf(b, id).revision == 2)
 pure def canObserveAuthority(b: Bounty, snapshot: C::Authority): bool =
   caseIds.every(id => C::canObserveAuthority(caseOf(b, id), snapshot))
 pure def observeAuthority(b: Bounty, snapshot: C::Authority): Bounty =
@@ -206,6 +229,9 @@ pure def sometimesFullAwardHold(b: Bounty): bool = b.holds.some(h => h.kind == F
 
 ### Simulation samples cover both orders of receipt, stale funds and both routes
 
+Actor 1 reports, 2 is a technical approver in `C::staff`, 4 a moderator and
+-1 the GitHub receipt service.
+
 ```quint
 pure val idValues = Set(1, 2)
 pure val receiptTerms: T::ReceiptTerms = { ...T::standardTerms, receivedAt: 5 }
@@ -219,7 +245,9 @@ pure val nowMsValues = Set(2, 1800003)
 pure val fundsValues = Set({ finalized: true, observedAt: 2, asset: "usdc", free: List(500) },
   { finalized: false, observedAt: 2, asset: "usdc", free: List(500) }, { finalized: true, observedAt: 3, asset: "usdc", free: List(50) })
 pure val routeValues = Set({ asset: "usdc", qualified: true, observedAt: 2 }, { asset: "usdc", qualified: false, observedAt: 3 })
-pure val byValues = Set(1, 2, 4)
+pure val byValues = Set(-1, 1, 2, 4)
+pure val listedValues = Set(true, false)
+pure val confirmedValues = Set(true)
 pure val checkedEpochValues = Set(1)
 pure val receiptValues = Set({ receipt: 1, gross: List(100), finalized: true }, { receipt: 1, gross: List(100), finalized: false },
   { receipt: 2, gross: List(4), finalized: true })

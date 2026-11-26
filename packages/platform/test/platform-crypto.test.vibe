@@ -2,7 +2,7 @@ import { assert, layer } from "@effect/vitest"
 import * as Base64 from "effect/encoding/Base64"
 import * as Hex from "effect/encoding/Hex"
 import { TestClock } from "effect/testing"
-import { aesGcmOpen, aesGcmSeal, base64url, ed25519Sign, ed25519Verify, fromBase64url, hmacSha256, hmacSha256Hex, rs256Sign, sha256Hex, timingSafeEqual, utf8, webCrypto } from "../src/crypto.vibe"
+import { aesGcmOpen, aesGcmSeal, base64url, ed25519Sign, ed25519Verify, fromBase64url, hmacSha256, hmacSha256Hex, minimumOperatorSecretLength, operatorBearerAuthorized, rs256Sign, sha256Hex, timingSafeEqual, utf8, webCrypto } from "../src/crypto.vibe"
 import { serviceKeys, signedHeaders, verifySigned } from "../src/signed.vibe"
 import { generatedRsaKey } from "./support/rsaKey.ts"
 
@@ -60,6 +60,27 @@ layer(webCrypto)((it) => {
     try same(
       { fromText, fromBytes, equal: timingSafeEqual(digest, bytes(rfc4231)), changed: timingSafeEqual(digest, changed(digest)), shorter: timingSafeEqual(digest, digest.slice(1)) },
       { fromText: rfc4231, fromBytes: rfc4231, equal: true, changed: false, shorter: false },
+    )
+  })
+
+  it.effect('An operator route admits only the exact bearer of a configured secret of at least 32 characters (spec/points/periods.md, "A period freezes only when settlement has frozen, reserved or completed it, or an obligation exists")', () => effect {
+    const token = "s".repeat(minimumOperatorSecretLength)
+    const secret = Redacted.make(token)
+    const standIn = "x".repeat(minimumOperatorSecretLength)
+    try same(
+      {
+        exact: operatorBearerAuthorized(`Bearer ${token}`, secret),
+        wrong: operatorBearerAuthorized(`Bearer ${"t".repeat(minimumOperatorSecretLength)}`, secret),
+        missing: operatorBearerAuthorized(undefined, secret),
+        empty: operatorBearerAuthorized("", secret),
+        lowerScheme: operatorBearerAuthorized(`bearer ${token}`, secret),
+        bare: operatorBearerAuthorized(token, secret),
+        unsetStandIn: operatorBearerAuthorized(`Bearer ${standIn}`, undefined),
+        unsetAny: operatorBearerAuthorized(`Bearer ${token}`, undefined),
+        short: operatorBearerAuthorized(`Bearer ${token.slice(1)}`, Redacted.make(token.slice(1))),
+        shortStandIn: operatorBearerAuthorized(`Bearer ${standIn}`, Redacted.make(token.slice(1))),
+      },
+      { exact: true, wrong: false, missing: false, empty: false, lowerScheme: false, bare: false, unsetStandIn: false, unsetAny: false, short: false, shortStandIn: false },
     )
   })
 

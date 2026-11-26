@@ -1,0 +1,418 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
+import { sha256Hex } from "@repo/platform/crypto"
+import { mergeResolutionLineCounts } from "@repo/platform/git/evidence"
+import { GitHub } from "@repo/platform/github"
+import { implementationCreditActors } from "@repo/points/client"
+import {
+  type CorrectionActor,
+  type CorrectionClaim,
+  type CorrectionSource,
+  type HistoricalBodyEdit,
+  type OriginalContributorRepair,
+  type RepairReference,
+  CreatedPull,
+  correctionClaimCommit,
+  isOriginalContributorRepair,
+  referencesOriginalContributorSource,
+  sameRepositoryCommitHints,
+  verifiedHuman,
+} from "@repo/points/corrections"
+import { Comment, type Evidence } from "../evidence/types.vibe"
+import { acknowledgementTime, retainedAcknowledgements } from "../retained/reference.vibe"
+import { sourceDigestOf } from "../workUnits/prepare.vibe"
+import { answer, isOid } from "../workUnits/source.vibe"
+import type { WorkUnitSource } from "../workUnits/types.vibe"
+import { refused, richSource } from "./bind.vibe"
+
+schema ShaRef { readonly sha: string }
+schema GitObject { readonly sha: string; readonly parents: ReadonlyArray<ShaRef> }
+schema ComparedCommit { readonly sha: string; readonly parents: ReadonlyArray<ShaRef> }
+export schema NativeComparison {
+  readonly status: string
+  readonly ahead_by: number
+  readonly behind_by: number
+  readonly total_commits: number
+  readonly base_commit: ShaRef
+  readonly merge_base_commit: ShaRef
+  readonly commits: ReadonlyArray<ComparedCommit>
+}
+schema CommittedAt { readonly date: string }
+schema HeadObject { readonly sha: string; readonly committer: CommittedAt }
+schema EditorRead { readonly __typename: string; readonly id?: string }
+schema EditNode {
+  readonly id: string
+  readonly createdAt: string
+  readonly editedAt: string
+  readonly updatedAt: string
+  readonly deletedAt: string | null
+  readonly diff: string | null
+  readonly editor: EditorRead | null
+}
+schema EditPage {
+  readonly totalCount: number
+  readonly nodes: ReadonlyArray<EditNode | null> | null
+  readonly pageInfo: { readonly hasNextPage: boolean }
+}
+schema HistoryPull {
+  readonly id: string
+  readonly body: string
+  readonly headRefOid: string
+  readonly mergedAt: string | null
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly userContentEdits: EditPage | null
+}
+schema HistoryRepository { readonly id: string; readonly pullRequest: HistoryPull | null }
+schema HistoryAnswer { readonly repository: HistoryRepository | null }
+schema BodyPull {
+  readonly id: string
+  readonly body: string
+  readonly headRefOid: string
+  readonly mergedAt: string
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: EditorRead | null
+  readonly author: EditorRead
+}
+schema BodyRepository { readonly pullRequest: BodyPull | null }
+schema BodyAnswer { readonly repository: BodyRepository | null }
+
+export type NativeMerge = { readonly sha: string; readonly parents: ReadonlyArray<ShaRef> }
+
+type Reference = Omit<RepairReference, "digest">
+
+const historyQuery =
+  "query SlopHistoricalRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt userContentEdits(first:100){totalCount nodes{id createdAt editedAt updatedAt deletedAt diff editor{__typename ... on User{id}}} pageInfo{hasNextPage}}}} rateLimit{cost limit remaining resetAt}}"
+const bodyQuery =
+  "query SlopOriginalRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}"
+const commentId = /#issuecomment-([1-9]\d*)$/u
+
+function shas(parents: ReadonlyArray<ShaRef>) {
+  return JSON.stringify(parents.map(({ sha }) => sha))
+}
+
+export effect function nativeSyncOriginal(evidence: Evidence, expectedOrigin: CorrectionActor | null, maintainer: CorrectionActor, owners: ReadonlyMap<string, string>) {
+  if (!verifiedHuman(expectedOrigin) || !verifiedHuman(maintainer) || evidence.pull.user.node_id !== expectedOrigin.id || evidence.pull.user.type !== expectedOrigin.kind) return false
+  const source = try richSource(evidence, owners)
+  const origin = source.author
+  if (!verifiedHuman(origin)) return false
+  const commits = new Map(evidence.commits.map((commit) => [commit.sha, commit]))
+  const originShas = new Set<string>()
+  const repairs: string[] = []
+  for (const commit of source.commits) {
+    if (commit.parentCount > 1) {
+      const raw = commits.get(commit.sha)
+      const resolutions = evidence.mergeResolutions?.filter((resolution) => resolution.commitSha === commit.sha)
+      const [resolution] = resolutions ?? []
+      if (raw === undefined || resolutions?.length !== 1 || resolution === undefined) return false
+      const changes = mergeResolutionLineCounts(resolution, raw)
+      if (changes === null || changes.length > 0) return false
+      continue
+    }
+    if (commit.firstAcceptedSourceId !== source.sourceId) return false
+    const actors = implementationCreditActors(origin, [commit.author])
+    const [actor] = actors
+    if (actors.length !== 1 || actor === undefined) return false
+    if (actor.id === origin.id) originShas.add(commit.sha)
+    else if (actor.id === maintainer.id) repairs.push(commit.sha)
+    else return false
+  }
+  if (originShas.size === 0) return false
+  const ancestors = (head: string) => {
+    const found = new Set<string>()
+    const pending = [head]
+    for (const sha of pending) {
+      if (found.has(sha)) continue
+      found.add(sha)
+      pending.push(...(commits.get(sha)?.parents.map((parent) => parent.sha) ?? []))
+    }
+    return found
+  }
+  const reachable = ancestors(source.headSha)
+  return source.commits.every((commit) => reachable.has(commit.sha)) &&
+    repairs.every((sha) => [...originShas].some((originSha) => ancestors(sha).has(originSha)))
+}
+
+export effect function authenticateOriginalFollowupParents(source: CorrectionSource, evidence: Evidence) {
+  const commits = [...source.commits]
+  for (const [index, commit] of evidence.commits.entries()) {
+    const parentShas = commit.parents.map(({ sha }) => sha)
+    if (!isOid(commit.sha) || !parentShas.every(isOid) || new Set(parentShas).size !== parentShas.length || parentShas.includes(commit.sha)) {
+      throw refused("October original Git parent evidence is malformed")
+    }
+    const immutable = try answer(`/repos/${source.repository}/git/commits/${commit.sha}`, GitObject)
+    const target = commits[index]
+    if (immutable?.sha !== commit.sha || shas(immutable.parents) !== JSON.stringify(parentShas) || target === undefined) {
+      throw refused("October original Git parent evidence is unavailable or inconsistent")
+    }
+    commits[index] = { ...target, parentShas }
+  }
+  return { ...source, commits } satisfies CorrectionSource
+}
+
+export effect function nativeComparison(repository: string, base: string, head: string, page = 1) {
+  const result = try answer(`/repos/${repository}/compare/${base}...${head}?per_page=100&page=${page}`, NativeComparison)
+  if (
+    result === undefined || result.base_commit.sha !== base || !isOid(result.merge_base_commit.sha) ||
+    !Number.isSafeInteger(result.ahead_by) || result.ahead_by < 0 || !Number.isSafeInteger(result.behind_by) || result.behind_by < 0 ||
+    !Number.isSafeInteger(result.total_commits) || result.total_commits < 0
+  ) throw refused("October exact source comparison is incomplete")
+  return result
+}
+
+export effect function authenticateNativeAcceptedRange(source: CorrectionSource, evidence: Evidence, merge: NativeMerge, requiredShas: ReadonlyArray<string>) {
+  const firstParent = merge.parents[0]?.sha
+  if (firstParent === undefined) throw refused("October exact accepted range differs from the complete census")
+  const expected = new Map(evidence.commits.map((commit) => [commit.sha, commit]))
+  const acceptedRange: NativeComparison[] = []
+  const observed = new Set<string>()
+  let acceptedCount: number | null = null
+  for (let page = 1; page <= Math.ceil((acceptedCount ?? expected.size + 1) / 100); page++) {
+    const range = try nativeComparison(source.repository, firstParent, merge.sha, page)
+    if (
+      range.status !== "ahead" || range.behind_by !== 0 || range.merge_base_commit.sha !== firstParent || range.total_commits <= 0 ||
+      range.total_commits > expected.size + 1 || (acceptedCount !== null && range.total_commits !== acceptedCount) ||
+      range.ahead_by !== range.total_commits || range.commits.length !== Math.min(100, range.total_commits - (page - 1) * 100)
+    ) throw refused("October exact accepted range differs from the complete census")
+    acceptedCount = range.total_commits
+    for (const commit of range.commits) {
+      const canonical = commit.sha === merge.sha ? merge : expected.get(commit.sha)
+      if (canonical === undefined || observed.has(commit.sha) || shas(commit.parents) !== shas(canonical.parents)) {
+        throw refused("October exact accepted range has an unknown or repeated Git object")
+      }
+      observed.add(commit.sha)
+    }
+    acceptedRange.push(range)
+  }
+  if (
+    observed.size !== acceptedCount || !observed.has(merge.sha) || !requiredShas.every((sha) => observed.has(sha)) ||
+    !source.commits.every((commit) => !correctionClaimCommit(commit) || commit.firstAcceptedSourceId !== source.sourceId || observed.has(commit.sha))
+  ) throw refused("October exact accepted range is incomplete")
+  const authenticated = try authenticateOriginalFollowupParents(source, evidence)
+  const omitted = new Map(authenticated.commits.filter((commit) => !observed.has(commit.sha)).map((commit) => [commit.sha, commit]))
+  const nonHeads = new Set([...omitted.values()].flatMap((commit) => (commit.parentShas ?? []).filter((parent) => omitted.has(parent))))
+  const retainedBaseRanges: NativeComparison[] = []
+  const inherited = new Set<string>()
+  for (const commit of omitted.values()) {
+    if (nonHeads.has(commit.sha)) continue
+    const baseRange = try nativeComparison(source.repository, commit.sha, firstParent)
+    if (!["ahead", "identical"].includes(baseRange.status) || baseRange.behind_by !== 0 || baseRange.merge_base_commit.sha !== commit.sha) {
+      throw refused("October omitted PR commit is not in the native accepted base")
+    }
+    retainedBaseRanges.push(baseRange)
+    const pending = [commit.sha]
+    for (const id of pending) {
+      if (inherited.has(id)) continue
+      inherited.add(id)
+      pending.push(...(omitted.get(id)?.parentShas ?? []).filter((parent) => omitted.has(parent)))
+    }
+  }
+  if (inherited.size !== omitted.size) throw refused("October omitted PR ancestry is incomplete")
+  return { acceptedRange, retainedBaseRanges, source: authenticated }
+}
+
+export effect function historicalRepairBody(original: WorkUnitSource, integration: WorkUnitSource) {
+  const github = try GitHub
+  const evidence = integration.evidence
+  const pull = evidence.pull
+  const [owner, name] = evidence.repository.split("/")
+  const data = try github.graphql(historyQuery, { owner, name, number: pull.number }, HistoryAnswer)
+  const current = data.repository?.pullRequest ?? undefined
+  const history = current?.userContentEdits ?? undefined
+  const listed = history?.nodes ?? null
+  const nodes = listed?.flatMap((edit) => edit === null ? [] : [edit]) ?? []
+  if (
+    data.repository?.id !== evidence.repositoryNodeId || current === undefined || current.id !== pull.node_id || current.body !== pull.body ||
+    current.headRefOid !== pull.head.sha || current.mergedAt !== pull.merged_at || current.updatedAt !== pull.updated_at || history === undefined ||
+    history.pageInfo.hasNextPage !== false || listed === null || nodes.length !== listed.length || nodes.some((edit) => edit.id === "") ||
+    !Number.isSafeInteger(history.totalCount) || history.totalCount !== nodes.length || new Set(nodes.map((edit) => edit.id)).size !== nodes.length ||
+    !nodes.some((edit) => edit.diff === current.body && edit.editedAt === current.lastEditedAt && edit.deletedAt === null)
+  ) return undefined
+  const edits = nodes
+    .filter((edit) =>
+      edit.id.length > 0 && edit.deletedAt === null && edit.editor?.__typename === "User" && edit.editor.id === pull.merged_by?.node_id &&
+      edit.createdAt === edit.editedAt && edit.updatedAt === edit.editedAt && Number.isFinite(Date.parse(edit.editedAt)) &&
+      Date.parse(edit.editedAt) <= Date.parse(pull.merged_at ?? "") && typeof edit.diff === "string" &&
+      sameRepositoryCommitHints(evidence.repository, edit.diff).includes(pull.head.sha) &&
+      referencesOriginalContributorSource(edit.diff, evidence.repository, original.evidence.pull.number))
+    .sort((a, b) => Date.parse(b.editedAt) - Date.parse(a.editedAt) || a.id.localeCompare(b.id))
+  if (edits.length === 0) return undefined
+  const head = try answer(`/repos/${evidence.repository}/git/commits/${pull.head.sha}`, HeadObject)
+  if (head === undefined || head.sha !== pull.head.sha || !Number.isFinite(Date.parse(head.committer.date))) return undefined
+  const edit = edits.find((entry) => Date.parse(head.committer.date) <= Date.parse(entry.editedAt))
+  const diff = edit?.diff ?? null
+  const editorId = edit?.editor?.id
+  if (edit === undefined || diff === null || edit.editor === null || editorId === undefined) return undefined
+  return {
+    id: edit.id,
+    createdAt: edit.createdAt,
+    editedAt: edit.editedAt,
+    updatedAt: edit.updatedAt,
+    deletedAt: null,
+    diff,
+    editor: { id: editorId, type: edit.editor.__typename },
+    headCommit: { sha: head.sha, committedAt: head.committer.date },
+  } satisfies HistoricalBodyEdit
+}
+
+effect function unchangedComment(repository: string, comment: Comment, fresh: Map<string, boolean>) {
+  const id = commentId.exec(comment.html_url)?.[1]
+  if (id === undefined) return false
+  const known = fresh.get(comment.html_url)
+  if (known !== undefined) return known
+  const current = try answer(`/repos/${repository}/issues/comments/${id}`, Comment)
+  const unchanged = current !== undefined && current.node_id === comment.node_id && current.html_url === comment.html_url && current.body === comment.body &&
+    current.created_at === comment.created_at && current.updated_at === comment.updated_at && current.user?.node_id === comment.user?.node_id &&
+    current.user?.type === comment.user?.type
+  fresh.set(comment.html_url, unchanged)
+  return unchanged
+}
+
+effect function sealedRepair(sourceId: string, commitSha: string, authorNodeId: string | null, reference: Reference) {
+  return { sourceId, commitSha, authorNodeId, reference: { ...reference, digest: try sha256Hex(JSON.stringify(reference)) } } satisfies OriginalContributorRepair
+}
+
+effect function bodyReference(original: WorkUnitSource, integration: WorkUnitSource, source: WorkUnitSource, bodyHeadHint: string, sourceDigests: Reference["sourceDigests"]) {
+  const github = try GitHub
+  const pull = source.evidence.pull
+  const [owner, name] = source.evidence.repository.split("/")
+  const data = try github.graphql(bodyQuery, { owner, name, number: pull.number }, BodyAnswer)
+  const body = data.repository?.pullRequest ?? undefined
+  if (
+    body === undefined || body.id !== pull.node_id || body.body !== pull.body || body.headRefOid !== pull.head.sha || body.mergedAt !== pull.merged_at ||
+    body.updatedAt !== pull.updated_at
+  ) return undefined
+  const authorId = body.author.id
+  const editor = body.editor
+  const editorId = editor?.id
+  if (authorId === undefined || (editor !== null && editorId === undefined)) return undefined
+  let resolvedHead: Reference["resolvedHead"] = undefined
+  if (bodyHeadHint !== pull.head.sha) {
+    const resolved = try answer(`/repos/${source.evidence.repository}/commits/${bodyHeadHint}`, ShaRef)
+    if (resolved?.sha !== pull.head.sha) return undefined
+    resolvedHead = { hint: bodyHeadHint, commitSha: resolved.sha }
+  }
+  const reference: Reference = {
+    sourceDigests,
+    pull,
+    acceptingPull: integration.evidence.pull,
+    headSha: pull.head.sha,
+    ...(resolvedHead === undefined ? {} : { resolvedHead }),
+    bodyEdit: {
+      id: body.id,
+      body: body.body,
+      headRefOid: body.headRefOid,
+      mergedAt: body.mergedAt,
+      updatedAt: body.updatedAt,
+      lastEditedAt: body.lastEditedAt,
+      editor: editor === null || editorId === undefined ? null : { id: editorId, type: editor.__typename },
+      author: { id: authorId, type: body.author.__typename },
+    },
+  }
+  return reference
+}
+
+export effect function acknowledgedOriginalRepairs(
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  originalSource: CorrectionSource,
+  accepted: CorrectionSource,
+  claims: ReadonlyArray<CorrectionClaim>,
+) {
+  const author = original.evidence.pull.user.node_id
+  const commits = accepted.commits.filter((commit) =>
+    claims.some((claim) => claim.commitSha === commit.sha) &&
+    (commit.author === null || (commit.author.id !== author && commit.author.id !== accepted.author?.id)))
+  if (commits.length === 0) return []
+  const repairs: OriginalContributorRepair[] = []
+  const parents = new Map([...accepted.commits, ...originalSource.commits].map((commit) => [commit.sha, commit.parentShas ?? []]))
+  const headContains = (head: string, commitSha: string) => {
+    const pending = [head]
+    const visited = new Set<string>()
+    for (const current of pending) {
+      if (current === commitSha) return true
+      if (visited.has(current)) continue
+      visited.add(current)
+      pending.push(...(parents.get(current) ?? []))
+    }
+    return false
+  }
+  const sourceDigests: Reference["sourceDigests"] = {
+    [originalSource.sourceId]: try sourceDigestOf(original.evidence, original.policy),
+    [accepted.sourceId]: try sourceDigestOf(integration.evidence, integration.policy),
+  }
+  const pairedPulls: CreatedPull[] = []
+  if (commits.some((commit) => commit.author === null)) {
+    for (const source of [original, integration]) {
+      const pull = try answer(`/repos/${source.evidence.repository}/pulls/${source.evidence.pull.number}`, CreatedPull)
+      if (pull !== undefined) pairedPulls.push(pull)
+    }
+  }
+  const [originalPull, acceptingPull] = pairedPulls
+  const currentPair = pairedPulls.length === 2 && originalPull !== undefined && acceptingPull !== undefined &&
+    [originalPull, acceptingPull].every((pull, index) => {
+      const expected = [original, integration][index]?.evidence.pull
+      return expected !== undefined && pull.node_id === expected.node_id && pull.number === expected.number && pull.html_url === expected.html_url &&
+        pull.head.sha === expected.head.sha && pull.state === expected.state && pull.merged_at === expected.merged_at &&
+        pull.merge_commit_sha === expected.merge_commit_sha && pull.updated_at === expected.updated_at && pull.user.node_id === expected.user.node_id &&
+        pull.merged_by?.node_id === expected.merged_by?.node_id && pull.merged_by?.type === expected.merged_by?.type && Number.isFinite(Date.parse(pull.created_at))
+    })
+  const fresh = new Map<string, boolean>()
+  for (const commit of commits) {
+    if (commit.author === null) {
+      if (!currentPair || originalPull === undefined || acceptingPull === undefined) continue
+      for (const originalComment of original.evidence.comments) {
+        for (const acceptedComment of integration.evidence.comments) {
+          const repair = try sealedRepair(accepted.sourceId, commit.sha, null, {
+            sourceDigests,
+            pull: acceptingPull,
+            acceptingPull,
+            acknowledgement: acceptedComment,
+            originalAcknowledgement: { pull: originalPull, comment: originalComment },
+            headSha: accepted.headSha,
+          })
+          if (!(try isOriginalContributorRepair(repair, originalSource, accepted, commit)) || !headContains(accepted.headSha, commit.sha)) continue
+          if (!(try unchangedComment(accepted.repository, originalComment, fresh))) continue
+          if (!(try unchangedComment(accepted.repository, acceptedComment, fresh))) continue
+          repairs.push(repair)
+          break
+        }
+        if (repairs.some((repair) => repair.commitSha === commit.sha)) break
+      }
+      continue
+    }
+    for (const source of [original, integration]) {
+      const pull = source.evidence.pull
+      const bodyHints = sameRepositoryCommitHints(source.evidence.repository, pull.body ?? "")
+      const bodyHeadHint = bodyHints.includes(pull.head.sha)
+        ? pull.head.sha
+        : source === original ? bodyHints.find((hint) => pull.head.sha.startsWith(hint)) : undefined
+      const matching = retainedAcknowledgements(source.evidence).find((record) =>
+        record.user?.node_id === integration.evidence.pull.merged_by?.node_id && record.user?.type === "User" &&
+        Number.isFinite(Date.parse(acknowledgementTime(record))) && (!("updated_at" in record) || record.updated_at === acknowledgementTime(record)) &&
+        sameRepositoryCommitHints(source.evidence.repository, record.body).includes(pull.head.sha) &&
+        (source === original || referencesOriginalContributorSource(record.body, source.evidence.repository, original.evidence.pull.number)))
+      let reference: Reference | undefined
+      if (matching !== undefined && Number.isFinite(Date.parse(acknowledgementTime(matching)))) {
+        reference = { sourceDigests, pull, acceptingPull: integration.evidence.pull, acknowledgement: matching, headSha: pull.head.sha }
+      } else if (
+        bodyHeadHint !== undefined &&
+        (source === original || referencesOriginalContributorSource(pull.body ?? "", source.evidence.repository, original.evidence.pull.number))
+      ) {
+        reference = try bodyReference(original, integration, source, bodyHeadHint, sourceDigests)
+      }
+      const bodyEdit = reference?.bodyEdit
+      if (reference !== undefined && bodyEdit !== undefined && Date.parse(bodyEdit.lastEditedAt ?? "") > Date.parse(integration.evidence.pull.merged_at ?? "")) {
+        const historicalBodyEdit = try historicalRepairBody(original, integration)
+        if (historicalBodyEdit !== undefined) reference = { ...reference, historicalBodyEdit }
+      }
+      if (reference === undefined || !headContains(reference.headSha, commit.sha)) continue
+      const repair = try sealedRepair(pull.node_id, commit.sha, commit.author.id, reference)
+      if (try isOriginalContributorRepair(repair, originalSource, accepted, commit)) {
+        repairs.push(repair)
+        break
+      }
+    }
+  }
+  return repairs
+}

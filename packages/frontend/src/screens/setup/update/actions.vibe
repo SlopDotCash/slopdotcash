@@ -1,10 +1,12 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
-import { publicProject } from "@repo/backend/client"
-import { type EditorAccountChanged, publishRevision, removeProject, requireEditorActor } from "../../../flows/projects/api.vibe"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
+import { route } from "@repo/platform/route"
+import { publicProject, reviseProject } from "@repo/backend/client"
+import { type EditorAccountChanged, projectReplyLimitBytes, publishRevision, removeProject, requireEditorActor } from "../../../flows/projects/api.vibe"
 import { ProjectDrafts, draftSaver, legacyUpdateDraft, projectDrafts, updateDraftKey } from "../../../flows/projects/draftStore.vibe"
 import { type CallFailure, call } from "../../../platform/api.vibe"
 import { bootedRegistry, findProject } from "../../../reads/registry.vibe"
 import { Session } from "../../../session/session.vibe"
+import type { BranchRequest } from "./revision.ts"
 
 export const revisionLimitBytes = 2_097_152
 export const revisionUnreadable = "Cannot read the current revision."
@@ -12,8 +14,14 @@ export const publicationUnconfirmed = "Publication could not be confirmed."
 export const removalUnconfirmed = "Removal could not be confirmed. Try again."
 export const monthChanged = "The month changed, so an added repository counts from a later month. Reload the page, then publish again."
 
+schema BranchHead { readonly name: string; readonly commitSha: string }
+
+schema BranchChange { readonly expectedRevision: number; readonly integrationBranch: BranchHead; readonly contribution?: Schema.Unknown }
+
+const moveBranch = route({ ...reviseProject, request: BranchChange })
+
 export error RevisionUnavailable { message: string }
-export error EditorRefused { message: string; staleRevision: boolean; accessLost: boolean }
+export error EditorRefused { message: string; staleRevision: boolean; accessLost: boolean; branchMoved: boolean }
 
 export interface CurrentRevision {
   readonly projectId: string
@@ -27,6 +35,7 @@ export interface Publication {
   readonly expectedRevision: number
   readonly monthlyAmount: string | null
   readonly actor: string
+  readonly branch?: BranchRequest
 }
 
 type Failure = CallFailure | EditorAccountChanged
@@ -65,12 +74,21 @@ effect function refused(failure: Failure, actor: string, fallback: string) {
     message: code === "invalid_repository_start" ? monthChanged : checked.message === "" ? fallback : checked.message,
     staleRevision: code === "stale_revision",
     accessLost: lost,
+    branchMoved: code === "branch_head_changed",
   })
+}
+
+effect function sent(publication: Publication) {
+  if (publication.branch !== undefined) {
+    const body = { expectedRevision: publication.expectedRevision, ...publication.branch }
+    return try call(moveBranch, { body, params: { id: publication.projectId } }, { limitBytes: projectReplyLimitBytes, expectedActor: publication.actor })
+  }
+  return try publishRevision({ projectId: publication.projectId, manifest: publication.manifest, expectedRevision: publication.expectedRevision, note: "", monthlyAmount: publication.monthlyAmount, expectedActor: publication.actor })
 }
 
 effect function published(publication: Publication) {
   try requireEditorActor(publication.actor)
-  const answer = try publishRevision({ projectId: publication.projectId, manifest: publication.manifest, expectedRevision: publication.expectedRevision, note: "", monthlyAmount: publication.monthlyAmount, expectedActor: publication.actor })
+  const answer = try sent(publication)
   try requireEditorActor(publication.actor)
   return answer
 }

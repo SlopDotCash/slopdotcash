@@ -1,0 +1,188 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type World, commit, origin, project, read, rows, signed, signingKeySha256, started, template } from "./support/admission/harness.ts"
+
+service Enforcing { readonly world: World }
+
+const accountProject = "account-entries"
+const clearProject = "requeue-clear"
+const pausedProject = "requeue-paused"
+const staleTemplate = "e".repeat(64)
+const maliciousScan = `vet_${"7".repeat(32)}`
+const clearRetry = `vet_${"8".repeat(32)}`
+const pausedRetry = `vet_${"9".repeat(32)}`
+const serviceBan = `enf_${"a".repeat(32)}`
+const moderatorBan = `enf_${"b".repeat(32)}`
+const accountAppeal = `enf_${"c".repeat(32)}`
+const accountRelease = `enf_${"d".repeat(32)}`
+const pausedFlags = [`flg_${pausedProject}_1`, `flg_${pausedProject}_2`]
+const clearFlag = `flg_${clearProject}_1`
+const githubIds: Readonly<Record<string, number>> = { [accountProject]: 7101, [clearProject]: 7201, [pausedProject]: 7301 }
+const evidence = "Install script posts the wallet seed phrase to a remote host"
+const minute = 60_000
+const base = Date.now() - 4 * 60 * minute
+
+function at(minutes: number) {
+  return new Date(base + minutes * minute).toISOString()
+}
+
+function pathOf(id: string) {
+  return `slop-test/${id}`
+}
+
+function manifestOf(id: string) {
+  return JSON.stringify({
+    id,
+    name: `Enforcement fixture ${id}`,
+    status: "active",
+    listingTier: "community",
+    steward: { github: { type: "User", actorId: "900", login: "steward", nodeId: "U_steward" } },
+    authority: { repositoryId: githubIds[id], repositoryNodeId: `R_${githubIds[id]}` },
+    terms: { repositoryLicense: { state: "verified", spdx: "MIT", url: "https://example.test/license", commitSha: "a".repeat(40), fileSha256: "b".repeat(64) } },
+    repositories: [{ id: pathOf(id), integrationBranch: "main" }],
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "none" },
+    funding: {},
+  })
+}
+
+function maliciousResult() {
+  return JSON.stringify({ schemaVersion: "slop-vetting-result-v2", assessmentId: maliciousScan, projectId: accountProject, revision: 1, manifestSha256: "a".repeat(64), disposition: "malicious", policyVersion: "slop-scan-policy-v2", assessed: { repository: pathOf(accountProject), commitSha: commit, templateSha256: template, inputManifestSha256: "b".repeat(64), dependencyLocks: [] } })
+}
+
+function fixtures(world: World) {
+  const { db } = world
+  const listed = (id: string) => [
+    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)").bind(id, manifestOf(id), "a".repeat(64), "Enforcement fixture", at(0)),
+    db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(id, manifestOf(id), "a".repeat(64), at(0), at(0)),
+  ]
+  const queued = (id: string, assessment: string, templateSha256: string, requested: number, flagIds: ReadonlyArray<string>) =>
+    db.prepare(`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state,repository_id,flag_ids)
+      VALUES(?,?,1,?,?,?,?,'900','steward',?,'Automatic scan of new project content','pending',?,?)`).bind(assessment, id, "a".repeat(64), "b".repeat(64), commit, templateSha256, at(requested), pathOf(id), JSON.stringify(flagIds))
+  const flagged = (id: string, flag: string, reporter: number, filed: number) =>
+    db.prepare("INSERT INTO project_flags(id,project_id,reporter_github_id,reporter_github_login,revision,manifest_sha256,category,evidence,evidence_url,created_at) VALUES(?,?,?,?,1,?,'wallet-drainer',?,NULL,?)").bind(flag, id, String(reporter), `flagger-${reporter}`, "a".repeat(64), evidence, at(filed))
+  const recorded = (id: string, record: { readonly id: string; readonly sequence: number; readonly action: string; readonly stateAfter: string; readonly appealAfter: string; readonly actor: string | null; readonly issuer: unknown; readonly role: string; readonly source: string; readonly minutes: number }) =>
+    db.prepare(`INSERT INTO project_enforcements(id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+      VALUES(?,?,?,?,?,?,'Recorded enforcement decision','evidence:fixture',?,?,?,?,?,?,?,1,?,NULL,NULL,'no_revision_needed',?)`)
+      .bind(record.id, id, record.sequence, record.action, record.stateAfter, record.appealAfter, String(githubIds[id]), JSON.stringify([pathOf(id)]), record.actor, record.actor === null ? null : `member-${record.actor}`, record.issuer === null ? null : JSON.stringify(record.issuer), record.role, record.source, "a".repeat(64), at(record.minutes))
+  const moderator = { issuer: null, role: "project-moderator", source: "admin-panel" }
+  world.heads.set(pathOf(clearProject), commit)
+  world.heads.set(pathOf(pausedProject), commit)
+  return db.batch([
+    ...listed(accountProject),
+    db.prepare(`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state,repository_id,flag_ids,policy_version,result,result_sha256,signing_key_sha256,completed_at)
+      VALUES(?,?,1,?,?,?,?,'900','steward',?,'Automatic scan of new project content','malicious',?,'[]','slop-scan-policy-v2',?,?,?,?)`).bind(maliciousScan, accountProject, "a".repeat(64), "b".repeat(64), commit, template, at(1), pathOf(accountProject), maliciousResult(), "f".repeat(64), signingKeySha256, at(2)),
+    recorded(accountProject, { id: serviceBan, sequence: 1, action: "ban", stateAfter: "banned", appealAfter: "none", actor: null, issuer: { kind: "vetting-service", keySha256: signingKeySha256, assessmentId: maliciousScan, policyVersion: "slop-scan-policy-v2", rule: "confirmed-malicious-scan" }, role: "vetting-service", source: "standing-rule", minutes: 3 }),
+    recorded(accountProject, { id: moderatorBan, sequence: 2, action: "ban", stateAfter: "banned", appealAfter: "none", actor: "801", ...moderator, minutes: 4 }),
+    db.prepare("INSERT INTO project_maintainer_bans(enforcement_id,github_id,github_login) VALUES(?,'950','member-950')").bind(moderatorBan),
+    recorded(accountProject, { id: accountAppeal, sequence: 3, action: "request_reinstatement", stateAfter: "banned", appealAfter: "requested", actor: "950", issuer: null, role: "banned-account", source: "account-request", minutes: 5 }),
+    recorded(accountProject, { id: accountRelease, sequence: 4, action: "reinstate_accounts", stateAfter: "banned", appealAfter: "granted", actor: "802", ...moderator, minutes: 6 }),
+    db.prepare("INSERT INTO project_account_reinstatements(enforcement_id,ban_enforcement_id,github_id) VALUES(?,?,'950')").bind(accountRelease, moderatorBan),
+    ...listed(clearProject),
+    queued(clearProject, clearRetry, staleTemplate, 1, []),
+    flagged(clearProject, clearFlag, 501, 2),
+    ...listed(pausedProject),
+    flagged(pausedProject, pausedFlags[0] ?? "", 501, 1),
+    flagged(pausedProject, pausedFlags[1] ?? "", 502, 2),
+    recorded(pausedProject, { id: `enf_flags_${"e".repeat(32)}`, sequence: 1, action: "quarantine", stateAfter: "quarantined", appealAfter: "none", actor: null, issuer: { kind: "contributor-flags", threshold: 2, flagIds: pausedFlags }, role: "contributor-flags", source: "standing-rule", minutes: 3 }),
+    queued(pausedProject, pausedRetry, staleTemplate, 4, pausedFlags),
+  ])
+}
+
+const Started = Layer.effect(Enforcing, effect {
+  const world = try acquireRelease(promise(() => started()), (running) => promise(() => running.mf.dispose()))
+  try promise(() => fixtures(world))
+  return { world }
+})
+
+let sessions = 0
+
+effect function posted(world: World, path: string, body: unknown, as: string) {
+  sessions += 1
+  const token = `e${as.padStart(20, "0")}${String(sessions).padStart(8, "0")}${"z".repeat(35)}`
+  const hash = try Effect.provide(sha256Hex(new TextEncoder().encode(token)), webCrypto)
+  try promise(() => world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${as}`, as, `member-${as}`, new Date().toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(hash, `actor-${as}`, new Date(Date.now() + 3_600_000).toISOString()),
+  ]))
+  const response = try promise(() => world.mf.dispatchFetch(`${origin}${path}`, {
+    method: "POST",
+    headers: { cookie: `__Host-slop_points=${token}`, "x-slop-expected-github-id": as, origin, "content-type": "application/json" },
+    body: JSON.stringify(body),
+    redirect: "manual",
+  }))
+  const answered: unknown = try promise(() => response.json())
+  return { status: response.status, error: (answered as { readonly error?: string }).error ?? null }
+}
+
+interface Overview {
+  readonly projects?: ReadonlyArray<{ readonly id: string; readonly clearance: { readonly state: string } | null }>
+}
+
+effect function clearances(world: World) {
+  const overview = try promise(() => read(world, "/api/v1/admin/vetting", "801"))
+  const projects = (overview.body as Overview).projects ?? []
+  return { status: overview.status, states: Object.fromEntries(projects.map((each) => [each.id, each.clearance?.state ?? null])) }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('An administrator grants an owner-approved exemption with only a reason and a decision reference (spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan")', () => effect {
+    const { world } = try Enforcing
+    const decision = { projectId: project, revision: 1, reason: "Owner-approved fork of an audited upstream", decisionReference: "owner-decision-2026-10-27", confirmation: true }
+    const invented = try posted(world, "/api/v1/admin/vetting/exemptions", { ...decision, branch: "main", head: commit }, "801")
+    const unconfirmed = try posted(world, "/api/v1/admin/vetting/exemptions", { ...decision, confirmation: false }, "801")
+    const granted = try posted(world, "/api/v1/admin/vetting/exemptions", decision, "801")
+    const stored = try promise(() => rows(world, "SELECT revision, repository_id, repository_node_id, steward_id, granted_by_github_id, reason, decision_reference FROM vetting_admission_exemptions WHERE project_id = ?", project))
+    const after = try clearances(world)
+    try Effect.try(() => assert.deepStrictEqual({
+      answers: [invented, unconfirmed, granted].map((answer) => [answer.status, answer.error]),
+      stored,
+      replayed: [after.status, after.states[project] !== null],
+    }, {
+      answers: [[400, "invalid_request"], [400, "confirmation_required"], [201, null]],
+      stored: [{ revision: 1, repository_id: "4101", repository_node_id: "R_admission", steward_id: "900", granted_by_github_id: "801", reason: decision.reason, decision_reference: decision.decisionReference }],
+      replayed: [200, true],
+    }))
+  })
+
+  it.effect('A project journal holding an account appeal and an account reinstatement still reads and keeps its ban (spec/security/enforcement.md, "Account entries share the project journal without changing its restriction"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision")', () => effect {
+    const { world } = try Enforcing
+    const overview = try clearances(world)
+    const journal = try promise(() => rows(world, "SELECT sequence, action, actor_role FROM project_enforcements WHERE project_id = ? ORDER BY sequence", accountProject))
+    try Effect.try(() => assert.deepStrictEqual({ status: overview.status, state: overview.states[accountProject], journal }, {
+      status: 200,
+      state: "banned",
+      journal: [
+        { sequence: 1, action: "ban", actor_role: "vetting-service" },
+        { sequence: 2, action: "ban", actor_role: "project-moderator" },
+        { sequence: 3, action: "request_reinstatement", actor_role: "banned-account" },
+        { sequence: 4, action: "reinstate_accounts", actor_role: "project-moderator" },
+      ],
+    }))
+  })
+
+  it.effect('A replaced template requeues the pending scan of a clear project with the current flags and leaves a paused project alone (spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/security/admission.md, "A replaced template requeues the pending assessment with its original commit")', () => effect {
+    const { world } = try Enforcing
+    const refreshed = try promise(() => signed(world, "POST", "/api/v1/vetting/refresh", "{}"))
+    const clear = try promise(() => rows(world, "SELECT id, commit_sha, template_sha256, flag_ids, replaces_assessment_id, state FROM vetting_assessments WHERE project_id = ? ORDER BY rowid", clearProject))
+    const paused = try promise(() => rows(world, "SELECT id, template_sha256, replaces_assessment_id FROM vetting_assessments WHERE project_id = ? ORDER BY rowid", pausedProject))
+    const requeued = String(clear[1]?.id ?? "")
+    const queued = (refreshed.body as { readonly queued?: ReadonlyArray<string> }).queued ?? []
+    const after = try clearances(world)
+    try Effect.try(() => assert.deepStrictEqual({
+      status: refreshed.status,
+      queued: queued.includes(requeued),
+      clear: clear.map((row) => ({ ...row, id: row.id === requeued ? "requeued" : row.id })),
+      paused,
+      replayed: [after.states[clearProject] !== null, after.states[pausedProject] !== null],
+    }, {
+      status: 200,
+      queued: true,
+      clear: [
+        { id: clearRetry, commit_sha: commit, template_sha256: staleTemplate, flag_ids: "[]", replaces_assessment_id: null, state: "pending" },
+        { id: "requeued", commit_sha: commit, template_sha256: template, flag_ids: JSON.stringify([clearFlag]), replaces_assessment_id: clearRetry, state: "pending" },
+      ],
+      paused: [{ id: pausedRetry, template_sha256: staleTemplate, replaces_assessment_id: null }],
+      replayed: [true, true],
+    }))
+  })
+})

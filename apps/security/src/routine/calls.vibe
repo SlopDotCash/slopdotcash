@@ -1,0 +1,76 @@
+// spec/security/routineDecisions.md, "Two independent calls must agree before a close, and a plausible loss of funds closes nothing"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"
+import { isoAt } from "@repo/platform/clock"
+import { depositHeldOn } from "../deposit/hold.ts"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { type EarlierReport, type RoutineInput, type RoutineProposal, routineMessage, routinePrompt, routinePromptRevision, routineProposal } from "../analysis/prompts.ts"
+import { privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
+import { caseReceipt, exactReport } from "../assessment/store.vibe"
+import { routineClosingLines } from "../program/exclusions.ts"
+import { routineActorGithubId } from "./reasons.ts"
+import type { CallAudit } from "./store.vibe"
+
+export interface CallTarget {
+  readonly caseId: string
+  readonly submissionId: string
+  readonly reportVersion: number
+  readonly nowMs: number
+  readonly timeoutMs: number
+}
+
+export type CallResult =
+  | { readonly kind: "failed"; readonly calls: ReadonlyArray<CallAudit> }
+  | { readonly kind: "answered"; readonly first: RoutineProposal; readonly second: RoutineProposal; readonly calls: ReadonlyArray<CallAudit>; readonly closing: ReadonlyArray<string>; readonly proofFile: boolean }
+
+schema Earlier { id: string; summary: string | null }
+
+const earlierLimit = 25
+const earlierSummaryChars = 1200
+const nothingSent: CallResult = { kind: "failed", calls: [] }
+
+function audit(state: CallAudit["state"]): CallAudit {
+  return { provider: privateProvider, model: privateModel, promptRevision: routinePromptRevision, state }
+}
+
+effect function earlierReports(caseId: string) {
+  const found = try rows(Earlier, sql`SELECT c.id, (SELECT a.summary FROM security_case_analyses a
+      LEFT JOIN security_submission_intake i ON i.case_id = a.case_id
+      WHERE a.case_id = c.id AND a.state = 'complete' AND a.report_version IS i.report_version
+      ORDER BY a.attempt DESC LIMIT 1) AS summary
+    FROM security_cases c, security_cases r
+    WHERE r.id = ${caseId} AND c.project_id = r.project_id AND c.id <> r.id
+      AND c.submission_state = 'verified'
+      AND (c.received_at < r.received_at OR (c.received_at = r.received_at AND c.rowid < r.rowid))
+      AND NOT ${depositHeldOn("c.id")}
+    ORDER BY c.received_at DESC, c.rowid DESC LIMIT ${earlierLimit}`)
+  return found.flatMap((entry) => entry.summary === null || entry.summary === "" ? [] : [{ id: entry.id, summary: entry.summary.slice(0, earlierSummaryChars) } satisfies EarlierReport])
+}
+
+effect function oneCall(input: RoutineInput, timeoutMs: number) {
+  const answer = try privateCall(routinePrompt, routineMessage(input), timeoutMs)
+  return answer.kind === "answered" ? routineProposal(answer.text, input) : undefined
+}
+
+export effect function routineCalls(target: CallTarget) {
+  if (!(try privateRouteReady())) return nothingSent
+  const report = try exactReport(target.submissionId, target.reportVersion)
+  if (report === undefined) return nothingSent
+  const { scope } = try caseReceipt(target.caseId)
+  if (scope.kind !== "scope") return nothingSent
+  const published = scope.scope
+  const closing = published === null ? [] : routineClosingLines(published.doesNotQualify)
+  const input: RoutineInput = {
+    report,
+    scope: published === null ? null : { includedAssets: [...published.includedAssets], severityRubric: published.severityRubric, lossDefinition: published.lossDefinition },
+    doesNotQualify: closing,
+    earlierReports: try earlierReports(target.caseId),
+  }
+  try (try D1).run(sql`INSERT INTO security_intake_access_log(submission_id, actor_github_id, action, at) VALUES (${target.submissionId}, ${routineActorGithubId}, 'read', ${try isoAt(target.nowMs)})`)
+  const reversed: RoutineInput = { ...input, doesNotQualify: [...input.doesNotQualify].reverse(), earlierReports: [...input.earlierReports].reverse() }
+  const [first, second] = try Effect.all([oneCall(input, target.timeoutMs), oneCall(reversed, target.timeoutMs)], { concurrency: 2 })
+  const calls = [audit(first === undefined ? "failed" : "answered"), audit(second === undefined ? "failed" : "answered")]
+  if (first === undefined || second === undefined) {
+    try Effect.logError("security routine decision call failed")
+    return { kind: "failed", calls } satisfies CallResult
+  }
+  return { kind: "answered", first, second, calls, closing, proofFile: report.proofOfConcept !== undefined && report.proofOfConcept !== null } satisfies CallResult
+}

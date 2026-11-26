@@ -1,0 +1,452 @@
+// spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/assessmentAudit.md, "An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence"
+import { parsedJson, sha256Of } from "@repo/platform/git/bytes"
+import type { SourceAudit } from "../packet.vibe"
+import type { AssessmentCatalogRow, HistoricalAssessmentCatalog, HistoricalAssessmentHeads, Row } from "./catalog.vibe"
+import { type EmptyLegacyClosureFacts, type HistoricalEvidence, type JointCandidate, type VerifiedClosure, isStandaloneHistoricalReview } from "../replay/bindings.vibe"
+import type { Event } from "../../../../gen/points__assessmentAudit.ts"
+
+export error InvalidAssessmentJournal { message: string }
+
+export type SourceFinding = "audited-head" | "stale-head" | VerifiedClosure | "retained-removed-merge" | "conflicting-audit-binding" | "missing-from-merged-audit" | "outside-audit"
+
+export type Blocker = "incomplete-catalog" | "invalid-legacy-history" | "invalid-joint-history" | "conflicting-audit-binding" | "missing-from-merged-audit"
+
+export type ReceiptStatus = "no-scoped-active-assessments" | "requires-value-replay" | "incomplete"
+
+export interface ScopedSource {
+  readonly id: string
+  readonly number: number
+  readonly headSha: string
+  readonly auditedHeadSha: string | null
+  readonly occurredAt: string
+  readonly finding: SourceFinding
+}
+
+export interface ScopedRecord {
+  readonly journal: "legacy" | "joint"
+  readonly digest: string
+  readonly sequence: number
+  readonly sources: ReadonlyArray<ScopedSource>
+}
+
+export interface ReceiptScope {
+  readonly projectId: string
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly from: string
+  readonly through: string
+  readonly sourceAuditSha256: string
+}
+
+export interface HistoricalAssessmentReceipt {
+  readonly schemaVersion: "1"
+  readonly status: ReceiptStatus
+  readonly scope: ReceiptScope
+  readonly heads: HistoricalAssessmentHeads
+  readonly counts: { readonly auditedSources: number; readonly activeLegacyRecords: number; readonly activeJointRecords: number; readonly relevantRecords: number }
+  readonly records: ReadonlyArray<ScopedRecord>
+  readonly blockers: ReadonlyArray<Blocker>
+  readonly emptyLegacyClosures?: ReadonlyArray<ScopedRecord>
+  readonly receiptSha256: string
+}
+
+export interface ClassifiedScope {
+  readonly receipt: HistoricalAssessmentReceipt
+  readonly observations: ReadonlyArray<Observation>
+}
+
+export type Observation = Extract<Event, { type: "observe" | "observeEmptyLegacyClosure" }>
+
+interface Stored {
+  readonly row: AssessmentCatalogRow
+  readonly record: Row
+}
+
+interface Member {
+  readonly key: string
+  readonly owner: string | undefined
+}
+
+interface Parent {
+  readonly digest: string
+  readonly index: number
+  readonly record: Row | undefined
+}
+
+type Audited = SourceAudit["sources"][number]
+
+const shaPattern = /^[a-f0-9]{40}$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+const nodePattern = /^[A-Za-z0-9_=+/-]{1,256}$/u
+const projectPattern = /^[a-z0-9][a-z0-9-]{0,79}$/u
+const repositoryPathPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const identityLabel = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,95}$/u
+const rubricPattern = /^slop-value-\d{4}-\d{2}-\d{2}$/u
+const auditFrom = "2026-09-27T00:00:00.000Z"
+const auditThrough = "2026-11-01T00:00:00.000Z"
+const mergeProfiles: ReadonlyArray<string> = ["git-2.56.0-v1", "git-2.56.0-v2"]
+const triageSteps: ReadonlyArray<readonly [string, string]> = [["surplus", "claude-sonnet-5.5"], ["surplus", "gpt-6.1-terra"], ["orbio", "anthropic/claude-sonnet-5.5"]]
+const surplusModels: ReadonlyArray<string> = ["claude-opus-5.5", "gpt-6.1-sol"]
+const subscriptionChannels: Readonly<Record<string, string>> = { "chatgpt-subscription": "openai", "claude-subscription": "anthropic" }
+
+function matches(value: unknown, expression: RegExp): value is string {
+  return typeof value === "string" && expression.test(value)
+}
+
+function time(value: unknown): value is string {
+  return typeof value === "string" && /^20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/u.test(value) && Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString() === value.replace(/(?<!\.\d{3})Z$/u, ".000Z")
+}
+
+function isObject(value: unknown): value is Row {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function count(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+function positive(value: unknown): value is number {
+  return count(value) && value > 0
+}
+
+function list(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : []
+}
+
+function keysAre(value: Row, keys: string) {
+  return Object.keys(value).sort().join() === keys
+}
+
+effect function ensure(holds: boolean) {
+  if (!holds) throw new InvalidAssessmentJournal({ message: "Invalid protected assessment journal" })
+}
+
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  if (isObject(value)) {
+    return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
+effect function body(row: AssessmentCatalogRow, after: number, through: number) {
+  try ensure(positive(row.sequence) && row.sequence > after && row.sequence <= through && time(row.recorded_at) && matches(row.record_digest, digestPattern) &&
+    typeof row.record_json === "string" && sha256Of(row.record_json) === row.record_digest)
+  const value = parsedJson(row.record_json)?.value
+  try ensure(isObject(value))
+  return value as Row
+}
+
+function sourceKey(source: Row) {
+  return JSON.stringify([source.repositoryNodeId, source.pullRequestNodeId])
+}
+
+function sortedSet(values: ReadonlyArray<string>) {
+  return JSON.stringify([...new Set(values)].sort())
+}
+
+function validContextSelections(value: unknown) {
+  if (!Array.isArray(value) || value.length > 16) return false
+  const entries = value as ReadonlyArray<unknown>
+  return entries.every((entry) => typeof entry === "string" || (isObject(entry) && keysAre(entry, "path,ref") && typeof entry.path === "string" && matches(entry.ref, shaPattern))) &&
+    new Set(entries.map((entry) => isObject(entry) ? JSON.stringify([entry.ref, entry.path]) : entry)).size === entries.length
+}
+
+function validMergeRecipe(value: unknown) {
+  return isObject(value) && keysAre(value, "inputSha256,profile") && typeof value.profile === "string" && mergeProfiles.includes(value.profile) && matches(value.inputSha256, digestPattern)
+}
+
+function subscriptionProducer(value: Row) {
+  return keysAre(value, "apiReceipt,channel,client,exactVariant,identityEvidence,model,provider") && typeof value.channel === "string" &&
+    Object.hasOwn(subscriptionChannels, value.channel) && value.provider === subscriptionChannels[value.channel] && matches(value.model, identityLabel) &&
+    matches(value.client, identityLabel) && value.exactVariant === null && value.identityEvidence === "self-reported" && value.apiReceipt === null
+}
+
+function valueProducer(value: unknown) {
+  if (!isObject(value)) return false
+  if (subscriptionProducer(value)) return true
+  return keysAre(value, "provider,reported,requested") && typeof value.requested === "string" && value.requested === value.reported &&
+    (triageSteps.some(([provider, model]) => value.provider === provider && value.requested === model) || (value.provider === "surplus" && surplusModels.includes(value.requested)))
+}
+
+function recordProducer(record: Row) {
+  return valueProducer(record.model) && matches(record.producerRevision, shaPattern) && time(record.assessedAt) && matches(record.rubricVersion, rubricPattern)
+}
+
+function assessmentEnvelope(value: unknown) {
+  return isObject(value) && (value.status === "assessed" || value.status === "unresolved") && Array.isArray(value.reviews)
+}
+
+function boundSource(source: unknown, audit: SourceAudit): source is Row {
+  return isObject(source) && typeof source.repository === "string" && source.repository.toLowerCase() === audit.repository.toLowerCase() &&
+    source.repositoryNodeId === audit.repositoryNodeId && positive(source.repositoryDatabaseId) && matches(source.pullRequestNodeId, nodePattern) &&
+    positive(source.pullRequestNumber) && matches(source.headSha, shaPattern) && (source.mergeSha === null || matches(source.mergeSha, shaPattern)) &&
+    matches(source.policySha, shaPattern) && matches(source.sourceDigest, digestPattern) && time(source.occurredAt) &&
+    (source.contextPaths === undefined || validContextSelections(source.contextPaths))
+}
+
+function jointSourceExtras(source: Row) {
+  const indirect = source.indirectAcceptance
+  return (source.mergeRecipe === undefined || validMergeRecipe(source.mergeRecipe)) &&
+    (indirect === undefined || (isObject(indirect) && source.mergeSha === null && matches(indirect.historicalHeadSha, shaPattern) &&
+      matches(indirect.integrationSha, shaPattern) && matches(indirect.acceptedTipSha, shaPattern) && typeof indirect.branch === "string" &&
+      indirect.branch.length > 0 && positive(indirect.observationRunId) && indirect.observedOnBranchAt === source.occurredAt))
+}
+
+function revisionReasoned(record: Row) {
+  return typeof record.revisionReason === "string" && record.revisionReason.trim() !== ""
+}
+
+effect function legacyHistory(catalog: HistoricalAssessmentCatalog, audit: SourceAudit, projectId: string) {
+  const current = new Map<string, Stored>()
+  const seen = new Set<string>()
+  let after = 0
+  for (const row of catalog.legacy) {
+    const record = try body(row, after, catalog.heads.legacyThrough)
+    try ensure(record.schemaVersion === "slop-value-record:v1" && record.projectId === projectId && boundSource(record, audit) &&
+      record.repositoryNodeId === row.repository_node_id && record.pullRequestNodeId === row.pull_request_node_id && record.headSha === row.head_sha &&
+      record.sourceDigest === row.source_digest && record.supersedes === row.supersedes && assessmentEnvelope(record.assessment) && recordProducer(record) &&
+      !seen.has(row.record_digest))
+    const key = sourceKey(record)
+    const prior = current.get(key)
+    try ensure(record.supersedes === (prior?.row.record_digest ?? null) && (prior === undefined ? record.revisionReason === null
+      : prior.record.pullRequestNumber === record.pullRequestNumber && prior.record.repositoryDatabaseId === record.repositoryDatabaseId && revisionReasoned(record)))
+    current.set(key, { row, record })
+    seen.add(row.record_digest)
+    after = row.sequence
+  }
+  return current
+}
+
+export function workUnitIdentity(unit: Row) {
+  const claimIds = list(unit.claimIds).map(String)
+  const reviews = isObject(unit.assessment) ? list(unit.assessment.reviews) : []
+  const identity = claimIds.length > 0 ? ["implementation", [...claimIds].sort()] : ["reviews", reviews.map((review) => isObject(review) ? String(review.sourceId) : "").sort()]
+  return `wu_${sha256Of(JSON.stringify(identity))}`
+}
+
+function completeClaimPartition(claimCount: number, units: ReadonlyArray<ReadonlyArray<number>>) {
+  const seen = new Array<boolean>(claimCount).fill(false)
+  for (const unit of units) {
+    if (unit.length === 0) return false
+    for (const claim of unit) {
+      if (claim < 0 || claim >= claimCount || seen[claim] === true) return false
+      seen[claim] = true
+    }
+  }
+  return seen.every((covered) => covered)
+}
+
+effect function validateUnitIdentities(record: Row) {
+  const claims = list(record.claims)
+  const available = new Map(claims.map((claim, index) => [isObject(claim) ? String(claim.id) : "", index] as const))
+  const units = new Set<string>()
+  const partition: number[][] = []
+  for (const unit of list(record.units)) {
+    try ensure(isObject(unit))
+    const item = unit as Row
+    const claimIds = item.claimIds
+    const assessment = item.assessment
+    const reviews = isObject(assessment) ? list(assessment.reviews) : []
+    try ensure(Array.isArray(claimIds) && (claimIds as ReadonlyArray<unknown>).every((claim) => matches(claim, digestPattern)) && assessmentEnvelope(assessment) &&
+      reviews.every((review) => isObject(review) && matches(review.sourceId, nodePattern)) && (list(claimIds).length > 0 || reviews.length > 0) &&
+      typeof item.workUnitId === "string" && item.workUnitId === workUnitIdentity(item) && !units.has(item.workUnitId))
+    units.add(String(item.workUnitId))
+    const ids = list(claimIds).map(String)
+    if (ids.length > 0) partition.push(ids.map((id) => available.get(id) ?? -1))
+  }
+  try ensure(completeClaimPartition(available.size, partition))
+}
+
+function ownershipPlan(projectId: string, digest: string, parents: ReadonlyArray<Parent>, used: ReadonlyArray<boolean>, members: ReadonlyArray<Member>, claims: ReadonlyArray<Member>, currentClaims: ReadonlyArray<readonly [string, string]>) {
+  const keys = new Set(members.map((member) => member.key))
+  const parentDigests = new Set(parents.map((parent) => parent.digest))
+  for (const parent of parents) {
+    if (parent.record === undefined || used[parent.index] === true || parent.record.projectId !== projectId) return undefined
+    if (!list(parent.record.sources).every((source) => isObject(source) && keys.has(sourceKey(source)))) return undefined
+  }
+  if ([...members, ...claims].some((member) => member.owner !== undefined && !parentDigests.has(member.owner))) return undefined
+  return {
+    owner: digest,
+    retire: parents.map((parent) => parent.index),
+    removeClaims: currentClaims.filter(([, owner]) => parentDigests.has(owner)).map(([key]) => key),
+    setSources: members.map((member) => member.key),
+    setClaims: claims.map((claim) => claim.key),
+  }
+}
+
+effect function jointHistory(catalog: HistoricalAssessmentCatalog, audit: SourceAudit, projectId: string, legacy: ReadonlyMap<string, Stored>) {
+  const records: Stored[] = []
+  const indices = new Map<string, number>()
+  const sources = new Map<string, string>()
+  const claims = new Map<string, string>()
+  const used: boolean[] = []
+  let after = 0
+  for (const row of catalog.joint) {
+    const record = try body(row, after, catalog.heads.jointThrough)
+    const recordSources = list(record.sources)
+    const recordClaims = list(record.claims)
+    const supersedes = list(record.supersedes)
+    const legacyPredecessors = list(record.legacyPredecessors)
+    try ensure(record.schemaVersion === "slop-work-unit-record:v1" && record.projectId === projectId && record.projectId === row.project_id &&
+      matches(record.sourceDigest, digestPattern) && record.sourceDigest === row.source_digest && Array.isArray(record.sources) && recordSources.length > 0 &&
+      recordSources.every((source) => boundSource(source, audit) && jointSourceExtras(source as Row)) && Array.isArray(record.claims) &&
+      recordClaims.every((claim) => isObject(claim) && matches(claim.id, digestPattern)) &&
+      new Set(recordClaims.map((claim) => isObject(claim) ? claim.id : undefined)).size === recordClaims.length && Array.isArray(record.units) &&
+      Array.isArray(record.supersedes) && Array.isArray(record.legacyPredecessors) &&
+      [...supersedes, ...legacyPredecessors].every((parent) => matches(parent, digestPattern)) && new Set(supersedes).size === supersedes.length &&
+      new Set(legacyPredecessors).size === legacyPredecessors.length &&
+      (supersedes.length + legacyPredecessors.length > 0 ? revisionReasoned(record) : record.revisionReason === null) && recordProducer(record) &&
+      !indices.has(row.record_digest))
+    const keys = recordSources.map((source) => sourceKey(source as Row))
+    const index = parsedJson(row.source_keys_json)?.value
+    const indexed = list(index)
+    try ensure(Array.isArray(index) && indexed.length === keys.length &&
+      indexed.every((key) => Array.isArray(key) && key.length === 2 && (key as ReadonlyArray<unknown>).every((part) => matches(part, nodePattern))) &&
+      new Set(keys).size === keys.length && sortedSet(indexed.map((key) => JSON.stringify(key))) === sortedSet(keys))
+    const inherited = keys.flatMap((key) => {
+      const predecessor = legacy.get(key)?.row.record_digest
+      return predecessor === undefined ? [] : [predecessor]
+    })
+    try ensure(sortedSet(legacyPredecessors.map(String)) === sortedSet(inherited))
+    try validateUnitIdentities(record)
+    const plan = ownershipPlan(projectId, row.record_digest,
+      supersedes.map((digest) => {
+        const at = indices.get(String(digest)) ?? -1
+        return { digest: String(digest), index: at, record: records[at]?.record }
+      }),
+      used,
+      keys.map((key) => ({ key, owner: sources.get(key) })),
+      recordClaims.map((claim) => {
+        const key = isObject(claim) ? String(claim.id) : ""
+        return { key, owner: claims.get(key) }
+      }),
+      supersedes.length > 0 ? [...claims] : [])
+    try ensure(plan !== undefined)
+    for (const parent of plan?.retire ?? []) used[parent] = true
+    for (const key of plan?.removeClaims ?? []) claims.delete(key)
+    for (const key of plan?.setSources ?? []) sources.set(key, row.record_digest)
+    for (const key of plan?.setClaims ?? []) claims.set(key, row.record_digest)
+    indices.set(row.record_digest, records.length)
+    records.push({ row, record })
+    used.push(false)
+    after = row.sequence
+  }
+  return { sources, active: records.filter((_, at) => used[at] !== true) }
+}
+
+function scopedRecord(journal: ScopedRecord["journal"], row: AssessmentCatalogRow, sources: ReadonlyArray<Row>, audit: SourceAudit, byId: ReadonlyMap<string, Audited>, byNumber: ReadonlyMap<number, Audited>, evidence?: HistoricalEvidence): ScopedRecord {
+  return {
+    journal,
+    digest: row.record_digest,
+    sequence: row.sequence,
+    sources: sources.map((source) => {
+      const id = String(source.pullRequestNodeId)
+      const number = Number(source.pullRequestNumber)
+      const headSha = String(source.headSha)
+      const audited = byId.get(id) ?? byNumber.get(number)
+      const occurredAt = new Date(String(source.occurredAt)).toISOString()
+      const finding: SourceFinding = audited !== undefined
+        ? audited.id !== id || audited.number !== number || audited.mergedAt !== occurredAt ? "conflicting-audit-binding" : audited.headSha === headSha ? "audited-head" : "stale-head"
+        : occurredAt >= audit.from && occurredAt < audit.through ? (evidence?.removed.has(id) === true ? "retained-removed-merge" : evidence?.verifiedClosed.get(id) ?? "missing-from-merged-audit") : "outside-audit"
+      return { id, number, headSha, auditedHeadSha: audited?.headSha ?? null, occurredAt, finding }
+    }).sort((left, right) => left.number - right.number),
+  }
+}
+
+function blocked(record: ScopedRecord) {
+  return record.sources.some((source) => source.finding === "conflicting-audit-binding" || source.finding === "missing-from-merged-audit")
+}
+
+export effect function classifyHistoricalAssessmentScope<E = never, R = never>(catalog: HistoricalAssessmentCatalog, audit: SourceAudit, projectId: string, evidence?: (candidates: ReadonlyArray<JointCandidate>, legacy: ReadonlyArray<Row>, heads: HistoricalAssessmentHeads) => HistoricalEvidence!E!R) {
+  try ensure(matches(projectId, projectPattern) && audit.repository.length <= 201 && repositoryPathPattern.test(audit.repository) &&
+    !audit.repository.split("/").some((part) => part === "." || part === "..") && matches(audit.repositoryNodeId, nodePattern) &&
+    audit.from === auditFrom && audit.through === auditThrough && audit.sources.length > 0)
+  const byId = new Map<string, Audited>()
+  const byNumber = new Map<number, Audited>()
+  for (const { id, number, headSha, mergedAt } of audit.sources) {
+    try ensure(matches(id, nodePattern) && positive(number) && matches(headSha, shaPattern) && time(mergedAt) && new Date(mergedAt).toISOString() === mergedAt &&
+      mergedAt >= audit.from && mergedAt < audit.through && !byId.has(id) && !byNumber.has(number))
+    const entry = { id, number, headSha, mergedAt }
+    byId.set(id, entry)
+    byNumber.set(number, entry)
+  }
+  const { jointThrough, legacyThrough, jointScopedCount, legacyRepoCount, d1PointsDigest, d1PointsCount, enforcementGeneration, registryRevision, registryManifestSha256 } = catalog.heads
+  try ensure(count(jointThrough) && count(legacyThrough) && count(jointScopedCount) && count(legacyRepoCount) && jointScopedCount <= jointThrough &&
+    legacyRepoCount <= legacyThrough && matches(d1PointsDigest, digestPattern) && count(d1PointsCount) && count(enforcementGeneration) &&
+    positive(registryRevision) && matches(registryManifestSha256, digestPattern))
+  const boundary = { repository: audit.repository, repositoryNodeId: audit.repositoryNodeId, from: audit.from, through: audit.through }
+  const scope = { projectId, ...boundary, sourceAuditSha256: sha256Of(JSON.stringify({ ...boundary, sources: [...byNumber.values()].sort((a, b) => a.number - b.number) })) }
+  const heads = { jointThrough, legacyThrough, jointScopedCount, legacyRepoCount, d1PointsDigest, d1PointsCount, enforcementGeneration, registryRevision, registryManifestSha256 }
+  const receipt = (status: ReceiptStatus, records: ReadonlyArray<ScopedRecord>, blockers: ReadonlyArray<Blocker>, activeLegacyCount = 0, activeJointCount = 0, emptyLegacyClosures: ReadonlyArray<ScopedRecord> = []): HistoricalAssessmentReceipt => {
+    const result = {
+      schemaVersion: "1" as const,
+      status,
+      scope,
+      heads,
+      counts: { auditedSources: byId.size, activeLegacyRecords: activeLegacyCount, activeJointRecords: activeJointCount, relevantRecords: records.length },
+      records,
+      blockers,
+      ...(emptyLegacyClosures.length > 0 ? { emptyLegacyClosures } : {}),
+    }
+    return { ...result, receiptSha256: sha256Of(canonicalJson(result)) }
+  }
+  const observed = (rows: ReadonlyArray<AssessmentCatalogRow>, joint: boolean, valid: (digest: string) => boolean, active: (digest: string) => boolean, closures: ReadonlyMap<string, EmptyLegacyClosureFacts> = new Map()) =>
+    rows.map((row): Observation => {
+      const facts = closures.get(row.record_digest)
+      return facts === undefined
+        ? { type: "observe", joint, valid: valid(row.record_digest), activeInScope: active(row.record_digest) }
+        : { type: "observeEmptyLegacyClosure", exactClosure: facts.exactClosure, emptyAssessment: true, noFormalReviews: facts.noFormalReviews, noPriorAward: facts.noPriorAward }
+    })
+  const none = () => false
+  const all = () => true
+  if (catalog.legacy.length !== legacyRepoCount || catalog.joint.length !== jointScopedCount) {
+    return { receipt: receipt("incomplete", [], ["incomplete-catalog"]), observations: [] }
+  }
+  const legacy = legacyHistory(catalog, audit, projectId) catch () => undefined
+  if (legacy === undefined) return { receipt: receipt("incomplete", [], ["invalid-legacy-history"]), observations: observed(catalog.legacy, false, none, none) }
+  const joint = jointHistory(catalog, audit, projectId, legacy) catch () => undefined
+  if (joint === undefined) {
+    return { receipt: receipt("incomplete", [], ["invalid-joint-history"]), observations: [...observed(catalog.legacy, false, all, none), ...observed(catalog.joint, true, none, none)] }
+  }
+  const activeLegacy = [...legacy.entries()].filter(([key]) => !joint.sources.has(key)).map(([, value]) => value)
+  const jointSources = joint.active.map(({ row, record }) => ({ row, record, initial: scopedRecord("joint", row, list(record.sources) as ReadonlyArray<Row>, audit, byId, byNumber) }))
+  const candidates = jointSources.flatMap(({ initial, record }) => {
+    const standalone = initial.sources.length === 1 && initial.sources[0]?.finding === "missing-from-merged-audit" && isStandaloneHistoricalReview(record)
+    if (!standalone && !initial.sources.some(({ finding }) => finding === "audited-head" || finding === "stale-head")) return []
+    const missing = new Set(initial.sources.filter(({ finding }) => finding === "missing-from-merged-audit").map(({ id }) => id))
+    return (list(record.sources) as ReadonlyArray<Row>).filter((source) => missing.has(String(source.pullRequestNodeId)) && source.indirectAcceptance === undefined).map((source) => ({ source, standalone }) satisfies JointCandidate)
+  })
+  const legacySources = activeLegacy.map(({ row, record }) => ({ row, record, initial: scopedRecord("legacy", row, [record], audit, byId, byNumber) }))
+  const legacyCandidates = legacySources.filter(({ record, initial }) => initial.sources[0]?.finding === "missing-from-merged-audit" && record.supersedes === null &&
+    isObject(record.assessment) && record.assessment.tier === null && Array.isArray(record.assessment.reviews) && record.assessment.reviews.length === 0 &&
+    Date.parse(String(record.assessedAt)) >= Date.parse(String(record.occurredAt)))
+  const found = evidence === undefined ? undefined : try evidence(candidates, legacyCandidates.map(({ record }) => record), heads)
+  const bound = found !== undefined && (found.removed.size > 0 || found.verifiedClosed.size > 0 || found.legacyClosures.size > 0) ? found : undefined
+  const closures = new Map(legacyCandidates.flatMap(({ row, record }) => {
+    const facts = bound?.legacyClosures.get(String(record.pullRequestNodeId))
+    return facts === undefined ? [] : [[row.record_digest, facts] as const]
+  }))
+  const reconciledLegacy = legacySources.map(({ row, record, initial }) =>
+    bound?.verifiedClosed.has(String(record.pullRequestNodeId)) === true ? scopedRecord("legacy", row, [record], audit, byId, byNumber, bound) : initial)
+  const noAwards = (entry: ScopedRecord) => entry.sources[0]?.finding === "verified-legacy-closure-without-awards"
+  const relevant = [
+    ...reconciledLegacy.filter((entry) => !noAwards(entry)),
+    ...jointSources.map(({ row, record, initial }) => bound === undefined ? initial : scopedRecord("joint", row, list(record.sources) as ReadonlyArray<Row>, audit, byId, byNumber, bound)),
+  ].filter(({ sources }) => sources.some(({ finding }) => finding !== "outside-audit"))
+  const blockers: Blocker[] = []
+  for (const finding of ["conflicting-audit-binding", "missing-from-merged-audit"] as const) {
+    if (relevant.some(({ sources }) => sources.some((source) => source.finding === finding))) blockers.push(finding)
+  }
+  const relevantDigests = new Set(relevant.map((record) => record.digest))
+  const blockedDigests = new Set(relevant.filter(blocked).map((record) => record.digest))
+  const valid = (digest: string) => !blockedDigests.has(digest)
+  const active = (digest: string) => relevantDigests.has(digest)
+  return {
+    receipt: receipt(blockers.length > 0 ? "incomplete" : relevant.length > 0 ? "requires-value-replay" : "no-scoped-active-assessments", relevant, blockers, activeLegacy.length, joint.active.length,
+      reconciledLegacy.filter(noAwards)),
+    observations: [...observed(catalog.legacy, false, valid, active, closures), ...observed(catalog.joint, true, valid, active)],
+  }
+}
+

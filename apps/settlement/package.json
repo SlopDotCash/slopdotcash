@@ -8,6 +8,7 @@
     "./client": "./src/client/index.vibe",
     "./kernels/*": "./src/kernels/*.ts",
     "./live": "./src/live.vibe",
+    "./testing/evm": "./test/support/evm/deploy.ts",
     "./owner/ownerInstructions": "./src/owner/ownerInstructions.ts",
     "./owner/solanaDeployment": "./src/owner/solanaDeployment.vibe",
     "./vault/evmTotals": "./src/vault/evmTotals.vibe",

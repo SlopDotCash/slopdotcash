@@ -60,7 +60,7 @@ effect function programCode(deployment: SolanaDeployment, program: Address, exec
   if (content.length <= 45 || readU32(content, 0) !== 3 || flag > 1) throw unverified("Invalid ProgramData metadata")
   const authority = flag === 1 ? addressOf(content.slice(13, 45)) ?? null : null
   if (authority !== deployment.upgradeAuthority) throw unverified("Upgrade authority mismatch")
-  if (executedAtSlot !== undefined && Number(readU64(content, 4)) >= executedAtSlot) throw unverified("Program version was not effective before the receipt slot")
+  if (executedAtSlot !== undefined && readU64(content, 4) >= try orDie(Effect.try(() => BigInt(executedAtSlot)))) throw unverified("Program version was not effective before the receipt slot")
   return content.slice(45)
 }
 

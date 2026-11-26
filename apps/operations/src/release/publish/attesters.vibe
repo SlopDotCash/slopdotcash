@@ -1,0 +1,116 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import type { Environment } from "../../../gen/operations__release.effect.vibe"
+import { registrySnapshotPath } from "../run/collect.vibe"
+import { Cloudflare } from "../wrangler/cloudflare.vibe"
+import { ConfigRefused, type Reviewed } from "./config.vibe"
+import { checkedSecrets, configsFor } from "./order.vibe"
+
+export const settlementProgram = "apps/settlement/dist/programs/main.js"
+
+export interface Attester {
+  readonly network: string
+  readonly enabled: boolean
+  readonly reviewed: Reviewed
+  readonly vars: Readonly<Record<string, string>>
+  readonly crons: ReadonlyArray<string>
+  readonly release: boolean
+}
+
+const Pins = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
+const Plan = Schema.Array(Schema.Struct({ network: Schema.String, enabled: Schema.Boolean, ordinary: Pins, security: Pins, secrets: Schema.Array(Schema.String) }))
+
+type PlanEntry = (typeof Plan.Type)[number]
+
+const attesterCron = "*/5 * * * *"
+const pinBindingBytes = 5_000
+const pinVariables = ["PAYMENT_DEPLOYMENTS", "SECURITY_PAYMENT_DEPLOYMENTS"] as const
+const absentScript = 10007
+const signerStacks: { readonly [E in Environment]: string } = { Production: "production", Staging: "test" }
+const registries: { readonly [E in Environment]: string } = { Production: "mainnet", Staging: "testnet" }
+
+function refused(message: string) {
+  return new ConfigRefused({ message })
+}
+
+effect function framedPins(name: (typeof pinVariables)[number], pins: ReadonlyArray<unknown>) {
+  const value = JSON.stringify(pins)
+  const bytes = utf8(value).byteLength
+  if (bytes <= pinBindingBytes) return { [name]: value }
+  const parts: string[] = []
+  let part = ""
+  let partBytes = 0
+  for (const character of value) {
+    const size = utf8(character).byteLength
+    if (partBytes + size > pinBindingBytes) {
+      parts.push(part)
+      part = ""
+      partBytes = 0
+    }
+    part += character
+    partBytes += size
+  }
+  parts.push(part)
+  const framed: Record<string, string> = Object.fromEntries(parts.map((chunk, index) => [`${name}_PART_${index + 1}`, chunk]))
+  framed[name] = `pins:v1:${parts.length}:${bytes}:${try sha256Hex(value)}`
+  return framed
+}
+
+function boundaryIssue(reviewed: Reviewed, environment: Environment, entry: PlanEntry) {
+  const vars = reviewed.file.vars ?? {}
+  if (vars.SIGNER_STACK !== signerStacks[environment]) return `${reviewed.path} must declare SIGNER_STACK ${signerStacks[environment]}`
+  if (reviewed.file.workers_dev !== false || reviewed.file.preview_urls !== false || (reviewed.file.routes ?? []).length > 0 || reviewed.file.services !== undefined) return `${reviewed.path} must have no workers.dev or preview URLs, routes or service bindings`
+  const pinned = Object.keys(vars).some((name) => pinVariables.some((pin) => name.startsWith(pin)) && !(name === "PAYMENT_DEPLOYMENTS" && vars[name] === "[]"))
+  if (pinned || vars.PAYMENT_DEPLOYMENTS !== "[]" || (reviewed.file.triggers?.crons ?? []).length > 0) return `${reviewed.path} must stay zero-pin and unscheduled; the release derives its pins and schedule from the registry snapshot`
+  const declared = [...reviewed.file.expectedSecrets ?? []].sort()
+  if ((reviewed.file.optionalSecrets ?? []).length > 0 || JSON.stringify(declared) !== JSON.stringify(entry.secrets)) return `${reviewed.path} must expect exactly the secrets ${entry.secrets.join(", ")}`
+  if ([...entry.ordinary, ...entry.security].some((pin) => pin.network !== entry.network)) return `the ${entry.network} attester plan pins a deployment of another network`
+  return undefined
+}
+
+effect function released(reviewed: Reviewed, network: string, enabled: boolean) {
+  const cloudflare = try Cloudflare
+  const name = reviewed.file.name
+  const present = cloudflare.wrangler(`${name} presence`, { args: ["deployments", "list", "--name", name, "--json"] }) catch effect (error) => {
+    if (error.command?.providerCode === absentScript) return undefined
+    throw refused(`Cannot prove the ${network} attester absent`)
+  }
+  if (present !== undefined) return !enabled
+  if (enabled) throw refused(`the ${network} attester is enabled without reviewed pins and has no service; the release never creates an attester whose secrets it cannot verify`)
+  return false
+}
+
+export effect function attesterPlan(reviewed: ReadonlyArray<Reviewed>, environment: Environment, bundle: string) {
+  const cloudflare = try Cloudflare
+  const files = try Path.Path
+  const configs = configsFor(reviewed, "PaymentAttesters", environment)
+  if (typeof configs === "string") throw refused(configs)
+  const text = try cloudflare.node("attester plan", { args: [files.join(bundle, settlementProgram), "deployments", "attesters", registries[environment], "--registry", files.join(bundle, registrySnapshotPath)] })
+  const value = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw refused("the attester plan is not JSON")
+  }
+  const plan = Schema.decodeUnknownEffect(Plan)(value) catch effect () => {
+    throw refused("the attester plan has an unexpected shape")
+  }
+  const byNetwork = new Map(configs.map((config) => [config.file.vars?.PAYMENT_NETWORK ?? "", config]))
+  if (byNetwork.size !== configs.length) throw refused("two reviewed attester configurations serve one network")
+  const unplanned = configs.find((config) => !plan.some((entry) => entry.network === config.file.vars?.PAYMENT_NETWORK))
+  if (unplanned !== undefined) throw refused(`${unplanned.path} serves no network of the ${registries[environment]} attester plan`)
+  const attesters: Attester[] = []
+  for (const entry of plan) {
+    const pins = entry.ordinary.length + entry.security.length
+    if (pins === 0 && (environment === "Staging" || !entry.enabled)) continue
+    const config = byNetwork.get(entry.network)
+    if (config === undefined && environment === "Staging") continue
+    if (config === undefined) throw refused(`no reviewed attester configuration serves ${entry.network}`)
+    const issue = boundaryIssue(config, environment, entry)
+    if (issue !== undefined) throw refused(issue)
+    const scheduled = entry.enabled && pins > 0
+    const ordinary = try framedPins("PAYMENT_DEPLOYMENTS", entry.ordinary)
+    const security = entry.security.length === 0 ? {} : try framedPins("SECURITY_PAYMENT_DEPLOYMENTS", entry.security)
+    if (scheduled) try checkedSecrets(config)
+    const release = scheduled ? true : try released(config, entry.network, entry.enabled)
+    attesters.push({ network: entry.network, enabled: entry.enabled, reviewed: config, vars: { ...ordinary, ...security }, crons: scheduled ? [attesterCron] : [], release })
+  }
+  return attesters
+}

@@ -1,4 +1,4 @@
-// spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"
+// spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"
 import { isoNow } from "@repo/platform/clock"
 import { D1, first, sql } from "@repo/platform/d1"
 import { freeReviewsPerRepositoryPerMonth } from "../../gen/slopbot__reviewCap.effect.vibe"
@@ -24,4 +24,16 @@ export effect function admitMonth(item: MonthItem) {
     (SELECT COUNT(*) FROM slopbot_review_month_starts WHERE repository_id = ${repositoryId} AND month = ${month}) AS used`)
   if (found === undefined) return try die(new Error("monthly admission read no row"))
   return { alreadyAdmitted: found.admitted === 1, usedThisMonth: found.used } satisfies MonthAdmission
+}
+
+schema OpenRow { readonly open: number }
+
+export effect function monthlyReviewOpen(item: MonthItem) {
+  const month = (try isoNow()).slice(0, 7)
+  const { repositoryId, itemKind, number } = item
+  const found = try first(OpenRow, sql`SELECT (
+      EXISTS (SELECT 1 FROM slopbot_review_month_starts WHERE repository_id = ${repositoryId} AND month = ${month} AND item_kind = ${itemKind} AND item_number = ${number})
+      OR (SELECT COUNT(*) FROM slopbot_review_month_starts WHERE repository_id = ${repositoryId} AND month = ${month}) < ${freeReviewsPerRepositoryPerMonth}
+    ) AS open`)
+  return found?.open === 1
 }

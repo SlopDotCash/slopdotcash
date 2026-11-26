@@ -1,6 +1,6 @@
 // spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
 import { GitHub } from "@repo/platform/github"
-import { githubLinkDestinations, withoutClosedCodeFences, withoutClosedCodeSpans } from "./hints.vibe"
+import { githubLinkDestinations, withoutClosedCodeFences, withoutClosedCodeSpans } from "@repo/points/corrections"
 import { EvidenceRefused, type Limitation, type RelatedPullRequest, type UnavailableReference } from "./types.vibe"
 
 export const valueReferenceQuery =

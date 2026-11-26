@@ -1,0 +1,261 @@
+// spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+import { isoNow } from "@repo/platform/clock"
+import { withPublicGitObjects } from "@repo/platform/git"
+import { type Journal } from "../kernels/records/canonical.ts"
+import { batchDigest } from "../kernels/records/ids.vibe"
+import { participationBans } from "../collect/feeds/bans.vibe"
+import { repositoriesOf } from "../journal/build.vibe"
+import { readRegistry } from "../snapshot/adaptPr.vibe"
+import { batchRecorded } from "../corrections/apply/apply.vibe"
+import { projectOfRegistry } from "../corrections/apply/derive.vibe"
+import { publishedJournal, publishedRegistry } from "../corrections/collect/published.vibe"
+import { type HistoricalPacket, decodeEncodedPacket, decodePacketBytes, digestPattern, digestText, require } from "../corrections/reviewed/packet.vibe"
+import { type BeforeImportCheck, verifyHistoricalNetOutcomes } from "../corrections/reviewed/netOutcome.vibe"
+import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
+import { type PacketStorage, type ReviewedStorageError, type ReviewedStorageServices, exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
+import { type HistoricalAssessmentJournalHeads, readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
+import { auditAssessments } from "../corrections/reviewed/audit/run.vibe"
+import type { HistoricalAssessmentReceipt } from "../corrections/reviewed/audit/reconcile.vibe"
+import type { HistoricalProject } from "../client/snapshot/validate.vibe"
+import { latestOf } from "../corrections/reviewed/replay/latest.vibe"
+import { verifyHistoricalReplayQualification } from "../corrections/reviewed/replay/qualification.vibe"
+import { readTrustedHistoricalReplay } from "../corrections/reviewed/replay/receipt.vibe"
+import { replayReview } from "../corrections/reviewed/replay/review.vibe"
+import { replayUsage } from "../corrections/reviewed/replay/run.vibe"
+import { phased, reviewedServices } from "../corrections/reviewed/replay/services.vibe"
+import { type VerifiedClosedReviews, assertRemovedMergeGroupsPreserved } from "../corrections/reviewed/replay/value.vibe"
+import { enforcementGeneration, historicalStatements, recordHistorical, verifyCarrierTips, verifyHistoricalAcceptedSquashes, verifyHistoricalCensus, verifyHistoricalDuplicateAcceptanceOrder, verifyHistoricalIdenticalAcceptedChanges, verifyHistoricalProtection, verifyHistoricalValueRecords, verifyOwnerAuthority, verifyRecipientAccounts } from "../corrections/reviewed/verify.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export type PublicationPhase =
+  | "trusted invocation"
+  | "main source verification"
+  | "private packet read"
+  | "reviewed packet validation"
+  | "enforcement checkpoint read"
+  | "project and repository verification"
+  | "owner authority verification"
+  | "historical census verification"
+  | "duplicate acceptance order verification"
+  | "accepted squash verification"
+  | "financial protection verification"
+  | "assessment journal checkpoint read"
+  | "trusted replay receipt read"
+  | "assessment qualification match"
+  | "value record verification"
+  | "complete assessment catalog read"
+  | "assessment source reconciliation"
+  | "historical assessment replay"
+  | "assessment qualification recheck"
+  | "private replay review staging"
+  | "assessment receipt"
+  | "public Points read"
+  | "recipient and account restriction verification"
+  | "published checkpoint verification"
+  | "historical Points reconstruction"
+  | "import preparation"
+  | "apply authority recheck"
+  | "protected import and readback"
+
+interface Invocation {
+  readonly registryPath: string
+  readonly reviewedDigest: string
+  readonly apply: boolean
+}
+
+schema RegistryRevision { readonly projectId: string; readonly revision: number; readonly manifestSha256: string; readonly manifest: Schema.Unknown }
+schema ListedRepository { readonly id: string; readonly nodeId?: string; readonly countsFrom?: string; readonly integrationBranch?: string }
+schema ProjectAuthority { readonly repositoryNodeId?: string }
+schema ListedProject { readonly id: string; readonly repositories: ReadonlyArray<ListedRepository>; readonly authority?: ProjectAuthority }
+
+const usage = "Usage: reviewed <repository registry.json> --reviewed-sha256 <packet digest reviewed by the repository owner> [--apply]"
+const isRevision = Schema.is(RegistryRevision)
+const isProject = Schema.is(ListedProject)
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function invocationOf(args: ReadonlyArray<string>) {
+  const [registryPath, flag, reviewedDigest, ...rest] = args
+  const apply = rest.length === 1 && rest[0] === "--apply"
+  try require(registryPath !== undefined && flag === "--reviewed-sha256" && reviewedDigest !== undefined && digestPattern.test(reviewedDigest) && (rest.length === 0 || apply), usage)
+  return { registryPath: registryPath ?? "", reviewedDigest: reviewedDigest ?? "", apply } satisfies Invocation
+}
+
+effect function privatePacket() {
+  const manifest = try environment("HISTORICAL_POINTS_OBJECT_MANIFEST")
+  if (manifest === "") {
+    const parts: string[] = []
+    for (let n = 1; n <= 4; n++) parts.push(try environment(`HISTORICAL_POINTS_PACKET_${n}`))
+    return { encoded: parts.join(""), bytes: null as Uint8Array | null }
+  }
+  const storage: PacketStorage<ReviewedStorageError, ReviewedStorageServices> = try reviewedStorage(try environment("CLOUDFLARE_ACCOUNT_ID"), try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make("")))
+  const bytes: Uint8Array | null = try readPacket(storage, manifest)
+  return { encoded: "", bytes }
+}
+
+function listedProjects(projects: ReadonlyArray<unknown>) {
+  return projects.flatMap((project) => isProject(project) ? [project] : [])
+}
+
+effect function verifiedProject(packet: HistoricalPacket) {
+  const registry = try publishedRegistry()
+  const revision = registry.revisions.find((row) => isRevision(row) && row.projectId === packet.projectId && row.revision === packet.revision)
+  const project = registry.projects.find((row) => isProject(row) && row.id === packet.projectId)
+  try require(isRevision(revision) && isProject(project) && revision.manifestSha256 === packet.manifestSha256 && digestText(revision.manifest) === packet.manifestSha256 &&
+    JSON.stringify(project) === JSON.stringify(revision.manifest) && !registry.withheld.includes(packet.projectId), "Historical project changed")
+  const listed = project as ListedProject
+  const index = listed.repositories.findIndex((repository) => repository.id.toLowerCase() === packet.sourceAudit.repository.toLowerCase())
+  const nodeId = index === 0 ? listed.authority?.repositoryNodeId : listed.repositories[index]?.nodeId
+  try require(index >= 0 && nodeId === packet.sourceAudit.repositoryNodeId, "Historical repository changed")
+  const countsFrom: Record<string, string> = {}
+  for (const entry of listedProjects(registry.projects)) {
+    for (const repository of entry.repositories) if (repository.countsFrom !== undefined) countsFrom[repository.id] = repository.countsFrom
+  }
+  return { registry, countsFrom, manifest: project as unknown, repository: listed.repositories[index]?.id ?? "", integrationBranch: listed.repositories[index]?.integrationBranch }
+}
+
+function githubIdOf(actor: string) {
+  return String(githubUserIdFromNodeId(actor))
+}
+
+effect function ownerReader() {
+  const appId = try environment("SLOPBOT_APP_ID")
+  const privateKey = try Config.withDefault(Config.Redacted("SLOPBOT_APP_PRIVATE_KEY"), Redacted.make(""))
+  try require(appId !== "" && Redacted.value(privateKey) !== "", "Current owner authority reader unavailable")
+  return { appId, privateKey }
+}
+
+effect function retainedActors(packet: HistoricalPacket, baseline: Journal) {
+  const latest = new Map(baseline.revisions.map((revision) => [revision.award.key, revision] as const))
+  const actors = new Set<string>()
+  for (const revision of latest.values()) if (revision.award.projectId === packet.projectId) actors.add(revision.award.actor.id)
+  for (const correction of packet.recipientCorrections) for (const recipient of correction.recipients) actors.add(recipient.actor.id)
+  return actors
+}
+
+effect function published(setPhase: (phase: PublicationPhase) => void, invocation: Invocation) {
+  setPhase("main source verification")
+  try exactMainHead("Historical publication source changed")
+  setPhase("private packet read")
+  const read = try privatePacket()
+  setPhase("reviewed packet validation")
+  const packet = read.bytes === null ? try decodeEncodedPacket(read.encoded, invocation.reviewedDigest) : try decodePacketBytes(read.bytes, invocation.reviewedDigest)
+  setPhase("enforcement checkpoint read")
+  const generation = try enforcementGeneration()
+  setPhase("project and repository verification")
+  const project = try verifiedProject(packet)
+  const registry = try readRegistry(invocation.registryPath)
+  setPhase("owner authority verification")
+  try ownerReader()
+  try verifyOwnerAuthority(packet, project.manifest)
+  setPhase("historical census verification")
+  try verifyHistoricalCensus(packet)
+  setPhase("duplicate acceptance order verification")
+  const order = try verifyHistoricalDuplicateAcceptanceOrder(packet)
+  setPhase("accepted squash verification")
+  try verifyHistoricalAcceptedSquashes(packet)
+  const identical = try verifyHistoricalIdenticalAcceptedChanges(packet, project.integrationBranch ?? "")
+  const beforeImport: Array<BeforeImportCheck> = []
+  const net = try verifyHistoricalNetOutcomes(packet, withPublicGitObjects, beforeImport)
+  const duplicates = new Set([...identical.identical, ...net])
+  setPhase("financial protection verification")
+  const protection = try verifyHistoricalProtection(packet)
+  setPhase("public Points read")
+  const baseline = try publishedJournal()
+  setPhase("recipient and account restriction verification")
+  try verifyRecipientAccounts(packet)
+  const bans = try participationBans(try retainedActors(packet, baseline))
+  setPhase("published checkpoint verification")
+  const baselineDigest = try batchDigest(baseline)
+  if (baselineDigest === packet.candidateDigest) {
+    try require(try batchRecorded(packet.candidateDigest, baseline.revisions.length), "Public candidate lacks D1 checkpoint")
+    try Console.log(JSON.stringify({ projectId: packet.projectId, enforcementGeneration: generation, mode: "already-published", candidateDigest: packet.candidateDigest }))
+    return
+  }
+  const repositories = repositoriesOf(registry, project.countsFrom)
+  let assessmentHeads: HistoricalAssessmentJournalHeads
+  let closedReviews: VerifiedClosedReviews = new Map()
+  let assessmentReceipt: HistoricalAssessmentReceipt | undefined
+  const qualification = packet.replayQualification
+  if (qualification !== undefined) {
+    setPhase("trusted replay receipt read")
+    const sourceCommit = try environment("GITHUB_SHA")
+    const donor = try readTrustedHistoricalReplay(qualification, sourceCommit)
+    setPhase("assessment qualification match")
+    const pin = { projectId: packet.projectId, repository: project.repository, repositoryNodeId: packet.sourceAudit.repositoryNodeId, manifestSha256: packet.manifestSha256 }
+    const context = { registry, repositories, protection: [], pin, project: project.manifest as HistoricalProject, now: try Clock.currentTimeMillis }
+    const qualified = try verifyHistoricalReplayQualification(packet, baseline, donor, sourceCommit, generation, context, project.integrationBranch)
+    assessmentHeads = qualified.heads
+    closedReviews = qualified.closedReviews
+    assessmentReceipt = qualified.receipt
+  } else {
+    setPhase("assessment journal checkpoint read")
+    try require(!invocation.apply, "Applying historical Points requires a reviewed replay qualification")
+    assessmentHeads = try readHistoricalAssessmentJournalHeads()
+  }
+  setPhase("value record verification")
+  try verifyHistoricalValueRecords(packet, { qualifiedReplay: qualification !== undefined })
+  setPhase("historical Points reconstruction")
+  const candidate = try reconstructHistoricalPoints({
+    packet,
+    baseline,
+    now: try isoNow(),
+    bans,
+    protection,
+    registry,
+    repositories,
+    projectOf: projectOfRegistry(project.registry.projects),
+    qualified: qualification !== undefined,
+    preview: !invocation.apply,
+    closedReviews,
+    verifiedRetirements: { duplicates, order },
+  })
+  if (assessmentReceipt !== undefined) try assertRemovedMergeGroupsPreserved(candidate.revisions.slice(baseline.revisions.length), assessmentReceipt, latestOf(baseline.revisions))
+  setPhase("import preparation")
+  const prepared = try historicalStatements(packet, candidate, generation, githubIdOf, assessmentHeads)
+  const candidateDigest = prepared.digest
+  if (invocation.apply) {
+    setPhase("protected import and readback")
+    try recordHistorical(prepared, candidate, {
+      verifyAuthority: () => effect {
+        setPhase("apply authority recheck")
+        try exactMainHead("Historical publication source changed")
+        try verifyOwnerAuthority(packet, project.manifest)
+        try verifyHistoricalProtection(packet)
+        try verifyCarrierTips(packet, identical)
+        for (const check of beforeImport) try check
+        setPhase("protected import and readback")
+      },
+      loadPublic: publishedJournal,
+      wait: (millis) => sleep(Duration.millis(millis)),
+    })
+  }
+  try Console.log(JSON.stringify({
+    projectId: packet.projectId,
+    enforcementGeneration: generation,
+    mode: invocation.apply ? "verified-import" : "preview",
+    baselineRevisions: baseline.revisions.length,
+    candidateRevisions: candidate.revisions.length,
+    candidateDigest,
+  }))
+}
+
+export effect function reviewed(args: ReadonlyArray<string>) {
+  const [operation, ...rest] = args
+  if (operation === "replay-review") return try replayReview(rest)
+  try require(operation !== "--replay-assessments", replayUsage)
+  try phased("trusted invocation" as PublicationPhase, (setPhase) => effect {
+    try trustedMain("Reviewed historical publication requires manual main workflow")
+    if (args.length === 1 && operation === "--audit-assessments") return try reviewedServices(auditAssessments(setPhase))
+    const invocation = try invocationOf(args)
+    try reviewedServices(published(setPhase, invocation))
+  })
+}

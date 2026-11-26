@@ -1,5 +1,7 @@
 // spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"
-import { sha256Hex } from "@repo/platform/crypto"
+import * as Hex from "effect/encoding/Hex"
+import { utf8 } from "@repo/platform/crypto"
+import { runningSha256 } from "@repo/platform/digest"
 import { type Award, type Journal, type KeyParts, type Revision, type RevisionBody, journalText, keyText, revisionBodyText, revisionText } from "./canonical.ts"
 import { coverageOrdered, revisionFault } from "./chain.ts"
 import { PointRevision, PointsJournal } from "./records.schema.ts"
@@ -13,22 +15,36 @@ const pullPath = /^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*$/u
 const decodeRevision = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
 const decodeJournal = Schema.decodeUnknownEffect(Schema.fromJsonString(PointsJournal))
 
+function digestHex(text: string) {
+  const running = runningSha256()
+  running.update(utf8(text))
+  return Hex.encode(running.finish())
+}
+
+export function keyDigest(parts: KeyParts) {
+  return digestHex(keyText(parts))
+}
+
 export effect function pointKey(parts: KeyParts) {
-  return try sha256Hex(keyText(parts))
+  return keyDigest(parts)
 }
 
 export effect function pointRevisionId(body: RevisionBody) {
-  return try sha256Hex(revisionBodyText(body))
+  return digestHex(revisionBodyText(body))
 }
 
 export effect function batchDigest(journal: Journal) {
-  return try sha256Hex(journalText(journal))
+  return digestHex(journalText(journal))
+}
+
+function keyHolds(award: Award) {
+  const parts = { projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }
+  if (award.key === keyDigest(parts)) return true
+  return award.category === "merged-pull-request" && workUnitPattern.test(award.workUnitId) && award.key === keyDigest({ ...parts, workUnitId: award.workUnitId })
 }
 
 export effect function awardKeyHolds(award: Award) {
-  const parts = { projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }
-  if (award.key === (try pointKey(parts))) return true
-  return award.category === "merged-pull-request" && workUnitPattern.test(award.workUnitId) && award.key === (try pointKey({ ...parts, workUnitId: award.workUnitId }))
+  return keyHolds(award)
 }
 
 function sourceFault(award: Award): string {
@@ -38,11 +54,25 @@ function sourceFault(award: Award): string {
   return url.origin === "https://github.com" && pullPath.test(url.pathname) ? "" : "penalty"
 }
 
+interface Digested {
+  readonly revision: Revision
+  readonly idHolds: boolean
+  readonly keyHolds: boolean
+}
+
+function digested(revision: Revision): Digested {
+  return { revision, idHolds: digestHex(revisionBodyText(revision)) === revision.id, keyHolds: keyHolds(revision.award) }
+}
+
+function mismatch(digest: Digested, prior: Revision | null, asOf: string): string {
+  if (!digest.idHolds) return "id"
+  if (!digest.keyHolds) return "key"
+  const fault = revisionFault(digest.revision, prior, asOf)
+  return fault === "" ? sourceFault(digest.revision.award) : fault
+}
+
 effect function verify(revision: Revision, prior: Revision | null, asOf: string) {
-  if ((try pointRevisionId(revision)) !== revision.id) throw new RevisionMismatch({ id: revision.id, check: "id" })
-  if (!(try awardKeyHolds(revision.award))) throw new RevisionMismatch({ id: revision.id, check: "key" })
-  const fault = revisionFault(revision, prior, asOf)
-  const check = fault === "" ? sourceFault(revision.award) : fault
+  const check = mismatch(digested(revision), prior, asOf)
   if (check !== "") throw new RevisionMismatch({ id: revision.id, check })
 }
 
@@ -59,8 +89,10 @@ export effect function journalFile(text: string) {
   const latest = new Map<string, Revision>()
   const seen = new Set<string>()
   for (const revision of journal.revisions) {
+    const digest = digested(revision)
     if (seen.has(revision.id)) throw new RevisionMismatch({ id: revision.id, check: "duplicate" })
-    try verify(revision, latest.get(revision.award.key) ?? null, journal.generatedAt)
+    const check = mismatch(digest, latest.get(revision.award.key) ?? null, journal.generatedAt)
+    if (check !== "") throw new RevisionMismatch({ id: revision.id, check })
     latest.set(revision.award.key, revision)
     seen.add(revision.id)
   }

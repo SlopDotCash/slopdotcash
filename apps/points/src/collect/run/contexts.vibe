@@ -1,0 +1,39 @@
+// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import type { SourceDecision } from "@repo/ports/points"
+import { ensureEstimatedBudget, estimateReviewFirstPageDetailCost } from "../../ingestion/graphql.vibe"
+import { type ReviewRecord, hydrateReviewedPullRequests } from "../merged/hydrate.vibe"
+import { MergedRecordInvalid, type NodeReference } from "../merged/wire.vibe"
+
+schema JointContextStatus { readonly status: string }
+
+schema AssessedJointContext {
+  readonly evidence: { readonly sources: ReadonlyArray<{ readonly evidence: { readonly pull: { readonly node_id: string; readonly merged_at?: string | null } } }> }
+}
+
+const decodeStatus = Schema.decodeUnknownEffect(JointContextStatus)
+const decodeAssessed = Schema.decodeUnknownEffect(AssessedJointContext)
+
+export effect function contextStates(decisions: ReadonlyArray<SourceDecision>, censusIds: ReadonlySet<string>) {
+  const contexts = new Map<string, "merged" | "closed">()
+  for (const row of decisions) {
+    const malformed = `Joint value decision for ${row.sourceId} is malformed`
+    const { status } = decodeStatus(row.decision) catch effect () => { throw new MergedRecordInvalid({ message: malformed }) }
+    if (status !== "assessed") continue
+    const decision = decodeAssessed(row.decision) catch effect () => { throw new MergedRecordInvalid({ message: malformed }) }
+    for (const { evidence } of decision.evidence.sources) {
+      if (!censusIds.has(evidence.pull.node_id)) contexts.set(evidence.pull.node_id, typeof evidence.pull.merged_at === "string" && evidence.pull.merged_at !== "" ? "merged" : "closed")
+    }
+  }
+  return contexts
+}
+
+export effect function valueContextPullRequests(decisions: ReadonlyArray<SourceDecision>, censusIds: ReadonlySet<string>) {
+  const contexts = try contextStates(decisions, censusIds)
+  try ensureEstimatedBudget(try estimateReviewFirstPageDetailCost(contexts.size))
+  const hydrated: ReviewRecord[] = []
+  for (const state of ["merged", "closed"] as const) {
+    const references: ReadonlyArray<NodeReference> = [...contexts].filter(([, expected]) => expected === state).map(([id]) => ({ id, kind: "PullRequest", outcome: null, commitPage: null }))
+    if (references.length > 0) hydrated.push(...try hydrateReviewedPullRequests(references, true, state))
+  }
+  return hydrated
+}

@@ -23,13 +23,15 @@
   },
   "include": [
     "vibestack/spec.ts",
+    "vibestack/formal.ts",
     "vibestack/studio/src/main.vibe",
     "vibestack/studio/gen/*.vibe",
     "vibestack/testing/index.ts",
     "vibestack/testing/vitest.ts",
     "vibestack/stories/meta.ts",
     "vibestack/stories/storybook.ts",
-    "vibestack/design/eslint.ts"
+    "vibestack/design/eslint.ts",
+    "vibestack/eslint.ts"
   ],
   "vibe": {
     "sidecarDir": ".vibe/build"

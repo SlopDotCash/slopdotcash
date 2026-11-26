@@ -4,6 +4,7 @@ import { base64Decode } from "@repo/platform/chain/solana"
 import type { QuoteRead } from "../conversion/chain.vibe"
 import { decimalBps, jsonText, jsonValue, venuesOf, wholeText, wideOf } from "../solana/bytes.ts"
 import { refuse, solanaNativeAsset, wrappedSol } from "../solana/wire.vibe"
+import { noteProviderFailure } from "../kernels/providerFailure.ts"
 
 module verified {
   import { errorText as sanitized } from "../kernels/errorText.ts"
@@ -70,7 +71,8 @@ effect function jupiter(settings: JupiterSettings, path: string, body?: unknown)
   const bytes = boundedBytes(response, responseLimitBytes, "Jupiter") catch effect () => { throw new JupiterUnavailable({ path: label, detail: "Jupiter response too large or unreadable" }) }
   const parsed = jsonValue(new TextDecoder().decode(bytes))
   const ok = response.status >= 200 && response.status <= 299
-  if (ok && parsed === undefined) throw new JupiterUnavailable({ path: label, detail: `Jupiter ${label}: unparseable response` })
+  if (ok && parsed === undefined)
+    throw noteProviderFailure(new JupiterUnavailable({ path: label, detail: `Jupiter ${label}: unparseable response` }), { provider: "jupiter", stage: "response-json", method: label, httpStatus: response.status })
   if (!ok) {
     const detail = Schema.decodeUnknownEffect(Refusal)(parsed) catch () => undefined
     const reason = detail?.errorCode ?? detail?.error ?? response.status

@@ -72,7 +72,7 @@ export const managing: OwnerMonthly = {
   lifetime: 1,
   now: secondsOf("2026-12-02T12:00:00.000Z"),
   loaded: true,
-  month: { sequence: 3, automatic: true, cutoffAt: secondsOf(cutoffAt), latestCutAt: 0, frozen: false },
+  month: { sequence: 3, automatic: true, cutoffAt: secondsOf(cutoffAt), latestCutAt: 0, frozen: false, fixed: false },
 };
 
 export const cutsClosed: OwnerMonthly = { ...managing, now: secondsOf("2026-12-03T06:00:00.000Z") };
@@ -89,6 +89,6 @@ export const bountyProject: BountyProject = {
   securityBounty: {
     amount: { network: "base" },
     intake: { repository: "example/vault-guard" },
-    settlement: { chain: "base", deployments: [{ network: "base-mainnet", vault: "0x7a11000000000000000000000000000000000c0d" }] },
+    settlement: { chain: "base", deployments: [{ network: "base-mainnet", vault: "0x7a11000000000000000000000000000000000c0d", asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", owner: "0x0000000000000000000000000000000000000b0b" }] },
   },
 };

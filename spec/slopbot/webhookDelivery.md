@@ -146,9 +146,9 @@ pure def finishInstallation(w: Webhook, requestId: int, committed: bool): Webhoo
     answer(r, 202, Ignored, { ...w, installationProcessed: true, install: I::deliver(w.install, change) })
   else if (committed and I::canDeliver(w.install, change)) answer(r, 500, Failed, { ...w, install: I::deliver(w.install, change) })
   else answer(r, 503, Failed, w)
-pure def releaseOrdinary(w: Webhook): Webhook =
-  if (w.reopen != noReopen or w.value != noValue) w
-  else { ...w, receipt: NoReceipt, exists: false, installationProcessed: false, firstEvent: Other }
+pure def releaseOrdinary(r: Request, w: Webhook): Webhook =
+  answer(r, 503, Failed, if (w.reopen != noReopen or w.value != noValue) w
+    else { ...w, receipt: NoReceipt, exists: false, installationProcessed: false, firstEvent: Other })
 ```
 
 ### Current registration determines valuation and queue scope
@@ -178,7 +178,7 @@ pure def inspectValue(w: Webhook, requestId: int, registration: RS::RegistryObse
   val value = r.body.value
   val conflict = wants and (not(w.exists) or RS::slopbotScope(writeRegistration) != RS::Contributor or not(validValue(value))
     or (w.value != noValue and w.value != value))
-  if (not(lookupOk) or conflict) answer(r, 503, Failed, releaseOrdinary(w))
+  if (not(lookupOk) or conflict) releaseOrdinary(r, w)
   else updateRequest({ ...r, phase: InspectQueue, valued: wants },
     { ...w, value: if (wants) value else w.value })
 pure def qualifiedJob(body: Body): JobKind =
@@ -197,9 +197,36 @@ pure def inspectQueue(w: Webhook, requestId: int, registration: RS::RegistryObse
   val scope = queueScope(job, RS::slopbotScope(registration))
   if (job == NoJob) updateRequest({ ...r, phase: AwaitCompletion,
     completion: if (r.valued) ValuationPending else Ignored }, w)
-  else if (not(lookupOk)) answer(r, 503, Failed, releaseOrdinary(w))
+  else if (not(lookupOk)) releaseOrdinary(r, w)
   else if (scope == NoScope) updateRequest({ ...r, phase: AwaitCompletion, completion: NotRegistered }, w)
   else updateRequest({ ...r, scope: scope, completion: Queued, phase: if (job == HumanReopen) PersistReopen else SendQueue }, w)
+```
+
+### An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on
+
+While `SLOPBOT_EVIDENCE_CLOSURE_ENABLED` is exactly `"true"`, the review job
+of a `pull_request` delivery with action `opened`, whose body is a string
+carrying the Slop participation footer, is sent to the queue with a
+60-second delay, so that its participation receipt can land before the
+review runs. Every other job is sent with no delay: an edited or reopened
+pull request, a body that is absent or has no footer, an appeal, an appeal
+command, a human reopen, and any job while the switch has any other value.
+The adapter decides the switch, the event and action, and the footer from
+the authenticated payload; the delay changes only when the job is first
+delivered, never its scope, source or retry policy.
+
+```quint
+pure val receiptDelaySeconds = 60
+pure def queueDelaySeconds(evidenceSwitch: bool, job: JobKind, openedPullRequest: bool, carriesFooter: bool): int =
+  if (evidenceSwitch and job == Review and openedPullRequest and carriesFooter) receiptDelaySeconds else 0
+pure def lawOnlyAnOpenedFooterReviewWaits(evidenceSwitch: bool, job: JobKind, openedPullRequest: bool,
+  carriesFooter: bool): bool =
+  (queueDelaySeconds(evidenceSwitch, job, openedPullRequest, carriesFooter) > 0)
+    iff (evidenceSwitch and job == Review and openedPullRequest and carriesFooter)
+pure def lawDelayIsZeroOrOneMinute(evidenceSwitch: bool, job: JobKind, openedPullRequest: bool,
+  carriesFooter: bool): bool =
+  queueDelaySeconds(evidenceSwitch, job, openedPullRequest, carriesFooter) == 0
+    or queueDelaySeconds(evidenceSwitch, job, openedPullRequest, carriesFooter) == receiptDelaySeconds
 ```
 
 ## Story: Recover an uncertain queue submission without changing source authority
@@ -214,8 +241,13 @@ the same delivery ID refuses. An unavailable source completes with no
 decision. A queue attempt may fail before storage or succeed while its
 acknowledgment is lost. An error releases an ordinary receipt unless a
 reopen source was retained. The separate valuation request survives either
-failure. A successful send enters final receipt completion. A completion
-failure is recoverable through the same ordinary release path. Completion
+failure. An unexpected error thrown while a claimed ordinary request is
+valued, looked up, bound, sent or completed releases through the same path
+before the error propagates (the `catch` around ordinary routing in
+`workers/slopbot/index.ts`). An installation request, and a request not yet
+claimed, never releases: the release sits only around ordinary routing. A
+successful send enters final receipt completion. A completion failure is
+recoverable through the same ordinary release path. Completion
 does not establish exactly-once queue delivery. An overlapping ordinary
 request can release the row before another completes, and the latter
 source's completion update can affect zero rows. The adapter still returns
@@ -229,20 +261,24 @@ pure def bindReopen(w: Webhook, requestId: int, strictSource: bool): Webhook =
   val r = request(w, requestId)
   val source = r.body.reopen
   if (not(strictSource) or not(validReopen(source))) updateRequest({ ...r, phase: AwaitCompletion, completion: ReopenUnavailable }, w)
-  else if (not(w.exists) or (w.reopen != noReopen and w.reopen != source)) answer(r, 503, Failed, releaseOrdinary(w))
+  else if (not(w.exists) or (w.reopen != noReopen and w.reopen != source)) releaseOrdinary(r, w)
   else updateRequest({ ...r, phase: SendQueue }, { ...w, reopen: source })
 pure def canSend(w: Webhook, requestId: int): bool = request(w, requestId).phase == SendQueue
 pure def send(w: Webhook, requestId: int, ack: Ack): Webhook =
   val r = request(w, requestId)
   val sent = { ...w, sends: w.sends + (if (ack == QueueRejected) 0 else 1) }
   if (ack == QueuedAndAcked) updateRequest({ ...r, phase: AwaitCompletion }, sent)
-  else answer(r, 503, Failed, releaseOrdinary(sent))
+  else releaseOrdinary(r, sent)
 pure def canComplete(w: Webhook, requestId: int): bool = request(w, requestId).phase == AwaitCompletion
 pure def complete(w: Webhook, requestId: int, committed: bool): Webhook =
   val r = request(w, requestId)
   if (committed) answer(r, 202, r.completion,
     if (w.exists) { ...w, receipt: ProcessedReceipt } else w)
-  else answer(r, 503, Failed, releaseOrdinary(w))
+  else releaseOrdinary(r, w)
+pure def routingPhase(p: Ingress): bool =
+  p == InspectValue or p == InspectQueue or p == PersistReopen or p == SendQueue or p == AwaitCompletion
+pure def canFailRouting(w: Webhook, requestId: int): bool = routingPhase(request(w, requestId).phase)
+pure def failRouting(w: Webhook, requestId: int): Webhook = releaseOrdinary(request(w, requestId), w)
 ```
 
 ### A downstream reopen decision rechecks the exact retained source

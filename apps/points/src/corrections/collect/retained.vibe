@@ -1,0 +1,330 @@
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"
+import { GitHub } from "@repo/platform/github"
+import type { OutcomeCommit } from "../../collect/merged/wire.vibe"
+import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import { interrupted } from "../../quotaRecovery/run.vibe"
+import { canonicalInstant } from "./calendar.vibe"
+
+export error RetainedRefused { message: string }
+
+export const discoveryStale = "Retained-source discovery is incomplete or stale"
+export const originalIdentityUnavailable = "Retained original identity unavailable"
+export const retainedSourceChanged = "Retained source changed during evidence collection"
+export const lacksDirectAcceptance = "Historical allocation lacks direct acceptance"
+export const acceptanceChanged = "Historical allocation acceptance changed"
+const evidenceUnavailable = "retained-source-evidence-unavailable"
+
+const referencePattern = /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu
+
+schema PullSide { readonly sha: string; readonly ref: string }
+schema RestPull {
+  readonly node_id: string
+  readonly number: number
+  readonly html_url: string
+  readonly state: string
+  readonly body: string | null
+  readonly merged_at: string | null
+  readonly merge_commit_sha: string | null
+  readonly updated_at: string
+  readonly head: PullSide
+  readonly base: PullSide
+}
+schema RestRepository { readonly node_id: string }
+schema RestMergeCommit { readonly sha: string }
+schema Discussed { readonly body: string | null }
+schema ReferencedIssue { readonly node_id: string; readonly number: number; readonly html_url: string; readonly pull_request?: Schema.Unknown }
+schema TimelineSource { readonly issue?: ReferencedIssue }
+schema TimelineEntry { readonly event?: string; readonly source?: TimelineSource }
+
+export interface AcceptedSource {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly sourceId: string
+  readonly number: number
+  readonly headSha: string
+  readonly occurredAt: string
+  readonly mergeCommit?: { readonly oid: string } | null
+}
+
+export interface HistoricalAllocationAcceptance {
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+  readonly headSha: string
+  readonly acceptedSha: string
+  readonly mergedAt: string
+  readonly baseSha: string
+  readonly baseRef: string
+}
+
+export type RetainedDiscovery = "no-retained-original" | "retained-originals"
+
+export interface RetainedPull {
+  readonly nodeId: string
+  readonly number: number
+  readonly headSha: string
+  readonly updatedAt: string
+}
+
+export type RetainedOriginals =
+  | { readonly kind: "none" }
+  | { readonly kind: "originals"; readonly accepted: RetainedPull; readonly acceptance: HistoricalAllocationAcceptance; readonly originals: ReadonlyArray<RetainedPull> }
+
+interface Reference { readonly number: number; readonly id?: string }
+
+function refused(message: string) {
+  return new RetainedRefused({ message })
+}
+
+export function hasUnlinkedCommit(commits: ReadonlyArray<OutcomeCommit>, owned: (oid: string) => boolean) {
+  return commits.some((commit) => commit.parentCount <= 1 && owned(commit.oid) && !isCreditEligibleCommitAuthor(commit.author))
+}
+
+export function withoutClosedCodeFences(text: string) {
+  const lines = text.split(/(?<=\n)/u)
+  const output: string[] = []
+  let pending: string[] = []
+  let marker = ""
+  let length = 0
+  for (const line of lines) {
+    if (marker !== "") {
+      pending.push(line)
+      const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*(?:\r?\n)?$/u.exec(line)
+      const run = closing?.[1] ?? ""
+      if (closing !== null && run[0] === marker && run.length >= length) {
+        output.push("\n".repeat(pending.length))
+        pending = []
+        marker = ""
+      }
+      continue
+    }
+    const opening = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)/u.exec(line)
+    const run = opening?.[1] ?? ""
+    if (opening !== null && !(run[0] === "`" && (opening[2] ?? "").includes("`"))) {
+      marker = run[0] ?? ""
+      length = run.length
+      pending = [line]
+    } else output.push(line)
+  }
+  output.push(...pending)
+  return output.join("")
+}
+
+interface BacktickRun { readonly start: number; readonly end: number; readonly escaped: boolean }
+
+export function withoutClosedCodeSpans(text: string) {
+  const runs: BacktickRun[] = []
+  for (const found of text.matchAll(/`+/gu)) {
+    const start = found.index ?? 0
+    let escapes = 0
+    for (let index = start - 1; index >= 0 && text[index] === "\\"; index -= 1) escapes += 1
+    runs.push({ start, end: start + found[0].length, escaped: escapes % 2 === 1 })
+  }
+  const nextByLength = new Map<number, number>()
+  const closing = new Map<number, number>()
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index]
+    if (run === undefined) continue
+    const size = run.end - run.start
+    const next = nextByLength.get(size)
+    if (next !== undefined) closing.set(index, next)
+    nextByLength.set(size, index)
+  }
+  const output: string[] = []
+  let cursor = 0
+  for (let index = 0; index < runs.length; index += 1) {
+    const run = runs[index]
+    if (run === undefined || run.escaped) continue
+    const end = closing.get(index)
+    const closer = end === undefined ? undefined : runs[end]
+    if (end === undefined || closer === undefined) continue
+    output.push(text.slice(cursor, run.start), " ")
+    cursor = closer.end
+    index = end
+  }
+  output.push(text.slice(cursor))
+  return output.join("")
+}
+
+export function githubLinkDestinations(text: string) {
+  return text
+    .replace(
+      /\[[^[\]\n]*\]\(\s*(<[^<>\n]*>|(?:\\.|[^\s()])+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\s*\)/gu,
+      (link: string, rawDestination: string, offset: number) => {
+        let escapes = 0
+        for (let index = offset - 1; text[index] === "\\"; index -= 1) escapes += 1
+        if (escapes % 2 === 1) return link
+        const destination = rawDestination.startsWith("<") ? rawDestination.slice(1, -1) : rawDestination
+        const local = !destination.startsWith("//") && !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(destination)
+        const path = destination.split(/[?#]/u, 1)[0] ?? ""
+        return local && /\.md$/iu.test(path) ? " " : link
+      },
+    )
+    .replace(
+      /<a\b([^<>]*)>(?:(?!<\/?a\b)[\s\S])*<\/a>/giu,
+      (anchor: string, attributes: string) => /\bhref=(["'])(https:\/\/(?:redirect\.)?github\.com\/[^"']+)\1/iu.exec(attributes)?.[2] ?? anchor,
+    )
+    .replace(/\[[^[\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)[\]]+)\)/gu, "$1")
+}
+
+function label(text: string) {
+  return text.trim().replace(/\s+/gu, " ").toLowerCase()
+}
+
+export function sameRepositoryCommitHints(repository: string, source: string) {
+  const text = source
+    .replace(/<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v[12]|slop-contribution-attribution:v1)\b[\s\S]*?-->/giu, "")
+    .replace(/^\s*(?:[-*+]\s+)?(?:\*\*)?(?:Contribution skill revision|Skill revision)(?:\*\*)?\s*:[^\r\n]*/gimu, "")
+  const local = (target: string) => target.toLowerCase() === repository.toLowerCase()
+  const name = repository.split("/")[1] ?? ""
+  const definitions = new Set([...text.matchAll(/^ {0,3}\[([^[\]\n]+)\]:/gmu)].map((found) => label(found[1] ?? "")))
+  const referencesText = githubLinkDestinations(
+    text
+      .replace(/(?<![\w./-])(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)*github\.com\//giu, "https://github.com/")
+      .replace(/\]\(<(https:\/\/github\.com\/[^<>\n]*)>\)/gu, "]($1)"),
+  )
+    .replace(/\[([^[\]\n]*)\](\[[^[\]\n]*\])?/gu, (link: string, content: string, reference: string | undefined) =>
+      reference !== undefined || definitions.has(label(content)) ? " " : link)
+    .replace(/https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:[/?#][^\s<>"')]*|\b)/gu, (url: string, target: string) =>
+      local(target) ? url : " ")
+  const hints = [
+    ...referencesText.matchAll(
+      /(?:https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:commit|blob|tree|pull\/\d+\/commits)\/|(?<![\w./-])([\w./-]+)@|(?<!@))\b([a-f0-9]{7,40})\b/gu,
+    ),
+  ]
+    .filter(([, scope]) => scope === undefined || local(scope.includes("/") ? scope : `${scope}/${name}`))
+    .flatMap((found) => found[2] === undefined ? [] : [found[2]])
+  return [...new Set(hints)]
+}
+
+export function referencedNumbers(repository: string, texts: ReadonlyArray<string>) {
+  const numbers = new Set<number>()
+  for (const text of texts) {
+    for (const match of githubLinkDestinations(withoutClosedCodeSpans(withoutClosedCodeFences(text))).matchAll(referencePattern)) {
+      const named = match[1] ?? match[3]
+      const number = Number(match[2] ?? match[4])
+      if ((named === undefined || named.toLowerCase() === repository.toLowerCase()) && Number.isSafeInteger(number) && number > 0) numbers.add(number)
+    }
+  }
+  return numbers
+}
+
+function pullUrl(repository: string, number: number) {
+  return `https://github.com/${repository}/pull/${number}`.toLowerCase()
+}
+
+effect function acceptedPull(source: AcceptedSource) {
+  const pull = (try GitHub).json(`/repos/${source.repository}/pulls/${source.number}`, RestPull) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(discoveryStale)
+  }
+  if (pull.node_id !== source.sourceId || pull.head.sha !== source.headSha || canonicalInstant(pull.merged_at ?? "") !== source.occurredAt) throw refused(discoveryStale)
+  return pull
+}
+
+effect function discussed(path: string) {
+  const listed = (try GitHub).pages(path, Discussed) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(discoveryStale)
+  }
+  return listed.map((entry) => entry.body ?? "")
+}
+
+effect function referencesOf(source: AcceptedSource, pull: RestPull) {
+  const root = `/repos/${source.repository}`
+  const texts = [
+    pull.body ?? "",
+    ...(try discussed(`${root}/pulls/${source.number}/reviews`)),
+    ...(try discussed(`${root}/issues/${source.number}/comments`)),
+    ...(try discussed(`${root}/pulls/${source.number}/comments`)),
+  ]
+  const timeline = (try GitHub).pages(`${root}/issues/${source.number}/timeline`, TimelineEntry) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(discoveryStale)
+  }
+  const found = new Map<number, Reference>()
+  for (const entry of timeline) {
+    const issue = entry.source?.issue
+    if (entry.event !== "cross-referenced" || issue === undefined || issue.pull_request === undefined) continue
+    if (issue.html_url.toLowerCase() === pullUrl(source.repository, issue.number)) found.set(issue.number, { number: issue.number, id: issue.node_id })
+  }
+  for (const number of referencedNumbers(source.repository, texts)) if (!found.has(number)) found.set(number, { number })
+  return [...found.values()].filter((reference) => reference.number < source.number).sort((left, right) => left.number - right.number)
+}
+
+effect function originalPulls(source: AcceptedSource, references: ReadonlyArray<Reference>) {
+  const originals: RestPull[] = []
+  for (const reference of references) {
+    const pull = (try GitHub).json(`/repos/${source.repository}/pulls/${reference.number}`, RestPull) catch effect (error) => {
+      if (try interrupted()) throw error
+      if (error._tag === "NotFound" && reference.id === undefined) return undefined
+      throw refused(originalIdentityUnavailable)
+    }
+    if (pull === undefined) continue
+    if ((reference.id !== undefined && pull.node_id !== reference.id) || pull.html_url.toLowerCase() !== pullUrl(source.repository, reference.number) || pull.number !== reference.number) {
+      throw refused(originalIdentityUnavailable)
+    }
+    if (pull.state === "closed" && pull.merged_at === null) originals.push(pull)
+  }
+  return originals
+}
+
+effect function reread(source: AcceptedSource, number: number) {
+  const pull = (try GitHub).json(`/repos/${source.repository}/pulls/${number}`, RestPull) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(evidenceUnavailable)
+  }
+  return pull
+}
+
+function acceptanceOf(source: AcceptedSource, pull: RestPull): HistoricalAllocationAcceptance | undefined {
+  const acceptedSha = pull.merge_commit_sha
+  const mergedAt = pull.merged_at
+  if (acceptedSha === null || acceptedSha === "" || mergedAt === null) return undefined
+  return { repositoryNodeId: source.repositoryNodeId, pullRequestNodeId: source.sourceId, headSha: source.headSha, acceptedSha, mergedAt, baseSha: pull.base.sha, baseRef: pull.base.ref }
+}
+
+effect function acceptedEvidence(source: AcceptedSource, acceptance: HistoricalAllocationAcceptance) {
+  const github = try GitHub
+  const root = `/repos/${source.repository}`
+  const reading = effect {
+    const repository = try github.json(root, RestRepository)
+    const pull = try github.json(`${root}/pulls/${source.number}`, RestPull)
+    const commit = try github.json(`${root}/commits/${acceptance.acceptedSha}`, RestMergeCommit)
+    return { repository, pull, commit }
+  }
+  const read = reading catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(evidenceUnavailable)
+  }
+  const { repository, pull, commit } = read
+  const recorded = source.mergeCommit
+  const indirect = recorded !== undefined && recorded !== null && recorded.oid !== acceptance.acceptedSha
+  if (repository.node_id !== acceptance.repositoryNodeId || pull.node_id !== acceptance.pullRequestNodeId || pull.head.sha !== acceptance.headSha ||
+    pull.merge_commit_sha !== acceptance.acceptedSha || commit.sha !== acceptance.acceptedSha || pull.merged_at !== acceptance.mergedAt ||
+    pull.base.sha !== acceptance.baseSha || pull.base.ref !== acceptance.baseRef || indirect || pull.state !== "closed") {
+    throw refused(acceptanceChanged)
+  }
+  return pull
+}
+
+function retainedPull(pull: RestPull): RetainedPull {
+  return { nodeId: pull.node_id, number: pull.number, headSha: pull.head.sha, updatedAt: pull.updated_at }
+}
+
+export effect function retainedOriginals(source: AcceptedSource) {
+  const accepted = try acceptedPull(source)
+  const originals = try originalPulls(source, try referencesOf(source, accepted))
+  if (originals.length === 0) return { kind: "none" } satisfies RetainedOriginals
+  const acceptance = acceptanceOf(source, accepted)
+  if (acceptance === undefined) throw refused(lacksDirectAcceptance)
+  for (const expected of [accepted, ...originals]) {
+    const current = expected === accepted ? try acceptedEvidence(source, acceptance) : try reread(source, expected.number)
+    if (current.node_id !== expected.node_id || current.head.sha !== expected.head.sha || current.updated_at !== expected.updated_at) throw refused(retainedSourceChanged)
+  }
+  return { kind: "originals", accepted: retainedPull(accepted), acceptance, originals: originals.map(retainedPull) } satisfies RetainedOriginals
+}
+
+export effect function discoverRetained(source: AcceptedSource) {
+  const found = try retainedOriginals(source)
+  return (found.kind === "none" ? "no-retained-original" : "retained-originals") satisfies RetainedDiscovery
+}

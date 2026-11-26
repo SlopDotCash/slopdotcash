@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
 import type { Handler } from "@repo/platform/testing"
+import { GitHubWorld } from "@repo/platform/testing/github"
 import { type Served, serve } from "@repo/platform/testing/chains"
 import { type CloudflareApi, cloudflareApi } from "@repo/platform/testing/cloudflare"
 import { repoRoot } from "@repo/platform/testing/paths"
@@ -13,8 +14,10 @@ import { AgentClientsRefused, agentClientGate, requiredClients } from "../src/re
 import { EvidenceRefused, type Verification, sealEvidence, validateEvidence } from "../src/release/evidence/bundle.vibe"
 import { captureEvidence, committedBuild, remoteArtifactPaths, servedArtifacts } from "../src/release/evidence/capture.vibe"
 import { evidence } from "../src/release/evidence/command.vibe"
-import { type PinRequest, activateCandidate, confirmActivation, pinActive, pinnedWrangler, rotateRobinhoodRpc, uploadCandidate } from "../src/release/rpc/command.vibe"
+import { type PinRequest, activateCandidate, confirmActivation, pinActive, pinnedWrangler, runRobinhoodRotation, startRotation, uploadCandidate } from "../src/release/rpc/command.vibe"
 import { type ContractProbe, RotationRefused } from "../src/release/rpc/qualify.vibe"
+import { stagingBackend, stagingIdentity, stagingSite } from "../src/release/staging/probes.vibe"
+import { StagingRefused } from "../src/release/staging/request.vibe"
 import { cloudflare } from "../src/release/wrangler/cloudflare.vibe"
 
 const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
@@ -46,7 +49,7 @@ const takeOrders: ContractProbe = {
 }
 
 function described(error: unknown) {
-  if (error instanceof EvidenceRefused || error instanceof AgentClientsRefused || error instanceof RotationRefused || error instanceof InspectRefused || error instanceof InspectUsage) return error.message
+  if (error instanceof EvidenceRefused || error instanceof StagingRefused || error instanceof AgentClientsRefused || error instanceof RotationRefused || error instanceof InspectRefused || error instanceof InspectUsage) return error.message
   return error instanceof Error ? error.name : String(error)
 }
 
@@ -223,7 +226,7 @@ effect function seedConverter(host: ConverterHost, sha: string, database: string
   return pinned
 }
 
-effect function solanaSteps(request: PinRequest) {
+effect function solanaSteps(request: PinRequest & { readonly kind: "solana" }) {
   provide cloudflare({ root: request.root, wrangler: pinnedWrangler(request.root) }) {
     const pin = try pinActive(request)
     const candidate = try uploadCandidate(pin, { RPC_URL_SOLANA: Redacted.make("https://solana-primary.test/v1"), SOLANA_RECOVERY_RPC_URL: Redacted.make("https://solana-recovery.test/v1") })
@@ -269,6 +272,84 @@ function slopbotHost(scenario: ReadbackScenario, calls: string[]): Handler {
     if (path.endsWith("/deployments")) return Response.json({ success: true, result: calls.length === 1 ? scenario.before ?? slopbotDeployments() : scenario.after ?? slopbotDeployments() })
     if (scenario.raw !== undefined) return new Response(scenario.raw, { status: 200 })
     return Response.json({ success: true, result: scenario.version ?? slopbotVersionView() })
+  }
+}
+
+const quotaProject = { id: "example", status: "active", authority: { repositoryId: "12", repositoryNodeId: "repo-12" }, repositories: [{ id: "sample/example" }] }
+const quotaRepository = { id: 12, node_id: "repo-12", private: false, full_name: "sample/example" }
+const quotaCommits: Readonly<Record<string, string>> = { slop360: "2ab9e1bcd82da29b9639859948eb6ad70556a75c", slop367: "6446f3e94529786cd32ec7d0c3f8880fea493eaa" }
+const quotaToken = "fixture-quota-token"
+
+interface QuotaScenario {
+  readonly manifest: string
+  readonly reset: number
+  readonly commit?: string
+  readonly refusal?: "grant" | "revocation" | "repository" | "reset"
+}
+
+function rateHeaders(remaining: number, used: number, reset: number) {
+  return { "x-ratelimit-limit": "5000", "x-ratelimit-remaining": String(remaining), "x-ratelimit-used": String(used), "x-ratelimit-resource": "core", "x-ratelimit-reset": String(reset) }
+}
+
+function quotaHost(scenario: QuotaScenario, calls: string[], mints: unknown[]): Handler {
+  const wanted = scenario.commit === undefined ? { metadata: "read" } : { metadata: "read", contents: "read" }
+  return async (request) => {
+    const url = new URL(request.url)
+    calls.push(`${request.method} ${url.pathname}`)
+    if (url.host === "slop.cash") return Response.json({ project: quotaProject, manifestSha256: scenario.manifest })
+    const auth = request.headers.get("authorization") ?? ""
+    if (url.pathname === "/repos/sample/example/installation") return /^Bearer ey/u.test(auth) ? Response.json({ id: 78, app_id: 5257625 }) : new Response(null, { status: 401 })
+    if (url.pathname === "/app/installations/78/access_tokens") {
+      mints.push(await request.json())
+      const permissions = scenario.refusal === "grant" ? { metadata: "read", contents: "write" } : wanted
+      return Response.json({ token: quotaToken, permissions, expires_at: new Date(scenario.reset * 1000).toISOString() }, { status: 201 })
+    }
+    if (auth !== `Bearer ${quotaToken}`) return new Response(null, { status: 401 })
+    if (url.pathname === "/installation/token") return new Response(null, { status: scenario.refusal === "revocation" ? 503 : 204 })
+    if (url.pathname === "/rate_limit") return Response.json({ resources: { core: { limit: 5000, remaining: 4999, used: 1, reset: scenario.reset } } })
+    if (url.pathname === "/installation/repositories") return Response.json({ total_count: 1, repositories: [scenario.refusal === "repository" ? { ...quotaRepository, id: 13 } : quotaRepository] })
+    if (scenario.commit !== undefined && url.pathname === `/repos/sample/example/commits/${scenario.commit}`) {
+      return Response.json({ sha: scenario.commit, files: [{ filename: "never-export.patch" }] }, { headers: rateHeaders(4997, 3, scenario.reset) })
+    }
+    if (url.pathname === "/repos/sample/example") {
+      const committed = scenario.commit !== undefined
+      return Response.json(quotaRepository, { headers: rateHeaders(committed ? 4996 : 4997, committed ? 4 : 3, scenario.reset + (scenario.refusal === "reset" ? 30 : 0)) })
+    }
+    if (url.pathname === "/graphql") {
+      return Response.json({ data: { repository: { id: "repo-12", isPrivate: false, nameWithOwner: "sample/example" }, rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: new Date(scenario.reset * 1000).toISOString() } } })
+    }
+    return new Response(null, { status: 404 })
+  }
+}
+
+interface StagingScenario {
+  readonly bind: boolean
+  readonly unboundStatus: number
+  readonly clientId: string
+}
+
+function stagingHost(scenario: StagingScenario, calls: string[]): Handler {
+  const flowId = "flow-1"
+  const binding = `__Host-slop_oauth_bind_${flowId}=bound-browser`
+  return (request) => {
+    const url = new URL(request.url)
+    const cookie = request.headers.get("cookie") ?? ""
+    calls.push(`${request.method} ${url.origin}${url.pathname}${cookie === binding ? " bound" : ""}`)
+    if (url.origin === stagingIdentity && url.pathname === "/v1/oauth/start") {
+      if (request.headers.get("origin") !== stagingSite) return new Response(null, { status: 403 })
+      const headers: Record<string, string> = { "access-control-allow-origin": stagingSite, ...scenario.bind ? { "access-control-allow-credentials": "true", "set-cookie": `${binding}; Path=/; Secure; HttpOnly; SameSite=None` } : {} }
+      return Response.json({ flowId, pollCapability: "never-export", authorizationUrl: `${stagingIdentity}/v1/oauth/authorize?flow_id=${flowId}` }, { status: 201, headers })
+    }
+    if (url.origin === stagingIdentity && url.pathname === "/v1/oauth/authorize") {
+      if (cookie !== binding) return new Response(null, { status: scenario.unboundStatus })
+      const github = `https://github.com/login/oauth/authorize?client_id=${scenario.clientId}&redirect_uri=${encodeURIComponent(`${stagingIdentity}/v1/oauth/callback`)}`
+      return new Response(null, { status: 302, headers: { location: github } })
+    }
+    if (url.origin === stagingIdentity && url.pathname === "/v1/oauth/poll") return Response.json({ status: cookie === binding ? "pending" : "forbidden" }, { status: cookie === binding ? 202 : 403 })
+    if (url.pathname === "/api/v1/points/me") return Response.json(null)
+    if (url.pathname === "/api/v1/payments/me") return Response.json({ error: "not_signed_in" }, { status: 401 })
+    if (url.pathname === "/api/v1/points/visibility") return Response.json({ error: "not_signed_in" }, { status: 401 })
+    return new Response(null, { status: 404 })
   }
 }
 
@@ -385,6 +466,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
 
     try written(records, agentRecords(head, everyRecord(head)))
     const complete = try gate(head)
+    const commanded = try settled(routed(configured(evidence(["agent-clients", records, repository]), { GITHUB_SHA: head }), asFetch(site)))
     try written(records, agentRecords(head, everyRecord(head).filter((record) => !(record.workflow === "contributor-skill" && record.client === "muse"))))
     const missingClient = try gate(head)
     const { model: _model, ...modelless } = agentRecord("slop-skill", "grok", head)
@@ -407,8 +489,9 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     try sealEvidence(out, verification(unrelated, { bytes: log.length, sha256: try sha256Hex(log) }), log)
     const releasedWithoutRecords = try settled(configured(evidence(["validate", out]), { GITHUB_SHA: unrelated }))
 
-    try Effect.try(() => assert.deepStrictEqual({ complete, missingClient, missingModel, missingVersion, placeholderProvider, failed, staleSource: staleSource.split(": ")[0], nothingChanged, releasedWithoutRecords }, {
+    try Effect.try(() => assert.deepStrictEqual({ complete, commanded, missingClient, missingModel, missingVersion, placeholderProvider, failed, staleSource: staleSource.split(": ")[0], nothingChanged, releasedWithoutRecords }, {
       complete: "ok",
+      commanded: "ok",
       missingClient: `release refused: the affected agent-client workflows lack passing records for ${head}: contributor-skill has no recorded result for muse`,
       missingModel: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",
       missingVersion: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",
@@ -420,7 +503,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     }))
   }))
 
-  it.effect('Rotate the fee-converter RPC only to a qualified Robinhood endpoint (spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A rotation run prepares only on main from a manual dispatch"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/fees/solanaRpcRotation.md, "A candidate changes only the two Solana RPC secrets of the exact pinned version, and only that candidate is activated"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
+  it.effect('Rotate the fee-converter RPC only to a qualified Robinhood endpoint (spec/operations/robinhoodRpcRotation.md, "Story: Rotate the fee converter\'s Robinhood RPC only to a qualified, independent endpoint from the pinned version"; spec/operations/robinhoodRpcRotation.md, "A rotation is admitted only on trusted main from a manual dispatch with the release enabled and an exact expected version"; spec/operations/robinhoodRpcRotation.md, "The candidate is an HTTPS endpoint without credentials, independent of the public reference"; spec/operations/robinhoodRpcRotation.md, "The expected version is the only active version, tagged with this source and published without a rotation"; spec/operations/robinhoodRpcRotation.md, "The candidate qualifies only on a finalized chain-4663 read that an independent RPC confirms at the same canonical block"; spec/operations/robinhoodRpcRotation.md, "Upload binds exactly one new version with only the candidate secret, rechecks the pin, the quiet journal and live main, and activates it at 100%"; spec/operations/robinhoodRpcRotation.md, "Only a readback of the same Worker at the candidate with the release message confirms the rotation"; spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A rotation run prepares only on main from a manual dispatch"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/fees/solanaRpcRotation.md, "A candidate changes only the two Solana RPC secrets of the exact pinned version, and only that candidate is activated"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-rpc-rotation-" })
@@ -491,8 +574,10 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       calls.length = 0
       host.calls.length = 0
       return effect {
-        const outcome = try settled(routed(configured(rotateRobinhoodRpc(checkout, takeOrders), values), asFetch(network(candidate, reference))))
-        return { outcome, rpc: [...calls], cloudflare: host.calls.map((call) => `${call.method} ${call.path}`).sort() }
+        const run = try startRotation()
+        const outcome = try settled(routed(configured(runRobinhoodRotation(run, checkout, takeOrders), values), asFetch(network(candidate, reference))))
+        const ended = try run.state()
+        return { outcome, rpc: [...calls], cloudflare: host.calls.map((call) => `${call.method} ${call.path}`).sort(), end: { phase: ended.phase, uploadAttempted: ended.uploadAttempted }, writes: host.calls.filter(isWrite).length }
       }
     }
     const summary = effect {
@@ -526,6 +611,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
 
     const qualifyingPin = try seedConverter(host, head, feeDatabase)
     const pinnedEnvironment = { ...environment, SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: qualifyingPin }
+    const notOnlyActive = try rotate(environment, robinhood, robinhood)
     const wrongChain = try rotate(pinnedEnvironment, base, robinhood)
     const headersOnly = try rotate(pinnedEnvironment, stateless, robinhood)
     const contradicted = try rotate(pinnedEnvironment, robinhood, forked)
@@ -564,32 +650,37 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const solanaRefused = try solana(otherSha, solanaRefusedPin)
     const solanaRefusedCandidate = host.api.state.versions["slop-fee-converter"]?.at(-1)
 
-    try Effect.try(() => assert.deepStrictEqual({ wrongChain, headersOnly, insecure, reference, untrusted, pushed, disabled, contradicted, qualified, unpublished }, {
-      wrongChain: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: qualifyingReads(qualifyingPin) },
-      headersOnly: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber"], cloudflare: qualifyingReads(qualifyingPin) },
-      insecure: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
-      reference: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
-      untrusted: { outcome: "The fee-converter release requires trusted main and verified TLS.", rpc: [], cloudflare: [] },
-      pushed: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
-      disabled: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
-      contradicted: { outcome: "The independent Robinhood RPC did not verify the candidate block.", rpc: qualifiedRpc, cloudflare: qualifyingReads(qualifyingPin) },
-      qualified: { outcome: "Fee-converter deployment or upload history is unavailable.", rpc: [], cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`] },
-      unpublished: { outcome: "First publish this main revision without a rotation input.", rpc: [], cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`, `GET ${worker}/versions/${unpublishedPin}`] },
+    const unwritten = { phase: "Refused", uploadAttempted: false }
+    try Effect.try(() => assert.deepStrictEqual({ wrongChain, headersOnly, insecure, reference, untrusted, pushed, disabled, contradicted, qualified, unpublished, notOnlyActive }, {
+      wrongChain: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: qualifyingReads(qualifyingPin), end: unwritten, writes: 0 },
+      headersOnly: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber"], cloudflare: qualifyingReads(qualifyingPin), end: unwritten, writes: 0 },
+      insecure: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [], end: unwritten, writes: 0 },
+      reference: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [], end: unwritten, writes: 0 },
+      untrusted: { outcome: "The fee-converter release requires trusted main and verified TLS.", rpc: [], cloudflare: [], end: unwritten, writes: 0 },
+      pushed: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [], end: unwritten, writes: 0 },
+      disabled: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [], end: unwritten, writes: 0 },
+      contradicted: { outcome: "The independent Robinhood RPC did not verify the candidate block.", rpc: qualifiedRpc, cloudflare: qualifyingReads(qualifyingPin), end: unwritten, writes: 0 },
+      qualified: { outcome: "Fee-converter deployment or upload history is unavailable.", rpc: [], cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`], end: unwritten, writes: 0 },
+      unpublished: { outcome: "First publish this main revision without a rotation input.", rpc: [], cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`, `GET ${worker}/versions/${unpublishedPin}`], end: unwritten, writes: 0 },
+      notOnlyActive: { outcome: "The pinned fee-converter deployment or latest upload changed.", rpc: [], cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`], end: unwritten, writes: 0 },
     }))
     try Effect.try(() => assert.deepStrictEqual({
-      deployRefused: deployRefused.outcome, deployRefusedEffects, deployRefusedSummary,
-      staleRead: staleRead.outcome, staleEffects, staleSummary,
-      confirmed: confirmed.outcome, confirmedEffects, confirmedSummary,
+      deployRefused: deployRefused.outcome, deployRefusedEnd: deployRefused.end, deployRefusedEffects, deployRefusedSummary,
+      staleRead: staleRead.outcome, staleEnd: staleRead.end, staleEffects, staleSummary,
+      confirmed: confirmed.outcome, confirmedEnd: confirmed.end, confirmedEffects, confirmedSummary,
       serving: serving?.versions, servingMessage: serving?.annotations["workers/message"],
       candidate: { number: candidate?.number, tag: candidate?.tag, message: candidate?.annotations["workers/message"] },
     }, {
       deployRefused: "Fee-converter RPC release check failed.",
+      deployRefusedEnd: { phase: "Uncertain", uploadAttempted: true },
       deployRefusedEffects: { writes: [`wrangler PATCH ${latest}`, `wrangler POST ${worker}/deployments`], journalReads: 2, strayed: [] },
       deployRefusedSummary: "",
       staleRead: "The pinned fee-converter deployment or latest upload changed.",
+      staleEnd: { phase: "Uncertain", uploadAttempted: true },
       staleEffects: { writes: [`wrangler PATCH ${latest}`, `wrangler POST ${worker}/deployments`], journalReads: 2, strayed: [] },
       staleSummary: "",
       confirmed: "ok",
+      confirmedEnd: { phase: "Confirmed", uploadAttempted: true },
       confirmedEffects: { writes: [`wrangler PATCH ${latest}`, `wrangler POST ${worker}/deployments`], journalReads: 2, strayed: [] },
       confirmedSummary: `Fee converter Robinhood RPC rotation from ${confirmedPin} to ${candidate?.id ?? ""} at 100% on ${head}.\n`,
       serving: [{ versionId: candidate?.id ?? "", percentage: 100 }],
@@ -745,6 +836,149 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
         status: "observed",
         observation: { sourceCommit: slopbotSource, versionId: slopbotVersion, cpuMs: 30_000, usageModel: "bundled", deploymentStable: true },
       },
+    }))
+  }))
+  it.effect('Witness the installation quota with a temporary metadata-only grant (spec/operations/slopbotQuotaWitness.md, "Story: Witness the installation quota with a temporary metadata-only grant"; spec/operations/slopbotQuotaWitness.md, "Only a manual main run in the protected environment, bound to the exact registry revision, may mint"; spec/operations/slopbotQuotaWitness.md, "The token is minted for the one repository with exactly the mode\'s read grant, and any other grant is revoked unused"; spec/operations/slopbotQuotaWitness.md, "A quota reading is valid only when its windows agree on one public repository and the named commit"; spec/operations/slopbotQuotaWitness.md, "Every minted grant is revoked, and only a verified reading with a 204 revocation writes the receipt")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const runnerTemp = try fs.makeTempDirectoryScoped({ prefix: "slop-app-quota-" })
+    const receiptPath = files.join(runnerTemp, "slopbot-app-quota.json")
+    const pem = try Effect.try(() => new GitHubWorld(() => 0).addApp({ id: "5257625", slug: "slopbot", botId: 1 }).privateKeyPem)
+    const manifest = try sha256Hex(JSON.stringify(quotaProject))
+    const reset = Math.floor((try Clock.currentTimeMillis) / 1000) + 1800
+    const run = {
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_REPOSITORY: "Sample/Example",
+      GITHUB_REPOSITORY_ID: "12",
+      SLOP_QUOTA_PROJECT: "example",
+      SLOP_QUOTA_MANIFEST_SHA256: manifest,
+      SLOP_QUOTA_PLAN_SHA256: "a".repeat(64),
+      SLOPBOT_APP_ID: "5257625",
+      SLOPBOT_APP_PRIVATE_KEY: pem,
+      RUNNER_TEMP: runnerTemp,
+    }
+    const witnessed = (values: Readonly<Record<string, string>>, scenario: Omit<QuotaScenario, "manifest" | "reset"> = {}) => effect {
+      try fs.remove(receiptPath, { force: true })
+      const calls: string[] = []
+      const mints: unknown[] = []
+      const outcome = try settled(routed(configured(inspect(["slopbot-app-quota"]), values), asFetch(quotaHost({ manifest, reset, ...scenario }, calls, mints))))
+      const text = fs.readFileString(receiptPath) catch () => ""
+      const mode = text === "" ? 0 : (try fs.stat(receiptPath)).mode & 0o777
+      return { outcome, calls, mints, text, mode }
+    }
+    const refused = "Protected GitHub App quota witness was refused"
+    const metadata = try witnessed(run)
+    const commit = try witnessed({ ...run, SLOP_QUOTA_COMMIT_WITNESS: "slop367" }, { commit: quotaCommits.slop367 })
+    const wrongGrant = try witnessed(run, { refusal: "grant" })
+    const foreign = try witnessed({ ...run, SLOP_QUOTA_COMMIT_WITNESS: "slop367", GITHUB_REPOSITORY: "sample/other" }, { commit: quotaCommits.slop367 })
+    const unreviewed = try witnessed({ ...run, SLOP_QUOTA_COMMIT_WITNESS: "f".repeat(40) })
+    const development = try witnessed({ ...run, GITHUB_REF: "refs/heads/development" })
+    const otherApp = try witnessed({ ...run, SLOPBOT_APP_ID: "44" })
+    const staleManifest = try witnessed({ ...run, SLOP_QUOTA_MANIFEST_SHA256: "b".repeat(64) })
+    const secondRepository = try witnessed(run, { refusal: "repository" })
+    const driftedReset = try witnessed(run, { refusal: "reset" })
+    const unrevoked = try witnessed(run, { refusal: "revocation" })
+    const receipt = parsedJson(metadata.text)
+    const commitReceipt = parsedJson(commit.text)
+    const pick = (value: unknown, keys: ReadonlyArray<string>) => typeof value === "object" && value !== null ? Object.fromEntries(Object.entries(value).filter(([key]) => keys.includes(key))) : value
+    const shown = ["schemaVersion", "project", "installationId", "repository", "installationPageOne", "temporaryTokenRevoked", "scopedTokenMetadataOnly", "effectiveCore", "usedDelta", "exactCommitGet", "productionWrites"]
+    const ending = (found: { readonly calls: ReadonlyArray<string> }) => found.calls.at(-1)
+    const readQuota = (found: { readonly calls: ReadonlyArray<string> }) => found.calls.includes("GET /rate_limit")
+    const nothing = (found: { readonly outcome: string; readonly calls: ReadonlyArray<string>; readonly text: string }) => ({ outcome: found.outcome, calls: found.calls, written: found.text !== "" })
+    const revokedWithout = (found: { readonly outcome: string; readonly calls: ReadonlyArray<string>; readonly text: string }) => ({ outcome: found.outcome, last: ending(found), written: found.text !== "" })
+
+    try Effect.try(() => assert.deepStrictEqual({
+      metadata: { outcome: metadata.outcome, last: ending(metadata), calls: metadata.calls.length, mints: metadata.mints, mode: metadata.mode, endsWithNewline: metadata.text.endsWith("}\n"), receipt: pick(receipt, shown) },
+      commit: { outcome: commit.outcome, mints: commit.mints, tail: commit.calls.slice(-4), receipt: pick(commitReceipt, shown) },
+      wrongGrant: { ...revokedWithout(wrongGrant), readQuota: readQuota(wrongGrant) },
+      foreign: nothing(foreign),
+      unreviewed: nothing(unreviewed),
+      development: nothing(development),
+      otherApp: nothing(otherApp),
+      staleManifest: nothing(staleManifest),
+      secondRepository: revokedWithout(secondRepository),
+      driftedReset: revokedWithout(driftedReset),
+      unrevoked: revokedWithout(unrevoked),
+      private: [quotaToken, "PRIVATE KEY", "never-export", "Bearer"].filter((secret) => metadata.text.includes(secret) || commit.text.includes(secret)),
+    }, {
+      metadata: {
+        outcome: "ok",
+        last: "DELETE /installation/token",
+        calls: 8,
+        mints: [{ repository_ids: [12], permissions: { metadata: "read" } }],
+        mode: 0o600,
+        endsWithNewline: true,
+        receipt: {
+          schemaVersion: "protected-slopbot-app-quota:v1",
+          project: "example",
+          installationId: 78,
+          repository: { path: "sample/example", databaseId: 12, nodeId: "repo-12" },
+          installationPageOne: { path: "/installation/repositories?per_page=100&page=1", pageCount: 1, totalCount: 1, matched: true, checkedWithQuotaToken: true },
+          temporaryTokenRevoked: true,
+          scopedTokenMetadataOnly: true,
+          effectiveCore: { limit: 5000, remaining: 4997, used: 3, reset },
+          usedDelta: 2,
+          productionWrites: false,
+        },
+      },
+      commit: {
+        outcome: "ok",
+        mints: [{ repository_ids: [12], permissions: { metadata: "read", contents: "read" } }],
+        tail: [`GET /repos/sample/example/commits/${quotaCommits.slop367}`, "GET /repos/sample/example", "POST /graphql", "DELETE /installation/token"],
+        receipt: {
+          schemaVersion: "protected-slopbot-app-quota:v1",
+          project: "example",
+          installationId: 78,
+          repository: { path: "sample/example", databaseId: 12, nodeId: "repo-12" },
+          installationPageOne: { path: "/installation/repositories?per_page=100&page=1", pageCount: 1, totalCount: 1, matched: true, checkedWithQuotaToken: true },
+          temporaryTokenRevoked: true,
+          scopedTokenMetadataOnly: false,
+          effectiveCore: { limit: 5000, remaining: 4996, used: 4, reset },
+          usedDelta: 3,
+          exactCommitGet: { repository: "sample/example", commit: quotaCommits.slop367, installationId: 78, method: "GET", http: 200, remaining: 4997, sameInstallationToken: true },
+          productionWrites: false,
+        },
+      },
+      wrongGrant: { outcome: refused, last: "DELETE /installation/token", written: false, readQuota: false },
+      foreign: { outcome: refused, calls: ["GET /api/v1/projects/example"], written: false },
+      unreviewed: { outcome: refused, calls: [], written: false },
+      development: { outcome: refused, calls: [], written: false },
+      otherApp: { outcome: refused, calls: [], written: false },
+      staleManifest: { outcome: refused, calls: ["GET /api/v1/projects/example"], written: false },
+      secondRepository: { outcome: refused, last: "DELETE /installation/token", written: false },
+      driftedReset: { outcome: refused, last: "DELETE /installation/token", written: false },
+      unrevoked: { outcome: refused, last: "DELETE /installation/token", written: false },
+      private: [],
+    }))
+  }))
+
+  it.effect('Staging binds each website sign-in flow to the browser that started it (spec/operations/release.md, "Served bytes are verified against the deployment\'s own source")', () => scoped(effect {
+    const clientId = "Iv1.staging"
+    const probed = (scenario: StagingScenario) => effect {
+      const calls: string[] = []
+      const outcome = try settled(routed(stagingBackend(scenario.clientId), asFetch(stagingHost(scenario, calls))))
+      return { outcome, calls }
+    }
+    const bound = try probed({ bind: true, unboundStatus: 403, clientId })
+    const unbound = try probed({ bind: true, unboundStatus: 302, clientId })
+    const unbinding = try probed({ bind: false, unboundStatus: 403, clientId })
+    try Effect.try(() => assert.deepStrictEqual({ bound, unbound: unbound.outcome, unbinding: unbinding.outcome }, {
+      bound: {
+        outcome: "ok",
+        calls: [
+          `POST ${stagingIdentity}/v1/oauth/start`,
+          `GET ${stagingIdentity}/v1/oauth/authorize`,
+          `GET ${stagingIdentity}/v1/oauth/authorize bound`,
+          `POST ${stagingIdentity}/v1/oauth/poll bound`,
+          `POST ${stagingIdentity}/v1/oauth/start`,
+          `GET ${stagingSite}/api/v1/points/me`,
+          `GET ${stagingSite}/api/v1/payments/me`,
+          `POST ${stagingSite}/api/v1/points/visibility`,
+        ],
+      },
+      unbound: "Staging authorized a flow in a browser that did not start it",
+      unbinding: "Staging identity did not bind the flow to its browser",
     }))
   }))
 })

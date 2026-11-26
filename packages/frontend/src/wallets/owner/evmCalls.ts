@@ -85,7 +85,7 @@ export function batchCalls(terms: VaultCallTerms, gross: bigint, approval: Batch
   return [
     ...(approval.resetAllowance ? [approveCall(terms, 0n)] : []),
     ...(approval.approvalNeeded ? [approveCall(terms, gross)] : []),
-    { to: terms.vault, data: depositCalldata(gross), value: "0x0" },
+    { to: terms.vault, data: depositCalldata(gross), value: terms.native ? hexQuantity(gross) : "0x0" },
     ...extraCalls,
   ];
 }

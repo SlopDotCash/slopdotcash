@@ -23,7 +23,7 @@ service Http {
   ask(path: string, init?: Ask): Answer!!
 }
 
-const shownHeaders = ["cache-control", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers", "vary", "set-cookie"]
+const shownHeaders = ["cache-control", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers", "access-control-allow-credentials", "vary", "set-cookie"]
 
 const signer = {
   seed: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
@@ -145,7 +145,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     }))
   })
 
-  it.effect('Raw bodies are bounded while they are read, and a cross-origin route answers only its listed origins and headers (spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', () => effect {
+  it.effect('Raw bodies are bounded while they are read, and a cross-origin route answers only its listed origins and headers, with credentials only where it carries them (spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes")', () => effect {
     const http = try Http
     const trace = (bytes: string | ReadableStream<Uint8Array>, type = "application/x-ndjson") => http.ask("/api/v1/fixture/traces/t1", { method: "PUT", headers: { "content-type": type }, body: bytes })
     const streamed = Stream.toReadableStream(Stream.make(new TextEncoder().encode("0123456789"), new TextEncoder().encode("0123456")))
@@ -194,7 +194,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       foreign: refusal(403, "origin_not_allowed", "This origin may not call this route"),
       noToken: refusal(401, "unauthorized", "Authentication failed", { "cache-control": "no-store", "access-control-allow-origin": "https://slop.cash", vary: "Origin" }),
       wrongToken: refusal(401, "unauthorized", "Authentication failed", { "cache-control": "no-store", "access-control-allow-origin": "https://slop.cash", vary: "Origin" }),
-      tierListed: { status: 200, headers: { "cache-control": "no-store", "access-control-allow-origin": "https://staging.slop.cash", vary: "Origin" }, body: { id: "tiered", q: "" } },
+      tierListed: { status: 200, headers: { "cache-control": "no-store", "access-control-allow-origin": "https://staging.slop.cash", "access-control-allow-credentials": "true", vary: "Origin" }, body: { id: "tiered", q: "" } },
       otherTier: refusal(403, "origin_not_allowed", "This origin may not call this route"),
       tierPreflight: {
         status: 204,
@@ -203,6 +203,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
           "access-control-allow-origin": "https://staging.slop.cash",
           "access-control-allow-methods": "GET",
           "access-control-allow-headers": "",
+          "access-control-allow-credentials": "true",
           vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
         },
         body: "",

@@ -170,23 +170,23 @@ function finish(spec: Spec, text: string) {
  * Which characters of Quint are code, as opposed to part of a string or a comment, which are comments, which are in a
  * string, its quotes included, and what is still open at the end. A string ends at its next quote: Quint's have no escapes.
  */
-function scan(text: string): { code: boolean[]; comment: boolean[]; quoted: boolean[]; strings: Set<number>; mode: "" | '"' | "//" | "/*" } {
-  const code: boolean[] = [];
-  const comment: boolean[] = [];
-  const quoted: boolean[] = [];
+function scan(text: string): { code: Uint8Array; comment: Uint8Array; quoted: Uint8Array; strings: Set<number>; mode: "" | '"' | "//" | "/*" } {
+  const code = new Uint8Array(text.length);
+  const comment = new Uint8Array(text.length);
+  const quoted = new Uint8Array(text.length);
   const strings = new Set<number>();
   let mode: "" | '"' | "//" | "/*" = "";
   for (let i = 0; i < text.length; i++) {
-    const two = text.slice(i, i + 2);
-    if (mode === "" && text[i] === '"') { strings.add(i); quoted[i] = true; mode = '"'; }
-    else if (mode === "" && two === "//") { comment[i] = comment[i + 1] = true; i++; mode = "//"; }
-    else if (mode === "" && two === "/*") { comment[i] = comment[i + 1] = true; i++; mode = "/*"; }
-    else if (mode === "") code[i] = true;
-    else if (mode === '"') { quoted[i] = true; if (text[i] === '"') mode = ""; }
-    else if (mode === "//" && text[i] === "\n") mode = "";
-    else if (mode === "//") comment[i] = true;
-    else if (mode === "/*" && two === "*/") { comment[i] = comment[i + 1] = true; i++; mode = ""; }
-    else if (mode === "/*") comment[i] = true;
+    const ch = text[i];
+    if (mode === "" && ch === '"') { strings.add(i); quoted[i] = 1; mode = '"'; }
+    else if (mode === "" && (ch === "/" && text[i + 1] === "/")) { comment[i] = comment[i + 1] = 1; i++; mode = "//"; }
+    else if (mode === "" && (ch === "/" && text[i + 1] === "*")) { comment[i] = comment[i + 1] = 1; i++; mode = "/*"; }
+    else if (mode === "") code[i] = 1;
+    else if (mode === '"') { quoted[i] = 1; if (ch === '"') mode = ""; }
+    else if (mode === "//" && ch === "\n") mode = "";
+    else if (mode === "//") comment[i] = 1;
+    else if (mode === "/*" && (ch === "*" && text[i + 1] === "/")) { comment[i] = comment[i + 1] = 1; i++; mode = ""; }
+    else if (mode === "/*") comment[i] = 1;
   }
   return { code, comment, quoted, strings, mode: mode === "//" ? "" : mode };
 }
@@ -328,8 +328,9 @@ export function specFiles(root: string): string[] {
 }
 
 /** Every spec after its imports; text snapshots also support Studio's unpublished changes. */
-export function readSpecs(root: string, texts?: Record<string, string>): Spec[] {
+export function readSpecs(root: string, texts?: Record<string, string>, ownerName?: string): Spec[] {
   const files = texts ? Object.keys(texts).sort() : specFiles(root);
+  const available = new Set(files);
   if (!files.length) throw new Error(`there are no specs: ${path.join(root, "spec")} holds no .md file`);
   const all: Spec[] = [];
   const byFile = new Map<string, Spec>();
@@ -342,7 +343,10 @@ export function readSpecs(root: string, texts?: Record<string, string>): Spec[] 
     byName.set(spec.name, spec);
     return spec;
   };
-  for (const file of files) add(parseSpec(root, file, texts?.[file]));
+  for (const file of files)
+    if (ownerName === undefined || file.startsWith(`spec/${ownerName}/`)) add(parseSpec(root, file, texts?.[file]));
+  if (!all.length) throw new Error(`${ownerName}: no specs under spec/${ownerName}/`);
+  const roots = all.slice();
   const resolve = (spec: Spec, target: string, line: number, library = false): Spec => {
     const fail = (reason: string): never => { throw new Error(`${spec.file}:${line}: ${target}: ${reason}`); };
     let link: string;
@@ -352,7 +356,11 @@ export function readSpecs(root: string, texts?: Record<string, string>): Spec[] 
     const dest = path.posix.normalize(path.posix.join(path.posix.dirname(spec.file), link)).replace(/\/$/, "");
     if (dest !== scope && !dest.startsWith(`${scope}/`)) return fail(`the target must stay within ${scope}/`);
     const candidates = path.posix.extname(dest) ? [dest] : [`${dest}.md`, `${dest}/index.md`];
-    const found = candidates.map((file) => byFile.get(file)).filter((s) => s !== undefined);
+    const found = candidates.flatMap((file) => {
+      const existing = byFile.get(file);
+      if (existing !== undefined) return [existing];
+      return ownerName !== undefined && available.has(file) ? [add(parseSpec(root, file, texts?.[file]))] : [];
+    });
     if (!found.length && (library || isStd(spec.file))) {
       // A bare sibling import may name a library shipped with the tools, after the local path was tried.
       const sibling = link.match(/^(?:\.\/)?([a-z][A-Za-z0-9]*)(?:\.md)?$/);
@@ -387,6 +395,8 @@ export function readSpecs(root: string, texts?: Record<string, string>): Spec[] 
     for (const name of spec.imports) visit(byName.get(name)!, [...trail, spec.name]);
     ordered.push(spec);
   };
-  all.forEach((spec) => visit(spec, []));
-  return ordered;
+  roots.forEach((spec) => visit(spec, []));
+  const ownersAndImports = ordered.length;
+  all.slice(roots.length).forEach((spec) => visit(spec, []));
+  return ownerName === undefined ? ordered : ordered.slice(0, ownersAndImports);
 }

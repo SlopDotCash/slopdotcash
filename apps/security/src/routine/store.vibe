@@ -1,0 +1,248 @@
+// spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"; spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { depositHeldOn } from "../deposit/hold.ts"
+import { ConstraintViolation, type Statement, decoded, rows, sql } from "@repo/platform/d1"
+import { Conflict, type Aggregate, type Rows, load, update } from "@repo/platform/stored"
+import type { Json } from "@repo/ports/backend"
+import { routineProofWindowMs } from "../../gen/security__cases.effect.vibe"
+import type { Event, FailedAttempt, Routine, RoutineRecord } from "../../gen/security__routineDecisions.ts"
+import { Rejected, apply, decodeState, earlierCases } from "../../gen/security__routineDecisions.effect.vibe"
+import type { Screening } from "../../gen/security__screening.ts"
+import { initial as unscreened } from "../../gen/security__screening.effect.vibe"
+import type { MissingEvidence, RoutineSeverity } from "../analysis/prompts.ts"
+import { type CaseRecord, caseAggregate } from "../cases/rows.vibe"
+import { type Assignments, caseNotices, modelColumns, setList } from "../cases/store.vibe"
+import { caseEvent } from "../receipt/statements.vibe"
+import { screeningAt } from "../screening/store.vibe"
+import { type RoutineOutcomeName, routineActorGithubId, routineProofNextAction, routineReason } from "./reasons.ts"
+import { type ActiveMode, bases, basisNames, holdNames, holds, isRoutineSeverity, modes, outcomeNames, outcomes, severityOfRank, severityRanks } from "./tables.ts"
+
+export error RoutineCaseMissing { caseId: string }
+
+export interface CallAudit {
+  readonly provider: string
+  readonly model: string
+  readonly promptRevision: string
+  readonly state: "answered" | "failed"
+}
+
+export interface Rank {
+  readonly lossPlausible: boolean | null
+  readonly severity: RoutineSeverity | null
+  readonly proofPresent: boolean | null
+}
+
+export interface DecisionFacts {
+  readonly runId: number
+  readonly duplicateOf: string | null
+  readonly exclusionLine: string | null
+  readonly missing: ReadonlyArray<MissingEvidence>
+  readonly rank: Rank
+  readonly calls: ReadonlyArray<CallAudit>
+  readonly promptRevision: string
+}
+
+export interface Loaded {
+  readonly routine: Routine
+  readonly record: CaseRecord
+  readonly intake: IntakeFacts | undefined
+}
+
+schema DecisionRow {
+  case_revision: number
+  report_version: number | null
+  mode: "dry_run" | "live"
+  outcome: "duplicate" | "does-not-qualify" | "needs-proof" | "no-proof-received" | "acknowledged" | "unavailable"
+  basis: "digest" | "two-calls" | "clock" | "hold"
+  hold_reason: "loss-plausible" | "calls-disagreed" | "analysis-unavailable" | "github-advisory" | "report-not-stored" | "proof-still-missing" | null
+  duplicate_of: string | null
+  exclusion_line: string | null
+  plausible_severity: string | null
+  applied: number
+  decided_at: string
+}
+
+export schema IntakeFacts { submission_id: string; report_version: number; advisory_ghsa: string | null; digest: string | null }
+schema RankedCase { case_id: string }
+
+const ownerListLimit = 20
+const receiptOutcomes: Partial<Readonly<Record<RoutineOutcomeName, string>>> = { duplicate: "duplicate", "does-not-qualify": "out-of-scope", "no-proof-received": "rejected" }
+const journalKinds: Readonly<Record<RoutineOutcomeName, string>> = { duplicate: "decide", "does-not-qualify": "decide", "no-proof-received": "decide", "needs-proof": "request-information", acknowledged: "triage", unavailable: "triage" }
+
+function recordOf(row: DecisionRow): RoutineRecord[] {
+  if (row.outcome === "unavailable") return []
+  return [{
+    mode: modes[row.mode],
+    caseRevision: row.case_revision,
+    reportVersion: row.report_version ?? 0,
+    at: millisOf(row.decided_at),
+    decision: {
+      outcome: outcomes[row.outcome],
+      basis: bases[row.basis],
+      hold: row.hold_reason === null ? "NoHold" : holds[row.hold_reason],
+      duplicateOf: row.duplicate_of === null ? 0 : earlierCases[0] ?? 0,
+      line: row.exclusion_line === null ? 0 : 1,
+      severity: isRoutineSeverity(row.plausible_severity) ? severityRanks[row.plausible_severity] : 0,
+    },
+    applied: row.applied === 1,
+  }]
+}
+
+function failureOf(row: DecisionRow): FailedAttempt[] {
+  return row.outcome === "unavailable" ? [{ mode: modes[row.mode], caseRevision: row.case_revision, at: millisOf(row.decided_at) }] : []
+}
+
+effect function screeningOf(record: CaseRecord, intake: IntakeFacts | undefined) {
+  if (intake === undefined) return { ...unscreened, version: record.model.reportVersion, phase: "Unavailable" } satisfies Screening
+  return (try screeningAt(intake.submission_id)).screening
+}
+
+function aggregateOf(caseId: string, mode: ActiveMode, nowMs: number, proofFile = false) {
+  const cases = caseAggregate(caseId)
+  return {
+    name: `security routine decision of ${caseId}`,
+    version: sql`SELECT coalesce((SELECT revision FROM security_cases WHERE id = ${caseId}), 0) || '|' || (SELECT count(*) FROM security_routine_decisions WHERE case_id = ${caseId}) AS version`,
+    reads: [
+      ...cases.reads,
+      sql`SELECT case_revision, report_version, mode, outcome, basis, hold_reason, duplicate_of, exclusion_line, plausible_severity, applied, decided_at FROM security_routine_decisions WHERE case_id = ${caseId} ORDER BY id`,
+      sql`SELECT i.submission_id, i.report_version, s.advisory_ghsa, (SELECT r.content_sha256 FROM security_intake_reports r WHERE r.submission_id = i.submission_id AND r.version = i.report_version) AS digest FROM security_submission_intake i JOIN security_submissions s ON s.id = i.submission_id WHERE i.case_id = ${caseId}`,
+    ],
+    decode: (found: ReadonlyArray<Rows>) => effect {
+      const count = cases.reads.length
+      const record = try cases.decode(found.slice(0, count))
+      if (record === undefined) throw new RoutineCaseMissing({ caseId })
+      const decisions = try decoded(DecisionRow, found[count] ?? [], "security routine decisions")
+      const [intake] = try decoded(IntakeFacts, found[count + 1] ?? [], "security routine intake")
+      const routine = try decodeState({
+        mode: modes[mode],
+        privateCase: record.model,
+        screening: try screeningOf(record, intake),
+        onGithub: record.row.advisory_ghsa !== null || (intake !== undefined && intake.advisory_ghsa !== null),
+        nowMs,
+        savedAt: millisOf(record.row.updated_at),
+        records: decisions.flatMap(recordOf),
+        failures: decisions.flatMap(failureOf),
+        proofFile,
+      })
+      return { routine, record, intake } satisfies Loaded
+    },
+  } satisfies Aggregate<Loaded, unknown, unknown>
+}
+
+export effect function routineAt(caseId: string, mode: ActiveMode, nowMs: number) {
+  return (try load(aggregateOf(caseId, mode, nowMs))).state
+}
+
+function flag(value: boolean | null) {
+  return value === null ? null : value ? 1 : 0
+}
+
+interface Row {
+  readonly outcome: RoutineOutcomeName
+  readonly basis: string
+  readonly hold: string | null
+  readonly duplicateOf: string | null
+  readonly exclusionLine: string | null
+  readonly proofDueAt: string | null
+  readonly severity: RoutineSeverity | null
+  readonly applied: boolean
+}
+
+function decisionInsert(current: Loaded, mode: ActiveMode, facts: DecisionFacts, row: Row, at: string, eventKey: string | null): Statement {
+  const caseId = current.record.row.id
+  const revision = current.routine.privateCase.revision
+  const modelCalls = facts.calls.length === 2 ? 2 : 0
+  const landed = eventKey === null ? sql`1` : sql`EXISTS (SELECT 1 FROM security_case_events e WHERE e.case_id = ${caseId} AND e.case_revision = ${revision + 1} AND e.idempotency_key = ${eventKey})`
+  return sql`INSERT INTO security_routine_decisions (run_id, case_id, case_revision, report_version, mode, attempt, outcome, basis, hold_reason, exclusion_line, duplicate_of, proof_due_at, loss_plausible, plausible_severity, proof_present, prompt_revision, calls, model_calls, applied, applied_case_revision, decided_at)
+    SELECT ${facts.runId}, ${caseId}, ${revision}, ${current.intake?.report_version ?? null}, ${mode},
+      1 + (SELECT COUNT(*) FROM security_routine_decisions d WHERE d.case_id = ${caseId} AND d.case_revision = ${revision} AND d.mode = ${mode}),
+      ${row.outcome}, ${row.basis}, ${row.hold}, ${row.exclusionLine}, ${row.duplicateOf}, ${row.proofDueAt},
+      ${flag(facts.rank.lossPlausible)}, ${row.severity}, ${flag(facts.rank.proofPresent)},
+      ${modelCalls === 2 ? facts.promptRevision : null}, ${JSON.stringify(facts.calls)}, ${modelCalls},
+      ${row.applied ? 1 : 0}, ${row.applied ? revision + 1 : null}, ${at}
+    WHERE ${landed} AND (${row.outcome} = 'unavailable' OR NOT EXISTS (SELECT 1 FROM security_routine_decisions f WHERE f.case_id = ${caseId} AND f.case_revision = ${revision} AND f.mode = ${mode} AND f.outcome <> 'unavailable'))`
+}
+
+effect function rowOf(current: Loaded, next: Routine, event: Event, facts: DecisionFacts) {
+  if (event.type !== "decideReport") return { outcome: "unavailable", basis: "hold", hold: "analysis-unavailable", duplicateOf: null, exclusionLine: null, proofDueAt: null, severity: null, applied: false } satisfies Row
+  const record = next.records.at(-1)
+  if (record === undefined) throw new Rejected({ event, state: current.routine, by: 0 })
+  const { decision } = record
+  const outcome = outcomeNames[decision.outcome]
+  return {
+    outcome,
+    basis: basisNames[decision.basis],
+    hold: holdNames[decision.hold],
+    duplicateOf: outcome === "duplicate" ? facts.duplicateOf : null,
+    exclusionLine: outcome === "does-not-qualify" ? facts.exclusionLine : null,
+    proofDueAt: outcome === "needs-proof" ? try isoAt(current.routine.nowMs + routineProofWindowMs) : null,
+    severity: facts.calls.length === 2 ? severityOfRank(decision.severity) : facts.rank.severity,
+    applied: record.applied,
+  } satisfies Row
+}
+
+effect function liveStatements(current: Loaded, next: Routine, facts: DecisionFacts, row: Row, at: string) {
+  const { row: stored } = current.record
+  const revision = current.routine.privateCase.revision
+  const eventKey = `routine-decision-r${revision}`
+  const kind = journalKinds[row.outcome]
+  const set: Assignments = {
+    ...modelColumns(current.routine.privateCase, next.privateCase),
+    ...row.outcome === "duplicate" ? { duplicate_of: row.duplicateOf } : {},
+    next_action: row.outcome === "needs-proof" ? routineProofNextAction : null,
+    next_action_due_at: row.proofDueAt,
+  }
+  const receiptOutcome = receiptOutcomes[row.outcome]
+  const detail: { readonly [key: string]: Json } = {
+    automatic: true,
+    ...receiptOutcome === undefined ? {} : { outcome: receiptOutcome },
+    routine: {
+      outcome: row.outcome,
+      basis: row.basis,
+      holdReason: row.hold,
+      exclusionLine: row.exclusionLine,
+      duplicateOf: row.duplicateOf,
+      proofDueAt: row.proofDueAt,
+      promptRevision: facts.calls.length > 0 ? facts.promptRevision : null,
+      calls: facts.calls.map((call) => ({ ...call })),
+    },
+  }
+  const notices = try caseNotices({ caseId: stored.id, revision: revision + 1, kind, idempotencyKey: eventKey, actorGithubId: routineActorGithubId, reporterGithubId: stored.reporter_github_id, detail, program: undefined, relatedReview: false, at })
+  return [
+    sql`UPDATE security_cases SET ${setList(set, at)} WHERE id = ${stored.id} AND revision = ${revision} AND receipt_state = ${stored.receipt_state} AND appeal_state = 'none' AND award_state NOT IN ('reserved', 'approved') AND NOT ${depositHeldOn("security_cases.id")}`,
+    caseEvent({ caseId: stored.id, revision: revision + 1, kind, actorGithubId: routineActorGithubId, role: "triager", idempotencyKey: eventKey, reason: routineReason({ outcome: row.outcome, exclusionLine: row.exclusionLine, proofDueAt: row.proofDueAt, missing: facts.missing }), evidenceReference: null, detail, at, guard: true }),
+    decisionInsert(current, "live", facts, row, at, eventKey),
+    ...notices,
+  ]
+}
+
+export effect function recorded(caseId: string, mode: ActiveMode, seen: { readonly revision: number; readonly nowMs: number; readonly proofFile: boolean }, event: Event, facts: DecisionFacts) {
+  return update(aggregateOf(caseId, mode, seen.nowMs, seen.proofFile), (current: Loaded) => effect {
+    if (current.routine.privateCase.revision !== seen.revision) return { value: false, writes: [] }
+    const next = apply(current.routine, event, 0) catch effect (error) => {
+      if (error instanceof Rejected) return undefined
+      throw error
+    }
+    if (next === undefined) return { value: false, writes: [] }
+    const at = try isoAt(try Clock.currentTimeMillis)
+    const row = try rowOf(current, next, event, facts)
+    const writes = row.applied ? try liveStatements(current, next, facts, row, at) : [decisionInsert(current, mode, facts, row, at, null)]
+    return { value: true, writes }
+  }, 1) catch effect (error) => {
+    if (error instanceof Conflict || error instanceof ConstraintViolation) return false
+    throw error
+  }
+}
+
+export effect function routineOwnerRanking(projectIds: ReadonlyArray<string>) {
+  if (projectIds.length === 0) return []
+  const ranked = try rows(RankedCase, sql`SELECT d.case_id FROM security_routine_decisions d JOIN security_cases c ON c.id = d.case_id
+    WHERE d.mode = 'live' AND d.applied = 1 AND d.outcome = 'acknowledged'
+      AND c.receipt_state = 'triaging' AND c.appeal_state = 'none'
+      AND c.project_id IN (SELECT value FROM json_each(${JSON.stringify(projectIds)}))
+      AND d.id = (SELECT MAX(x.id) FROM security_routine_decisions x WHERE x.case_id = d.case_id AND x.applied = 1)
+    ORDER BY CASE d.plausible_severity WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'informational' THEN 1 ELSE 0 END DESC,
+      COALESCE(d.proof_present, 0) DESC, c.received_at ASC, c.rowid ASC
+    LIMIT ${ownerListLimit}`)
+  return ranked.map((row) => row.case_id)
+}

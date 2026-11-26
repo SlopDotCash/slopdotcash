@@ -1,5 +1,7 @@
-// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "Every required check binds the same source and built artifact"
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"
+import { systemGit } from "@repo/platform/git"
 import { cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
+import { agentClientGate } from "./agentClients.vibe"
 import { validateEvidence } from "./bundle.vibe"
 import { captureEvidence } from "./capture.vibe"
 
@@ -8,6 +10,7 @@ export error EvidenceUsage { message: string }
 const usage = [
   "evidence capture <bundle> <deployment-id> <deploy-log> <out> [root]",
   "evidence validate <dir>",
+  "evidence agent-clients <records> [root]",
 ].join(" | ")
 
 export effect function evidence(args: ReadonlyArray<string>) {
@@ -24,6 +27,14 @@ export effect function evidence(args: ReadonlyArray<string>) {
     const sourceSha = try Config.String("GITHUB_SHA")
     const valid = try validateEvidence(first, { sourceSha })
     try Console.log(`[Slop] evidence bundle ${first} binds ${valid.artifacts} artifacts captured at ${valid.capturedAt}`)
+    return
+  }
+  if (command === "agent-clients" && first !== undefined && third === undefined) {
+    provide systemGit {
+      const gate = try agentClientGate(first, second ?? ".")
+      const scope = gate.workflows.length === 0 ? "no agent-client workflow changed" : `${gate.records} records pass ${gate.workflows.join(", ")}`
+      try Console.log(`[Slop] agent-client gate since ${gate.base ?? "no released ancestor"}: ${scope}`)
+    }
     return
   }
   throw new EvidenceUsage({ message: `usage: ${usage}` })

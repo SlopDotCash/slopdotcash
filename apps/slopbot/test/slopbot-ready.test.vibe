@@ -1,0 +1,335 @@
+// spec/slopbot/readyLabel.md, "Story: Label a pull request ready only while every condition holds at its head"
+import { assert, layer } from "@effect/vitest"
+import { Response as WebResponse } from "miniflare"
+import type { Handler } from "@repo/platform/testing"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { githubFake, signature256 } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { lostQueueNumber } from "./support/ingressNumbers.vibe"
+import { journeyBuild } from "./support/journey.vibe"
+
+type Fake = ReturnType<typeof githubFake>
+
+interface MergeReport {
+  readonly mergeable: boolean | null
+  readonly mergeable_state: string | null
+}
+
+interface HeadFlip {
+  readonly head: string
+  reads: number
+}
+
+const secret = "ready-webhook-secret"
+const installationId = 9301
+const repositoryId = 8101
+const repo = "ada/widgets"
+const marker = "<!-- slopbot:review -->"
+const readyMarker = "<!-- slopbot:ready -->"
+const t0 = Date.parse("2026-11-20T12:00:00.000Z")
+const project = { projectId: "ready-project", path: repo, repositoryId: String(repositoryId), rowStatus: "Active" }
+const onSettings = { enabled: true, approvals: 1, maxChangedLines: 400, maxChangedFiles: 20, protectedPaths: ["deploy/**"] }
+const cleanFile = { path: "src/a.ts", additions: 10, deletions: 2, status: "modified" as const, patch: "@@ -1,2 +1,10 @@\n+a" }
+const commentBody = [marker, "### Slopbot review", "", "No finding.", "", "<details><summary>Review details</summary>", "", "Checked.", "</details>"].join("\n")
+const clean = { mergeable: true, mergeable_state: "clean" }
+
+effect function seed() {
+  const fake = try Effect.try(() => githubFake())
+  const world = fake.world
+  try Effect.try(() => world.addUser({ id: 100, login: "ada" }))
+  try Effect.try(() => world.addUser({ id: 301, login: "carol" }))
+  try Effect.try(() => world.addUser({ id: 302, login: "maya" }))
+  try Effect.try(() => world.addUser({ id: 303, login: "otto" }))
+  try Effect.try(() => world.addUser({ id: 304, login: "helper[bot]", type: "Bot" }))
+  try Effect.try(() => world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" }))
+  try Effect.try(() => world.setPermission(repo, "maya", "write"))
+  try Effect.try(() => world.setPermission(repo, "otto", "read"))
+  try Effect.try(() => world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } }))
+  const merges = new Map<number, MergeReport>()
+  const flips = new Map<number, HeadFlip>()
+  const handler: Handler = async (request) => {
+    const found = /\/pulls\/(\d+)$/u.exec(new URL(request.url).pathname)
+    if (request.method !== "GET" || found === null) return fake.handler(request)
+    const number = Number(found[1])
+    const flip = flips.get(number)
+    if (flip !== undefined && ++flip.reads === 2) {
+      Object.assign(world.pull(repo, number), { headSha: flip.head })
+      flips.delete(number)
+    }
+    const answer = await fake.handler(request)
+    const report = merges.get(number)
+    if (report === undefined || answer.status !== 200) return answer
+    const pull = await answer.json() as Record<string, unknown>
+    return new WebResponse(JSON.stringify({ ...pull, ...report }), { status: 200, headers: answer.headers })
+  }
+  const token = try Effect.try(() => fake.tokens.installation(installationId))
+  return { fake, merges, flips, net: internet({ github: handler }), token }
+}
+
+type Seeded = Effect.Success<ReturnType<typeof seed>>
+
+service World {
+  readonly fake: Fake
+  readonly merges: Seeded["merges"]
+  readonly flips: Seeded["flips"]
+}
+
+const ReadyArea = Layer.unwrap(effect {
+  const seeded = try seed()
+  return Layer.merge(
+    areaLayer({
+      ...journeyBuild,
+      entry: "ready",
+      d1: { SLOPBOT_DB: "slop-private" },
+      vars: {
+        GITHUB_API: seeded.fake.authority,
+        GITHUB_TOKEN: seeded.token,
+        SLOPBOT_WEBHOOK_SECRET: secret,
+        SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
+        TEST_PROJECTS: JSON.stringify([project]),
+      },
+      internet: seeded.net,
+    }),
+    Layer.succeed(World, seeded),
+  )
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function iso(millis: number) {
+  return new Date(millis).toISOString()
+}
+
+function jobOf(number: number) {
+  return { kind: "ready_label", deliveryId: `ready-delivery-${number}`, installationId, repositoryId, owner: "ada", repo: "widgets", itemKind: "pull_request", number }
+}
+
+effect function prepared(area: AreaShape) {
+  try area.sql("CREATE TABLE IF NOT EXISTS ready_test_jobs (delivery TEXT NOT NULL, kind TEXT NOT NULL, number INTEGER NOT NULL)")
+  try area.sql("CREATE TABLE IF NOT EXISTS ready_test_manifests (project_id TEXT PRIMARY KEY, manifest TEXT NOT NULL)")
+  try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1) ON CONFLICT (installation_id) DO NOTHING", installationId, iso(t0))
+}
+
+effect function configured(area: AreaShape, readyLabel: unknown) {
+  const manifest = JSON.stringify({ id: project.projectId, slopbot: readyLabel === undefined ? {} : { readyLabel } })
+  try area.sql("INSERT INTO ready_test_manifests (project_id, manifest) VALUES (?, ?) ON CONFLICT (project_id) DO UPDATE SET manifest = excluded.manifest", project.projectId, manifest)
+}
+
+interface PullSetup {
+  readonly files?: ReadonlyArray<typeof cleanFile | { readonly path: string; readonly additions: number; readonly deletions: number; readonly status: "modified" | "removed" | "added" | "renamed"; readonly patch?: string }>
+  readonly verdict?: string
+  readonly approvers?: ReadonlyArray<string>
+  readonly merge?: MergeReport
+  readonly labelled?: boolean
+}
+
+effect function pulled(area: AreaShape, title: string, setup: PullSetup = {}) {
+  const { fake, merges } = try World
+  const world = fake.world
+  const number = try Effect.try(() => world.addPull({ repo, author: "carol", title, files: setup.files ?? [cleanFile], labels: setup.labelled === true ? ["slopbot:ready"] : [] }))
+  const pull = try Effect.try(() => world.pull(repo, number))
+  const commentId = try Effect.try(() => world.addComment(repo, number, { author: fake.app.bot.login, body: commentBody }))
+  for (const author of setup.approvers ?? ["maya"]) try Effect.try(() => world.addReview(repo, number, { author, state: "APPROVED", commitId: pull.headSha }))
+  merges.set(number, setup.merge ?? clean)
+  try area.sql("INSERT INTO slopbot_item_comments (item_node_id, repository_id, comment_id) VALUES (?, ?, ?)", pull.nodeId, repositoryId, commentId)
+  try reviewedAt(area, number, pull.headSha, setup.verdict ?? "none")
+  return { number, commentId, head: pull.headSha }
+}
+
+effect function reviewedAt(area: AreaShape, number: number, head: string, category: string) {
+  const { fake } = try World
+  const pull = try Effect.try(() => fake.world.pull(repo, number))
+  try area.sql("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, verdict, action, created_at) VALUES (?, ?, ?, 'pull_request', ?, ?, 301, ?, 'content', 'policy', 'completed', ?, 'comment', ?)",
+    `ready-review-${number}-${head}`, installationId, repositoryId, number, pull.nodeId, head, JSON.stringify({ category, limitations: [] }), iso(t0))
+}
+
+effect function refreshed(area: AreaShape, number: number, now: number) {
+  const answer = try area.request("/test/ready/refresh", { method: "POST", json: jobOf(number), headers: { "x-test-now": String(now) } })
+  return (answer.body as { readonly outcome: string }).outcome
+}
+
+effect function dispatched(area: AreaShape, now: number) {
+  const answer = try area.request("/test/ready/dispatch", { method: "POST", json: {}, headers: { "x-test-now": String(now) } })
+  return (answer.body as { readonly sent: number }).sent
+}
+
+effect function stateOf(area: AreaShape, number: number) {
+  const { fake } = try World
+  const item = try Effect.try(() => fake.world.item(repo, number))
+  const comment = item.comments.find((entry) => entry.author.id === fake.app.bot.id)
+  const rows = try area.sql("SELECT state, head_sha, reason, next_check_at FROM slopbot_ready_labels WHERE repository_id = ? AND pull_number = ?", repositoryId, number)
+  return {
+    labels: item.labels.map((label) => label.name),
+    line: (comment?.body ?? "").split("\n").find((line) => line.startsWith(readyMarker)) ?? null,
+    row: rows[0] ?? null,
+  }
+}
+
+function notLabelled(head: string, reason: string) {
+  return `${readyMarker} **Not labelled \`slopbot:ready\`** at \`${head.slice(0, 7)}\`: ${reason}.`
+}
+
+function pullEvent(action: string, number: number, head: string) {
+  return {
+    action,
+    installation: { id: installationId },
+    repository: { id: repositoryId, name: "widgets", private: false, owner: { login: "ada" } },
+    sender: { id: 301, type: "User" },
+    pull_request: { number, node_id: `PR_${number}`, updated_at: "2026-11-20T12:00:00Z", head: { sha: head } },
+  }
+}
+
+effect function delivered(area: AreaShape, event: string, payload: unknown, deliveryId: string) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload))
+  const answer = try area.request("/github/webhook", {
+    method: "POST",
+    body: bytes,
+    origin: null,
+    headers: { "content-type": "application/json", "x-github-event": event, "x-github-delivery": deliveryId, "x-hub-signature-256": signature256(secret, bytes) },
+  })
+  return answer.status
+}
+
+effect function readyJobs(area: AreaShape, pattern: string) {
+  return try area.sql("SELECT delivery, number FROM ready_test_jobs WHERE kind = 'ready_label' AND delivery LIKE ? ORDER BY delivery", pattern)
+}
+
+effect function merges(fake: Fake) {
+  return fake.requests.filter((request) => request.url.includes("/merge") || request.method === "PUT").length
+}
+
+layer(ReadyArea, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('A ready pull request is labelled with one comment line, only writer approvals at the head count, and nothing is ever merged (spec/slopbot/readyLabel.md, "The owner\'s settings are off unless saved on, and stay within their bounds"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/slopbot/readyLabel.md, "Only the latest decision of each other account with write access counts, and only at the head"; spec/slopbot/readyLabel.md, "A changed file is protected when it is deleted, on a default or owner path, or has no text diff"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready"; spec/slopbot/readyLabel.md, "Only a human merges")', () => effect {
+    const area = try Area
+    const { fake } = try World
+    try prepared(area)
+    const ready = try pulled(area, "Ready change")
+    const before = fake.requests.length
+    const off = try refreshed(area, ready.number, t0)
+    const offRequests = fake.requests.length - before
+    const offQueued = try delivered(area, "pull_request", pullEvent("synchronize", ready.number, ready.head), "ready-off-sync")
+    try configured(area, onSettings)
+    const added = try refreshed(area, ready.number, t0 + 1000)
+    const kept = try refreshed(area, ready.number, t0 + 2000)
+    const counted = try pulled(area, "Approvals that do not count", { approvers: ["otto", "carol", "helper[bot]"] })
+    try Effect.try(() => fake.world.addReview(repo, counted.number, { author: "maya", state: "APPROVED", commitId: "f".repeat(40) }))
+    const guarded = try pulled(area, "Lockfile change", { files: [{ path: "package.json", additions: 1, deletions: 1, status: "modified", patch: "@@ -1 +1 @@" }] })
+    const owned = try pulled(area, "Owner path", { files: [{ path: "deploy/prod.yml", additions: 1, deletions: 1, status: "modified", patch: "@@ -1 +1 @@" }] })
+    const finding = try pulled(area, "Reviewed with a finding", { verdict: "spam" })
+    const deletion = try pulled(area, "Large deletion", { files: [{ path: "src/old.ts", additions: 0, deletions: 301, status: "modified", patch: "@@ -1,301 +0,0 @@" }] })
+    const removed = try pulled(area, "Deleted file", { files: [{ path: "src/gone.ts", additions: 0, deletions: 3, status: "removed", patch: "@@ -1,3 +0,0 @@" }] })
+    const outcomes = [
+      try refreshed(area, counted.number, t0 + 3000),
+      try refreshed(area, guarded.number, t0 + 3000),
+      try refreshed(area, owned.number, t0 + 3000),
+      try refreshed(area, finding.number, t0 + 3000),
+      try refreshed(area, deletion.number, t0 + 3000),
+      try refreshed(area, removed.number, t0 + 3000),
+    ]
+    const labelledState = try stateOf(area, ready.number)
+    const unlabelled = [try stateOf(area, counted.number), try stateOf(area, guarded.number)].map((state) => state.labels)
+    try same({ off, offRequests, offQueued, offJobs: try readyJobs(area, "ready-off-sync%"), added, kept, outcomes, unlabelled, merged: try merges(fake) }, {
+      off: "ready label is off for this project",
+      offRequests: 0,
+      offQueued: 202,
+      offJobs: [],
+      added: "ready label added",
+      kept: "ready label kept",
+      outcomes: [
+        "not ready: 0 of 1 required approvals at this commit from accounts with write access",
+        "not ready: it touches a dependency manifest or lockfile (package.json)",
+        "not ready: it touches a path this project protects (deploy/prod.yml)",
+        "not ready: Slopbot's review of this commit has a finding",
+        "not ready: 301 deleted lines is a large deletion (over 300)",
+        "not ready: it touches a deleted file (src/gone.ts)",
+      ],
+      unlabelled: [[], []],
+      merged: 0,
+    })
+    try same({ labels: labelledState.labels, row: labelledState.row, labelledLine: labelledState.line?.startsWith(`${readyMarker} **Labelled \`slopbot:ready\`** at \`${ready.head.slice(0, 7)}\`. Checked:`) }, {
+      labels: ["slopbot:ready"],
+      row: { state: "ready", head_sha: ready.head, reason: "all conditions hold", next_check_at: iso(t0 + 2000 + 3_600_000) },
+      labelledLine: true,
+    })
+    try same((try stateOf(area, guarded.number)).line, notLabelled(guarded.head, "it touches a dependency manifest or lockfile (package.json)"))
+  })
+
+  it.effect('A push removes the label and replaces the line, a push during the check adds nothing, and pending mergeability is rechecked by the cron, claimed before sending (spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request\'s own events are GitHub\'s"; spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready")', () => effect {
+    const area = try Area
+    const { fake, flips } = try World
+    try prepared(area)
+    try configured(area, onSettings)
+    const pushed = try pulled(area, "Pushed after labelling")
+    const first = try refreshed(area, pushed.number, t0)
+    const newHead = "b".repeat(40)
+    try Effect.try(() => Object.assign(fake.world.pull(repo, pushed.number), { headSha: newHead }))
+    const status = try delivered(area, "pull_request", pullEvent("synchronize", pushed.number, newHead), "ready-push")
+    const closing = try delivered(area, "pull_request", pullEvent("closed", pushed.number, newHead), "ready-close")
+    const queued = try readyJobs(area, "ready-push%")
+    const closedQueued = try readyJobs(area, "ready-close%")
+    const afterPush = try refreshed(area, pushed.number, t0 + 60_000)
+    const pushedState = try stateOf(area, pushed.number)
+    const raced = try pulled(area, "Raced by a push")
+    flips.set(raced.number, { head: "c".repeat(40), reads: 0 })
+    const race = try refreshed(area, raced.number, t0 + 60_000)
+    const racedState = try stateOf(area, raced.number)
+    const pending = try pulled(area, "Checks still running", { merge: { mergeable: null, mergeable_state: null } })
+    const waiting = try refreshed(area, pending.number, t0 + 60_000)
+    const pendingRow = (try stateOf(area, pending.number)).row
+    for (let index = 0; index < 24; index++) try area.sql("INSERT INTO slopbot_ready_labels (repository_id, pull_number, installation_id, owner, repo, head_sha, state, reason, first_seen_at, updated_at, next_check_at) VALUES (?, ?, ?, 'ada', 'widgets', ?, 'not-ready', 'seeded', ?, ?, ?)",
+      repositoryId, 600 + index, installationId, "d".repeat(40), iso(t0), iso(t0), iso(t0 + 1000 + index))
+    const due = t0 + 60_000 + 600_000
+    const firstRun = try dispatched(area, due)
+    const claimed = try area.sql("SELECT count(*) AS n FROM slopbot_ready_labels WHERE next_check_at = ?", iso(due + 600_000))
+    const secondRun = try dispatched(area, due)
+    const thirdRun = try dispatched(area, due + 600_000)
+    const recheck = try refreshed(area, pending.number, due)
+    try same({ first, status, closing, queued, closedQueued, afterPush, pushedState, race, racedState, waiting, pendingRow, firstRun, claimed, secondRun, thirdRun, recheck }, {
+      first: "ready label added",
+      status: 202,
+      closing: 202,
+      queued: [{ delivery: "ready-push:ready", number: pushed.number }],
+      closedQueued: [],
+      afterPush: "ready label removed: Slopbot has not reviewed this commit",
+      pushedState: { labels: [], line: notLabelled(newHead, "Slopbot has not reviewed this commit"), row: { state: "not-ready", head_sha: newHead, reason: "Slopbot has not reviewed this commit", next_check_at: null } },
+      race: "head moved during the ready check",
+      racedState: { labels: [], line: null, row: { state: "not-ready", head_sha: "c".repeat(40), reason: "a new commit arrived during the check", next_check_at: iso(t0 + 60_000) } },
+      waiting: "not ready: GitHub does not report every check passing and the branch mergeable (unknown)",
+      pendingRow: { state: "not-ready", head_sha: pending.head, reason: "GitHub does not report every check passing and the branch mergeable (unknown)", next_check_at: iso(t0 + 60_000 + 600_000) },
+      firstRun: 20,
+      claimed: [{ n: 20 }],
+      secondRun: 6,
+      thirdRun: 20,
+      recheck: "not ready: GitHub does not report every check passing and the branch mergeable (unknown)",
+    })
+  })
+
+  it.effect('Turning the setting off clears an open pull request, a closed one keeps its label, and a finished review queues a check whose queue failure does not replay the review (spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request\'s own events are GitHub\'s"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay")', () => effect {
+    const area = try Area
+    const { fake } = try World
+    try prepared(area)
+    try configured(area, onSettings)
+    const open = try pulled(area, "Open and labelled")
+    const closed = try pulled(area, "Closed while labelled")
+    const labelled = [try refreshed(area, open.number, t0), try refreshed(area, closed.number, t0)]
+    try Effect.try(() => Object.assign(fake.world.pull(repo, closed.number), { state: "closed", closedAt: iso(t0 + 1000) }))
+    const closedOutcome = try refreshed(area, closed.number, t0 + 2000)
+    const review = { kind: "review", deliveryId: "ready-review", installationId, repositoryId, owner: "ada", repo: "widgets", itemKind: "pull_request", number: open.number }
+    const afterReview = try area.request("/test/ready/after-review", { method: "POST", json: review, headers: { "x-test-now": String(t0 + 3000) } })
+    const lost = try area.request("/test/ready/after-review", { method: "POST", json: { ...review, deliveryId: "ready-review-lost", number: lostQueueNumber }, headers: { "x-test-now": String(t0 + 3000) } })
+    try configured(area, { ...onSettings, enabled: false })
+    const turnedOff = [try refreshed(area, open.number, t0 + 4000), try refreshed(area, closed.number, t0 + 4000)]
+    try same({ labelled, closedOutcome, afterReview: afterReview.body, lost: [lost.status, lost.body], reviewJobs: try readyJobs(area, "ready-review%"), turnedOff, open: try stateOf(area, open.number), closed: (try stateOf(area, closed.number)).labels }, {
+      labelled: ["ready label added", "ready label added"],
+      closedOutcome: "pull request is not open",
+      afterReview: { queued: true },
+      lost: [200, { queued: false }],
+      reviewJobs: [{ delivery: "ready-review:ready", number: open.number }],
+      turnedOff: ["ready label removed: setting off", "ready label removed: setting off"],
+      open: { labels: [], line: null, row: { state: "off", head_sha: open.head, reason: "ready label is off for this project", next_check_at: null } },
+      closed: ["slopbot:ready"],
+    })
+  })
+})

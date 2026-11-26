@@ -1,14 +1,14 @@
-// spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
-import { rotationVerdict } from "../../../gen/operations__rpcRotationRun.effect.vibe"
+// spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/operations/robinhoodRpcRotation.md, "Only a readback of the same Worker at the candidate with the release message confirms the rotation"
+import { verdict } from "../../../gen/operations__robinhoodRpcRotation.effect.vibe"
 import { cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
-import { type ContractProbe, RotationRefused, qualifyRobinhood, secureRpcUrl } from "./qualify.vibe"
-import { type EndPhase, type Rotation, type RotationEnd, inheritedMessage, reasonOf, rotateFeeConverterRpc } from "./rotate.vibe"
+import { type ContractProbe, RotationRefused } from "./qualify.vibe"
+import { type RotationRun, inheritedMessage, reasonOf, rotateRobinhoodVersion, startRotation } from "./rotate.vibe"
 
 export { Cloudflare, type CommandCategory, type CommandFailure, type ReadBound, ToolFailed, cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
 export { releaseMessage } from "../wrangler/outputs.vibe"
 export { withSecretsFile } from "../publish/order.vibe"
 export { RotationRefused } from "./qualify.vibe"
-export { type Activation, type Confirmation, type EndPhase, type Pin, type PinRequest, activateCandidate, confirmActivation, pinActive, requireLiveMain, trustedMain, uploadCandidate } from "./rotate.vibe"
+export { type Activation, type Confirmation, type Pin, type PinRequest, type RotationRun, RotationRejected, activateCandidate, confirmActivation, pinActive, requireLiveMain, startRotation, trustedMain, uploadCandidate } from "./rotate.vibe"
 export { type RotationKind, type WorkerVersion, feeConverterWorker, inspectVersion, requireRotationBase, requireSameWorker, rotationMessage, workerState } from "./worker.vibe"
 
 export error RpcUsage { message: string }
@@ -16,36 +16,27 @@ export error RpcUsage { message: string }
 const usage = "rpc inherit [root]"
 const checkFailed = "Fee-converter RPC release check failed."
 
-export function rotationRunVerdict(phase: EndPhase, uploaded: boolean) {
-  return rotationVerdict(phase, uploaded)
-}
-
-effect function rotationEnd<A, E, R>(rotation: Rotation<A, E, R>) {
-  provide cloudflare({ root: rotation.root, wrangler: pinnedWrangler(rotation.root) }) {
-    return try rotateFeeConverterRpc(rotation)
+effect function rotationEnd(run: RotationRun, root: string, probe: ContractProbe) {
+  provide cloudflare({ root, wrangler: pinnedWrangler(root) }) {
+    return try rotateRobinhoodVersion(run, root, probe)
   }
 }
 
-export effect function rpcRotation<A, E, R>(rotation: Rotation<A, E, R>) {
-  const end: RotationEnd = rotationEnd(rotation) catch (error) => ({ phase: "Refused" as const, uploaded: false, reason: reasonOf(error), candidate: "", summary: undefined })
-  const summary = end.summary
-  if (rotationRunVerdict(end.phase, end.uploaded) !== "RunRpcConfirmed" || summary === undefined) throw new RotationRefused({ message: end.reason ?? checkFailed })
+export effect function runRobinhoodRotation(run: RotationRun, root: string, probe: ContractProbe) {
+  const ended = try exit(rotationEnd(run, root, probe))
+  const reason = Exit.isFailure(ended) ? reasonOf(Cause.squash(ended.cause)) : undefined
+  if (verdict(try run.state()) !== "RunRpcConfirmed" || Exit.isFailure(ended)) throw new RotationRefused({ message: reason ?? checkFailed })
+  const { candidate, summary } = ended.value
   const fs = try FileSystem.FileSystem
   fs.writeFileString(summary.path, `${summary.line}\n`, { flag: "a" }) catch effect () => {
     throw new RotationRefused({ message: "The protected release runner and summary paths are unavailable." })
   }
   try Console.log(summary.line)
-  return end.candidate
+  return candidate
 }
 
 export effect function rotateRobinhoodRpc(root: string, probe: ContractProbe) {
-  const candidate = try Config.withDefault(Config.Redacted("SLOP_ROBINHOOD_RPC_REPLACEMENT"), Redacted.make(""))
-  const qualify = effect {
-    const observed = try qualifyRobinhood(candidate, probe)
-    try Console.log(JSON.stringify({ event: "robinhood_rpc_candidate_verified", ...observed }))
-  }
-  const inputRefusal = secureRpcUrl(Redacted.value(candidate)) === undefined ? "The candidate must use TLS and be independent of the public reference." : undefined
-  return try rpcRotation({ root, kind: "robinhood", secrets: { RPC_URL_ROBINHOOD: candidate }, inputRefusal, qualify })
+  return try runRobinhoodRotation(try startRotation(), root, probe)
 }
 
 export effect function rpc(args: ReadonlyArray<string>) {

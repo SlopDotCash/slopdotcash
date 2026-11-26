@@ -21,6 +21,23 @@ export schema RecoveryAnswer {
   readonly blockNumber: string
 }
 
+export schema ReservedAwardNeed = "wallet" | "authorize"
+
+export schema ReservedAward {
+  readonly githubId: number
+  readonly login: string | null
+  readonly projectId: string
+  readonly projectName: string | null
+  readonly network: string
+  readonly needs: ReservedAwardNeed
+}
+
+export schema ReservedAwardsFeed {
+  readonly schema: "slop-reserved-awards-v1"
+  readonly generatedAt: string
+  readonly awards: ReadonlyArray<ReservedAward>
+}
+
 const ReconcileBody = Schema.Record(Schema.String, Schema.Unknown)
 
 export const reconcileBindingRoute = route({
@@ -34,4 +51,15 @@ export const reconcileBindingRoute = route({
   cache: "no-store",
 })
 
-export const operatorApi: ReadonlyArray<AnyRoute> = [reconcileBindingRoute]
+export const reservedAwardsRoute = route({
+  method: "GET",
+  path: "/api/v1/operator/reserved-awards",
+  access: "public",
+  limitKib: 1,
+  request: undefined,
+  answer: ReservedAwardsFeed,
+  rejected: "reserved_awards_unavailable",
+  cache: "no-store",
+})
+
+export const operatorApi: ReadonlyArray<AnyRoute> = [reconcileBindingRoute, reservedAwardsRoute]

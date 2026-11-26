@@ -1,0 +1,314 @@
+// spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"; spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "A deposit whose payout the token refuses is parked and never holds up the rest"
+import type { Hex } from "@repo/platform/chain/evm"
+import { isoNow } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { D1, first, sql } from "@repo/platform/d1"
+import { type Actor, type SendConfig, type Sends, canRebroadcast, canRecordFailed, canRecordFinalized, canRecordList, canRefuseOverBudget, canSign, initial, machineOver, maxBatch, recordList } from "../../gen/fees__submissionFeeSends.effect.vibe"
+import { GasBudget, type PreparedSend, type SendEntry, type SubmissionFeeChain, SubmissionFeeRefused } from "./chain.vibe"
+import type { GasLimits, NetworkConfig } from "./config.vibe"
+import { park, probeAlone } from "./parked.vibe"
+import { message } from "./steps.vibe"
+import { storedDeposit } from "./store.vibe"
+
+export schema SendState = "recorded" | "submitted" | "unknown" | "finalized" | "failed"
+
+schema SendMode = "dry_run" | "live"
+
+export type SendOutcome = "none" | "in_flight" | "sent" | "recorded" | "unchanged" | "gas_budget" | "no_resolver_key" | "parked" | "reverted"
+
+export interface Sent {
+  readonly send: SendOutcome
+  readonly parked: number
+}
+
+export interface SendRow {
+  readonly id: string
+  readonly network: string
+  readonly mode: SendMode
+  readonly contract: string
+  readonly deposits: ReadonlyArray<SendEntry>
+  readonly resolver: string | null
+  readonly txId: string | null
+  readonly rawTx: string | null
+  readonly evmNonce: number | null
+  readonly maximumNativeWei: string | null
+  readonly state: SendState
+  readonly createdAt: string
+}
+
+export error SendConflict { network: string }
+
+schema SendRecord {
+  readonly id: string
+  readonly network: string
+  readonly mode: SendMode
+  readonly contract: string
+  readonly deposits: string
+  readonly resolver: string | null
+  readonly tx_id: string | null
+  readonly raw_tx: string | null
+  readonly evm_nonce: number | null
+  readonly maximum_native_wei: string | null
+  readonly state: SendState
+  readonly created_at: string
+}
+
+schema Spent { readonly spent: number }
+
+type Attempt =
+  | { readonly kind: "signed"; readonly prepared: PreparedSend }
+  | { readonly kind: "conflict" }
+  | { readonly kind: "gas_budget" }
+  | { readonly kind: "payout_failed"; readonly depositId: number }
+  | { readonly kind: "reverted" }
+
+const worker: Actor = "Worker"
+
+const columns = { text: "id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, created_at", params: [] }
+
+function refused(issue: string) {
+  return new SubmissionFeeRefused({ issue })
+}
+
+function lower(value: string) {
+  return value.toLowerCase()
+}
+
+function utcDay(iso: string) {
+  return `${iso.slice(0, 10)}T00:00:00.000Z`
+}
+
+function isEntries(value: unknown): value is ReadonlyArray<SendEntry> {
+  return Array.isArray(value) && value.every((entry: unknown) => typeof entry === "object" && entry !== null && "id" in entry && "refund" in entry
+    && Number.isSafeInteger(entry.id) && typeof entry.id === "number" && entry.id > 0 && typeof entry.refund === "boolean" && Object.keys(entry).length === 2)
+}
+
+function sameEntries(left: ReadonlyArray<SendEntry>, right: ReadonlyArray<SendEntry>) {
+  return left.length === right.length && left.every((entry, index) => entry.id === right[index].id && entry.refund === right[index].refund)
+}
+
+function openView(config: SendConfig, state: SendState): Sends {
+  return { ...initial, config, row: state === "unknown" ? "Unknown" : "Submitted", signedBytes: 1, signatures: 1, journaled: [1], broadcasts: [1] }
+}
+
+effect function rowOf(record: typeof SendRecord.Type) {
+  const parsed: unknown = try Effect.try({ try: () => JSON.parse(record.deposits), catch: () => refused("A recorded send has an invalid deposit list") })
+  if (!isEntries(parsed)) throw refused("A recorded send has an invalid deposit list")
+  return {
+    id: record.id,
+    network: record.network,
+    mode: record.mode,
+    contract: record.contract,
+    deposits: parsed,
+    resolver: record.resolver,
+    txId: record.tx_id,
+    rawTx: record.raw_tx,
+    evmNonce: record.evm_nonce,
+    maximumNativeWei: record.maximum_native_wei,
+    state: record.state,
+    createdAt: record.created_at,
+  } satisfies SendRow
+}
+
+function spentSince(network: string, day: string) {
+  return sql`(SELECT COALESCE(SUM(CAST(maximum_native_wei AS INTEGER)), 0)
+    FROM submission_fee_sends WHERE network = ${network} AND mode = 'live' AND created_at >= ${day})`
+}
+
+export effect function openSend(network: string) {
+  const found = try first(SendRecord, sql`SELECT ${columns} FROM submission_fee_sends WHERE network = ${network} AND state IN ('submitted', 'unknown')`)
+  return found === undefined ? null : try rowOf(found)
+}
+
+export effect function latestDryRun(network: string) {
+  const found = try first(SendRecord, sql`SELECT ${columns} FROM submission_fee_sends WHERE network = ${network} AND mode = 'dry_run' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+  return found === undefined ? null : try rowOf(found)
+}
+
+effect function spentToday(network: string) {
+  const day = utcDay(try isoNow())
+  const found = try first(Spent, sql`SELECT ${spentSince(network, day)} AS spent`)
+  return found?.spent ?? 0
+}
+
+effect function insertSend(row: SendRow, gas: GasLimits) {
+  const insert = sql`INSERT INTO submission_fee_sends
+      (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, reason, block_number, created_at, updated_at, finalized_at)
+    SELECT ${row.id}, ${row.network}, ${row.mode}, ${row.contract}, ${JSON.stringify(row.deposits)}, ${row.resolver}, ${row.txId}, ${row.rawTx},
+           ${row.evmNonce}, ${row.maximumNativeWei}, ${row.state}, NULL, NULL, ${row.createdAt}, ${row.createdAt}, NULL`
+  const reserve = row.maximumNativeWei ?? ""
+  if (row.mode === "live" && (!/^[1-9][0-9]*$/u.test(reserve) || Number(reserve) > Number(gas.perTransactionWei)))
+    throw new GasBudget({ issue: "The transaction exceeds the native fee limit; nothing was signed" })
+  const statement = row.mode === "dry_run" ? insert
+    : sql`${insert} WHERE ${spentSince(row.network, utcDay(row.createdAt))} + ${Number(reserve)} <=${Number(gas.perDayWei)}`
+  const changes = (try D1).run(statement) catch effect (error) => {
+    if (error._tag === "ConstraintViolation") throw new SendConflict({ network: row.network })
+    throw error
+  }
+  if (changes !== 1) throw new GasBudget({ issue: "The day's native fee limit is reached; nothing was sent" })
+}
+
+effect function updateSend(id: string, state: SendState, fields: { readonly reason?: string; readonly blockNumber?: number; readonly finalizedAt?: string }) {
+  const at = try isoNow()
+  const changed = try (try D1).run(sql`UPDATE submission_fee_sends
+      SET state = ${state}, reason = ${fields.reason ?? null}, block_number = ${fields.blockNumber ?? null}, finalized_at = ${fields.finalizedAt ?? null}, updated_at = ${at}
+    WHERE id = ${id}`)
+  if (changed !== 1) throw refused("A recorded send was not updated")
+}
+
+effect function broadcastFailure(chain: SubmissionFeeChain, rawTx: Hex) {
+  const sent = effect {
+    try chain.broadcast(rawTx)
+    return null
+  }
+  return sent catch effect (error) => {
+    return message(error)
+  }
+}
+
+effect function authorize(network: string, config: SendConfig, maximumNativeWei: string) {
+  const cost = { maximum: Number(maximumNativeWei) }
+  const view = { ...initial, config, spentToday: try spentToday(network) }
+  if (canSign(view, cost, worker)) return
+  if (canRefuseOverBudget(view, cost, worker)) throw new GasBudget({ issue: "The day's native fee limit is reached; nothing was signed" })
+  throw refused("The resolver may not sign in this run")
+}
+
+export effect function reconcile(network: NetworkConfig, config: SendConfig, chain: SubmissionFeeChain) {
+  const send = try openSend(network.network)
+  if (send === null) return false
+  if (send.contract !== network.contract) throw refused("The recorded send names another contract")
+  if (send.rawTx === null) throw refused("A recorded send has no signed bytes")
+  const status = try chain.status(send)
+  const view = openView(config, send.state)
+  const logged = { network: network.network, txId: send.txId }
+  switch (status.kind) {
+    case "pending":
+      return true
+    case "finalized": {
+      if (!canRecordFinalized({ ...view, mined: [1] }, worker)) throw refused("A finalized send is recorded only in a live run")
+      try updateSend(send.id, "finalized", { blockNumber: status.blockNumber, finalizedAt: try isoNow() })
+      try Effect.logInfo("submission_fee_send_finalized", logged)
+      return false
+    }
+    case "failed": {
+      if (!canRecordFailed(view, worker)) throw refused("A failed send is recorded only in a live run")
+      try updateSend(send.id, "failed", { reason: status.reason })
+      try Effect.logInfo("submission_fee_send_failed", { ...logged, reason: status.reason })
+      return false
+    }
+    case "rebroadcast": {
+      if (!canRebroadcast(view, true, worker)) throw refused("A send is broadcast again only in a live run")
+      const failure = try broadcastFailure(chain, send.rawTx as Hex)
+      if (failure === null) {
+        try updateSend(send.id, "submitted", {})
+      } else {
+        try updateSend(send.id, "unknown", { reason: failure })
+      }
+      return true
+    }
+  }
+}
+
+effect function attempt(network: NetworkConfig, config: SendConfig, chain: SubmissionFeeChain, row: SendRow, batch: ReadonlyArray<SendEntry>, resolver: string) {
+  const signed = effect {
+    const prepared = try chain.prepare(batch, (maximumNativeWei) => authorize(network.network, config, maximumNativeWei))
+    try insertSend({ ...row, deposits: batch, resolver, txId: prepared.txId, rawTx: prepared.rawTx, evmNonce: prepared.evmNonce, maximumNativeWei: prepared.maximumNativeWei, state: "submitted" }, network.gas)
+    return { kind: "signed", prepared } satisfies Attempt
+  }
+  return signed catch effect (error) => {
+    if (error._tag === "SendConflict") return { kind: "conflict" } satisfies Attempt
+    if (error._tag === "GasBudget") return { kind: "gas_budget" } satisfies Attempt
+    if (error._tag === "PayoutFailed") return { kind: "payout_failed", depositId: error.depositId } satisfies Attempt
+    if (error._tag === "SendReverted") return { kind: "reverted" } satisfies Attempt
+    throw error
+  }
+}
+
+effect function broadcastSigned(network: NetworkConfig, chain: SubmissionFeeChain, id: string, prepared: PreparedSend, batch: ReadonlyArray<SendEntry>, parked: number) {
+  const sent = { network: network.network, txId: prepared.txId, deposits: batch }
+  const failure = try broadcastFailure(chain, prepared.rawTx)
+  if (failure !== null) {
+    try updateSend(id, "unknown", { reason: failure })
+    try Effect.logInfo("submission_fee_send_unknown", sent)
+    return { send: "in_flight", parked } satisfies Sent
+  }
+  try Effect.logInfo("submission_fee_send_submitted", sent)
+  return { send: "sent", parked } satisfies Sent
+}
+
+export effect function send(network: NetworkConfig, config: SendConfig, chain: SubmissionFeeChain, planned: ReadonlyArray<SendEntry>) {
+  const entries: SendEntry[] = []
+  for (const entry of planned) {
+    if (entries.length === maxBatch) break
+    const stored = try storedDeposit(network.network, entry.id)
+    const onChain = try chain.deposit(entry.id)
+    if (stored === null || lower(onChain.payer) !== lower(stored.payer) || lower(onChain.token) !== lower(stored.token) || onChain.amount !== stored.amount
+      || lower(onChain.keptTo) !== lower(stored.keptTo) || lower(onChain.item) !== lower(stored.item))
+      throw refused("A stored deposit differs from the contract's record")
+    if (onChain.state !== 1) continue
+    entries.push(entry)
+  }
+  if (entries.length === 0) return { send: "none", parked: 0 } satisfies Sent
+  const at = try isoNow()
+  const row: SendRow = {
+    id: `sfs_${try randomId()}`,
+    network: network.network,
+    mode: config.mode === "Live" ? "live" : "dry_run",
+    contract: network.contract,
+    deposits: entries,
+    resolver: null,
+    txId: null,
+    rawTx: null,
+    evmNonce: null,
+    maximumNativeWei: null,
+    state: "recorded",
+    createdAt: at,
+  }
+  if (row.mode === "dry_run") {
+    const last = try latestDryRun(network.network)
+    const view = { ...initial, config, listRecorded: last !== null && last.contract === row.contract && sameEntries(last.deposits, entries) }
+    if (!canRecordList(view, worker)) throw refused("A dry run records its list only while reading")
+    if (recordList(view, worker).result === "ListUnchanged") return { send: "unchanged", parked: 0 } satisfies Sent
+    try insertSend(row, network.gas)
+    try Effect.logInfo("submission_fee_would_send", { network: network.network, deposits: entries })
+    return { send: "recorded", parked: 0 } satisfies Sent
+  }
+  const resolver = chain.address()
+  if (resolver === null) return { send: "no_resolver_key", parked: 0 } satisfies Sent
+  let batch: ReadonlyArray<SendEntry> = entries
+  let parked = 0
+  let probed = false
+  for (;;) {
+    if (batch.length === 0) return { send: "parked", parked } satisfies Sent
+    const result = try attempt(network, config, chain, row, batch, resolver)
+    if (result.kind === "signed") return try broadcastSigned(network, chain, row.id, result.prepared, batch, parked)
+    if (result.kind === "conflict") return { send: "in_flight", parked } satisfies Sent
+    if (result.kind === "gas_budget") {
+      try Effect.logInfo("submission_fee_gas_budget", { network: network.network })
+      return { send: "gas_budget", parked } satisfies Sent
+    }
+    const named = result.kind === "payout_failed" ? batch.find((entry) => entry.id === result.depositId) : undefined
+    if (named !== undefined) {
+      if (try park(network.network, config, named, "payout_failed", false)) parked += 1
+      batch = batch.filter((entry) => entry !== named)
+      continue
+    }
+    if (!probed) {
+      probed = true
+      const alone = try probeAlone(network.network, config, chain, batch)
+      parked += alone.parked
+      if (alone.through.length > 0 || parked > 0) {
+        batch = alone.through
+        continue
+      }
+    }
+    try Effect.logInfo("submission_fee_send_reverted", { network: network.network, deposits: batch })
+    return { send: "reverted", parked } satisfies Sent
+  }
+}
+
+export effect function sendsModel(start: Sends = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}

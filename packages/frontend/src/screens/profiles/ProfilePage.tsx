@@ -1,4 +1,4 @@
-// spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"
+// spec/frontend/views.md, "Story: Read a contributor's profile"; spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"
 import type { PublicMember } from "@repo/backend/client";
 import type { LeaderboardSnapshot } from "@repo/points/client";
 import { Button, DataState, Disclosure, ExternalLink, NotFound, Spinner, Status } from "@repo/ui";
@@ -6,6 +6,8 @@ import { Clock, Info, Wallet as WalletIcon } from "lucide-react";
 import type { Effect } from "effect";
 import { useMemo, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
+import { formatDateTime } from "../../app/format.ts";
+import { NotFoundHead } from "../../app/notFoundHead.ts";
 import type { PageProps } from "../../app/pages.ts";
 import { type ProfileActor, resolveProfileActor } from "../../projections/profile.ts";
 import { findHistoricalProject, findProjectByRepositoryId, type RegistryBoot } from "../../reads/registry.vibe";
@@ -53,6 +55,7 @@ function Unverified({ login, status, onRetry }: { login: string; status: ReadSta
 function UnknownContributor({ login }: { login: string }) {
   return (
     <NotFound title={`@${login} not found`}>
+      <NotFoundHead />
       <p>
         <a href="/points" className={linkClass}>
           Find a contributor
@@ -63,8 +66,8 @@ function UnknownContributor({ login }: { login: string }) {
 }
 
 /** @throws {never} */
-function facts(member: Pick<PublicMember, "actor" | "welcome" | "socialPoints">): MembershipFacts {
-  return { actor: member.actor, welcome: member.welcome, socialPoints: member.socialPoints };
+function facts(member: Pick<PublicMember, "actor">): MembershipFacts {
+  return { actor: member.actor };
 }
 
 /** @throws {never} */
@@ -127,39 +130,29 @@ function Payments({ board, githubId, shares, cycles }: { board: Board; githubId:
 }
 
 function Projects({ boot, standings, actor }: Pick<Board, "boot" | "standings"> & { actor: ProfileActor }) {
-  const matches = (standings?.views ?? []).flatMap((view) => view.leaders.filter((leader) => leader.actor.id === actor.id).map((leader) => ({ leader, view })));
-  const first = matches[0];
+  const views = (standings?.views ?? []).filter((view) => view.leaders.some((leader) => leader.actor.id === actor.id));
+  const first = views[0];
   if (first === undefined) return null;
+  const named = views.map((view) => {
+    const record = findHistoricalProject(boot, view.project.id);
+    return { id: view.project.id, name: projectName(boot, view.project.id) ?? view.project.id, slug: typeof record?.slug === "string" ? record.slug : view.project.id };
+  });
   return (
     <section aria-label="Projects" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-xl font-semibold text-foreground">Projects</h2>
-        <span className="text-sm text-muted-foreground">{formatMonth(first.view.cycle.id)}</span>
+        <span className="text-sm text-muted-foreground">{formatMonth(first.cycle.id)}</span>
       </div>
       <ul className="flex flex-col gap-3">
-        {[...matches]
-          .sort((left, right) => right.leader.points - left.leader.points)
-          .map(({ leader, view }) => {
-            const total = view.leaders.reduce((sum, entry) => sum + entry.weight, 0n);
-            const share = total > 0n ? Number((leader.weight * 1_000_000n) / total) / 1_000_000 : 0;
-            const record = findHistoricalProject(boot, view.project.id);
-            const slug = typeof record?.slug === "string" ? record.slug : view.project.id;
-            return (
-              <li key={view.project.id}>
-                <a href={`/projects/${slug}`} className="flex flex-col gap-1 rounded-md focus-visible:outline-2">
-                  <span className="flex items-baseline justify-between gap-4">
-                    <strong className="text-foreground">{projectName(boot, view.project.id) ?? view.project.id}</strong>
-                    <small className="text-sm text-muted-foreground" title="Accepted-work points">
-                      {leader.points.toLocaleString("en-US")} pts
-                    </small>
-                  </span>
-                  <span aria-hidden className="h-2 w-full overflow-hidden rounded-full bg-border">
-                    <span className="block h-full bg-primary" style={{ width: `${Math.max(2, share * 100)}%` }} />
-                  </span>
-                </a>
-              </li>
-            );
-          })}
+        {named
+          .sort((left, right) => left.name.localeCompare(right.name))
+          .map((project) => (
+            <li key={project.id}>
+              <a href={`/projects/${project.slug}`} className={linkClass}>
+                <strong>{project.name}</strong>
+              </a>
+            </li>
+          ))}
       </ul>
     </section>
   );
@@ -209,7 +202,7 @@ function Recorded({ board, actor, history, census, own, joined, joinStatus }: { 
     ) : (
       <Payments board={board} githubId={githubId} shares={shares} cycles={cycles.value !== undefined} />
     );
-  const shared = { login, actorId: actor.id, census, history, own, joined, joinStatus, x: product ? x : undefined, payments, nowMs };
+  const shared = { login, actorId: actor.id, census, history, own, joined, joinStatus, x: product ? x : undefined, payments };
   if (!matched && shares.length === 0 && global === undefined) {
     return (
       <main className={pageClass}>
@@ -305,7 +298,14 @@ function Snapshot({ props, section, sectionReads, reads, boot, product, tier, fo
   const board: Board = { login: route.login, boot, snapshot, standings, section: sectionReads, reads, product, tier, nowMs };
   return (
     <>
-      {status === "Stale" ? <DataState status="Stale" onRetry={onRetry} className="mx-auto w-full max-w-(--breakpoint-lg) px-4 pt-6" /> : null}
+      {status === "Stale" ? (
+        <DataState
+          status="Stale"
+          onRetry={onRetry}
+          updatedAt={<time dateTime={snapshot.generatedAt}>{formatDateTime(snapshot.generatedAt)}</time>}
+          className="mx-auto w-full max-w-(--breakpoint-lg) px-4 pt-6"
+        />
+      ) : null}
       {standings === undefined ? <DataState status="Invalid" onRetry={onRetry} className="mx-auto w-full max-w-(--breakpoint-lg) px-4 pt-6" /> : null}
       <Resolve board={board} />
     </>
@@ -339,7 +339,7 @@ function Sections({ props, section, contributor }: { props: ProfilePageProps; se
   );
 }
 
-/** `/contributors/:login`: the contributor once a current record confirms the login, their Points, projects, pull requests, payments and penalties. */
+/** `/contributors/:login`: the contributor once a current record confirms the login, their projects by name, pull requests, payments and penalties. */
 export function ProfilePage(props: ProfilePageProps) {
   return <Sections key={props.route.login.toLowerCase()} props={props} section={projectRuntime(props.runtime)} contributor={contributorRuntime(props.runtime)} />;
 }

@@ -1,5 +1,7 @@
-// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
+// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
 import { isoAt, millisOf } from "@repo/platform/clock"
+import type { RetainedCopy } from "../../gen/points__authorship.ts"
+import type { ReferenceDiscussion } from "../../gen/points__referenceDiscussion.ts"
 import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
 import { instantOf } from "../kernels/records/instants.ts"
 import type { Category as PenaltyCategory } from "../../gen/slopbot__categories.ts"
@@ -17,6 +19,19 @@ export interface Actor {
 export interface Retained {
   readonly actor: Actor
   readonly originalPullRequestUrl: string
+  readonly discussion: ReferenceDiscussion
+}
+
+export interface ChangedFile {
+  readonly filename: string
+  readonly previousFilename: string | null
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface FileAttribution {
+  readonly limited: boolean
+  readonly files: ReadonlyArray<ChangedFile>
 }
 
 export interface Commit {
@@ -26,6 +41,23 @@ export interface Commit {
   readonly retained: Retained | null
   readonly additions: number
   readonly deletions: number
+  readonly attributions: ReadonlyArray<FileAttribution>
+  readonly resolutions: ReadonlyArray<ReadonlyArray<ChangedFile>>
+}
+
+export interface RetainedCopyClaim {
+  readonly sourceId: string
+  readonly commitOid: string
+  readonly kind: RetainedCopy
+}
+
+export interface JointClaim {
+  readonly id: string
+  readonly sourceId: string
+  readonly commitOid: string
+  readonly path: string
+  readonly copy: RetainedCopyClaim | null
+  readonly carriers: ReadonlyArray<string>
 }
 
 export interface Review {
@@ -111,6 +143,9 @@ export interface MergedPull {
   readonly externalPrize: boolean
   readonly traceUpload: boolean
   readonly automatedReviews: ReadonlyArray<AutomatedReview>
+  readonly emptyAcceptanceMarker?: boolean
+  readonly acceptedOrdinaryCommitOid?: string
+  readonly valueActorIds?: ReadonlyArray<string>
 }
 
 export interface ClosedPull {
@@ -143,7 +178,7 @@ export interface JointUnit {
   readonly rationale: string
   readonly sources: ReadonlyArray<string>
   readonly carriers: ReadonlyArray<string>
-  readonly commits: ReadonlyArray<string>
+  readonly claims: ReadonlyArray<JointClaim>
   readonly retainedOriginal: string | null
   readonly reviewValues: ReadonlyArray<ReviewValue>
 }
@@ -186,13 +221,26 @@ export interface Activity {
   readonly models: ReadonlyArray<string>
 }
 
-export interface ScoringFacts {
+export type ScoringMode = "rolling" | "historical"
+
+export interface ImplementationHistory {
+  readonly mode: ScoringMode
+  readonly valueInput: boolean
+  readonly acceptedImplementationDigests: ReadonlyMap<string, string>
+  readonly previousImplementationDigests: ReadonlySet<string>
+  readonly previousAcceptedOrdinaryOwners: ReadonlyMap<string, string>
+  readonly unresolvedImplementationSources: ReadonlySet<string>
+}
+
+export interface ScoringFacts extends Partial<ImplementationHistory> {
   readonly windowFrom: string
   readonly windowTo: string
   readonly merged: ReadonlyArray<MergedPull>
   readonly closedUnmerged: ReadonlyArray<ClosedPull>
-  readonly contexts: ReadonlyArray<MergedPull>
+  readonly contexts: ReadonlyArray<MergedPull | ClosedPull>
   readonly joint: ReadonlyArray<JointDecision>
+  readonly valueActors?: ReadonlyMap<string, Actor>
+  readonly evaluated?: ReadonlyArray<ScoreEvent>
   readonly attributionHolds: ReadonlySet<string>
   readonly heldUnits: ReadonlyArray<HeldUnit>
   readonly openReviewedAt: ReadonlyArray<string>
@@ -200,16 +248,33 @@ export interface ScoringFacts {
   readonly projects: ReadonlyMap<string, string>
   readonly bans: ReadonlyMap<string, string>
   readonly activity: ReadonlyMap<string, Activity>
+  readonly retainedReviews?: ReadonlyArray<ScoreEvent>
 }
 
 export type EventCategory = "merged-pull-request" | "resolved-issue" | "material-test-change" | "evidence" | "substantive-review" | "evaluated-contribution"
 
+export interface ExternalEvidence {
+  readonly archiveUrl: string
+  readonly contentSha256: string
+  readonly capturedAt: string
+}
+
 export interface EventSource {
   readonly id: string
-  readonly kind: "pull-request" | "review" | "comment"
+  readonly kind: "pull-request" | "review" | "comment" | "issue" | "external"
   readonly number: number
   readonly title: string
   readonly url: string
+  readonly platform?: string
+  readonly evidence?: ExternalEvidence
+}
+
+export interface Evaluation {
+  readonly decisionUrl: string
+  readonly reviewedAt: string
+  readonly reviewer: string
+  readonly manifestPath: string
+  readonly manifestSha256: string
 }
 
 export interface ReviewDecision {
@@ -236,6 +301,7 @@ export interface ScoreEvent {
   readonly source: EventSource
   readonly reason: string
   readonly reviewHistory?: ReadonlyArray<ReviewDecision>
+  readonly evaluation?: Evaluation
 }
 
 export type ReviewExclusionReason =
@@ -314,6 +380,8 @@ export interface Scoring {
   readonly ledger: ReadonlyArray<ScoreEvent>
   readonly reviewExclusions: ReadonlyArray<ReviewExclusion>
   readonly held: ReadonlyArray<HeldSource>
+  readonly implementationHeld: ReadonlySet<string>
+  readonly standaloneReview: ReadonlySet<string>
   readonly penaltyThirds: ReadonlyMap<string, number>
 }
 
@@ -380,6 +448,17 @@ export effect function instantAtIso(iso: string, sourceId: string) {
   const instant = instantOf(try isoAt(try millisAt(iso, sourceId)))
   if (instant === null) throw new FactsRefused({ reason: "timestamp outside the instant range", sourceId })
   return instant
+}
+
+export function implementationHistory(facts: ScoringFacts): ImplementationHistory {
+  return {
+    mode: facts.mode ?? "rolling",
+    valueInput: facts.valueInput ?? false,
+    acceptedImplementationDigests: facts.acceptedImplementationDigests ?? new Map(),
+    previousImplementationDigests: facts.previousImplementationDigests ?? new Set(),
+    previousAcceptedOrdinaryOwners: facts.previousAcceptedOrdinaryOwners ?? new Map(),
+    unresolvedImplementationSources: facts.unresolvedImplementationSources ?? new Set(),
+  }
 }
 
 export function compareCodeUnits(left: string, right: string) {

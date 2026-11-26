@@ -1,0 +1,284 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
+import { outbound } from "@repo/platform/http"
+import { sha256Of, textBytes } from "@repo/platform/git/bytes"
+import type { Revision } from "../src/kernels/records/canonical.ts"
+import { batchDigest } from "../src/kernels/records/ids.vibe"
+import { valueHistoryPage, workUnitHistoryPage } from "../src/collect/feeds/value.vibe"
+import { type SourceAudit, digestText } from "../src/corrections/reviewed/packet.vibe"
+import { type PacketManifest, type PacketStorage, gitLine } from "../src/corrections/reviewed/transport.vibe"
+import type { HistoricalAssessmentCatalog } from "../src/corrections/reviewed/audit/catalog.vibe"
+import { type HistoricalAssessmentReceipt, canonicalJson } from "../src/corrections/reviewed/audit/reconcile.vibe"
+import { historicalClosedContextBindings } from "../src/corrections/reviewed/replay/bindings.vibe"
+import { historicalAssessmentTransport } from "../src/corrections/reviewed/replay/history.vibe"
+import { type HistoricalReplayReceipt, readTrustedHistoricalReplay, workflowPath } from "../src/corrections/reviewed/replay/receipt.vibe"
+import { readHistoricalReplayReview, stageHistoricalReplayReview } from "../src/corrections/reviewed/replay/review.vibe"
+import { type ReplayContext, assertRemovedMergeGroupsPreserved, sourceAuditSha256, verifyHistoricalValueReplay } from "../src/corrections/reviewed/replay/value.vibe"
+import { reviewed } from "../src/programs/reviewed.vibe"
+import { apiReply } from "./support/catchup6-k6/reply.ts"
+
+const repository = "acme/slop"
+const nodeId = "R_slop"
+const digestA = "a".repeat(64)
+const audit: SourceAudit = {
+  repository,
+  repositoryNodeId: nodeId,
+  from: "2026-09-27T00:00:00.000Z",
+  through: "2026-11-01T00:00:00.000Z",
+  sources: [{ id: "PR_seven", number: 7, headSha: "c".repeat(40), mergedAt: "2026-10-05T00:00:00.000Z" }],
+}
+const heads = { jointThrough: 4, legacyThrough: 3, jointScopedCount: 1, legacyRepoCount: 1, d1PointsDigest: digestA, d1PointsCount: 0, enforcementGeneration: 2, registryRevision: 5, registryManifestSha256: digestA }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function messageOf(failure: unknown) {
+  return typeof failure === "object" && failure !== null && "message" in failure ? String((failure as { readonly message: unknown }).message) : String(failure)
+}
+
+function zipOf(name: string, data: Uint8Array) {
+  const file = textBytes(name)
+  const local = new Uint8Array(30 + file.length + data.length)
+  const localView = new DataView(local.buffer)
+  localView.setUint32(0, 0x04034b50, true)
+  localView.setUint32(18, data.length, true)
+  localView.setUint32(22, data.length, true)
+  localView.setUint16(26, file.length, true)
+  local.set(file, 30)
+  local.set(data, 30 + file.length)
+  const central = new Uint8Array(46 + file.length)
+  const centralView = new DataView(central.buffer)
+  centralView.setUint32(0, 0x02014b50, true)
+  centralView.setUint32(20, data.length, true)
+  centralView.setUint32(24, data.length, true)
+  centralView.setUint16(28, file.length, true)
+  centralView.setUint32(38, 0o100600 << 16 >>> 0, true)
+  central.set(file, 46)
+  const end = new Uint8Array(22)
+  const endView = new DataView(end.buffer)
+  endView.setUint32(0, 0x06054b50, true)
+  endView.setUint16(8, 1, true)
+  endView.setUint16(10, 1, true)
+  endView.setUint32(12, central.length, true)
+  endView.setUint32(16, local.length, true)
+  const archive = new Uint8Array(local.length + central.length + end.length)
+  archive.set(local, 0)
+  archive.set(central, local.length)
+  archive.set(end, local.length + central.length)
+  return archive
+}
+
+function receiptOf(sourceCommit: string): HistoricalReplayReceipt {
+  return {
+    schemaVersion: "1",
+    projectId: "slop",
+    mode: "assessment-replay",
+    status: "requires-value-replay",
+    sourceCommit,
+    sourceDigest: digestText(audit),
+    sourceCount: 1,
+    sourceRepositoryNodeId: nodeId,
+    sourceFrom: audit.from,
+    sourceThrough: audit.through,
+    expectedPointsDigest: digestA,
+    baselineRevisionCount: 0,
+    registryRevision: 5,
+    registryManifestSha256: digestA,
+    enforcementGeneration: 2,
+    jointThrough: 4,
+    legacyThrough: 3,
+    jointRecords: 1,
+    legacyRecords: 1,
+    receiptDigest: digestA,
+    replay: { snapshotSha256: "b".repeat(64), valueCoverageCount: 1, closedUnmergedCoverageCount: 0, valueEventCount: 1, qualificationSha256: "e".repeat(64) },
+  }
+}
+
+function json(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown, headers: Readonly<Record<string, string>> = {}) {
+  return HttpClientResponse.fromWeb(request, apiReply(body, status, headers))
+}
+
+function actionsApi(sourceCommit: string, archive: Uint8Array, seen: string[], options: { readonly stepName?: string } = {}) {
+  const actions = `https://api.github.com/repos/${repository}/actions`
+  const run = { id: 41, run_attempt: 2, workflow_id: 9, head_branch: "main", head_sha: sourceCommit, path: workflowPath, event: "workflow_dispatch", status: "completed", conclusion: "success", repository: { id: 100, full_name: repository }, head_repository: { id: 100, full_name: repository } }
+  const steps = [options.stepName ?? "Read and verify the complete historical assessment catalog", "Preserve the assessment audit receipt"].map((name) => ({ name, status: "completed", conclusion: "success" }))
+  const artifact = { id: 77, name: "historical-assessment-replay-2", expired: false, size_in_bytes: archive.length, digest: `sha256:${sha256Of(archive)}`, workflow_run: { id: 41, repository_id: 100, head_repository_id: 100, head_branch: "main", head_sha: sourceCommit } }
+  return HttpClient.make((request) => {
+    seen.push(`${request.method} ${request.url}`)
+    const answers: Readonly<Record<string, unknown>> = {
+      [`${actions}/workflows/reviewed-historical-points.yml`]: { id: 9, path: workflowPath },
+      [`${actions}/runs/41/attempts/2`]: run,
+      [`${actions}/runs/41/attempts/2/jobs?per_page=100`]: { total_count: 1, jobs: [{ name: "publish", status: "completed", conclusion: "success", steps }] },
+      [`${actions}/artifacts/77`]: artifact,
+    }
+    if (request.url === `${actions}/artifacts/77/zip`) return succeed(json(request, 302, null, { location: "https://blob.example/receipt.zip" }))
+    if (request.url === "https://blob.example/receipt.zip") return succeed(json(request, 200, archive))
+    const answer = answers[request.url]
+    return succeed(answer === undefined ? json(request, 404, { message: "Not Found" }) : json(request, 200, answer))
+  })
+}
+
+function environment(sourceCommit: string, token = "replay-token") {
+  return ConfigProvider.layer(ConfigProvider.fromUnknown({
+    GITHUB_REPOSITORY: repository,
+    GITHUB_REPOSITORY_ID: "100",
+    GITHUB_RUN_ID: "900",
+    GITHUB_ACTIONS: "true",
+    GITHUB_EVENT_NAME: "workflow_dispatch",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_WORKFLOW_REF: `${repository}/${workflowPath}@refs/heads/main`,
+    GITHUB_WORKFLOW_SHA: sourceCommit,
+    GITHUB_SHA: sourceCommit,
+    HISTORICAL_REPLAY_ACTIONS_TOKEN: token,
+    PATH: "/usr/bin:/bin",
+  }))
+}
+
+effect function trustedRead(sourceCommit: string, archive: Uint8Array, options: { readonly stepName?: string; readonly token?: string } = {}) {
+  const seen: string[] = []
+  const reference = { runId: 41, attempt: 2, artifactId: 77, qualificationSha256: "e".repeat(64) }
+  provide environment(sourceCommit, options.token), HttpClient.HttpClient = actionsApi(sourceCommit, archive, seen, options) {
+    const outcome = readTrustedHistoricalReplay(reference, sourceCommit) catch effect (failure) => messageOf(failure)
+    return { outcome, seen }
+  }
+}
+
+function memoryStorage(objects: Map<string, Uint8Array>): PacketStorage<never, never> {
+  const key = (manifest: PacketManifest, suffix: string) => `${manifest.rawSha256}/${manifest.compressedSha256}/${suffix}`
+  return {
+    check: (_create: boolean) => effect {},
+    get: (manifest: PacketManifest, suffix: string) => effect {
+      return objects.get(key(manifest, suffix)) ?? null
+    },
+    putExact: (manifest: PacketManifest, suffix: string, bytes: Uint8Array) => effect {
+      objects.set(key(manifest, suffix), bytes.slice())
+    },
+  }
+}
+
+function catalogOf(): HistoricalAssessmentCatalog {
+  const legacyRecord = JSON.stringify({ projectId: "slop", repositoryNodeId: nodeId, pullRequestNodeId: "PR_seven", pullRequestNumber: 7 })
+  const first = JSON.stringify({ projectId: "slop", sources: [{ repositoryNodeId: nodeId, pullRequestNodeId: "PR_seven", pullRequestNumber: 7 }], supersedes: [] })
+  return {
+    heads,
+    legacy: [{ sequence: 3, record_digest: sha256Of(legacyRecord), record_json: legacyRecord, recorded_at: "2026-10-06T00:00:00.000Z", repository_node_id: nodeId, pull_request_node_id: "PR_seven", head_sha: "c".repeat(40), source_digest: digestA, supersedes: null }],
+    joint: [{ sequence: 4, record_digest: sha256Of(first), record_json: first, recorded_at: "2026-10-07T00:00:00.000Z", project_id: "slop", source_digest: digestA, source_keys_json: "[]" }],
+  }
+}
+
+function emptyReceipt(): HistoricalAssessmentReceipt {
+  const body = {
+    schemaVersion: "1" as const,
+    status: "no-scoped-active-assessments" as const,
+    scope: { projectId: "slop", repository, repositoryNodeId: nodeId, from: audit.from, through: audit.through, sourceAuditSha256: sourceAuditSha256(audit) },
+    heads,
+    counts: { auditedSources: 1, activeLegacyRecords: 0, activeJointRecords: 0, relevantRecords: 0 },
+    records: [],
+    blockers: [],
+  }
+  return { ...body, receiptSha256: sha256Of(canonicalJson(body)) }
+}
+
+function revision(id: string, sourceId: string, sourceUrl: string, decision?: string): Revision {
+  return {
+    id,
+    previous: null,
+    recordedAt: "2026-10-08T00:00:00.000Z",
+    sourceDigest: digestA,
+    sourceRule: "rule",
+    award: { key: `key-${id}`, actor: { id: "U_one", login: "one" }, projectId: "slop", category: "merged-pull-request", amount: 10, occurredAt: "2026-10-05T00:00:00.000Z", sourceId, sourceUrl, workUnitId: "unit", provisional: false },
+    ...(decision === undefined ? {} : { decision: { sourceId: decision, effectiveAt: "2026-10-08T00:00:00.000Z", reason: "value", delta: 10 } }),
+  }
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto, systemGit), { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('The publisher reads only the exact trusted replay receipt of the canonical main run (spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => effect {
+    const sourceCommit = try gitLine(["rev-parse", "HEAD"], "checkout unavailable")
+    const receipt = receiptOf(sourceCommit)
+    const archive = zipOf("receipt.json", textBytes(JSON.stringify(receipt)))
+    const read = try trustedRead(sourceCommit, archive)
+    try same(read.outcome, receipt)
+    try same(read.seen.at(-1), "GET https://blob.example/receipt.zip")
+    const renamedStep = try trustedRead(sourceCommit, archive, { stepName: "Another step" })
+    const otherEntry = try trustedRead(sourceCommit, zipOf("other.json", textBytes(JSON.stringify(receipt))))
+    const otherCommit = try trustedRead(sourceCommit, zipOf("receipt.json", textBytes(JSON.stringify(receiptOf("d".repeat(40))))))
+    const extraField = try trustedRead(sourceCommit, zipOf("receipt.json", textBytes(JSON.stringify({ ...receipt, extra: true }))))
+    const noToken = try trustedRead(sourceCommit, archive, { token: " " })
+    try same([renamedStep.outcome, otherEntry.outcome, otherCommit.outcome, extraField.outcome, noToken.outcome, noToken.seen], [
+      "Invalid historical replay evidence",
+      "Invalid historical replay evidence",
+      "Invalid historical replay evidence",
+      "Invalid historical replay evidence",
+      "Trusted replay read token unavailable",
+      [],
+    ])
+  })
+
+  it.effect('A staged private replay review is read back exactly and only against its receipt (spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => effect {
+    const objects = new Map<string, Uint8Array>()
+    const storage = memoryStorage(objects)
+    const review = { sourceAudit: audit, valueSnapshot: { ledger: [] }, valueKeys: ["f".repeat(64)], qualificationSha256: "e".repeat(64) }
+    const manifest = try stageHistoricalReplayReview(review, storage)
+    const base = receiptOf("c".repeat(40))
+    const receipt = { ...base, replay: { ...base.replay, snapshotSha256: digestText(review.valueSnapshot), privateReviewManifest: manifest } }
+    const bytes = try readHistoricalReplayReview(receipt, storage)
+    const read: unknown = try Effect.try(() => JSON.parse(new TextDecoder().decode(bytes)) as unknown)
+    try same(read, { schemaVersion: "slop-historical-replay-review-v1", ...review })
+    const otherQualification = readHistoricalReplayReview({ ...receipt, replay: { ...receipt.replay, qualificationSha256: "d".repeat(64) } }, storage) catch effect (failure) => messageOf(failure)
+    const unstaged = readHistoricalReplayReview(base, storage) catch effect (failure) => messageOf(failure)
+    try same([otherQualification, unstaged], ["Historical replay review differs from the trusted receipt", "Historical replay receipt has no private review manifest"])
+  })
+
+  it.effect('A replay reads assessment history only from the frozen catalog (spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => effect {
+    const forwarded: string[] = []
+    const network = Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => {
+      forwarded.push(request.url)
+      return succeed(json(request, 503, null))
+    }))
+    const frozen = Layer.provide(historicalAssessmentTransport(catalogOf(), { projectId: "slop", repository, repositoryNodeId: nodeId }), network)
+    provide frozen {
+      const source = { repository, pinnedNodeId: nodeId }
+      const joint = try workUnitHistoryPage(source, 7, 0, null, nodeId)
+      const legacy = try valueHistoryPage(source, 7, 0, nodeId)
+      const unknown = try workUnitHistoryPage(source, 8, 0, null, nodeId)
+      const wrongBoundary = workUnitHistoryPage(source, 7, 1, 3, nodeId) catch effect () => "refused"
+      try same([joint.records.length, joint.throughSequence, joint.totalRecords, joint.nextAfter, legacy.records.length, unknown.records.length, wrongBoundary, forwarded], [1, 4, 1, null, 1, 0, "refused", []])
+      const outside = try (try HttpClient.HttpClient).execute(HttpClientRequest.get("https://api.github.com/rate_limit"))
+      try same([outside.status, forwarded], [503, ["https://api.github.com/rate_limit"]])
+    }
+  })
+
+  it.effect('An empty assessment scope qualifies without value decisions and a removed-merge group stays unchanged (spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => effect {
+    const receipt = emptyReceipt()
+    const baseline = { schemaVersion: "1", ruleVersion: "rule", generatedAt: "2026-11-01T00:00:00.000Z", coverage: [], revisions: [] }
+    const baselineDigest = try batchDigest(baseline)
+    const scoped = { ...receipt, heads: { ...receipt.heads, d1PointsDigest: baselineDigest } }
+    const { receiptSha256: _old, ...body } = scoped
+    const current = { ...body, receiptSha256: sha256Of(canonicalJson(body)) }
+    const packet = { projectId: "slop", sourceAudit: audit, revision: 5, manifestSha256: digestA, baselineDigest, baselineRevisionCount: 0, valueSnapshot: null, valueKeys: [] as ReadonlyArray<string> }
+    const context = {} as ReplayContext
+    const qualified = try verifyHistoricalValueReplay(packet, baseline, current, null, new Map(), context)
+    try same(qualified, sha256Of(canonicalJson({ receiptSha256: current.receiptSha256, value: null })))
+    const keyed = verifyHistoricalValueReplay({ ...packet, valueKeys: ["k"] }, baseline, current, null, new Map(), context) catch effect (failure) => messageOf(failure)
+    try same(keyed, "Empty assessment scope cannot carry historical value decisions")
+
+    const held = { ...current, status: "requires-value-replay" as const, records: [{ journal: "joint" as const, digest: digestA, sequence: 4, sources: [{ id: "PR_gone", number: 9, headSha: "c".repeat(40), auditedHeadSha: null, occurredAt: "2026-10-05T00:00:00.000Z", finding: "retained-removed-merge" as const }] }] }
+    try same(historicalClosedContextBindings(held).size, 0)
+    const untouched = revision("r1", "PR_other", `https://github.com/${repository}/pull/10`)
+    try assertRemovedMergeGroupsPreserved([untouched], held, new Map())
+    const byNumber = assertRemovedMergeGroupsPreserved([revision("r2", "PR_new", `https://github.com/${repository}/pull/9`)], held, new Map()) catch effect (failure) => messageOf(failure)
+    const byDecision = assertRemovedMergeGroupsPreserved([revision("r3", "PR_new", `https://github.com/${repository}/pull/11`, `value:${digestA}`)], held, new Map()) catch effect (failure) => messageOf(failure)
+    try same([byNumber, byDecision], ["Historical Points change would alter a retained removed-merge group", "Historical Points change would alter a retained removed-merge group"])
+  })
+
+  it.effect('The points publisher refuses a replay and names the slopbot entry; a review retrieval needs an exact receipt and output (spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => effect {
+    provide outbound {
+      const replay = try Effect.flip(reviewed(["--replay-assessments"]))
+      const retrieval = try Effect.flip(reviewed(["replay-review", "receipt.json"]))
+      try same([messageOf(replay), retrieval._tag, messageOf(retrieval)], ["Usage: slopbot reviewed-replay <repository registry.json>", "ReplayReviewUnavailable", "Could not read the private historical replay review."])
+    }
+  })
+})

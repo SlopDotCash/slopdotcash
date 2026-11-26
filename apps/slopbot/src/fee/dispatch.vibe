@@ -1,0 +1,82 @@
+// spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
+import { isoAt } from "@repo/platform/clock"
+import { rows, sql } from "@repo/platform/d1"
+import { RegistryManifests } from "@repo/ports/backend"
+import { FeeOutcome } from "@repo/ports/slopbot"
+import { feeSettingAbsent, feeSettingOn } from "../../gen/backend__submissionFeeSettings.effect.vibe"
+import { type FeeFacts, canDispatch, feeDispatchBatch } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { feeJob, send } from "../jobs/job.vibe"
+import { parsedManifest, publishedWays, stepped, storedSettingOf } from "./gate.vibe"
+import { StoredGate, SubmissionFeeMode, askLeaseMillis, claimCheck, gateModel, paidUndecided } from "./store.vibe"
+
+export interface FeeCheckItem {
+  readonly repositoryId: number
+  readonly number: number
+}
+
+schema DueRow {
+  readonly repository_id: number
+  readonly pull_number: number
+  readonly installation_id: number
+  readonly owner: string
+  readonly repo: string
+  readonly project_id: string
+  readonly item: string
+  readonly state: StoredGate
+  readonly reason: string
+  readonly comment_id: number | null
+  readonly updated_at: string
+  readonly next_check_at: string | null
+  readonly stable_minor: string
+  readonly asked_at: string
+  readonly paid_at: string | null
+  readonly outcome: FeeOutcome | null
+}
+
+export effect function feeCheckWanted(item: FeeCheckItem, unmarkedOnly: boolean = false) {
+  const { mode } = try SubmissionFeeMode
+  if (mode !== "FeeLive") return false
+  return try paidUndecided(item.repositoryId, item.number, unmarkedOnly)
+}
+
+effect function projectSettings() {
+  const settings = new Map<string, ReturnType<typeof storedSettingOf>>()
+  const registry = try RegistryManifests
+  const current = try registry.current()
+  for (const registered of current) {
+    const manifest = parsedManifest(registered.manifest) catch () => undefined
+    settings.set(registered.projectId, storedSettingOf(manifest))
+  }
+  return settings
+}
+
+export effect function dispatchFeeChecks() {
+  const { mode } = try SubmissionFeeMode
+  if (mode !== "FeeLive" || publishedWays().length === 0) return 0
+  const nowMillis = try Clock.currentTimeMillis
+  const at = try isoAt(nowMillis)
+  const later = try isoAt(nowMillis + askLeaseMillis)
+  const settings = try projectSettings()
+  const settingOn = JSON.stringify([...settings].filter(([, setting]) => feeSettingOn(setting)).map(([projectId]) => projectId))
+  const due = try rows(DueRow, sql`SELECT g.repository_id, g.pull_number, g.installation_id, g.owner, g.repo, i.project_id, i.item, g.state, g.reason, g.comment_id, g.updated_at, g.next_check_at, i.stable_minor, i.asked_at, i.paid_at, i.outcome
+    FROM slopbot_fee_gates g
+    JOIN submission_fee_items i ON i.repository_id = g.repository_id AND i.pull_number = g.pull_number
+    WHERE (g.next_check_at IS NOT NULL AND g.next_check_at <= ${at})
+       OR (g.next_check_at IS NULL AND g.state <> 'paid' AND i.paid_at IS NOT NULL)
+       OR (g.state = 'paid' AND i.paid_at IS NULL AND i.outcome IS NULL
+           AND (g.next_check_at IS NULL OR g.next_check_at <= ${at} OR g.next_check_at > ${later}))
+       OR (g.next_check_at IS NULL AND g.state = 'asked' AND i.paid_at IS NULL
+           AND i.project_id NOT IN (SELECT value FROM json_each(${settingOn})))
+    ORDER BY g.next_check_at IS NULL, g.next_check_at, g.updated_at LIMIT ${feeDispatchBatch}`)
+  let sent = 0
+  for (const row of due) {
+    const model = gateModel(row, { repositoryId: row.repository_id, pullNumber: row.pull_number, projectId: row.project_id, item: row.item, stableMinor: row.stable_minor, askedAt: row.asked_at, paidAt: row.paid_at, paidNetwork: null, paidDepositId: null, outcome: row.outcome, outcomeAt: null }, nowMillis)
+    const facts: FeeFacts = { mode, contractPublished: true, feeSetting: settings.get(row.project_id) ?? feeSettingAbsent, settingSince: 0, openedAt: 0, exemption: "ExemptionUnknown", mayAsk: false }
+    if (!canDispatch(model, facts)) continue
+    try stepped(model, { type: "dispatch", facts })
+    try claimCheck({ repositoryId: row.repository_id, number: row.pull_number }, later)
+    try send(feeJob({ deliveryId: `fee:${row.repository_id}:${row.pull_number}:${at}`, installationId: row.installation_id, repositoryId: row.repository_id, owner: row.owner, repo: row.repo, number: row.pull_number }))
+    sent += 1
+  }
+  return sent
+}

@@ -1,7 +1,7 @@
 // spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"
 import { Cloudflare, ToolFailed } from "../../release/wrangler/cloudflare.vibe"
 import { ControlPlane, ControlRefused, type Method } from "./account.vibe"
-import { type Names, RecoveryRefused, bucketBindings, databaseBindings, protectedWorkflow, qualificationMigrations, qualificationSchema, queueBinding, runtimeVars } from "./plan.vibe"
+import { type Names, RecoveryRefused, bucketBindings, databaseBindings, protectedWorkflow, qualificationAccounts, qualificationMigrations, qualificationSchema, queueBinding, runtimeVars } from "./plan.vibe"
 
 schema Database { readonly uuid: string; readonly name: string }
 schema Bucket { readonly name: string; readonly creation_date: string }
@@ -337,11 +337,12 @@ export effect function hostedQualification(hosted: Hosted) {
   }
 
   effect function configured() {
-    if (!(try fs.exists(hosted.bundle))) throw refused("The recovery qualification Worker is not built (apps/operations/dist/recovery.js)")
+    if (!(try fs.exists(hosted.bundle))) throw refused("The recovery qualification Worker is not built (apps/security/dist/recovery.js)")
     const migrations = files.join(hosted.workspace, "migrations")
     try fs.makeDirectory(migrations, { recursive: true })
     try fs.writeFileString(files.join(migrations, "0000_qualification_schema.sql"), qualificationSchema)
     for (const name of qualificationMigrations) try fs.copyFile(files.join(hosted.root, "migrations", name), files.join(migrations, name))
+    try fs.writeFileString(files.join(migrations, qualificationAccounts.name), qualificationAccounts.schema)
     const [work, failed] = names.queues
     const config = {
       name: run,
@@ -369,7 +370,7 @@ export effect function hostedQualification(hosted: Hosted) {
   effect function qualified() {
     try provision()
     const config = try configured()
-    for (const database of owned.databases) try wrangler("schema", ["d1", "migrations", "apply", database.name, "--remote", "--config", config], migrationSeconds)
+    for (const database of owned.databases) try cloudflare.wrangler("schema", { args: ["d1", "migrations", "apply", database.name, "--remote", "--config", config], cwd: hosted.workspace, seconds: migrationSeconds, quiet: true })
     stage = "deploy-worker"
     uncertain.add(run)
     try wrangler("deploy", ["deploy", "--config", config, "--tag", source, "--message", `Disposable recovery qualification ${run}`])
@@ -380,6 +381,8 @@ export effect function hostedQualification(hosted: Hosted) {
     uncertain.delete(run)
     try assertBindings()
     stage = "fixture-commands"
+    try command("access")
+    report.results.access = try waitFor("access")
     try command("seed")
     report.results.seed = try waitFor("seed")
     report.results.acknowledgedFirstPageDeliveries = try waited(cycleSeconds, "Hosted queue snapshot did not finish", effect {

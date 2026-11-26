@@ -1,0 +1,13 @@
+// spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"
+import { IntakePause, RegistryManifests, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
+import { submissionFeeMode } from "../../src/fee/store.vibe"
+
+export function reviewIntakeGate(paused: () => boolean) {
+  return Layer.mergeAll(
+    submissionFeeMode(undefined),
+    Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
+    Layer.succeed(SubmissionFeeRates, { all: () => effect { return [] }, newest: () => effect { return null }, append: () => Effect.die(new Error("the review journeys append no rate")) }),
+    Layer.succeed(SubmissionFeeSetting, { since: () => effect { return null } }),
+    Layer.succeed(IntakePause, { paused: () => Effect.sync(paused) }),
+  )
+}

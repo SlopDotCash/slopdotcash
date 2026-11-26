@@ -7,6 +7,7 @@ import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
 import { type RevisionBody, pointRevisionId } from "@repo/points/client"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -65,7 +66,7 @@ const Disputing = Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.mergeAll(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "disputes",
       origin: "https://slopbot.internal",
       d1: { SLOPBOT_DB: "slop-private" },
@@ -214,12 +215,13 @@ interface PointsDispute {
   readonly statement: string
   readonly openedAt: number
   readonly lease?: { readonly token: string; readonly until: number }
+  readonly unreadable?: true
 }
 
 effect function filed(area: AreaShape, dispute: PointsDispute) {
   const body = { previous: null, recordedAt: "2026-10-30T14:00:00.000Z", sourceDigest: "a".repeat(64), sourceRule: "slop-score-v2", award: award(dispute.projectId, dispute.sourceId) } satisfies RevisionBody
   const id = try pointRevisionId(body)
-  try area.sql("INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, NULL, ?, ?)", id, body.award.key, body.recordedAt, JSON.stringify({ id, ...body }))
+  try area.sql("INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, NULL, ?, ?)", id, body.award.key, body.recordedAt, dispute.unreadable ? "{}" : JSON.stringify({ id, ...body }))
   const appealKey = `points-dispute:${try sha256Hex(`${id}:${recipient}`)}`
   try area.sql(`INSERT INTO points_disputes (appeal_key, revision_id, item_node_id, appellant_github_id, statement, opened_at, due_at, claim_token, claim_until)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, appealKey, id, id, String(recipient), dispute.statement, try isoAt(dispute.openedAt), try isoAt(dispute.openedAt + week),
@@ -346,7 +348,7 @@ layer(Disputing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
     try same(fake.requests.filter((request) => request.method === "PATCH").length, 0)
   })
 
-  it.effect('Points-dispute triage takes over an expired lease, leaves a held one alone, and every outcome reaches a moderator (spec/slopbot/pointsDisputes.md, "Triage runs under an expiring lease and every outcome escalates to a moderator"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "A dispute still unresolved seven days after filing escalates without a lease")', () => effect {
+  it.effect('Points-dispute triage takes over an expired lease, leaves a held one alone, escalates an evidence read that fails before any call as unavailable, and every outcome reaches a moderator (spec/slopbot/pointsDisputes.md, "Triage runs under an expiring lease and every outcome escalates to a moderator"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "A dispute still unresolved seven days after filing escalates without a lease")', () => effect {
     const area = try Area
     const { providers, net } = try World
     try prepared(area)
@@ -359,17 +361,20 @@ layer(Disputing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       restricted: try filed(area, { projectId: locked.projectId, sourceId: "points-award-3", statement: "P3-CLAIM", openedAt: now - 3 * hour }),
       held: try filed(area, { projectId: values.projectId, sourceId: "points-award-5", statement: "P5-CLAIM", openedAt: now - 2 * hour, lease: { token: "busy-worker", until: now + hour } }),
       intake: try filed(area, { projectId: values.projectId, sourceId: "points-award-4", statement: "P4-CLAIM wrong category", openedAt: now - hour }),
+      unreadable: try filed(area, { projectId: values.projectId, sourceId: "points-award-7", statement: "P7-CLAIM unreadable evidence", openedAt: now - hour / 2, unreadable: true }),
     }
     const calls = providers.calls.length
     try answers("P1-CLAIM", JSON.stringify({ draft: "uphold", confidence: 0.95 }))
     try answers("P4-CLAIM", JSON.stringify({ draft: "deny", confidence: 0.4 }))
     const refused = try area.request("/v1/points-disputes", { method: "POST", body: "{\"key\":\"not-a-dispute\"}", headers: { "content-type": "application/json" } })
     const intake = try area.request("/v1/points-disputes", { method: "POST", json: { key: keys.intake } })
+    const unreadable = try area.request("/v1/points-disputes", { method: "POST", json: { key: keys.unreadable } })
     const pending = (try area.post("/test/points-disputes/pending", {})).body
     const moderatorReview = "Original work evidence needs independent moderator review"
     try same({
       refused: [refused.status, refused.body],
       intake: [intake.status, intake.body],
+      unreadable: [unreadable.status, unreadable.body],
       pending,
       rows: {
         overdue: try pointsRow(area, keys.overdue),
@@ -378,6 +383,7 @@ layer(Disputing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         restricted: try pointsRow(area, keys.restricted),
         held: try pointsRow(area, keys.held),
         intake: try pointsRow(area, keys.intake),
+        unreadable: try pointsRow(area, keys.unreadable),
       },
       notices: {
         overdue: try noticeCount(area, keys.overdue),
@@ -386,14 +392,16 @@ layer(Disputing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         restricted: try noticeCount(area, keys.restricted),
         held: try noticeCount(area, keys.held),
         intake: try noticeCount(area, keys.intake),
+        unreadable: try noticeCount(area, keys.unreadable),
       },
-      costs: { stale: try costRows(area, keys.stale), intake: try costRows(area, keys.intake), gone: try costRows(area, keys.gone) },
+      costs: { stale: try costRows(area, keys.stale), intake: try costRows(area, keys.intake), gone: try costRows(area, keys.gone), unreadable: try costRows(area, keys.unreadable) },
       providerCalls: providers.calls.length - calls,
       unanswered: providers.unanswered.length,
       unexpected: [net.unexpected.length, area.outboundErrors.length],
     }, {
       refused: [400, { error: "invalid_request" }],
       intake: [200, { accepted: true }],
+      unreadable: [200, { accepted: true }],
       pending: { processed: [keys.overdue, keys.stale, keys.gone, keys.restricted, keys.held], failed: [] },
       rows: {
         overdue: { draft: null, draft_confidence: null, escalation: "The dispute is still unresolved after seven days; independent review is required", claim_token: null },
@@ -402,9 +410,10 @@ layer(Disputing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         restricted: { draft: null, draft_confidence: null, escalation: "The project is restricted; Slopbot cannot reassess ordinary work", claim_token: null },
         held: { draft: null, draft_confidence: null, escalation: null, claim_token: "busy-worker" },
         intake: { draft: "deny", draft_confidence: 0.4, escalation: moderatorReview, claim_token: null },
+        unreadable: { draft: null, draft_confidence: null, escalation: "Slopbot triage is unavailable; independent review is required", claim_token: null },
       },
-      notices: { overdue: 2, stale: 2, gone: 2, restricted: 2, held: 0, intake: 2 },
-      costs: { stale: 1, intake: 1, gone: 0 },
+      notices: { overdue: 2, stale: 2, gone: 2, restricted: 2, held: 0, intake: 2, unreadable: 2 },
+      costs: { stale: 1, intake: 1, gone: 0, unreadable: 0 },
       providerCalls: 2,
       unanswered: 0,
       unexpected: [0, 0],

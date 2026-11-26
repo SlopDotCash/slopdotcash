@@ -1,0 +1,61 @@
+// spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"
+import { isoNow } from "@repo/platform/clock"
+import { operatorBearerAuthorized } from "@repo/platform/crypto"
+import { rows } from "@repo/platform/d1"
+import { answered, json } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { type ProtectedPointMonth, protectedMonthsRoute } from "../client/protectedMonths.vibe"
+import { getOperatorProtectedPointMonths } from "../client/refusals.vibe"
+import { protectedRouteAnswer } from "../../gen/points__protectedMonths.effect.vibe"
+import { monthPattern, protectedMonthsListing, protectedProjectsListing } from "./protection.vibe"
+
+export interface ProtectedMonthsVars {
+  readonly POINTS_PROTECTION_TOKEN?: string
+}
+
+service ProtectedMonthsAccess {
+  readonly secret: Redacted.Redacted<string> | undefined
+}
+
+schema ListedMonth { project_id: string | null; period: string | null }
+schema ListedProject { project_id: string | null }
+
+const noStore = cacheControl(protectedMonthsRoute.cache)
+
+export function protectedMonthsAccess(token: string | undefined) {
+  return Layer.succeed(ProtectedMonthsAccess, { secret: token === undefined ? undefined : Redacted.make(token) })
+}
+
+function isProjectId(value: string | null): value is string {
+  return value !== null && value !== "" && !value.includes("\0")
+}
+
+export effect function protectedListing() {
+  const months: ProtectedPointMonth[] = []
+  for (const row of try rows(ListedMonth, protectedMonthsListing())) {
+    const { project_id: projectId, period } = row
+    if (isProjectId(projectId) && period !== null && monthPattern.test(period)) months.push({ projectId, period })
+  }
+  const everyMonthProjects: string[] = []
+  for (const row of try rows(ListedProject, protectedProjectsListing())) {
+    if (isProjectId(row.project_id)) everyMonthProjects.push(row.project_id)
+  }
+  return { months, everyMonthProjects }
+}
+
+function refused(row: { readonly status: number; readonly error: string; readonly headers: Readonly<Record<string, string>> }) {
+  return json({ error: row.error }, row.status, Object.fromEntries(Object.entries(row.headers).filter(([name]) => name !== "content-type")))
+}
+
+effect function answer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const secret = (try ProtectedMonthsAccess).secret
+  const gate = protectedRouteAnswer(secret === undefined ? 0 : Redacted.value(secret).length, operatorBearerAuthorized(request.headers.authorization, secret), request.method === "GET" || request.method === "HEAD", true)
+  if (gate === "RouteNotFound") return refused(getOperatorProtectedPointMonths.notFoundNoStore)
+  if (gate === "MethodNotAllowed") return refused(getOperatorProtectedPointMonths.otherMethods.methodNotAllowedNoStore)
+  const listing = { schema: "slop-protected-point-months-v1" as const, generatedAt: try isoNow(), ...(try protectedListing()) }
+  const encoded = try orDie(Schema.encodeUnknownEffect(protectedMonthsRoute.answer)(listing))
+  return json(encoded, 200, { "cache-control": noStore })
+}
+
+export const ProtectedMonthsRoutes = HttpRouter.add("*", protectedMonthsRoute.path, answered(answer()))

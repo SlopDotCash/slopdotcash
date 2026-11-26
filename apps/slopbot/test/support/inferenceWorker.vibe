@@ -19,7 +19,7 @@ export const repositoryId = 7001
 export const installationId = 501
 export const policyText = "# Contributing\n\nValue only retained, observed outcomes.\n"
 export const producerRevision = "e".repeat(40)
-export const pulls = [1, 2, 3] as const
+export const pulls = [1, 2, 3, 4, 5] as const
 
 export interface World {
   readonly github: GitHubFake
@@ -103,7 +103,7 @@ function patched(number: number) {
 }
 
 function census(world: World) {
-  return () => ({
+  return (body: Readonly<Record<string, unknown>>) => typeof body["data"] !== "object" || body["data"] === null || !("search" in body["data"]) ? body : ({
     data: {
       search: {
         issueCount: pulls.length,

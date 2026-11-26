@@ -1,0 +1,69 @@
+// spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work"; spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once"; spec/settlement/paymentDispatch.md, "Story: Recover uncertainty without opening a competing transfer"
+import { recordRegistryDeposits } from "../deposits/record.vibe"
+import type { NetworkKey } from "../kernels/networks.ts"
+import { coordinateMonthlyPayments } from "../monthly/coordinator.vibe"
+import { type ExecutorBindings, type ServedVault, releaseAuthorized, runPaymentDispatch } from "../payments/dispatch.vibe"
+import { vaultAsset } from "../payments/ledger.vibe"
+import { reconcileFailedAttempts, recoverUncertainAttempts } from "../payments/recovery.vibe"
+import { failureTag } from "../payments/terms.vibe"
+import { paymentDeploymentOf } from "../scan/index.vibe"
+import { runSecurityPayments } from "../securityScope/engine.vibe"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+import { syncRegistryVaults } from "../vault/sync.vibe"
+import { runMonthlyCommitments } from "./commitments.vibe"
+import { isolated, reported } from "./steps.vibe"
+
+export const paymentsCron = "*/5 * * * *"
+
+export error CoordinatorFailed { failures: ReadonlyArray<string> }
+export error DispatchUnavailable
+
+export interface PaymentsRun {
+  readonly networks: ReadonlyArray<NetworkKey>
+  readonly securityNetworks: ReadonlyArray<NetworkKey>
+  readonly executors: ExecutorBindings
+}
+
+export effect function servedVaults(deployments: ReadonlyArray<RegisteredDeployment>, failures: string[]) {
+  const rpc = try PaymentRpc
+  const served: ServedVault[] = []
+  for (const registered of deployments) {
+    const deployment = paymentDeploymentOf(registered, rpc)
+    if (deployment === undefined) {
+      failures.push(`${registered.network} ${registered.vault}: RPC configuration unavailable`)
+      continue
+    }
+    const asset = vaultAsset(deployment) catch (error) => failureTag(error)
+    if (typeof asset === "string") failures.push(`${registered.network} ${registered.vault}: ${asset}`)
+    else served.push({ deployment, asset })
+  }
+  return served
+}
+
+effect function coordinated() {
+  const report = try coordinateMonthlyPayments()
+  if (report.failures.length > 0) throw new CoordinatorFailed({ failures: report.failures.map((failure) => `${failure.key}: ${failure.reason}`) })
+  return report
+}
+
+effect function dispatched(vaults: ReadonlyArray<ServedVault>, executors: ExecutorBindings) {
+  if (executors.evm === undefined && executors.solana === undefined) throw new DispatchUnavailable()
+  for (const served of vaults) try releaseAuthorized(served.deployment, served.asset)
+  try runPaymentDispatch(vaults)
+}
+
+export effect function runPayments(run: PaymentsRun) {
+  const failures: string[] = []
+  const synced = try syncRegistryVaults(run.networks, "ordinary")
+  failures.push(...synced.failures)
+  const vaults = try servedVaults(synced.deployments, failures)
+  try isolated("recovery", recoverUncertainAttempts(vaults), failures)
+  try isolated("reconcile", reconcileFailedAttempts(run.networks, vaults), failures)
+  try isolated("coordinator", coordinated(), failures)
+  try isolated("commitments", runMonthlyCommitments(run.networks, synced.deployments, run.executors), failures)
+  try isolated("dispatch", dispatched(vaults, run.executors), failures)
+  if (run.securityNetworks.length > 0) try isolated("security", runSecurityPayments(run.securityNetworks, run.executors), failures)
+  try recordRegistryDeposits(synced.deployments, "ordinary")
+  try reported("payments", failures)
+}

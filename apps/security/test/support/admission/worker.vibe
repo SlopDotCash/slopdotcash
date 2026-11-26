@@ -1,4 +1,4 @@
-// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"
 import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
@@ -7,13 +7,14 @@ import { outboundVia, serviceAuth } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
-import { RegistryLive, RegistryManifestsLive } from "@repo/backend/ports"
+import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
 import { Authority } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { ContributorAudience } from "@repo/ports/points"
 import { skillTemplateFrom } from "../../../src/admission/livePin.vibe"
 import { admissionRecordRoutes, admissionServiceRoutes, overviewRoutes, vettingSandbox } from "../../../src/admission/routes.vibe"
 import { EnforcementRowsLive, ProjectEventsLive } from "../../../src/enforcement/port.vibe"
+import { enforcementRoutes } from "../../../src/enforcement/routes.vibe"
 import { evidenceBucket } from "../../../src/evidence/objects.vibe"
 
 interface Env {
@@ -34,24 +35,22 @@ const otherAreas = Layer.mergeAll(
     payoutRecipient: (project) => succeed(project.stewardGithubId),
   } satisfies Notices.Shape),
   Layer.succeed(ContributorAudience, { affected: () => succeed(sql`SELECT NULL AS recipient WHERE 0`) } satisfies ContributorAudience.Shape),
-  Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
+  Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: read.actorGithubId === "900" ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
 )
 
 function enforcement(env: Env) {
-  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom(env), otherAreas)
-  return Layer.provideMerge(ProjectEventsLive, Layer.provideMerge(EnforcementRowsLive, base))
+  const gitHub = Layer.provide(github({ authority: "https://api.github.test", token: Redacted.make("ghs_admission_fixture"), userAgent: "security-admission-test" }), outboundVia(env.GITHUB))
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom(env), otherAreas, evidenceBucket(env.VETTING_EVIDENCE), skillTemplateFrom(env.ASSETS), gitHub)
+  return Layer.provideMerge(Layer.mergeAll(ProjectEventsLive, RestrictionsLive), Layer.provideMerge(EnforcementRowsLive, base))
 }
 
 export default worker({
   services: (env: Env) => Layer.mergeAll(
     enforcement(env),
-    evidenceBucket(env.VETTING_EVIDENCE),
     vettingSandbox(env.SANDBOX),
-    skillTemplateFrom(env.ASSETS),
-    Layer.provide(github({ authority: "https://api.github.test", token: Redacted.make("ghs_admission_fixture"), userAgent: "security-admission-test" }), outboundVia(env.GITHUB)),
     Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
     Layer.provide(Layer.merge(RegistryLive, RegistryManifestsLive), d1(env.SLOP_DB)),
   ),
-  routes: Layer.mergeAll(admissionServiceRoutes, overviewRoutes, admissionRecordRoutes),
+  routes: Layer.mergeAll(admissionServiceRoutes, overviewRoutes, admissionRecordRoutes, enforcementRoutes),
 })

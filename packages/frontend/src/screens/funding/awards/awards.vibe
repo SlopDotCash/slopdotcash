@@ -1,4 +1,4 @@
-// spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+// spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
 import type { CommitmentReview, MonthlyOwnerView, MonthlyRun } from "@repo/settlement/client"
 import { ordinaryFeeBase } from "@repo/settlement/kernels/fees"
 import { type ChainResult, Machine as MonthlyMachine, canObserveClock, clock } from "../../../../gen/frontend__ownerMonthly.effect.vibe"
@@ -14,13 +14,14 @@ import { type Deployment, deploymentOf } from "../../../wallets/owner/commitment
 import { type ChainStatus, type SolanaCommitmentReview, type VerifiedCommitment, checkEvmCommitment, checkSolanaCommitment, commitmentMessages, evmVaultOf, familyOf, requestCommitment, reviewSolanaCommitment, sendEvmCommitment, sendSolanaCommitment } from "../../../wallets/owner/commitments.vibe"
 import { type EvmVault, readVault, requireVaultWallet } from "../../../wallets/owner/evmVault.vibe"
 import { readText, slotOfText } from "../../../wallets/owner/flowSlots.ts"
-import { monthlyNotice, ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
+import { type MonthlySlotKeys, monthlyNotice, ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
+import { type ReleaseMonth, type ReleaseReady, type ReleaseStatus, checkRelease, heldMessage, releaseMessages, requestRelease, sendEvmRelease } from "../../../wallets/owner/reserveRelease.vibe"
 import type { SolanaVaultTerms } from "../../../wallets/owner/solanaPlans.ts"
 import { type FundingProject, deploymentsOf } from "../vault/project.schema.ts"
 import { solanaTerms } from "../vault/savedPlans.ts"
 import { type SavedAward, commitmentKey, savedAward } from "./month.ts"
 
-export type { MonthlyOwnerView, WalletOffer }
+export type { MonthlyOwnerView, ReleaseReady, WalletOffer }
 
 export type Connection =
   | { readonly family: "evm"; readonly address: string; readonly evm: EvmConnection }
@@ -43,6 +44,18 @@ export interface CommitmentShown {
 export interface Checked {
   readonly status: ChainStatus
   readonly hash: string
+}
+
+export type ReleaseReviewed = { readonly kind: "held"; readonly message: string } | { readonly kind: "ready"; readonly ready: ReleaseReady }
+
+export interface ReleaseChecked {
+  readonly status: ReleaseStatus
+  readonly hash: string
+}
+
+export interface ReleaseSent {
+  readonly hash: string
+  readonly kept: boolean
 }
 
 interface Shown {
@@ -79,25 +92,31 @@ export service AwardsDesk {
   readonly project: FundingProject
   readonly period: string
   readonly monthly: MonthlyPage
+  readonly keys: MonthlySlotKeys
+  readonly released: { network: string }
   readonly shown: SubscriptionRef.SubscriptionRef<Shown>
 }
 
 const shared = Layer.provideMerge(walletChoiceServices, browserServices)
 const memo = Layer.makeMemoMapUnsafe()
 
-function slotKeys(projectId: string, period: string) {
+function slotKeys(projectId: string, period: string, released: { readonly network: string }): MonthlySlotKeys {
   return {
     commitment: commitmentKey(projectId, period),
     setting: `${storageKeys.vaultMonthly.key}${projectId}:${period}`,
-    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}`,
+    get release() {
+      return `${storageKeys.monthlyRelease.key}${projectId}:${period}:${released.network}`
+    },
   }
 }
 
 function deskOf(project: FundingProject, period: string) {
   return Layer.effect(AwardsDesk, effect {
-    const monthly = try ownerMonthlyPage(sessionSlots(), slotKeys(project.id, period), project.id, period)
+    const released = { network: "" }
+    const keys = slotKeys(project.id, period, released)
+    const monthly = try ownerMonthlyPage(sessionSlots(), keys, project.id, period)
     const shown = try SubscriptionRef.make<Shown>({ view: undefined, actor: "" })
-    return { project, period, monthly, shown }
+    return { project, period, monthly, keys, released, shown }
   })
 }
 
@@ -125,8 +144,9 @@ function stopped(message: string) {
 }
 
 effect function accept(view: MonthlyOwnerView) {
-  const { project, period, shown } = try AwardsDesk
+  const { project, period, released, shown } = try AwardsDesk
   if (view.projectId !== project.id || view.period !== period) throw stopped(awardMessages.unverified)
+  released.network = deploymentOf(view.deployment)?.network ?? ""
   try SubscriptionRef.update(shown, (current) => ({ ...current, view }))
   return view
 }
@@ -337,4 +357,94 @@ export effect function unreadableCommitment() {
 
 export effect function clearUnreadableCommitment() {
   return try (try AwardsDesk).monthly.clearUnreadable("Commitment")
+}
+
+interface Releasable {
+  readonly month: ReleaseMonth
+  readonly evm: EvmVault | undefined
+}
+
+effect function releasable() {
+  const { project, period, shown } = try AwardsDesk
+  const { view } = try SubscriptionRef.get(shown)
+  const deployment = view === undefined ? undefined : deploymentOf(view.deployment)
+  if (view === undefined || deployment === undefined) throw stopped(releaseMessages.unavailable)
+  return { month: { projectId: project.id, period, manifestSha256: view.manifestSha256, network: deployment.network }, evm: evmVaultOf(deployment) } satisfies Releasable
+}
+
+effect function releaseVault(target: Releasable, connection: Connection) {
+  if (target.evm === undefined || connection.family !== "evm") throw stopped(awardMessages.unsupported)
+  return { vault: target.evm, wallet: connection.evm }
+}
+
+export effect function connectReleaseOwner(id: number) {
+  const { monthly } = try AwardsDesk
+  const target = try releasable()
+  if (target.evm === undefined) throw stopped(awardMessages.unsupported)
+  const evm = try connectEvm(id, false)
+  const saved = try monthly.saved("Release")
+  const from = saved.plan?.kind === "evmRelease" ? saved.plan.call?.from : undefined
+  if (from !== undefined && from !== evm.address.toLowerCase()) throw stopped(`${awardMessages.reconnect}${from}`)
+  return { family: "evm", address: evm.address, evm } satisfies Connection
+}
+
+export effect function reviewRelease() {
+  const { monthly } = try AwardsDesk
+  const target = try releasable()
+  if (target.evm === undefined) throw stopped(awardMessages.unsupported)
+  const answer = try requestRelease(target.month, target.evm.vault, try actorOf())
+  try monthly.observeApproval(answer.status === "ready")
+  if (answer.status === "held") return { kind: "held", message: heldMessage(answer.reason) } satisfies ReleaseReviewed
+  if ((try monthly.machine.get()).release.phase !== "Reviewed") try monthly.review("Release")
+  return { kind: "ready", ready: answer } satisfies ReleaseReviewed
+}
+
+export effect function sendRelease(connection: Connection, ready: ReleaseReady) {
+  const { monthly } = try AwardsDesk
+  const target = try releasable()
+  const { vault, wallet } = try releaseVault(target, connection)
+  const fresh = try requestRelease(target.month, vault.vault, try actorOf())
+  if (fresh.status !== "ready" || fresh.planId !== ready.planId || JSON.stringify(fresh.transaction) !== JSON.stringify(ready.transaction)) throw stopped(releaseMessages.changed)
+  const sent: ReleaseSent = Effect.map(monthly.submit("Release", (before) => sendEvmRelease(wallet, vault, fresh, before)), (hash) => ({ hash, kept: true })) catch effect (error) => {
+    if (error._tag === "HashNotKept") return { hash: error.hash, kept: false }
+    throw error
+  }
+  return sent
+}
+
+function releaseResultOf(status: ReleaseStatus): ChainResult {
+  return status === "finalized" ? "FinalMatch" : status === "failed" ? "FinalFailure" : "StillPending"
+}
+
+export effect function checkSavedRelease() {
+  const { monthly } = try AwardsDesk
+  const target = try releasable()
+  const saved = try monthly.saved("Release")
+  const hash = saved.attempt.hash !== "" ? saved.attempt.hash : saved.attempt.candidate
+  if (hash === "") throw stopped(awardMessages.enterHash)
+  const status = try checkRelease(target.month, saved.plan, hash, try actorOf())
+  const result = releaseResultOf(status)
+  try monthly.check("Release", () => Effect.succeed(result))
+  return { status, hash } satisfies ReleaseChecked
+}
+
+export effect function enterReleaseHash(candidate: string) {
+  try (try AwardsDesk).monthly.enterCandidate("Release", candidate.trim())
+  return try checkSavedRelease()
+}
+
+export effect function confirmReleaseUnsent() {
+  return try (try AwardsDesk).monthly.confirmUnsent("Release")
+}
+
+export effect function unreadableRelease() {
+  return slotOfText(readText(sessionSlots(), (try AwardsDesk).keys.release)).kind === "unreadable"
+}
+
+export effect function clearUnreadableRelease() {
+  return try (try AwardsDesk).monthly.clearUnreadable("Release")
+}
+
+export effect function savedReleaseHeld() {
+  return slotOfText(readText(sessionSlots(), (try AwardsDesk).keys.release)).kind !== "empty"
 }

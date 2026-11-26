@@ -1,55 +1,150 @@
-// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
-import { isoAt, millisOf } from "@repo/platform/clock"
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
-import type { Actor } from "../../score/facts.vibe"
-import { type CollectedEvidence, type ProvedCandidates, type SourceRead, repositoryIdOf } from "../collect/collect.vibe"
+import { interrupted } from "../../quotaRecovery/run.vibe"
+import { type CollectedEvidence, type ProvedCandidates, type SourceRead } from "../collect/collect.vibe"
 import type { CorrectionCandidate } from "../collect/inventory.vibe"
-import type { CorrectionActor, CorrectionSource } from "./manifest.vibe"
+import type { RetainedOriginals } from "../collect/retained.vibe"
+import { type GroupedBinding, type GroupedProof, groupedDecisionUnavailable, proveGrouped } from "./grouped.vibe"
+import type { CorrectionClaim, CorrectionSource, OriginalContributorBinding, OriginalContributorFollowup } from "./manifest.vibe"
+import { type OctoberAuthors, type SyncMerges, boundOrdinary, isOctober, mirroredOctoberDonor, mirroredOctoberSources, octoberOrdinary, octoberProofUnavailable, ordinarySource, outcomeMissing } from "./october.vibe"
 
-const groupedProofUnavailable = "grouped-retained-decision-unavailable"
 const retainedEvidenceUnavailable = "retained-source-evidence-unavailable"
-const octoberProofUnavailable = "october-original-contributor-proof-unavailable"
-const outcomeMissing = "Complete source outcome missing"
 
-function actorOf(actor: Actor | null): CorrectionActor | null {
-  return actor === null ? null : { id: actor.id, login: actor.login, kind: actor.kind }
+export interface RetainedRequest {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly plain: CorrectionSource
+  readonly retained: Extract<RetainedOriginals, { readonly kind: "originals" }>
+  readonly owners: ReadonlyMap<string, string>
+  readonly october: OctoberAuthors | undefined
 }
 
-effect function ordinarySource(read: SourceRead, owners: ReadonlyMap<string, string>) {
-  const outcome = read.outcome
-  const commits = outcome.commits
-  if (outcome.headRefOid === "" || commits === null) return undefined
-  const repository = repositoryIdOf(outcome.url)
-  return {
-    repository,
-    repositoryNodeId: read.repositoryNodeId,
-    sourceId: outcome.id,
-    sourceUrl: outcome.url,
-    headSha: outcome.headRefOid,
-    occurredAt: try isoAt(millisOf(outcome.mergedAt)),
-    author: actorOf(outcome.author),
-    complete: true,
-    commitCount: commits.length,
-    commits: commits.map((commit) => ({
-      sha: commit.oid,
-      parentCount: commit.parentCount,
-      author: actorOf(commit.author),
-      additions: commit.additions,
-      deletions: commit.deletions,
-      firstAcceptedSourceId: owners.get(`${repository.toLowerCase()}\u0000${commit.oid}`) ?? null,
-    })),
-  } satisfies CorrectionSource
+export interface OrdinaryProof {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributor?: OriginalContributorBinding
+}
+
+export type RetainedOrdinary<E, R> = (request: RetainedRequest) => OrdinaryProof!E!R
+
+export interface OctoberOriginalRequest {
+  readonly accepted: CorrectionSource
+  readonly sources: ReadonlyArray<unknown>
+  readonly owners: ReadonlyMap<string, string>
+  readonly allowMergedOriginal: boolean
+}
+
+export interface OctoberFollowupRequest {
+  readonly accepted: CorrectionSource
+  readonly followup: CorrectionSource
+  readonly retained: unknown
+}
+
+export interface OctoberUnitRequest {
+  readonly accepted: CorrectionSource
+  readonly original: unknown
+  readonly integration: unknown
+  readonly owners: ReadonlyMap<string, string>
+  readonly claims: ReadonlyArray<CorrectionClaim>
+  readonly followups: ReadonlyArray<unknown>
+  readonly sources: ReadonlyArray<unknown>
+}
+
+export interface OctoberUnitProof {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributor?: OriginalContributorBinding
+  readonly originalContributorParts?: ReadonlyArray<OriginalContributorBinding>
+}
+
+export interface OctoberPartsRequest {
+  readonly sources: ReadonlyArray<unknown>
+  readonly owners: ReadonlyMap<string, string>
+  readonly claims: ReadonlyArray<CorrectionClaim>
+  readonly originating: ReadonlyMap<string, ReadonlyArray<string>>
+  readonly candidateSourceId: string
+}
+
+export interface OctoberPartsProof {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributorParts: ReadonlyArray<OriginalContributorBinding>
+  readonly independentClaimIds: ReadonlyArray<string>
+}
+
+export type OctoberOriginal<E, R> = (request: OctoberOriginalRequest) => OrdinaryProof!E!R
+export type OctoberFollowup<E, R> = (request: OctoberFollowupRequest) => OriginalContributorFollowup!E!R
+export type OctoberUnit<E, R> = (request: OctoberUnitRequest) => OctoberUnitProof!E!R
+export type OctoberParts<E, R> = (request: OctoberPartsRequest) => OctoberPartsProof!E!R
+
+export interface OctoberBinding<E, R> {
+  readonly original: OctoberOriginal<E, R>
+  readonly followup: OctoberFollowup<E, R>
+  readonly unit: OctoberUnit<E, R>
+  readonly parts: OctoberParts<E, R>
+  readonly syncMerges: SyncMerges<E, R>
+}
+
+export interface RetainedBinder<E, R> {
+  readonly ordinary: RetainedOrdinary<E, R>
+  readonly grouped: GroupedBinding<E, R>
+  readonly october: OctoberBinding<E, R>
+}
+
+function held(candidate: CorrectionCandidate, reason: string): GroupedProof {
+  return { kind: "held", candidate, reason }
+}
+
+function complete(evidence: CollectedEvidence, candidate: CorrectionCandidate, proved: OrdinaryProof): GroupedProof {
+  const originalContributor = proved.originalContributor
+  const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources: [...proved.sources], ...(originalContributor === undefined ? {} : { originalContributor }) }
+  return { kind: "complete", candidate: { ...candidate, sourceIds: proved.sources.map((source) => source.sourceId).sort(), proof } }
+}
+
+function messageOf(error: unknown) {
+  if (typeof error !== "object" || error === null) return retainedEvidenceUnavailable
+  if ("message" in error && typeof error.message === "string" && error.message !== "") return error.message
+  return "reason" in error && typeof error.reason === "string" && error.reason !== "" ? error.reason : retainedEvidenceUnavailable
 }
 
 function unlinked(source: CorrectionSource) {
-  return source.commits.some((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === source.sourceId &&
-    !(commit.author !== null && commit.author.kind === "User" && isCreditEligibleCommitAuthor(commit.author)))
+  return source.commits.some((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === source.sourceId && !isCreditEligibleCommitAuthor(commit.author))
 }
 
-export effect function proveCandidates(evidence: CollectedEvidence) {
+effect function bound<E, R>(evidence: CollectedEvidence, candidate: CorrectionCandidate, plain: CorrectionSource, retained: RetainedRequest["retained"], ordinary: RetainedOrdinary<E, R>, october: OctoberAuthors | undefined) {
+  const proving = effect {
+    return complete(evidence, candidate, try boundOrdinary(plain, retained, evidence.owners, ordinary, october))
+  }
+  const result = proving catch effect (error) => {
+    if (try interrupted()) throw error
+    return held(candidate, messageOf(error))
+  }
+  return result
+}
+
+effect function octoberProof<E, R>(evidence: CollectedEvidence, candidate: CorrectionCandidate, read: SourceRead, mirrored: ReadonlySet<string>, ordinary: RetainedOrdinary<E, R> | undefined) {
+  if (mirrored.has(candidate.sourceId)) return held(candidate, mirroredOctoberDonor)
+  const plain = try ordinarySource(read, evidence.owners)
+  if (plain === undefined) return held(candidate, outcomeMissing)
+  const found = try octoberOrdinary(plain, read)
+  if (found.kind === "plain") return complete(evidence, candidate, { sources: [plain] })
+  if (found.kind === "held") return held(candidate, found.reason)
+  if (ordinary === undefined) return held(candidate, octoberProofUnavailable)
+  return try bound(evidence, candidate, plain, found.retained, ordinary, found.october)
+}
+
+effect function ordinaryProof<E, R>(evidence: CollectedEvidence, candidate: CorrectionCandidate, read: SourceRead, ordinary: RetainedOrdinary<E, R> | undefined) {
+  const plain = try ordinarySource(read, evidence.owners)
+  if (plain === undefined) return held(candidate, outcomeMissing)
+  if (!unlinked(plain)) return complete(evidence, candidate, { sources: [plain] })
+  const retained = evidence.retainedOriginals.get(candidate.sourceId)
+  if (retained?.kind === "none") return complete(evidence, candidate, { sources: [plain] })
+  if (retained === undefined || ordinary === undefined) return held(candidate, retainedEvidenceUnavailable)
+  return try bound(evidence, candidate, plain, retained, ordinary, undefined)
+}
+
+effect function proved<E, R>(evidence: CollectedEvidence, binder: RetainedBinder<E, R> | undefined, grouped: ReadonlyMap<string, GroupedProof> | undefined) {
   const limitations = new Map(evidence.limitations)
   const selected = new Set(evidence.selected.map((pool) => pool.candidate.id))
   const october = evidence.options.octoberOriginalCredit === true
+  const mirrored = october && evidence.ownershipComplete ? try mirroredOctoberSources(evidence.outcomes, evidence.owners, binder?.october.syncMerges) : new Set<string>()
   const candidates: CorrectionCandidate[] = []
   for (const { candidate } of evidence.pools) {
     const read = evidence.reads.get(candidate.sourceId)
@@ -57,16 +152,20 @@ export effect function proveCandidates(evidence: CollectedEvidence) {
       candidates.push(candidate)
       continue
     }
-    const reason = candidate.kind === "work-unit" ? groupedProofUnavailable : october && candidate.occurredAt.startsWith("2026-10-") ? octoberProofUnavailable : undefined
-    const source = reason === undefined ? try ordinarySource(read, evidence.owners) : undefined
-    const held = reason ?? (source === undefined ? outcomeMissing : unlinked(source) ? retainedEvidenceUnavailable : undefined)
-    if (held !== undefined || source === undefined) {
-      limitations.set(candidate.id, held ?? outcomeMissing)
-      candidates.push(candidate)
-      continue
-    }
-    const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources: [source] }
-    candidates.push({ ...candidate, sourceIds: [source.sourceId], proof })
+    const result = candidate.kind === "work-unit"
+      ? grouped?.get(candidate.id) ?? held(candidate, groupedDecisionUnavailable)
+      : october && isOctober(candidate.occurredAt) ? try octoberProof(evidence, candidate, read, mirrored, binder?.ordinary) : try ordinaryProof(evidence, candidate, read, binder?.ordinary)
+    if (result.kind === "held") limitations.set(candidate.id, result.reason)
+    candidates.push(result.candidate)
   }
   return { candidates, limitations } satisfies ProvedCandidates
+}
+
+export effect function proveCandidates(evidence: CollectedEvidence) {
+  return try proved<never, never>(evidence, undefined, undefined)
+}
+
+export effect function proveRetained<E, R>(evidence: CollectedEvidence, binder: RetainedBinder<E, R>) {
+  const grouped = try proveGrouped(evidence, binder)
+  return try proved(evidence, binder, grouped)
 }

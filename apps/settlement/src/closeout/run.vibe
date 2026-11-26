@@ -1,0 +1,253 @@
+// spec/settlement/asiNovemberCloseout.md, "Only an apply run under the reviewed packet and preview digests writes the closeout base, once"; spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
+import { nowSeconds } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, type Statement, maxParameters, rows, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import { type LeaderboardSnapshot } from "@repo/points/client"
+import { closeoutLedger, currentPointsBatch, protectedScope } from "@repo/points/live"
+import type { PointWeight } from "@repo/ports/points"
+import type { WorkRow } from "../../gen/settlement__payoutExclusions.ts"
+import { type Event, type Monthly, apply } from "../../gen/settlement__monthly.effect.vibe"
+import { closeoutGross } from "../../gen/settlement__asiNovemberCloseout.effect.vibe"
+import { fromAmount } from "../kernels/amounts.ts"
+import { formatPeriod, periodStartSeconds } from "../kernels/calendar.ts"
+import { type CurrentRevision, type MonthKey, MonthlyFacts, actorClear, amountOf, awardSource, proposalWrites, readRows, stateOf, unproposed } from "../monthly/store.vibe"
+import { cutoffIso } from "./packet.vibe"
+import { digestPattern, refusal } from "./heldSources.vibe"
+
+export type Outcome = "preview" | "already-imported" | "applied"
+
+export interface Review {
+  readonly reviewedPacketSha256: string
+  readonly snapshotSha256: string
+  readonly pointsBatch: string
+  readonly manifestSha256: string
+  readonly revision: number
+  readonly enforcementGeneration: number
+  readonly capBase: string
+  readonly earlyCloseAt: string
+  readonly rows: ReadonlyArray<readonly [string, string, string]>
+}
+
+export interface Plan {
+  readonly review: Review
+  readonly previewSha256: string
+  readonly preflight: ReadonlyArray<Statement>
+  readonly readback: ReadonlyArray<Statement>
+  readonly writes: ReadonlyArray<Statement>
+}
+
+export interface Proposal {
+  readonly key: MonthKey
+  readonly next: Monthly
+  readonly current: CurrentRevision
+  readonly logins: ReadonlyMap<number, string>
+  readonly repositories: ReadonlyArray<string>
+  readonly snapshotSha256: string
+}
+
+export interface Binding {
+  readonly reviewedPacketSha256: string
+  readonly pointsBatch: string
+  readonly enforcementGeneration: number
+}
+
+schema Ok { readonly ok: number | null }
+schema GitHubUser { readonly id: number; readonly login: string }
+schema Steward { readonly type: string; readonly actorId: string; readonly login: string; readonly nodeId: string }
+schema OwnerPolicy {
+  readonly steward: { readonly github: Steward }
+  readonly authority: { readonly repositoryId: string | number; readonly repositoryNodeId: string }
+  readonly repositories: ReadonlyArray<{ readonly githubUrl: string }>
+}
+schema RepositoryFacts { readonly id: number; readonly node_id: string; readonly full_name: string; readonly private: boolean; readonly owner: { readonly id: number; readonly node_id: string; readonly login: string; readonly type: string } }
+schema PermissionAnswer { readonly permission: string; readonly user: { readonly id: number } }
+
+const maxTerms = 5
+const maxQueryBytes = 95_000
+const coverageRefused = "ASI's November closeout requires complete verified coverage through the approved cutoff."
+const ownerUnavailable = "Current owner permission unavailable"
+const encoder = new TextEncoder()
+
+export function coverageComplete(snapshot: LeaderboardSnapshot, asOf: string) {
+  const source = snapshot.source
+  return snapshot.window.to >= cutoffIso && source.cutoffAt === snapshot.window.to && source.verificationWindow.from === snapshot.window.from &&
+    source.verificationWindow.to === snapshot.window.to && source.evidenceVerification.status === "complete" && snapshot.generatedAt >= cutoffIso && snapshot.generatedAt <= asOf
+}
+
+export effect function closeoutPoints(key: MonthKey, snapshotSha256: string, repositories: ReadonlyArray<string>) {
+  const batch = try currentPointsBatch()
+  if (batch === undefined || !digestPattern.test(batch.digest)) throw refusal("No canonical Points batch for the ASI closeout.")
+  const ledger = try closeoutLedger({ projectId: key.projectId, period: formatPeriod(key.period), before: cutoffIso, snapshotSha256, repositories })
+  if (ledger === undefined || ledger.pointsBatch !== batch.digest) throw refusal("Points do not cover the published ASI cutoff snapshot.")
+  return ledger
+}
+
+effect function workRowOf(weight: PointWeight) {
+  const actor = Number(weight.githubId)
+  if (!/^[1-9][0-9]{0,19}$/u.test(weight.githubId) || !Number.isSafeInteger(actor) || !Number.isSafeInteger(weight.points) || weight.points < 0) throw refusal(coverageRefused)
+  return { actor, acceptedWork: amountOf(try orDie(Effect.try(() => BigInt(weight.points)))), participation: 0, recognition: 0 } satisfies WorkRow
+}
+
+export effect function proposeCloseout(key: MonthKey, snapshotSha256: string, weights: ReadonlyArray<PointWeight>, repositories: ReadonlyArray<string>) {
+  const facts = try (try MonthlyFacts).of(key.projectId)
+  const current = facts.current
+  if (current === undefined) throw refusal("ASI registry authority is unavailable.")
+  const opened = try stateOf(key, unproposed(try readRows(key)), facts, try nowSeconds())
+  const workRows: WorkRow[] = []
+  const logins = new Map<number, string>()
+  for (const weight of weights) {
+    const row = try workRowOf(weight)
+    workRows.push(row)
+    logins.set(row.actor, weight.login)
+  }
+  const revision = opened.currentRevision
+  const event: Event = { type: "proposeCloseout", snapshot: { project: key.projectId, period: key.period, digest: snapshotSha256, coverage: "CompleteCoverage", rows: workRows }, exclusions: revision.exclusions, revision }
+  const next = apply(opened, event) catch effect () => {
+    throw refusal(coverageRefused)
+  }
+  if (fromAmount(next.cap) !== (try orDie(Effect.try(() => BigInt(closeoutGross))))) throw refusal("The proposal does not use the approved cap.")
+  return { key, next, current, logins, repositories, snapshotSha256 } satisfies Proposal
+}
+
+function exists(statement: Statement) {
+  return sql`EXISTS (${statement})`
+}
+
+function requireSql(condition: Statement) {
+  return sql`INSERT INTO monthly_reward_bases (project_id) SELECT NULL WHERE NOT COALESCE((${condition}), 0)`
+}
+
+export effect function closeoutPlan(proposal: Proposal, binding: Binding) {
+  const { key, next, current } = proposal
+  const period = formatPeriod(key.period)
+  const scope = sql`project_id = ${key.projectId} AND period = ${period}`
+  const shares = [...next.proposedShares].sort((left, right) => left.actor - right.actor)
+  const reviewRows: Array<readonly [string, string, string]> = []
+  const exactRows: Statement[] = []
+  for (const share of shares) {
+    const login = proposal.logins.get(share.actor) ?? ""
+    const gross = fromAmount(share.amount).toString()
+    reviewRows.push([String(share.actor), login, gross])
+    exactRows.push(exists(sql`SELECT 1 FROM monthly_reward_base_rows WHERE ${scope} AND github_user_id = ${String(share.actor)} AND github_login = ${login} AND gross_base = ${gross} AND source_digest = ${try awardSource(key.projectId, key.period, share.actor)}`))
+  }
+  const review = {
+    reviewedPacketSha256: binding.reviewedPacketSha256,
+    snapshotSha256: proposal.snapshotSha256,
+    pointsBatch: binding.pointsBatch,
+    manifestSha256: current.manifestSha256,
+    revision: current.number,
+    enforcementGeneration: binding.enforcementGeneration,
+    capBase: fromAmount(next.cap).toString(),
+    earlyCloseAt: cutoffIso,
+    rows: reviewRows,
+  } satisfies Review
+  const hasBase = exists(sql`SELECT 1 FROM monthly_reward_bases WHERE ${scope}`)
+  const exactHeader = exists(sql`SELECT 1 FROM monthly_reward_bases WHERE ${scope} AND manifest = ${current.manifest} AND manifest_sha256 = ${current.manifestSha256} AND source_snapshot_sha256 = ${proposal.snapshotSha256} AND cap_base = ${review.capBase} AND recipient_count = ${shares.length} AND early_close_at = ${cutoffIso}`)
+  const exactCount = sql`(SELECT count(*) FROM monthly_reward_base_rows WHERE ${scope}) = ${shares.length}`
+  const from = new Date(periodStartSeconds(key.period) * 1000).toISOString()
+  const fresh = [
+    exists(sql`SELECT 1 FROM projects WHERE id = ${key.projectId} AND revision = ${current.number} AND manifest = ${current.manifest} AND manifest_sha256 = ${current.manifestSha256} AND status = 'active'`),
+    sql`(SELECT digest FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1) = ${binding.pointsBatch}`,
+    sql`(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ${binding.enforcementGeneration}`,
+    sql`NOT ${protectedScope(sql`${key.projectId}`, sql`${period}`)}`,
+    ...proposal.repositories.map((repository) => exists(sql`SELECT 1 FROM points_batches b, json_each(b.coverage) c WHERE b.digest = ${binding.pointsBatch} AND lower(json_extract(c.value, '$.repository')) = lower(${repository}) AND json_extract(c.value, '$.from') <= ${from} AND json_extract(c.value, '$.to') >= ${cutoffIso} AND json_extract(c.value, '$.digest') = ${proposal.snapshotSha256}`)),
+  ]
+  const preflight = [
+    ...fresh.map((condition) => sql`${hasBase} OR ${condition}`),
+    sql`NOT ${hasBase} OR ${exactHeader}`,
+    sql`NOT ${hasBase} OR ${exactCount}`,
+    sql`${hasBase} OR NOT ${exists(sql`SELECT 1 FROM monthly_reward_base_rows WHERE ${scope}`)}`,
+    ...exactRows.map((condition) => sql`NOT ${hasBase} OR ${condition}`),
+    ...shares.map((share) => sql`${hasBase} OR ${actorClear(share.actor)}`),
+  ]
+  const readback = [exactHeader, exactCount, ...exactRows]
+  const writes = [...preflight.map(requireSql), ...(try proposalWrites(key, next, current, proposal.snapshotSha256, proposal.logins, undefined)), ...readback.map(requireSql)]
+  return { review, previewSha256: try sha256Hex(JSON.stringify(review)), preflight, readback, writes } satisfies Plan
+}
+
+function bytesOf(statement: Statement) {
+  return statement.params.reduce((total: number, param) => total + (typeof param === "string" ? encoder.encode(param).length : 8), encoder.encode(statement.text).length + 12)
+}
+
+function unionOf(terms: ReadonlyArray<Statement>) {
+  const joined = terms.reduce((all, term, index) => index === 0 ? term : sql`${all} UNION ALL ${term}`, sql``)
+  return sql`SELECT MIN(ok) AS ok FROM (${joined})`
+}
+
+export function guardQueries(conditions: ReadonlyArray<Statement>): ReadonlyArray<Statement> {
+  const queries: Statement[] = []
+  let terms: Statement[] = []
+  let size = 0
+  let params = 0
+  for (const condition of conditions) {
+    const term = sql`SELECT COALESCE((${condition}), 0) AS ok`
+    const bytes = bytesOf(term)
+    if (terms.length > 0 && (terms.length === maxTerms || size + bytes > maxQueryBytes || params + term.params.length > maxParameters)) {
+      queries.push(unionOf(terms))
+      terms = []
+      size = 0
+      params = 0
+    }
+    terms.push(term)
+    size += bytes
+    params += term.params.length
+  }
+  if (terms.length > 0) queries.push(unionOf(terms))
+  return queries
+}
+
+export effect function holdsAll(conditions: ReadonlyArray<Statement>) {
+  for (const query of guardQueries(conditions)) {
+    const found = try rows(Ok, query)
+    if (found.length !== 1 || found[0]?.ok !== 1) return false
+  }
+  return true
+}
+
+export effect function executeCloseout<E, R>(plan: Plan, write: boolean, beforeWrite: () => void!E!R) {
+  if (!(try holdsAll(plan.preflight))) throw refusal("The current closeout does not pass its import guards.")
+  if (try holdsAll(plan.readback)) return "already-imported" satisfies Outcome
+  if (!write) return "preview" satisfies Outcome
+  try beforeWrite()
+  const database = try D1
+  const written = Effect.as(database.batch(plan.writes), true) catch () => false
+  if (try holdsAll(plan.readback)) return "applied" satisfies Outcome
+  throw refusal(written ? "The import readback differs from the approved preview." : "The import was not confirmed.")
+}
+
+effect function require(condition: boolean, message: string) {
+  if (!condition) throw refusal(message)
+}
+
+export effect function verifyCurrentOwner(manifestText: string, reviewerGithubId: string) {
+  try require(/^[1-9][0-9]{0,19}$/u.test(reviewerGithubId), "Invalid owner identity")
+  const user = (try GitHub).json(`/user/${reviewerGithubId}`, GitHubUser) catch effect () => {
+    throw refusal("Current owner identity unavailable")
+  }
+  try require(String(user.id) === reviewerGithubId, "Current owner identity differs")
+  const parsed = Effect.try(() => JSON.parse(manifestText) as unknown) catch () => undefined
+  const policy = Schema.decodeUnknownEffect(OwnerPolicy)(parsed) catch effect () => {
+    throw refusal(ownerUnavailable)
+  }
+  const steward = policy.steward.github
+  try require(steward.type !== "User" || steward.actorId === reviewerGithubId, ownerUnavailable)
+  const path = (URL.parse(policy.repositories[0]?.githubUrl ?? "")?.pathname ?? "").replace(/^\/|\/$/gu, "")
+  const [owner = "", name = ""] = path.split("/")
+  const checked = effect {
+    const app = try GitHubApp
+    const installation = try app.installationFor(owner, name)
+    provide app.asInstallation(installation, { repositories: [name], permissions: { metadata: "read" } }) {
+      const installed = try GitHub
+      const facts = try installed.json(`/repos/${owner}/${name}`, RepositoryFacts)
+      const access = try installed.json(`/repos/${owner}/${name}/collaborators/${encodeURIComponent(user.login)}/permission`, PermissionAnswer)
+      return String(facts.id) === String(policy.authority.repositoryId) && facts.node_id === policy.authority.repositoryNodeId && String(facts.owner.id) === steward.actorId &&
+        facts.owner.node_id === steward.nodeId && facts.owner.type === steward.type && facts.owner.login.toLowerCase() === steward.login.toLowerCase() &&
+        facts.full_name.toLowerCase() === path.toLowerCase() && !facts.private && String(access.user.id) === reviewerGithubId &&
+        (access.permission === "admin" || access.permission === "write") && (steward.actorId === reviewerGithubId || access.permission === "admin")
+    }
+  }
+  const verified = checked catch () => false
+  try require(verified, ownerUnavailable)
+}

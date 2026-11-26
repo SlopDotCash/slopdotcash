@@ -1,0 +1,268 @@
+// spec/slopbot/closure.md, "Story: Decide a current review under the registered repository's policy"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/categories.md, "Debits are whole Points fixed by the table version in force when the debit is recorded"
+import { assert, layer } from "@effect/vitest"
+import { isoNow } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { journeyBuild } from "./support/journey.vibe"
+
+type Fake = ReturnType<typeof githubFake>
+
+interface Target {
+  readonly id: number
+  readonly owner: string
+  readonly name: string
+  readonly projectId: string
+  readonly consent: boolean
+}
+
+const installationId = 9700
+const consented: Target = { id: 8301, owner: "ada", name: "evidence", projectId: "evidence-project", consent: true }
+const unconsented: Target = { id: 8302, owner: "ada", name: "unconsented", projectId: "unconsented-project", consent: false }
+const released: Target = { id: 8303, owner: "ada", name: "released", projectId: "released-project", consent: true }
+const guide = [
+  "# Contributing",
+  "",
+  "## Evidence",
+  "",
+  "- Change types: docs, non-ui, ui, performance or hardware",
+  "- Test results: the command you ran and its output",
+  "- Proof of change: what the change does, before and after",
+  "- Runtime logs: logs for a non-ui change",
+  "- UI video: a video link for a ui change",
+  "- `UI screenshots:` screenshot links for a ui change",
+  "- Benchmarks: numbers for a performance change",
+  "- On-device testing: device results for a hardware change",
+  "",
+].join("\n")
+const policy = { "README.md": "Keep changes small.\n", "CONTRIBUTING.md": guide }
+const unshotGuide = guide.replace("- `UI screenshots:` screenshot links for a ui change\n", "")
+const targetGuides = { release: guide, bare: null, train: guide }
+const release = JSON.stringify({ sequence: 1, branch: "main", workflow: "production-release", reviewedPullRequest: 77, sourceSha: "release-1" })
+const footer = "Made via @slopdotcash"
+const testResults = "- Test results: pnpm test passed all forty retry cases"
+const proofOfChange = "- Proof of change: a failed fetch is now retried and logged with its attempt number"
+const runtimeLogs = "- Runtime logs: https://logs.slop.test/runs/42"
+
+function bodyOf(token: string, fields: ReadonlyArray<string>) {
+  return [`Retries failed fetches. ${token}`, "", "## Evidence", "", ...fields, "", footer].join("\n")
+}
+
+const withoutProof = (token: string) => bodyOf(token, ["- Change types: non-ui", testResults, runtimeLogs])
+const complete = (token: string) => bodyOf(token, ["- Change types: non-ui", testResults, proofOfChange, runtimeLogs])
+const uiWithoutScreenshots = (token: string) => bodyOf(token, ["- Change types: ui.", testResults, proofOfChange, "- UI video: https://videos.slop.test/clips/7"])
+
+const pulls = {
+  gap: { target: consented, body: withoutProof("GAP-TOKEN") },
+  shot: { target: consented, body: uiWithoutScreenshots("SHOT-TOKEN") },
+  full: { target: consented, body: complete("FULL-TOKEN") },
+  edit: { target: consented, body: withoutProof("EDIT-TOKEN") },
+  nocon: { target: unconsented, body: withoutProof("NOCON-TOKEN") },
+  rel: { target: released, body: uiWithoutScreenshots("REL-TOKEN") },
+  bare: { target: released, body: withoutProof("BARE-TOKEN") },
+  moved: { target: released, body: uiWithoutScreenshots("MOVED-TOKEN") },
+}
+type Author = keyof typeof pulls
+const targetBranches: Partial<Record<Author, keyof typeof targetGuides>> = { rel: "release", bare: "bare", moved: "train" }
+const authors = Object.keys(pulls) as ReadonlyArray<Author>
+const pathOf = (target: Target) => `${target.owner}/${target.name}`
+const projects = [consented, unconsented, released].map((target) => ({ projectId: target.projectId, path: pathOf(target), repositoryId: String(target.id), rowStatus: "Active", retirement: "NotRetired", restriction: "Clear", closureConsent: target.consent }))
+const noFinding = JSON.stringify({ category: "none", confidence: 0.95, rule_refs: [], evidence: [], summary: "The change is supported by its evidence.", limitations: [], objective_defect: null })
+
+async function seed() {
+  const fake = githubFake()
+  const world = fake.world
+  world.addUser({ id: 100, login: "ada" })
+  authors.forEach((login, index) => world.addUser({ id: 701 + index, login }))
+  for (const target of [consented, unconsented]) world.addRepo({ id: target.id, owner: target.owner, name: target.name, files: policy })
+  world.addRepo({ id: released.id, owner: released.owner, name: released.name, files: { ...policy, "CONTRIBUTING.md": unshotGuide } })
+  const releaseRoot = world.addCommit(pathOf(released), { message: "Default tip before the target branches" })
+  for (const [branch, text] of Object.entries(targetGuides)) world.addCommit(pathOf(released), { branch, parents: [releaseRoot], files: { "CONTRIBUTING.md": text, ".github/slopbot.json": "{" } })
+  const items = Object.fromEntries(authors.map((login) => {
+    const { target, body } = pulls[login]
+    const baseRef = targetBranches[login]
+    const base = world.addCommit(pathOf(target), { branch: baseRef, message: `Target tip for ${login}` })
+    const head = world.addCommit(pathOf(target), { branch: `evidence-${login}`, parents: [base], files: { [`src/${login}.ts`]: `export const ${login} = 1\n` } })
+    return [login, world.addPull({ repo: pathOf(target), author: login, title: `Retry ${login}`, body, headRef: `evidence-${login}`, headSha: head, baseRef })]
+  })) as Record<Author, number>
+  world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
+  const providers = providerFake()
+  const net = internet({ github: fake.handler, providers: providers.handler })
+  return { fake, providers, items, net, token: fake.tokens.installation(installationId) }
+}
+
+type Seeded = Awaited<ReturnType<typeof seed>>
+
+service World {
+  readonly fake: Fake
+  readonly providers: Seeded["providers"]
+  readonly items: Seeded["items"]
+  readonly net: Seeded["net"]
+}
+
+const Evidence = Layer.unwrap(effect {
+  const seeded = try promise(() => seed())
+  return Layer.mergeAll(
+    areaLayer({
+      ...journeyBuild,
+      entry: "close",
+      d1: { SLOPBOT_DB: "slop-private" },
+      vars: {
+        GITHUB_API: seeded.fake.authority,
+        GITHUB_TOKEN: seeded.token,
+        ORBIO_API_KEY: "orbio-test-credential",
+        SURPLUS_API_KEY: "surplus-test-credential",
+        SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
+        SLOPBOT_CLOSURE_ENABLED: "false",
+        SLOPBOT_EVIDENCE_CLOSURE_ENABLED: "true",
+        SLOPBOT_RELEASE: release,
+        ADMIN_GITHUB_IDS: "18633264",
+        PROJECT_MODERATOR_GITHUB_IDS: "18633264",
+        TEST_PROJECTS: JSON.stringify(projects),
+        TEST_ACTIVATION_RECORDS: JSON.stringify({ decisions: [], qualifications: [] }),
+      },
+      internet: seeded.net,
+    }),
+    Layer.succeed(World, seeded),
+    webCrypto,
+  )
+})
+
+const idOf = (login: Author) => 701 + authors.indexOf(login)
+
+function about(token: string) {
+  return (call: ProviderCall) => call.messages.some((message) => message.content.includes(token))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function installed(area: AreaShape) {
+  try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1) ON CONFLICT (installation_id) DO NOTHING", installationId, try isoNow())
+  try area.sql("CREATE TABLE IF NOT EXISTS close_jobs (kind TEXT NOT NULL, body TEXT NOT NULL)")
+}
+
+effect function itemOf(login: Author) {
+  const { fake, items } = try World
+  return try Effect.try(() => fake.world.item(pathOf(pulls[login].target), items[login]))
+}
+
+effect function eligible(area: AreaShape, login: Author) {
+  const githubId = String(idOf(login))
+  const node = (try itemOf(login)).nodeId
+  const at = try isoNow()
+  const run = `run-${login}`
+  const target = pulls[login].target
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 0, 5)", `actor-${login}`, githubId, login, at)
+  try area.sql("INSERT INTO trace_runs (id, client_run_id, github_user_id, github_login, project_id, repository, project_policy_revision, provider, model, client, client_version, state, created_at, create_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, '3', 'p', 'm', 'c', '1', 'awaiting_trace', ?, ?)", run, `pr_opened_${node}`, githubId, login, target.projectId, pathOf(target), at, run)
+  try area.sql("INSERT INTO run_progress_events (id, run_id, github_user_id, kind, occurred_at, source, github_object_id, created_at, idempotency_key) VALUES (?, ?, ?, 'pull_request_opened', ?, 'agent', ?, ?, ?)", `event-${run}`, run, githubId, at, node, at, `event-${run}`)
+}
+
+effect function closeOf(area: AreaShape, login: Author) {
+  const { items } = try World
+  const target = pulls[login].target
+  const job = { kind: "review", deliveryId: `evidence-delivery-${target.id}-${items[login]}`, installationId, repositoryId: target.id, owner: target.owner, repo: target.name, itemKind: "pull_request", number: items[login] }
+  return (try area.post("/test/close", job)).body
+}
+
+effect function outcomeOf(area: AreaShape, login: Author) {
+  const { fake, items, providers } = try World
+  const item = try itemOf(login)
+  const closePath = `/repositories/${pulls[login].target.id}/pulls/${items[login]}`
+  const reviews = try area.sql("SELECT json_extract(verdict, '$.category') AS category, json_extract(verdict, '$.confidence') AS confidence, json_extract(verdict, '$.rule_refs') AS rules, json_extract(verdict, '$.summary') AS summary FROM slopbot_reviews WHERE item_node_id = ? ORDER BY rowid", item.nodeId)
+  return {
+    state: item.state,
+    labels: item.labels.map((label) => label.name),
+    closeRequests: fake.requests.filter((request) => request.method === "PATCH" && new URL(request.url).pathname.endsWith(closePath)).length,
+    modelCalls: providers.calls.filter(about(`${login.toUpperCase()}-TOKEN`)).length,
+    penalties: try area.sql("SELECT category, table_version, debit_thirds FROM slopbot_penalties WHERE item_node_id = ?", item.nodeId),
+    reviews,
+  }
+}
+
+function evidenceReview(fields: string) {
+  return { category: "missing_evidence", confidence: 1, rules: JSON.stringify([{ source: "CONTRIBUTING.md", quote: "## Evidence" }]), summary: `The Evidence section is missing or incomplete. Supply these required fields with checkable results: ${fields}.` }
+}
+
+layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Close a Slop submission that lacks required evidence: on the evidence switch alone a signed pull request missing proof of change is closed with a version-2 debit of 10 Points and no model call, a ui change without the guide\'s UI screenshots names them, complete evidence goes to the model, a body edited before the close refuses it, without saved closure consent nothing closes, and a pull request into another branch is held to that branch\'s guide and the default branch\'s repository file: its screenshots requirement closes despite an invalid file on the target branch, a target branch with no guide does not, and a target tip that moves before the close refuses it (spec/slopbot/review.md, "Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB"; spec/slopbot/closure.md, "A repository file is valid only with version 1, a known audience, known keys and category modes, and a daily close cap from 0 to 200"; spec/slopbot/closure.md, "Closing also needs current production activation, a qualified category and every independent gate"; spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model\'s missing-evidence finding is a label"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"; spec/slopbot/closeAttempt.md, "Only GitHub\'s own close event confirms and only a definitive refusal releases"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/categories.md, "Debits are whole Points fixed by the table version in force when the debit is recorded")', () => effect {
+    const area = try Area
+    const { fake, items, net, providers } = try World
+    try installed(area)
+    for (const login of authors) try eligible(area, login)
+    providers.reply(about("FULL-TOKEN"), { text: noFinding })
+    providers.reply(about("BARE-TOKEN"), { text: noFinding })
+    const edited = try itemOf("edit")
+    try Effect.try(() => fake.alterNext(`POST /repositories/${consented.id}/issues/${items.edit}/labels`, (response) => {
+      edited.body = complete("EDIT-TOKEN")
+      return response
+    }))
+    try Effect.try(() => fake.alterNext(`POST /repositories/${released.id}/issues/${items.moved}/labels`, async (response) => {
+      fake.world.addCommit(pathOf(released), { branch: "train", message: "Target tip moved", files: { "CONTRIBUTING.md": unshotGuide } })
+      return response
+    }))
+    const results = {
+      gap: try closeOf(area, "gap"),
+      shot: try closeOf(area, "shot"),
+      full: try closeOf(area, "full"),
+      edit: try closeOf(area, "edit"),
+      nocon: try closeOf(area, "nocon"),
+      rel: try closeOf(area, "rel"),
+      bare: try closeOf(area, "bare"),
+      moved: try closeOf(area, "moved"),
+    }
+    const kinds = Object.fromEntries(Object.entries(results).map(([login, result]) => [login, (result as { readonly kind: string }).kind]))
+    const outcomes = {
+      gap: try outcomeOf(area, "gap"),
+      shot: try outcomeOf(area, "shot"),
+      full: try outcomeOf(area, "full"),
+      edit: try outcomeOf(area, "edit"),
+      nocon: try outcomeOf(area, "nocon"),
+      rel: try outcomeOf(area, "rel"),
+      bare: try outcomeOf(area, "bare"),
+      moved: try outcomeOf(area, "moved"),
+    }
+    try same({
+      kinds,
+      gap: outcomes.gap,
+      shotReview: outcomes.shot.reviews,
+      shotCalls: outcomes.shot.modelCalls,
+      full: { state: outcomes.full.state, closeRequests: outcomes.full.closeRequests, modelCalls: outcomes.full.modelCalls, category: outcomes.full.reviews.map((review) => (review as { readonly category: string }).category) },
+      edit: { state: outcomes.edit.state, closeRequests: outcomes.edit.closeRequests, modelCalls: outcomes.edit.modelCalls, penalties: outcomes.edit.penalties },
+      nocon: { state: outcomes.nocon.state, closeRequests: outcomes.nocon.closeRequests, modelCalls: outcomes.nocon.modelCalls, penalties: outcomes.nocon.penalties, labels: outcomes.nocon.labels },
+      rel: outcomes.rel,
+      bare: { state: outcomes.bare.state, closeRequests: outcomes.bare.closeRequests, modelCalls: outcomes.bare.modelCalls, penalties: outcomes.bare.penalties, category: outcomes.bare.reviews.map((review) => (review as { readonly category: string }).category) },
+      moved: { state: outcomes.moved.state, closeRequests: outcomes.moved.closeRequests, modelCalls: outcomes.moved.modelCalls, penalties: outcomes.moved.penalties },
+      unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
+    }, {
+      kinds: { gap: "close", shot: "close", full: "settled", edit: "close", nocon: "settled", rel: "close", bare: "settled", moved: "close" },
+      gap: {
+        state: "closed",
+        labels: ["slopbot: missing evidence"],
+        closeRequests: 1,
+        modelCalls: 0,
+        penalties: [{ category: "missing_evidence", table_version: "slopbot-penalties-v2", debit_thirds: 1 }],
+        reviews: [evidenceReview("Proof of change")],
+      },
+      shotReview: [evidenceReview("UI screenshots")],
+      shotCalls: 0,
+      full: { state: "open", closeRequests: 0, modelCalls: 1, category: ["none"] },
+      edit: { state: "open", closeRequests: 0, modelCalls: 0, penalties: [] },
+      nocon: { state: "open", closeRequests: 0, modelCalls: 0, penalties: [], labels: ["slopbot: missing evidence"] },
+      rel: {
+        state: "closed",
+        labels: ["slopbot: missing evidence"],
+        closeRequests: 1,
+        modelCalls: 0,
+        penalties: [{ category: "missing_evidence", table_version: "slopbot-penalties-v2", debit_thirds: 1 }],
+        reviews: [evidenceReview("UI screenshots")],
+      },
+      bare: { state: "open", closeRequests: 0, modelCalls: 1, penalties: [], category: ["none"] },
+      moved: { state: "open", closeRequests: 0, modelCalls: 0, penalties: [] },
+      unexpected: [0, 0, 0],
+    })
+  })
+})

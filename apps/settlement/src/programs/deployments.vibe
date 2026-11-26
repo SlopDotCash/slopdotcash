@@ -1,0 +1,119 @@
+// spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
+import { mainnetExecution, reviewedActivation } from "../../gen/settlement__signer.effect.vibe"
+import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { PinnedDeployment, SIGNER_STACKS } from "../signer/evm.vibe"
+import { SolanaPin } from "../signer/solana.vibe"
+
+export error DeploymentsRefused { message: string }
+
+const usage = "usage: deployments testnet|mainnet --registry PATH [--network NETWORK] [--security-bounty] | deployments attesters testnet|mainnet --registry PATH"
+
+type Scope = "ordinary" | "security-bounty"
+
+interface Options {
+  readonly testnet: boolean
+  readonly registry: string
+  readonly network: string | undefined
+  readonly scope: Scope
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+function refused(message: string) {
+  return new DeploymentsRefused({ message })
+}
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+effect function optionsOf(args: ReadonlyArray<string>) {
+  const [environment, ...rest] = args
+  if (environment !== "testnet" && environment !== "mainnet") throw refused(usage)
+  const values = new Map<string, string>()
+  let scope: Scope = "ordinary"
+  for (let index = 0; index < rest.length; index++) {
+    const flag = rest[index] ?? ""
+    const value = rest[index + 1]
+    if (flag === "--security-bounty") scope = "security-bounty"
+    else if ((flag === "--registry" || flag === "--network") && value !== undefined && !values.has(flag)) {
+      values.set(flag, value)
+      index++
+    } else throw refused(usage)
+  }
+  const registry = values.get("--registry")
+  const network = values.get("--network")
+  if (registry === undefined || (network !== undefined && !isNetworkKey(network))) throw refused(usage)
+  return { testnet: environment === "testnet", registry, network, scope } satisfies Options
+}
+
+function policyOf(project: Fields, scope: Scope) {
+  return scope === "security-bounty" ? fieldsOf(fieldsOf(project.securityBounty)?.settlement) : fieldsOf(project.escrow)
+}
+
+effect function record(projectId: string, deployment: Fields, scope: Scope) {
+  const network = typeof deployment.network === "string" && isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined
+  if (network === undefined) throw refused(`Unknown escrow network: ${String(deployment.network)}`)
+  const base = { projectId, ...deployment, chain: network.chain, ...scope === "security-bounty" ? { payoutPolicy: scope } : {} }
+  if (network.family === "solana") return Schema.decodeUnknownEffect(SolanaPin)(base, { onExcessProperty: "error" }) catch effect () => { throw refused(`${projectId} ${String(deployment.network)}: deployment record is incomplete`) }
+  const pinned = { ...base, chainId: String(network.chainId), gasCeiling: String(network.gasCeiling), scanPageBlocks: String(network.scanPageBlocks) }
+  const { scanPageBlocks: _blocks, ...checked } = pinned
+  Schema.decodeUnknownEffect(PinnedDeployment)(checked) catch effect () => { throw refused(`${projectId} ${String(deployment.network)}: deployment record is incomplete`) }
+  return pinned
+}
+
+export effect function paymentDeployments(snapshot: unknown, options: Pick<Options, "testnet" | "network" | "scope">) {
+  const projects = fieldsOf(snapshot)?.projects
+  if (!Array.isArray(projects)) throw refused("The registry snapshot has no projects")
+  const result: unknown[] = []
+  const projectIds = new Set<string>()
+  for (const entry of projects) {
+    const project = fieldsOf(entry)
+    const id = project?.id
+    if (project === undefined || typeof id !== "string") throw refused("The registry snapshot has a project without an id")
+    const deployments = policyOf(project, options.scope)?.deployments
+    for (const value of Array.isArray(deployments) ? deployments : []) {
+      const deployment = fieldsOf(value)
+      if (deployment === undefined) throw refused(`${id}: deployment is not an object`)
+      if (options.network !== undefined && deployment.network !== options.network) continue
+      if (typeof deployment.network !== "string" || !isNetworkKey(deployment.network) || NETWORKS[deployment.network].testnet !== options.testnet) continue
+      if (projectIds.has(id)) throw refused("Select one explicit network per test database; do not combine project liabilities across test clusters")
+      projectIds.add(id)
+      result.push(try record(id, deployment, options.scope))
+    }
+  }
+  return result
+}
+
+export effect function attesterPlan(snapshot: unknown, testnet: boolean) {
+  const stack = SIGNER_STACKS[testnet ? "TestStack" : "ProductionStack"]
+  const plan: unknown[] = []
+  for (const network of Object.keys(NETWORKS)) {
+    if (!isNetworkKey(network) || NETWORKS[network].testnet !== testnet) continue
+    const served = NETWORKS[network]
+    const ordinary = try paymentDeployments(snapshot, { testnet, network, scope: "ordinary" })
+    const security = testnet ? [] : try paymentDeployments(snapshot, { testnet, network, scope: "security-bounty" })
+    const signer = served.family === "evm" ? stack.evmSecret : stack.solanaSecret
+    plan.push({ network, enabled: testnet || mainnetExecution([...reviewedActivation], served.service), ordinary, security, secrets: ["PAYMENT_RPC_URLS", signer].sort() })
+  }
+  return plan
+}
+
+effect function snapshotAt(path: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(path) catch effect () => { throw refused("The registry snapshot is unreadable") }
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refused("The registry snapshot is not JSON") })
+}
+
+export effect function deploymentsCommand(args: ReadonlyArray<string>) {
+  if (args[0] === "attesters") {
+    const [, environment, flag, registry, ...extra] = args
+    if ((environment !== "testnet" && environment !== "mainnet") || flag !== "--registry" || registry === undefined || extra.length > 0) throw refused(usage)
+    try Console.log(JSON.stringify(try attesterPlan(try snapshotAt(registry), environment === "testnet")))
+    return
+  }
+  const options = try optionsOf(args)
+  const deployments = try paymentDeployments(try snapshotAt(options.registry), options)
+  if (deployments.length === 0) throw refused("No reviewed escrow deployments exist for this environment")
+  try Console.log(JSON.stringify(deployments))
+}

@@ -1,0 +1,434 @@
+// spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { isoAt } from "@repo/platform/clock"
+import { Git } from "@repo/platform/git"
+import { githubApi, githubJson } from "@repo/platform/github"
+import { type GitObjectKind, type GitQuery, type GitRead, type LocalObject, type LocalReads, Machine, canCrash, initial, machineOver, maxTreeEntries } from "../../gen/points__localGitObjects.effect.vibe"
+
+export interface LocalGitStats {
+  readonly served: number
+  readonly declined: number
+}
+
+export type LocalAnswer = Uint8Array | undefined
+
+export interface LocalGitObjects {
+  read(url: URL, headers?: Readonly<Record<string, string>>): LocalAnswer!!
+  stats(): LocalGitStats!!
+  close(): void!!
+}
+
+interface GitObject {
+  readonly type: string
+  readonly size: number
+  readonly content: Uint8Array | undefined
+}
+
+type Found = GitObject | undefined
+
+interface CatFile {
+  read(sha: string): Found!!
+}
+
+interface Child {
+  readonly input: Queue.Queue<Uint8Array, Cause.Done>
+  readonly scope: Scope.Closeable
+  readonly pending: Array<Deferred.Deferred<Found>>
+  buffer: Uint8Array
+}
+
+interface Reads {
+  readonly machine: Machine.Shape
+  readonly ledger: Semaphore.Semaphore
+  epoch: number
+}
+
+interface Repository {
+  readonly fullName: string
+  readonly objects: CatFile
+  readonly sizes: CatFile
+  readonly reads: Reads
+}
+
+interface RawEntry {
+  readonly mode: string
+  readonly name: string
+  readonly sha: string
+}
+
+interface Identity {
+  readonly name: string
+  readonly email: string
+  readonly date: string
+}
+
+type Built =
+  | { readonly kind: "served"; readonly value: unknown; readonly entries: number }
+  | { readonly kind: "missing" }
+  | { readonly kind: "wrongType" }
+  | { readonly kind: "uncertain" }
+  | { readonly kind: "tooMany"; readonly entries: number }
+
+type Walked = Built | undefined
+
+const fullSha = /^[a-f0-9]{40}$/u
+const objectHeader = /^([a-f0-9]{40}) (blob|tree|commit|tag) (\d+)$/u
+const objectPath = /^\/repos\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/git\/(commits|trees)\/([a-f0-9]{40})$/u
+const identityLine = /^(.*) <([^<>]*)> (\d{1,12}) [+-]\d{4}$/u
+const blobModes = new Set(["100644", "100755", "120000"])
+const signatureHeaders = new Set(["gpgsig", "gpgsig-sha256", "mergetag"])
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true })
+const encoder = new TextEncoder()
+const missing: Built = { kind: "missing" }
+const wrongType: Built = { kind: "wrongType" }
+const uncertain: Built = { kind: "uncertain" }
+
+function latin1(bytes: Uint8Array) {
+  return Array.from(bytes, (byte) => String.fromCharCode(byte)).join("")
+}
+
+function hex(bytes: Uint8Array) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+function joined(head: Uint8Array, tail: Uint8Array) {
+  const both = new Uint8Array(head.length + tail.length)
+  both.set(head, 0)
+  both.set(tail, head.length)
+  return both
+}
+
+effect function utf8(bytes: Uint8Array) {
+  const text = Effect.try(() => strictUtf8.decode(bytes)) catch () => undefined
+  return text
+}
+
+export effect function localReads() {
+  const held = try Ref.make<LocalReads>(initial)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+effect function catFile(gitDir: string, mode: "--batch" | "--batch-check", outer: Scope.Scope, died: () => void!!) {
+  const git = try Git
+  const spawner = try ChildProcessSpawner.ChildProcessSpawner
+  const lock = try Semaphore.make(1)
+  let current: Child | undefined = undefined
+
+  effect function drained(child: Child) {
+    while (child.pending.length > 0) {
+      const newline = child.buffer.indexOf(10)
+      if (newline < 0) return
+      const match = objectHeader.exec(latin1(child.buffer.subarray(0, newline)))
+      let found: Found = undefined
+      if (match === null) child.buffer = child.buffer.subarray(newline + 1)
+      else if (mode === "--batch-check") {
+        child.buffer = child.buffer.subarray(newline + 1)
+        found = { type: match[2] ?? "", size: Number(match[3]), content: undefined }
+      } else {
+        const size = Number(match[3])
+        const end = newline + 1 + size
+        if (child.buffer.length < end + 1) return
+        found = { type: match[2] ?? "", size, content: child.buffer.slice(newline + 1, end) }
+        child.buffer = child.buffer.subarray(end + 1)
+      }
+      const done = child.pending.shift()
+      if (done !== undefined) try Deferred.succeed(done, found)
+    }
+  }
+
+  effect function failed(child: Child) {
+    const waiting = try Semaphore.withPermit(lock, effect {
+      if (current !== child) return []
+      current = undefined
+      try Scope.close(child.scope, Exit.void)
+      return child.pending.splice(0)
+    })
+    try died()
+    for (const done of waiting) {
+      try Deferred.succeed(done, undefined)
+    }
+  }
+
+  effect function pumped(child: Child, stdout: Stream.Stream<Uint8Array, unknown>) {
+    const pumping = effect {
+      for try (const chunk of stdout) {
+        child.buffer = joined(child.buffer, chunk)
+        try drained(child)
+      }
+    }
+    try Effect.ensuring(Effect.catch(pumping, () => Effect.void), failed(child))
+  }
+
+  effect function started() {
+    if (current !== undefined) return current
+    const scope = try Scope.fork(outer)
+    const input = try Queue.unbounded<Uint8Array, Cause.Done>()
+    const handle = try Scope.provide(scope)(spawner.spawn(ChildProcess.make(git.binary, ["--git-dir", gitDir, "cat-file", mode], {
+      env: { GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+      extendEnv: true,
+      stdin: Stream.fromQueue(input),
+      stderr: "ignore",
+    })))
+    const child: Child = { input, scope, pending: [], buffer: new Uint8Array(0) }
+    current = child
+    try Effect.forkIn(pumped(child, handle.stdout), outer)
+    return child
+  }
+
+  return {
+    read: (sha) => effect {
+      if (!fullSha.test(sha)) return undefined
+      const done = try Deferred.make<Found>()
+      const queued = try Semaphore.withPermit(lock, effect {
+        const child = started() catch () => undefined
+        if (child === undefined) return false
+        child.pending.push(done)
+        try Queue.offer(child.input, encoder.encode(`${sha}\n`))
+        return true
+      })
+      if (!queued) return undefined
+      return try Deferred.await(done)
+    },
+  } satisfies CatFile
+}
+
+effect function rawEntries(content: Uint8Array) {
+  const entries: RawEntry[] = []
+  let at = 0
+  while (at < content.length) {
+    const space = content.indexOf(32, at)
+    const nul = content.indexOf(0, space + 1)
+    if (space < 0 || nul < 0 || nul + 21 > content.length) return undefined
+    const name = try utf8(content.subarray(space + 1, nul))
+    if (name === undefined || name === "") return undefined
+    entries.push({ mode: latin1(content.subarray(at, space)), name, sha: hex(content.subarray(nul + 1, nul + 21)) })
+    at = nul + 21
+  }
+  return entries
+}
+
+effect function treeBody(repository: Repository, sha: string, recursive: boolean) {
+  const base = `${githubApi}/repos/${repository.fullName}`
+  const tree: Array<Readonly<Record<string, unknown>>> = []
+
+  effect function walk(treeSha: string, prefix: string): Walked!! {
+    const object = try repository.objects.read(treeSha)
+    if (object === undefined) return prefix === "" ? missing : uncertain
+    if (object.type !== "tree" || object.content === undefined) return prefix === "" ? wrongType : uncertain
+    const entries = try rawEntries(object.content)
+    if (entries === undefined) return uncertain
+    const sizes = try Effect.forEach(entries, (entry) => blobModes.has(entry.mode) ? repository.sizes.read(entry.sha) : Effect.succeed<Found>(undefined), { concurrency: "unbounded" })
+    for (const [index, entry] of entries.entries()) {
+      const path = `${prefix}${entry.name}`
+      if (entry.mode === "40000") {
+        tree.push({ path, mode: "040000", type: "tree", sha: entry.sha, url: `${base}/git/trees/${entry.sha}` })
+        if (tree.length > maxTreeEntries) return { kind: "tooMany", entries: tree.length }
+        if (recursive) {
+          const nested = try walk(entry.sha, `${path}/`)
+          if (nested !== undefined) return nested
+        }
+      } else if (blobModes.has(entry.mode)) {
+        const blob = sizes[index]
+        if (blob?.type !== "blob") return uncertain
+        tree.push({ path, mode: entry.mode, type: "blob", sha: entry.sha, size: blob.size, url: `${base}/git/blobs/${entry.sha}` })
+        if (tree.length > maxTreeEntries) return { kind: "tooMany", entries: tree.length }
+      } else return uncertain
+    }
+    return undefined
+  }
+
+  const failure = try walk(sha, "")
+  if (failure !== undefined) return failure
+  return { kind: "served", value: { sha, url: `${base}/git/trees/${sha}`, tree, truncated: false }, entries: tree.length } satisfies Built
+}
+
+effect function identity(line: string) {
+  const match = identityLine.exec(line)
+  if (match === null) return undefined
+  const [, name = "", email = "", seconds = ""] = match
+  if (name === "" || name !== name.trim() || /[<>]/u.test(name)) return undefined
+  const date = (try isoAt(Number(seconds) * 1_000)).replace(/\.\d{3}Z$/u, "Z")
+  return { name, email, date } satisfies Identity
+}
+
+effect function commitBody(repository: Repository, sha: string) {
+  const object = try repository.objects.read(sha)
+  if (object === undefined) return missing
+  if (object.type !== "commit" || object.content === undefined) return wrongType
+  const text = try utf8(object.content)
+  if (text === undefined || text.includes("\r")) return uncertain
+  const split = text.indexOf("\n\n")
+  if (split < 0) return uncertain
+  const header = text.slice(0, split).split("\n")
+  let message = text.slice(split + 2)
+  if (message.endsWith("\n\n")) return uncertain
+  if (message.endsWith("\n")) message = message.slice(0, -1)
+  let tree: string | undefined = undefined
+  const parents: string[] = []
+  let author: Identity | undefined = undefined
+  let committer: Identity | undefined = undefined
+  let signature = false
+  for (const line of header) {
+    if (line.startsWith(" ")) {
+      if (!signature) return uncertain
+      continue
+    }
+    signature = false
+    const space = line.indexOf(" ")
+    const key = space < 0 ? line : line.slice(0, space)
+    const value = space < 0 ? "" : line.slice(space + 1)
+    if (key === "tree" && tree === undefined && fullSha.test(value)) tree = value
+    else if (key === "parent" && fullSha.test(value)) parents.push(value)
+    else if (key === "author" && author === undefined) {
+      author = try identity(value)
+      if (author === undefined) return uncertain
+    } else if (key === "committer" && committer === undefined) {
+      committer = try identity(value)
+      if (committer === undefined) return uncertain
+    } else if (signatureHeaders.has(key)) signature = true
+    else return uncertain
+  }
+  if (tree === undefined || author === undefined || committer === undefined) return uncertain
+  const api = `${githubApi}/repos/${repository.fullName}`
+  const web = `https://github.com/${repository.fullName}`
+  return {
+    kind: "served",
+    value: {
+      sha,
+      url: `${api}/git/commits/${sha}`,
+      html_url: `${web}/commit/${sha}`,
+      author,
+      committer,
+      tree: { sha: tree, url: `${api}/git/trees/${tree}` },
+      message,
+      parents: parents.map((parent) => ({ sha: parent, url: `${api}/git/commits/${parent}`, html_url: `${web}/commit/${parent}` })),
+    },
+    entries: 0,
+  } satisfies Built
+}
+
+function localObject(built: Built, bytes: LocalAnswer): LocalObject {
+  switch (built.kind) {
+    case "served":
+      return { held: true, rightType: true, certainFields: true, entries: built.entries, bytes: bytes?.length ?? 0 }
+    case "tooMany":
+      return { held: true, rightType: true, certainFields: true, entries: built.entries, bytes: 0 }
+    case "uncertain":
+      return { held: true, rightType: true, certainFields: false, entries: 0, bytes: 0 }
+    case "wrongType":
+      return { held: true, rightType: false, certainFields: false, entries: 0, bytes: 0 }
+    case "missing":
+      return { held: false, rightType: false, certainFields: false, entries: 0, bytes: 0 }
+    default: {
+      const _exhaustive: never = built
+      return _exhaustive
+    }
+  }
+}
+
+function queryOf(search: string): GitQuery {
+  if (search === "") return "NoQuery"
+  return search === "?recursive=1" ? "RecursiveQuery" : "OtherQuery"
+}
+
+function gitReadOf(url: URL, kind: GitObjectKind, headers: Readonly<Record<string, string>>): GitRead {
+  const accept = headers.accept
+  return {
+    isGet: true,
+    apiOrigin: url.origin === githubApi,
+    exactAddress: url.username === "" && url.password === "" && url.hash === "",
+    objectPath: true,
+    kind,
+    query: queryOf(url.search),
+    plainAccept: accept === undefined || accept === githubJson,
+    rangeOrConditional: Object.keys(headers).some((name) => name.toLowerCase() === "range" || name.toLowerCase().startsWith("if-")),
+  }
+}
+
+effect function answered(repository: Repository, gitRead: GitRead, build: () => Built!!) {
+  const { machine, ledger } = repository.reads
+  const offered = try Semaphore.withPermit(ledger, effect {
+    const sent = machine.send({ type: "offer", gitRead }) catch () => undefined
+    return sent === undefined ? undefined : repository.reads.epoch
+  })
+  if (offered === undefined) return undefined
+  const built = try build()
+  const bytes = built.kind === "served" ? encoder.encode(JSON.stringify(built.value)) : undefined
+  return try Semaphore.withPermit(ledger, effect {
+    if (repository.reads.epoch !== offered) return undefined
+    const before = (try machine.get()).localServed
+    const after = try orDie(machine.send({ type: "answer", found: localObject(built, bytes) }))
+    return after.localServed > before ? bytes : undefined
+  })
+}
+
+effect function crashed(reads: Reads) {
+  try Semaphore.withPermit(reads.ledger, effect {
+    if (!canCrash(try reads.machine.get())) return
+    try orDie(reads.machine.send({ type: "crash" }))
+    reads.epoch += 1
+  })
+}
+
+effect function repositoryAt(fullName: string, gitDir: string, outer: Scope.Scope) {
+  const reads: Reads = { machine: try localReads(), ledger: try Semaphore.make(1), epoch: 0 }
+  const died = () => crashed(reads)
+  return {
+    fullName,
+    objects: try catFile(gitDir, "--batch", outer, died),
+    sizes: try catFile(gitDir, "--batch-check", outer, died),
+    reads,
+  } satisfies Repository
+}
+
+effect function isDirectory(path: string) {
+  const fs = try FileSystem.FileSystem
+  return (try fs.stat(path)).type === "Directory"
+}
+
+export effect function localGitObjects(root: string) {
+  const fs = try FileSystem.FileSystem
+  const outer = try Scope.fork(try Effect.scope)
+  const repositories = new Map<string, Repository>()
+  const owners = try fs.readDirectory(root)
+  for (const owner of owners) {
+    const ownerDir = `${root}/${owner}`
+    if (!(try isDirectory(ownerDir))) continue
+    const entries = try fs.readDirectory(ownerDir)
+    for (const entry of entries) {
+      if (!entry.endsWith(".git")) continue
+      const gitDir = `${ownerDir}/${entry}`
+      if (!(try isDirectory(gitDir))) continue
+      const fullName = `${owner}/${entry.slice(0, -".git".length)}`
+      repositories.set(fullName.toLowerCase(), try repositoryAt(fullName, gitDir, outer))
+    }
+  }
+  return {
+    read: (url, headers = {}) => effect {
+      const match = objectPath.exec(url.pathname)
+      if (match === null) return undefined
+      const [, owner = "", name = "", kind = "", sha = ""] = match
+      const repository = repositories.get(`${owner}/${name}`.toLowerCase())
+      if (repository === undefined) return undefined
+      const gitRead = gitReadOf(url, kind === "commits" ? "CommitObject" : "TreeObject", headers)
+      return try answered(repository, gitRead, () => kind === "commits" ? commitBody(repository, sha) : treeBody(repository, sha, gitRead.query === "RecursiveQuery"))
+    },
+    stats: () => effect {
+      const states = try Effect.forEach([...repositories.values()], (repository) => repository.reads.machine.get())
+      return {
+        served: states.reduce((total, state) => total + state.localServed, 0),
+        declined: states.reduce((total, state) => total + state.declined, 0),
+      } satisfies LocalGitStats
+    },
+    close: () => Scope.close(outer, Exit.void),
+  } satisfies LocalGitObjects
+}
+
+export effect function localGitObjectsFromEnv() {
+  const directory = try Config.withDefault(Config.String("SLOP_LOCAL_GIT_DIR"), "")
+  return directory === "" ? undefined : try localGitObjects(directory)
+}
+
+export function localGitSummary(stats: LocalGitStats) {
+  return `[slop.cash] local git objects: ${stats.served} served from local clones, ${stats.declined} read from GitHub instead`
+}

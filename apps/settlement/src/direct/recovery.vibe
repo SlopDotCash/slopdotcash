@@ -3,13 +3,14 @@ import { isoNow } from "@repo/platform/clock"
 import { type Statement, rows, sql } from "@repo/platform/d1"
 import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { type CaseContext, type RecoveryRefusal, RecoveryRefused } from "@repo/ports/settlement"
 import type { Network } from "../../gen/fees__runtime.ts"
 import { type Intent, Rejected } from "../../gen/settlement__directBounty.effect.vibe"
 import type { ConsentPaymentBody, DirectIntent, PaymentTransaction, PaymentWallet, PreparePaymentBody, VerifyPaymentBody } from "../client/direct.vibe"
 import { EvmDirectRails, type EvmDirectRail, evmRecoveryState, evmTransactions, payerChain, verifyEvmCancellation } from "./evm.vibe"
-import { type Claims, type Facts, type Journal, type StoredRetirement, commit, currentIntent, decided, directModel, generationOf, highestReservedNonce, intentModel, journalFor, retirementOf, storedWallet, walletModel } from "./journal.vibe"
-import { type CaseContext, consentPayment, preparePayment, verifyPayment } from "./routes.vibe"
-import { type IssuedPlan, type RecoveryRefusal, type SolanaDirectRail, RecoveryRefused, SolanaDirectRails, consentSolanaPayment, isSolanaNetwork, issuedPlans, prepareSolanaPayment, prepareSolanaPlan, verifySolanaPayment, walletFence, walletOfIntent } from "./solana.vibe"
+import { type Alongside, type Claims, type Facts, type Journal, type StoredRetirement, commit, currentIntent, decided, directModel, generationOf, highestReservedNonce, intentModel, journalFor, retirementOf, storedWallet, walletModel } from "./journal.vibe"
+import { consentPayment, preparePayment, verifyPayment } from "./routes.vibe"
+import { type IssuedPlan, type SolanaDirectRail, SolanaDirectRails, consentSolanaPayment, isSolanaNetwork, issuedPlans, prepareSolanaPayment, prepareSolanaPlan, verifySolanaPayment, walletFence, walletOfIntent } from "./solana.vibe"
 import { RecoverySignature, RecoverySignatureInvalid, retireSolanaPlans } from "./solanaRecovery.vibe"
 
 module limbs {
@@ -282,14 +283,14 @@ effect function evmSuccessor(c: Context, rail: EvmDirectRail, next: DirectIntent
   } satisfies Successor
 }
 
-effect function solanaProgressCommit(context: CaseContext, c: Context, detail: RecoveryDetail, fence: Statement, alongside: ReadonlyArray<Statement>) {
+effect function solanaProgressCommit(context: CaseContext, c: Context, detail: RecoveryDetail, fence: Statement, alongside: Alongside) {
   return try commit(context.caseId, (current) => effect {
     if (generationOf(current) !== c.generation) return try refuse("paymentRecoveryChanged")
     return { value: detail, writes: [fence] }
   }, alongside)
 }
 
-export effect function recoverPayment(context: CaseContext, body: RecoverPaymentBody, alongside: ReadonlyArray<Statement>) {
+export effect function recoverPayment(context: CaseContext, body: RecoverPaymentBody, alongside: Alongside) {
   if (body.confirmation !== true) return try refuse("confirmationRequiredConfirmTheReviewedPayment")
   if ((body.signatures?.length ?? 0) > 64) return try refuse("invalidRequestEachExpiredRequestNeeds")
   const c = try contextOf(context.caseId, context.reporterGithubId)
@@ -379,9 +380,9 @@ export effect function recoverPayment(context: CaseContext, body: RecoverPayment
 }
 
 export const directActions = {
-  "consent-payment": (context: CaseContext, body: ConsentPaymentBody, alongside: ReadonlyArray<Statement>) => isSolanaNetwork(body.network) ? consentSolanaPayment(context, body, alongside) : consentPayment(context, body, alongside),
-  "prepare-payment": (context: CaseContext, body: PreparePaymentBody, alongside: ReadonlyArray<Statement>) => isSolanaNetwork(body.network) ? prepareSolanaPayment(context, body, alongside) : preparePayment(context, body, alongside),
-  "verify-payment": (context: CaseContext, body: VerifyPaymentBody, alongside: ReadonlyArray<Statement>) => effect {
+  "consent-payment": (context: CaseContext, body: ConsentPaymentBody, alongside: Alongside) => isSolanaNetwork(body.network) ? consentSolanaPayment(context, body, alongside) : consentPayment(context, body, alongside),
+  "prepare-payment": (context: CaseContext, body: PreparePaymentBody, alongside: Alongside) => isSolanaNetwork(body.network) ? prepareSolanaPayment(context, body, alongside) : preparePayment(context, body, alongside),
+  "verify-payment": (context: CaseContext, body: VerifyPaymentBody, alongside: Alongside) => effect {
     const intent = currentIntent(try journalFor(context.caseId))
     return intent !== undefined && solana(intent) ? try verifySolanaPayment(context, body, alongside) : try verifyPayment(context, body, alongside)
   },

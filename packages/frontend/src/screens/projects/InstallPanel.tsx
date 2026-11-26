@@ -1,6 +1,6 @@
-// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"
-import { Status } from "@repo/ui";
-import { type ListingFacts, notListedInstallText, showsNotListed } from "../../../gen/frontend__poolListing.ts";
+// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"
+import { Spinner, Status } from "@repo/ui";
+import { installNotice, type ListingFacts, listedThisMonth, notListedInstallText, pausedInstallText } from "../../../gen/frontend__poolListing.ts";
 import { bootstrapPrompt } from "../home/agentLinks.ts";
 import { AgentPrompt } from "../home/AgentPrompt.tsx";
 import type { Shown } from "../home/listing.ts";
@@ -13,8 +13,10 @@ export type InstallPanelProps = {
   project: Pick<ShownProject, "slug" | "repositories">;
   /** Whether agent discovery lists the project as cleared. */
   clearance: Clearance;
-  /** This month's listing facts; a project the funding read leaves out is not listed, which is not a clearance problem. */
+  /** This month's listing facts from the registry; a project with no amount this month is not listed, which is not a clearance problem. */
   listing: ListingFacts;
+  /** Whether the merge activity read shows the project held at its intake cap. */
+  held: boolean;
   /** The origin the page was reached at, which the prompt names the skill by. */
   origin: string;
   /** Writes the prompt to the clipboard; a rejection is reported as a failed copy. */
@@ -28,36 +30,52 @@ export function clearanceOf(discovery: Shown<ReadonlySet<string>>, projectId: st
   return clearanceFor(discovery.status, discovery.value?.has(projectId) ?? false);
 }
 
-const notices = {
-  loading: "Checking project clearance…",
-  blocked: "This project is not cleared for agents. The prompt below picks only cleared projects.",
-  error: "Project clearance could not be checked. The prompt below picks only cleared projects.",
-} as const;
+function ClearanceState({ project, clearance, listing, held }: Pick<InstallPanelProps, "project" | "clearance" | "listing" | "held">) {
+  switch (clearance) {
+    case "ready":
+      return null;
+    case "loading":
+      return <Spinner size="sm" label="Checking project clearance" />;
+    case "blocked": {
+      const notice = installNotice(true, held, listedThisMonth(listing));
+      switch (notice) {
+        case "PausedInstall":
+          return pausedInstallText;
+        case "NotListedInstall":
+          return <Status presentation={{ tone: "Caution", icon: "Alert", label: notListedInstallText }} />;
+        case "NoListingNotice":
+          return (
+            <>
+              <Status presentation={{ tone: "Caution", icon: "Alert", label: "Not cleared" }} />{" "}
+              <a href={`/projects/${project.slug}/manage`} className={linkClass}>
+                Owner setup
+              </a>
+            </>
+          );
+        default: {
+          const _exhaustive: never = notice;
+          return _exhaustive;
+        }
+      }
+    }
+    case "error":
+      return <Status presentation={{ tone: "Neutral", icon: "Dot", label: "Clearance unknown" }} />;
+    default: {
+      const _exhaustive: never = clearance;
+      return _exhaustive;
+    }
+  }
+}
 
 /** The project's agent setup: its own prompt once discovery lists it as cleared, else the generic prompt, which picks only cleared projects. */
-export function InstallPanel({ project, clearance, listing, origin, onCopy }: InstallPanelProps) {
+export function InstallPanel({ project, clearance, listing, held, origin, onCopy }: InstallPanelProps) {
   const ready = clearance === "ready";
-  const unlisted = clearance === "blocked" && showsNotListed(listing);
   return (
     <div id="start" className="flex min-w-0 flex-col gap-3">
-      <h2 className="text-xl font-semibold text-foreground">Copy this into your agent.</h2>
+      <h2 className="text-xl font-semibold text-foreground">Start</h2>
       {ready ? null : (
-        <p role="status" className="text-muted-foreground">
-          {unlisted ? (
-            <Status presentation={{ tone: "Caution", icon: "Alert", label: notListedInstallText }} />
-          ) : (
-            <>
-              {notices[clearance]}
-              {clearance === "blocked" ? (
-                <>
-                  {" "}
-                  <a href={`/projects/${project.slug}/manage`} className={linkClass}>
-                    Project owner: review setup
-                  </a>
-                </>
-              ) : null}
-            </>
-          )}
+        <p className="flex flex-wrap items-center gap-1">
+          <ClearanceState project={project} clearance={clearance} listing={listing} held={held} />
         </p>
       )}
       <AgentPrompt openIn prompt={ready ? projectPrompt(project, origin) : bootstrapPrompt(origin)} origin={origin} onCopy={onCopy} />

@@ -1,10 +1,12 @@
-// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/solanaRpcRotation.md, "Story: Replace the Solana RPC pair of the exact active fee Worker"
+// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"; spec/fees/solanaRpcRotation.md, "Story: Replace the Solana RPC pair of the exact active fee Worker"
 import { webCrypto } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
 import { RpcUsage, rotateRobinhoodRpc } from "@repo/operations/rpc"
 import { Socket } from "effect/socket"
+import { isolatePublication, preflight, summary, unpublished } from "../runtime/config.vibe"
+import type { FeeVars } from "../runtime/networks.vibe"
 import { zeroOrderProbe } from "../rpcProbe/probe.vibe"
 import { inspectFeeOperations } from "./feeOperations.vibe"
 import { inspectFeeWorker } from "./inspectFeeWorker.vibe"
@@ -13,8 +15,48 @@ import { qualifySolanaRpcPair } from "./solanaRpcPair.vibe"
 import { probeSolanaRpc } from "./solanaRpcProbe.vibe"
 import { rotateSolanaRpc } from "./solanaRpcRotation.vibe"
 
+module verified {
+  import { jsonValue } from "../solana/bytes.ts"
+  /** @throws {never} */
+  export function parsedJson(text: string): unknown { return jsonValue(text) }
+}
+import { parsedJson } from verified
+
+export error PreflightRefused { message: string }
+
+schema ReviewedWorker { vars: Readonly<Record<string, string>> }
+schema SecretEntry { name: string }
+
+const SecretInventory = Schema.Array(SecretEntry)
+
 function command<E, R>(run: Command<E, R>): Command<unknown, R> {
   return run
+}
+
+effect function jsonFile(file: string, label: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(file) catch effect () => { throw new PreflightRefused({ message: `the ${label} is unavailable` }) }
+  return parsedJson(text)
+}
+
+effect function preflightRelease(args: ReadonlyArray<string>) {
+  const [config, inventory, ...rest] = args
+  if (config === undefined || inventory === undefined || rest.length > 0) throw new PreflightRefused({ message: "usage: preflight <wrangler config> <secret inventory json>" })
+  const worker = Schema.decodeUnknownEffect(ReviewedWorker)(try jsonFile(config, "fee-converter Worker configuration")) catch effect () => {
+    throw new PreflightRefused({ message: "the fee-converter Worker configuration has no plain variables" })
+  }
+  const secrets = Schema.decodeUnknownEffect(SecretInventory)(try jsonFile(inventory, "fee-converter secret inventory")) catch effect () => {
+    throw new PreflightRefused({ message: "fee-converter secret inventory must be an array" })
+  }
+  const derived = try preflight({
+    vars: worker.vars as FeeVars,
+    secretInventory: secrets.map((entry) => entry.name),
+    releaseVariable: true,
+    source: isolatePublication,
+    previous: unpublished,
+    ownerApproval: { entries: [], replacementActive: false },
+  })
+  try Console.log(summary(derived))
 }
 
 effect function rotateRobinhood(args: ReadonlyArray<string>) {
@@ -30,6 +72,7 @@ program({
     "qualify-solana-rpc-pair": command(qualifySolanaRpcPair),
     "inspect-fee-worker": command((args) => Effect.asVoid(inspectFeeWorker(args))),
     "inspect-fee-operations": command((args) => Effect.asVoid(inspectFeeOperations(args))),
+    "preflight": command(preflightRelease),
     "probe-solana-rpc": command((args) => Effect.asVoid(probeSolanaRpc(args))),
     "rotate-robinhood-rpc": command(rotateRobinhood),
     "rotate-solana-rpc": command(rotateSolanaRpc),

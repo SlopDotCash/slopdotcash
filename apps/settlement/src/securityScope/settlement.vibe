@@ -1,0 +1,289 @@
+// spec/settlement/privateAward.md, "A vault-backed award reserves its bounty vault in the same step"; spec/settlement/privateAward.md, "Exact amounts are shown before authorization"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"
+import type { Address } from "@repo/platform/chain/solanaWire"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { randomToken } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, RowMismatch, type Statement, first, sql } from "@repo/platform/d1"
+import { Conflict } from "@repo/platform/stored"
+import type { Json } from "@repo/ports/backend"
+import type { ApprovedAward, AwardAssetTerms } from "@repo/ports/security"
+import { type CaseContext, type DirectRefusal, DirectRefused } from "@repo/ports/settlement"
+import { bytes32, evmAddress, awardId as evmAwardId } from "../chain/evm/abi.ts"
+import { commitAwardCalldata } from "../chain/evm/actions.ts"
+import { digest } from "../chain/solana/bytes.ts"
+import { awardId as solanaAwardId } from "../chain/solana/pda.ts"
+import { bountyFeeBase } from "../kernels/fees.ts"
+import { NETWORKS, type NetworkKey, chainFamily, isChain } from "../kernels/networks.ts"
+import type { Alongside } from "../direct/journal.vibe"
+import { type ReviewedDeployment, reviewedPolicy } from "../vault/policy.vibe"
+import { awardAsset, sameAssetAddress, snapshotMaxAgeMillis } from "./programFunds.vibe"
+
+module limbs {
+  import type { Json } from "@repo/ports/backend"
+  /** @throws {never} */
+  export function baseUnits(text: string | null | undefined): bigint | undefined {
+    return typeof text === "string" && /^(?:0|[1-9]\d{0,77})$/u.test(text) ? BigInt(text) : undefined
+  }
+  /** @throws {SyntaxError} */
+  export function parsedJson(text: string): Json {
+    return JSON.parse(text) as Json
+  }
+}
+import { baseUnits, parsedJson } from limbs
+
+type Fields = Readonly<Record<string, unknown>>
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+schema TermsAsset {
+  readonly network: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly address: string
+}
+
+schema CaseTerms {
+  readonly currency: string
+  readonly decimals: number
+  readonly network?: string | null
+  readonly asset?: TermsAsset
+}
+
+schema ProgramRow {
+  readonly project_id: string
+  readonly terms: string | null
+  readonly reserved_gross: string | null
+  readonly manifest: string | null
+}
+
+schema Present { readonly ok: number }
+
+schema SnapshotRow {
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly observed_at: string
+  readonly free_balance: string | null
+}
+
+schema SettlementRow {
+  readonly obligation_id: string
+  readonly source_digest: string
+  readonly deployment: string
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly reporter_github_id: string
+  readonly state: string | null
+  readonly queue_state: string | null
+  readonly attempt_state: string | null
+  readonly paid_transaction: string | null
+  readonly submitted_transaction: string | null
+}
+
+schema StoredDeployment {
+  readonly network: string
+  readonly chain: string
+  readonly vault: string
+  readonly asset: string
+  readonly owner?: string
+  readonly programId?: string | null
+}
+
+export interface EscrowDeployment {
+  readonly reviewed: ReviewedDeployment
+  readonly record: Fields
+}
+
+export interface EscrowProgram {
+  readonly projectId: string
+  readonly terms: AwardAssetTerms | undefined
+  readonly reservedGross: string | undefined
+  readonly deployments: ReadonlyArray<EscrowDeployment>
+}
+
+export type VaultSettlementState = "paid" | "awaiting-owner-commitment" | "held" | "uncertain" | "needs-wallet" | "ready" | "processing" | "submitted"
+
+export interface VaultSettlementView {
+  readonly state: VaultSettlementState
+  readonly obligationId: string
+  readonly network: string
+  readonly asset: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly transactionId: string | null
+  readonly submittedTransactionId: string | null
+  readonly privacyNotice: string
+  readonly ownerRequest: Json
+}
+
+const privacyNotice = "Chain transactions reveal the vault, GitHub actor number, destination, time and amounts. Never include report data in a transaction."
+const queueStates: ReadonlyArray<VaultSettlementState> = ["ready", "processing", "submitted", "paid", "held"]
+
+effect function refuse(reason: DirectRefusal): never!DirectRefused {
+  throw new DirectRefused({ reason })
+}
+
+effect function termsOf(text: string | null) {
+  if (text === null) return undefined
+  const decoded = Schema.decodeUnknownEffect(Schema.fromJsonString(CaseTerms))(text) catch () => undefined
+  if (decoded === undefined) return undefined
+  return { currency: decoded.currency, decimals: decoded.decimals, network: decoded.network ?? null, ...decoded.asset === undefined ? {} : { asset: decoded.asset } } satisfies AwardAssetTerms
+}
+
+function deploymentRecord(projectId: string, raw: Fields, network: NetworkKey): Fields {
+  const facts = NETWORKS[network]
+  return {
+    projectId,
+    ...raw,
+    chain: facts.chain,
+    ...facts.family === "evm" ? { chainId: String(facts.chainId), gasCeiling: String(facts.gasCeiling), scanPageBlocks: String(facts.scanPageBlocks) } : {},
+    payoutPolicy: "security-bounty",
+  }
+}
+
+effect function bountyDeployments(projectId: string, manifest: string | null) {
+  if (manifest === null) return []
+  const parsed = fieldsOf(Effect.try(() => JSON.parse(manifest) as unknown) catch () => undefined)
+  const policy = fieldsOf(fieldsOf(parsed?.securityBounty)?.settlement)
+  if (policy === undefined) return []
+  const reviewed = reviewedPolicy(projectId, policy, "security-bounty") catch () => []
+  const listed = Array.isArray(policy.deployments) ? policy.deployments : []
+  return reviewed.flatMap((deployment) => {
+    const raw = listed.map(fieldsOf).find((entry) => entry?.network === deployment.network && entry.vault === deployment.vault)
+    return raw === undefined ? [] : [{ reviewed: deployment, record: deploymentRecord(projectId, raw, deployment.network) } satisfies EscrowDeployment]
+  })
+}
+
+export effect function escrowProgram(caseId: string) {
+  const row = try first(ProgramRow, sql`SELECT c.project_id, c.terms, r.gross_minor AS reserved_gross, p.manifest FROM security_cases c LEFT JOIN projects p ON p.id = c.project_id LEFT JOIN security_award_reservations r ON r.case_id = c.id WHERE c.id = ${caseId}`)
+  if (row === undefined) return undefined
+  return {
+    projectId: row.project_id,
+    terms: try termsOf(row.terms),
+    reservedGross: row.reserved_gross ?? undefined,
+    deployments: try bountyDeployments(row.project_id, row.manifest),
+  } satisfies EscrowProgram
+}
+
+effect function written(caseId: string, statements: ReadonlyArray<Statement>) {
+  (try D1).batch(statements) catch effect (error) => match (error) {
+    when ConstraintViolation: throw new Conflict({ aggregate: `security settlement ${caseId}`, attempts: 1 });
+    default: throw error;
+  }
+}
+
+export effect function consentEscrow(context: CaseContext, deployment: EscrowDeployment, alongside: Alongside) {
+  if (context.actorGithubId !== context.reporterGithubId) return try refuse("forbiddenOnlyTheReporterMay")
+  const revision = context.revision + 1
+  const at = try isoNow()
+  const detail = { network: deployment.reviewed.network, publicChainVisibilityAccepted: true } as const
+  try written(context.caseId, [
+    ...(try alongside(detail)),
+    sql`INSERT INTO security_payment_consents (case_id, deployment, reporter_github_id, accepted_at, case_revision) SELECT ${context.caseId}, ${JSON.stringify(deployment.record)}, ${context.actorGithubId}, ${at}, ${revision} WHERE EXISTS (SELECT 1 FROM security_case_events WHERE case_id = ${context.caseId} AND case_revision = ${revision} AND kind = 'consent-payment')`,
+  ])
+  return detail
+}
+
+effect function obligationOf(deployment: ReviewedDeployment, source: string) {
+  if (deployment.family === "solana") {
+    const sourceDigest = digest(source)
+    if (sourceDigest === undefined) return try die(new Error("A random source commitment is not a digest"))
+    return solanaAwardId(deployment.projectPda as Address, sourceDigest)
+  }
+  const vault = evmAddress(deployment.vault)
+  const sourceDigest = bytes32(`0x${source}`)
+  if (vault === undefined || sourceDigest === undefined) return try die(new Error("A reviewed vault or random source commitment is malformed"))
+  return try orDie(Effect.try(() => evmAwardId(deployment.chainId, vault, sourceDigest)))
+}
+
+export effect function prepareEscrow(context: CaseContext, network: string, award: ApprovedAward | undefined, program: EscrowProgram | undefined, alongside: Alongside) {
+  if (award?.split === "FullAward") return try refuse("railUnavailableTheBountyVaultPays")
+  const deployment = program?.deployments.find((entry) => entry.reviewed.network === network)
+  const terms = program?.terms
+  const reserved = baseUnits(program?.reservedGross)
+  if (award === undefined || program === undefined || deployment === undefined || terms === undefined || reserved === undefined) return try refuse("railUnavailableTheProgramHasNo")
+  const { reviewed, record } = deployment
+  const expected = awardAsset(terms, reviewed.network, reviewed.asset)
+  if (expected === undefined || !sameAssetAddress(reviewed.network, expected.address, reviewed.asset) || terms.network !== reviewed.chain) return try refuse("paymentTermsMismatch")
+  const recordText = JSON.stringify(record)
+  const consent = try first(Present, sql`SELECT 1 AS ok FROM security_payment_consents WHERE case_id = ${context.caseId} AND reporter_github_id = ${context.reporterGithubId} AND deployment = ${recordText}`)
+  if (consent === undefined) return try refuse("paymentConsentRequiredTheReporterMustAccept")
+  const existing = try first(Present, sql`SELECT 1 AS ok FROM security_settlements WHERE case_id = ${context.caseId}`)
+  if (existing !== undefined) return try refuse("settlementExists")
+  const snapshot = try first(SnapshotRow, sql`SELECT asset_address, asset_decimals, observed_at, free_balance FROM security_vault_snapshots WHERE project_id = ${program.projectId} AND network = ${reviewed.network} AND vault = ${reviewed.vault}`)
+  const at = try isoNow()
+  if (snapshot === undefined || snapshot.asset_address !== reviewed.asset || snapshot.asset_decimals !== terms.decimals || !(millisOf(at) - millisOf(snapshot.observed_at) <= snapshotMaxAgeMillis))
+    return try refuse("paymentVaultUnverified")
+  const free = baseUnits(snapshot.free_balance)
+  if (free === undefined || free < reserved) return try refuse("paymentFundsUnavailable")
+  if (reserved <= 0n || reserved % 4n !== 0n) return try die(new Error("Bounty split must be exact"))
+  const source = try randomToken(32)
+  const obligationId = try obligationOf(reviewed, source)
+  const revision = context.revision + 1
+  const detail = { network: reviewed.network, publicChainVisibilityAccepted: true } as const
+  try written(context.caseId, [
+    ...(try alongside(detail)),
+    sql`INSERT INTO security_settlements (case_id, obligation_id, source_digest, network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, approved_at, case_revision, deployment)
+      SELECT ${context.caseId}, ${obligationId}, ${source}, ${reviewed.network}, ${reviewed.vault}, ${reviewed.asset}, ${terms.decimals}, ${reserved.toString()}, ${bountyFeeBase(reserved).toString()}, ${context.reporterGithubId}, ${context.actorGithubId}, ${at}, ${revision}, ${recordText}
+      WHERE EXISTS (SELECT 1 FROM security_cases c JOIN security_case_events e ON e.case_id = c.id AND e.case_revision = c.revision WHERE c.id = ${context.caseId} AND c.revision = ${revision} AND c.award_state = 'approved' AND e.kind = 'prepare-payment')`,
+  ])
+  return detail
+}
+
+function stateOf(row: SettlementRow): VaultSettlementState {
+  if (row.state === "paid") return "paid"
+  if (row.state === null) return "awaiting-owner-commitment"
+  if (row.queue_state === "held") return "held"
+  if (row.attempt_state === "unknown" || row.attempt_state === "prepared") return "uncertain"
+  return queueStates.find((state) => state === row.queue_state) ?? "needs-wallet"
+}
+
+effect function ownerRequestOf(row: SettlementRow, deployment: StoredDeployment) {
+  if (row.state !== null) return null
+  const actor = baseUnits(row.reporter_github_id)
+  const gross = baseUnits(row.gross_base)
+  if (!isChain(deployment.chain) || actor === undefined || gross === undefined) throw new RowMismatch({ text: "security_settlements", issue: "the settlement's chain, actor or amount is malformed" })
+  if (chainFamily(deployment.chain) === "solana") {
+    const full = try Effect.try({ try: () => parsedJson(row.deployment), catch: () => new RowMismatch({ text: "security_settlements", issue: "the deployment is not JSON" }) })
+    const request: Json = {
+      network: deployment.network,
+      programId: deployment.programId ?? null,
+      operation: "commit-bounty",
+      deployment: full,
+      awards: [{ awardId: row.obligation_id, sourceDigest: row.source_digest, githubUserId: row.reporter_github_id, grossMicro: row.gross_base }],
+    }
+    return request
+  }
+  const id = bytes32(row.obligation_id)
+  const sourceDigest = bytes32(`0x${row.source_digest}`)
+  if (id === undefined || sourceDigest === undefined || deployment.owner === undefined) throw new RowMismatch({ text: "security_settlements", issue: "the obligation, source commitment or owner is malformed" })
+  const data = try Effect.try({ try: () => commitAwardCalldata({ purpose: "BountyPurpose", id, actor, gross, sourceDigest }), catch: () => new RowMismatch({ text: "security_settlements", issue: "the award commitment does not encode" }) })
+  const request: Json = { network: deployment.network, from: deployment.owner, to: deployment.vault, data, value: "0x0" }
+  return request
+}
+
+export effect function securitySettlementView(caseId: string) {
+  const row = try first(SettlementRow, sql`SELECT s.obligation_id, s.source_digest, s.deployment, s.gross_base, s.fee_base, s.reporter_github_id, o.state, o.paid_transaction, q.state AS queue_state,
+      (SELECT state FROM security_payment_attempts a WHERE a.obligation_id = s.obligation_id ORDER BY created_at DESC, rowid DESC LIMIT 1) AS attempt_state,
+      (SELECT transaction_id FROM security_payment_attempts a WHERE a.obligation_id = s.obligation_id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1) AS submitted_transaction
+    FROM security_settlements s LEFT JOIN security_payment_obligations o ON o.id = s.obligation_id LEFT JOIN security_payment_outbox q ON q.obligation_id = s.obligation_id WHERE s.case_id = ${caseId}`)
+  if (row === undefined) return undefined
+  const deployment = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredDeployment))(row.deployment) catch effect () => { throw new RowMismatch({ text: "security_settlements", issue: "the deployment record is malformed" }) }
+  const gross = baseUnits(row.gross_base)
+  const fee = baseUnits(row.fee_base)
+  if (gross === undefined || fee === undefined) throw new RowMismatch({ text: "security_settlements", issue: "the settlement amounts are not base units" })
+  return {
+    state: stateOf(row),
+    obligationId: row.obligation_id,
+    network: deployment.network,
+    asset: deployment.asset,
+    grossBase: row.gross_base,
+    feeBase: row.fee_base,
+    netBase: (gross - fee).toString(),
+    transactionId: row.paid_transaction,
+    submittedTransactionId: row.submitted_transaction,
+    privacyNotice,
+    ownerRequest: try ownerRequestOf(row, deployment),
+  } satisfies VaultSettlementView
+}

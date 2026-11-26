@@ -7,7 +7,7 @@ import { call } from "../../platform/api.vibe"
 import { WalletFailed } from "../core/discovery.vibe"
 import type { SolanaConnection } from "../core/solana.vibe"
 import { isChainMonth, siteMonth } from "./monthLockPeriods.ts"
-import type { LockCheck } from "./evmMonthLock.vibe"
+import type { LockCheck, MonthPledgeRead } from "./evmMonthLock.vibe"
 import { type ReviewedWire, solanaChainOf, wireMatches } from "./solanaPlans.ts"
 import { type SolanaVault, signAndVerify } from "./solanaVault.vibe"
 
@@ -27,6 +27,7 @@ export interface SolanaLockPlan {
   readonly requested: ReadonlyArray<number>
   readonly amountMinor: bigint
   readonly decimals: number | undefined
+  readonly current: ReadonlyArray<MonthPledgeRead>
   readonly transaction: SolanaLockTransaction | null
   readonly wire: ReviewedWire | undefined
 }
@@ -69,6 +70,14 @@ function transactionOf(value: unknown): SolanaLockTransaction | undefined {
   return typeof blockhash === "string" && isBlockhash(blockhash) && typeof lastValidBlockHeight === "number" && Number.isSafeInteger(lastValidBlockHeight) && lastValidBlockHeight >= 0
     && typeof transaction === "string" && typeof networkFeeLamports === "string" && canonical.test(networkFeeLamports)
     ? { blockhash, lastValidBlockHeight, transaction, networkFeeLamports }
+    : undefined
+}
+
+function currentOf(value: unknown): ReadonlyArray<{ readonly period: number; readonly amountMinor: string; readonly open: boolean }> | undefined {
+  if (!Array.isArray(value)) return undefined
+  const rows = value.map(recordOf)
+  return rows.every((row) => row !== undefined && typeof row.period === "number" && isChainMonth(row.period) && typeof row.amountMinor === "string" && canonical.test(row.amountMinor) && typeof row.open === "boolean")
+    ? rows as unknown as ReadonlyArray<{ readonly period: number; readonly amountMinor: string; readonly open: boolean }>
     : undefined
 }
 
@@ -116,10 +125,14 @@ export effect function reviewSolanaLock(vault: SolanaVault, connection: SolanaCo
   const requested = monthsOf(plan?.requested)
   const decimals = decimalsOf(plan?.decimals)
   const transaction = plan?.transaction === null ? null : transactionOf(plan?.transaction)
-  if (plan === undefined || plan.wallet !== connection.address || typeof plan.amountMinor !== "string" || !positive.test(plan.amountMinor) || decimals === undefined
+  const shown = currentOf(plan?.current)
+  if (shown === undefined || plan === undefined || plan.wallet !== connection.address || typeof plan.amountMinor !== "string" || !positive.test(plan.amountMinor) || decimals === undefined
     || periods === undefined || requested === undefined || requested.length !== count || !periods.every((period) => requested.includes(period))
     || transaction === undefined || (transaction !== null && periods.length === 0)) throw refused(solanaLockMessages.invalidLock)
-  const checked = checkedPlan(vault, { action: "lock", wallet: connection.address, periods, requested, amountMinor: BigInt(plan.amountMinor), decimals, transaction, wire: undefined }, solanaLockMessages.invalidLock)
+  const amountText = plan.amountMinor
+  const amountMinor = try Effect.try({ try: () => BigInt(amountText), catch: () => refused(solanaLockMessages.invalidLock) })
+  const current = try Effect.try({ try: () => shown.map((row) => ({ period: row.period, amount: BigInt(row.amountMinor), open: row.open })), catch: () => refused(solanaLockMessages.invalidLock) })
+  const checked = checkedPlan(vault, { action: "lock", wallet: connection.address, periods, requested, amountMinor, decimals, current, transaction, wire: undefined }, solanaLockMessages.invalidLock)
   if (typeof checked === "string") throw refused(checked)
   return checked
 }
@@ -129,7 +142,9 @@ export effect function reviewSolanaRelease(vault: SolanaVault, connection: Solan
   const plan = recordOf(answer.plan)
   const transaction = transactionOf(plan?.transaction)
   if (plan === undefined || plan.wallet !== connection.address || plan.period !== period || typeof plan.amountMinor !== "string" || !canonical.test(plan.amountMinor) || transaction === undefined) throw refused(solanaLockMessages.invalidRelease)
-  const checked = checkedPlan(vault, { action: "release", wallet: connection.address, periods: [period], requested: [period], amountMinor: BigInt(plan.amountMinor), decimals: undefined, transaction, wire: undefined }, solanaLockMessages.invalidRelease)
+  const amountText = plan.amountMinor
+  const amountMinor = try Effect.try({ try: () => BigInt(amountText), catch: () => refused(solanaLockMessages.invalidRelease) })
+  const checked = checkedPlan(vault, { action: "release", wallet: connection.address, periods: [period], requested: [period], amountMinor, decimals: undefined, current: [], transaction, wire: undefined }, solanaLockMessages.invalidRelease)
   if (typeof checked === "string") throw refused(checked)
   return checked
 }

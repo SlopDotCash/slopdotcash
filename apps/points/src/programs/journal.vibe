@@ -1,14 +1,17 @@
-// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/historicalImport.md, "Each import has its own hold and published rules stay prior until a release"; spec/points/publication.md, "An admissible candidate preserves every public record in exact order"
+// spec/points/payoutRecognition.md, "A finalized ordinary monthly vault payment earns recognition once per recipient, project and month"; spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/historicalImport.md, "Each import has its own hold and published rules stay prior until a release"; spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"
 import { isoNow } from "@repo/platform/clock"
-import { d1Http } from "@repo/platform/d1Http"
+import { d1Http, registryDatabases } from "@repo/platform/d1Http"
 import { journalText } from "../kernels/records/canonical.ts"
-import { finish, openStore } from "../journal/ledger.vibe"
+import { type ReviewedMergeGroups, holdProtected, reviewedMergeGroups } from "../journal/hold.vibe"
+import { type Store, finish, openStore } from "../journal/ledger.vibe"
 import { repositoriesOf, readSnapshots } from "../journal/build.vibe"
 import { reconcilePenalties } from "../journal/penalties.vibe"
 import { applyRetainedReviews } from "../journal/retained.vibe"
 import { applySnapshots } from "../journal/snapshot.vibe"
 import { recognizePayouts } from "../payoutRecognition/awards.vibe"
-import { admittedFrom, databases, evaluationInputs } from "../evaluations/check.vibe"
+import { loadVaultPayouts } from "../payoutRecognition/vault.vibe"
+import { evaluationInputs } from "../evaluations/check.vibe"
+import { admittedOffline } from "../evaluations/offline.vibe"
 import { applyEvaluations } from "../evaluations/journal.vibe"
 import { evaluationEvents } from "../evaluations/manifests.vibe"
 import { readRegistry } from "../snapshot/adaptPr.vibe"
@@ -21,6 +24,8 @@ import { readSnapshotFile } from "../snapshot/files.vibe"
 import { instantOf } from "../kernels/records/instants.ts"
 import { projectionFiles, readProjection, writeProjection } from "../publication/projections.vibe"
 import { origins, recoverPublished } from "../recovery/published.vibe"
+import { committedMonths, protectionEnvironment, resolveProtection } from "../publication/protectedMonths.vibe"
+import type { Protection } from "../../gen/points__protectedMonths.ts"
 import type { Environment } from "../../gen/points__recovery.ts"
 
 export error JournalUsage { message: string }
@@ -156,6 +161,17 @@ effect function waitFor(millis: number) {
   try sleep(Duration.millis(millis))
 }
 
+interface Holding {
+  readonly known: ReadonlySet<string>
+  readonly protection: Protection
+  readonly groups: ReviewedMergeGroups
+}
+
+effect function heldIn(store: Store, holding: Holding | null) {
+  if (holding === null) return 0
+  return try holdProtected(store, holding.known, holding.protection, holding.groups)
+}
+
 effect function build(args: ReadonlyArray<string>) {
   const parsed = try buildArguments(args)
   const files = try Path.Path
@@ -165,18 +181,29 @@ effect function build(args: ReadonlyArray<string>) {
   const store = try openStore(history, published === null ? null : `${journalText(published)}\n`, [])
   const registry = try readRegistry(parsed.registry)
   const repositories = repositoriesOf(registry, try countsFromOf(parsed.snapshot))
-  try applySnapshots(store, repositories, try readSnapshots(try snapshotTexts(parsed.directory), registry), recordedAt)
-  try recognizePayouts(store, try textFile(files.join(parsed.directory, "cycles", "index.json"), maxCycleIndexBytes), recordedAt)
-  const admitted = try admittedFrom(try evaluationInputs(files.resolve(".")), repositories, parsed.environment === "Production" ? "production" : "staging")
+  const origin = origins[parsed.environment]
+  const snapshots = try readSnapshots(try snapshotTexts(parsed.directory), registry)
+  let holding: Holding | null = null
+  if (published !== null) {
+    holding = { known: new Set(published.revisions.map((revision) => revision.id)), protection: try resolveProtection(try committedMonths(), try protectionEnvironment(), origin), groups: reviewedMergeGroups(snapshots, repositories) }
+  }
+  try applySnapshots(store, repositories, snapshots, recordedAt)
+  const heldAfterSnapshots = try heldIn(store, holding)
+  const vaults = parsed.online ? try loadVaultPayouts(store.revisions.map((row) => row.award.actor), origin) : []
+  const recognizedAt = try isoNow()
+  try recognizePayouts(store, try textFile(files.join(parsed.directory, "cycles", "index.json"), maxCycleIndexBytes), recognizedAt, vaults)
+  const admitted = try admittedOffline(try evaluationInputs(files.resolve(".")), repositories, parsed.snapshot)
   const reviewed: ReadonlyArray<unknown> = [...(try acceptedReviewEvents()), ...evaluationEvents(admitted)]
-  const digest = try applyRetainedReviews(store, repositories, reviewed, recordedAt)
-  try applyEvaluations(store, repositories, admitted, digest, recordedAt)
-  try reconcilePenalties(store, repositories, undefined, digest, recordedAt)
-  const finished = try finish(store, recordedAt)
-  const projection = try projectionFiles(finished.journal)
+  const digest = try applyRetainedReviews(store, repositories, reviewed, recognizedAt)
+  try applyEvaluations(store, repositories, admitted, digest, recognizedAt)
+  try reconcilePenalties(store, repositories, undefined, digest, recognizedAt)
+  const held = heldAfterSnapshots + (try heldIn(store, holding))
+  if (held > 0) try Console.log(`[points] held ${held} candidate revisions in months with a recorded payment`)
+  const finished = try finish(store, recognizedAt)
+  const projection = try projectionFiles(finished.journal, repositories.registry)
   try writeProjection(parsed.directory, projection)
   const points = projection.members.reduce((sum, member) => sum + member.total, 0)
-  try writeBuildFile("report.json", `${JSON.stringify({ generatedAt: recordedAt, revisionCount: finished.journal.revisions.length, contributors: projection.members.length, points, coverage: finished.journal.coverage }, null, 2)}\n`)
+  try writeBuildFile("report.json", `${JSON.stringify({ generatedAt: recognizedAt, revisionCount: finished.journal.revisions.length, contributors: projection.members.length, points, coverage: finished.journal.coverage }, null, 2)}\n`)
   try writeBuildFile("held.json", finished.review)
   try Console.log(`[points] ${projection.members.length} contributors; ${finished.journal.revisions.length} historical revisions; ${finished.held.length} held for owner review`)
 }
@@ -206,7 +233,7 @@ effect function importInto(args: ReadonlyArray<string>) {
   try publishable(current, candidate, { censusPhase: try censusPhaseOf(directory, registry), historicalHold: publicationHeld(try historicalHolds(current)) })
   const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
   const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
-  provide d1Http({ accountId, databaseId: databases.production, token }) {
+  provide d1Http({ accountId, databaseId: registryDatabases.production, token }) {
     const imported = try importJournal(candidate, { wait: waitFor })
     try Console.log(`[points] imported ${imported.revisions} revisions as batch ${imported.digest} on attempt ${imported.attempt}`)
   }

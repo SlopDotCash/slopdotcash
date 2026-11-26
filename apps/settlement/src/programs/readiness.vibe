@@ -1,0 +1,162 @@
+// spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
+import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
+import { SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
+import { reviewedActivation } from "../../gen/settlement__signer.effect.vibe"
+import { pinsOf } from "../jobs/attester.vibe"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { paymentDeployments } from "./deployments.vibe"
+
+export error ReadinessRefused { message: string }
+
+const usage = "usage: readiness --registry PATH [--config PATH]... [--probe] [--require NETWORK]..."
+
+type Probe = "finalized" | "wrong-chain" | "no-finalized-head" | "unreachable"
+
+interface Options {
+  readonly registry: string
+  readonly configs: ReadonlyArray<string>
+  readonly probe: boolean
+  readonly required: ReadonlyArray<NetworkKey>
+}
+
+interface StackConfig {
+  readonly name?: unknown
+  readonly vars?: Readonly<Record<string, unknown>>
+  readonly services?: ReadonlyArray<{ readonly binding?: unknown }>
+}
+
+interface NetworkReadiness {
+  readonly network: NetworkKey
+  readonly testnet: boolean
+  readonly deployments: number
+  readonly factory: "configured" | "missing" | "not-applicable"
+  readonly attester: "configured" | "missing"
+  readonly rpc: "configured" | "missing" | Probe
+  readonly executor: "enabled" | "missing" | "off-by-review"
+  readonly ready: boolean
+  readonly reasons: ReadonlyArray<string>
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+function refused(message: string) {
+  return new ReadinessRefused({ message })
+}
+
+effect function optionsOf(args: ReadonlyArray<string>) {
+  const configs: string[] = []
+  const required: NetworkKey[] = []
+  let registry: string | undefined = undefined
+  let probe = false
+  for (let index = 0; index < args.length; index++) {
+    const flag = args[index] ?? ""
+    const value = args[index + 1]
+    if (flag === "--probe") probe = true
+    else if ((flag === "--config" || flag === "--require" || flag === "--registry") && value !== undefined && !value.startsWith("--")) {
+      index++
+      if (flag === "--config") configs.push(value)
+      else if (flag === "--require" && isNetworkKey(value)) required.push(value)
+      else if (flag === "--registry" && registry === undefined) registry = value
+      else throw refused(usage)
+    } else throw refused(usage)
+  }
+  if (registry === undefined) throw refused(usage)
+  if (required.length > 0 && !probe) throw refused("--require needs --probe")
+  return { registry, configs, probe, required } satisfies Options
+}
+
+effect function jsonFile(path: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(path) catch effect () => { throw refused(`${path} is unreadable`) }
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refused(`${path} is not JSON`) })
+}
+
+function canonical(records: ReadonlyArray<unknown>) {
+  return JSON.stringify([...records].map((record) => JSON.stringify(record)).sort())
+}
+
+effect function pinnedFor(config: StackConfig, network: NetworkKey) {
+  const text = try pinsOf(config.vars ?? {}, "PAYMENT_DEPLOYMENTS")
+  if (text === undefined) return []
+  const pins = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refused("PAYMENT_DEPLOYMENTS is not JSON") })
+  if (!Array.isArray(pins)) throw refused("PAYMENT_DEPLOYMENTS must be an array")
+  return pins.filter((pin) => typeof pin === "object" && pin !== null && "network" in pin && pin.network === network)
+}
+
+effect function probeOf(network: NetworkKey, url: string) {
+  const registry = NETWORKS[network]
+  const urls = Redacted.make([url])
+  const probed: Probe = registry.family === "evm"
+    ? effect {
+      const chainId = try orDie(Effect.try(() => BigInt(registry.chainId)))
+      provide evmRpc({ urls, chainId }) {
+        const rpc = try EvmRpc
+        if ((try rpc.chainId()) !== chainId) return "wrong-chain" satisfies Probe
+        const head = try rpc.head("finalized")
+        return (head.number >= 0n ? "finalized" : "no-finalized-head") satisfies Probe
+      }
+    } catch () => "unreachable" satisfies Probe
+    : effect {
+      provide solanaRpc({ urls, genesis: registry.genesisHash }) {
+        const rpc = try SolanaRpc
+        if ((try rpc.genesisHash()) !== registry.genesisHash) return "wrong-chain" satisfies Probe
+        const slot = try rpc.slot("finalized")
+        return (Number.isSafeInteger(slot) && slot > 0 ? "finalized" : "no-finalized-head") satisfies Probe
+      }
+    } catch () => "unreachable" satisfies Probe
+  return probed
+}
+
+effect function readinessOf(network: NetworkKey, records: ReadonlyArray<Fields>, configs: ReadonlyArray<StackConfig>, rpcUrls: Fields, probes: Partial<Record<NetworkKey, Probe>>) {
+  const registry = NETWORKS[network]
+  const reasons: string[] = []
+  const deployments = records.filter((record) => record.network === network)
+  if (deployments.length === 0) reasons.push("no reviewed escrow deployment")
+  const factory = registry.family !== "evm" ? "not-applicable" : deployments.length > 0 && deployments.every((record) => typeof record.factory === "string" && typeof record.factoryCodeSha256 === "string" && typeof record.registrar === "string") ? "configured" : "missing"
+  if (factory === "missing") reasons.push("factory address not recorded")
+  const attesters = configs.filter((config) => typeof config.name === "string" && config.name.endsWith("-attester"))
+  const pinned: unknown[] = []
+  for (const config of attesters) pinned.push(...try pinnedFor(config, network))
+  const attester = deployments.length > 0 && deployments.every((record) => typeof record.identityAuthority === "string") && canonical(pinned) === canonical(deployments) ? "configured" : "missing"
+  if (attester === "missing") reasons.push("attester Worker does not pin exactly the registry deployments")
+  const url = rpcUrls[network]
+  const rpc = typeof url === "string" && /^https:\/\/[^\s]+$/u.test(url) ? probes[network] ?? "configured" : "missing"
+  if (rpc === "missing") reasons.push("no https RPC endpoint configured")
+  else if (rpc !== "configured" && rpc !== "finalized") reasons.push(`RPC probe: ${rpc}`)
+  const binding = registry.family === "evm" ? "EVM_PAYMENT_EXECUTOR" : "SOLANA_PAYMENT_EXECUTOR"
+  const dispatching = configs.some((config) => typeof config.vars?.PAYMENT_NETWORKS === "string" && config.vars.PAYMENT_NETWORKS.includes(`"${network}"`) && (config.services ?? []).some((service) => service.binding === binding))
+  const executor = !registry.testnet ? (reviewedActivation.includes(registry.service) ? "enabled" : "off-by-review") : dispatching ? "enabled" : "missing"
+  if (executor === "off-by-review") reasons.push("MAINNET_EXECUTION is off for this network")
+  if (executor === "missing") reasons.push(`no payments dispatcher serves the network with ${binding}`)
+  return { network, testnet: registry.testnet, deployments: deployments.length, factory, attester, rpc, executor, ready: reasons.length === 0, reasons } satisfies NetworkReadiness
+}
+
+effect function rpcUrlsOf() {
+  const text = Option.getOrUndefined(try Config.option(Config.Redacted("PAYMENT_RPC_URLS")))
+  if (text === undefined) return {} satisfies Fields
+  const parsed = try Effect.try({ try: () => JSON.parse(Redacted.value(text)) as unknown, catch: () => refused("PAYMENT_RPC_URLS must be a JSON object") })
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw refused("PAYMENT_RPC_URLS must be a JSON object")
+  return parsed as Fields
+}
+
+export effect function readinessCommand(args: ReadonlyArray<string>) {
+  const options = try optionsOf(args)
+  const snapshot = try jsonFile(options.registry)
+  const records: Fields[] = []
+  for (const network of Object.keys(NETWORKS)) {
+    if (!isNetworkKey(network)) continue
+    const listed = try paymentDeployments(snapshot, { testnet: NETWORKS[network].testnet, network, scope: "ordinary" })
+    for (const record of listed) if (typeof record === "object" && record !== null) records.push(record as Fields)
+  }
+  const configs: StackConfig[] = []
+  for (const path of options.configs) configs.push(try jsonFile(path) as StackConfig)
+  const rpcUrls = try rpcUrlsOf()
+  const probes: Partial<Record<NetworkKey, Probe>> = {}
+  if (options.probe) for (const [network, url] of Object.entries(rpcUrls)) if (isNetworkKey(network) && typeof url === "string") probes[network] = try probeOf(network, url)
+  const report: NetworkReadiness[] = []
+  for (const network of Object.keys(NETWORKS)) if (isNetworkKey(network)) report.push(try readinessOf(network, records, configs, rpcUrls, probes))
+  for (const row of report) try Console.log(`${row.ready ? "READY    " : "NOT READY"} ${row.network.padEnd(18)} deployments=${row.deployments} factory=${row.factory} attester=${row.attester} rpc=${row.rpc} executor=${row.executor}${row.reasons.length > 0 ? ` | ${row.reasons.join("; ")}` : ""}`)
+  try Console.log(JSON.stringify({ schemaVersion: "1", networks: report }))
+  const blocked = options.required.filter((network) => report.find((row) => row.network === network)?.ready !== true)
+  if (blocked.length > 0) throw refused(`payout readiness refused: ${blocked.join(", ")} not ready`)
+}

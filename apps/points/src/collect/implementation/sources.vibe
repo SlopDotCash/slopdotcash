@@ -1,0 +1,157 @@
+// spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+import { type MergedOutcome, MergedRecordInvalid, arrayAt, commitSha, recordAt } from "../merged/wire.vibe"
+
+export interface AcceptedImplementationSource {
+  readonly id: string
+  readonly headSha: string
+  readonly mergeSha: string
+  readonly mergeParentShas: ReadonlyArray<string>
+  readonly mergeTreeSha: string
+  readonly firstParentTreeSha: string
+}
+
+export type Acceptance = AcceptedImplementationSource | "ineligible" | null
+
+export interface AcceptanceMarkers {
+  readonly acceptedOrdinaryCommitOid?: string
+  readonly emptyAcceptanceMarker?: boolean
+}
+
+export interface CurrentAcceptance {
+  readonly outcome: MergedOutcome
+  readonly markers: AcceptanceMarkers
+  readonly implementationSource: { readonly source: AcceptedImplementationSource; readonly changedFiles: number } | undefined
+}
+
+export const implementationSourcesQuery = `
+  query PreviousImplementationSources($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest {
+        id
+        number
+        url
+        state
+        mergedAt
+        repository { id isPrivate }
+        headRefOid
+        changedFiles
+        additions
+        deletions
+        mergeCommit {
+          oid
+          tree { oid }
+          parents(first: 2) { totalCount nodes { oid tree { oid } } }
+        }
+        commits(first: 1) {
+          totalCount
+          pageInfo { hasNextPage }
+          nodes { commit { oid parents { totalCount } } }
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export function acceptedOrdinaryCommitOid(source: AcceptedImplementationSource): string | undefined {
+  if (source.mergeParentShas.length === 1 && source.mergeSha !== source.headSha && source.mergeTreeSha !== source.firstParentTreeSha) return source.mergeSha
+  return undefined
+}
+
+export function implementationShape(changedFiles: number, additions: number, deletions: number) {
+  return `${changedFiles}/${additions}/${deletions}`
+}
+
+export function safeCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+export function absent(value: unknown) {
+  return value === null || value === undefined
+}
+
+effect function oidAt(value: unknown, path: string) {
+  const row = try recordAt(value, path)
+  const oid = row.oid
+  if (typeof oid !== "string") throw new MergedRecordInvalid({ message: `${path}.oid must be a full commit SHA` })
+  return try commitSha(oid, `${path}.oid`)
+}
+
+export effect function readImplementationAcceptance(id: string, headSha: string, value: unknown, path: string): Acceptance!MergedRecordInvalid {
+  const mergePath = `${path}.mergeCommit`
+  const merge = try recordAt(value, mergePath)
+  if (absent(merge.parents)) return null
+  const mergeSha = try oidAt(merge, mergePath)
+  const parents = try recordAt(merge.parents, `${mergePath}.parents`)
+  const parentCount = parents.totalCount
+  if (typeof parentCount === "number" && Number.isSafeInteger(parentCount) && (parentCount === 0 || parentCount > 2)) return "ineligible"
+  const nodes = parents.nodes
+  if ((parentCount !== 1 && parentCount !== 2) || !Array.isArray(nodes) || nodes.length !== parentCount || nodes.some(absent)) return null
+  const parentPath = `${mergePath}.parents.nodes[0]`
+  const first = try recordAt(nodes[0], parentPath)
+  const mergeParentShas: string[] = []
+  for (const [index, parent] of (try arrayAt(nodes, `${mergePath}.parents.nodes`)).entries()) mergeParentShas.push(try oidAt(parent, `${mergePath}.parents.nodes[${index}]`))
+  if (mergeParentShas.includes(mergeSha)) return null
+  if (mergeParentShas[0] === headSha || (parentCount === 2 && mergeParentShas[1] !== headSha)) return "ineligible"
+  if (absent(merge.tree) || absent(first.tree)) return null
+  return {
+    id,
+    headSha,
+    mergeSha,
+    mergeParentShas,
+    mergeTreeSha: try oidAt(merge.tree, `${mergePath}.tree`),
+    firstParentTreeSha: try oidAt(first.tree, `${parentPath}.tree`),
+  } satisfies AcceptedImplementationSource
+}
+
+export effect function currentAcceptance(value: unknown, outcome: MergedOutcome, path: string) {
+  const none: CurrentAcceptance = { outcome, markers: {}, implementationSource: undefined }
+  if (absent(value)) return none
+  const node = try recordAt(value, path)
+  if (node.id !== outcome.id || absent(node.mergeCommit) || absent(node.commits)) return none
+  const acceptance = try readImplementationAcceptance(outcome.id, outcome.headRefOid, node.mergeCommit, path)
+  if (acceptance === null || acceptance === "ineligible") return none
+  const commits = try recordAt(node.commits, `${path}.commits`)
+  const totalCount = commits.totalCount
+  if (!safeCount(totalCount)) return none
+  const changed = acceptance.mergeTreeSha !== acceptance.firstParentTreeSha
+  const separateOrdinaryCommit = acceptance.mergeParentShas.length === 1 && acceptance.mergeSha !== outcome.headRefOid
+  const ordinary = changed && separateOrdinaryCommit && totalCount > 0 ? { acceptedOrdinaryCommitOid: acceptance.mergeSha } : {}
+  const page = absent(commits.pageInfo) ? undefined : try recordAt(commits.pageInfo, `${path}.commits.pageInfo`)
+  const nodes = Array.isArray(commits.nodes) ? commits.nodes : []
+  const edge = nodes.length === 1 && !absent(nodes[0]) ? try recordAt(nodes[0], `${path}.commits.nodes[0]`) : undefined
+  const commit = edge === undefined || absent(edge.commit) ? undefined : try recordAt(edge.commit, `${path}.commits.nodes[0].commit`)
+  const parentsOf = commit === undefined || absent(commit.parents) ? undefined : try recordAt(commit.parents, `${path}.commits.nodes[0].commit.parents`)
+  const single = totalCount === 1 && page?.hasNextPage === false && commit !== undefined && typeof commit.oid === "string" && commit.oid.toLowerCase() === outcome.headRefOid && parentsOf?.totalCount === 1
+  if (!single) return { outcome, markers: ordinary, implementationSource: undefined } satisfies CurrentAcceptance
+  if (changed) {
+    const changedFiles = node.changedFiles
+    const implementationSource = typeof changedFiles === "number" && Number.isSafeInteger(changedFiles) && changedFiles > 0 ? { source: acceptance, changedFiles } : undefined
+    return { outcome, markers: ordinary, implementationSource } satisfies CurrentAcceptance
+  }
+  const empty = outcome.additions + outcome.deletions > 0 && separateOrdinaryCommit ? { emptyAcceptanceMarker: true } : {}
+  return { outcome, markers: { ...ordinary, ...empty }, implementationSource: undefined } satisfies CurrentAcceptance
+}
+
+export function implementationSourcesByShape(current: ReadonlyArray<CurrentAcceptance>) {
+  const byShape = new Map<string, AcceptedImplementationSource[]>()
+  for (const { implementationSource, outcome } of current) {
+    if (implementationSource === undefined) continue
+    const shape = implementationShape(implementationSource.changedFiles, outcome.additions, outcome.deletions)
+    const candidates = byShape.get(shape) ?? []
+    candidates.push(implementationSource.source)
+    byShape.set(shape, candidates)
+  }
+  return byShape
+}
+
+export function implementationDigestCandidates(current: ReadonlyArray<CurrentAcceptance>, priorShapes: ReadonlySet<string> = new Set()) {
+  return [...implementationSourcesByShape(current)].flatMap(([shape, sources]) => priorShapes.has(shape) || new Set(sources.map((source) => source.headSha)).size > 1 ? sources : [])
+}
+
+export function dedupedSources(sources: ReadonlyArray<AcceptedImplementationSource>) {
+  const byId = new Map<string, AcceptedImplementationSource>()
+  for (const source of sources) if (!byId.has(source.id)) byId.set(source.id, source)
+  return [...byId.values()]
+}

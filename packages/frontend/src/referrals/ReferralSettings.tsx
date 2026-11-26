@@ -1,4 +1,5 @@
-// spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
+// spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/frontend/requestedRepos.md, "Story: See requested repos, flag one, renew or withdraw it"
+import { requestedPage } from "@repo/backend/client";
 import { Address, Alert, Button, Field, Input } from "@repo/ui";
 import { type FormEvent, useState } from "react";
 import { canSubmit, type Settings } from "../../gen/frontend__referralSettings.ts";
@@ -74,6 +75,12 @@ export function ReferralSettings({ settings, origin, problem, onEdit, onSave, on
       <p>A project listed through your link names you as its referrer.</p>
       {settings.savedCode !== "" ? <Address value={referralLink(origin, settings.savedCode)} label="Your referral link" copyLabel="Copy link" onCopy={onCopy} /> : null}
       <NameForm key={`${settings.lifetime}:${settings.savedCode}`} settings={settings} problem={problem} onEdit={onEdit} onSave={onSave} />
+      <p>
+        <a href={requestedPage} className="font-medium text-primary underline-offset-4 hover:underline">
+          Requested repos
+        </a>{" "}
+        lists repos Slop contributors want to work on, with a pitch that carries your link.
+      </p>
     </section>
   );
 }

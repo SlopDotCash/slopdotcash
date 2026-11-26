@@ -1,0 +1,173 @@
+// spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events"
+import type { FeeOutcome, ObservedDeposit } from "@repo/ports/slopbot"
+import { type ChainDeposit, type DepositState, type FeeDeposit, type ItemOutcome, type Judgement, type PaidBy, type Refusal, initial } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
+import type { DepositedEvent } from "./chain.vibe"
+
+export schema StateText = "open" | "refund_due" | "kept_due" | "refunded" | "kept" | "reclaimed"
+
+export schema DepositRecord {
+  readonly network: string
+  readonly deposit_id: number
+  readonly item: string
+  readonly repository_id: number | null
+  readonly pull_number: number | null
+  readonly payer: string
+  readonly token: string
+  readonly amount: string
+  readonly kept_to: string
+  readonly tx_hash: string
+  readonly block_number: number
+  readonly block_time: string
+  readonly finalized_at: string | null
+  readonly accepted: number | null
+  readonly reject_reason: string | null
+  readonly state: StateText
+}
+
+export interface DepositRow extends ObservedDeposit {
+  readonly repositoryId: number | null
+  readonly pullNumber: number | null
+  readonly finalizedAt: string | null
+  readonly accepted: number | null
+  readonly rejectReason: string | null
+  readonly state: DepositState
+}
+
+export const depositColumns = "network, deposit_id, item, repository_id, pull_number, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, reject_reason, state"
+
+const states: Readonly<Record<DepositState, StateText>> = {
+  Open: "open",
+  RefundDue: "refund_due",
+  KeptDue: "kept_due",
+  Refunded: "refunded",
+  Kept: "kept",
+  Reclaimed: "reclaimed",
+}
+
+const reasons: Readonly<Record<Exclude<Refusal, "NoRefusal">, string>> = {
+  TokenNotAccepted: "token_not_accepted",
+  WrongKeptTo: "wrong_kept_to",
+  UnknownItem: "unknown_item",
+  ItemFeeInvalid: "item_fee_invalid",
+  NoSlopRate: "no_slop_rate",
+  AmountBelowDue: "amount_below_due",
+  ItemAlreadyPaid: "item_already_paid",
+  ItemAlreadyDecided: "item_already_decided",
+  ReportWrongNetwork: "report_wrong_network",
+  ReportTokenNotSlop: "report_token_not_slop",
+  ReportAmountInvalid: "report_amount_invalid",
+}
+
+const outcomes: Readonly<Record<FeeOutcome, ItemOutcome>> = {
+  refund_due: "RefundDueOutcome",
+  kept_due: "KeptDueOutcome",
+  refunded: "RefundedOutcome",
+  kept: "KeptOutcome",
+}
+
+export function stateText(state: DepositState): StateText {
+  return states[state]
+}
+
+const textStates: Readonly<Record<StateText, DepositState>> = {
+  open: "Open",
+  refund_due: "RefundDue",
+  kept_due: "KeptDue",
+  refunded: "Refunded",
+  kept: "Kept",
+  reclaimed: "Reclaimed",
+}
+
+export function stateOf(text: StateText): DepositState {
+  return textStates[text]
+}
+
+export function reasonText(refusal: Exclude<Refusal, "NoRefusal">): string {
+  return reasons[refusal]
+}
+
+export function refusalOf(text: string | null): Refusal {
+  const found = (Object.keys(reasons) as ReadonlyArray<Exclude<Refusal, "NoRefusal">>).find((refusal) => reasons[refusal] === text)
+  return found ?? "NoRefusal"
+}
+
+export function itemOutcomeOf(outcome: FeeOutcome | null): ItemOutcome {
+  return outcome === null ? "Undecided" : outcomes[outcome]
+}
+
+export function dueOutcome(outcome: FeeOutcome | null) {
+  return outcome === "refund_due" || outcome === "kept_due"
+}
+
+export function depositOf(record: typeof DepositRecord.Type): DepositRow {
+  return {
+    network: record.network,
+    depositId: record.deposit_id,
+    item: record.item,
+    repositoryId: record.repository_id,
+    pullNumber: record.pull_number,
+    payer: record.payer,
+    token: record.token,
+    amount: record.amount,
+    keptTo: record.kept_to,
+    txHash: record.tx_hash,
+    blockNumber: record.block_number,
+    blockTime: record.block_time,
+    finalizedAt: record.finalized_at,
+    accepted: record.accepted,
+    rejectReason: record.reject_reason,
+    state: stateOf(record.state),
+  }
+}
+
+export function observedOf(network: string, event: DepositedEvent, blockTime: string): ObservedDeposit {
+  return {
+    network,
+    depositId: event.depositId,
+    item: event.item,
+    payer: event.payer,
+    token: event.token,
+    amount: event.amount,
+    keptTo: event.keptTo,
+    txHash: event.txHash,
+    blockNumber: event.blockNumber,
+    blockTime,
+  }
+}
+
+export interface ViewFacts {
+  readonly made: ChainDeposit
+  readonly finalized: boolean
+  readonly judgement: Judgement
+  readonly reason: Refusal
+  readonly state: DepositState
+  readonly asked: boolean
+  readonly paidBy: PaidBy
+  readonly outcome: FeeOutcome | null
+  readonly graceOver: boolean
+}
+
+export function paidByOf(deposit: { readonly network: string; readonly depositId: number }, paid: { readonly paidNetwork: string | null; readonly paidDepositId: number | null } | null): PaidBy {
+  if (paid === null || paid.paidDepositId === null) return "Unpaid"
+  return paid.paidNetwork === deposit.network && paid.paidDepositId === deposit.depositId ? "ThisDeposit" : "OtherDeposit"
+}
+
+export function depositView(facts: ViewFacts): FeeDeposit {
+  const paid = facts.paidBy === "ThisDeposit"
+  return {
+    ...initial,
+    chain: "ChainOpen",
+    made: facts.made,
+    confirmed: true,
+    finalized: facts.finalized,
+    row: facts.finalized ? "FinalRow" : "ConfirmedRow",
+    state: facts.state,
+    judgement: facts.judgement,
+    reason: facts.reason,
+    asked: facts.asked || paid,
+    otherPaid: facts.paidBy === "OtherDeposit",
+    paid,
+    itemOutcome: paid ? itemOutcomeOf(facts.outcome) : "Undecided",
+    graceOver: facts.graceOver,
+  }
+}

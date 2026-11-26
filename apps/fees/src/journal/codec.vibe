@@ -1,8 +1,8 @@
-// spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
+// spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
 import { RowMismatch, decoded } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Rows } from "@repo/platform/stored"
-import { type HoldingKind, type Attempt, type Coverage, type ExpiryProof, type ExpiryScan, type Fee, type Holding, type ProviderFinding, type Reason, type Reservation, type Row, type RowState, type SendKind, type Trigger, dayMs, decodeState, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
+import { type HoldingKind, type Attempt, type RecordedSend, type Coverage, type ExpiryProof, type ExpiryScan, type Fee, type Holding, type ProviderFinding, type Reason, type Reservation, type Row, type RowState, type SendKind, type Trigger, dayMs, decodeState, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import type { Held } from "../runtime/config.vibe"
 import { signedFees } from "./signedSend.ts"
@@ -55,6 +55,7 @@ export interface Observed {
   readonly asset: HoldingKind
   readonly received: number
   readonly topUps: number
+  readonly balance: number | undefined
   readonly vault: string | undefined
   readonly vaultObserved: number
 }
@@ -94,6 +95,14 @@ export interface GasRecord {
   readonly accountProof: string | null
 }
 
+export interface Unaccounted {
+  readonly recorded: RecordedSend
+  readonly id: string
+  readonly txId: string
+  readonly rawTx: string
+  readonly wallet: string
+}
+
 export interface Journal {
   readonly state: Fee
   readonly sends: ReadonlyArray<SendRecord>
@@ -102,6 +111,7 @@ export interface Journal {
   readonly runs: ReadonlyMap<number, string>
   readonly scans: ReadonlyMap<string, string>
   readonly foreign: ReadonlyArray<Foreign>
+  readonly unaccounted: ReadonlyArray<Unaccounted>
   readonly pending: number
 }
 
@@ -183,7 +193,7 @@ schema ReplacementRow { conversion_id: string; tx_id: string; max_fee_per_gas: s
 schema GasRow {
   id: string; run_id: string; fee_wallet: string; nonce: number; maximum_wei: string; state: "reserved" | "signed" | "abandoned"
   tx_id: string | null; conversion_id: string | null; actual_wei: string | null; settled_day: string | null
-  solana_blockhash_slot: number | null; purpose: string; created_at: string; intent_hash: string; solana_account_proof: string | null
+  solana_blockhash_slot: number | null; purpose: string; created_at: string; intent_hash: string; solana_account_proof: string | null; imported: 0 | 1
 }
 schema StepRow { tx_id: string; operator: string; revision: number; run_id: string; scan_json: string; observed_at: string }
 schema ProofRow { tx_id: string; run_id: string; proof_json: string; observed_at: string }
@@ -292,7 +302,7 @@ const openStates: ReadonlyArray<string> = ["quoted", "submitted", "unknown"]
 effect function firstAttempt(row: Conversion, network: Network, epoch: number) {
   if (row.journal !== null) return { fees: try sendJournal(row.journal, `fee journal ${row.id}`), at: millisOf(row.submitted_at ?? row.created_at) - epoch }
   const legacy = row.legacy_raw === null || network === "Solana" ? undefined : signedFees(row.legacy_raw)
-  const deadline = row.kind !== "conversion" ? 0 : network === "Solana" ? maximumSafeValue : (row.expires_at ?? 0) * 1000 - epoch
+  const deadline = network === "Solana" ? (row.kind === "conversion" ? maximumSafeValue : 0) : row.kind === "claim" || row.expires_at === null ? 0 : row.expires_at * 1000 - epoch
   const fees = legacy === undefined
     ? { gasLimit: 1, maxFee: transactionCeilingOf(network), priority: 0, deadline }
     : {
@@ -327,10 +337,12 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     ...replacements.map((entry) => entry.tx_id),
     ...live.flatMap((row) => row.approval_tx_id === null || row.approval_tx_id === row.tx_id ? [] : [row.approval_tx_id]),
   ]
-  const unaccounted = signedTexts.find((tx) => !reserved.has(tx))
-  if (unaccounted !== undefined) throw new RowMismatch({ text: `fee journal send ${unaccounted}`, issue: "signed bytes hold no native gas reservation; their historical liability must be imported first" })
-  const openApproval = live.find((row) => row.approval_tx_id !== null && row.tx_id === null && openStates.includes(row.state))
-  if (openApproval !== undefined) throw new RowMismatch({ text: `fee journal row ${openApproval.id}`, issue: "a legacy approval-only send is still open; its approval receipt must close it first" })
+  const unreserved = new Set(signedTexts.filter((tx) => !reserved.has(tx)))
+  const replacedIds = new Set(replacements.map((entry) => entry.conversion_id))
+  const importable = (row: Conversion) => network !== "Solana" && row.tx_id !== null && row.legacy_raw !== null && row.approval_tx_id === null && !replacedIds.has(row.id) && unreserved.has(row.tx_id)
+  const awaitingImport = new Set(live.filter((row) => openStates.includes(row.state) && importable(row)).map((row) => row.id))
+  const stranded = live.find((row) => openStates.includes(row.state) && !awaitingImport.has(row.id) && [row.tx_id, row.approval_tx_id, ...replacements.filter((entry) => entry.conversion_id === row.id).map((entry) => entry.tx_id)].some((tx) => tx !== null && unreserved.has(tx)))
+  if (stranded !== undefined) throw new RowMismatch({ text: `fee journal row ${stranded.id}`, issue: "signed bytes hold no native gas reservation and cannot be imported from their recorded bytes" })
 
   const firstSeen = [
     ...rows.map((row) => [row.created_at, row.run_id] as const),
@@ -349,11 +361,12 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const nextRun = Math.max(0, ...runs.keys()) + 1
 
   const known = new Set(rows.map((row) => row.id))
-  const carriers = rows.filter((row) => !foreignRow(row, network))
+  const carriers = rows.filter((row) => !foreignRow(row, network) && !awaitingImport.has(row.id))
+  const pendingImport = rows.filter((row) => awaitingImport.has(row.id) && !foreignRow(row, network))
   const foreignIds = new Set(rows.filter((row) => foreignRow(row, network)).map((row) => row.id))
   const modelIds = new Map(carriers.map((carrier, index) => [carrier.id, index + 1] as const))
   const isForeignGas = (row: Gas) => row.purpose === "bridge" || (row.conversion_id !== null && foreignIds.has(row.conversion_id))
-  const solanaNonce = new Map(gasRows.flatMap((row) => row.tx_id === null ? [] : [[row.tx_id, row.nonce] as const]))
+  const reservedNonce = new Map(gasRows.flatMap((row) => row.tx_id === null ? [] : [[row.tx_id, row.nonce] as const]))
 
   const tokens = [...instance.tokens.map((token) => token.address)]
   const tokenOf = (address: string) => {
@@ -375,11 +388,11 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const modelRows: Array<Row> = []
   for (const [index, carrier] of carriers.entries()) {
     const label = `fee journal row ${carrier.id}`
-    const state = stateOf[carrier.state]
+    const approvalOnly = carrier.tx_id === null && carrier.approval_tx_id !== null
+    const state = approvalOnly && carrier.mode === "live" && carrier.state === "pending" ? "Submitted" : stateOf[carrier.state]
     const reason = reasonOf(state, carrier.reason)
     if (reason === undefined) throw new RowMismatch({ text: label, issue: `reason ${carrier.reason ?? "missing"} does not fit state ${carrier.state}` })
     const later = replacements.filter((entry) => entry.conversion_id === carrier.id)
-    const approvalOnly = carrier.tx_id === null && carrier.approval_tx_id !== null
     const firstTx = carrier.tx_id ?? (carrier.mode === "live" ? carrier.approval_tx_id : null)
     const signed = firstTx === null ? undefined : try firstAttempt(carrier, network, epoch)
     const attempts: Array<Attempt> = signed === undefined || firstTx === null ? [] : [
@@ -392,7 +405,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
       at: ms(entry.created_at),
     })
     const kind: SendKind = carrier.kind === "claim" ? "Claim" : carrier.kind === "approval" || approvalOnly ? "Approval" : "Conversion"
-    const nonce = network === "Solana" ? (firstTx === null ? -1 : solanaNonce.get(firstTx) ?? -1) : carrier.evm_nonce ?? -1
+    const nonce = network !== "Solana" && carrier.evm_nonce !== null ? carrier.evm_nonce : firstTx === null ? -1 : reservedNonce.get(firstTx) ?? -1
     modelRows.push({
       id: index + 1,
       token: tokenOf(carrier.token),
@@ -414,6 +427,32 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
       createdAt: ms(carrier.created_at),
     })
     sends.push({ id: carrier.id, pending: undefined, run: carrier.run_id, wallet: carrier.fee_wallet, token: carrier.token, txs: [...(firstTx === null ? [] : [firstTx]), ...later.map((entry) => entry.tx_id)] })
+  }
+  const unaccounted: Array<Unaccounted> = []
+  for (const carrier of pendingImport) {
+    const label = `fee journal row ${carrier.id}`
+    const txId = carrier.tx_id ?? ""
+    const signed = try firstAttempt(carrier, network, epoch)
+    const kind: SendKind = carrier.kind === "claim" ? "Claim" : carrier.kind === "approval" ? "Approval" : "Conversion"
+    unaccounted.push({
+      recorded: {
+        token: tokenOf(carrier.token),
+        kind,
+        tx: names.number("tx", txId),
+        nonce: carrier.evm_nonce ?? signedFees(carrier.legacy_raw ?? "")?.nonce ?? -1,
+        gasLimit: signed.fees.gasLimit,
+        fees: { maxFee: signed.fees.maxFee, priority: signed.fees.priority },
+        amountIn: try exact(carrier.amount_in, label),
+        valueMicro: carrier.quote_value_micro ?? 0,
+        minimumOutput: try exact(carrier.min_amount_out, label),
+        deadline: signed.fees.deadline,
+        wallet: walletOf(carrier.fee_wallet),
+      },
+      id: carrier.id,
+      txId,
+      rawTx: carrier.legacy_raw ?? "",
+      wallet: carrier.fee_wallet,
+    })
   }
   const intent = instance.intent
   const pending = intent === undefined || known.has(intent.evaluation.id) ? 0 : modelRows.length + 1
@@ -441,6 +480,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
       actual: try native(row.actual_wei, network, label),
       settledDay: row.settled_day === null ? 0 : Math.floor(ms(`${row.settled_day}T00:00:00.000Z`) / dayMs),
       blockhashSlot: state === "Signed" ? row.solana_blockhash_slot ?? 0 : 0,
+      imported: state === "Signed" && row.imported === 1,
     }
     if (isForeignGas(row)) {
       foreign.push({ purpose: row.purpose, reservation: { ...reservation, id: foreign.length + 1 } })
@@ -478,13 +518,16 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     const sold = sum(modelRows, token, finalized("Conversion"), (row) => row.amountIn)
     const claimed = sum(modelRows, token, finalized("Claim"), (row) => row.output)
     const openClaims = sum(modelRows, token, (row) => row.kind === "Claim" && isOpen(row), (row) => row.amountIn)
-    const feeIncome = (seen?.received ?? 0) + claimed
-    const topUps = seen?.topUps ?? 0
+    const asset = seen?.asset ?? "ProjectToken"
+    const open = sum(modelRows, token, (row) => row.kind === "Conversion" && isOpen(row), (row) => row.amountIn)
+    const topUps = asset === "NativeAsset" ? seen?.topUps ?? 0 : 0
+    const observedBalance = Math.max(seen?.balance ?? 0, open)
+    const feeIncome = asset === "NativeAsset" ? (seen?.received ?? 0) + claimed : Math.max((seen?.received ?? 0) + claimed, sold + observedBalance)
     const vaultObserved = seen?.vaultObserved ?? 0
     return {
       token,
-      asset: seen?.asset ?? "ProjectToken",
-      balance: feeIncome + topUps - sold,
+      asset,
+      balance: asset === "NativeAsset" ? feeIncome + topUps - sold : observedBalance,
       feeIncome,
       topUps,
       sold,
@@ -514,5 +557,5 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     proofs,
     rotation: rotating === undefined || rotating.expires_at === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: names.number("rotation", rotating.run_id.slice(rotationScope.length)), expiresAt: ms(rotating.expires_at) },
   } satisfies Fee)
-  return { state, sends, gas, tokens, runs, scans: latestScans, foreign, pending } satisfies Journal
+  return { state, sends, gas, tokens, runs, scans: latestScans, foreign, unaccounted, pending } satisfies Journal
 }

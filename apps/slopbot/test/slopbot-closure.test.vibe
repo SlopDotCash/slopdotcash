@@ -7,6 +7,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -156,14 +157,13 @@ const Closure = Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.mergeAll(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "closure",
       d1: { SLOPBOT_DB: "slop-private" },
       vars: {
         GITHUB_API: seeded.fake.authority,
         GITHUB_TOKEN: seeded.token,
         ORBIO_API_KEY: "orbio-test-credential",
-        SURPLUS_API_KEY: "surplus-test-credential",
         SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
         SLOPBOT_CLOSURE_ENABLED: "true",
         SLOPBOT_RELEASE: release(1),
@@ -240,7 +240,7 @@ effect function defectLine(fake: Fake, path: string, number: number) {
 const idOf = (login: string) => 501 + authors.indexOf(login)
 
 layer(Closure, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Only an active member\'s own run, saved consent, a qualified activation and two agreeing grounded verdicts reach a close request; every other case labels or holds (spec/slopbot/closure.md, "Only the author\'s own authenticated run for the exact PR supplies participation authority"; spec/slopbot/closure.md, "Two independent grounded verdicts with the same category are required before any close"; spec/slopbot/closure.md, "Closing also needs current production activation, a qualified category and every independent gate"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope and missing evidence are label-only"; spec/slopbot/closure.md, "A restricted project permits only an authorized security comment and the confirmed scam label"; spec/slopbot/closure.md, "A decision is recorded once and keeps its scope, verdicts and outcome"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/contributor/openedRun.md, "One invocation validates the PR, reuses its own run and records one exact event")', () => effect {
+  it.effect('Only an active member\'s own run, saved consent, a qualified activation and two agreeing grounded verdicts reach a close request, commented and labeled first; every other case labels or holds (spec/slopbot/closure.md, "Only the author\'s own authenticated run for the exact PR supplies participation authority"; spec/slopbot/closure.md, "Two independent grounded verdicts with the same category are required before any close"; spec/slopbot/closure.md, "Closing also needs current production activation, a qualified category and every independent gate"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model\'s missing-evidence finding is a label"; spec/slopbot/closure.md, "A restricted project permits only an authorized security comment and the confirmed scam label"; spec/slopbot/closure.md, "A decision is recorded once and keeps its scope, verdicts and outcome"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/contributor/openedRun.md, "One invocation validates the PR, reuses its own run and records one exact event")', () => effect {
     const area = try Area
     const { fake, providers, items, net } = try World
     try installed(area)
@@ -293,7 +293,7 @@ layer(Closure, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       },
       calls: ["mia", "mia", "copy", "unk", "asg", "dis", "dis", "ida", "sec"],
       writes: {
-        mia: { comments: [], labels: [], state: "open" },
+        mia: { comments: ["**Slopbot review:** `spam`"], labels: ["slopbot: spam"], state: "open" },
         copy: { comments: ["**Slopbot review:** `spam`"], labels: ["slopbot: spam"], state: "open" },
         boss: { comments: [], labels: [], state: "open" },
         unk: { comments: ["**Slopbot review:** `spam`"], labels: ["slopbot: spam"], state: "open" },
@@ -310,7 +310,7 @@ layer(Closure, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         "_This item was not closed: author is not eligible for automatic closure._",
         "_This item was not closed: contributor work is paused; security review only._",
       ],
-      actions: 11,
+      actions: 13,
       unexpected: [0, 0, 0],
     })
   })
@@ -352,7 +352,7 @@ layer(Closure, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       shadows: try area.sql("SELECT COUNT(*) AS n FROM slopbot_quality_shadow"),
       unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
     }, {
-      launch: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false }, enabled: false, journal: 0 },
+      launch: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false, evidenceEnabled: false }, enabled: false, journal: 0 },
       forged: { kind: "settled", result: "labeled (spam)" },
       forgedWrites: { comments: ["**Slopbot review:** `spam`"], labels: ["slopbot: spam"], state: "open" },
       forgedReason: "_This item was not closed: author is not eligible for automatic closure._",
@@ -364,7 +364,7 @@ layer(Closure, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       off: { kind: "settled", result: "labeled (spam)" },
       offWrites: { comments: ["**Slopbot review:** `spam`"], labels: ["slopbot: spam"], state: "open" },
       offReason: "_This item was not closed: closure is disabled for Slopbot (pending production activation)._",
-      launchAfter: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false }, enabled: false, journal: 0 },
+      launchAfter: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false, evidenceEnabled: false }, enabled: false, journal: 0 },
       shadows: [{ n: 0 }],
       unexpected: [0, 0, 0],
     })

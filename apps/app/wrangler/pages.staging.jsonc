@@ -10,7 +10,9 @@
     "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855",
     "MONTHLY_PAYMENT_SCHEDULE": "{\"firstPeriod\":\"2026-11\",\"cutoffSecondsAfterPeriodEnd\":259200}",
     "PAYMENT_NETWORKS": "[\"base-sepolia\",\"ethereum-sepolia\",\"robinhood-testnet\",\"solana-devnet\"]",
-    "SLOP_PRIVATE_INTAKE_MODE": "on"
+    "SLOP_PRIVATE_INTAKE_MODE": "on",
+    "SECURITY_ROUTINE_DECISIONS": "off",
+    "SECURITY_REPORT_DEPOSIT": "off"
   },
   "d1_databases": [
     {
@@ -27,7 +29,7 @@
   "services": [
     { "binding": "SLOPBOT", "service": "slop-repository-access-staging" },
     { "binding": "SLOPBOT_VALUE_IMPORT", "service": "slop-repository-access-staging", "entrypoint": "HistoricalValuePublisher" },
-    { "binding": "SANDBOX", "service": "slop-vetting-sandbox-staging" },
+    { "binding": "VETTING_SANDBOX", "service": "slop-vetting-sandbox-staging" },
     { "binding": "SLOP_IDENTITY", "service": "slop-identity-staging" }
   ],
   "env": {
@@ -47,7 +49,9 @@
     "GITHUB_INTAKE_APP_CLIENT_SECRET",
     "GITHUB_INTAKE_APP_ID",
     "GITHUB_INTAKE_APP_PRIVATE_KEY",
+    "OPERATOR_FEED_TOKEN",
     "PAYMENT_RPC_URLS",
+    "POINTS_PROTECTION_TOKEN",
     "REWARD_RPC_SOLANA",
     "SLOP_GITHUB_READ_TOKEN",
     "SLOP_INTAKE_GRANT_KEY",

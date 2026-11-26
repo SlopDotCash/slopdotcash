@@ -1,0 +1,849 @@
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"
+import { isoAt } from "@repo/platform/clock"
+import { D1, type Statement, rows, sql } from "@repo/platform/d1"
+import { gitBytes, publicGitArguments, withPublicGitObjects } from "@repo/platform/git"
+import { lossyText, parsedJson, sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import type { Journal } from "../../kernels/records/canonical.ts"
+import { batchDigest } from "../../kernels/records/ids.vibe"
+import { importStatements } from "../../publication/import.vibe"
+import { protectionEvidence } from "../../publication/protection.vibe"
+import { batchRecorded, isExtension } from "../apply/apply.vibe"
+import type { FreezeEvidence } from "../../../gen/points__periods.ts"
+import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
+import { instantOf } from "../../kernels/records/instants.ts"
+import { numstatFiles, readPullRequestGitFiles } from "../../collect/merged/files.vibe"
+import type { CorrectionFile, CorrectionSource } from "../apply/manifest.vibe"
+import type { AcceptanceOrder } from "../../../gen/points__reviewedHistory.ts"
+import { type AuditedSource, type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type PacketSquash, type ReviewedRefused, type SourceAudit, digestPattern, digestText, githubIdPattern, historicalFrom, historicalThrough, matchesCarriedAcceptance, pullUrl, refusal, require, shaPattern } from "./packet.vibe"
+import { type HistoricalAssessmentJournalHeads, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition } from "./audit/catalog.vibe"
+
+schema CensusRepository { readonly id: string }
+schema CensusNode { readonly id: string; readonly number: number; readonly headRefOid: string; readonly mergedAt: string; readonly repository: CensusRepository }
+schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
+schema CensusSearch { readonly issueCount: number; readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<CensusNode> }
+schema CensusPage { readonly search: CensusSearch }
+export schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name: string }
+schema PullUser { readonly node_id: string; readonly type: string }
+schema PullRef { readonly sha: string }
+schema Pull {
+  readonly node_id: string
+  readonly user: PullUser
+  readonly head: PullRef
+  readonly base: PullRef
+  readonly commits: number
+  readonly merged_at: string | null
+  readonly merge_commit_sha: string | null
+}
+schema CommitAuthor { readonly node_id: string; readonly type: string }
+schema PullCommit { readonly sha: string; readonly parents: ReadonlyArray<PullRef>; readonly author: CommitAuthor | null }
+schema ComparePage { readonly total_commits: number; readonly commits: ReadonlyArray<PullCommit> }
+schema MergeCommitOid { readonly oid: string }
+schema PromotionNode { readonly id: string; readonly headRefOid: string; readonly mergedAt: string; readonly repository: CensusRepository; readonly mergeCommit: MergeCommitOid | null }
+schema PromotionAnswer { readonly node: PromotionNode | null }
+schema SquashActor { readonly __typename: string; readonly login: string; readonly id?: string }
+schema SquashAuthor { readonly user: SquashActor | null }
+schema PageInfoNext { readonly hasNextPage: boolean }
+schema ParentNodes { readonly nodes: ReadonlyArray<MergeCommitOid>; readonly pageInfo: PageInfoNext }
+schema SquashMerge { readonly oid: string; readonly author: SquashAuthor; readonly parents: ParentNodes }
+schema NamedRepository { readonly id: string; readonly nameWithOwner: string }
+schema SquashNode {
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly merged: boolean
+  readonly mergedAt: string
+  readonly headRefOid: string
+  readonly repository: NamedRepository
+  readonly author: SquashActor | null
+  readonly mergeCommit: SquashMerge | null
+}
+schema SquashAnswer { readonly nodes: ReadonlyArray<SquashNode | null> }
+schema GitHubUser { readonly id: number; readonly node_id: string; readonly login: string }
+schema PermissionUser { readonly id: number }
+schema PermissionAnswer { readonly permission: string; readonly user: PermissionUser }
+schema StewardAccount { readonly type: string; readonly actorId: string; readonly nodeId: string; readonly login: string }
+schema Steward { readonly github: StewardAccount }
+schema AuthorityRepository { readonly repositoryId: string; readonly repositoryNodeId: string }
+schema PolicyRepository { readonly githubUrl: string }
+schema OwnerPolicy { readonly steward: Steward; readonly authority: AuthorityRepository; readonly repositories: ReadonlyArray<PolicyRepository> }
+schema RepositoryOwner { readonly id: number; readonly node_id: string; readonly type: string; readonly login: string }
+schema RepositoryFacts { readonly id: number; readonly node_id: string; readonly full_name: string; readonly private: boolean; readonly owner: RepositoryOwner }
+schema Generation { readonly generation: number }
+schema RecordRow { readonly record_json: string; readonly record_digest: string }
+schema ReviewedBase { readonly sha: string; readonly ref?: string; readonly repo?: PublicRepository | null }
+schema ReviewedPull {
+  readonly number: number
+  readonly node_id: string
+  readonly state: string
+  readonly html_url: string
+  readonly user: PullUser | null
+  readonly head: PullRef
+  readonly base: ReviewedBase
+  readonly commits: number
+  readonly changed_files?: number
+  readonly merged_at: string | null
+  readonly merge_commit_sha: string | null
+}
+schema Comparison { readonly status?: string; readonly behind_by?: number; readonly base_commit?: PullRef | null; readonly merge_base_commit?: PullRef | null }
+schema BranchObject { readonly sha: string; readonly type: string }
+schema BranchRef { readonly ref: string; readonly object: BranchObject }
+schema RecordedCommit { readonly sha: string; readonly author: CommitAuthor | null }
+
+export type RetirementScope = Pick<HistoricalPacket, "sourceAudit" | "duplicateRetirements">
+
+type PulledSource = Pick<CorrectionSource, "sourceId" | "sourceUrl" | "headSha" | "occurredAt" | "repositoryNodeId">
+
+interface IdenticalFlags {
+  readonly sharedMerge: boolean
+  readonly emptySquash: boolean
+  readonly surviving: boolean
+  readonly carried: boolean
+}
+
+interface CheckedPull {
+  readonly source: CorrectionSource
+  readonly mergeSha: string
+  readonly pull: ReviewedPull
+}
+
+interface IdenticalPlan {
+  readonly retirement: PacketRetirement
+  readonly proof: IdenticalAcceptedChange
+  readonly kind: IdenticalFlags
+  readonly earlier: CheckedPull
+  readonly later: CheckedPull
+  readonly branchTip: string | undefined
+}
+
+export interface CarrierPin { readonly ref: string; readonly tip: string }
+
+export interface VerifiedIdenticalChanges {
+  readonly identical: ReadonlySet<string>
+  readonly repository: PublicRepository | undefined
+  readonly pins: ReadonlyArray<CarrierPin>
+}
+
+export const historicalMonths: ReadonlyArray<string> = ["2026-09", "2026-10"]
+
+const censusQuery = "query HistoricalPointsCensus($query:String!,$after:String){search(query:$query,type:ISSUE,first:100,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{...on PullRequest{id number headRefOid mergedAt repository{id}}}}}"
+const promotionQuery = "query HistoricalPromotionMerge($id:ID!){node(id:$id){...on PullRequest{id headRefOid mergedAt repository{id} mergeCommit{oid}}}}"
+const squashQuery = "query HistoricalAcceptedSquashes($ids:[ID!]!){nodes(ids:$ids){...on PullRequest{id number url merged mergedAt headRefOid repository{id nameWithOwner} author{__typename login ...on User{id} ...on Bot{id}} mergeCommit{oid author{user{__typename id login}} parents(first:10){nodes{oid} pageInfo{hasNextPage}}}}}}"
+const pageSize = 100
+const nativeFailed = "Native Git object read failed"
+const rangeLimit = 64 * 1024 * 1024
+const diffLimit = 256 * 1024 * 1024
+const isOwnerPolicy = Schema.is(OwnerPolicy)
+const ownerUnavailable = "Current owner permission unavailable"
+
+function iso(value: string | null) {
+  return value === null ? "" : new Date(value).toISOString()
+}
+
+effect function mergedRange(from: number, through: number) {
+  return `merged:${(try isoAt(from)).replace(".000Z", "Z")}..${(try isoAt(through)).replace(".000Z", "Z")}`
+}
+
+effect function censusRange(repository: string, repositoryNodeId: string, from: string, through: string): AuditedSource[]!(ReviewedRefused | GitHubFailure)!GitHub {
+  const github = try GitHub
+  const rowsFound: AuditedSource[] = []
+  let cursor: string | null = null
+  let total: number | undefined
+  do {
+    const query = `repo:${repository} is:pr is:merged ${try mergedRange(Date.parse(from), Date.parse(through) - 1000)}`
+    const page: CensusSearch = (try github.graphql(censusQuery, { query, after: cursor }, CensusPage)).search
+    try require(Number.isSafeInteger(page.issueCount) && (total === undefined || total === page.issueCount), "Historical census count changed")
+    total = page.issueCount
+    if (total >= 1000) {
+      const start = Date.parse(from)
+      const end = Date.parse(through)
+      try require(end - start > 1000, "Historical census cannot be split further")
+      const middle = new Date(Math.floor((start + end) / 2000) * 1000).toISOString()
+      const combined = [...(try censusRange(repository, repositoryNodeId, from, middle)), ...(try censusRange(repository, repositoryNodeId, middle, through))]
+      try require(combined.length === total && new Set(combined.map((row) => row.id)).size === total, "Historical split census changed")
+      return combined
+    }
+    for (const node of page.nodes) {
+      try require(node.repository.id === repositoryNodeId, "Historical census repository changed")
+      const mergedAt = iso(node.mergedAt)
+      try require(node.id !== "" && Number.isSafeInteger(node.number) && node.number > 0 && /^[a-f0-9]{40}$/u.test(node.headRefOid) && mergedAt >= from && mergedAt < through,
+        "Historical census source is invalid")
+      rowsFound.push({ id: node.id, number: node.number, headSha: node.headRefOid, mergedAt })
+    }
+    const next: PageInfo = page.pageInfo
+    try require(!next.hasNextPage || (next.endCursor !== null && next.endCursor !== cursor), "Historical census pagination failed")
+    cursor = next.hasNextPage ? next.endCursor : null
+  } while (cursor !== null)
+  try require(rowsFound.length === total && new Set(rowsFound.map((row) => row.id)).size === total, "Historical census incomplete")
+  return rowsFound
+}
+
+export effect function historicalSourceAudit(repository: string, repositoryNodeId: string) {
+  const sources = try censusRange(repository, repositoryNodeId, historicalFrom, historicalThrough)
+  try require(sources.length > 0 && new Set(sources.map(({ number }) => number)).size === sources.length, "Historical census pull request numbers are invalid")
+  return { repository, repositoryNodeId, from: historicalFrom, through: historicalThrough, sources: [...sources].sort((left, right) => left.number - right.number) } satisfies SourceAudit
+}
+
+export effect function verifyHistoricalCensus(packet: HistoricalPacket) {
+  const found = try censusRange(packet.sourceAudit.repository, packet.sourceAudit.repositoryNodeId, packet.sourceAudit.from, packet.sourceAudit.through)
+  const ordered = (list: ReadonlyArray<AuditedSource>) => JSON.stringify([...list].sort((left, right) => left.id.localeCompare(right.id)).map((row) => ({ id: row.id, number: row.number, headSha: row.headSha, mergedAt: row.mergedAt })))
+  try require(ordered(found) === ordered(packet.sourceAudit.sources), "Reviewed historical census changed")
+}
+
+effect function pullCommits(root: string, path: string, pull: Pull) {
+  const github = try GitHub
+  const observed = try github.pages(`${path}/commits`, PullCommit, { perPage: pageSize, maxPages: 3 })
+  const complete: PullCommit[] = []
+  const ids = new Set<string>()
+  for (let page = 1; page <= Math.ceil(pull.commits / pageSize); page += 1) {
+    const batch = try github.json(`${root}/compare/${pull.base.sha}...${pull.head.sha}?per_page=${pageSize}&page=${page}`, ComparePage)
+    try require(batch.total_commits === pull.commits, "Comparison cannot reconcile the reported PR commit count")
+    for (const commit of batch.commits) {
+      try require(/^[a-f0-9]{40}$/u.test(commit.sha) && !ids.has(commit.sha), "Comparison contains an invalid or repeated commit")
+      ids.add(commit.sha)
+      complete.push(commit)
+    }
+  }
+  try require(complete.length === pull.commits && observed.every((commit) => ids.has(commit.sha)), "Comparison commit range does not cover the observed PR commits")
+  return complete
+}
+
+function samePull(current: Pull, pull: Pull, withUser: boolean) {
+  return current.node_id === pull.node_id && current.head.sha === pull.head.sha && current.base.sha === pull.base.sha && current.commits === pull.commits &&
+    current.merged_at === pull.merged_at && current.merge_commit_sha === pull.merge_commit_sha &&
+    (!withUser || (current.user.node_id === pull.user.node_id && current.user.type === pull.user.type))
+}
+
+effect function publicGitBytes(directory: string, args: ReadonlyArray<string>, refusalText: string, limit = 1024 * 1024, seconds = 120) {
+  return try gitBytes({ args: publicGitArguments(directory, args), env: { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory }, limit, seconds }, refusalText)
+}
+
+effect function publicGit(directory: string, args: ReadonlyArray<string>, refusalText = "Earlier automatic merge tree changed", limit = 1024 * 1024) {
+  return (utf8Text(try publicGitBytes(directory, args, refusalText, limit)) ?? "").trim()
+}
+
+effect function verifyCarriedPromotion(repository: PublicRepository, pull: Pull, source: CorrectionSource) {
+  const mergeSha = pull.merge_commit_sha ?? ""
+  try require(shaPattern.test(mergeSha), "Accepted promotion merge is unavailable")
+  const expected = new Set(source.commits.map(({ sha, parentShas }) => [sha, ...(parentShas ?? [])].join(" ")))
+  const limit = [...expected].reduce((bytes, line) => bytes + line.length + 1, 1024 * 1024)
+  try withPublicGitObjects(repository, [mergeSha], (directory) => effect {
+    const parents = (try publicGit(directory, ["show", "--no-patch", "--format=%P", mergeSha], nativeFailed)).split(" ")
+    const acceptedTree = try publicGit(directory, ["rev-parse", `${mergeSha}^{tree}`], nativeFailed)
+    const [first = "", second = ""] = parents
+    try require(parents.length === 2 && second === pull.head.sha && parents.every((parent) => shaPattern.test(parent)), "Carried acceptance promotion has different parents")
+    const members = (try publicGit(directory, ["rev-list", "--parents", second, `^${first}`, "--"], nativeFailed, limit)).split("\n")
+    try require(members.length === expected.size && members.every((member) => expected.delete(member)), "Carried acceptance promotion has different native members")
+    const automatic = try publicGit(directory, ["merge-tree", "--write-tree", "--no-messages", first, second], nativeFailed)
+    try require(automatic === acceptedTree, "Carried acceptance promotion has independent merge changes")
+  })
+}
+
+export effect function verifyHistoricalAcceptedSquashes(packet: HistoricalPacket) {
+  const github = try GitHub
+  const root = `/repos/${packet.sourceAudit.repository}`
+  const retirements = packet.duplicateRetirements ?? []
+  for (const retirement of retirements) {
+    const proof = retirement.earlierAcceptanceProof
+    if (proof === undefined) continue
+    const repository = try github.json(root, PublicRepository)
+    try require(repository.node_id === retirement.source.repositoryNodeId, "Earlier acceptance repository changed")
+    const automatic = proof.contextSources.filter((source) => source.automaticMerge !== undefined)
+    if (automatic.length > 0) {
+      try withPublicGitObjects(repository, automatic.flatMap((source) => [source.headSha, source.mergeSha]), (directory) => effect {
+        for (const source of automatic) {
+          const expected = source.automaticMerge
+          try require(expected !== undefined, "Earlier automatic merge proof is missing")
+          const merged = try publicGit(directory, ["merge-tree", "--write-tree", "--no-messages", expected?.baseParentSha ?? "", source.headSha])
+          try require(merged === expected?.automaticTree, "Earlier automatic merge tree changed")
+          const tree = try publicGit(directory, ["rev-parse", `${source.mergeSha}^{tree}`])
+          try require(tree === expected?.automaticTree, "Earlier accepted merge tree changed")
+        }
+      })
+    }
+    for (const source of retirement.earlierSources) {
+      const audit = packet.sourceAudit.sources.find((row) => row.id === source.sourceId)
+      const context = proof.contextSources.find((row) => row.id === source.sourceId)
+      const number = audit?.number ?? context?.number
+      try require(number !== undefined, "Earlier acceptance source is unavailable")
+      const path = `${root}/pulls/${number ?? 0}`
+      const pull = try github.json(path, Pull)
+      try require(pull.node_id === source.sourceId && pull.head.sha === source.headSha && pull.base.sha === context?.baseSha && pull.commits === source.commitCount &&
+        pull.merged_at !== null && iso(pull.merged_at) === source.occurredAt && (context === undefined || pull.merge_commit_sha === context.mergeSha) &&
+        pull.user.node_id === source.author?.id && pull.user.type === source.author.kind, "Earlier acceptance source changed")
+      const commits = new Map((try pullCommits(root, path, pull)).map((commit) => [commit.sha, commit] as const))
+      try require(commits.size === source.commits.length && source.commits.every((commit) => {
+        const current = commits.get(commit.sha)
+        return current !== undefined && JSON.stringify(current.parents.map((parent) => parent.sha)) === JSON.stringify(commit.parentShas) &&
+          current.author?.node_id === commit.author?.id && current.author?.type === commit.author?.kind
+      }), "Earlier acceptance source omits or substitutes a commit")
+      try require(samePull(try github.json(path, Pull), pull, true), "Earlier acceptance changed during collection")
+    }
+  }
+  for (const retirement of retirements) {
+    if ((retirement.acceptedSquashes?.length ?? 0) === 0 && retirement.earlierAcceptanceProof === undefined) continue
+    const promotion = retirement.acceptedPromotion
+    const node = (try github.graphql(promotionQuery, { id: retirement.sourceId }, PromotionAnswer)).node
+    try require(promotion !== undefined && node?.id === retirement.sourceId && node.headRefOid === retirement.source.headSha &&
+      node.repository.id === retirement.source.repositoryNodeId && iso(node.mergedAt) === retirement.source.occurredAt && node.mergeCommit?.oid === promotion.mergeSha,
+      "Accepted promotion source changed")
+  }
+  for (const retirement of retirements) {
+    if ((retirement.acceptedSquashes?.length ?? 0) === 0 && retirement.earlierAcceptanceProof === undefined) continue
+    const audited = packet.sourceAudit.sources.find((source) => source.id === retirement.sourceId)
+    try require(audited !== undefined, "Promotion source is outside the audit")
+    const path = `${root}/pulls/${audited?.number ?? 0}`
+    const repository = try github.json(root, PublicRepository)
+    const pull = try github.json(path, Pull)
+    const proof = retirement.earlierAcceptanceProof
+    try require(repository.node_id === retirement.source.repositoryNodeId && pull.node_id === retirement.sourceId && pull.head.sha === retirement.source.headSha &&
+      pull.merge_commit_sha === retirement.acceptedPromotion?.mergeSha && pull.merged_at !== null && iso(pull.merged_at) === retirement.source.occurredAt &&
+      pull.commits === retirement.source.commitCount &&
+      (proof === undefined || (pull.base.sha === proof.sourceBaseSha && pull.user.node_id === retirement.source.author?.id && pull.user.type === retirement.source.author.kind)),
+      "Accepted promotion membership changed")
+    const commits = new Map((try pullCommits(root, path, pull)).map((commit) => [commit.sha, commit] as const))
+    const head = commits.get(retirement.source.headSha)
+    const headParents = (/^tree [a-f0-9]{40}\n((?:parent [a-f0-9]{40}\n)*)/u.exec(retirement.acceptedPromotion?.headCommit ?? "")?.[1] ?? "").trim().split("\n").filter((line) => line !== "").map((line) => line.slice(7))
+    try require(commits.size === retirement.source.commits.length && head !== undefined && JSON.stringify(head.parents.map((parent) => parent.sha)) === JSON.stringify(headParents) &&
+      retirement.source.commits.every((commit) => {
+        const current = commits.get(commit.sha)
+        return JSON.stringify(current?.parents.map((parent) => parent.sha)) === JSON.stringify(commit.parentShas) &&
+          (proof === undefined || (current?.author?.node_id === commit.author?.id && current?.author?.type === commit.author?.kind))
+      }), "Accepted promotion source omits or substitutes a commit")
+    if ((proof?.acceptedMergeEdges?.length ?? 0) > 0) try verifyCarriedPromotion(repository, pull, retirement.source)
+    try require(samePull(try github.json(path, Pull), pull, proof !== undefined), "Accepted promotion changed during collection")
+  }
+  const sources = new Map<string, PacketSquash>()
+  for (const retirement of retirements) {
+    for (const source of retirement.acceptedSquashes ?? []) {
+      const prior = sources.get(source.sourceId)
+      try require(prior === undefined || JSON.stringify(prior) === JSON.stringify(source), "Conflicting accepted squash identity")
+      sources.set(source.sourceId, source)
+    }
+  }
+  const listed = [...sources.values()]
+  for (let offset = 0; offset < listed.length; offset += 50) {
+    const batch = listed.slice(offset, offset + 50)
+    const nodes = (try github.graphql(squashQuery, { ids: batch.map((source) => source.sourceId) }, SquashAnswer)).nodes
+    try require(nodes.length === batch.length, "Accepted squash source unavailable")
+    for (const [index, source] of batch.entries()) {
+      const current = nodes[index]
+      const committer = current?.mergeCommit?.author.user
+      const committerKind = committer?.login.endsWith("[bot]") === true ? "Bot" : committer?.__typename
+      try require(current !== null && current !== undefined && current.id === source.sourceId && current.merged && current.headRefOid === source.headSha &&
+        iso(current.mergedAt) === source.occurredAt && current.url === source.sourceUrl && current.repository.id === source.repositoryNodeId &&
+        current.repository.nameWithOwner.toLowerCase() === packet.sourceAudit.repository.toLowerCase() && current.author?.id === source.author?.id &&
+        current.author?.__typename === source.author?.kind && current.mergeCommit?.oid === source.commit.sha && committer?.id === source.commit.author?.id &&
+        committerKind === source.commit.author?.kind && current.mergeCommit?.parents.pageInfo.hasNextPage === false &&
+        JSON.stringify(current.mergeCommit.parents.nodes.map((parent) => parent.oid)) === JSON.stringify(source.commit.parentShas), "Accepted squash source changed")
+    }
+  }
+}
+
+effect function found<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S) {
+  const github = try GitHub
+  const value = github.json(path, schema) catch effect (error) => {
+    if (error._tag === "NotFound") return undefined
+    throw error
+  }
+  return value
+}
+
+export effect function verifyHistoricalDuplicateAcceptanceOrder(packet: RetirementScope) {
+  const orders = new Map<string, ReadonlyArray<AcceptanceOrder>>()
+  const retirements = (packet.duplicateRetirements ?? []).filter((item) => item.identicalAcceptedChange === undefined && item.netOutcome === undefined)
+  if (retirements.length === 0) return orders
+  const audit = packet.sourceAudit
+  const root = `/repos/${audit.repository}`
+  const repository = try found(root, PublicRepository)
+  try require(repository?.node_id === audit.repositoryNodeId && !repository.private && repository.full_name.toLowerCase() === audit.repository.toLowerCase(), "Duplicate acceptance repository changed")
+  const audited = new Map(audit.sources.map((row) => [row.id, row] as const))
+  const pulls = new Map<number, ReviewedPull | undefined>()
+  const checked = new Set<string>()
+  effect function readSource(source: PulledSource, number: number | undefined, expected: ReadonlyArray<string | undefined>) {
+    if (number === undefined || !Number.isSafeInteger(number) || number <= 0 || source.repositoryNodeId !== audit.repositoryNodeId || source.sourceUrl !== pullUrl(audit.repository, number)) {
+      throw refusal("Duplicate acceptance source is outside the reviewed scope")
+    }
+    if (!pulls.has(number)) pulls.set(number, try found(`${root}/pulls/${number}`, ReviewedPull))
+    const pull = pulls.get(number)
+    if (pull === undefined || pull.number !== number || pull.node_id !== source.sourceId || pull.state !== "closed" || pull.html_url !== source.sourceUrl ||
+      pull.head.sha !== source.headSha || !shaPattern.test(pull.head.sha) || pull.merged_at === null || iso(pull.merged_at) !== source.occurredAt ||
+      pull.merge_commit_sha === null || !shaPattern.test(pull.merge_commit_sha) || expected.some((merge) => merge !== undefined && merge !== pull.merge_commit_sha)) {
+      throw refusal("Duplicate acceptance source changed")
+    }
+    return { head: pull.head.sha, merge: pull.merge_commit_sha }
+  }
+  for (const retirement of retirements) {
+    const retired = try readSource(retirement.source, audited.get(retirement.sourceId)?.number, [retirement.acceptedPromotion?.mergeSha, retirement.unchangedPromotion?.merge.sha])
+    const order: AcceptanceOrder[] = []
+    const sources: ReadonlyArray<PulledSource> = [...retirement.earlierSources, ...(retirement.acceptedSquashes ?? [])]
+    for (const source of sources) {
+      const context = retirement.earlierAcceptanceProof?.contextSources.find((row) => row.id === source.sourceId)
+      const squash = retirement.acceptedSquashes?.find((row) => row.sourceId === source.sourceId)
+      const earlier = try readSource(source, audited.get(source.sourceId)?.number ?? context?.number, [context?.mergeSha, squash?.commit.sha])
+      const sameMerge = retired.merge === earlier.merge
+      for (const revision of sameMerge ? [] : [...new Set([earlier.head, earlier.merge])]) {
+        const pair = `${retired.merge}...${revision}`
+        if (checked.has(pair)) continue
+        const comparison = try found(`${root}/compare/${pair}?per_page=1&page=1`, Comparison)
+        const common = comparison?.merge_base_commit?.sha
+        const behind = comparison?.behind_by
+        const status = comparison?.status
+        if (comparison?.base_commit?.sha !== retired.merge || common === undefined || !shaPattern.test(common) || behind === undefined || !Number.isSafeInteger(behind) || behind < 0) {
+          throw refusal("Duplicate acceptance ancestry is unavailable")
+        }
+        if ((status === "ahead" || status === "identical") && behind === 0 && common === retired.merge) throw refusal("Earlier source already carries the retiring PR's merge")
+        if ((status !== "behind" && status !== "diverged") || behind === 0 || common === retired.merge) throw refusal("Duplicate acceptance ancestry is inconsistent")
+        checked.add(pair)
+      }
+      order.push({ sameMerge, ancestryKnown: true, carriesRetiringMerge: false })
+    }
+    orders.set(digestText(retirement), order)
+  }
+  return orders
+}
+
+function identicalKind(proof: IdenticalAcceptedChange): IdenticalFlags {
+  return { sharedMerge: proof.earlierMergeSha === proof.mergeSha, emptySquash: proof.emptySquash === true, surviving: proof.survivingCarrier === true, carried: proof.carriedAcceptance === true }
+}
+
+function sameRepository(repository: PublicRepository, other: PublicRepository | null | undefined) {
+  return other?.node_id === repository.node_id && other.id === repository.id && other.private === false && repository.private === false &&
+    other.full_name.toLowerCase() === repository.full_name.toLowerCase()
+}
+
+effect function readBranchTip(root: string, repository: PublicRepository, ref: string) {
+  const branch = try found(`${root}/git/ref/heads/${ref.split("/").map(encodeURIComponent).join("/")}`, BranchRef)
+  const current = try found(root, PublicRepository)
+  if (branch === undefined || branch.ref !== `refs/heads/${ref}` || branch.object.type !== "commit" || !shaPattern.test(branch.object.sha) || !sameRepository(repository, current)) {
+    throw refusal("Surviving carrier branch is unavailable")
+  }
+  return branch.object.sha
+}
+
+effect function identicalPull(packet: RetirementScope, root: string, repository: PublicRepository, kind: IdenticalFlags, source: CorrectionSource, mergeSha: string) {
+  const audit = packet.sourceAudit.sources.find((row) => row.id === source.sourceId)
+  if (audit === undefined) throw refusal("Identical change is outside the reviewed census")
+  const pull = try found(`${root}/pulls/${audit.number}`, ReviewedPull)
+  const strict = kind.emptySquash || kind.sharedMerge || kind.surviving || kind.carried
+  if (pull === undefined || ((kind.surviving || kind.carried) && !sameRepository(repository, pull.base.repo)) || pull.node_id !== source.sourceId || pull.number !== audit.number ||
+    pull.head.sha !== source.headSha || !shaPattern.test(pull.head.sha) || !shaPattern.test(pull.base.sha) || pull.merge_commit_sha !== mergeSha || pull.merged_at === null ||
+    iso(pull.merged_at) !== source.occurredAt || pull.commits !== source.commitCount ||
+    (strict && (pull.state !== "closed" || pull.html_url !== source.sourceUrl || pull.user?.node_id !== source.author?.id || pull.user?.type !== source.author?.kind))) {
+    throw refusal("Reviewed identical change source changed")
+  }
+  return pull
+}
+
+effect function verifyOriginalAuthor(root: string, source: CorrectionSource) {
+  const [original] = source.commits
+  if (original === undefined) throw refusal("Surviving carrier original commit author changed")
+  const recorded = try found(`${root}/commits/${original.sha}`, RecordedCommit)
+  if (recorded === undefined || recorded.sha !== original.sha || recorded.author?.node_id !== source.author?.id || recorded.author?.type !== "User") {
+    throw refusal("Surviving carrier original commit author changed")
+  }
+}
+
+effect function isAncestor(directory: string, ancestor: string, descendant: string) {
+  return (try publicGit(directory, ["rev-list", "--count", ancestor, `^${descendant}`], nativeFailed)) === "0"
+}
+
+effect function diffDigest(directory: string, base: string, head: string, paths: ReadonlyArray<string> = []) {
+  return sha256Of(try publicGitBytes(directory, ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--", ...paths], nativeFailed, diffLimit))
+}
+
+effect function matchesRange(directory: string, head: string, base: string, source: CorrectionSource) {
+  const lines = (try publicGit(directory, ["rev-list", "--parents", head, `^${base}`], nativeFailed, rangeLimit)).split("\n")
+  const range = new Map(lines.map((line) => {
+    const [id = "", ...parents] = line.split(" ")
+    return [id, parents] as const
+  }))
+  return range.size === source.commits.length && range.size === new Set(source.commits.map(({ sha }) => sha)).size &&
+    source.commits.every((member) => range.has(member.sha) && JSON.stringify(range.get(member.sha)) === JSON.stringify(member.parentShas))
+}
+
+effect function squashFiles(directory: string, head: string, mergeSha: string, parent: string) {
+  if (parent === head || ![head, mergeSha, parent].every((sha) => shaPattern.test(sha))) throw refusal("Reviewed squash requires an exact one-parent accepted commit")
+  if ((try publicGit(directory, ["cat-file", "-t", mergeSha], nativeFailed)) !== "commit") throw refusal("Accepted merge object is not a native commit")
+  if ((try publicGit(directory, ["show", "-s", "--format=%P", mergeSha, "--"], nativeFailed)) !== parent) throw refusal("Git merge parents differ from the accepted source")
+  const bases = (try publicGit(directory, ["merge-base", "--all", parent, head], nativeFailed)).split("\n")
+  const [mergeBase = ""] = bases
+  if (bases.length !== 1 || !shaPattern.test(mergeBase)) throw refusal("A unique submitted merge base is required")
+  if ((try diffDigest(directory, parent, mergeSha)) !== (try diffDigest(directory, mergeBase, head))) throw refusal("Accepted Git file changes differ from the submitted source")
+  return try numstatFiles(try publicGitBytes(directory, [`--attr-source=${head}`, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--numstat", "-z", "--find-renames", "-l0", parent, mergeSha, "--"], nativeFailed, diffLimit))
+}
+
+function fileCounts(files: ReadonlyArray<CorrectionFile>) {
+  return digestText(files.map((file) => [file.path, file.additions, file.deletions] as const).sort((left, right) => left[0].localeCompare(right[0])))
+}
+
+effect function verifyEmptySquash(directory: string, plan: IdenticalPlan) {
+  const { proof } = plan
+  const parents: string[] = []
+  const incomplete = "Empty squash needs complete matching submitted changes"
+  for (const { pull, mergeSha, source } of [plan.earlier, plan.later]) {
+    const [accepted, parent, ...extra] = (try publicGit(directory, ["rev-list", "--parents", "-n", "1", mergeSha], nativeFailed)).split(" ")
+    const [submitted] = source.commits
+    const submittedParent = submitted?.parentShas?.[0] ?? ""
+    const range = try publicGit(directory, ["rev-list", "--parents", pull.head.sha, `^${pull.base.sha}`], nativeFailed)
+    if (accepted !== mergeSha || parent === undefined || !shaPattern.test(parent) || extra.length > 0 || source.commits.length !== 1 || submitted?.sha !== pull.head.sha ||
+      submitted.parentCount !== 1 || submitted.parentShas?.length !== 1 || range !== `${pull.head.sha} ${submittedParent}`) throw refusal(incomplete)
+    if ((try diffDigest(directory, submittedParent, pull.head.sha)) !== proof.diffSha256) throw refusal(incomplete)
+    parents.push(parent ?? "")
+  }
+  const [earlierParent = "", laterParent = ""] = parents
+  const empty = sha256Of("")
+  const [acceptedTree = "", parentTree] = (try publicGit(directory, ["rev-parse", `${proof.mergeSha}^{tree}`, `${laterParent}^{tree}`], nativeFailed)).split("\n")
+  if (!shaPattern.test(acceptedTree) || acceptedTree !== parentTree) throw refusal("Accepted squash changes its first-parent tree")
+  if (proof.diffSha256 === empty || (try diffDigest(directory, earlierParent, proof.earlierMergeSha)) !== proof.diffSha256) {
+    throw refusal("Earlier squash does not match the complete submitted change")
+  }
+  if (!(try isAncestor(directory, proof.earlierMergeSha, laterParent))) throw refusal("Earlier accepted squash is absent from the later base")
+  const listed = lossyText(try publicGitBytes(directory, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", earlierParent, proof.earlierMergeSha, "--"], nativeFailed, diffLimit))
+  const paths = listed.split("\0")
+  const last = paths.pop()
+  const retained = "Later squash base does not retain all earlier accepted paths"
+  if (last !== "" || paths.length === 0 || paths.some((path) => path === "" || path.includes("�")) || new Set(paths).size !== paths.length ||
+    [plan.earlier, plan.later].some(({ pull }) => pull.changed_files !== paths.length)) throw refusal(retained)
+  if ((try diffDigest(directory, proof.earlierMergeSha, laterParent, paths)) !== empty) throw refusal(retained)
+}
+
+effect function verifyAcceptedChanges(directory: string, repository: PublicRepository, plan: IdenticalPlan) {
+  const { proof, kind, retirement } = plan
+  let carriedBaseTree: string | undefined
+  for (const { pull, mergeSha, source } of [plan.earlier, plan.later]) {
+    const [commit, first, second, ...extra] = (try publicGit(directory, ["rev-list", "--parents", "-n", "1", mergeSha], nativeFailed)).split(" ")
+    if (commit !== mergeSha || first === undefined || !shaPattern.test(first) || ((kind.sharedMerge || kind.surviving) && first !== pull.base.sha) ||
+      ((kind.surviving || kind.carried) && second === undefined) || (second !== undefined && second !== pull.head.sha) || extra.length > 0) {
+      throw refusal("Identical change needs the complete accepted merge")
+    }
+    const firstParent = first ?? ""
+    let complete = try matchesRange(directory, pull.head.sha, pull.base.sha, source)
+    if (complete && kind.carried && firstParent !== pull.base.sha) complete = try matchesRange(directory, pull.head.sha, firstParent, source)
+    if (!complete) throw refusal("Identical change has incomplete submitted commits")
+    if (kind.carried) {
+      const baseTree = try publicGit(directory, ["rev-parse", `${firstParent}^{tree}`], nativeFailed)
+      const headTree = try publicGit(directory, ["rev-parse", `${pull.head.sha}^{tree}`], nativeFailed)
+      const acceptedTree = try publicGit(directory, ["rev-parse", `${mergeSha}^{tree}`], nativeFailed)
+      if (headTree !== acceptedTree || (carriedBaseTree !== undefined && carriedBaseTree !== baseTree)) throw refusal("Carried merge has different base or accepted trees")
+      carriedBaseTree = baseTree
+      if (source === retirement.source) {
+        const merged = try publicGit(directory, ["merge-tree", "--write-tree", "--no-messages", firstParent, pull.head.sha], nativeFailed)
+        if (merged !== acceptedTree) throw refusal("Carried merge has independent resolution changes")
+      }
+      if ((try diffDigest(directory, firstParent, mergeSha)) !== proof.diffSha256) throw refusal("Complete accepted changes differ")
+      continue
+    }
+    const changed = try (second === undefined ? squashFiles(directory, pull.head.sha, mergeSha, firstParent)
+      : readPullRequestGitFiles(directory, { repository, head: pull.head.sha, merge: { sha: mergeSha, parents: [{ sha: firstParent }, { sha: second }] } }))
+    if (changed.changedFiles === 0 || changed.changedFiles !== pull.changed_files) throw refusal("Complete accepted changes differ")
+    if ((try diffDigest(directory, firstParent, mergeSha)) !== proof.diffSha256) throw refusal("Complete accepted changes differ")
+    if (kind.sharedMerge || source !== retirement.source) continue
+    const [submitted] = source.commits
+    const files = submitted?.files
+    const differs = "Duplicate submitted commit differs from its accepted change"
+    if (source.commits.length !== 1 || submitted?.sha !== source.headSha || submitted.parentCount !== 1 || submitted.parentShas?.length !== 1 || files === undefined ||
+      files.length !== changed.changedFiles || submitted.additions !== changed.additions || submitted.deletions !== changed.deletions || fileCounts(files) !== fileCounts(changed.files)) {
+      throw refusal(differs)
+    }
+    if ((try diffDigest(directory, submitted.parentShas?.[0] ?? "", submitted.sha)) !== proof.diffSha256) throw refusal(differs)
+  }
+}
+
+effect function verifyNative(directory: string, repository: PublicRepository, plan: IdenticalPlan) {
+  const { proof, kind } = plan
+  if (plan.branchTip !== undefined) {
+    const base = plan.earlier.pull.base.sha
+    const submitted = (try publicGit(directory, ["rev-list", "--first-parent", plan.earlier.pull.head.sha, `^${base}`], nativeFailed, rangeLimit)).split("\n")
+    const integrated = new Set((try publicGit(directory, ["rev-list", "--first-parent", plan.branchTip, `^${base}`], nativeFailed, rangeLimit)).split("\n"))
+    const [carrierTree = "", originalTree] = (try publicGit(directory, ["rev-parse", `${proof.earlierMergeSha}^{tree}`, `${proof.mergeSha}^{tree}`], nativeFailed)).split("\n")
+    if (!submitted.includes(proof.mergeSha) || !integrated.has(proof.earlierMergeSha) || integrated.has(proof.mergeSha) || !shaPattern.test(carrierTree) || carrierTree !== originalTree) {
+      throw refusal("Surviving carrier does not match the published first-parent edge")
+    }
+  } else if (!kind.sharedMerge) {
+    for (const revision of new Set([plan.earlier.pull.head.sha, proof.earlierMergeSha])) {
+      if (try isAncestor(directory, proof.mergeSha, revision)) throw refusal("Earlier source already carries the retiring PR's merge")
+    }
+  }
+  if (kind.emptySquash) try verifyEmptySquash(directory, plan)
+  else try verifyAcceptedChanges(directory, repository, plan)
+}
+
+effect function recheckPlan(packet: RetirementScope, root: string, repository: PublicRepository, plan: IdenticalPlan) {
+  for (const before of [plan.earlier, plan.later]) {
+    const after = try identicalPull(packet, root, repository, plan.kind, before.source, before.mergeSha)
+    if (after.base.sha !== before.pull.base.sha || after.base.ref !== before.pull.base.ref || after.changed_files !== before.pull.changed_files) {
+      throw refusal("Reviewed identical change source changed during verification")
+    }
+  }
+  if (plan.kind.surviving) try verifyOriginalAuthor(root, plan.retirement.source)
+}
+
+effect function identicalPlan(packet: RetirementScope, root: string, repository: PublicRepository, integrationBranch: string, retirement: PacketRetirement, branches: Map<string, { readonly tip: string; readonly retiringMerges: Set<string> }>) {
+  const proof = retirement.identicalAcceptedChange
+  const earlier = retirement.earlierSources.find((source) => source.sourceId === proof?.earlierSourceId)
+  if (proof === undefined || earlier === undefined) throw refusal("Reviewed earlier source is missing")
+  const source = retirement.source
+  const kind = identicalKind(proof)
+  if (!shaPattern.test(proof.earlierMergeSha) || !shaPattern.test(proof.mergeSha) ||
+    (kind.sharedMerge && (kind.emptySquash || earlier.sourceId === source.sourceId || earlier.headSha !== source.headSha)) || !digestPattern.test(proof.diffSha256) ||
+    (proof.survivingCarrier !== undefined && (!kind.surviving || kind.emptySquash || kind.sharedMerge)) ||
+    (proof.carriedAcceptance !== undefined && (!kind.carried || kind.emptySquash || kind.sharedMerge || kind.surviving || !matchesCarriedAcceptance(source, earlier, proof.earlierMergeSha))) ||
+    (proof.emptySquash !== undefined && proof.emptySquash !== true)) {
+    throw refusal("Reviewed identical change identity is invalid")
+  }
+  const earlierPull: CheckedPull = { source: earlier, mergeSha: proof.earlierMergeSha, pull: try identicalPull(packet, root, repository, kind, earlier, proof.earlierMergeSha) }
+  const laterPull: CheckedPull = { source, mergeSha: proof.mergeSha, pull: try identicalPull(packet, root, repository, kind, source, proof.mergeSha) }
+  if (kind.sharedMerge && earlierPull.pull.base.sha !== laterPull.pull.base.sha) throw refusal("Shared acceptance has differing submitted bases")
+  const changedFiles = earlierPull.pull.changed_files
+  if (kind.carried && (changedFiles === undefined || !Number.isSafeInteger(changedFiles) || changedFiles < 1 || changedFiles !== laterPull.pull.changed_files || proof.diffSha256 === sha256Of(""))) {
+    throw refusal("Carried merge has different or empty accepted changes")
+  }
+  let branchTip: string | undefined
+  if (kind.surviving) {
+    const base = earlierPull.pull.base
+    const other = laterPull.pull.base
+    if (base.ref === undefined || base.ref === "" || base.ref !== other.ref || base.sha !== other.sha || base.ref !== integrationBranch) {
+      throw refusal("Surviving carrier needs one reported integration base")
+    }
+    const author = source.author
+    const [original] = source.commits
+    if (author?.kind !== "User" || source.commits.length !== 1 || original === undefined || original.sha !== source.headSha || original.parentCount !== 1 ||
+      original.parentShas?.length !== 1 || original.parentShas[0] !== base.sha || original.author?.id !== author.id || original.author.kind !== "User" ||
+      !earlier.commits.some((commit) => commit.sha === proof.mergeSha) || !earlier.commits.some((commit) => commit.sha === original.sha)) {
+      throw refusal("Surviving carrier needs the original author's commit")
+    }
+    try verifyOriginalAuthor(root, source)
+    let branch = branches.get(base.ref)
+    if (branch === undefined) {
+      branch = { tip: try readBranchTip(root, repository, base.ref), retiringMerges: new Set<string>() }
+      branches.set(base.ref, branch)
+    }
+    branch.retiringMerges.add(proof.mergeSha)
+    branchTip = branch.tip
+  }
+  return { retirement, proof, kind, earlier: earlierPull, later: laterPull, branchTip } satisfies IdenticalPlan
+}
+
+effect function refreshedTip(directory: string, root: string, repository: PublicRepository, ref: string, branch: { readonly tip: string; readonly retiringMerges: ReadonlySet<string> }) {
+  const current = try readBranchTip(root, repository, ref)
+  if (current === branch.tip) return current
+  const changed = "Surviving carrier integration branch changed"
+  try publicGitBytes(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", `--negotiation-tip=${branch.tip}`, `https://github.com/${repository.full_name}.git`, current],
+    "Public Git object acquisition refused", 1024 * 1024, 1800)
+  const added = (try publicGit(directory, ["rev-list", "--parents", "--first-parent", "--exclude-first-parent-only", current, `^${branch.tip}`], nativeFailed, rangeLimit))
+    .split("\n").map((row) => row.split(" "))
+  if (added.at(-1)?.[1] !== branch.tip || added.some(([commit]) => commit !== undefined && branch.retiringMerges.has(commit))) throw refusal(changed)
+  if ((try readBranchTip(root, repository, ref)) !== current) throw refusal(changed)
+  return current
+}
+
+export effect function verifyHistoricalIdenticalAcceptedChanges(packet: RetirementScope, integrationBranch: string) {
+  const candidates = (packet.duplicateRetirements ?? []).filter((retirement) => retirement.identicalAcceptedChange !== undefined)
+  if (candidates.length === 0) return { identical: new Set<string>(), repository: undefined, pins: [] } satisfies VerifiedIdenticalChanges
+  const root = `/repos/${packet.sourceAudit.repository}`
+  const repository = try found(root, PublicRepository)
+  if (repository === undefined || repository.node_id !== packet.sourceAudit.repositoryNodeId || repository.full_name.toLowerCase() !== packet.sourceAudit.repository.toLowerCase()) {
+    throw refusal("Reviewed identical change repository changed")
+  }
+  const branches = new Map<string, { readonly tip: string; readonly retiringMerges: Set<string> }>()
+  const plans: IdenticalPlan[] = []
+  for (const retirement of candidates) plans.push(try identicalPlan(packet, root, repository, integrationBranch, retirement, branches))
+  const objects = new Set<string>()
+  for (const plan of plans) {
+    if (plan.branchTip !== undefined) objects.add(plan.branchTip)
+    for (const { mergeSha, pull } of [plan.earlier, plan.later]) for (const sha of [mergeSha, pull.head.sha, pull.base.sha]) objects.add(sha)
+  }
+  const pins: CarrierPin[] = []
+  try withPublicGitObjects(repository, [...objects], (directory) => effect {
+    for (const plan of plans) try verifyNative(directory, repository, plan)
+    for (const plan of plans) try recheckPlan(packet, root, repository, plan)
+    for (const [ref, branch] of branches) pins.push({ ref, tip: try refreshedTip(directory, root, repository, ref, branch) })
+  })
+  return { identical: new Set(plans.map((plan) => digestText(plan.retirement))), repository, pins } satisfies VerifiedIdenticalChanges
+}
+
+export effect function verifyCarrierTips(packet: RetirementScope, verified: VerifiedIdenticalChanges) {
+  const repository = verified.repository
+  if (repository === undefined) return
+  for (const pin of verified.pins) {
+    if ((try readBranchTip(`/repos/${packet.sourceAudit.repository}`, repository, pin.ref)) !== pin.tip) throw refusal("Surviving carrier integration branch changed")
+  }
+}
+
+export function protectionScopes(packet: HistoricalPacket) {
+  const scopes = new Map(historicalMonths.map((period) => [JSON.stringify([packet.projectId, period]), { projectId: packet.projectId, period }] as const))
+  for (const candidate of packet.corrections.candidates) {
+    const scope = { projectId: candidate.projectId, period: candidate.occurredAt.slice(0, 7) }
+    scopes.set(JSON.stringify([scope.projectId, scope.period]), scope)
+  }
+  return [...scopes.values()]
+}
+
+export effect function verifyHistoricalProtection(packet: HistoricalPacket) {
+  const evidence = try protectionEvidence(protectionScopes(packet))
+  const months = historicalMonths.map((month) => periodOf(instantOf(`${month}-01T00:00:00.000Z`) ?? -1))
+  const historical = evidence.filter((row) => row.project === packet.projectId && months.includes(row.period))
+  try require(historical.length === 2 && new Set(historical.map((row) => row.period)).size === 2 && historical.every((row) => !freezes(row)),
+    "Historical Points are financially protected or unavailable")
+  return evidence satisfies ReadonlyArray<FreezeEvidence>
+}
+
+export effect function verifyHistoricalValueRecords(packet: HistoricalPacket, options: { readonly qualifiedReplay: boolean } = { qualifiedReplay: false }) {
+  const verified = new Map<string, string>()
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    for (const { rewardedUnit } of retirement.coverage) {
+      if (rewardedUnit === undefined) continue
+      try require(digestPattern.test(rewardedUnit.recordDigest), "Invalid duplicate coverage record digest")
+      const known = verified.get(rewardedUnit.recordDigest)
+      if (known !== undefined) {
+        try require(known === rewardedUnit.recordJson, "Duplicate coverage record changed")
+        continue
+      }
+      const found = try rows(RecordRow, sql`SELECT record_json, record_digest FROM slopbot_work_unit_journal j WHERE record_digest=${rewardedUnit.recordDigest} AND NOT EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest=j.record_digest)`)
+      try require(found.length === 1 && found[0]?.record_digest === rewardedUnit.recordDigest && found[0].record_json === rewardedUnit.recordJson &&
+        sha256Of(rewardedUnit.recordJson) === rewardedUnit.recordDigest, "Duplicate coverage record is missing or changed")
+      verified.set(rewardedUnit.recordDigest, rewardedUnit.recordJson)
+    }
+  }
+  if (options.qualifiedReplay) return
+  const coverage = valueCoverage(packet)
+  for (const digest of new Set(coverage.flatMap((row) => row.recordDigest === null ? [] : [row.recordDigest]))) {
+    try require(digestPattern.test(digest), "Invalid value record binding")
+    const found = try rows(RecordRow, sql`SELECT record_json, record_digest FROM slopbot_value_journal j WHERE record_digest=${digest} AND NOT EXISTS (SELECT 1 FROM slopbot_value_journal n WHERE n.supersedes=j.record_digest) UNION ALL SELECT record_json, record_digest FROM slopbot_work_unit_journal j WHERE record_digest=${digest} AND NOT EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest=j.record_digest)`)
+    const [row] = found
+    try require(found.length === 1 && row?.record_digest === digest && sha256Of(row.record_json) === digest, "Historical value record is missing or changed")
+    const record = recordOf(row?.record_json ?? "")
+    const sources = Array.isArray(record.sources) ? record.sources as ReadonlyArray<{ readonly pullRequestNodeId?: unknown; readonly repositoryNodeId?: unknown; readonly headSha?: unknown }> : []
+    const rowsFor = coverage.filter((item) => item.recordDigest === digest)
+    try require(rowsFor.every((item) => (record.pullRequestNodeId === item.pullRequestId && record.repositoryNodeId === packet.sourceAudit.repositoryNodeId) ||
+      sources.some((source) => source.pullRequestNodeId === item.pullRequestId && source.repositoryNodeId === packet.sourceAudit.repositoryNodeId)), "Historical value record source differs")
+    try require(record.projectId === packet.projectId, "Historical value record belongs to another project")
+    for (const item of rowsFor) {
+      const audited = packet.sourceAudit.sources.find((source) => source.id === item.pullRequestId)
+      const source = record.pullRequestNodeId === item.pullRequestId ? record : sources.find((entry) => entry.pullRequestNodeId === item.pullRequestId)
+      try require(audited !== undefined && source?.headSha === audited.headSha, "Historical assessment head differs from audited source")
+    }
+  }
+}
+
+interface CoverageRow { readonly pullRequestId: string; readonly recordDigest: string | null }
+
+function valueCoverage(packet: HistoricalPacket): ReadonlyArray<CoverageRow> {
+  const snapshot = packet.valueSnapshot as { readonly valueAssessmentCoverage?: ReadonlyArray<CoverageRow> } | null
+  return snapshot?.valueAssessmentCoverage ?? []
+}
+
+function recordOf(text: string): Readonly<Record<string, unknown>> {
+  const value = parsedJson(text)?.value
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {}
+}
+
+export effect function enforcementGeneration() {
+  const found = try rows(Generation, sql`SELECT COALESCE(MAX(rowid),0) AS generation FROM project_enforcements`)
+  const generation = found[0]?.generation
+  try require(found.length === 1 && generation !== undefined && Number.isSafeInteger(generation) && generation >= 0, "Enforcement state unavailable")
+  return generation ?? 0
+}
+
+export effect function verifyOwnerAuthority(packet: HistoricalPacket, manifest: unknown) {
+  const github = try GitHub
+  try require(githubIdPattern.test(packet.reviewerGithubId), "Invalid owner identity")
+  const user = try github.json(`/user/${packet.reviewerGithubId}`, GitHubUser)
+  try require(String(user.id) === packet.reviewerGithubId, "Current owner identity differs")
+  try require(isOwnerPolicy(manifest), ownerUnavailable)
+  const policy = manifest as OwnerPolicy
+  const steward = policy.steward.github
+  try require(steward.type !== "User" || steward.actorId === packet.reviewerGithubId, ownerUnavailable)
+  const path = (URL.parse(policy.repositories[0]?.githubUrl ?? "")?.pathname ?? "").replace(/^\/|\/$/gu, "")
+  const [owner = "", name = ""] = path.split("/")
+  const app = try GitHubApp
+  const installation = try app.installationFor(owner, name)
+  provide app.asInstallation(installation, { repositories: [name], permissions: { metadata: "read" } }) {
+    const installed = try GitHub
+    const facts = try installed.json(`/repos/${owner}/${name}`, RepositoryFacts)
+    try require(String(facts.id) === policy.authority.repositoryId && facts.node_id === policy.authority.repositoryNodeId && String(facts.owner.id) === steward.actorId &&
+      facts.owner.node_id === steward.nodeId && facts.owner.type === steward.type && facts.owner.login.toLowerCase() === steward.login.toLowerCase() &&
+      facts.full_name.toLowerCase() === path.toLowerCase() && !facts.private, ownerUnavailable)
+    const access = try installed.json(`/repos/${owner}/${name}/collaborators/${encodeURIComponent(user.login)}/permission`, PermissionAnswer)
+    try require(String(access.user.id) === packet.reviewerGithubId && (access.permission === "admin" || access.permission === "write") &&
+      (steward.actorId === packet.reviewerGithubId || access.permission === "admin"), ownerUnavailable)
+  }
+}
+
+export effect function verifyRecipientAccounts(packet: HistoricalPacket) {
+  const github = try GitHub
+  for (const correction of packet.recipientCorrections) {
+    for (const recipient of correction.recipients) {
+      const user = try github.json(`/user/${recipient.githubId}`, GitHubUser)
+      try require(String(user.id) === recipient.githubId && user.node_id === recipient.actor.id && user.login === recipient.actor.login, "Reviewed recipient account changed")
+    }
+  }
+}
+
+function quoted(value: string) {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+export effect function historicalGuards(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string, heads: HistoricalAssessmentJournalHeads) {
+  const conditions = [
+    `EXISTS (SELECT 1 FROM projects WHERE id=${quoted(packet.projectId)} AND revision=${packet.revision} AND manifest_sha256=${quoted(packet.manifestSha256)} AND status='active')`,
+    `(SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=${generation}`,
+  ]
+  const actors = new Set(candidate.revisions.slice(packet.baselineRevisionCount).filter((row) => row.award.projectId === packet.projectId && row.award.amount > 0).map((row) => row.award.actor.id))
+  for (const actor of actors) {
+    conditions.push(`NOT EXISTS (SELECT 1 FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id = ${quoted(githubIdOf(actor))} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) LIMIT 1)`)
+  }
+  conditions.push(...(try historicalAssessmentRecordingConditions({ projectId: packet.projectId, repositoryNodeId: packet.sourceAudit.repositoryNodeId }, heads)))
+  conditions.push(try historicalPointsBaselineCondition(packet.baselineDigest, packet.baselineRevisionCount))
+  return conditions.map((condition) => `(${condition})`).join(" AND ")
+}
+
+const recordedCoverage = " THEN json_group_array(json(entry)) END"
+
+export effect function historicalStatements(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string, heads: HistoricalAssessmentJournalHeads) {
+  try require(Number.isSafeInteger(generation) && generation >= 0, "Invalid enforcement generation")
+  for (const actor of new Set(candidate.revisions.slice(packet.baselineRevisionCount).map((row) => row.award.actor.id))) {
+    try require(githubIdPattern.test(githubIdOf(actor)), "Unknown historical actor identity")
+  }
+  const digest = try batchDigest(candidate)
+  const statements = importStatements(digest, candidate)
+  const gate = statements[statements.length - 3]
+  const parts = gate?.text.split(recordedCoverage) ?? []
+  try require(gate !== undefined && gate.text.startsWith("INSERT INTO points_batches") && parts.length === 2, "Points import gate unavailable")
+  const guarded: Statement = { text: `${parts[0] ?? ""} AND ${try historicalGuards(packet, candidate, generation, githubIdOf, heads)}${recordedCoverage}${parts[1] ?? ""}`, params: gate?.params ?? [] }
+  return { digest, statements: statements.map((statement) => statement === gate ? guarded : statement) } satisfies PreparedImport
+}
+
+export interface ImportIo<VE, VR, LE, LR> {
+  readonly verifyAuthority: () => void!VE!VR
+  readonly loadPublic: () => (Journal | null)!LE!LR
+  readonly wait: (millis: number) => void!!
+}
+
+export interface PreparedImport {
+  readonly digest: string
+  readonly statements: ReadonlyArray<Statement>
+}
+
+effect function applied(statements: ReadonlyArray<Statement>) {
+  const database = try D1
+  for (const statement of statements) try database.run(statement)
+}
+
+export effect function recordHistorical<VE, VR, LE, LR>(prepared: PreparedImport, candidate: Journal, io: ImportIo<VE, VR, LE, LR>) {
+  const { digest, statements } = prepared
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!(try batchRecorded(digest, candidate.revisions.length))) {
+      try io.verifyAuthority()
+      applied(statements) catch () => undefined
+    }
+    if (try batchRecorded(digest, candidate.revisions.length)) {
+      const published = try io.loadPublic()
+      if (published !== null && isExtension(candidate, published)) return digest
+    }
+    if (attempt < 2) try io.wait(5000)
+  }
+  throw refusal("Historical Points import was not verified")
+}

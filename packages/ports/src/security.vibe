@@ -1,8 +1,9 @@
-// spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "Story: Clear each repository by its own admission before work"; spec/security/bounty.md, "Story: Award each underlying finding once, to its first qualifying report"; spec/security/privacy.md, "Story: Read only authorized retained evidence"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"
+// spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "Story: Clear each repository by its own admission before work"; spec/security/bounty.md, "Story: Award each underlying finding once, to its first qualifying report"; spec/security/privacy.md, "Story: Read only authorized retained evidence"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"; spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain"
 import type { Statement } from "@repo/platform/d1"
 import type { Rows } from "@repo/platform/stored"
 import { type FileRecovery, type FileRequest, type MergeInput, MergeResolution } from "@repo/platform/git/evidence"
 import { type Json, Network, type ReadFailure } from "./backend.vibe"
+import { type FeeDeposit, FeeOutcome, type FinalOutcome, type GoneDeposits, type ObservedDeposit } from "./slopbot.vibe"
 
 export {
   AutomaticMergeResolution,
@@ -288,6 +289,7 @@ export interface EnforcementChange {
   readonly registryBefore: RegistryMirror
   readonly registryAfter: RegistryMirror
   readonly at: string
+  readonly recordId?: string
 }
 
 export schema PinState = "PinMatches" | "PinChanged" | "PinUnavailable"
@@ -407,4 +409,28 @@ export schema GenerationTarget {
   readonly part_index: number
   readonly sha256: string
   readonly size_bytes: number
+}
+
+export schema DepositOutcomeReason = "responded" | "silent" | "turned-off" | "spam" | "duplicate" | "out-of-scope"
+
+export schema ReportDeposit {
+  readonly caseId: string
+  readonly item: string
+  readonly slopAmount: string
+  readonly askedAt: string
+  readonly paidAt: string | null
+  readonly paidNetwork: string | null
+  readonly paidDepositId: number | null
+  readonly outcome: FeeOutcome | null
+  readonly outcomeReason: DepositOutcomeReason | null
+  readonly outcomeAt: string | null
+}
+
+export service ReportDeposits {
+  askedByItem(item: string): (ReportDeposit | null)!ReadFailure
+  askedByCase(caseId: string): (ReportDeposit | null)!ReadFailure
+  markPaid(deposit: FeeDeposit, caseId: string, at: string): Statement!!
+  finalOutcome(deposit: FeeDeposit, outcome: FinalOutcome, at: string): Statement!!
+  unpayWhereGone(gone: GoneDeposits): Statement!!
+  unpayChanged(observed: ObservedDeposit): Statement!!
 }

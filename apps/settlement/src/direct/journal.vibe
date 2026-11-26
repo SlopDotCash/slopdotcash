@@ -333,10 +333,14 @@ export function stateOf(record: Journal, facts: Facts, claims: Claims) {
   } satisfies DirectBounty)
 }
 
-export effect function commit<A, E, R>(caseId: string, decide: (current: Journal) => Decision<A>!E!R, alongside: ReadonlyArray<Statement>) {
+export type Alongside = (detail: unknown) => ReadonlyArray<Statement>!!
+
+export const nothing: Alongside = () => Effect.succeed([])
+
+export effect function commit<A, E, R>(caseId: string, decide: (current: Journal) => Decision<A>!E!R, alongside: Alongside) {
   return update(journal(caseId), (current) => effect {
     const decision = try decide(current)
-    return { value: decision.value, writes: [...decision.writes, ...alongside] } satisfies Decision<A>
+    return { value: decision.value, writes: [...decision.writes, ...(try alongside(decision.value))] } satisfies Decision<A>
   }) catch effect (error) => match (error) {
     when ConstraintViolation: throw new Conflict({ aggregate: `direct bounty ${caseId}`, attempts: 1 });
     default: throw error;
@@ -394,7 +398,7 @@ export effect function send(caseId: string, facts: Facts, extra: ReadonlyArray<P
   return try commit(caseId, (current) => effect {
     const { next, writes } = try decided(current, facts, extra, eventOf, by, entry)
     return { value: next, writes }
-  }, [])
+  }, nothing)
 }
 
 export effect function snapshot(caseId: string, facts: Facts, extra: ReadonlyArray<PaymentWallet | undefined> = []) {

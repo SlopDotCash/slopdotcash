@@ -9,6 +9,7 @@ verification remain external evidence boundaries for the future shell.
 - [Email enrollment](./email.md)
 - [Public referred project list](./referralProjects.md)
 - [Custom referral name reservations](./referralCodes.md)
+- [Requested repos](./repoRequests.md)
 - [Project automatic-closure consent](./closureConsent.md)
 - [Project registration](./projects.md)
 - [Reward asset verification](./rewardAsset.md)
@@ -25,3 +26,5 @@ verification remain external evidence boundaries for the future shell.
 - [Repository merge activity](./mergeActivity.md)
 - [Project intake cap](./intakeCap.md)
 - [Slopbot ready-label settings](./readyLabelSettings.md)
+- [Submission fee terms](./submissionFeeTerms.md)
+- [Submission fee settings](./submissionFeeSettings.md)

@@ -1,0 +1,143 @@
+// spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"; spec/fees/submissionFeeReportDeposits.md, "A deposit pays a report only as SLOP to the burn address on Robinhood Chain for an asked row"; spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain"
+import { amountAtLeast, slopFeeDueAt } from "@repo/backend/client"
+import { isoNow } from "@repo/platform/clock"
+import { D1 } from "@repo/platform/d1"
+import { type SlopRate, SubmissionFeeRates } from "@repo/ports/backend"
+import { type ReportDeposit, ReportDeposits } from "@repo/ports/security"
+import { type SubmissionFeeItem, SubmissionFeeItems } from "@repo/ports/slopbot"
+import { burnAddress, keptToFor, tokenKind, unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { type DepositFacts, type Party, type Refusal, apply, canJudge, depositVerdict, judgedPerRun } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
+import { type ReportDeposit as ReportModel, type ReportFacts, apply as applyReport, canJudge as canJudgeReport, reportVerdict } from "../../gen/fees__submissionFeeReportDeposits.effect.vibe"
+import { type DepositRow, depositView, paidByOf, reasonText } from "./codec.vibe"
+import { setJudgement, unjudged } from "./store.vibe"
+
+export interface Judged {
+  readonly judged: number
+  readonly paid: number
+}
+
+export const reportNetwork = "robinhood-mainnet"
+
+const worker: Party = "Worker"
+
+function lower(value: string) {
+  return value.toLowerCase()
+}
+
+function graceOver(deposit: DepositRow, now: number) {
+  return deposit.finalizedAt !== null && now - Date.parse(deposit.finalizedAt) >= unknownItemGraceMs
+}
+
+function itemFacts(deposit: DepositRow, item: SubmissionFeeItem | null, rates: ReadonlyArray<SlopRate>): DepositFacts {
+  const kind = tokenKind(deposit.network, lower(deposit.token))
+  const feePositive = item !== null && amountAtLeast(item.stableMinor, "1")
+  const due = item === null || !feePositive ? null : kind === "SlopToken" ? slopFeeDueAt(item.stableMinor, rates, deposit.blockTime) : item.stableMinor
+  return {
+    kind,
+    keptToMatches: kind !== "NoToken" && lower(deposit.keptTo) === lower(keptToFor(deposit.network, kind)),
+    itemKnown: item !== null,
+    itemFeePositive: feePositive,
+    rateInForce: kind !== "SlopToken" || due !== null,
+    paidAtLeastDue: due !== null && amountAtLeast(deposit.amount, due),
+    paidBy: paidByOf(deposit, item),
+    decided: item !== null && item.outcome !== null,
+  }
+}
+
+effect function refuse(deposit: DepositRow, refusal: Exclude<Refusal, "NoRefusal">, item: SubmissionFeeItem | null) {
+  const reason = reasonText(refusal)
+  try (try D1).run(setJudgement(deposit, { accepted: 0, reason, repositoryId: item?.repositoryId ?? null, pullNumber: item?.pullNumber ?? null }))
+  try Effect.logInfo("submission_fee_refused", { network: deposit.network, depositId: deposit.depositId, reason })
+}
+
+effect function judgeItem(deposit: DepositRow, item: SubmissionFeeItem | null, rates: ReadonlyArray<SlopRate>, now: number) {
+  const facts = itemFacts(deposit, item, rates)
+  const verdict = depositVerdict(facts)
+  const view = depositView({
+    made: { kind: facts.kind, keptToMatches: facts.keptToMatches, amountCovers: facts.itemFeePositive && facts.rateInForce && facts.paidAtLeastDue },
+    finalized: deposit.finalizedAt !== null,
+    judgement: "Unjudged",
+    reason: "NoRefusal",
+    state: "Open",
+    asked: item !== null,
+    paidBy: facts.paidBy,
+    outcome: item?.outcome ?? null,
+    graceOver: graceOver(deposit, now),
+  })
+  if (!canJudge(view, worker)) return "waiting"
+  const next = try apply(view, { type: "judge" }, worker)
+  const refusal = verdict !== "NoRefusal" ? verdict : next.reason
+  if (refusal !== "NoRefusal") {
+    try refuse(deposit, refusal, item)
+    return "refused"
+  }
+  if (item === null) return "waiting"
+  const items = try SubmissionFeeItems
+  const pull = { repositoryId: item.repositoryId, pullNumber: item.pullNumber }
+  if ((try (try D1).run(try items.markPaid(deposit, pull, try isoNow()))) !== 1) return "waiting"
+  try (try D1).run(setJudgement(deposit, { accepted: 1, reason: null, ...pull }))
+  try Effect.logInfo("submission_fee_paid", { network: deposit.network, depositId: deposit.depositId, repositoryId: item.repositoryId, pullNumber: item.pullNumber })
+  return "paid"
+}
+
+effect function judgeReport(deposit: DepositRow, report: ReportDeposit, now: number) {
+  const kind = tokenKind(deposit.network, lower(deposit.token))
+  const facts = {
+    kind,
+    robinhood: deposit.network === reportNetwork,
+    keptToBurn: lower(deposit.keptTo) === lower(burnAddress),
+    rowAsked: true,
+    amountValid: amountAtLeast(report.slopAmount, "1"),
+    paidAtLeastDue: amountAtLeast(deposit.amount, report.slopAmount),
+    paidBy: paidByOf(deposit, report),
+    decided: report.outcome !== null,
+  } satisfies ReportFacts
+  const verdict = reportVerdict(facts)
+  const view = {
+    deposit: depositView({
+      made: { kind, keptToMatches: kind !== "NoToken" && lower(deposit.keptTo) === lower(keptToFor(deposit.network, kind)), amountCovers: facts.paidAtLeastDue },
+      finalized: deposit.finalizedAt !== null,
+      judgement: "Unjudged",
+      reason: "NoRefusal",
+      state: "Open",
+      asked: true,
+      paidBy: facts.paidBy,
+      outcome: report.outcome,
+      graceOver: graceOver(deposit, now),
+    }),
+    mode: "AskedReport",
+    amountValid: facts.amountValid,
+    robinhood: facts.robinhood,
+    keptToBurn: facts.keptToBurn,
+  } satisfies ReportModel
+  if (!canJudgeReport(view, worker)) return "waiting"
+  const next = try applyReport(view, { type: "judge" }, worker)
+  const refusal = verdict !== "NoRefusal" ? verdict : next.deposit.reason
+  if (refusal !== "NoRefusal") {
+    try refuse(deposit, refusal, null)
+    return "refused"
+  }
+  const reports = try ReportDeposits
+  if ((try (try D1).run(try reports.markPaid(deposit, report.caseId, try isoNow()))) !== 1) return "waiting"
+  try (try D1).run(setJudgement(deposit, { accepted: 1, reason: null, repositoryId: null, pullNumber: null }))
+  try Effect.logInfo("submission_fee_report_paid", { network: deposit.network, depositId: deposit.depositId })
+  return "paid"
+}
+
+export effect function judgeDeposits(network: string) {
+  const items = try SubmissionFeeItems
+  const reports = try ReportDeposits
+  const rates = try (try SubmissionFeeRates).all()
+  let judged = 0
+  let paid = 0
+  for (const deposit of try unjudged(network, judgedPerRun)) {
+    const now = try Clock.currentTimeMillis
+    const item = try items.byItem(deposit.item)
+    const report = item === null ? try reports.askedByItem(deposit.item) : null
+    const outcome = report === null ? try judgeItem(deposit, item, rates, now) : try judgeReport(deposit, report, now)
+    if (outcome === "waiting") continue
+    judged += 1
+    if (outcome === "paid") paid += 1
+  }
+  return { judged, paid } satisfies Judged
+}

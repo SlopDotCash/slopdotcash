@@ -1,4 +1,5 @@
 // spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"
+import type { ImageFormat } from "./images.ts";
 
 export const SCAN_SURFACES = ["source", "manifests", "dependencies", "installScripts", "downloads", "agentInstructions"] as const;
 export type ScanSurface = (typeof SCAN_SURFACES)[number];
@@ -35,6 +36,7 @@ export interface ScanInputFile {
   readonly logicalPath?: string;
   readonly parentArtifactSha256?: string;
   readonly symlink?: SymlinkProvenance;
+  readonly templateInput?: true;
 }
 
 export interface ScanFinding {
@@ -52,11 +54,18 @@ export type Checks = Readonly<Record<ScanThreat, CheckState>>;
 
 export type BulkClass = "lockfile" | "data" | "generated" | "vendored";
 
+export interface MediaRecord {
+  readonly path: string;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly format: ImageFormat;
+}
+
 export interface DeterministicRecord {
   readonly path: string;
   readonly sha256: string;
   readonly bytes: number;
-  readonly class: BulkClass;
+  readonly class: BulkClass | "template";
   readonly signals?: true;
 }
 
@@ -85,5 +94,6 @@ export interface RepositoryInspection {
   readonly visibilityGaps: ReadonlyArray<string>;
   readonly downloads: ReadonlyArray<string>;
   readonly deterministic: ReadonlyArray<DeterministicRecord>;
+  readonly media: ReadonlyArray<MediaRecord>;
   readonly riskSignals: ReadonlyArray<string>;
 }

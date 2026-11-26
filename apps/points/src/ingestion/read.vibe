@@ -1,11 +1,12 @@
-// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"; spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's"
 import { HttpClientError } from "effect/http"
 import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { ConfigInvalid } from "@repo/platform/config"
 import { GitHub, github, rateLimitHints, secondaryLimitMessage } from "@repo/platform/github"
-import { type Event, type Method, type Origin, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
+import { type Event, type Method, type Origin, type Page, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
 import { type CachedDiscussion, type DiscussionCache, type DiscussionEntry, parsedJson } from "./discussions.vibe"
+import type { LocalGitObjects } from "./localGit.vibe"
 import { replayed } from "./replayed.ts"
 
 export const requestTimeoutMs = 60_000
@@ -21,6 +22,12 @@ const repositoryRoot = /^\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\//u
 const gitObject = /^git\/(commits|trees|blobs)\/([a-f0-9]{40})$/u
 const contentsRef = /^\?ref=[a-f0-9]{40}$/u
 const jsonType = /^application\/(?:json|[a-z0-9.+-]+\+json)(?:\s*;|$)/iu
+const repositoryScope = /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)(\/.*)$/u
+const itemListPath = /^\/(?:pulls\/[1-9]\d*\/(?:files|reviews|comments|commits)|issues\/[1-9]\d*\/(?:comments|events|timeline))$/u
+const commitPath = /^\/commits\/[a-f0-9]{40}$/u
+const commitPullsPath = /^\/commits\/[a-f0-9]{40}\/pulls$/u
+const commitFilesQuery = /^\?per_page=100&page=[1-9]\d*$/u
+const commitPullsQuery = /^\?per_page=100(?:&page=[1-9]\d*)?$/u
 
 export error IngestionCheckpoint { message: string }
 
@@ -28,6 +35,7 @@ export interface TransportOptions {
   readonly deadlineMs?: number
   readonly requestTimeoutMs?: number
   readonly discussions?: DiscussionCache
+  readonly localGitObjects?: LocalGitObjects
   readonly sleep?: (millis: number) => void!!
 }
 
@@ -78,9 +86,30 @@ export function immutableRead(url: string): string | undefined {
   return path.startsWith("contents/") && path.length > "contents/".length && contentsRef.test(parsed.search) ? "contents" : undefined
 }
 
+export function evidencePage(url: string): Page {
+  const parsed = URL.parse(url)
+  if (parsed === null) return "OtherPage"
+  const path = repositoryScope.exec(parsed.pathname)?.[1] ?? ""
+  if (itemListPath.test(path)) return "ItemList"
+  const plain = parsed.username === "" && parsed.password === "" && parsed.hash === ""
+  if (!plain) return "OtherPage"
+  if (commitPath.test(path) && commitFilesQuery.test(parsed.search)) return "CommitFiles"
+  return commitPullsPath.test(path) && commitPullsQuery.test(parsed.search) ? "CommitPulls" : "OtherPage"
+}
+
+function addressOf(request: HttpClientRequest.HttpClientRequest) {
+  return URL.parse(Option.isSome(request.hash) ? `${request.url}#${request.hash.value}` : request.url)
+}
+
+function exactAddress(address: URL | null) {
+  return address !== null && address.username === "" && address.password === "" && address.hash === ""
+}
+
 function transportError(request: HttpClientRequest.HttpClientRequest, description: string) {
   return new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, description }) })
 }
+
+const nullBodyStatuses: ReadonlyArray<number> = [204, 205, 304]
 
 function opaqueTag(etag: string | undefined) {
   return etag?.replace(/^W\//u, "")
@@ -132,6 +161,7 @@ export function ingestion(options: TransportOptions = {}) {
     effect function exchanged(request: HttpClientRequest.HttpClientRequest) {
       const fetched = effect {
         const response = try base.execute(request)
+        if (nullBodyStatuses.includes(response.status)) return { status: response.status, headers: plainHeaders(response.headers), bytes: new Uint8Array(0) } satisfies Answer
         const bytes = boundedBytes(response, transportLimitBytes, "GitHub read") catch effect (error) => {
           throw transportError(request, error._tag === "BodyTooLarge" ? `GitHub answered more than ${transportLimitBytes} bytes` : "GitHub returned no readable body")
         }
@@ -182,7 +212,13 @@ export function ingestion(options: TransportOptions = {}) {
 
     effect function waited(machine: Machine.Shape, request: HttpClientRequest.HttpClientRequest) {
       let state = try machine.get()
-      try Console.warn(JSON.stringify({ event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
+      const delayMs = state.wakeAt - state.now
+      const at = try isoAt(state.now)
+      try Console.warn(JSON.stringify(state.pageWait
+        ? { event: "github_ingestion_page_retry_wait", pageRetries: state.pageRetries, delayMs, at }
+        : state.gatewayWait
+          ? { event: "github_ingestion_gateway_retry_wait", gatewayRetries: state.gatewayRetries, delayMs, at }
+          : { event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs, at }))
       while (state.phase === "Waiting" && state.now < state.wakeAt) {
         try sleeping(state.wakeAt - state.now)
         state = try advanced(machine)
@@ -194,11 +230,14 @@ export function ingestion(options: TransportOptions = {}) {
     effect function readWithRetries(request: HttpClientRequest.HttpClientRequest) {
       const url = request.url
       const headers = plainHeaders(request.headers)
+      const address = addressOf(request)
       const machine = try run.next(try Clock.currentTimeMillis)
-      const begun = machine.send({ type: "begin", method: "Get", origin: "GitHubApi" }) catch effect () => {
+      const begun = machine.send({ type: "begin", method: "Get", origin: "GitHubApi", page: evidencePage(url), exactAddress: exactAddress(address) }) catch effect () => {
         throw transportError(request, checkpointMessage)
       }
       if (begun.phase === "Checkpointed") throw transportError(request, checkpointMessage)
+      const local = options.localGitObjects === undefined || address === null ? undefined : try options.localGitObjects.read(address, headers)
+      if (local !== undefined) return try orDie(Effect.try(() => replayed(request, 200, { "content-type": "application/json; charset=utf-8" }, local)))
       const discussion = options.discussions?.entry(url, headers)
       let validator = discussion === undefined ? undefined : try discussion.read()
       const identity = immutableRead(url)

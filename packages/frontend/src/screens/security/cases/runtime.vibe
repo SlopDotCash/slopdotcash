@@ -23,6 +23,7 @@ export type Loaded<T> =
 export interface ProgramChoice {
   readonly id: string
   readonly name: string
+  readonly security?: unknown
 }
 
 export interface DetailShown {
@@ -235,7 +236,7 @@ export effect function actOnCase(owner: string, record: SecurityCase, action: st
 }
 
 function choiceOf(project: Readonly<Record<string, unknown>>): ProgramChoice | undefined {
-  return typeof project.id === "string" && typeof project.name === "string" ? { id: project.id, name: project.name } : undefined
+  return typeof project.id === "string" && typeof project.name === "string" ? { id: project.id, name: project.name, security: project.security } : undefined
 }
 
 export type Choices = { readonly kind: "ready"; readonly projects: ReadonlyArray<ProgramChoice> } | { readonly kind: "failed"; readonly message: string }

@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"
+// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
 import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { D1, type D1Error, RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
@@ -14,6 +14,7 @@ import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
 import { NETWORKS, isChain, isNetworkKey, maxBaseUnitsForChain } from "../kernels/networks.ts"
 import { pledgedIn } from "../../gen/settlement__monthPledges.effect.vibe"
 import { frozenTotal, obligationProgress, withinCap } from "../monthlyCommitment/execution.ts"
+import { earlyCloseAt } from "./closeout.vibe"
 import { PledgeRow, modelNetwork, storedPledgesOf } from "../vault/store.vibe"
 
 module limbs {
@@ -45,9 +46,16 @@ export schema ReviewBudget {
   readonly monthlyCapMinor?: string
 }
 
+export schema ShareHistoryEntry {
+  readonly basisPoints: number
+  readonly throughCycle: string
+}
+
 export schema ManifestReward {
   readonly kind: string
   readonly monthlyCapMinor?: string
+  readonly maintainerShare?: number
+  readonly maintainerShareHistory?: ReadonlyArray<ShareHistoryEntry>
   readonly cycleCaps?: ReadonlyArray<CycleCap>
   readonly rewardStartAt?: string
   readonly payoutExclusions?: ReadonlyArray<ManifestExclusion>
@@ -73,17 +81,39 @@ export schema ManifestState {
   readonly state: string
 }
 
+export schema ManifestAuthority {
+  readonly state: string
+  readonly repositoryId?: string | number
+  readonly repositoryNodeId?: string
+}
+
+export schema ManifestRepository {
+  readonly id: string
+  readonly countsFrom?: string
+  readonly githubId?: string
+  readonly nodeId?: string
+}
+
 export schema ManifestTerms {
   readonly receiptPolicy?: ManifestState
+}
+
+export schema ManifestRewardAsset {
+  readonly network: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly address: string
 }
 
 export schema MonthlyManifest {
   readonly id: string
   readonly status: string
   readonly name?: string
-  readonly authority?: ManifestState
+  readonly authority?: ManifestAuthority
   readonly terms?: ManifestTerms
   readonly reward: ManifestReward
+  readonly rewardAsset?: ManifestRewardAsset
+  readonly repositories?: ReadonlyArray<ManifestRepository>
   readonly escrow?: ManifestEscrow
 }
 
@@ -105,6 +135,21 @@ export interface CurrentRevision {
   readonly number: number
   readonly manifest: string
   readonly manifestSha256: string
+}
+
+export interface StoredShareRow {
+  readonly actor: number
+  readonly login: string
+  readonly decisions: number
+  readonly amount: Amount
+}
+
+export interface StoredShare {
+  readonly basisPoints: number
+  readonly pool: Amount
+  readonly text: string
+  readonly sha256: string
+  readonly rows: ReadonlyArray<StoredShareRow>
 }
 
 export interface MonthFacts {
@@ -140,6 +185,7 @@ export interface Extra {
   readonly funding?: FundingFacts
   readonly alongside?: ReadonlyArray<Statement>
   readonly reason?: string
+  readonly share?: StoredShare
 }
 
 const relationships: Readonly<Record<ManifestExclusion["relationship"], Relationship>> = {
@@ -270,7 +316,7 @@ export effect function awardSource(projectId: string, period: Period, actor: num
   return try sha256Hex(JSON.stringify(["slop-escrow-origin-v2", projectId, formatPeriod(period), String(actor)]))
 }
 
-export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly revision: number | null }
+export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly early_close_at: string | null; readonly revision: number | null }
 export schema ProposedRow { readonly github_user_id: string; readonly github_login: string; readonly gross_base: string; readonly source_digest: string }
 export schema ChangeRow { readonly sequence: number; readonly github_user_id: string; readonly gross_base: string; readonly actor_id: string; readonly created_at: string }
 export schema CutRow { readonly sequence: number; readonly github_user_id: string; readonly proposed_gross_base: string; readonly gross_base: string; readonly reason: string; readonly created_at: string }
@@ -308,7 +354,7 @@ function scopeOf(key: MonthKey) {
 export function monthReads(key: MonthKey): ReadonlyArray<Statement> {
   const scope = scopeOf(key)
   return [
-    sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
+    sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, early_close_at, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
     sql`SELECT github_user_id, github_login, gross_base, source_digest FROM monthly_reward_base_rows WHERE ${scope} ORDER BY rowid`,
     sql`SELECT sequence, github_user_id, gross_base, actor_id, created_at FROM monthly_allocation_changes WHERE ${scope} ORDER BY sequence`,
     sql`SELECT sequence, github_user_id, proposed_gross_base, gross_base, reason, created_at FROM monthly_allocation_cut_reasons WHERE ${scope} ORDER BY sequence`,
@@ -429,6 +475,7 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
     publicCuts,
     notices,
     latestCutAt: cuts.reduce((last, entry) => Math.max(last, entry.at), 0),
+    earlyCloseAt: earlyCloseAt(project, period, found),
   }, rows.settings)
   const run = rows.run
   if (run === undefined) return try decodeState(proposed)
@@ -487,8 +534,18 @@ export effect function readMonth(key: MonthKey) {
   return { rows, state: try stateOf(key, rows, facts, now), facts } satisfies Loaded
 }
 
-export effect function proposalWrites(key: MonthKey, next: Monthly, current: CurrentRevision, sourceSnapshot: string, logins: ReadonlyMap<number, string>) {
+function shareWrites(key: MonthKey, proposal: Statement, share: StoredShare, created: string): Statement[] {
+  const period = formatPeriod(key.period)
+  return [
+    sql`INSERT INTO monthly_maintainer_shares (project_id, period, basis_points, pool_base, decisions, decisions_sha256, created_at) SELECT ${key.projectId}, ${period}, ${share.basisPoints}, ${fromAmount(share.pool).toString()}, ${share.text}, ${share.sha256}, ${created} WHERE EXISTS (SELECT 1 FROM monthly_reward_bases WHERE ${proposal}) ON CONFLICT (project_id, period) DO NOTHING`,
+    ...share.rows.map((row) => sql`INSERT INTO monthly_maintainer_share_rows (project_id, period, github_user_id, github_login, decisions, gross_base) SELECT ${key.projectId}, ${period}, ${String(row.actor)}, ${row.login}, ${row.decisions}, ${fromAmount(row.amount).toString()} WHERE EXISTS (SELECT 1 FROM monthly_maintainer_shares WHERE project_id = ${key.projectId} AND period = ${period} AND decisions_sha256 = ${share.sha256}) ON CONFLICT (project_id, period, github_user_id) DO NOTHING`),
+  ]
+}
+
+export effect function proposalWrites(key: MonthKey, next: Monthly, current: CurrentRevision, sourceSnapshot: string, logins: ReadonlyMap<number, string>, share: StoredShare | undefined) {
   const created = try isoAt(next.now * 1000)
+  let early = { column: sql``, value: sql`` }
+  if (next.earlyCloseAt > 0) early = { column: sql`, early_close_at`, value: sql`, ${try isoAt(next.earlyCloseAt * 1000)}` }
   const period = formatPeriod(key.period)
   const digests: string[] = []
   for (const share of next.proposedShares) digests.push(try awardSource(key.projectId, key.period, share.actor))
@@ -500,8 +557,9 @@ export effect function proposalWrites(key: MonthKey, next: Monthly, current: Cur
     rows.push(sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) SELECT ${key.projectId}, ${period}, ${String(share.actor)}, ${login}, ${fromAmount(share.amount).toString()}, ${digests[index] ?? ""} WHERE EXISTS (SELECT 1 FROM monthly_reward_bases WHERE ${proposal}) ON CONFLICT (project_id, period, github_user_id) DO NOTHING`)
   }
   return [
-    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${key.projectId}, ${period}, ${current.manifest}, ${current.manifestSha256}, ${sourceSnapshot}, ${fromAmount(next.cap).toString()}, ${next.proposedShares.length}, ${created}) ON CONFLICT (project_id, period) DO NOTHING`,
+    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at${early.column}) VALUES (${key.projectId}, ${period}, ${current.manifest}, ${current.manifestSha256}, ${sourceSnapshot}, ${fromAmount(next.cap).toString()}, ${next.proposedShares.length}, ${created}${early.value}) ON CONFLICT (project_id, period) DO NOTHING`,
     ...rows,
+    ...(share === undefined ? [] : shareWrites(key, proposal, share, created)),
   ]
 }
 
@@ -680,7 +738,7 @@ effect function writesFor(key: MonthKey, loaded: Loaded, next: Monthly, event: E
   if (event.type === "propose") {
     const current = loaded.facts.current
     if (current === undefined) throw new ManifestInvalid({ projectId: key.projectId, issue: "the project has no current revision" })
-    return [...(try proposalWrites(key, next, current, event.snapshot.digest, extra.logins ?? new Map())), ...alongside]
+    return [...(try proposalWrites(key, next, current, event.snapshot.digest, extra.logins ?? new Map(), extra.share)), ...alongside]
   }
   if (event.type === "adjust") return [try changeWrite(key, next, event.actor, event.amount, event.fact.actor), ...alongside]
   if (event.type === "cut") return [...(try cutWrites(key, next, event, extra.reason)), ...alongside]

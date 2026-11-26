@@ -1,0 +1,147 @@
+// spec/frontend/requestedRepos.md, "A board read keeps a ready board on screen and a failed one offers Try again"; spec/frontend/requestedRepos.md, "One flag, renew or withdraw is in flight per lifetime, a success reloads the board and a refusal changes nothing else"; spec/backend/repoRequests.md, "A flag write is a same-origin JSON request naming exactly a repository and an action"
+import { flagRepoRequest, type RepoRequestAnswer, type RepoRequestBoard, repoRequestBoard } from "@repo/backend/client"
+import { type Event, type RequestedPage, Machine, machine } from "../../../gen/frontend__requestedRepos.effect.vibe"
+import { referralLink } from "../../flows/account/referral.vibe"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { formatDate } from "../projects/summary.ts"
+
+export const boardLimitBytes = 256 * 1024
+export const actLimitBytes = 4096
+
+export const requestedMessages = {
+  unsaved: "Your flag could not be saved. Retry.",
+  unreadable: "Your flag could not be read. Reload the page.",
+} as const
+
+export type RepoRequestAction = "flag" | "withdraw"
+
+export interface Viewer {
+  readonly login: string
+  readonly referralCode: string | null
+}
+
+export interface RequestedView {
+  readonly page: RequestedPage
+  readonly board: RepoRequestBoard | undefined
+  readonly done: string | undefined
+  readonly problem: string | undefined
+  readonly viewer: Viewer | undefined
+}
+
+export function pitchLink(origin: string, viewer: Viewer | undefined): string {
+  if (viewer === undefined) return `${origin}/projects/new`
+  if (viewer.referralCode !== null) return referralLink(origin, viewer.referralCode)
+  return `${origin}/r/${viewer.login}`
+}
+
+effect function doneText(answer: RepoRequestAnswer) {
+  if (!answer.flagged) return `Withdrawn your flag on ${answer.repo}.`
+  const expiresAt = answer.expiresAt
+  if (expiresAt === null) return undefined
+  const until: string | undefined = Effect.try(() => formatDate(expiresAt)) catch () => undefined
+  return until === undefined ? undefined : `Flagged ${answer.repo} until ${until}.`
+}
+
+function failureMessage(failure: CallFailure): string {
+  switch (failure._tag) {
+    case "Refused": return failure.message !== "" && failure.message !== "Internal error" ? failure.message : requestedMessages.unsaved
+    case "ActorChanged": return failure.message !== "" && failure.message !== "Internal error" ? failure.message : requestedMessages.unsaved
+    case "NetworkError": return failure.message
+    case "InvalidResponse": return failure.status >= 200 && failure.status < 300 ? requestedMessages.unreadable : requestedMessages.unsaved
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
+export service RequestedRepos {
+  readonly changes: Stream.Stream<RequestedView>
+  view(): RequestedView!!
+  mount(actor: string): RequestedView!!
+  showViewer(lifetime: number, viewer: Viewer): RequestedView!!
+  load(): RequestedView!!HttpClient.HttpClient
+  retry(): RequestedView!!HttpClient.HttpClient
+  act(repo: string, action: RepoRequestAction): RequestedView!!HttpClient.HttpClient
+}
+
+export const requestedMachine = machine()
+
+export effect function sendRequested(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function receiveRequested(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function requestedState() {
+  return try (try Machine).get()
+}
+
+const opened = (page: RequestedPage): RequestedView => ({ page, board: undefined, done: undefined, problem: undefined, viewer: undefined })
+
+const requestedRepos = Layer.effect(RequestedRepos, effect {
+  const page = try Machine
+  const shown = try SubscriptionRef.make(opened(try page.get()))
+
+  effect function publish(change: Partial<RequestedView>) {
+    const next: RequestedView = { ...(try SubscriptionRef.get(shown)), ...change }
+    try SubscriptionRef.set(shown, next)
+    return next
+  }
+
+  effect function step(event: Event, change: Partial<RequestedView>) {
+    const next = page.send(event) catch () => undefined
+    if (next === undefined) return { accepted: false, view: try SubscriptionRef.get(shown) }
+    return { accepted: true, view: try publish({ ...change, page: next }) }
+  }
+
+  effect function load() {
+    const before = try page.get()
+    if (!before.loading) return try SubscriptionRef.get(shown)
+    const board = call(repoRequestBoard, {}, { limitBytes: boardLimitBytes }) catch () => undefined
+    const answered = try step({ type: "boardAnswered", ok: board !== undefined, read: before.reading, life: before.lifetime }, board === undefined ? {} : { board })
+    return answered.view
+  }
+
+  effect function retry() {
+    const retried = try step({ type: "retry" }, {})
+    if (!retried.accepted) return retried.view
+    return try load()
+  }
+
+  effect function act(repo: string, action: RepoRequestAction) {
+    const submitted = try step({ type: "submit" }, { done: undefined, problem: undefined })
+    if (!submitted.accepted) return submitted.view
+    const life = submitted.view.page.lifetime
+    const answered = call(flagRepoRequest, { body: { repo, action } }, { limitBytes: actLimitBytes, expectedActor: submitted.view.page.actor }) catch (failure) => ({ failure })
+    const done = "failure" in answered ? undefined : try doneText(answered)
+    const problem = done !== undefined ? undefined : "failure" in answered ? failureMessage(answered.failure) : requestedMessages.unreadable
+    const settled = try step({ type: "actAnswered", ok: done !== undefined, life }, { done, problem })
+    if (!settled.accepted || done === undefined) return settled.view
+    return try load()
+  }
+
+  effect function showViewer(lifetime: number, viewer: Viewer) {
+    if ((try page.get()).lifetime !== lifetime) return try SubscriptionRef.get(shown)
+    return try publish({ viewer })
+  }
+
+  effect function mount(actor: string) {
+    const mounted = try step({ type: "mount", actor }, { board: undefined, done: undefined, problem: undefined, viewer: undefined })
+    return mounted.view
+  }
+
+  return {
+    changes: SubscriptionRef.changes(shown),
+    view: () => SubscriptionRef.get(shown),
+    mount,
+    showViewer,
+    load,
+    retry,
+    act,
+  }
+})
+
+export const requestedLayer = Layer.provideMerge(requestedRepos, requestedMachine)

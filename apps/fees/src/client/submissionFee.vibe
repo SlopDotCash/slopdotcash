@@ -1,0 +1,109 @@
+// spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeReportDeposits.md, "A deposit pays a report only as SLOP to the burn address on Robinhood Chain for an asked row"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema SubmissionFeeOutcome = "refund_due" | "kept_due" | "refunded" | "kept"
+
+export schema ReportDepositOutcomeReason = "responded" | "silent" | "turned-off" | "spam" | "duplicate" | "out-of-scope"
+
+export schema SlopRateLine {
+  readonly effectiveAt: string
+  readonly slopPerUsd: string
+}
+
+export schema PreviousSlopRateLine {
+  readonly effectiveAt: string
+  readonly slopPerUsd: string
+  readonly acceptedUntil: string
+}
+
+export schema SubmissionFeeRateAnswer {
+  readonly schema: "slop-submission-fee-rate-v1"
+  readonly slopShareBps: number
+  readonly rate: SlopRateLine | null
+  readonly previous: PreviousSlopRateLine | null
+}
+
+export schema SubmissionFeeWay {
+  readonly network: string
+  readonly chainId: number
+  readonly contract: string
+  readonly token: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly amount: string
+  readonly minimumAccepted: string
+  readonly keptTo: string
+}
+
+export schema ReportDepositWay {
+  readonly network: string
+  readonly chainId: number
+  readonly token: string
+  readonly symbol: "SLOP"
+  readonly decimals: number
+  readonly amount: string
+  readonly contract: string
+  readonly keptTo: string
+}
+
+export schema SubmissionFeePaid {
+  readonly at: string
+  readonly network: string | null
+  readonly depositId: number | null
+  readonly token: string | null
+  readonly amount: string | null
+  readonly transaction: string | null
+  readonly finalized: boolean
+}
+
+export schema SubmissionFeeItemAnswer {
+  readonly schema: "slop-submission-fee-item-v1"
+  readonly repositoryId: number
+  readonly pullNumber: number
+  readonly projectId: string
+  readonly item: string
+  readonly stableMinor: string
+  readonly askedAt: string
+  readonly due: ReadonlyArray<SubmissionFeeWay>
+  readonly paid: SubmissionFeePaid | null
+  readonly outcome: SubmissionFeeOutcome | null
+  readonly outcomeAt: string | null
+  readonly resolveTransaction: string | null
+}
+
+export schema ReportDepositAnswer {
+  readonly schema: "slop-report-deposit-v1"
+  readonly caseId: string
+  readonly item: string
+  readonly askedAt: string
+  readonly due: ReadonlyArray<ReportDepositWay>
+  readonly paid: SubmissionFeePaid | null
+  readonly outcome: SubmissionFeeOutcome | null
+  readonly outcomeReason: ReportDepositOutcomeReason | null
+  readonly outcomeAt: string | null
+  readonly resolveTransaction: string | null
+}
+
+export const submissionFeePath = "/api/v1/submission-fee"
+
+export const pullIdPattern = /^[1-9][0-9]{0,15}$/u
+
+export const reportCasePattern = /^sc_[A-Za-z0-9_-]{8,72}$/u
+
+export const submissionFeeCache = { browserSeconds: 60 } as const
+
+export function submissionFeeItemPath(repositoryId: number, pullNumber: number) {
+  return `${submissionFeePath}/items/${repositoryId}/${pullNumber}`
+}
+
+export function reportDepositPath(caseId: string) {
+  return `${submissionFeePath}/reports/${caseId}`
+}
+
+export const submissionFeeRate = route({ method: "GET", path: "/api/v1/submission-fee/rate", access: "public", limitKib: 1, request: undefined, answer: SubmissionFeeRateAnswer, rejected: "not_found", cache: submissionFeeCache })
+
+export const submissionFeeItemRead = route({ method: "GET", path: "/api/v1/submission-fee/items/:repositoryId/:pullNumber", access: "public", limitKib: 1, request: undefined, answer: SubmissionFeeItemAnswer, rejected: "not_found", cache: submissionFeeCache })
+
+export const reportDepositRead = route({ method: "GET", path: "/api/v1/submission-fee/reports/:caseId", access: "public", limitKib: 1, request: undefined, answer: ReportDepositAnswer, rejected: "not_found", cache: "no-store" })
+
+export const submissionFeeApi: ReadonlyArray<AnyRoute> = [submissionFeeRate, submissionFeeItemRead, reportDepositRead]

@@ -36,8 +36,7 @@ conjunction.
 
 ```quint
 import mergeActivity as MA from "./mergeActivity"
-pure def openOutsideCount(open: List[MA::OpenPull], countedBeyondPages: int): int =
-  open.select(p => MA::outsideAuthor(p.association, p.bot) and not(p.draft)).length() + countedBeyondPages
+pure def openOutsideCount(open: List[MA::OpenPull], countedBeyondPages: int): int = MA::outsideOpen(open, countedBeyondPages)
 pure def lawDraftsMaintainersAndBotsNeverCount(p: MA::OpenPull): bool =
   (p.draft or p.bot or p.association == MA::Owner or p.association == MA::Member or p.association == MA::Collaborator)
     implies openOutsideCount(List(p), 0) == 0

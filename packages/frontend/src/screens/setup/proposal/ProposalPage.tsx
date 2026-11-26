@@ -155,7 +155,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
     setSubmission({ status: "submitting" });
     const funding = fundingOf(p);
     const exit = await runtime.runPromiseExit(
-      createFromSetup({ manifest, referrer: saved.referrer, monthlyAmount: funding.mode === "monthly" ? funding.monthlyAmount.trim() : null, actor: actor.githubId }),
+      createFromSetup({ manifest, referrer: saved.referrer, monthlyAmount: funding.mode === "monthly" ? funding.monthlyAmount.trim() : null, bountyAmount: p.fundingMode === "bounty" ? p.monthlyPool.trim() : null, actor: actor.githubId }),
     );
     inFlight.current = false;
     if (Exit.isSuccess(exit)) {
@@ -243,6 +243,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
             networkFixed={false}
             error={(field) => shownFor(field === "monthlyAmount" ? "monthlyPool" : field === "tokenAddress" ? "rewardAssetAddress" : "rewardAssetSymbol")}
             onChange={(field, value) => change(fundingFields[field], value)}
+            promise={{ checked: p.honorSystem === "true", onChange: (checked) => change("honorSystem", String(checked)) }}
           />
         ) : null}
         {step === 2 ? (

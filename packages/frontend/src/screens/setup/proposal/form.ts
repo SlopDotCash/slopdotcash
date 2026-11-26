@@ -1,5 +1,6 @@
 // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"
 import { isIntegrationBranch } from "@repo/contributor/render/fields";
+import { honorSystemKept, type ListingChoices, publishedChoices } from "../../../../gen/frontend__presentation.ts";
 import { type Chain, isChain } from "@repo/settlement/kernels/networks";
 import { referrerOf } from "../../../flows/projects/draftStore.vibe";
 import type { RepositoryLookup } from "@repo/backend/client";
@@ -171,7 +172,8 @@ export function withField(wizard: Wizard, field: Exclude<ProposalField, "reposit
             criteria: current.criteria === privateBountyCriteria ? defaultCriteria : current.criteria,
             requiredTests: current.requiredTests === privateBountyTesting ? "" : current.requiredTests,
           };
-  return { ...wizard, proposal: { ...current, [field]: value, ...branch, ...funding } };
+  const promise = field === "fundingMode" && value !== "monthly" ? { honorSystem: "false" } : {};
+  return { ...wizard, proposal: { ...current, [field]: value, ...branch, ...funding, ...promise } };
 }
 
 /** @throws {never} */
@@ -234,6 +236,21 @@ export function fundingOf(proposal: Proposal): FundingChoice {
     tokenSymbol: proposal.rewardAssetSymbol,
     monthlyAmount: proposal.monthlyPool,
   };
+}
+
+/** The owner's honor-system promise as published: only a chosen promise on a monthly pool. @throws {never} */
+export function honorSystemOf(proposal: Proposal): boolean {
+  return honorSystemKept(proposal.fundingMode === "monthly", proposal.honorSystem === "true");
+}
+
+/** The closure consent, submission fee, wanted issues and report deposit the new listing publishes; a bounty-only listing takes no contributions. @throws {never} */
+export function listingChoicesOf(proposal: Proposal): ListingChoices {
+  return publishedChoices(proposal.fundingMode === "bounty", {
+    closureConsent: proposal.automaticClosure === "true",
+    submissionFee: proposal.submissionFee === "true",
+    wantedIssues: proposal.wantedIssues === "true",
+    reportDeposit: proposal.reportDeposit === "true",
+  });
 }
 
 /** @throws {never} */

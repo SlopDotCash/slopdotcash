@@ -2,10 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type * as TS from "typescript";
-import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { writeConformance } from "./conform.ts";
-import { simulated } from "./gen/harness.ts";
+import { refusalFile, simulated, witnessFile } from "./gen/harness.ts";
 import { fail } from "./gen/types.ts";
 import type { Unit } from "./prove.ts";
 import { modules, originalColumn, type Spec } from "./parse.ts";
@@ -13,7 +12,7 @@ import { defines } from "./review.ts";
 import { act } from "./action.ts";
 import type { Memory } from "./cache.ts";
 import { plainText } from "./scan.ts";
-import { codeDirOf, codeDirs, filesUnder, manifest, owner, readSrc, SIMULATIONS, type SrcFile } from "./util.ts";
+import { codeDirOf, codeDirs, filesUnder, manifest, owner, readSrc, SIMULATIONS, tsApi, writeWhole, type SrcFile } from "./util.ts";
 import { effectAdapter } from "./gen/vibe.ts";
 import { reactHook } from "./gen/react.ts";
 
@@ -24,7 +23,11 @@ const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "dec
  * watches gen/ hears of what changed alone; what the generation did not write is swept away (`mirrorGen`).
  */
 const generations = new Map<string, Set<string>>();
-function put(root: string, file: string, text: string) {
+function put(root: string, file: string, text: string, staged?: Map<string, string>) {
+  if (staged) {
+    staged.set(file, text);
+    return;
+  }
   generations.get(root)?.add(file);
   let was: string | undefined;
   try { was = fs.readFileSync(file, "utf8"); } catch { was = undefined; }
@@ -35,11 +38,46 @@ function put(root: string, file: string, text: string) {
  * gen/ holds TypeScript that Node loads as ES modules, whatever the project's package.json says: a project whose
  * package.json says `"type": "commonjs"` would otherwise fail to load every generated module.
  */
-function genDir(root: string): string {
+function genDir(root: string, staged?: Map<string, string>): string {
   const dir = path.join(root, "gen");
-  fs.mkdirSync(dir, { recursive: true });
-  put(root, path.join(dir, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
+  if (!staged) fs.mkdirSync(dir, { recursive: true });
+  put(root, path.join(dir, "package.json"), `${JSON.stringify({ type: "module" })}\n`, staged);
   return dir;
+}
+
+export function publishGen(root: string, staged: ReadonlyMap<string, string>) {
+  const changed = new Map<string, string | undefined>();
+  const dir = path.join(root, "gen");
+  const existed = fs.existsSync(dir);
+  let undo: string | undefined;
+  try {
+    for (const [file, text] of staged) {
+      let previous: string | undefined;
+      try { previous = fs.readFileSync(file, "utf8"); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (previous === text) continue;
+      let saved: string | undefined;
+      if (previous !== undefined) {
+        undo ??= fs.mkdtempSync(path.join(dir, ".undo-"));
+        saved = path.join(undo, path.basename(file));
+        try { fs.linkSync(file, saved); } catch { fs.renameSync(file, saved); }
+      }
+      changed.set(file, saved);
+      writeWhole(file, text);
+    }
+    fs.rmSync(path.join(root, SIMULATIONS), { recursive: true, force: true });
+  } catch (error) {
+    for (const [file, previous] of changed) {
+      if (previous) fs.renameSync(previous, file);
+      else fs.rmSync(file, { force: true });
+    }
+    if (!existed) fs.rmSync(dir, { recursive: true, force: true });
+    if (undo) fs.rmSync(undo, { recursive: true, force: true });
+    throw error;
+  }
+  if (undo) fs.rmSync(undo, { recursive: true, force: true });
+  generations.set(root, new Set(staged.keys()));
 }
 
 /** Quint's errors, at their places in the Markdown: tangling keeps line numbers. */
@@ -54,8 +92,8 @@ function typeErrors(spec: Spec, ir: any, out: string, specs: Spec[]): Error {
 }
 
 /** The model of a spec, from Quint's typed IR: gen/<name>.ts and its simulation harness. `models` receives it. */
-export function generated(root: string, spec: Spec, ir: any, models: Map<string, Model>): Model {
-  const dir = genDir(root);
+export function generated(root: string, spec: Spec, ir: any, models: Map<string, Model>, staged?: Map<string, string>): Model {
+  const dir = genDir(root, staged);
   const top = new Set<string>((ir.modules?.find((m: any) => m.name === spec.name)?.declarations ?? [])
     .filter((d: any) => d.kind === "def" || d.kind === "typedef").map((d: any) => d.name));
   const assigned = new Set(spec.rules.flatMap(defines));
@@ -67,10 +105,13 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const origins = new Map<string, Origin>();
   for (const r of spec.rules) for (const d of r.defs) origins.set(d, { rule: r.key, line: r.line });
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
-  const write = (name: string, text: string) => put(root, path.join(dir, name), text);
+  const write = (name: string, text: string) => put(root, path.join(dir, name), text, staged);
   write(`${spec.name}.ts`, model.ts);
   write(`${spec.name}.run.qnt`, model.harness);
-  writeFaces(root, root, dir, spec, model.ts);
+  if (model.guardHarness) write(`${spec.name}.guard.run.qnt`, model.guardHarness);
+  if (model.witness) write(witnessFile(spec.name), model.witness.harness);
+  if (model.refusal) write(refusalFile(spec.name), model.refusal.harness);
+  writeFaces(root, root, dir, spec, model.ts, staged);
   if (model.opaques.length) write(`${spec.name}.sim.qnt`, simulated(spec.qnt, model.opaques));
   writeConformance(model, write);
   models.set(spec.name, model);
@@ -81,11 +122,11 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
  * Into `to`, the gen/ of the package in `dir`, what gen/<name>.ts (`text`) is for its shell: the Effect adapter, whose
  * `Machine` key carries the package's name, and the React hook where the package depends on react.
  */
-function writeFaces(root: string, dir: string, to: string, spec: Spec, text: string) {
+function writeFaces(root: string, dir: string, to: string, spec: Spec, text: string, staged?: Map<string, string>) {
   const pkg = manifest(dir);
-  put(root, path.join(to, `${spec.name}.effect.vibe`), effectAdapter(spec.name, spec.file, text, namespace(dir, pkg.name)));
+  put(root, path.join(to, `${spec.name}.effect.vibe`), effectAdapter(spec.name, spec.file, text, namespace(dir, pkg.name)), staged);
   const hook = ["dependencies", "devDependencies", "peerDependencies"].some((kind) => pkg[kind]?.react) && reactHook(spec.name, spec.file, text);
-  if (hook) put(root, path.join(to, `${spec.name}.react.ts`), hook);
+  if (hook) put(root, path.join(to, `${spec.name}.react.ts`), hook, staged);
 }
 
 /**
@@ -111,31 +152,35 @@ function namespace(dir: string, name: unknown): string {
  * check's simulations write what they run (simulate.ts), still running as this does, and which the next generation
  * begins by removing.
  */
-export function mirrorGen(root: string, specs: Spec[]) {
-  const written = generations.get(root) ?? new Set<string>();
-  generations.set(root, written);
-  written.add(path.join(root, SIMULATIONS));
+export function mirrorGen(root: string, specs: Spec[], scope?: { scratch: string; ownerDir: string }) {
+  const output = scope?.scratch ?? root;
+  const written = generations.get(output) ?? new Set<string>();
+  generations.set(output, written);
+  written.add(path.join(output, SIMULATIONS));
   const sweep = (dir: string) => {
     if (!fs.existsSync(dir)) return;
     for (const f of fs.readdirSync(dir)) if (!written.has(path.join(dir, f))) fs.rmSync(path.join(dir, f), { recursive: true, force: true });
     if (!fs.readdirSync(dir).length) fs.rmSync(dir, { recursive: true });
   };
-  const from = path.join(root, "gen");
+  const from = path.join(output, "gen");
   sweep(from);
-  for (const dir of codeDirs(root).filter(Boolean)) {
+  const rootsByOwner = new Map<string, string[]>();
+  for (const dir of scope ? [scope.ownerDir] : codeDirs(root).filter(Boolean)) rootsByOwner.set(dir, []);
+  if (rootsByOwner.size) for (const spec of specs) rootsByOwner.get(`${owner(root, spec.file)}/`)?.push(spec.name);
+  for (const [dir, roots] of rootsByOwner) {
     const needed = new Set<string>();
     const need = (name: string) => { if (!needed.has(name)) { needed.add(name); specs.find((s) => s.name === name)?.imports.forEach(need); } };
-    for (const spec of specs) if (`${owner(root, spec.file)}/` === dir) need(spec.name);
+    for (const name of roots) need(name);
     const to = path.join(root, dir, "gen");
     const files = fs.existsSync(from) ? fs.readdirSync(from).filter((f) => needed.has(f.match(/^(\w+)\.(?:ts|conformance\.ts)$/)?.[1] ?? "")) : [];
     if (files.length) {
       fs.mkdirSync(to, { recursive: true });
-      for (const f of [...files, "package.json", ...files.some((f) => f.endsWith(".conformance.ts")) ? ["_conformance.ts"] : []]) put(root, path.join(to, f), fs.readFileSync(path.join(from, f), "utf8"));
+      for (const f of [...files, "package.json", ...files.some((f) => f.endsWith(".conformance.ts")) ? ["_conformance.ts"] : []]) put(output, path.join(to, f), fs.readFileSync(path.join(from, f), "utf8"));
     }
-    for (const spec of specs) if (files.includes(`${spec.name}.ts`)) writeFaces(root, path.join(root, dir), to, spec, fs.readFileSync(path.join(from, `${spec.name}.ts`), "utf8"));
+    for (const spec of specs) if (files.includes(`${spec.name}.ts`)) writeFaces(output, path.join(root, dir), to, spec, fs.readFileSync(path.join(from, `${spec.name}.ts`), "utf8"));
     sweep(to);
   }
-  generations.delete(root);
+  generations.delete(output);
 }
 
 /**
@@ -144,20 +189,47 @@ export function mirrorGen(root: string, specs: Spec[]) {
  * generation of gen/ (`mirrorGen` ends it); gen/<name>.qnt is written for every spec, since the simulation harness
  * imports it.
  */
-export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise<any>> {
-  generations.set(memory.root, new Set());
-  fs.rmSync(path.join(memory.root, SIMULATIONS), { recursive: true, force: true });
-  const dir = genDir(memory.root);
-  for (const spec of specs) put(memory.root, path.join(dir, `${spec.name}.qnt`), spec.qnt);
+export function typecheckAll(memory: Memory, specs: Spec[], output = memory.root, staged?: Map<string, string>): Map<string, Promise<any>> {
+  if (!staged) {
+    generations.set(output, new Set());
+    fs.rmSync(path.join(output, SIMULATIONS), { recursive: true, force: true });
+  }
+  const dir = genDir(output, staged);
+  for (const spec of specs) put(output, path.join(dir, `${spec.name}.qnt`), spec.qnt, staged);
   return new Map(specs.map((spec) => {
     const ir = (async () => {
+      let decoded: any;
+      const readIr = (text?: string) => {
+        try { return text === undefined ? undefined : JSON.parse(text); } catch { return undefined; }
+      };
+      const encode = (value: unknown) => {
+        if (!value || typeof value !== "object" || !("ok" in value) || value.ok !== true || !("files" in value) ||
+            !value.files || typeof value.files !== "object" || !("ir.json" in value.files) || typeof value.files["ir.json"] !== "string") return undefined;
+        decoded = readIr(value.files["ir.json"]);
+        if (!Array.isArray(decoded?.modules) || !decoded.types || typeof decoded.types !== "object" || decoded.errors?.length) return undefined;
+        const module = decoded.modules.find((entry: unknown) => entry === null || (typeof entry === "object" && "name" in entry && entry.name === spec.name));
+        if (!Array.isArray(module?.declarations)) return undefined;
+        const types = new Map<string | number, unknown>();
+        const selected = decoded.types;
+        const nodes: unknown[] = [module];
+        while (nodes.length) {
+          const node = nodes.pop();
+          if (!node || typeof node !== "object") continue;
+          if ("id" in node && (typeof node.id === "number" || typeof node.id === "string") && Object.hasOwn(selected, node.id)) {
+            types.set(node.id, selected[node.id]);
+          }
+          for (const child of Object.values(node)) nodes.push(child);
+        }
+        decoded = { modules: [module], types: Object.fromEntries(types) };
+        return { ...value, files: { ...value.files, "ir.json": JSON.stringify(decoded) } };
+      };
       const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "vibestack-typecheck-"));
-      const typed = await act(memory, "quint", ["typecheck", "--out", "ir.json", `${spec.name}.qnt`], scratch, modules(spec, specs))
+      const actionProjection = { version: "model-module-v1", encode };
+      const typed = await act({ ...memory, actionProjection }, "quint", ["typecheck", "--out", "ir.json", `${spec.name}.qnt`], scratch, modules(spec, specs))
         .finally(() => fs.rmSync(scratch, { recursive: true, force: true }));
-      let ir: any;
-      try { ir = JSON.parse(typed.files["ir.json"]); } catch { ir = undefined; }
+      const ir = decoded ?? readIr(typed.files["ir.json"]);
       if (!typed.ok || !ir || ir.errors?.length) throw typeErrors(spec, ir, typed.out, specs);
-      return ir;
+      return { modules: ir.modules, types: ir.types };
     })();
     ir.catch(() => {}); // a spec that is not valid is reported in its turn, not as an unhandled rejection
     return [spec.name, ir] as const;
@@ -186,6 +258,7 @@ const definesAnything = (m: Model) => m.exports.types.length > 0 || m.exports.va
 export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = readSrc(root)): Unit[] {
   const byName = new Map(models.map((m) => [m.name, m]));
   const withoutImports = (text: string) => {
+    const ts = tsApi();
     const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
     // `export … from` loads a module as surely as `import` does.
     const imports = file.statements.filter((d): d is TS.ImportDeclaration | TS.ExportDeclaration => ts.isImportDeclaration(d) || (ts.isExportDeclaration(d) && !!d.moduleSpecifier));
@@ -193,19 +266,28 @@ export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = 
     return { kept, from: imports.map((d) => (d.moduleSpecifier as TS.StringLiteral).text) };
   };
   const withoutObligations = (text: string) => text.replace(/^\s*\/\/@ ensures .*\n/gm, "");
+  const renderings = new Map<string, string>();
+  const rendered = (name: string, prefix: string, docs: boolean) => {
+    const key = `${name}:${prefix}:${docs}`;
+    const known = renderings.get(key);
+    if (known !== undefined) return known;
+    const text = byName.get(name)!.render(prefix, docs);
+    renderings.set(key, text);
+    return text;
+  };
   /** The modules a module needs beside it, dependencies first. */
   const needs = (m: Model, seen: string[] = []): string[] => {
     for (const dep of m.imports) if (!seen.includes(dep)) { needs(byName.get(dep)!, seen); seen.push(dep); }
     return seen;
   };
-  const asDependency = (name: string, docs: boolean) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`, docs)).kept);
+  const asDependency = (name: string, docs: boolean) => withoutObligations(rendered(name, `${name}_`, docs));
   /** A module after what it needs, in its own names; `docs` keeps the doc comments, which the cache key leaves out. */
-  const bundle = (m: Model, docs: boolean) => [...needs(m).map((n) => asDependency(n, docs)), withoutImports(m.render("", docs)).kept];
+  const bundle = (m: Model, docs: boolean) => [...needs(m).map((n) => asDependency(n, docs)), m.render("", docs)];
   /** The definitions whose `_ensures` lemma a module's own unit proves (gen/typescript.ts). */
   const proving = (m: Model) => [...m.laws.map((l) => l.name), ...(m.stateType ? [...m.transitions.map((t) => t.name), "step", "initialHolds"] : [])];
   /** Modules placed beside a unit, each with the prefix the unit spells it with: their text with their obligations, and those lemmas. */
   const imported = (beside: [string, string][]): Unit["imports"] => ({
-    text: beside.map(([n, prefix]) => withoutImports(byName.get(n)!.render(prefix, false)).kept).join("\n"),
+    text: beside.map(([n, prefix]) => rendered(n, prefix, false)).join("\n"),
     lemmas: beside.flatMap(([n, prefix]) => proving(byName.get(n)!).map((def) => ({ fn: `${prefix}${def}`, def, from: `${n}.ts` }))),
   });
   const prefixed = (names: string[]) => names.map((n): [string, string] => [n, `${n}_`]);
@@ -270,6 +352,7 @@ export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = 
  * `ProofLib`, which the proof gives to Dafny's libraries. And NUL, which no source needs.
  */
 export function checkVerifiedSource(file: string, code: string) {
+  const ts = tsApi();
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
   const refuse = (at: number, why: string): never => { throw new Error(`${file}:${sf.getLineAndCharacterOfPosition(at).line + 1}: ${why}`); };
   plainText(file, code);

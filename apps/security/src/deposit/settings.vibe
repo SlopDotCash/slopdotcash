@@ -1,0 +1,18 @@
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
+import type { DepositMode } from "../../gen/security__reportDeposit.ts"
+
+export type ReportDepositMode = "off" | "dry_run" | "live"
+
+export service ReportDepositSettings {
+  readonly mode: ReportDepositMode
+}
+
+export const depositModes: Readonly<Record<ReportDepositMode, DepositMode>> = { off: "DepositOff", dry_run: "DepositDryRun", live: "DepositLive" }
+
+export function reportDepositMode(value: string | undefined): ReportDepositMode {
+  return value === "dry_run" || value === "live" ? value : "off"
+}
+
+export function reportDepositSettings(value: string | undefined) {
+  return Layer.succeed(ReportDepositSettings, { mode: reportDepositMode(value) })
+}

@@ -7,6 +7,7 @@ export const privacyContractPath = "apps/contributor/docs/private-trace-v1.md"
 export const requirementsPath = "docs/slop-product-requirements.md"
 
 const privacyHeading = "## Private trace privacy contract"
+const privacyV2Heading = "## Private trace privacy contract v2"
 const pointsHeading = "## 7. Points, discovery, and clear pages"
 const prdLink = "https://github.com/SlopDotCash/slopdotcash/blob/development/docs/slop-product-requirements.md#7-points-discovery-and-clear-pages"
 
@@ -33,14 +34,18 @@ function pointsDocument(name: string, section: string): string {
 }
 
 export effect function protocolFiles(root: string) {
-  const privacy = documentSection(try sourceText(root, privacyContractPath), privacyHeading)
+  const contract = try sourceText(root, privacyContractPath)
+  const privacy = documentSection(contract, privacyHeading)
+  const privacyV2 = documentSection(contract, privacyV2Heading)
   const points = documentSection(try sourceText(root, requirementsPath), pointsHeading)
   const identity = validateIdentityRecord(IDENTITY_RECORD)
   if (privacy === undefined) throw refused(`required document section is missing: ${privacyHeading}`)
+  if (privacyV2 === undefined) throw refused(`required document section is missing: ${privacyV2Heading}`)
   if (points === undefined) throw refused(`required document section is missing: ${pointsHeading}`)
   if (!protocolPublishable(true, identity.kind === "valid")) throw refused("the protocol identity record is invalid")
   return [
     textFile("protocol/private-trace-v1.md", `# Private trace privacy contract v1\n\n${raised(privacy)}\n`),
+    textFile("protocol/private-trace-v2.md", `# Private trace privacy contract v2\n\n${raised(privacyV2)}\n`),
     textFile("protocol/points-v1.md", pointsDocument("points-v1.md", points)),
     textFile("protocol/scoring-v2.md", pointsDocument("scoring-v2.md", points)),
     textFile("protocol/identity-v1.json", identityRecordText()),

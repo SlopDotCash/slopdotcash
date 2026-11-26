@@ -156,9 +156,11 @@ async function driven(root: string, name: string, machine: Machine, mode: TestPr
   fs.writeFileSync(found, JSON.stringify(machine.found));
   const r = await exec(process.execPath, ["--import", "vibelang/register", import.meta.filename, name, found, mode], root).finally(() => fs.rmSync(dir, { recursive: true, force: true }));
   for (const file of filesUnder(root, saved).filter((file) => !before.has(file))) wrote.set(path.join(root, file), fs.readFileSync(path.join(root, file), "utf8"));
-  const said = r.stdout.trimEnd().split("\n").at(-1) ?? "";
   let verdict: { problem?: string; summary?: string } | undefined;
-  try { verdict = JSON.parse(said); } catch { /* not the last line it writes, so the driver never finished */ }
+  if (!r.stopped) {
+    const said = r.stdout.trimEnd().split("\n").at(-1) ?? "";
+    try { verdict = JSON.parse(said); } catch { /* not the last line it writes, so the driver never finished */ }
+  }
   return verdict ?? { problem: `${DRIVERS}/${name}.ts did not finish${r.stopped ? `: ${r.stopped}` : ""}\n${`${r.stdout}${r.stderr}`.trim().split("\n").slice(-40).join("\n")}` };
 }
 
@@ -213,12 +215,13 @@ export async function conformance(root: string, machines: Map<string, Machine>, 
       wrote.set(file, text);
     }
   }
-  let inputs: string | undefined;
-  for (const file of filesUnder(root, DRIVERS).filter((f) => /^test\/drivers\/\w+\.ts$/.test(f))) {
+  const drivers = filesUnder(root, DRIVERS).filter((f) => /^test\/drivers\/\w+\.ts$/.test(f));
+  const inputs = drivers.length ? testInputs(root, mode) : undefined;
+  for (const file of drivers) {
     const name = path.basename(file, ".ts"), machine = machines.get(name);
-    const { problem, summary } = machine
-      ? await remember(JSON.stringify([name, inputs ??= testInputs(root, mode), sha(JSON.stringify(machine.found))]), () => driven(root, name, machine, mode, wrote), (r) => !r.problem)
-      : { problem: "no state-machine spec has this name" };
+    if (!machine) { add(file, undefined, "no state-machine spec has this name", ""); continue; }
+    const run = () => driven(root, name, machine, mode, wrote);
+    const { problem, summary } = await (inputs === undefined ? run() : remember(JSON.stringify([name, inputs, sha(JSON.stringify(machine.found))]), run, (r) => !r.problem));
     add(file, machine, problem, summary!);
   }
   const dir = path.join(root, TRACES);

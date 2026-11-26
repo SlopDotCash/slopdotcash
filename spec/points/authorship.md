@@ -277,6 +277,55 @@ pure val creditedActorsValues = Set(0, 1, 2)
 pure val resolutionsValues = Set(0, 1, 2)
 ```
 
+### A joint assessment credits a retained copy to its original author, a verified repair to its accepted author, and holds an unverified repair
+
+A claim that a retained copy carries into a joint assessment is credited by
+the commit its evidence names, never by the carrier as such. An ordinary
+copy credits the original commit's recipient, chosen by the rule above: its
+linked primary author, else the original pull request's creator. An
+original merge commit credits only when it has exactly one recorded merge
+resolution and that resolution names the claimed path. A verified
+original-contributor repair credits the accepted copy's commit the same way:
+its linked author, else the accepted pull request's creator. An unverified
+repair, or an original merge without that one resolution, leaves the
+claim's actor set unknown, which holds the unit. In every case the claim's
+lines are counted from the accepted copy's commit and file (the line rule
+above). Development: `workUnitCreditActorIds`, `workUnitLineWeights`.
+
+```quint
+type RetainedCopy = OrdinaryCopy | VerifiedRepair | UnverifiedRepair
+type CopyCredit = CreditsOriginal | CreditsAccepted | CopyCreditUnknown
+pure def copyCredit(retained: RetainedCopy, merge: bool, resolutions: int, namesPath: bool): CopyCredit =
+  match retained {
+  | OrdinaryCopy => if (not(merge) or (resolutions == 1 and namesPath)) CreditsOriginal else CopyCreditUnknown
+  | VerifiedRepair => CreditsAccepted
+  | UnverifiedRepair => CopyCreditUnknown }
+pure def copyClaimRecipient(credit: CopyCredit, original: CommitAttribution, accepted: CommitAttribution): int =
+  match credit { | CreditsOriginal => recipientFor(original) | CreditsAccepted => recipientFor(accepted) | CopyCreditUnknown => 0 }
+pure val carrierCommit: CommitAttribution = { ...initial, primary: Seen({ actor: 1, kind: User, linked: true }) }
+pure def lawOrdinaryCopyCreditsOriginal(resolutions: int, namesPath: bool): bool =
+  copyCredit(OrdinaryCopy, false, resolutions, namesPath) == CreditsOriginal
+pure def lawMergedOriginalNeedsOneResolutionNamingPath(resolutions: int, namesPath: bool): bool =
+  (copyCredit(OrdinaryCopy, true, resolutions, namesPath) == CreditsOriginal) iff (resolutions == 1 and namesPath)
+pure def lawVerifiedRepairCreditsAccepted(merge: bool, resolutions: int, namesPath: bool): bool =
+  copyCredit(VerifiedRepair, merge, resolutions, namesPath) == CreditsAccepted
+pure def lawUnverifiedRepairHolds(merge: bool, resolutions: int, namesPath: bool): bool =
+  copyCredit(UnverifiedRepair, merge, resolutions, namesPath) == CopyCreditUnknown
+pure def lawCarrierCreditedOnlyThroughRepair(retained: RetainedCopy, merge: bool, resolutions: int, namesPath: bool): bool =
+  copyCredit(retained, merge, resolutions, namesPath) == CreditsAccepted implies retained == VerifiedRepair
+pure def sometimesCopyCreditsOriginal(a: CommitAttribution): bool = a.phase == Credited and acceptedAs(a.acceptance, false, false)
+  and copyClaimRecipient(copyCredit(OrdinaryCopy, false, 0, true), a, carrierCommit) == a.recipient
+  and a.recipient != recipientFor(carrierCommit)
+pure def sometimesMergedOriginalCopyCredited(a: CommitAttribution): bool = a.phase == Credited and acceptedAs(a.acceptance, true, false)
+  and copyClaimRecipient(copyCredit(OrdinaryCopy, true, 1, true), a, carrierCommit) == a.recipient
+  and a.recipient != recipientFor(carrierCommit)
+pure def sometimesRepairCreditsAccepted(a: CommitAttribution): bool = a.phase == Credited
+  and copyClaimRecipient(copyCredit(VerifiedRepair, false, 0, true), carrierCommit, a) == a.recipient
+  and a.recipient != recipientFor(carrierCommit)
+pure val retainedValues = Set(OrdinaryCopy, VerifiedRepair, UnverifiedRepair)
+pure val namesPathValues = Set(true, false)
+```
+
 ### Simulation samples exercise linked, unlinked, conflicting and ineligible evidence
 
 These input sets bound simulation only.
@@ -301,4 +350,108 @@ pure val unitsValues = Set(W::initial,
     accepted: true, acceptedPeriod: 24320, superseded: false, frozen: false, supersededBy: 0 }) },
   { ...W::initial, nextId: 2, units: List({ id: 1, project: "p", sources: Set(2), commits: Set(11), band: 0, value: 10,
     accepted: true, acceptedPeriod: 24320, superseded: false, frozen: false, supersededBy: 0 }) })
+```
+
+## Story: Hold fresh implementation credit the census cannot prove
+
+> As a maintainer, I want a merged pull request that the census cannot show
+> did new work to keep its earlier Points without earning new implementation
+> credit, so that an empty marker, a promotion or a repeat of rewarded work is
+> never paid twice.
+
+### A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census
+
+Under the value policy (the scorer received value decisions) a merged pull
+request accepted at or after the v2 score with no human ratification and no
+assessed value record earns no new implementation credit, keeps every
+earlier award and reports `incomplete` coverage with no record digest when:
+rolling scoring sees an empty commit census for a merge under the value
+policy; it carries an empty acceptance marker; it is an unproved zero-line
+promotion (`CO::unprovedZeroLinePromotion` of its census commits, a commit
+owned when the implementation owners give it to this source); it is an
+unresolved implementation source; or its accepted-implementation digest
+(repository and native delta digest) was already scored in this or an
+earlier window. Every credited source records its digest, so a later exact
+repeat is held. Legacy scoring without value decisions is unchanged
+(development `src/lib/leaderboard.ts` implementation hold,
+`implementation_credit_gate` `selectCommitCensus`, `selectZeroLineWork`,
+`selectPreviousSubmission`). A source held as unavailable reports
+`unresolved` and keeps its digest; that hold is not this one.
+
+```quint
+type CreditSelection = { v2: bool, valueInput: bool, underValuePolicy: bool, rolling: bool, ratified: bool,
+  valueRecord: bool, jointAssessed: bool, commits: List[CO::CensusCommit], emptyMarker: bool, unresolved: bool,
+  digestScored: bool, earlierOverlap: bool }
+pure def freshCreditHeld(selection: CreditSelection): bool =
+  selection.v2 and selection.valueInput and not(selection.ratified) and not(selection.valueRecord) and
+  ((selection.rolling and selection.underValuePolicy and selection.commits.length() == 0) or selection.emptyMarker or
+    CO::unprovedZeroLinePromotion(selection.commits) or selection.unresolved or selection.digestScored)
+pure def scoredDigestsAfter(scored: Set[str], digest: str, credited: bool): Set[str] =
+  if (credited and digest != "") scored.union(Set(digest)) else scored
+pure def lawLegacyScoringNeverHeld(selection: CreditSelection): bool =
+  (not(selection.valueInput) or not(selection.v2)) implies not(freshCreditHeld(selection))
+pure def lawAssessedOrRatifiedSourceNotFreshHeld(selection: CreditSelection): bool =
+  (selection.ratified or selection.valueRecord) implies not(freshCreditHeld(selection))
+pure def lawEmptyRollingCensusHeld(selection: CreditSelection): bool =
+  (selection.v2 and selection.valueInput and selection.rolling and selection.underValuePolicy and not(selection.ratified) and
+    not(selection.valueRecord)) implies freshCreditHeld({ ...selection, commits: List() })
+pure def lawScoredDigestHoldsItsRepeat(selection: CreditSelection, digest: str): bool =
+  (selection.v2 and selection.valueInput and not(selection.ratified) and not(selection.valueRecord) and digest != "") implies
+    freshCreditHeld({ ...selection, digestScored: scoredDigestsAfter(Set(), digest, true).contains(digest) })
+```
+
+### Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review
+
+Rolling scoring also gives a source its accepted ordinary commit (the
+native accepted output, when every census commit has a known parent count
+and one has a single parent), and, for unassessed implementation credit (no
+ratification, no assessed value record, no assessed joint decision), the
+commits of earlier windows' positively rewarded sources, read from the
+validated Points journal (`previousAcceptedOrdinaryOwners`,
+`accepted-implementation-history.ts` `previousPositiveImplementationSources`:
+a positive latest ordinary merged-work award recorded no later than the
+cutoff, merged before it, not a duplicate-retirement zero). A standalone
+value assessment whose commits an earlier accepted source of another pull
+request owns is held for joint review: its implementation earns nothing,
+its coverage is `incomplete` with no record digest, and its reviews keep
+their own assessment binding through `reviewAssessmentDigest`. Review
+exclusions keep the full current actor census. Historical scoring uses none
+of these rolling-only owners or holds.
+
+```quint
+pure def ownsAcceptedOrdinaryCommit(rolling: bool, acceptedCommit: bool, parentsKnown: bool, singleParent: bool): bool =
+  rolling and acceptedCommit and parentsKnown and singleParent
+pure def usesEarlierOwners(selection: CreditSelection): bool =
+  selection.rolling and not(selection.ratified) and not(selection.valueRecord) and not(selection.jointAssessed)
+pure def standaloneOverlapHeld(selection: CreditSelection): bool =
+  selection.rolling and selection.valueRecord and not(selection.ratified) and selection.earlierOverlap
+pure def implementationHeld(selection: CreditSelection): bool = freshCreditHeld(selection) or standaloneOverlapHeld(selection)
+pure def heldRecordDigest(selection: CreditSelection, latestDigest: str): str =
+  if (implementationHeld(selection)) "" else latestDigest
+pure def reviewAssessmentDigestOf(selection: CreditSelection, latestDigest: str): str =
+  if (standaloneOverlapHeld(selection)) latestDigest else ""
+pure val ownedChangeRow: CO::CensusCommit = { parentsKnown: true, parents: 1, owned: true, linesKnown: true, additions: 2,
+  deletions: 0, files: 1 }
+pure def lawHeldCoverageHasNoRecordDigest(selection: CreditSelection, digest: str): bool =
+  implementationHeld(selection) implies heldRecordDigest(selection, digest) == ""
+pure def lawStandaloneHoldKeepsReviewBinding(selection: CreditSelection, digest: str): bool =
+  (standaloneOverlapHeld(selection) implies reviewAssessmentDigestOf(selection, digest) == digest) and
+  (not(standaloneOverlapHeld(selection)) implies reviewAssessmentDigestOf(selection, digest) == "")
+pure def lawHistoricalScoringHasNoRollingHolds(selection: CreditSelection): bool =
+  not(selection.rolling) implies (not(standaloneOverlapHeld(selection)) and not(usesEarlierOwners(selection)) and
+    freshCreditHeld({ ...selection, commits: List() }) == freshCreditHeld({ ...selection, commits: List(ownedChangeRow) }))
+pure def lawHistoricalOwnsNoAcceptedCommit(acceptedCommit: bool, parentsKnown: bool, singleParent: bool): bool =
+  not(ownsAcceptedOrdinaryCommit(false, acceptedCommit, parentsKnown, singleParent))
+pure val freshSelection: CreditSelection = { v2: true, valueInput: true, underValuePolicy: true, rolling: true,
+  ratified: false, valueRecord: false, jointAssessed: false, commits: List(ownedChangeRow), emptyMarker: false,
+  unresolved: false, digestScored: false, earlierOverlap: false }
+pure val selectionValues = Set(freshSelection, { ...freshSelection, commits: List() },
+  { ...freshSelection, commits: List(CO::emptyMarkerRow, CO::carriedChangeRow) }, { ...freshSelection, emptyMarker: true },
+  { ...freshSelection, unresolved: true, rolling: false }, { ...freshSelection, digestScored: true },
+  { ...freshSelection, valueRecord: true, earlierOverlap: true }, { ...freshSelection, valueRecord: true, earlierOverlap: true, rolling: false },
+  { ...freshSelection, ratified: true, commits: List() }, { ...freshSelection, valueInput: false, emptyMarker: true })
+pure val digestValues = Set("", "d1")
+pure val acceptedCommitValues = Set(true, false)
+pure val parentsKnownValues = Set(true, false)
+pure val singleParentValues = Set(true, false)
 ```

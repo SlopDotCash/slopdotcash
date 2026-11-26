@@ -1,0 +1,216 @@
+// spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"
+import { gitBytes, publicGitArguments, withPublicGitObjects } from "@repo/platform/git"
+import { lossyText, sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import type { CorrectionSource } from "../apply/manifest.vibe"
+import { type AuditedSource, type HistoricalNetOutcome, type NetOutcomeSource, type ReviewedRefused, type SourceAudit, digestPattern, digestText, isIso, pullUrl, refusal, require, shaPattern } from "./packet.vibe"
+import { PublicRepository, type RetirementScope } from "./verify.vibe"
+
+schema NetOutcomeRepository { readonly id: string; readonly isPrivate: boolean; readonly nameWithOwner: string }
+schema NetOutcomeCommits { readonly totalCount: number }
+schema NetOutcomeMerge { readonly oid: string }
+schema NetOutcomePull {
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly state: string
+  readonly mergedAt: string
+  readonly headRefOid: string
+  readonly commits: NetOutcomeCommits
+  readonly repository: NetOutcomeRepository
+  readonly mergeCommit: NetOutcomeMerge | null
+}
+schema NetOutcomeNodes { readonly nodes?: Schema.Unknown }
+
+type LifecycleRef = Pick<NetOutcomeSource, "id" | "number" | "mergedAt" | "mergeSha">
+
+interface NativeDelta { readonly before: string; readonly after: string }
+interface NativeMerge { readonly sha: string; readonly firstParent: string }
+interface NativeGroup { readonly paths: Map<string, NativeDelta>; raw: Uint8Array }
+
+export type BeforeImportCheck = void!(ReviewedRefused | GitHubFailure)!GitHub
+
+const lifecycleQuery = "query ReviewedNetOutcome($ids:[ID!]!) { nodes(ids:$ids) { ... on PullRequest { id number url state mergedAt headRefOid commits { totalCount } repository { id isPrivate nameWithOwner } mergeCommit { oid } } } }"
+const nodePattern = /^[A-Za-z0-9_=-]{4,256}$/u
+const rawDelta = /^:(000000|100644|100755|120000|160000) (000000|100644|100755|120000|160000) ([0-9a-f]{40}) ([0-9a-f]{40}) [ADMT]$/u
+const zeroId = "0".repeat(40)
+const nativeWindow = 32 * 1024 * 1024
+const lifecyclePage = 40
+const isPull = Schema.is(NetOutcomePull)
+
+function exact(value: object, keys: ReadonlyArray<string>) {
+  return Object.keys(value).sort().join(",") === [...keys].sort().join(",")
+}
+
+function isoOf(value: string) {
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : ""
+}
+
+export effect function assertHistoricalNetOutcome(proof: HistoricalNetOutcome, source: CorrectionSource) {
+  try require(exact(proof, ["mergeSha", "firstParentSha", "rawDiffSha256", "sources", "paths"]) && shaPattern.test(proof.mergeSha) && shaPattern.test(proof.firstParentSha) &&
+    digestPattern.test(proof.rawDiffSha256) && source.occurredAt !== null && Array.isArray(proof.sources) && proof.sources.length > 0 &&
+    Array.isArray(proof.paths) && proof.paths.length > 0, "Invalid reviewed net outcome")
+  const occurredAt = source.occurredAt ?? ""
+  const byId = new Map<string, NetOutcomeSource>()
+  const merges = new Set<string>()
+  for (const earlier of proof.sources) {
+    try require(exact(earlier, ["id", "number", "mergedAt", "mergeSha", "awardKey", "awardRevisionId"]) && nodePattern.test(earlier.id) && earlier.id !== source.sourceId &&
+      Number.isSafeInteger(earlier.number) && earlier.number > 0 && isIso(earlier.mergedAt) && earlier.mergedAt < occurredAt && shaPattern.test(earlier.mergeSha) &&
+      earlier.mergeSha !== proof.mergeSha && digestPattern.test(earlier.awardKey) && digestPattern.test(earlier.awardRevisionId) && !byId.has(earlier.id) && !merges.has(earlier.mergeSha),
+      "Reviewed net outcome repeats or lacks an earlier accepted source")
+    byId.set(earlier.id, earlier)
+    merges.add(earlier.mergeSha)
+  }
+  const uniquePaths = new Set<string>()
+  const used = new Set<string>()
+  for (const row of proof.paths) {
+    try require(exact(row, ["path", "sourceIds"]) && typeof row.path === "string" && row.path.length > 0 && !row.path.includes("\0") && !uniquePaths.has(row.path) &&
+      Array.isArray(row.sourceIds) && row.sourceIds.length > 0, "Reviewed net outcome repeats or lacks a path")
+    uniquePaths.add(row.path)
+    let previous = ""
+    for (const id of row.sourceIds) {
+      const earlier = byId.get(id)
+      if (earlier === undefined || !(previous < earlier.mergedAt)) throw refusal("Net outcome source order changed")
+      previous = earlier.mergedAt
+      used.add(id)
+    }
+  }
+  try require(used.size === byId.size, "Reviewed net outcome names an unused earlier source")
+}
+
+effect function observeSources(audit: SourceAudit, refs: ReadonlyArray<LifecycleRef>) {
+  const github = try GitHub
+  const observed = new Map<string, NetOutcomePull>()
+  for (let start = 0; start < refs.length; start += lifecyclePage) {
+    const page = refs.slice(start, start + lifecyclePage)
+    const { nodes } = try github.graphql(lifecycleQuery, { ids: page.map(({ id }) => id) }, NetOutcomeNodes)
+    if (!Array.isArray(nodes) || nodes.length !== page.length) throw refusal("Net outcome lifecycle read is incomplete")
+    const rows: ReadonlyArray<unknown> = nodes
+    for (const [index, row] of rows.entries()) {
+      const ref = page[index]
+      if (ref === undefined || !isPull(row) || row.id !== ref.id || row.number !== ref.number || row.url !== pullUrl(audit.repository, ref.number) || row.state !== "MERGED" ||
+        isoOf(row.mergedAt) !== ref.mergedAt || row.repository.id !== audit.repositoryNodeId || row.repository.isPrivate !== false ||
+        row.repository.nameWithOwner.toLowerCase() !== audit.repository.toLowerCase() || !shaPattern.test(row.headRefOid) || row.mergeCommit?.oid !== ref.mergeSha) {
+        throw refusal("Reviewed net outcome source lifecycle changed")
+      }
+      observed.set(ref.id, row)
+    }
+  }
+  return observed
+}
+
+effect function observedLifecycle(audit: SourceAudit, target: AuditedSource, proof: HistoricalNetOutcome, source: CorrectionSource) {
+  const rows = try observeSources(audit, [{ id: target.id, number: target.number, mergedAt: target.mergedAt, mergeSha: proof.mergeSha }, ...proof.sources])
+  const observed = rows.get(target.id)
+  try require(observed?.headRefOid === target.headSha && observed.commits.totalCount === source.commitCount, "Net outcome target scope changed")
+  return JSON.stringify([...rows])
+}
+
+effect function readGit(directory: string, args: ReadonlyArray<string>, input?: string) {
+  return try gitBytes({ args: publicGitArguments(directory, args), env: { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory }, ...(input === undefined ? {} : { input }),
+    limit: nativeWindow, seconds: 120 }, "Complete native net-outcome objects unavailable")
+}
+
+effect function acceptedDiffs(directory: string, merges: ReadonlyArray<NativeMerge>) {
+  const input = merges.map(({ sha, firstParent }) => `${sha} ${firstParent}\n`).join("")
+  const raw = try readGit(directory, ["diff-tree", "--stdin", "--raw", "--no-abbrev", "--no-renames", "-r", "-z"], input)
+  const groups = new Map<string, NativeGroup>()
+  const expected = new Set(merges.map(({ sha }) => sha))
+  let index = 0
+  let cursor = raw.indexOf(0)
+  let groupStart = 0
+  let group: NativeGroup | undefined
+  while (index < raw.length) {
+    try require(cursor >= index, "Native net outcome is truncated")
+    const field = utf8Text(raw.subarray(index, cursor))
+    if (field !== undefined && expected.has(field)) {
+      if (group !== undefined) group.raw = raw.subarray(groupStart, index)
+      try require(!groups.has(field), "Native net outcome repeats an acceptance")
+      group = { paths: new Map(), raw: new Uint8Array() }
+      groups.set(field, group)
+      groupStart = cursor + 1
+    } else {
+      const match = rawDelta.exec(field ?? "")
+      if (group === undefined || match === null) throw refusal("Native net outcome has an unsupported raw delta")
+      const end = raw.indexOf(0, cursor + 1)
+      try require(end > cursor + 1, "Native net outcome has an invalid path")
+      const path = utf8Text(raw.subarray(cursor + 1, end))
+      if (path === undefined) throw refusal("Native net outcome has an invalid path")
+      const [, oldMode = "", newMode = "", oldId = "", newId = ""] = match
+      try require((oldMode === "000000") === (oldId === zeroId) && (newMode === "000000") === (newId === zeroId) && !group.paths.has(path),
+        "Native net outcome repeats or changes a path identity")
+      group.paths.set(path, { before: oldMode + oldId, after: newMode + newId })
+      cursor = end
+    }
+    index = cursor + 1
+    cursor = raw.indexOf(0, index)
+  }
+  if (group !== undefined) group.raw = raw.subarray(groupStart)
+  try require(groups.size === expected.size, "Native net outcome omits an accepted source")
+  return groups
+}
+
+effect function verifyNativeOutcome(directory: string, proof: HistoricalNetOutcome, source: CorrectionSource) {
+  const target = lossyText(try readGit(directory, ["rev-list", "--parents", "-n", "1", proof.mergeSha])).trim().split(" ")
+  try require(target.length === 3 && target[0] === proof.mergeSha && target[1] === proof.firstParentSha && target[2] === source.headSha, "Net outcome acceptance parents changed")
+  const submitted = lossyText(try readGit(directory, ["rev-list", "--parents", source.headSha, `^${proof.firstParentSha}`])).trim().split("\n")
+  const parents = new Map(submitted.map((line) => {
+    const [sha = "", ...edges] = line.split(" ")
+    return [sha, edges] as const
+  }))
+  try require(parents.has(source.headSha) && parents.size === source.commits.length && new Set(source.commits.map(({ sha }) => sha)).size === parents.size &&
+    source.commits.every(({ sha, parentShas, parentCount }) => {
+      const native = parents.get(sha)
+      return native !== undefined && native.length === parentCount && JSON.stringify(native) === JSON.stringify(parentShas)
+    }), "Net outcome submission range is incomplete")
+  const merges: NativeMerge[] = [{ sha: proof.mergeSha, firstParent: proof.firstParentSha }]
+  for (const { mergeSha } of proof.sources) {
+    const firstParent = parents.get(mergeSha)?.[0]
+    if (firstParent === undefined || !shaPattern.test(firstParent)) throw refusal("Earlier net outcome is outside the native submitted range")
+    merges.push({ sha: mergeSha, firstParent })
+  }
+  const groups = try acceptedDiffs(directory, merges)
+  const targetDiff = groups.get(proof.mergeSha)
+  if (targetDiff === undefined || targetDiff.paths.size !== proof.paths.length || sha256Of(targetDiff.raw) !== proof.rawDiffSha256) {
+    throw refusal("Reviewed net outcome does not cover the complete accepted first-parent diff")
+  }
+  const earlierById = new Map(proof.sources.map(({ id, mergeSha }) => [id, groups.get(mergeSha)] as const))
+  for (const { path, sourceIds } of proof.paths) {
+    const accepted = targetDiff.paths.get(path)
+    if (accepted === undefined) throw refusal("Reviewed net outcome names a path outside the accepted diff")
+    let state = accepted.before
+    for (const id of sourceIds) {
+      const pathDelta = earlierById.get(id)?.paths.get(path)
+      if (pathDelta === undefined || pathDelta.before !== state) throw refusal("Earlier net outcome does not match the native path preimage")
+      state = pathDelta.after
+    }
+    try require(state === accepted.after, "Earlier net outcome does not cover the native path output")
+  }
+}
+
+export effect function verifyHistoricalNetOutcomes(packet: RetirementScope, withObjects: typeof withPublicGitObjects = withPublicGitObjects, beforeImport: Array<BeforeImportCheck> = []) {
+  const github = try GitHub
+  const verified = new Set<string>()
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    const proof = retirement.netOutcome
+    if (proof === undefined) continue
+    const source = retirement.source
+    try assertHistoricalNetOutcome(proof, source)
+    const audit = packet.sourceAudit
+    const target = audit.sources.find(({ id }) => id === source.sourceId)
+    if (target === undefined || target.headSha !== source.headSha || target.mergedAt !== source.occurredAt) throw refusal("Net outcome target is outside the complete audit")
+    const repository = try github.json(`/repos/${audit.repository}`, PublicRepository)
+    try require(repository.node_id === audit.repositoryNodeId && repository.full_name.toLowerCase() === audit.repository.toLowerCase() && repository.private === false,
+      "Net outcome repository identity changed")
+    const lifecycle = try observedLifecycle(audit, target, proof, source)
+    try withObjects(repository, [proof.mergeSha], (directory) => verifyNativeOutcome(directory, proof, source))
+    const recheck: BeforeImportCheck = effect {
+      try require((try observedLifecycle(audit, target, proof, source)) === lifecycle, "Net outcome lifecycle changed during verification")
+    }
+    try recheck
+    beforeImport.push(recheck)
+    verified.add(digestText(retirement))
+  }
+  return verified
+}

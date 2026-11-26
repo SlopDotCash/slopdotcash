@@ -1,0 +1,180 @@
+// spec/settlement/asiNovemberCloseout.md, "Story: Close ASI's November pool early from one reviewed import"; spec/settlement/asiNovemberCloseout.md, "Only an apply run under the reviewed packet and preview digests writes the closeout base, once"; spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision"
+import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
+import { isoNow, nowSeconds } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type D1, first, sql } from "@repo/platform/d1"
+import { gitText } from "@repo/platform/git"
+import { github } from "@repo/platform/github"
+import { githubApp } from "@repo/platform/github/app"
+import { validatePaymentSnapshot } from "@repo/points/client"
+import { checkedSnapshot, repositoryRegistry, restoreSnapshot } from "@repo/points/live"
+import { Registry, Restrictions } from "@repo/ports/backend"
+import { EnforcementRowsLive } from "@repo/security/live"
+import { type Event, Machine, closeoutCutoff, heldSourcesAdmitted, machine } from "../../gen/settlement__asiNovemberCloseout.effect.vibe"
+import { configuredEnforcementPorts } from "../jobs/services.vibe"
+import { automaticCutoffAt, formatPeriod, periodEndSeconds } from "../kernels/calendar.ts"
+import { manifestOf, monthlyFacts } from "../monthly/store.vibe"
+import { IdentityRegistry, countedRepositories, digestPattern, heldWorkOf, readHeldWorkUnitRecords, refusal } from "../closeout/heldSources.vibe"
+import { closeoutKey, modelPacket, reviewedPacket, verifyCapture, verifyPool } from "../closeout/packet.vibe"
+import { closeoutPlan, closeoutPoints, coverageComplete, executeCloseout, proposeCloseout, verifyCurrentOwner } from "../closeout/run.vibe"
+
+export error CloseoutStopped { message: string }
+
+type Stage =
+  | "trusted invocation"
+  | "published snapshot"
+  | "current private registry"
+  | "canonical held work source provenance"
+  | "published cutoff and canonical Points coverage"
+  | "reviewed packet"
+  | "current reviewer authority"
+  | "bound preview or import"
+
+export interface CloseoutSeams<E> {
+  readonly database: (accountId: string, token: Redacted.Redacted<string>) => Layer.Layer<D1, E, HttpClient.HttpClient>
+  readonly checkout: string
+  readonly served: ReadonlySet<string>
+}
+
+schema Generation { readonly generation: number }
+schema ProjectRow { readonly manifest: string; readonly manifest_sha256: string; readonly revision: number }
+
+const publishedSnapshot = "https://slop.cash/data/leaderboard.json"
+const sourcePattern = /^[a-f0-9]{40}$/u
+const userAgent = "slop-asi-november-closeout"
+const untrusted = "Untrusted ASI invocation."
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function currentMain(checkout: string, source: string) {
+  const moved = "Main changed during closeout."
+  const head = try gitText({ args: ["-C", checkout, "rev-parse", "HEAD"], limit: 4096, seconds: 60 }, moved)
+  const remote = try gitText({ args: ["-C", checkout, "ls-remote", "origin", "refs/heads/main"], limit: 4096, seconds: 60 }, moved)
+  if (head.trim() !== source || remote.split(/\s/u)[0] !== source) throw refusal(moved)
+}
+
+effect function send(event: Event, by: string, message: string) {
+  const closeout = try Machine
+  return closeout.send(event, by) catch effect () => {
+    throw refusal(message)
+  }
+}
+
+effect function enforcementGeneration() {
+  const found = try first(Generation, sql`SELECT COALESCE(MAX(rowid), 0) AS generation FROM project_enforcements`)
+  if (found === undefined || !Number.isSafeInteger(found.generation)) throw refusal("ASI registry authority is unavailable.")
+  return found.generation
+}
+
+effect function publishedBytes(runnerTemp: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  return try scoped(effect {
+    const directory = try fs.makeTempDirectoryScoped({ directory: runnerTemp, prefix: "asi-closeout-" })
+    const path = files.join(directory, "leaderboard.json")
+    try restoreSnapshot(publishedSnapshot, path)
+    return try fs.readFile(path)
+  })
+}
+
+effect function registryIdentities(path: string) {
+  const fs = try FileSystem.FileSystem
+  const text = try fs.readFileString(path)
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refusal("The registry snapshot is not JSON.") })
+  return (try Schema.decodeUnknownEffect(IdentityRegistry)(value)).projects
+}
+
+export effect function asiNovemberCloseout<E>(args: ReadonlyArray<string>, seams: CloseoutSeams<E>) {
+  let stage: Stage = "trusted invocation"
+  const run = effect {
+    provide machine() {
+      const [registryPath, ...rest] = args
+      const source = try environment("GITHUB_SHA")
+      const mode = try environment("ASI_CLOSEOUT_MODE")
+      const expectedPreview = try environment("ASI_CLOSEOUT_PREVIEW_SHA256")
+      const runnerTemp = try environment("RUNNER_TEMP")
+      if (registryPath === undefined || rest.length > 0 || !sourcePattern.test(source) || runnerTemp === "" || (mode !== "inspect" && mode !== "preview" && mode !== "apply") ||
+        (mode === "apply" && !digestPattern.test(expectedPreview))) throw refusal(untrusted)
+      const dispatch = { type: "observeDispatch", repository: try environment("GITHUB_REPOSITORY"), gitRef: try environment("GITHUB_REF"), dispatchEvent: try environment("GITHUB_EVENT_NAME") } satisfies Event
+      try send(dispatch, "workflow", untrusted)
+      try currentMain(seams.checkout, source)
+
+      stage = "published snapshot"
+      const registry = try repositoryRegistry(try checkedSnapshot(registryPath))
+      const identities = try registryIdentities(registryPath)
+      const bytes = try publishedBytes(runnerTemp)
+      const raw = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown, catch: () => refusal("The published snapshot is not UTF-8 JSON.") })
+      const snapshot = try validatePaymentSnapshot(raw, registry)
+      const snapshotSha256 = try sha256Hex(bytes)
+
+      stage = "current private registry"
+      const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+      const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+      const registered = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, RegistryManifestsLive)
+      provide Layer.provideMerge(monthlyFacts(seams.served), Layer.provideMerge(registered, Layer.merge(configuredEnforcementPorts, seams.database(accountId, token)))) {
+        const key = try closeoutKey()
+        const generation = try enforcementGeneration()
+        const view = try (try Registry).project(key.projectId)
+        const closure = try (try Restrictions).project(key.projectId)
+        if (view === undefined || closure.restricted || (try enforcementGeneration()) !== generation) throw refusal("ASI registry authority is unavailable.")
+        const row = try first(ProjectRow, sql`SELECT manifest, manifest_sha256, revision FROM projects WHERE id = ${key.projectId}`)
+        if (row === undefined || row.revision !== view.revision || row.manifest_sha256 !== view.manifestSha256 || (try sha256Hex(row.manifest)) !== view.manifestSha256) {
+          throw refusal("The ASI registry revision changed.")
+        }
+        const manifest = try manifestOf(key.projectId, row.manifest)
+        const asi = identities.find((project) => project.id === key.projectId)
+        if (asi === undefined) throw refusal("ASI registry authority is unavailable.")
+
+        stage = "canonical held work source provenance"
+        const records = try readHeldWorkUnitRecords(snapshot.source)
+        const held = try heldWorkOf(snapshot.source, asi, key.period, identities, records)
+
+        stage = "published cutoff and canonical Points coverage"
+        const now = try isoNow()
+        const verified = coverageComplete(snapshot, now)
+        if (!verified || !heldSourcesAdmitted(held)) throw refusal("ASI's November closeout requires complete verified coverage through the approved cutoff.")
+        try send({ type: "observeSources", verified, heldSources: held }, "workflow", "ASI's November closeout requires complete verified coverage through the approved cutoff.")
+        try verifyPool(manifest, row.manifest, key.period)
+        const repositories = countedRepositories(asi, key.period).map((repository) => repository.id)
+        const ledger = try closeoutPoints(key, snapshotSha256, repositories)
+        if ((try enforcementGeneration()) !== generation) throw refusal("The registry enforcement state changed.")
+        if (mode === "inspect") {
+          try Console.log(JSON.stringify({ schemaVersion: "1", period: formatPeriod(key.period), mode, snapshotSha256, pointsBatch: ledger.pointsBatch, manifestSha256: row.manifest_sha256, revision: row.revision, enforcementGeneration: generation }))
+          return
+        }
+
+        stage = "reviewed packet"
+        const packetText = try environment("ASI_CLOSEOUT_REVIEWED_PACKET")
+        const packetDigest = try environment("REVIEWED_PACKET_SHA256")
+        if (packetText === "" || !digestPattern.test(packetDigest)) throw refusal("The exact reviewed packet is required.")
+        const packet = try reviewedPacket(new TextEncoder().encode(packetText), packetDigest, snapshotSha256)
+        try verifyCapture(packet, { capturedAt: now, now, enforcementGeneration: generation, revision: row.revision, manifestSha256: row.manifest_sha256, manifestText: row.manifest, restricted: closure.restricted })
+        if (!coverageComplete(snapshot, packet.reviewedAt)) throw refusal("ASI's November closeout requires complete verified coverage through the approved cutoff.")
+        const proposal = try proposeCloseout(key, snapshotSha256, ledger.weights, repositories)
+        const plan = try closeoutPlan(proposal, { reviewedPacketSha256: packetDigest, pointsBatch: packet.pointsBatch, enforcementGeneration: packet.enforcementGeneration })
+
+        stage = "current reviewer authority"
+        const appId = try environment("SLOPBOT_APP_ID")
+        const privateKey = try Config.withDefault(Config.Redacted("SLOPBOT_APP_PRIVATE_KEY"), Redacted.make(""))
+        if (appId === "" || Redacted.value(privateKey) === "") throw refusal("Current owner authority reader unavailable")
+        provide Layer.mergeAll(github({ userAgent }), githubApp({ appId, privateKey, userAgent })) {
+          try verifyCurrentOwner(row.manifest, packet.reviewerGithubId)
+        }
+
+        stage = "bound preview or import"
+        const at = try nowSeconds()
+        const phases = [closeoutCutoff, periodEndSeconds(key.period), automaticCutoffAt(key.period) ?? Number.POSITIVE_INFINITY].filter((moment) => at >= moment).length
+        for (let phase = 0; phase < phases; phase++) try send({ type: "advance" }, "clock", "The current closeout does not pass its import guards.")
+        try send({ type: "previewCloseout", packet: modelPacket(packet, packetDigest), preview: plan.previewSha256 }, "workflow", "The current closeout does not pass its import guards.")
+        if (mode === "apply") try send({ type: "importCloseout", packetDigest, preview: expectedPreview }, "workflow", "The current closeout differs from the approved preview.")
+        const outcome = try executeCloseout(plan, mode === "apply", () => currentMain(seams.checkout, source))
+        try Console.log(JSON.stringify({ schemaVersion: "1", period: formatPeriod(key.period), mode: outcome, reviewedPacketSha256: packetDigest, previewSha256: plan.previewSha256, recipients: plan.review.rows.length }))
+      }
+    }
+  }
+  run catch effect () => {
+    throw new CloseoutStopped({ message: `ASI closeout refused during ${stage}.` })
+  }
+}

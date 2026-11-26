@@ -1,0 +1,199 @@
+// spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"
+import { runningSha256 } from "@repo/platform/digest"
+import { gitBytes } from "@repo/platform/git"
+import { hexOf } from "@repo/platform/git/bytes"
+import { GitHub, githubApi } from "@repo/platform/github"
+import { type FollowedRun, trustedMainRelease } from "../../../gen/operations__dailyCollection.effect.vibe"
+import { type Producer, canonicalRepository, producerMaxAgeHours } from "../../../gen/operations__release.effect.vibe"
+import type { RunFacts } from "./facts.vibe"
+import { isAncestor } from "./heads.vibe"
+import { startRun } from "./run.vibe"
+
+export error CollectedDataRefused { message: string }
+
+export interface RestoreInput {
+  readonly facts: RunFacts
+  readonly dataRun: string
+  readonly out: string
+  readonly root: string
+  readonly anchor: string
+  readonly token: Redacted.Redacted<string> | undefined
+}
+
+schema RunRepository { readonly full_name: string }
+schema ProducerRun {
+  readonly id: number
+  readonly repository: RunRepository
+  readonly head_repository: RunRepository
+  readonly head_branch: string | null
+  readonly event: string
+  readonly path: string
+  readonly status: string
+  readonly head_sha: string
+  readonly run_attempt: number
+}
+schema JobStep { readonly name: string; readonly conclusion: string | null }
+schema Job { readonly name: string; readonly conclusion: string | null; readonly steps?: ReadonlyArray<JobStep> | null }
+schema AttemptJobs { readonly jobs: ReadonlyArray<Job> }
+schema ArtifactRun { readonly id: number; readonly head_sha: string }
+schema Artifact {
+  readonly id: number
+  readonly name: string
+  readonly expired: boolean
+  readonly created_at: string
+  readonly digest?: string | null
+  readonly size_in_bytes: number
+  readonly workflow_run: ArtifactRun
+}
+schema RunArtifacts { readonly artifacts: ReadonlyArray<Artifact> }
+
+const prepareJob = "Prepare checked browser bundle"
+const collectStep = "Generate live contribution data"
+const archiveName = "bundle.zip"
+const maxArchiveBytes = 2 * 1024 * 1024 * 1024
+const downloadSeconds = 600
+const readLimitBytes = 4 * 1024 * 1024
+const hourMillis = 60 * 60 * 1000
+const positiveId = /^[1-9][0-9]{0,17}$/u
+const commitSha = /^[a-f0-9]{40}$/u
+const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const githubDigest = /^sha256:[a-f0-9]{64}$/u
+
+function refused(message: string) {
+  return new CollectedDataRefused({ message })
+}
+
+effect function demand(condition: boolean, message: string) {
+  if (!condition) throw refused(message)
+}
+
+function followedOf(run: ProducerRun): FollowedRun {
+  return {
+    repository: run.repository.full_name,
+    headRepository: run.head_repository.full_name,
+    branch: run.head_branch ?? "",
+    event: run.event,
+    path: run.path,
+    completed: run.status === "completed",
+  }
+}
+
+function collected(jobs: AttemptJobs) {
+  const [job, ...others] = jobs.jobs.filter((candidate) => candidate.name === prepareJob)
+  if (job === undefined || others.length > 0) return undefined
+  const steps = (job.steps ?? []).filter((step) => step.name === collectStep)
+  return job.conclusion === "success" && steps.length === 1 && steps[0]?.conclusion === "success"
+}
+
+function ageHoursOf(createdAt: string, now: number) {
+  const millis = now - Date.parse(createdAt)
+  if (!Number.isFinite(millis)) return -1
+  return millis < 0 ? -1 : Math.ceil(millis / hourMillis)
+}
+
+function boundArtifact(artifact: Artifact, run: ProducerRun, ageHours: number) {
+  return !artifact.expired
+    && ageHours >= 0 && ageHours <= producerMaxAgeHours
+    && positiveId.test(String(artifact.id))
+    && githubDigest.test(artifact.digest ?? "")
+    && Number.isSafeInteger(artifact.size_in_bytes) && artifact.size_in_bytes > 0 && artifact.size_in_bytes <= maxArchiveBytes
+    && artifact.workflow_run.id === run.id && artifact.workflow_run.head_sha === run.head_sha
+}
+
+effect function checkedOut(root: string) {
+  const bytes = try gitBytes({ args: ["-C", root, "rev-parse", "HEAD"], limit: 4096, seconds: 10 }, "Restore checkout is not the event commit")
+  return new TextDecoder().decode(bytes).trim()
+}
+
+effect function located(token: Redacted.Redacted<string> | undefined, url: string) {
+  const client = try HttpClient.HttpClient
+  const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "slop-release" }
+  if (token !== undefined) headers.authorization = `Bearer ${Redacted.value(token)}`
+  provide FetchHttpClient.RequestInit = { redirect: "manual", cache: "no-store" } {
+    const response = try client.execute(HttpClientRequest.get(url, { headers }))
+    if (response.status >= 200 && response.status < 300) return response
+    const location = response.headers.location
+    const next = location === undefined ? null : URL.parse(location, url)
+    if (response.status < 300 || response.status >= 400 || next === null || next.protocol !== "https:") throw refused("Bundle download failed")
+    const blob = try client.execute(HttpClientRequest.get(next.href, { headers: { accept: "*/*" } }))
+    if (blob.status < 200 || blob.status >= 300) throw refused("Bundle download failed")
+    return blob
+  }
+}
+
+effect function downloaded(input: RestoreInput, artifact: Artifact, archive: string) {
+  const fs = try FileSystem.FileSystem
+  const meter = { remaining: artifact.size_in_bytes, digest: runningSha256() }
+  const url = `${githubApi}/repos/${input.facts.ref.repository}/actions/artifacts/${artifact.id}/zip`
+  timeout(effect {
+    const response = try located(input.token, url)
+    const counted = Stream.mapEffect(response.stream, (chunk: Uint8Array) => effect {
+      meter.remaining -= chunk.byteLength
+      if (meter.remaining < 0) throw refused("Bundle download exceeded its trusted size")
+      meter.digest.update(chunk)
+      return chunk
+    })
+    try Stream.run(counted, fs.sink(archive, { flag: "wx", mode: 0o600 }))
+  }, Duration.seconds(downloadSeconds)) catch effect (error) => {
+    if (error._tag === "CollectedDataRefused") throw error
+    throw refused("Bundle download failed")
+  }
+  return meter.remaining === 0 && artifact.digest === `sha256:${hexOf(meter.digest.finish())}`
+}
+
+export effect function restoreCollected(input: RestoreInput) {
+  const { facts, dataRun, root } = input
+  try demand(
+    repositoryName.test(facts.ref.repository) && commitSha.test(facts.sha) && positiveId.test(dataRun) && dataRun !== facts.runId
+      && facts.ref.kind === "WorkflowDispatch" && facts.ref.branch === "main"
+      && facts.options.usePublishedData && facts.options.dataFromRun === dataRun,
+    "Invalid collected data request",
+  )
+  try demand((try checkedOut(root)) === facts.sha, "Restore checkout is not the event commit")
+  const github = try GitHub
+  const base = `/repos/${facts.ref.repository}/actions/runs/${dataRun}`
+  const producerRun = try github.json(base, ProducerRun, { limitBytes: readLimitBytes })
+  const deployRun = followedOf(producerRun)
+  const ancestor = try isAncestor(root, producerRun.head_sha, facts.sha)
+  try demand(
+    String(producerRun.id) === dataRun && trustedMainRelease(deployRun, canonicalRepository) && deployRun.completed
+      && commitSha.test(producerRun.head_sha) && positiveId.test(String(producerRun.run_attempt)) && ancestor,
+    "Data producer is not a completed trusted main release",
+  )
+  const fresh = collected(try github.json(`${base}/attempts/${producerRun.run_attempt}/jobs?per_page=100`, AttemptJobs, { limitBytes: readLimitBytes }))
+  try demand(fresh !== undefined, "Expected one preparation job in the producer attempt")
+  try demand(fresh === true, "Producer did not complete a fresh contribution collection")
+  const listed = try github.json(`${base}/artifacts?per_page=100`, RunArtifacts, { limitBytes: readLimitBytes })
+  const [artifact, ...others] = listed.artifacts.filter((candidate) => candidate.name === `slop-source-${producerRun.head_sha}`)
+  if (artifact === undefined || others.length > 0) throw refused("Expected one checked bundle from the producer")
+  const ageHours = ageHoursOf(artifact.created_at, try Clock.currentTimeMillis)
+  try demand(boundArtifact(artifact, producerRun, ageHours), "Checked bundle is expired, oversized or has unverified identity")
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try fs.makeDirectory(input.out, { recursive: true, mode: 0o700 })
+  const restored = try scoped(effect {
+    const staging = try fs.makeTempDirectoryScoped({ directory: input.out, prefix: ".restore-" })
+    const archive = files.join(staging, archiveName)
+    const digestMatches = try downloaded(input, artifact, archive)
+    try demand(digestMatches, "Bundle archive did not match its GitHub digest")
+    const run = try startRun("Production", facts.by)
+    const anchored = try isAncestor(root, input.anchor, facts.sha)
+    try run.send({ type: "configure", environment: "Production", ref: facts.ref, anchored })
+    const producer: Producer = {
+      runId: producerRun.id,
+      otherRun: dataRun !== facts.runId,
+      deployRun,
+      ancestor,
+      collected: fresh === true,
+      ageHours,
+      digestMatches,
+      digest: try run.idOf("snapshot", artifact.digest ?? ""),
+      generatedAt: Math.floor(Date.parse(artifact.created_at) / 1000),
+    }
+    const state = try run.send({ type: "restoreCollection", producer })
+    try fs.rename(archive, files.join(input.out, archiveName))
+    return state
+  })
+  try Console.log(`Restored collected data from trusted run ${dataRun}, attempt ${producerRun.run_attempt}, commit ${producerRun.head_sha}`)
+  return restored
+}

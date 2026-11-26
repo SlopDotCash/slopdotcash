@@ -1,0 +1,90 @@
+// spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { type Address, type Blockhash, SolanaRpc, base64Encode } from "@repo/platform/chain/solana"
+import type { PlanKind, ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import { decodeProject } from "../chain/solana/accounts.ts"
+import { u64 } from "../chain/solana/bytes.ts"
+import { setMonthlyCommitment } from "../chain/solana/instructions.ts"
+import { MAX_SOLANA_BASE_UNITS, parseBaseUnits } from "../kernels/amounts.ts"
+import type { Instruction } from "../chain/solana/transactions.ts"
+import type { LockTransaction } from "./monthLock.vibe"
+import type { VerifiedDeployment } from "./solanaDeployment.vibe"
+import { completedCheck } from "./solanaFunding.vibe"
+import { WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
+import { type Capture, reviewed } from "./store.vibe"
+
+export interface MonthlyIntent {
+  readonly wallet: Address
+  readonly cap: string
+  readonly enabled: boolean
+}
+
+export interface MonthlyCommitmentState {
+  readonly cap: string
+  readonly enabled: boolean
+}
+
+export interface MonthlySettingRead {
+  readonly current: MonthlyCommitmentState
+  readonly decimals: number
+}
+
+export interface MonthlySettingPlan {
+  readonly wallet: string
+  readonly cap: string
+  readonly enabled: boolean
+  readonly decimals: number
+  readonly current: MonthlyCommitmentState
+  readonly transaction: LockTransaction | null
+}
+
+const settingKind: PlanKind = "MonthlySettingPlan"
+
+function refused(message: string) {
+  return new WalletActionRefused({ message })
+}
+
+function settingFacts(capture: Capture): ReviewFacts {
+  return { steward: false, repositoryAuthority: false, revision: capture.revision, restricted: false, networkServed: true, snapshotDigest: capture.snapshotDigest, obligationFunded: false, monthLockPlanned: false, lockedFunds: false }
+}
+
+effect function settingInstruction(verified: VerifiedDeployment, intent: MonthlyIntent) {
+  const parsed = parseBaseUnits(intent.cap, MAX_SOLANA_BASE_UNITS)
+  const cap = parsed === undefined ? undefined : u64(parsed)
+  if (cap === undefined) throw refused("The monthly cap is outside the Solana vault's supported range.")
+  const built = setMonthlyCommitment({ program: verified.program, project: verified.project, owner: intent.wallet, cap, enabled: intent.enabled })
+  if (built.kind === "refused") throw refused("Turning on automatic monthly payment needs a positive monthly amount.")
+  if (intent.wallet !== verified.owner) throw refused("Connect the vault owner's wallet to change automatic monthly payment.")
+  return built.value
+}
+
+export effect function readMonthlySetting(verified: VerifiedDeployment) {
+  const decoded = decodeProject(try (try SolanaRpc).account(verified.project, "finalized"), verified.program)
+  if (decoded.kind !== "decoded") throw refused("The monthly commitment state could not be read.")
+  if (decoded.value.purpose !== "Ordinary") throw refused("Only an ordinary project vault takes automatic monthly payment.")
+  return { current: { cap: decoded.value.monthlyCap.toString(), enabled: decoded.value.monthlyEnabled }, decimals: verified.decimals } satisfies MonthlySettingRead
+}
+
+effect function plannedTransaction(wallet: Address, capture: Capture, instruction: Instruction) {
+  const prepared = try prepareWalletTransaction(wallet, [instruction])
+  const message = try walletMessage(wallet, prepared.blockhash, [instruction])
+  try reviewed(capture, settingKind, settingFacts(capture), base64Encode(message.bytes))
+  return { blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight, transaction: prepared.transaction, networkFeeLamports: prepared.networkFeeLamports } satisfies LockTransaction
+}
+
+export effect function reviewMonthlySetting(input: { readonly verified: VerifiedDeployment; readonly intent: MonthlyIntent; readonly capture: Capture }) {
+  const { verified, intent, capture } = input
+  const instruction = try settingInstruction(verified, intent)
+  const { current, decimals } = try readMonthlySetting(verified)
+  const unchanged = current.cap === intent.cap && current.enabled === intent.enabled
+  const transaction = unchanged ? null : try plannedTransaction(intent.wallet, capture, instruction)
+  return { wallet: intent.wallet, cap: intent.cap, enabled: intent.enabled, decimals, current, transaction } satisfies MonthlySettingPlan
+}
+
+export effect function checkMonthlySetting(input: { readonly verified: VerifiedDeployment; readonly intent: MonthlyIntent; readonly blockhash: Blockhash; readonly transactionId: string; readonly capture: Capture }) {
+  const { verified, intent, capture } = input
+  const instruction = try settingInstruction(verified, intent)
+  const message = try walletMessage(intent.wallet, input.blockhash, [instruction])
+  const text = base64Encode(message.bytes)
+  const request = try reviewed(capture, settingKind, settingFacts(capture), text)
+  return try completedCheck(request, text, input.transactionId, try checkWalletTransaction(intent.wallet, message, input.transactionId, false))
+}

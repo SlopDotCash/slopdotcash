@@ -1,47 +1,59 @@
-// spec/app/index.md, "The shell shows one route, opened from the address": what the document says of the route it shows.
-import type { Route, RouteKind } from "../gen/app.ts";
+// spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"; spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host"
+import { publicDomain } from "@repo/frontend/presentation";
+import { SITE_ORIGIN } from "@repo/frontend/platform/site";
+import { type RegistryBoot, type RegistryProject, findHistoricalProject, findProject } from "@repo/frontend/reads/registry";
+import { recordKind, routeHead, staticTitle } from "@repo/frontend/routes";
+import type { Route } from "../gen/app.ts";
 
-const homeTitle = "Slop: make money shipping open source";
-/** The title of each page that names it without a record, as development's `ROUTES` and `STATIC_PAGE_TITLES` do. */
-const titles: Partial<Record<RouteKind, string>> = {
-  Home: homeTitle, HowItWorks: "How it works", Sponsors: "Sponsors", CycleArchive: "Cycle archive", Points: "Leaderboard",
-  NewProject: "Add a project", Account: "Account", Login: "Log in", Earnings: "Your payouts", Inbox: "Inbox", Admin: "Admin",
-  VettingEvidence: "Private vetting evidence", SecurityCases: "Security cases",
-};
-/** The canonical path of each page that names it without a record. */
-const paths: Partial<Record<RouteKind, string>> = {
-  Home: "/", HowItWorks: "/how-it-works", Sponsors: "/sponsors", CycleArchive: "/cycles", Points: "/points", NewProject: "/projects/new",
-  Account: "/account", Login: "/login", Earnings: "/earnings", Inbox: "/inbox", Admin: "/admin", VettingEvidence: "/vetting-evidence",
-  SecurityCases: "/security",
-};
+export interface DocumentHead {
+  readonly title: string;
+  readonly canonical: string | undefined;
+}
 
-/**
- * The document title and canonical path of `route`, as development's `routeHead`; a missing page has no canonical. A
- * project's pages name it by its id until the registry read of the business-logic phase gives its name.
- */
-export function routeHead(route: Route): { title: string; path: string | null } {
-  const titled = (name: string, path: string | null) => ({ title: name === homeTitle ? name : `${name} · Slop`, path });
-  const project = `/projects/${encodeURIComponent(route.projectId)}`;
+interface RouteRecord {
+  readonly name: string;
+  readonly segments: Readonly<Record<string, string>>;
+}
+
+const homeTitle = staticTitle("Home");
+
+const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+
+const bountyOnly = ({ securityBounty }: RegistryProject) =>
+  typeof securityBounty === "object" && securityBounty !== null && "rewardMode" in securityBounty && securityBounty.rewardMode === "bounty-only";
+
+function projectRecord(route: Route, project: RegistryProject | undefined): RouteRecord | undefined {
+  const id = text(project?.id);
+  const name = text(project?.name);
+  if (project === undefined || id === undefined || name === undefined) return undefined;
+  const slug = text(project.slug) ?? id;
   switch (route.kind) {
-    case "Unknown": return titled("Page not found", null);
-    case "Profile": return titled(route.login, `/contributors/${encodeURIComponent(route.login)}`);
-    case "Cycle": return titled(`${route.projectId} ${route.cycleId} cycle`, `/cycles/${encodeURIComponent(route.projectId)}/${encodeURIComponent(route.cycleId)}`);
-    case "Project": return titled(route.projectId, project);
-    case "ManageProject": return titled(`Manage ${route.projectId}`, `${project}/manage`);
-    case "SecurityProgram": return titled(`${route.projectId} security bounty`, `${project}/security`);
-    default: return titled(titles[route.kind]!, paths[route.kind]!);
+    case "Cycle": return { name: `${name} ${route.cycleId} cycle`, segments: { project: id, cycle: route.cycleId } };
+    case "ManageProject": return { name: `Manage ${name}`, segments: { project: slug } };
+    case "SecurityProgram": return { name: `${name} security bounty`, segments: { project: slug } };
+    default: return { name: bountyOnly(project) ? `${name} security bounty` : name, segments: { project: slug } };
   }
 }
 
-/** Sets the title, and the canonical link or, for a missing page that the shell still answers with 200, noindex. */
-export function applyHead({ title, path }: { title: string; path: string | null }) {
-  document.title = title;
-  document.head.querySelector('link[rel="canonical"]')?.remove();
-  document.head.querySelector('meta[name="robots"]')?.remove();
-  const tag = path === null ? Object.assign(document.createElement("meta"), { name: "robots", content: "noindex" })
-    : Object.assign(document.createElement("link"), { rel: "canonical", href: `https://slop.cash${path}` });
-  document.head.append(tag);
+function projectOf(route: Route, boot: RegistryBoot): RegistryProject | undefined {
+  const listed = findProject(boot, route.projectId);
+  return route.kind === "Cycle" ? listed ?? findHistoricalProject(boot, route.projectId) : listed;
+}
+
+const filled = (pattern: string, segments: Readonly<Record<string, string>>) =>
+  pattern.replace(/:(\w+)/gu, (_, key: string) => encodeURIComponent(segments[key] ?? ""));
+
+/** The head of `route`, or undefined while a project route waits for the registry that names its project. */
+export function documentHead(route: Route, boot: RegistryBoot | undefined): DocumentHead | undefined {
+  const record = route.kind === "Profile" ? { name: route.login, segments: { login: route.login } }
+    : !recordKind(route.kind) ? undefined : boot === undefined ? null : projectRecord(route, projectOf(route, boot));
+  if (record === null) return undefined;
+  const head = routeHead(route, record !== undefined, record?.name ?? "");
+  return {
+    title: head.titleName === homeTitle ? homeTitle : `${head.titleName} · Slop`,
+    canonical: head.indexed ? `${SITE_ORIGIN}${filled(head.canonical, record?.segments ?? {})}` : undefined,
+  };
 }
 
 /** The domain the wordmark names: slop.tech where the page was served from it, slop.cash everywhere else. */
-export const domainOf = (hostname: string) => (["slop.tech", "www.slop.tech"].includes(hostname.toLowerCase().replace(/\.$/u, "")) ? "slop.tech" : "slop.cash");
+export const domainOf = (hostname: string) => (publicDomain(hostname.toLowerCase().replace(/\.$/u, "")) === "SlopTech" ? "slop.tech" : "slop.cash");

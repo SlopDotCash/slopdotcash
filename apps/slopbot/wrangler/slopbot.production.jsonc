@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-30",
   "workers_dev": false,
   "preview_urls": false,
+  "limits": {
+    "cpu_ms": 300000
+  },
   "triggers": {
     "crons": ["*/5 * * * *"]
   },
@@ -28,6 +31,8 @@
   },
   "vars": {
     "SLOPBOT_CLOSURE_ENABLED": "false",
+    "SLOPBOT_EVIDENCE_CLOSURE_ENABLED": "true",
+    "SUBMISSION_FEE_MODE": "live",
     "ADMIN_GITHUB_IDS": "18633264,202660855",
     "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855"
   },

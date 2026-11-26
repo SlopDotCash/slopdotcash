@@ -1,0 +1,321 @@
+// spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/slopbot/valueHistory.md, "The requested source selects one live record in the complete captured lineage"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
+import { sha256Hex } from "@repo/platform/crypto"
+import { validMergeRecipe } from "@repo/platform/git/evidence"
+import type { JointPage } from "@repo/points/collect"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import type { HeldWorkUnit, HistoricalClosedContext } from "@repo/ports/points"
+import { WorkUnitHistoryRow } from "@repo/ports/slopbot"
+import type { Event, History } from "../../../gen/slopbot__valueHistory.ts"
+import { apply, completeParents, liveTarget, ownClaims, ownSources } from "../../../gen/slopbot__valueHistory.effect.vibe"
+import { validContextSelections } from "../evidence/context.vibe"
+import { type Actor, EvidenceRefused, type RegisteredRepository } from "../evidence/types.vibe"
+import type { JournalRow } from "../history/read.vibe"
+import { type CurrentEvidence, type HistoryRead, observationOf, openHistory, pageEvent, rowEvent, sourceKey } from "../history/store.vibe"
+import { type WorkUnitAssessment, validateWorkUnitAssessment, valueRubricVersion } from "../inference/assessment.vibe"
+import { isSubscriptionProvenance, producerRecognized } from "../inference/publish.vibe"
+import { metadataCompatibleEvidence } from "../retained/repair.vibe"
+import { prepareWorkUnitEvidence } from "../workUnits/prepare.vibe"
+import { type WorkUnitRecord, workUnitIdentity, workUnitRecordVersion, workUnitSourceBindings } from "../workUnits/record.vibe"
+import type { WorkUnitClaim, WorkUnitEvidence, WorkUnitSource } from "../workUnits/types.vibe"
+import { rebindHistoricalStandaloneReview } from "./closedReview.vibe"
+
+const digestPattern = /^[a-f0-9]{64}$/u
+const shaPattern = /^[a-f0-9]{40}$/u
+
+const Indirect = Schema.Struct({
+  historicalHeadSha: Schema.String,
+  integrationSha: Schema.String,
+  acceptedTipSha: Schema.String,
+  branch: Schema.String,
+  observationRunId: Schema.Number,
+  observedOnBranchAt: Schema.String,
+})
+
+const Binding = Schema.Struct({
+  repository: Schema.String,
+  repositoryNodeId: Schema.String,
+  repositoryDatabaseId: Schema.Number,
+  pullRequestNodeId: Schema.String,
+  pullRequestNumber: Schema.Number,
+  headSha: Schema.String,
+  mergeSha: Schema.NullOr(Schema.String),
+  policySha: Schema.String,
+  sourceDigest: Schema.String,
+  occurredAt: Schema.String,
+  indirectAcceptance: Schema.optionalKey(Indirect),
+  mergeRecipe: Schema.optionalKey(Schema.Unknown),
+  contextPaths: Schema.optionalKey(Schema.Unknown),
+})
+
+const RecordShape = Schema.Struct({
+  schemaVersion: Schema.Literal(workUnitRecordVersion),
+  projectId: Schema.String,
+  sourceDigest: Schema.String,
+  producerRevision: Schema.String,
+  assessedAt: Schema.String,
+  rubricVersion: Schema.String,
+  sources: Schema.Array(Binding),
+  claims: Schema.Array(Schema.Struct({ id: Schema.String })),
+  units: Schema.Array(Schema.Struct({ workUnitId: Schema.String, claimIds: Schema.Array(Schema.String), assessment: Schema.Unknown })),
+  supersedes: Schema.Array(Schema.String),
+  legacyPredecessors: Schema.Array(Schema.String),
+  revisionReason: Schema.NullOr(Schema.String),
+  model: Schema.Unknown,
+})
+
+const Model = Schema.Struct({ provider: Schema.String, requested: Schema.String, reported: Schema.String })
+
+export interface JointTarget {
+  readonly projectId: string
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+}
+
+export interface JointCurrent {
+  readonly row: JournalRow
+  readonly record: WorkUnitRecord
+}
+
+export interface JointHistory {
+  readonly read: HistoryRead
+  readonly throughSequence: number
+  readonly current: JointCurrent | undefined
+}
+
+interface DecisionCommon {
+  readonly history: ReadonlyArray<JournalRow>
+  readonly throughSequence: number
+  readonly latestDigest: string | null
+}
+
+export type JointDecision =
+  | (DecisionCommon & { readonly status: "missing" | "incomplete" | "stale" })
+  | (DecisionCommon & { readonly status: "unresolved"; readonly sourceUnavailable: true })
+  | (DecisionCommon & { readonly status: "assessed" | "unresolved"; readonly record: WorkUnitRecord; readonly evidence: WorkUnitEvidence; readonly assessment: WorkUnitAssessment })
+
+function refused(reason: string) {
+  return new EvidenceRefused({ reason })
+}
+
+function digest(value: string) {
+  return digestPattern.test(value)
+}
+
+function sha(value: string) {
+  return shaPattern.test(value)
+}
+
+function time(value: string) {
+  return Number.isFinite(Date.parse(value))
+}
+
+function positive(value: number) {
+  return Number.isSafeInteger(value) && value > 0
+}
+
+effect function jointRecordOf(row: JournalRow, repositories: ReadonlyArray<RegisteredRepository>) {
+  const parsed = Effect.try(() => JSON.parse(row.record_json) as unknown) catch () => undefined
+  const shape = Schema.decodeUnknownEffect(RecordShape)(parsed) catch effect () => { throw refused("Joint history record has invalid revision bindings") }
+  const revisions = [...shape.supersedes, ...shape.legacyPredecessors]
+  const reason = shape.revisionReason
+  if (
+    !digest(shape.sourceDigest) || !sha(shape.producerRevision) || !time(shape.assessedAt) || shape.sources.length === 0 || !revisions.every(digest)
+    || new Set(shape.supersedes).size !== shape.supersedes.length || new Set(shape.legacyPredecessors).size !== shape.legacyPredecessors.length
+    || (revisions.length === 0 ? reason !== null : reason === null || reason.trim() === "")
+  ) throw refused("Joint history record has invalid revision bindings")
+  const keys = new Set<string>()
+  for (const source of shape.sources) {
+    const repository = repositories.find((entry) => [entry.id, ...entry.aliases].includes(source.repository))
+    const key = sourceKey(source.repositoryNodeId, source.pullRequestNodeId)
+    if (
+      repository === undefined || repository.projectId !== shape.projectId || (repository.expectedNodeId !== null && repository.expectedNodeId !== source.repositoryNodeId)
+      || source.pullRequestNodeId === "" || !positive(source.repositoryDatabaseId) || !positive(source.pullRequestNumber) || !sha(source.headSha)
+      || (source.mergeSha !== null && !sha(source.mergeSha)) || !sha(source.policySha) || !digest(source.sourceDigest) || !time(source.occurredAt)
+      || (source.mergeRecipe !== undefined && !validMergeRecipe(source.mergeRecipe)) || (source.contextPaths !== undefined && !validContextSelections(source.contextPaths)) || keys.has(key)
+    ) throw refused("Joint history source identity is invalid")
+    const indirect = source.indirectAcceptance
+    if (indirect !== undefined && (
+      source.mergeSha !== null || !sha(indirect.historicalHeadSha) || !sha(indirect.integrationSha) || !sha(indirect.acceptedTipSha) || indirect.branch !== repository.integrationBranch
+      || !positive(indirect.observationRunId) || !time(indirect.observedOnBranchAt) || source.occurredAt !== indirect.observedOnBranchAt
+    )) throw refused("Joint indirect acceptance binding is invalid")
+    keys.add(key)
+  }
+  if (shape.claims.some((claim) => !digest(claim.id)) || new Set(shape.claims.map((claim) => claim.id)).size !== shape.claims.length) throw refused("Joint history claim identity is invalid")
+  return parsed as WorkUnitRecord
+}
+
+effect function journalRow(raw: unknown, after: number, through: number, seen: ReadonlyMap<string, WorkUnitRecord>) {
+  const row = Schema.decodeUnknownEffect(WorkUnitHistoryRow)(raw) catch effect () => { throw refused("Joint history has invalid bytes or sequence") }
+  if (!Number.isSafeInteger(row.sequence) || row.sequence <= after || row.sequence > through || !digest(row.record_digest) || (try sha256Hex(row.record_json)) !== row.record_digest || !time(row.recorded_at) || seen.has(row.record_digest))
+    throw refused("Joint history has invalid bytes or sequence")
+  return row
+}
+
+function rowRefusal(before: History, event: Event) {
+  if (event.type !== "acceptRow" && event.type !== "rejectRow") return "Joint history has invalid bytes or sequence"
+  if (!completeParents(before, event.record)) return "Joint history has a missing, forked or incomplete predecessor"
+  if (!ownSources(before, event.record)) return "Joint history omits current source ownership"
+  if (!ownClaims(before, event.record)) return "Joint history duplicates a current claim"
+  return "Joint history has invalid bytes or sequence"
+}
+
+function closeRefusal(state: History) {
+  if (state.page.nextAfter > 0) return "Joint history cursor did not advance"
+  if (state.rows.length !== state.total) return "Joint history coverage is incomplete"
+  if (liveTarget(state).digest === 0) return "Joint history does not contain the requested source"
+  return "Joint history contains unrelated records"
+}
+
+export effect function readWorkUnitHistory<E, R>(load: (after: number, through: number | null) => JointPage!E!R, target: JointTarget, repositories: ReadonlyArray<RegisteredRepository>) {
+  const session = try openHistory(target.projectId, target.repositoryNodeId, target.pullRequestNodeId)
+  const records = new Map<string, WorkUnitRecord>()
+  let after = 0
+  let through: number | null = null
+  let refusal = "Joint history pagination boundary changed"
+  let state = try session.machine.get()
+  while (state.phase === "Opening" || state.phase === "BetweenPages") {
+    const page = try load(after, through)
+    refusal = "Joint history pagination boundary changed"
+    state = try session.machine.send(pageEvent(state, { through: page.throughSequence, total: page.totalRecords, rows: page.records.length, nextAfter: page.nextAfter ?? 0 }))
+    for (const raw of page.records) {
+      if (state.phase !== "ReadingPage") break
+      const row = try journalRow(raw, state.cursor, state.through, records)
+      records.set(row.record_digest, try jointRecordOf(row, repositories))
+      const event = try rowEvent(session, row)
+      refusal = rowRefusal(state, event)
+      state = try session.machine.send(event)
+      session.rows.push(row)
+    }
+    if (state.phase === "ReadingPage") {
+      const closing = state
+      state = try session.machine.send({ type: "closePage" })
+      refusal = closeRefusal(closing)
+    }
+    after = page.nextAfter ?? after
+    through = page.throughSequence
+  }
+  if (state.phase !== "HistoryReady") throw refused(refusal)
+  const read: HistoryRead = { history: state, names: session.names, rows: session.rows }
+  const selected = state.selected
+  const digestName = [...session.names.entries()].find(([name, id]) => id === selected && name.startsWith("record:"))?.[0].slice("record:".length)
+  const row = session.rows.find((entry) => entry.record_digest === digestName)
+  const record = digestName === undefined ? undefined : records.get(digestName)
+  if (selected > 0 && (row === undefined || record === undefined)) throw refused("Joint history current record is missing")
+  return { read, throughSequence: state.through, current: row === undefined || record === undefined ? undefined : { row, record } } satisfies JointHistory
+}
+
+function valueProducer(model: unknown) {
+  if (isSubscriptionProvenance(model)) return true
+  const decoded = Option.getOrUndefined(Schema.decodeUnknownOption(Model)(model))
+  return decoded !== undefined && typeof model === "object" && model !== null && Object.keys(model).sort().join() === "provider,reported,requested" && producerRecognized(decoded)
+}
+
+function settled(common: DecisionCommon, status: "missing" | "incomplete" | "stale"): JointDecision {
+  return { ...common, status }
+}
+
+function invalidReason(bound: boolean, producer: boolean, assessment: WorkUnitAssessment | undefined) {
+  if (!bound || !producer) return "Current joint record does not bind its sources or producer"
+  return assessment === undefined ? "Current joint assessment does not validate against source" : "Current joint work-unit identity is invalid"
+}
+
+export effect function consumeWorkUnitHistory(history: JointHistory, sources: ReadonlyArray<WorkUnitSource>, legacyDigests: ReadonlyMap<string, string | null>, repositories: ReadonlyArray<RegisteredRepository>) {
+  const current = history.current
+  const common: DecisionCommon = { history: history.read.rows, throughSequence: history.throughSequence, latestDigest: current?.row.record_digest ?? null }
+  if (current === undefined) return settled(common, "missing")
+  const { record } = current
+  const prepared = try prepareWorkUnitEvidence(sources, repositories)
+  const evidence = prepared.limitations.length > 0 ? prepared : try metadataCompatibleEvidence(record, prepared, sources, repositories)
+  const legacy: string[] = []
+  const verifiedLegacy: string[] = []
+  let legacyRefusal: string | undefined
+  for (const { evidence: source } of evidence.sources) {
+    const value = legacyDigests.get(source.pull.node_id)
+    const problem = value === undefined ? "Joint decision lacks verified legacy history" : value !== null && !digest(value) ? "Joint legacy history digest is invalid" : undefined
+    if (problem !== undefined) {
+      if (legacyRefusal === undefined) legacyRefusal = problem
+      continue
+    }
+    verifiedLegacy.push(sourceKey(source.repositoryNodeId, source.pull.node_id))
+    if (value !== null && value !== undefined) legacy.push(value)
+  }
+  const bindings = workUnitSourceBindings(evidence, repositories) catch () => undefined
+  const exactProducer = valueProducer(record.model)
+  const assessment = validateWorkUnitAssessment({ units: record.units.map(({ claimIds, assessment: unit }) => ({ claimIds, assessment: unit })) }, evidence)
+  const identified = assessment !== undefined && assessment.units.every((unit, index) => workUnitIdentity(unit) === record.units[index]?.workUnitId)
+  const observed = evidence.sources.map(({ evidence: source }) => sourceKey(source.repositoryNodeId, source.pull.node_id))
+  const observation: CurrentEvidence = {
+    sourceDigest: evidence.sourceDigest,
+    rubricVersion: valueRubricVersion,
+    sources: bindings ?? [],
+    claims: evidence.claims,
+    observedSources: observed,
+    verifiedLegacySources: verifiedLegacy,
+    legacy: [...new Set(legacy)],
+    completeEvidence: evidence.limitations.length === 0,
+    exactProducer,
+    validAssessment: identified,
+    everyUnitAssessed: assessment?.units.every((unit) => unit.assessment.status === "assessed") ?? false,
+  }
+  const decided = try apply(history.read.history, { type: "consume", observation: observationOf(history.read, observation) })
+  const outcome = decided.outcome
+  if (outcome === "Missing") return settled(common, "missing")
+  if (outcome === "Incomplete") return settled(common, "incomplete")
+  if (outcome === "Stale") return settled(common, "stale")
+  if ((outcome === "Assessed" || outcome === "Unresolved") && assessment !== undefined) {
+    const consumed: JointDecision = { ...common, status: outcome === "Assessed" ? "assessed" : "unresolved", record, evidence, assessment }
+    return consumed
+  }
+  if (legacyRefusal !== undefined) throw refused(legacyRefusal)
+  const bound = bindings !== undefined && JSON.stringify(record.sources) === JSON.stringify(bindings) && JSON.stringify(record.claims) === JSON.stringify(evidence.claims)
+  throw refused(invalidReason(bound, exactProducer, assessment))
+}
+
+export effect function consumeJointMembers(history: JointHistory, members: ReadonlyArray<WorkUnitSource>, legacyDigests: ReadonlyMap<string, string | null>, closure: HistoricalClosedContext | undefined, repositories: ReadonlyArray<RegisteredRepository>) {
+  const decision = try consumeWorkUnitHistory(history, members, legacyDigests, repositories)
+  const current = history.current
+  const [member] = members
+  if (decision.status !== "stale" || closure === undefined || !closure.standaloneReview || current === undefined || closure.digest !== current.row.record_digest || members.length !== 1 || member === undefined) return decision
+  const rebound = try rebindHistoricalStandaloneReview(member, current.record, repositories)
+  return rebound === member ? decision : try consumeWorkUnitHistory(history, [rebound], legacyDigests, repositories)
+}
+
+export function heldJointDecision(history: JointHistory, current: JointCurrent, unavailable: ReadonlyArray<string>) {
+  const decision: JointDecision = { history: history.read.rows, throughSequence: history.throughSequence, latestDigest: current.row.record_digest, status: "unresolved", sourceUnavailable: true }
+  const held: HeldWorkUnit = {
+    recordDigest: current.row.record_digest,
+    sourceNodeIds: current.record.sources.map((member) => member.pullRequestNodeId).sort(),
+    unavailableNodeIds: [...new Set(unavailable)].sort(),
+  }
+  return { decision, held }
+}
+
+export function soleCreditActor(sourceAuthor: Actor, commitAuthor: Actor | null) {
+  const committed = commitAuthor === null ? null : { id: commitAuthor.node_id, kind: commitAuthor.type }
+  if (committed !== null && isCreditEligibleCommitAuthor(committed)) return committed.id
+  const fallback = { id: sourceAuthor.node_id, kind: sourceAuthor.type }
+  return isCreditEligibleCommitAuthor(fallback) ? fallback.id : undefined
+}
+
+function creditActorIds(evidence: WorkUnitEvidence, claim: WorkUnitClaim): ReadonlyArray<string> {
+  const credited = evidence.sources.find((item) => item.evidence.pull.node_id === claim.creditPullRequestId)?.evidence
+  if (credited === undefined || credited.commits.filter((commit) => commit.sha === claim.commitSha).length !== 1) return []
+  const copy = claim.retainedCopy
+  const source = copy?.repair === undefined ? credited : evidence.sources.find((item) => item.evidence.pull.node_id === copy.acceptancePullRequestId)?.evidence
+  const commitSha = copy?.repair === undefined ? claim.commitSha : copy.acceptedCommitSha
+  const commit = source?.commits.find((candidate) => candidate.sha === commitSha)
+  const actor = source === undefined || commit === undefined ? undefined : soleCreditActor(source.pull.user, commit.author)
+  return actor === undefined ? [] : [actor]
+}
+
+export function jointActorIds(evidence: WorkUnitEvidence, assessment: WorkUnitAssessment) {
+  const actors = new Set(evidence.claims.flatMap((claim) => claim.implementationActorNodeIds))
+  for (const claim of evidence.claims) for (const id of creditActorIds(evidence, claim)) actors.add(id)
+  const valued = new Set(assessment.units.flatMap((unit) => unit.assessment.reviews.filter((review) => review.tier !== "none").map((review) => review.sourceId)))
+  for (const member of evidence.sources) {
+    for (const review of member.evidence.reviews) {
+      if (valued.has(review.node_id) && review.user !== null) actors.add(review.user.node_id)
+    }
+  }
+  return actors
+}

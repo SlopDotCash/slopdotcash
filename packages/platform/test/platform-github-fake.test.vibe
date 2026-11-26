@@ -203,8 +203,8 @@ layer(webCrypto, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
     const second = try signIn("state-two")
     let wrong: unknown, replayed: unknown, user: unknown
     provide web {
-      wrong = exchange(code, `${challenge.verifier}x`) catch (error) => error._tag
-      replayed = exchange(code, challenge.verifier) catch (error) => error._tag
+      wrong = exchange(code, `${challenge.verifier}x`) catch (error) => [error._tag, error.stage, error.reason, error.oauthError]
+      replayed = exchange(code, challenge.verifier) catch (error) => [error._tag, error.stage, error.reason, error.oauthError]
       user = try currentUser(try exchange(second.searchParams.get("code") ?? "", challenge.verifier))
     }
     const unauthorized = try promise(() => call(fake, authorizeUrl({ clientId: fake.app.clientId, redirectUri: callback, state: "state-three", challenge: challenge.challenge, login: "nobody" })))
@@ -217,9 +217,9 @@ layer(webCrypto, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
       exchanges: fake.requests.filter((request) => request.url.endsWith("/login/oauth/access_token")).map((request) => request.status),
     }, {
       redirect: [callback, "state-one", "state-two"],
-      wrong: "GitHubRefused",
-      replayed: "GitHubRefused",
-      user: { id: "583231", nodeId: "MDQ6VXNlcjU4MzIzMQ==", login: "octocat", createdAt: "2011-01-25T18:44:36Z" },
+      wrong: ["OAuthFailed", "token", "invalid-response", "bad_verification_code"],
+      replayed: ["OAuthFailed", "token", "invalid-response", "bad_verification_code"],
+      user: { id: "583231", nodeId: "MDQ6VXNlcjU4MzIzMQ==", login: "octocat" },
       unauthorized: 400,
       exchanges: [200, 200, 200],
     }))

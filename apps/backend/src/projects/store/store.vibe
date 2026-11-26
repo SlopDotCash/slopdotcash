@@ -1,13 +1,14 @@
-// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"
+// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type ConstraintViolation, type Statement, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
 import { type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { Notices } from "@repo/ports/operations"
-import { type Event, type Registry, apply, decodeEvent, decodeState } from "../../../gen/backend__projectComposition.effect.vibe"
+import { type Event, type Registry, type RegistryObservation, type RegistryRead, apply, decodeEvent, decodeState, initial, observation } from "../../../gen/backend__projectComposition.effect.vibe"
+import { platform } from "../../../gen/security__enforcement.effect.vibe"
 import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
-import { type ProjectFacts, assetKeyIn, assetOf, byOf, exclusionsOf, idOf, mismatchOf, monthOf, networkOf, projectState, repositoryIdsOf, repositoryKeysOf, sameExclusions, statusText, tierText } from "./codec.vibe"
+import { type ProjectFacts, assetKeyIn, assetOf, byOf, exclusionsOf, fieldsCompleteOf, fundedOf, idOf, licenseOf, mismatchOf, monthOf, networkOf, participationOf, projectState, repositoryIdsOf, repositoryKeysOf, rewardPromiseOf, sameExclusions, shareHistoryOf, statusOf, statusText, tierOf, tierText, vaultsOf } from "./codec.vibe"
 import { EnforcementRows, type EnforcementScope, type RegistryMirror } from "@repo/ports/security"
 import { accountStanding } from "./facts.vibe"
 import { type ApplicationRow, type Manifest, type ProjectRows, manifestOf, projectReads, projectRows, projectVersion } from "./rows.vibe"
@@ -30,7 +31,13 @@ export interface Action {
   readonly revision?: Recorded
   readonly referrer?: Actor
   readonly alongside?: ReadonlyArray<Statement>
+  readonly basedOn?: number
+  readonly recordId?: string
+  readonly observations?: ReadonlyArray<Observation>
+  readonly setupRead?: RegistryObservation
 }
+
+export type Observation = Extract<Event, { type: "observeEvidence" | "observePins" }>
 
 export interface Prospect {
   readonly repository: number
@@ -53,7 +60,6 @@ export interface Committed {
 export error RevisionMissing { projectId: string; event: string }
 export error RevisionMismatch { projectId: string; field: string }
 export error ApplicationMissing { projectId: string; event: string }
-export error FundingUnrecorded { projectId: string }
 
 const repositoryConflict = /UNIQUE constraint failed: project_repositories\./u
 
@@ -102,6 +108,29 @@ effect function registryRead(projectId: string, repository: number, keys: Readon
   return registryReadOf(repositoryId, try repositoryClaim({ projectId, repositoryId, keys }))
 }
 
+function appendedKeys(manifest: Manifest, held: ReadonlySet<string>, repository: number): ReadonlyArray<string> {
+  const entry = manifest.repositories.slice(1).find((listed) => idOf(listed.githubId) === repository)
+  return entry === undefined ? [] : [entry.id, ...(entry.aliases ?? [])].map((path) => path.toLowerCase()).filter((key) => !held.has(key))
+}
+
+export function exceptionFacts(manifest: Manifest, rows: ProjectRows) {
+  const reward = manifest.reward
+  return {
+    status: statusOf(manifest.status),
+    tier: tierOf(manifest.listingTier),
+    steward: idOf(manifest.steward.github.actorId),
+    participation: participationOf(manifest),
+    fieldsComplete: fieldsCompleteOf(manifest),
+    network: networkOf(manifest),
+    asset: assetKeyIn(rows.revisions.map((entry) => entry.manifest), assetOf(manifest).identity),
+    funded: fundedOf(manifest),
+    vaults: vaultsOf(manifest),
+    reward: rewardPromiseOf(reward),
+    license: licenseOf(manifest),
+    shareHistory: shareHistoryOf(reward),
+  }
+}
+
 effect function trusted(rows: ProjectRows, state: Registry, action: Action, prospect: Prospect | undefined) {
   const { projectId, by } = action
   const event = action.event
@@ -110,6 +139,7 @@ effect function trusted(rows: ProjectRows, state: Registry, action: Action, pros
     if (prospect === undefined) return event
     return {
       ...event,
+      creation: { ...event.creation, reward: rewardPromiseOf(prospect.manifest.reward), shareHistory: shareHistoryOf(prospect.manifest.reward) },
       account: try accountStanding({ actor: by, steward: event.creation.facts.owner }),
       registry: try registryRead(projectId, prospect.repository, repositoryKeysOf(prospect.manifest)),
       exclusions: [...exclusionsOf(prospect.manifest)],
@@ -119,16 +149,18 @@ effect function trusted(rows: ProjectRows, state: Registry, action: Action, pros
     const manifest = try submittedOf(projectId, action.revision, event.type)
     const asset = assetKeyIn(rows.revisions.map((entry) => entry.manifest), assetOf(manifest).identity)
     const exclusions = [...exclusionsOf(manifest)]
-    return { ...event, change: { ...event.change, network: networkOf(manifest), asset, exclusionsChanged: !sameExclusions(exclusions, state.exclusions) }, account: try accountStanding({ actor: by, steward }), exclusions } satisfies Event
-  }
-  if (event.type === "appendRepository") {
-    const manifest = try submittedOf(projectId, action.revision, event.type)
     const held = new Set(rows.current === undefined ? [] : repositoryKeysOf(rows.current))
-    const claimed = repositoryKeysOf(manifest).filter((key) => !held.has(key))
-    return { ...event, account: try accountStanding({ actor: by, steward }), registry: try registryRead(projectId, event.appendEvidence.facts.repository, claimed) } satisfies Event
+    const appendReads: RegistryRead[] = []
+    for (const appended of event.change.appends) appendReads.push(try registryRead(projectId, appended.facts.repository, appendedKeys(manifest, held, appended.facts.repository)))
+    const change = { ...event.change, network: networkOf(manifest), asset, exclusionsChanged: !sameExclusions(exclusions, state.exclusions), reward: rewardPromiseOf(manifest.reward) }
+    return { ...event, change, account: try accountStanding({ actor: by, steward }), exclusions, appendReads } satisfies Event
   }
-  if (event.type === "editConsent" || event.type === "activate") return { ...event, account: try accountStanding({ actor: by, steward }) } satisfies Event
-  if (event.type === "adminRevise") return { ...event, exclusions: [...exclusionsOf(try submittedOf(projectId, action.revision, event.type))] } satisfies Event
+  if (event.type === "activate" || event.type === "moveBranch") return { ...event, account: try accountStanding({ actor: by, steward }) } satisfies Event
+  if (event.type === "registerVault") return { ...event, account: try accountStanding({ actor: event.registration.authority.actor, steward }) } satisfies Event
+  if (event.type === "adminRevise") {
+    const manifest = try submittedOf(projectId, action.revision, event.type)
+    return { ...event, exception: { ...event.exception, ...exceptionFacts(manifest, rows) }, exclusions: [...exclusionsOf(manifest)] } satisfies Event
+  }
   return event
 }
 
@@ -140,14 +172,16 @@ effect function loaded(projectId: string, rows: ReadonlyArray<Rows>, action: Act
   const prospective = prospect === undefined ? project : { ...project, repositories: [prospect.repository], starts: [{ repositoryId: prospect.repository, month: facts.month }], network: networkOf(prospect.manifest), asset: assetKeyIn([], assetOf(prospect.manifest).identity) }
   const mirror = mirrorOf(backend)
   const security = try (try EnforcementRows).decode(projectId, rows.slice(3), prospect === undefined ? mirror : { ...mirror, repositoryGithubIds: [String(prospect.repository)] })
-  const state = try decodeState({ project: prospective, security, exclusions: exclusionsOf(backend.current) })
+  const decoded = try decodeState({ project: prospective, security, exclusions: exclusionsOf(backend.current), setupRead: initial.setupRead })
+  const state = { ...decoded, setupRead: action?.setupRead ?? observation(decoded) }
   return { rows: backend, state, event: action === undefined ? undefined : try trusted(backend, state, action, prospect) } satisfies Loaded
 }
 
 const claimsGeneration = sql`(SELECT COALESCE(MAX(rowid), 0) FROM project_repositories)`
 
 function claimsRegistry(event: Event | undefined): boolean {
-  return event?.type === "create" || event?.type === "publishApplication" || event?.type === "appendRepository"
+  if (event?.type === "publishOwnerRevision" || event?.type === "publishUpdate") return event.change.appends.length > 0
+  return event?.type === "create" || event?.type === "publishApplication"
 }
 
 function aggregate(projectId: string, scope: EnforcementScope, generation: Statement, action: Action | undefined) {
@@ -173,7 +207,7 @@ export interface Written {
 
 function factsOf(after: Registry): ProjectFacts {
   const project = after.project
-  return { status: project.status, tier: project.tier, steward: project.steward, participation: project.participation, repositories: project.repositories, fieldsComplete: project.fieldsComplete, consent: project.consent, network: project.network, asset: project.asset, exclusions: after.exclusions, branch: project.branch, license: project.license }
+  return { status: project.status, tier: project.tier, steward: project.steward, participation: project.participation, repositories: project.repositories, fieldsComplete: project.fieldsComplete, consent: project.consent, network: project.network, asset: project.asset, exclusions: after.exclusions, branch: project.branch, license: project.license, honorSystem: project.honorSystem, vaults: project.vaults, share: project.share, shareHistory: project.shareHistory }
 }
 
 function checked(manifest: Manifest, projectId: string, after: Registry, rows: ProjectRows) {
@@ -311,8 +345,14 @@ effect function backendWrites(current: Loaded, after: Registry, action: Action, 
 }
 
 effect function decide(current: Loaded, action: Action) {
+  if (action.basedOn !== undefined && current.state.project.revision !== action.basedOn) throw new RevisionMismatch({ projectId: action.projectId, field: "revision" })
   const event = current.event ?? action.event
-  const after = try apply(current.state, event, action.by)
+  let observed = current.state
+  for (const observation of action.observations ?? []) {
+    const next = try apply(observed, observation, platform)
+    observed = next
+  }
+  const after = try apply(observed, event, action.by)
   const at = try isoNow()
   const backend = try backendWrites(current, after, { ...action, event }, at)
   const registryAfter: RegistryMirror = backend.stamped === undefined
@@ -322,11 +362,12 @@ effect function decide(current: Loaded, action: Action) {
     projectId: action.projectId,
     event,
     by: action.by,
-    before: current.state.security,
+    before: observed.security,
     after: after.security,
     registryBefore: mirrorOf(current.rows),
     registryAfter,
     at,
+    ...(action.recordId === undefined ? {} : { recordId: action.recordId }),
   })
   return { value: { before: current.state, after, rows: current.rows, stamped: backend.stamped }, writes: [...backend.writes, ...security, ...(action.alongside ?? [])] } satisfies Decision<Committed>
 }
@@ -337,7 +378,6 @@ export effect function loadProject(projectId: string) {
 }
 
 export effect function send(action: Action) {
-  if (action.event.type === "recordFunding") throw new FundingUnrecorded({ projectId: action.projectId })
   const enforcement = try EnforcementRows
   return try update(aggregate(action.projectId, try enforcement.scope(action.projectId), try enforcement.generation(), action), (current) => decide(current, action))
 }

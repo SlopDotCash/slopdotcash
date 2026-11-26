@@ -48,7 +48,7 @@ export effect function recognized<E, R>(network: Network, awards: ReadonlyArray<
   return { journal: try journal.get(), unknownCases } satisfies Recognized
 }
 
-function canonical(network: Network, text: string) {
+export function canonical(network: Network, text: string) {
   return network === "Solana" ? text : text.toLowerCase()
 }
 

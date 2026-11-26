@@ -138,7 +138,8 @@ export interface HistorySession {
 export effect function openHistory(projectId: string, repositoryNodeId: string, pullRequestNodeId: string) {
   const names: Names = new Map()
   const machine = try historyReader(nameId(names, "project", projectId), nameId(names, "source", sourceKey(repositoryNodeId, pullRequestNodeId)))
-  return { machine, names, rows: [] } satisfies HistorySession
+  const session: HistorySession = { machine, names, rows: [] }
+  return session
 }
 
 export function pageEvent(state: History, page: Page): Event {

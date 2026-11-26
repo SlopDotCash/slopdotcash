@@ -1,0 +1,197 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { gitBytes, systemGit } from "@repo/platform/git"
+import { lossyText, parsedJson } from "@repo/platform/git/bytes"
+import { github } from "@repo/platform/github"
+import { type ClaimWallet, type UnsafeDestinationReport, reportMessage } from "../src/cycles/reportProof.vibe"
+import { verifyTransitionAuthorities } from "../src/cycles/transitions.vibe"
+import { unsafeDestinations } from "../src/programs/unsafeDestinations.vibe"
+import { jsonResponse } from "./support/web.ts"
+
+type Files = Readonly<Record<string, string>>
+
+interface Asked {
+  readonly owner?: unknown
+  readonly name?: unknown
+  readonly oid?: unknown
+}
+
+const identity = {
+  GIT_AUTHOR_NAME: "Slop",
+  GIT_AUTHOR_EMAIL: "slop@example.invalid",
+  GIT_AUTHOR_DATE: "2026-11-22T00:00:00Z",
+  GIT_COMMITTER_NAME: "Slop",
+  GIT_COMMITTER_EMAIL: "slop@example.invalid",
+  GIT_COMMITTER_DATE: "2026-11-22T00:00:00Z",
+}
+
+const wallet = {
+  address: "0x1111111111111111111111111111111111111111",
+  chain: "base",
+  observedAt: "2026-11-01T00:00:00.000Z",
+  sourceActorId: "101",
+  sourceClaimId: "claim_101",
+  sourceRecordSha256: "a".repeat(64),
+  sourceUrl: "https://api.slop.cash/api/v1/wallet-claims/claim_101",
+} satisfies ClaimWallet
+
+const report = {
+  kind: "unsafe-destination",
+  projectId: "asi",
+  cycleId: "2026-11",
+  intentId: "pay_asi_101",
+  suggestedMinor: "5000000",
+  carryMinor: "5000000",
+  reportedAt: "2026-12-02T00:00:00.000Z",
+  verifiedAt: "2026-12-03T00:00:00.000Z",
+  wallet,
+  sourceRepository: "contributor/wallet-reports",
+  sourceCommit: "c".repeat(40),
+} satisfies UnsafeDestinationReport
+
+const acceptedPath = "cycles/asi/2026-11/proposal.json"
+const nextPath = "cycles/asi/2026-12/proposal.json"
+
+function row(change: Readonly<Record<string, unknown>> = {}) {
+  return {
+    intentId: report.intentId,
+    actor: { id: "101", login: "contributor" },
+    state: "held",
+    suggestedMinor: "5000000",
+    accruedMinor: "5000000",
+    approvedMinor: "0",
+    wallet,
+    hold: { kind: "unsafe-destination", sourceCommit: report.sourceCommit },
+    unsafeDestinationReports: [report],
+    ...change,
+  }
+}
+
+function manifest(cycleId: string, rows: ReadonlyArray<unknown>, review: Readonly<Record<string, string>> = {}) {
+  return `${JSON.stringify({
+    schemaVersion: "1",
+    kind: "reward-allocation",
+    projectId: "asi",
+    cycleId,
+    status: "proposed",
+    review: { lastMaterialChangeAt: "2026-12-02T00:00:00.000Z", endsAt: "2026-12-16T00:00:00.000Z", ...review },
+    allocations: rows,
+  }, null, 2)}\n`
+}
+
+const acceptedFiles: Files = { [acceptedPath]: manifest("2026-11", [row()]) }
+
+effect function git(root: string, args: ReadonlyArray<string>) {
+  return lossyText(try gitBytes({ args: ["-C", root, ...args], env: identity, limit: 1024 * 1024, seconds: 30 }, "fixture Git failed")).trim()
+}
+
+effect function committed(root: string, tree: Files, message: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try fs.remove(files.join(root, "cycles"), { recursive: true, force: true })
+  for (const [path, text] of Object.entries(tree)) {
+    try fs.makeDirectory(files.dirname(files.join(root, path)), { recursive: true })
+    try fs.writeFileString(files.join(root, path), text)
+  }
+  try git(root, ["add", "-A"])
+  try git(root, ["commit", "-q", "--allow-empty", "-m", message])
+  return try git(root, ["rev-parse", "HEAD"])
+}
+
+effect function repository(base: Files, head: Files, checkout: "base" | "head" = "base") {
+  const fs = try FileSystem.FileSystem
+  const root = try fs.makeTempDirectoryScoped()
+  try git(root, ["init", "-q"])
+  const baseSha = try committed(root, base, "accepted cycle")
+  const headSha = try committed(root, head, "proposed change")
+  try git(root, ["checkout", "-q", "--detach", checkout === "base" ? baseSha : headSha])
+  return { root, baseSha, headSha }
+}
+
+function signingGitHub(state: string, asked: Asked[]) {
+  return Layer.provide(github({ userAgent: "slop-test" }), Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+    const body = request.body._tag === "Uint8Array" ? parsedJson(lossyText(request.body.body))?.value : undefined
+    const variables = (body as { readonly variables?: Asked } | undefined)?.variables ?? {}
+    asked.push(variables)
+    const object = variables.oid === report.sourceCommit
+      ? { oid: report.sourceCommit, message: `${reportMessage(report)}\n`, signature: { isValid: state === "VALID", state, signer: { id: "U_contributor", databaseId: 101 } } }
+      : null
+    return HttpClientResponse.fromWeb(request, jsonResponse({ data: { repository: { object } } }))
+  })))
+}
+
+const offline = Layer.succeed(HttpClient.HttpClient, HttpClient.make(() => effect {
+  return try die(new Error("a usage refusal must not reach GitHub"))
+}))
+
+effect function attempt(base: Files, head: Files, checkout: "base" | "head" | undefined) {
+  const fixture = try repository(base, head, checkout)
+  const result = try exit(verifyTransitionAuthorities(fixture.root, fixture.baseSha, fixture.headSha))
+  return Exit.isSuccess(result) ? result.value : (Cause.squash(result.cause) as { readonly message?: string }).message
+}
+
+effect function outcome(base: Files, head: Files, options: { readonly state?: string; readonly checkout?: "base" | "head" } = {}) {
+  const asked: Asked[] = []
+  provide NodeServices.layer, systemGit, signingGitHub(options.state ?? "VALID", asked) {
+    return { result: try attempt(base, head, options.checkout), asked }
+  }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+it.effect('A later cycle carries the trusted report and the gate verifies its signed commit (spec/settlement/unsafeDestinations.md, "Story: Keep accepted cycle files and unsafe-destination evidence on a trusted base"; spec/settlement/unsafeDestinations.md, "A new or changed cycle row keeps every trusted unsafe-destination report as an append-only prefix")', () => effect {
+  const carried = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: manifest("2026-12", [row()]) })
+  const forged = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: manifest("2026-12", [row()]) }, { state: "INVALID" })
+  const dropped = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: manifest("2026-12", [row({ hold: undefined, unsafeDestinationReports: undefined })]) })
+  try same([carried, forged.result, dropped.result], [
+    { result: { preservedFiles: 1, checkedFiles: 1, verifiedReports: 1 }, asked: [{ owner: "contributor", name: "wallet-reports", oid: report.sourceCommit }] },
+    "Signed wallet report does not bind the contributor and original destination",
+    "New or changed cycle rows must retain all trusted unsafe destination history",
+  ])
+})
+
+it.effect('An accepted held row keeps its wallet, report prefix and zero approval (spec/settlement/unsafeDestinations.md, "An accepted unsafe-destination hold keeps its wallet, amount and zero approval"; spec/settlement/unsafeDestinations.md, "A new or changed cycle row keeps every trusted unsafe-destination report as an append-only prefix")', () => effect {
+  const rewallet = try outcome(acceptedFiles, { [acceptedPath]: manifest("2026-11", [row({ wallet: { ...wallet, address: "0x2222222222222222222222222222222222222222" } })]) })
+  const approved = try outcome(acceptedFiles, { [acceptedPath]: manifest("2026-11", [row({ approvedMinor: "5000000", state: "approved" })]) })
+  const substituted = try outcome(acceptedFiles, { [acceptedPath]: manifest("2026-11", [row({ actor: { id: "101", login: "someone-else" } })]) })
+  try same([rewallet.result, approved.result, substituted.result], [
+    "An accepted unsafe destination hold must retain its original wallet, amount, and zero approval",
+    "An accepted unsafe destination hold must retain its original wallet, amount, and zero approval",
+    "Unsafe destination history cannot remove or substitute its contributor row",
+  ])
+})
+
+it.effect(`A changed amount must restart the review and an unchanged one keeps its window (spec/settlement/unsafeDestinations.md, "A changed cycle amount restarts its public review after the accepted proposal's last change and an unchanged one keeps its window")`, () => effect {
+  const plain = { ...row({ hold: undefined, unsafeDestinationReports: undefined, state: "proposed" }), intentId: "pay_asi_202", actor: { id: "202", login: "other" }, wallet: null }
+  const base: Files = { [acceptedPath]: manifest("2026-11", [row(), plain]) }
+  const raised = { ...plain, suggestedMinor: "6000000", accruedMinor: "6000000" }
+  const stale = try outcome(base, { [acceptedPath]: manifest("2026-11", [row(), raised]) })
+  const restarted = try outcome(base, { [acceptedPath]: manifest("2026-11", [row(), raised], { lastMaterialChangeAt: "2026-12-04T00:00:00.000Z", endsAt: "2026-12-18T00:00:00.000Z" }) })
+  const moved = try outcome(base, { [acceptedPath]: manifest("2026-11", [row(), plain], { endsAt: "2026-12-20T00:00:00.000Z" }) })
+  try same([stale.result, restarted.result, moved.result], [
+    "A changed cycle amount must restart its public review after the accepted proposal's last change",
+    { preservedFiles: 1, checkedFiles: 1, verifiedReports: 1 },
+    "An unchanged cycle amount must preserve the accepted proposal's public review window",
+  ])
+})
+
+it.effect('An accepted manifest is never deleted, renamed or re-identified, and the gate runs only from the trusted base (spec/settlement/unsafeDestinations.md, "An existing cycle manifest keeps its identity")', () => effect {
+  const deleted = try outcome(acceptedFiles, {})
+  const misnamed = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: manifest("2026-10", [row()]) })
+  const duplicated = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: '{"kind":"reward-allocation","kind":"reward-allocation"}\n' })
+  const fromHead = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: manifest("2026-12", [row()]) }, { checkout: "head" })
+  const usage = try exit(effect {
+    provide NodeServices.layer, offline {
+      return try unsafeDestinations(["only-one"])
+    }
+  })
+  try same([deleted.result, misnamed.result, duplicated.result, fromHead.result, Exit.isFailure(usage) ? String((Cause.squash(usage.cause) as { readonly _tag?: string })._tag) : "ran"], [
+    `Existing cycle manifest cannot be deleted or renamed: ${acceptedPath}`,
+    "Cycle manifest identity does not match its immutable path",
+    "Cycle manifest contains a duplicate JSON key",
+    "Cycle transition checker must run from its exact trusted base checkout",
+    "UnsafeDestinationArguments",
+  ])
+})

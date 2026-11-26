@@ -1,0 +1,324 @@
+// spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once"; spec/settlement/solanaVaultDeposits.md, "Story: Record every finalized deposit of an ordinary Solana vault once"
+import { assert, layer } from "@effect/vitest"
+import { type Address, type Blockhash, base58Encode, base64Encode } from "@repo/platform/chain/solana"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { serve } from "@repo/platform/testing/chains"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { Response } from "miniflare"
+import { EVENT_TOPICS } from "../src/chain/evm/events.ts"
+import { u64le } from "../src/chain/solana/bytes.ts"
+import { anchorData, meta } from "../src/chain/solana/instructions.ts"
+import { type Instruction, compileLegacy, transactionId, unsignedTransaction, withSignature } from "../src/chain/solana/transactions.ts"
+import type { EvmDepositDeployment } from "../src/deposits/evm.vibe"
+import { recordRegistryDeposits } from "../src/deposits/record.vibe"
+import type { SolanaDepositDeployment } from "../src/deposits/solana.vibe"
+import { type DepositKey, openEvmDeposits, openSolanaDeposits, storedEvmCursor, storedSolanaCursor } from "../src/deposits/store.vibe"
+import { PaymentRpc } from "../src/vault/rpc.vibe"
+
+service World {
+  readonly base: Layer.Layer<D1 | HttpClient.HttpClient>
+  serve(handler: Parameters<typeof serve>[0]): string!!
+}
+
+schema DepositRow {
+  readonly transaction_id: string
+  readonly event_index: number
+  readonly depositor: string
+  readonly amount: string
+  readonly block_number: string
+  readonly block_time: string
+}
+
+const VAULT = `0x${"2".repeat(40)}`
+const FUNDER = `0x${"ab".repeat(20)}`
+const CREATION = `0x${"c".repeat(64)}`
+const ORIGIN = 50
+const START = Date.parse("2026-11-18T00:00:00Z") / 1000
+const GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+
+const hex = (value: number | bigint) => `0x${value.toString(16)}`
+const word = (value: number | bigint) => `0x${value.toString(16).padStart(64, "0")}`
+const blockHash = (block: number) => word(0x1000 + block)
+
+effect function migrated(name: string) {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return try promise(() => database(mf, "SLOP_DB"))
+}
+
+const Started = Layer.effect(World, effect {
+  const db = try migrated("settlement-deposits")
+  const servers = try acquireRelease(sync((): Array<{ close(): Promise<void> }> => []), (opened) => promise(() => Promise.all(opened.map((server) => server.close()))))
+  return {
+    base: Layer.mergeAll(d1(db), outbound),
+    serve: (handler) => promise(async () => {
+      const served = await serve(handler)
+      servers.push(served)
+      return served.url
+    }),
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function rpcServer(answer: (method: string, params: ReadonlyArray<unknown>) => unknown, asked: string[]): Parameters<typeof serve>[0] {
+  return async (request) => {
+    const body: unknown = JSON.parse(await request.text())
+    const one = (call: unknown) => {
+      const { id, method, params } = call as { readonly id: unknown; readonly method: string; readonly params: ReadonlyArray<unknown> }
+      asked.push(method)
+      return { jsonrpc: "2.0", id, result: answer(method, params ?? []) }
+    }
+    return Response.json(Array.isArray(body) ? body.map(one) : one(body))
+  }
+}
+
+interface EvmChain {
+  chainId: number
+  finalized: number
+  forged: Set<number>
+  readonly logs: Array<{ readonly block: number; readonly index: number; readonly amount: bigint }>
+}
+
+function evmAnswer(chain: EvmChain) {
+  const header = (block: number) => ({ number: hex(block), hash: chain.forged.has(block) ? word(0xdead) : blockHash(block), parentHash: blockHash(block - 1), timestamp: hex(START + block * 60), transactions: block === ORIGIN ? [CREATION] : [] })
+  return (method: string, params: ReadonlyArray<unknown>) => {
+    if (method === "eth_chainId") return hex(chain.chainId)
+    if (method === "eth_getTransactionReceipt")
+      return { transactionHash: CREATION, blockHash: blockHash(ORIGIN), blockNumber: hex(ORIGIN), transactionIndex: "0x0", status: "0x1", from: FUNDER, to: null, contractAddress: VAULT, gasUsed: "0x1", logs: [] }
+    if (method === "eth_getBlockByNumber") return header(params[0] === "finalized" ? chain.finalized : Number(String(params[0])))
+    if (method === "eth_getLogs") {
+      const filter = params[0] as { readonly fromBlock: string; readonly toBlock: string }
+      return chain.logs.filter((log) => log.block >= Number(filter.fromBlock) && log.block <= Number(filter.toBlock)).map((log) => ({
+        address: VAULT,
+        topics: [EVENT_TOPICS.Deposited, `0x${"0".repeat(24)}${FUNDER.slice(2)}`],
+        data: word(log.amount),
+        blockNumber: hex(log.block),
+        blockHash: blockHash(log.block),
+        transactionHash: word(log.block * 16 + log.index),
+        transactionIndex: "0x0",
+        logIndex: hex(log.index),
+        removed: false,
+      }))
+    }
+    return null
+  }
+}
+
+const common = {
+  asset: "0x0000000000000000000000000000000000000000",
+  owner: FUNDER,
+  identityAuthority: FUNDER,
+  feeRecipient: FUNDER,
+  sourceCommit: "7fdedd3507c3f79217ccc896ace0e0b7472ca092",
+  codeSha256: "0".repeat(64),
+  bindingDelaySeconds: "0",
+  revision: 1,
+}
+
+const evmVault = {
+  ...common,
+  projectId: "acme",
+  scope: "ordinary",
+  network: "base-mainnet",
+  vault: VAULT,
+  deploymentTransaction: CREATION,
+  family: "evm",
+  chain: "base",
+  chainId: 8453n,
+  scanPageBlocks: 10n,
+  gasCeiling: 1_000_000n,
+  factory: VAULT,
+  factoryCodeSha256: "0".repeat(64),
+  registrar: FUNDER,
+  evmUpgrade: undefined,
+  maxNativeCostWei: undefined,
+  bindingConsentNonceLimit: undefined,
+} satisfies EvmDepositDeployment
+
+const evmKey = { projectId: "acme", network: "base-mainnet", chain: "base", vault: VAULT } satisfies DepositKey
+
+effect function recordedOf(projectId: string) {
+  return try rows(DepositRow, sql`SELECT transaction_id, event_index, depositor, amount, block_number, block_time FROM vault_deposits WHERE project_id = ${projectId} ORDER BY length(block_number), block_number, event_index`)
+}
+
+effect function shell(url: string, genesis: string) {
+  const { base } = try World
+  return Layer.merge(base, Layer.succeed(PaymentRpc, { urls: { "base-mainnet": Redacted.make([url]), "solana-mainnet": Redacted.make([url]) }, genesis: { "solana-mainnet": genesis } }))
+}
+
+const key = (seed: number) => base58Encode(Uint8Array.from({ length: 32 }, (_, at) => (at === 0 ? seed : 9))) as Address
+const PROGRAM = key(1)
+const PROJECT = key(2)
+const OTHER_PROJECT = key(3)
+const ROUTER = key(4)
+const DEPOSITOR = key(5)
+const BLOCKHASH = key(6) as string as Blockhash
+
+interface Listed {
+  readonly signature: string
+  readonly slot: number
+  readonly err: boolean
+  readonly wire: Uint8Array
+  readonly inner: ReadonlyArray<unknown>
+}
+
+error FixtureRefused { reason: string }
+
+effect function solanaTransaction(serial: number, instructions: ReadonlyArray<Instruction>, inner: (keys: ReadonlyArray<Address>) => ReadonlyArray<unknown>, err = false) {
+  const compiled = compileLegacy({ payer: DEPOSITOR, blockhash: BLOCKHASH, instructions })
+  if (compiled.kind === "refused") throw new FixtureRefused({ reason: `the test transaction did not compile: ${compiled.issue}` })
+  const wire = withSignature(unsignedTransaction(compiled.message) ?? new Uint8Array(), DEPOSITOR, Uint8Array.from({ length: 64 }, (_, at) => (at === 0 ? 1 + serial : at === 1 ? 77 : at)))
+  const signature = wire === undefined ? undefined : transactionId(wire)
+  if (wire === undefined || signature === undefined) throw new FixtureRefused({ reason: "the test transaction did not sign" })
+  return { signature, slot: 1000 + serial, err, wire, inner: inner(compiled.message.accountKeys) } satisfies Listed
+}
+
+const depositCall = (project: Address, amount: bigint, trailing: ReadonlyArray<number> = []): Instruction =>
+  ({ program: PROGRAM, accounts: [meta(DEPOSITOR, true, true), meta(project, true)], data: anchorData("deposit_native", u64le(amount as Parameters<typeof u64le>[0]), Uint8Array.from(trailing)) })
+
+const unrelated: Instruction = { program: ROUTER, accounts: [meta(DEPOSITOR, true, true)], data: Uint8Array.from([1]) }
+
+effect function routedDeposit(serial: number, amount: bigint) {
+  const routed: Instruction = { program: ROUTER, accounts: [meta(DEPOSITOR, true, true), meta(PROJECT, true), meta(PROGRAM, false)], data: Uint8Array.from([2]) }
+  return try solanaTransaction(serial, [routed], (keys) => [{ index: 0, instructions: [{ programIdIndex: keys.indexOf(PROGRAM), accounts: [keys.indexOf(DEPOSITOR), keys.indexOf(PROJECT)], data: base58Encode(anchorData("deposit", u64le(amount as Parameters<typeof u64le>[0]))), stackHeight: 2 }] }])
+}
+
+function historyEntry(serial: number) {
+  if (serial === 0) return solanaTransaction(serial, [depositCall(PROJECT, 3_000_000_000n)], () => [])
+  if (serial === 9) return solanaTransaction(serial, [depositCall(PROJECT, 2_000_000n, [9, 9, 9, 9])], () => [])
+  if (serial === 15) return solanaTransaction(serial, [depositCall(PROJECT, 4_000_000n)], () => [], true)
+  if (serial === 20) return routedDeposit(serial, 5_000_000n)
+  if (serial === 25) return solanaTransaction(serial, [depositCall(OTHER_PROJECT, 6_000_000n)], () => [])
+  if (serial === 29) return solanaTransaction(serial, [unrelated, depositCall(PROJECT, 1_000_000n)], () => [])
+  return solanaTransaction(serial, [unrelated], () => [])
+}
+
+effect function solanaHistory() {
+  const history: Listed[] = []
+  for (let serial = 0; serial < 30; serial++) history.push(try historyEntry(serial))
+  return history
+}
+
+function solanaAnswer(history: Listed[], unavailable: Set<string>, genesis: string) {
+  return (method: string, params: ReadonlyArray<unknown>) => {
+    if (method === "getGenesisHash") return genesis
+    if (method === "getSignaturesForAddress") {
+      const page = params[1] as { readonly limit: number; readonly before?: string; readonly until?: string }
+      const newestFirst = [...history].reverse()
+      const from = page.before === undefined ? 0 : newestFirst.findIndex((entry) => entry.signature === page.before) + 1
+      const until = page.until === undefined ? newestFirst.length : newestFirst.findIndex((entry) => entry.signature === page.until)
+      return newestFirst.slice(from, until).slice(0, page.limit).map((entry) => ({ signature: entry.signature, slot: entry.slot, err: entry.err ? { InstructionError: [0, "Custom"] } : null, blockTime: START + entry.slot }))
+    }
+    if (method === "getTransaction") {
+      const found = history.find((entry) => entry.signature === params[0])
+      if (found === undefined || unavailable.has(found.signature)) return null
+      return { slot: found.slot, blockTime: START + found.slot, transaction: [base64Encode(found.wire), "base64"], meta: { err: null, fee: 5000, preBalances: [], postBalances: [], innerInstructions: found.inner } }
+    }
+    return null
+  }
+}
+
+const solanaVault = {
+  ...common,
+  projectId: "acme-solana",
+  scope: "ordinary",
+  network: "solana-mainnet",
+  vault: PROJECT,
+  deploymentTransaction: "",
+  family: "solana",
+  chain: "solana",
+  genesisHash: GENESIS,
+  programId: PROGRAM,
+  upgradeAuthority: null,
+  projectPda: PROJECT,
+  networkDomain: "0".repeat(64),
+  rotationAuthority: DEPOSITOR,
+  rotationDelaySeconds: "0",
+} satisfies SolanaDepositDeployment
+
+const solanaKey = { projectId: "acme-solana", network: "solana-mainnet", chain: "solana", vault: PROJECT } satisfies DepositKey
+
+layer(Started, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('Record every finalized deposit of an ordinary EVM vault once (spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once"; spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event"; spec/settlement/vaultDeposits.md, "A run reads pages up to the finalized block and stores each page with its cursor"; spec/settlement/vaultDeposits.md, "Rules")', () => effect {
+    const world = try World
+    const chain: EvmChain = { chainId: 0x1, finalized: 420, forged: new Set([380]), logs: [{ block: 60, index: 4, amount: 253_000_000n }, { block: 330, index: 0, amount: 1_000_000n }, { block: 380, index: 1, amount: 7n }] }
+    const asked: string[] = []
+    const url = try world.serve(rpcServer(evmAnswer(chain), asked))
+    provide try shell(url, GENESIS) {
+      const wrongChain = try recordRegistryDeposits([evmVault], "ordinary")
+      try same(wrongChain?.failures, [{ projectId: "acme", network: "base-mainnet", error: "DepositReadFailed" }])
+      try same([try storedEvmCursor(evmKey), try recordedOf("acme")], [undefined, []])
+      chain.chainId = 8453
+      asked.length = 0
+      const first = try recordRegistryDeposits([evmVault], "ordinary")
+      try same([first?.recorded, asked.filter((method) => method === "eth_getLogs").length, try storedEvmCursor(evmKey)], [1, 10, ORIGIN + 99])
+      const stale = try openEvmDeposits(evmKey, { purpose: "OrdinaryVault", origin: ORIGIN, pageBlocks: 10 })
+      try stale.observe(420)
+      try stale.send({ type: "startPage", slot: 1 }, "payments-worker", [])
+      const second = try recordRegistryDeposits([evmVault], "ordinary")
+      const third = try recordRegistryDeposits([evmVault], "ordinary")
+      try same([second?.recorded, third?.recorded, try storedEvmCursor(evmKey)], [0, 1, ORIGIN + 299])
+      const forged = try recordRegistryDeposits([evmVault], "ordinary")
+      try same([forged?.failures.map((failure) => failure.error), try storedEvmCursor(evmKey), (try recordedOf("acme")).length], [["DepositReadFailed"], ORIGIN + 329, 2])
+      chain.forged.clear()
+      const fourth = try recordRegistryDeposits([evmVault], "ordinary")
+      try same([fourth?.recorded, try storedEvmCursor(evmKey)], [1, 420])
+      try stale.send({ type: "completePage", slot: 1 }, "payments-worker", [])
+      const before = try recordedOf("acme")
+      const again = try recordRegistryDeposits([evmVault], "ordinary")
+      try same([again?.recorded, try storedEvmCursor(evmKey), try recordedOf("acme")], [0, 420, before])
+      try same(before, [
+        { transaction_id: word(60 * 16 + 4), event_index: 4, depositor: FUNDER, amount: "253000000", block_number: "60", block_time: new Date((START + 60 * 60) * 1000).toISOString() },
+        { transaction_id: word(330 * 16), event_index: 0, depositor: FUNDER, amount: "1000000", block_number: "330", block_time: new Date((START + 330 * 60) * 1000).toISOString() },
+        { transaction_id: word(380 * 16 + 1), event_index: 1, depositor: FUNDER, amount: "7", block_number: "380", block_time: new Date((START + 380 * 60) * 1000).toISOString() },
+      ])
+      asked.length = 0
+      const bountyWorker = try recordRegistryDeposits([evmVault], "security-bounty")
+      const bountyVault = try recordRegistryDeposits([{ ...evmVault, projectId: "acme-bounty", scope: "security-bounty" }], "ordinary")
+      try same([bountyWorker, bountyVault?.scanned, asked, try recordedOf("acme-bounty")], [undefined, 0, [], []])
+    }
+  })
+
+  it.effect('Record every finalized deposit of an ordinary Solana vault once (spec/settlement/solanaVaultDeposits.md, "Story: Record every finalized deposit of an ordinary Solana vault once"; spec/settlement/solanaVaultDeposits.md, "A run reads newest first below the interval it resumes and above the covered position"; spec/settlement/solanaVaultDeposits.md, "Rules"; spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event")', () => effect {
+    const world = try World
+    const history = try solanaHistory()
+    const unavailable = new Set([history[12]?.signature ?? ""])
+    const asked: string[] = []
+    const wrongUrl = try world.serve(rpcServer(solanaAnswer(history, unavailable, key(8)), asked))
+    provide try shell(wrongUrl, GENESIS) {
+      const wrong = try recordRegistryDeposits([solanaVault], "ordinary")
+      try same([wrong?.failures.map((failure) => failure.error), asked.includes("getSignaturesForAddress"), try recordedOf("acme-solana")], [["DepositReadFailed"], false, []])
+    }
+    const url = try world.serve(rpcServer(solanaAnswer(history, unavailable, GENESIS), asked))
+    const signature = (serial: number) => history[serial]?.signature ?? ""
+    provide try shell(url, GENESIS) {
+      const first = try recordRegistryDeposits([solanaVault], "ordinary")
+      try same([first?.recorded, first?.failures.map((failure) => failure.error), try storedSolanaCursor(solanaKey)], [0, ["DepositReadFailed"], { position: null, pendingTop: signature(29), resumeBefore: signature(13) }])
+      unavailable.clear()
+      const stale = try openSolanaDeposits(solanaKey, 25)
+      try stale.start(1, "payments-worker", try stale.cursor(), [signature(12)])
+      const second = try recordRegistryDeposits([solanaVault], "ordinary")
+      try same([second?.recorded, try storedSolanaCursor(solanaKey)], [2, { position: signature(29), pendingTop: null, resumeBefore: null }])
+      try same([try stale.read(1, "payments-worker", []), try storedSolanaCursor(solanaKey)], ["Overtaken", { position: signature(29), pendingTop: null, resumeBefore: null }])
+      history.push(try solanaTransaction(30, [depositCall(PROJECT, 8_000_000n)], () => []))
+      const third = try recordRegistryDeposits([solanaVault], "ordinary")
+      const idle = try recordRegistryDeposits([solanaVault], "ordinary")
+      try same([third?.recorded, idle?.recorded, try storedSolanaCursor(solanaKey)], [1, 0, { position: signature(30), pendingTop: null, resumeBefore: null }])
+      const recorded = try recordedOf("acme-solana")
+      try same(recorded.map((row) => [row.transaction_id, row.event_index, row.depositor, row.amount, row.block_number]), [
+        [signature(0), 0, DEPOSITOR, "3000000000", "1000"],
+        [signature(9), 0, DEPOSITOR, "2000000", "1009"],
+        [signature(20), 1, DEPOSITOR, "5000000", "1020"],
+        [signature(29), 1, DEPOSITOR, "1000000", "1029"],
+        [signature(30), 0, DEPOSITOR, "8000000", "1030"],
+      ])
+    }
+  })
+})

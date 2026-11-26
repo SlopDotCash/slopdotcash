@@ -53,7 +53,11 @@ pure val syncedAtValues = Set("", "2026-11-15T00:00:00Z")
 
 Each route has one registry policy. Independent pages never read it: How it
 works, Settings, Log in, Payouts, Inbox, Administration, Add a project, private
-vetting evidence and security cases. Pages that act on a manifest need the
+vetting evidence, security cases and the two pay pages, which find the pull
+request's repository in the registry built into the page (development
+`src/SubmissionFeePage.tsx` `feeRepository` at `8660a6121`), and Requested
+repos, whose board the backend itself clears of listed repositories
+(development `src/App.tsx` `ROUTES.requested` at `f3f2725e0`). Pages that act on a manifest need the
 current registry: Manage project and the security program with its report
 form. Every other page may show the last good registry. A page is blocked,
 with "Projects are unavailable", the reason and Try again, when its policy is
@@ -69,7 +73,8 @@ pure def registryPolicy(page: N::Page): RegistryPolicy =
   val routed = N::routedPage(page)
   if (routed == N::HowItWorks or routed == N::Settings or routed == N::Login or routed == N::Payouts or
       routed == N::Inbox or routed == N::Administration or routed == N::AddProject or
-      routed == N::VettingEvidence or routed == N::SecurityCases) RegistryIndependent
+      routed == N::VettingEvidence or routed == N::SecurityCases or routed == N::SubmissionFee
+      or routed == N::ReportDeposit or routed == N::RequestedRepos) RegistryIndependent
   else if (routed == N::ManageProject or routed == N::SecurityProgram) RegistryNeedsCurrent
   else RegistryCached
 pure def registryStale(freshness: RegistryFreshness): bool = match freshness {

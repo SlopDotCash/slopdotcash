@@ -1,7 +1,9 @@
 // spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"
 import { sha256Of } from "@repo/platform/git/bytes";
+import { templatePrefix } from "../../admission/result.ts";
 import { expandGzipInputs } from "./gzip.ts";
 import { localInstallHelpers } from "./helpers.ts";
+import { wellFormedImage } from "./images.ts";
 import { cmakeIncludedPaths, decodeText, gypIncludedPaths } from "./includes.ts";
 import { declaresInterpreter } from "./magic.ts";
 import {
@@ -10,6 +12,7 @@ import {
   type Coverage,
   type DeterministicRecord,
   type InventoryItem,
+  type MediaRecord,
   type RepositoryInspection,
   SCAN_SURFACES,
   SCAN_THREATS,
@@ -55,8 +58,8 @@ export function textParts(text: string, size = MAX_TEXT_FILE_BYTES): string[] {
 }
 
 /** @throws {never} */
-function inventoryBytes(classifications: ReadonlyArray<Classification>, items: ReadonlyArray<InventoryItem>, artifacts: ReadonlyArray<VettingArtifact>, visibilityGaps: ReadonlyArray<string>): Uint8Array {
-  return encoder.encode(JSON.stringify({ schemaVersion: INVENTORY_SCHEMA, rulePolicySha256: RULE_POLICY_SHA256, classifications, items, artifacts, visibilityGaps }));
+function inventoryBytes(classifications: ReadonlyArray<Classification>, items: ReadonlyArray<InventoryItem>, artifacts: ReadonlyArray<VettingArtifact>, media: ReadonlyArray<MediaRecord>, visibilityGaps: ReadonlyArray<string>): Uint8Array {
+  return encoder.encode(JSON.stringify({ schemaVersion: INVENTORY_SCHEMA, rulePolicySha256: RULE_POLICY_SHA256, classifications, items, artifacts, ...(media.length > 0 ? { media } : {}), visibilityGaps }));
 }
 
 /** @throws {never} */
@@ -136,6 +139,8 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
   const candidates: Candidate[] = [];
   const classifications: Classification[] = [];
   const downloads = new Set<string>();
+  const media: MediaRecord[] = [];
+  const templatePaths = new Set(files.filter((file) => file.templateInput).map((file) => file.path));
   const gyp = gypIncludedPaths(files);
   if (gyp.unacquired.length > 0) {
     partial.add("installScripts");
@@ -150,13 +155,13 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
       if (text === null || text === undefined) return [];
       const surfaces = surfacesOf(file.logicalPath ?? file.path);
       const directory = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
-      const commands = installHookCommands(file.path, text);
+      const hooks = installHookCommands(file.path, text).map((command) => ({ path: file.path, text: command, directory }));
       if (
         (surfaces.includes("installScripts") || (surfaces.length === 0 && declaresInterpreter(file.bytes)) || gyp.included.has(file.path) || cmakeIncludes.has(file.path)) &&
         (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) || /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
       )
-        commands.push(text);
-      return commands.map((command) => ({ path: file.path, text: command, directory }));
+        return [...hooks, { path: file.path, text, directory, file: true }];
+      return hooks;
     }),
   );
   if (helpers.unacquired.length > 0) {
@@ -168,6 +173,15 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
     if (surfaces.length === 0 && declaresInterpreter(file.bytes)) surfaces.push("installScripts", "source");
     if (gyp.included.has(file.path) || cmakeIncludes.has(file.path) || helpers.included.has(file.path)) withSurface(surfaces, "installScripts", "source");
     const unclassified = surfaces.length === 0;
+    if (!file.templateInput && file.path.toLowerCase().startsWith(`${templatePrefix}/`)) {
+      partial.add("source");
+      gaps.push(`Repository path in the reserved template namespace: ${file.path}`);
+    }
+    const image = unclassified && !file.parentArtifactSha256 && !file.templateInput ? wellFormedImage(file.logicalPath ?? file.path, file.bytes) : null;
+    if (image !== null) {
+      media.push({ path: file.path.slice(0, 500), sha256: sha256Of(file.bytes), bytes: file.bytes.byteLength, format: image });
+      continue;
+    }
     if (surfaces.length > 0) classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256Of(file.bytes);
     if (opaqueArtifact(file.path, file.bytes)) {
@@ -217,12 +231,15 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
     });
   }
   const links = linkItems(input.files);
-  let items: InventoryItem[] = [...candidates.flatMap(itemsOf), ...links];
-  const deterministic: DeterministicRecord[] = [];
+  const deterministic: DeterministicRecord[] = candidates
+    .filter((candidate) => templatePaths.has(candidate.path))
+    .map((candidate) => ({ path: candidate.path, sha256: candidate.sha256, bytes: candidate.bytes, class: "template" as const }));
+  const reviewable = candidates.filter((candidate) => !templatePaths.has(candidate.path));
+  let items: InventoryItem[] = [...reviewable.flatMap(itemsOf), ...links];
   const excerpted = new Set<string>();
   if (beyondOneReview(items)) {
     items = [...links];
-    for (const candidate of candidates) {
+    for (const candidate of reviewable) {
       const kind = candidate.fullTextRequired ? null : bulkClass(candidate.path, candidate.surfaces);
       const excerpt = kind === null ? null : signalExcerpt(candidate.path, candidate.text, candidate.nonMatches);
       if (kind === null || (excerpt !== null && byteLength(excerpt) > MAX_TEXT_FILE_BYTES)) {
@@ -253,7 +270,7 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
     partial.add("downloads");
     gaps.push(`Install-time download not retrieved: ${url}`);
   }
-  const inventory = inventoryBytes(classifications, items, artifacts, gaps);
+  const inventory = inventoryBytes(classifications, items, artifacts, media, gaps);
   return {
     inventory,
     inventorySha256: sha256Of(inventory),
@@ -268,6 +285,7 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
     visibilityGaps: gaps,
     downloads: urls,
     deterministic,
+    media,
     riskSignals,
   };
 }
@@ -276,13 +294,13 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
 export function withExecutionEvidence(inspection: RepositoryInspection, added: ReadonlyArray<{ readonly id: string; readonly text: string }>, gaps: ReadonlyArray<string>): RepositoryInspection {
   const items = [...inspection.items, ...added.map(({ id, text }) => ({ id, text, sha256: sha256Of(text) }))];
   const visibilityGaps = [...inspection.visibilityGaps, ...gaps];
-  const inventory = inventoryBytes(inspection.classifications, items, inspection.artifacts, visibilityGaps);
+  const inventory = inventoryBytes(inspection.classifications, items, inspection.artifacts, inspection.media, visibilityGaps);
   return { ...inspection, items, visibilityGaps, inventory, inventorySha256: sha256Of(inventory) };
 }
 
 /** @throws {never} */
 export function refusalInventory(reason: string): { readonly inventory: Uint8Array; readonly inventorySha256: string; readonly visibilityGaps: ReadonlyArray<string> } {
   const visibilityGaps = [`Acquisition refused before inspection: ${reason}`];
-  const inventory = inventoryBytes([], [], [], visibilityGaps);
+  const inventory = inventoryBytes([], [], [], [], visibilityGaps);
   return { inventory, inventorySha256: sha256Of(inventory), visibilityGaps };
 }

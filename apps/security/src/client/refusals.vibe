@@ -450,6 +450,16 @@ const withPayloadTooLargeRequestBodyExceeds1024 = {
   payloadTooLargeRequestBodyExceeds1024: { status: 413, error: "payload_too_large", message: "Request body exceeds 1024 bytes", headers: jsonNoStore },
 } as const
 
+const withDepositRequired = {
+  depositRequired: { status: 409, error: "deposit_required", message: "This report waits for its deposit. Nothing else happens to it until the deposit is recorded.", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withInvalidReportProof = {
+  invalidReportInvalidProofOfConcept: { status: 400, error: "invalid_report", message: "Invalid proofOfConcept", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportProof: { status: 400, error: "invalid_report", messageFrom: "proofFileNameProblem(proofOfConcept.fileName) ?? proofPatchProblem(proofOfConcept.patch)", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportForwardedTooLong: { status: 400, error: "invalid_report", message: "The description and proof file together must fit in 65,000 characters for GitHub. Shorten the description.", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
 export const getSecurityProgramsByIdIntake = {
   programNotFound: { status: 404, error: "program_not_found", message: "No security program", headers: jsonPrivateNoStoreRobotsTag },
   ...withInternalError,
@@ -492,7 +502,12 @@ export const getSecurityCasesById = {
 
 export const postSecurityCasesByIdActions = {
   ...withOriginForbiddenAndInvalidContentLength,
+  ...withDepositRequired,
+  invalidRequestInvalidSpam: { status: 400, error: "invalid_request", message: "Invalid spam", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestOnlyARejectedReportCanBeMarkedSpam: { status: 400, error: "invalid_request", message: "Only a rejected report can be marked spam", headers: jsonPrivateNoStoreRobotsTag },
+  paymentPreparationChanged: { status: 409, error: "payment_preparation_changed", message: "The payment wallets or consent changed. Review the payment again.", headers: jsonPrivateNoStoreRobotsTag },
   ...withNotFoundCaseNotFound,
+  ...withProjectNotFoundV2,
   ...withIdempotencyConflict,
   ...withInvalidRequestInvalidExpectedRevision,
   staleRevision: { status: 409, error: "stale_revision", message: "The case changed since you loaded it", headers: jsonPrivateNoStoreRobotsTag },
@@ -641,6 +656,7 @@ export const postSecuritySubmissions = {
   intakeUnavailableAutomaticPrivateIntakeIs: { status: 409, error: "intake_unavailable", message: "Automatic private intake is not available for this program", headers: jsonPrivateNoStoreRobotsTag },
   submissionInFlight: { status: 409, error: "submission_in_flight", message: "Finish your submission in progress for this program first", headers: jsonPrivateNoStoreRobotsTag },
   submissionChanged: { status: 409, error: "submission_changed", message: "Start the submission again", headers: jsonPrivateNoStoreRobotsTag },
+  ...withInvalidReportProof,
 } as const
 
 export const getSecuritySubmissions = {
@@ -660,6 +676,7 @@ export const getSecuritySubmissionsById = {
 
 export const postSecuritySubmissionsByIdScreen = {
   ...withOriginForbidden,
+  ...withDepositRequired,
 } as const
 
 export const postSecuritySubmissionsByIdReview = {
@@ -668,6 +685,7 @@ export const postSecuritySubmissionsByIdReview = {
 
 export const postSecuritySubmissionsByIdReport = {
   ...withOriginForbidden,
+  ...withInvalidReportProof,
 } as const
 
 export const getSecuritySubmissionsAuthorizeCallback = {
@@ -682,6 +700,7 @@ export const postSecuritySubmissionsByIdAuthorize = {
   ...withOriginForbiddenAndUnauthorizedV4,
   ...withSubmissionClosed,
   ...withScreeningRequired,
+  ...withDepositRequired,
 } as const
 
 export const postSecuritySubmissionsByIdSend = {
@@ -700,6 +719,21 @@ export const postSecuritySubmissionsByIdSend = {
   ...withIntakeRateLimited,
   screeningRequiredThisDraftNeedsMore: { status: 409, error: "screening_required", message: "This draft needs more evidence or a private maintainer review before forwarding. Submit it through Slop to track that review.", headers: jsonPrivateNoStoreRobotsTag },
   submissionInFlightAnotherSubmissionForThis: { status: 409, error: "submission_in_flight", message: "Another submission for this program is being sent", headers: jsonPrivateNoStoreRobotsTag },
+  ...withDepositRequired,
+  ...withInvalidReportProof,
+} as const
+
+export const getSecurityRoutine = {
+  ...withUnauthorizedAndInvalidExpectedActorV6,
+  notFoundRoutine: { status: 404, error: "not_found", message: "Not found", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const postSecurityRoutine = {
+  ...withOriginForbiddenV2,
+  ...getSecurityRoutine,
+  ...withInvalidRequestRequestBodyHasUnexpected,
+  routineDecisionsOff: { status: 409, error: "routine_decisions_off", message: "Routine decisions are off", headers: jsonPrivateNoStoreRobotsTag },
+  routinePassRecent: { status: 409, error: "routine_pass_recent", message: "A pass started in the last three minutes. Try again shortly.", headers: jsonPrivateNoStoreRobotsTag },
 } as const
 
 export const postSecuritySubmissionsByIdReconcile = {

@@ -10,14 +10,9 @@ export const meta: ComponentMeta<ConsentReviewProps> = {
     family: "evm",
     claimAddress: payee,
     wallets: [{ id: "1", name: "Rabby" }],
-    phase: "Choosing",
-    walletAccount: "",
     problem: "",
-    notice: "",
     busy: false,
     onSign: () => undefined,
-    onReplace: () => undefined,
-    onContinue: () => undefined,
     onCancel: () => undefined,
   },
   decorator: (story) => (
@@ -26,24 +21,15 @@ export const meta: ComponentMeta<ConsentReviewProps> = {
     </Dialog>
   ),
   examples: {
-    Replacing: { phase: "Replacing", walletAccount: "0x9f000000000000000000000000000000000000d4" },
-    Registered: { phase: "Connected", walletAccount: "0x9f000000000000000000000000000000000000d4" },
-    Signing: { phase: "Signing", busy: true },
-    Unavailable: { phase: "Closed", problem: "Payout consent is unavailable. Your award stays reserved. Retry later." },
-    NoWallet: { wallets: [] },
+    TestNetwork: { payout: { ...reservedPayment, network: "base-sepolia" } },
+    Solana: { payout: { chain: "solana", network: "solana-devnet", vault: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin" }, family: "solana", claimAddress: "7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2" },
+    Signing: { busy: true },
+    WrongAddress: { problem: "Wrong address. Connect 0x2b7c…00c3." },
   },
   play: {
     // spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"
     Default: async () => {
-      await expect([screen.getByRole("group", { name: "Vault" }).textContent, screen.getByRole("group", { name: "Your wallet" }).textContent, screen.getByText("Fee (2%)").textContent]).toEqual([reservedPayment.vault, payee, "Fee (2%)"]);
-    },
-    // spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"
-    Replacing: async () => {
-      await expect([screen.getByRole("button", { name: "Register wallet account" }), screen.getByRole("button", { name: "Keep saved address" }), screen.queryByRole("button", { name: "Connect Rabby" })].map(Boolean)).toEqual([true, true, false]);
-    },
-    // spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"
-    Registered: async () => {
-      await expect([screen.getByRole("group", { name: "Your wallet" }).textContent, Boolean(screen.getByRole("button", { name: "Sign consent" }))]).toEqual(["0x9f000000000000000000000000000000000000d4", true]);
+      await expect([screen.getByRole("group", { name: "Vault" }).textContent, screen.getByRole("group", { name: "Your wallet" }).textContent]).toEqual([reservedPayment.vault, payee]);
     },
   },
 };

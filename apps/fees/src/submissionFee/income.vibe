@@ -1,0 +1,53 @@
+// spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events"
+import { type NonEmpty, RowMismatch, list, rows, sql } from "@repo/platform/d1"
+
+export interface KeptSubmissionFee {
+  readonly deposit: string
+  readonly token: string
+  readonly keptTo: string
+  readonly amount: bigint
+  readonly chainTime: number
+}
+
+export interface KeptFeesQuery {
+  readonly networks: NonEmpty<string>
+  readonly token: string
+  readonly feeWallet: string
+  readonly since: string
+}
+
+schema KeptRecord {
+  readonly network: string
+  readonly deposit_id: number
+  readonly token: string
+  readonly kept_to: string
+  readonly amount: string | null
+  readonly resolved_at: string
+}
+
+const wholeAmount = /^(0|[1-9][0-9]{0,38})$/u
+
+const kept = sql`state = 'kept' AND accepted = 1 AND finalized_at IS NOT NULL AND resolve_tx IS NOT NULL`
+
+effect function amountOf(amount: string | null) {
+  if (amount === null || !wholeAmount.test(amount)) throw new RowMismatch({ text: "submission_fee_deposits", issue: "Kept submission fee has an invalid amount" })
+  return try Effect.try({ try: () => BigInt(amount), catch: () => new RowMismatch({ text: "submission_fee_deposits", issue: "Kept submission fee has an invalid amount" }) })
+}
+
+export effect function keptSubmissionFees(query: KeptFeesQuery) {
+  const found = try rows(KeptRecord, sql`SELECT network, deposit_id, token, kept_to, amount, resolved_at FROM submission_fee_deposits
+    WHERE network IN ${list(query.networks)} AND ${kept} AND resolved_at >= ${query.since}
+      AND lower(token) = lower(${query.token}) AND lower(kept_to) = lower(${query.feeWallet})`)
+  let total = 0n
+  for (const row of found) total += try amountOf(row.amount)
+  return total
+}
+
+export effect function keptFees(query: { readonly network: string; readonly since: string }) {
+  const found = try rows(KeptRecord, sql`SELECT network, deposit_id, token, kept_to, amount, resolved_at FROM submission_fee_deposits
+    WHERE network = ${query.network} AND ${kept} AND resolved_at >= ${query.since}
+    ORDER BY resolved_at, deposit_id`)
+  const fees: KeptSubmissionFee[] = []
+  for (const row of found) fees.push({ deposit: `${row.network}:${row.deposit_id}`, token: row.token, keptTo: row.kept_to, amount: try amountOf(row.amount), chainTime: Date.parse(row.resolved_at) })
+  return fees
+}

@@ -32,6 +32,7 @@ export interface ProgramPublication {
   readonly projectId: string
   readonly manifest: unknown
   readonly expectedRevision: number
+  readonly bountyAmount: string | null
   readonly actorId: string
 }
 
@@ -92,7 +93,7 @@ export effect function currentSettings(projectId: string, actorId: string) {
 }
 
 export effect function publishProgram(publication: ProgramPublication) {
-  const revision = { projectId: publication.projectId, manifest: publication.manifest, expectedRevision: publication.expectedRevision, note: revisionNote, monthlyAmount: null, expectedActor: publication.actorId }
+  const revision = { projectId: publication.projectId, manifest: publication.manifest, expectedRevision: publication.expectedRevision, note: revisionNote, monthlyAmount: null, bountyAmount: publication.bountyAmount, expectedActor: publication.actorId }
   const read = try checked(publication.actorId, publishRevision(revision), settingsMessages.unpublished)
   if (read.kind !== "done") return read
   return { kind: "done", value: { revision: read.value.project.revision, manifest: read.value.project.manifest } } satisfies Checked<CurrentSettings>

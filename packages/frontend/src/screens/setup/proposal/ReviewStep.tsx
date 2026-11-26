@@ -15,7 +15,7 @@ import { draftRegistry } from "../fields/skills.vibe";
 import { rewardSymbol } from "../fields/rewardAsset.ts";
 import { slopbotInstallUrl } from "../fields/slopbot.ts";
 import { Chip } from "../../admin/parts.tsx";
-import { chainOf, rewardKindOf } from "./form.ts";
+import { chainOf, honorSystemOf, listingChoicesOf, rewardKindOf } from "./form.ts";
 import { useRun } from "./run.ts";
 
 export type ListingPreviewProps = {
@@ -46,8 +46,16 @@ function MonthlyFunding({ proposal: p, pool }: { proposal: Proposal; pool: Month
     <>
       {amount}/mo
       {chain === undefined ? p.settlementChain : <NetworkMark network={CHAIN_NAMES[chain]} showName={false} size="sm" role="img" aria-label={CHAIN_NAMES[chain]} title={CHAIN_NAMES[chain]} />}
-      <Chip tone="Caution">Pledge</Chip>
+      <Chip tone="Caution">{honorSystemOf(p) ? "Honor system (not vaulted or guaranteed)" : "Pledge"}</Chip>
     </>
+  );
+}
+
+function OnOff({ on }: { on: boolean }) {
+  return (
+    <Chip tone={on ? "Positive" : "Neutral"} icon={on ? <Check aria-hidden /> : <Minus aria-hidden />}>
+      {on ? "On" : "Off"}
+    </Chip>
   );
 }
 
@@ -55,7 +63,7 @@ function MonthlyFunding({ proposal: p, pool }: { proposal: Proposal; pool: Month
 export function ListingPreview({ proposal: p, pool, bounty, licenseKnown, referrer, onClearReferrer }: ListingPreviewProps) {
   const shares = bounty?.kind === "terms" ? bountyAmountPreview(bounty.terms.amount, p.monthlyPool) : undefined;
   const image = projectImage(p.image, ownerAvatar(p.stewardLogin));
-  const autoClose = p.automaticClosure === "true";
+  const choices = listingChoicesOf(p);
   return (
     <Card asChild className="gap-6">
       <article aria-label="Listing preview">
@@ -79,12 +87,21 @@ export function ListingPreview({ proposal: p, pool, bounty, licenseKnown, referr
             </Button>
           </Fact>
           {p.fundingMode === "bounty" ? null : (
-            <Fact term="Auto-close">
-              <Chip tone={autoClose ? "Positive" : "Neutral"} icon={autoClose ? <Check aria-hidden /> : <Minus aria-hidden />}>
-                {autoClose ? "On" : "Off"}
-              </Chip>
-            </Fact>
+            <>
+              <Fact term="Auto-close">
+                <OnOff on={choices.closureConsent} />
+              </Fact>
+              <Fact term="Submission fee">
+                <OnOff on={choices.submissionFee} />
+              </Fact>
+              <Fact term="Wanted issues">
+                <OnOff on={choices.wantedIssues} />
+              </Fact>
+            </>
           )}
+          <Fact term="Report deposit">
+            <OnOff on={choices.reportDeposit} />
+          </Fact>
           {shares ? (
             <>
               <Fact term="Private bounty">

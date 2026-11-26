@@ -7,11 +7,12 @@ import { checkedSchedules } from "../verify/probes.vibe"
 import { type ExpectedBindings, activeTag, checkedVersion, releaseMessage, secretNames, uploadedVersionId } from "../wrangler/outputs.vibe"
 import { ConfigRefused, type Reviewed, driftMessage, reviewOnlyKeys, secretDrift, tierName } from "./config.vibe"
 
-export const publicationOrder: ReadonlyArray<Service> = ["PaymentAttesters", "FeeConverter", "VettingSandbox", "Notify", "Slopbot", "RepositoryAccess", "IdentityWorker", "VettingBackup", "VettingRetention", "Referral"]
+export const publicationOrder: ReadonlyArray<Service> = ["PaymentAttesters", "FeeConverter", "VettingSandbox", "Notify", "Slopbot", "RepositoryAccess", "IdentityWorker", "VettingBackup", "VettingRetention", "Referral", "SubmissionFee"]
 
 interface Home {
   readonly app: string
   readonly worker: string
+  readonly builtBy?: string
   readonly only?: Environment
   readonly stacks?: true
 }
@@ -20,13 +21,14 @@ const homes: { readonly [S in Service]: Home } = {
   PaymentAttesters: { app: "settlement", worker: "attester", stacks: true },
   FeeConverter: { app: "fees", worker: "feeConverter" },
   VettingSandbox: { app: "security", worker: "sandbox" },
-  Notify: { app: "operations", worker: "notify" },
+  Notify: { app: "operations", worker: "notify", builtBy: "app" },
   Slopbot: { app: "slopbot", worker: "slopbot", only: "Production" },
   RepositoryAccess: { app: "slopbot", worker: "slopbot", only: "Staging" },
   IdentityWorker: { app: "backend", worker: "identity" },
   VettingBackup: { app: "operations", worker: "backup" },
   VettingRetention: { app: "operations", worker: "backup" },
   Referral: { app: "settlement", worker: "referralAccrual", only: "Production" },
+  SubmissionFee: { app: "fees", worker: "submissionFee", only: "Production" },
 }
 
 export interface Publication {
@@ -40,6 +42,7 @@ export interface Publication {
 export interface Overrides {
   readonly vars: Readonly<Record<string, string>>
   readonly withoutBindings: ReadonlyArray<string>
+  readonly crons?: ReadonlyArray<string>
 }
 
 export const noOverrides: Overrides = { vars: {}, withoutBindings: [] }
@@ -96,13 +99,18 @@ export effect function withSecretsFile<A, E, R>(workspace: string, label: string
   return try Effect.ensuring(use(path), Effect.ignore(fs.remove(path, { force: true })))
 }
 
+function builderOf(reviewed: Reviewed) {
+  return Object.values(homes).find((home) => home.app === reviewed.app && home.worker === reviewed.worker)?.builtBy ?? reviewed.app
+}
+
 effect function bundledMain(reviewed: Reviewed, publication: Publication) {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
   const main = reviewed.file.main
   if (main === undefined) throw refused(`${reviewed.path} names no built entry`)
+  const builder = builderOf(reviewed)
   const relative = files.normalize(files.join("apps", reviewed.app, "wrangler", main))
-  if (!relative.startsWith(`apps/${reviewed.app}/`)) throw refused(`${reviewed.path} names an entry outside its app`)
+  if (!relative.startsWith(`apps/${builder}/`)) throw refused(`${reviewed.path} names an entry outside apps/${builder}`)
   const built = files.join(publication.bundle, relative)
   const info = fs.stat(built) catch () => undefined
   if (info?.type !== "File") throw refused(`the release bundle has no built ${relative} for ${reviewed.file.name}`)
@@ -121,6 +129,7 @@ effect function generatedConfig(reviewed: Reviewed, publication: Publication, ov
     vars,
     ...reviewed.file.d1_databases === undefined ? {} : { d1_databases: reviewed.file.d1_databases.map((database) => ({ ...database, migrations_dir: files.join(publication.root, "migrations") })) },
     ...reviewed.file.services === undefined ? {} : { services },
+    ...overrides.crons === undefined ? {} : { triggers: { crons: overrides.crons } },
     ...extra,
   }
   const path = files.join(publication.workspace, `${reviewed.file.name}.json`)
@@ -209,7 +218,7 @@ export effect function publishWorker(reviewed: Reviewed, publication: Publicatio
   try cloudflare.wrangler(`${name} deploy`, { args: ["versions", "deploy", "--name", name, `--version-id=${versionId}`, "--percentage=100", `--message=${releaseMessage(sha)}`, "--yes"], seconds: deploySeconds })
   if (release.triggers) {
     try cloudflare.wrangler(`${name} triggers`, { args: ["triggers", "deploy", "--config", config], seconds: deploySeconds })
-    const crons = reviewed.file.triggers?.crons
+    const crons = release.overrides.crons ?? reviewed.file.triggers?.crons
     if (crons !== undefined) try checkedSchedules(name, crons)
   }
   return { tag: try readBack(name, versionId, () => uploaded), config }

@@ -8,11 +8,10 @@ import { migrationsDir } from "@repo/platform/testing/paths";
 import { noticePorts } from "@repo/operations/live";
 import { Restrictions } from "@repo/ports/backend";
 import type { Driver, Options } from "../../gen/slopbot__appeals.conformance.ts";
-import type { Appeal, AppealSubject, BanStatus, Event } from "../../gen/slopbot__appeals.ts";
+import type { Appeal, AppealSubject, BanStatus, Event, SiblingStatus } from "../../gen/slopbot__appeals.ts";
 import { dueJobOf } from "../../src/appeals/due.vibe";
 import { claimPublication, releasePublication } from "../../src/appeals/publication.vibe";
 import { type Step, appealKeyOf, categoryNameOf, commitAppeal, loadAppeal, postEventOf } from "../../src/appeals/store.vibe";
-import { penaltyTableVersion } from "../../src/closeAttempt/penalty.vibe";
 import { settled } from "../support/settled.ts";
 
 const mf = startWorker({ d1: { SLOPBOT_DB: "appeal-conformance" } });
@@ -35,6 +34,7 @@ let generation = 0;
 let attempt = 0;
 let opened = false;
 let ban: BanStatus = "BanUnknown";
+let sibling: SiblingStatus = "SiblingUnknown";
 let comments = 0;
 
 function node() {
@@ -59,6 +59,8 @@ function translated(event: Event): Event {
       return { ...event, subject: { ...event.subject, item: event.subject.item === "pr" ? node() : event.subject.item, revision: revision(event.subject.revision) } };
     case "accept":
     case "reject":
+    case "escalateBanAtAnswer":
+    case "escalateSiblingAtAnswer":
       return { ...event, authority: { ...event.authority, item: event.authority.item === "pr" ? node() : event.authority.item } };
     case "maintainerReopen":
       return { ...event, decision: { ...event.decision, item: event.decision.item === "pr" ? node() : event.decision.item, revision: revision(event.decision.revision) } };
@@ -76,7 +78,7 @@ async function seed(subject: AppealSubject) {
       VALUES (?, 1, 1, 'pull_request', 1, ?, ?, ?, 'content', 'policy', 'completed', ?, 'label', ?, ?)`).bind(reviewKey, subject.item, subject.author, subject.revision, JSON.stringify({ category: name }), at, at).run();
   if (subject.debit > 0)
     await db.prepare(`INSERT INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category, table_version, debit_thirds, period, moderator_review, review_key, recorded_at)
-      VALUES (?, 1, 'appeal-project', ?, ?, ?, ?, ?, ?, ?, ?)`).bind(subject.item, String(subject.author), name, subject.tableVersion === 1 ? penaltyTableVersion : `slopbot-penalties-v${subject.tableVersion}`,
+      VALUES (?, 1, 'appeal-project', ?, ?, ?, ?, ?, ?, ?, ?)`).bind(subject.item, String(subject.author), name, `slopbot-penalties-v${subject.tableVersion}`,
       Math.round(subject.debit / 10), at.slice(0, 7), subject.category === "Scam" ? 1 : 0, reviewKey, at).run();
 }
 
@@ -84,8 +86,11 @@ function committed(steps: ReadonlyArray<Step>, options: Parameters<typeof commit
   return settled(commitAppeal(key(), options, () => steps), runtime);
 }
 
-function banned(): ReadonlyArray<Step> {
-  return ban === "BanUnknown" ? [] : [{ event: { type: "observeBan", status: ban }, by: 0, optional: true }];
+function observations(): ReadonlyArray<Step> {
+  return [
+    ...(ban === "BanUnknown" ? [] : [{ event: { type: "observeBan", status: ban }, by: 0, optional: true } satisfies Step]),
+    ...(sibling === "SiblingUnknown" ? [] : [{ event: { type: "observeSibling", siblingStatus: sibling }, by: 0, optional: true } satisfies Step]),
+  ];
 }
 
 async function posted(event: Event) {
@@ -121,12 +126,19 @@ async function dispatch(raw: Event, by: number): Promise<"accepted" | "refused">
       if (outcome === "accepted") ban = event.status;
       return outcome;
     }
+    case "observeSibling": {
+      const outcome = await committed([{ event, by }]);
+      if (outcome === "accepted") sibling = event.siblingStatus;
+      return outcome;
+    }
     case "draft":
       return committed([{ event, by, confidence: event.confidenceHundredths / 100 }]);
     case "escalateByCriteria":
     case "escalateBanAtAnswer":
+    case "escalateSiblingAtAnswer":
     case "accept":
-      return committed([...banned(), { event, by }]);
+    case "reject":
+      return committed([...observations(), { event, by }]);
     case "postDraft":
     case "postEscalation":
     case "postResolution":
@@ -191,6 +203,7 @@ export const driver: Driver<Observed> & AsyncDisposable = {
     attempt = 0;
     opened = false;
     ban = "BanUnknown";
+    sibling = "SiblingUnknown";
     clock.set(0);
   },
   dispatch: (_key, event: Event, by) => dispatch(event, Number(by ?? 0)),

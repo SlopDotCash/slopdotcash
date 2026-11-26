@@ -1,6 +1,7 @@
-// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow"
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/workUnits.md, "A referenced pull request that can never join the group is left out instead of holding it"; spec/slopbot/valueEvidence.md, "Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow"
 import { parsedJson as parsedText } from "@repo/platform/git/bytes"
 import { GitHub } from "@repo/platform/github"
+import { type Discovery, joins } from "../../../gen/slopbot__workUnits.effect.vibe"
 import type { AcceptanceFailure } from "../evidence/acceptance.vibe"
 import { collectEvidence } from "../evidence/collect.vibe"
 import { type ContextSelection, collectContext, validContextSelections } from "../evidence/context.vibe"
@@ -122,8 +123,16 @@ effect function contextOf(repository: GroupRepository, evidence: Evidence, retai
   return validContextSelections(chosen) ? chosen : undefined
 }
 
+interface Candidate extends Selection {
+  readonly discovery: Discovery
+}
+
+function discovered(discovery: Discovery, selections: ReadonlyArray<Selection>): Candidate[] {
+  return selections.map((selection) => ({ ...selection, discovery }))
+}
+
 interface Visit {
-  readonly selected: Selection
+  readonly selected: Candidate
   readonly repository: GroupRepository
   readonly seed: WorkUnitSource | undefined
 }
@@ -137,10 +146,12 @@ effect function visitSource(visit: Visit, startAt: number) {
   let evidence = visit.seed?.evidence ?? try collectEvidence({ repository: repository.id, number: selected.number, policy: repository })
   if (
     evidence.pull.node_id !== selected.nodeId || evidence.repositoryDatabaseId !== identity.id ||
-    evidence.repositoryNodeId !== identity.node_id || evidence.pull.state !== "closed" || !deferredOnly(evidence)
+    evidence.repositoryNodeId !== identity.node_id || evidence.pull.state !== "closed"
   ) return undefined
   const occurred = millis(evidence.pull.merged_at ?? evidence.indirectAcceptance?.observedOnBranchAt ?? evidence.pull.closed_at)
-  if (!Number.isFinite(occurred) || occurred < startAt) return undefined
+  const joined = joins(selected.discovery, true, Number.isFinite(occurred) ? occurred : 0, startAt)
+  if (joined !== "Joins") return joined
+  if (!deferredOnly(evidence)) return undefined
   const previous = try currentWorkUnitRecord(evidence.repositoryNodeId, evidence.pull.node_id)
   const retained = retainedSelections(previous?.record_json, evidence.pull.node_id)
   const context: ReadonlyArray<ContextSelection> | undefined = try contextOf(repository, evidence, retained)
@@ -164,8 +175,9 @@ function siblingsOf(recordJson: string | undefined) {
 export effect function collectValueGroup(seed: WorkUnitSource, startAt: number, repositories: ReadonlyArray<GroupRepository>) {
   const root = repositories.find((repository) => repository.id === seed.evidence.repository)
   if (root === undefined) return undefined
-  const queue: Selection[] = [{ repository: root.id, number: seed.evidence.pull.number, nodeId: seed.evidence.pull.node_id }]
+  const queue: Candidate[] = [{ repository: root.id, number: seed.evidence.pull.number, nodeId: seed.evidence.pull.node_id, discovery: "ByCarrier" }]
   const sources = new Map<string, WorkUnitSource>()
+  const historicalReferences = new Set<string>()
   const commitCarrierCache = new Map<string, ReadonlyArray<Selection>>()
   const censuses = new Map<string, AcceptedCommitCensus>()
   for (let position = 0; position < queue.length; position += 1) {
@@ -177,17 +189,25 @@ export effect function collectValueGroup(seed: WorkUnitSource, startAt: number, 
       if (prior.evidence.pull.node_id !== selected.nodeId) return undefined
       continue
     }
+    if (selected.discovery === "ByReference" && historicalReferences.has(key)) continue
     if (sources.size >= groupSourceLimit) return undefined
     const named = findRepository(repositories.filter((repository) => repository.projectId === root.projectId), selected.repository)
     const repository = repositories.find((entry) => entry === named)
-    if (repository === undefined) return undefined
+    if (repository === undefined) {
+      if (joins(selected.discovery, false, 0, startAt) === "LeftOut") continue
+      return undefined
+    }
     const visited = try visitSource({ selected, repository, seed: position === 0 ? seed : undefined }, startAt)
-    if (visited === undefined) return undefined
+    if (visited === "LeftOut") {
+      historicalReferences.add(key)
+      continue
+    }
+    if (visited === undefined || visited === "JoinPending") return undefined
     const { evidence } = visited.source
     sources.set(key, visited.source)
     const carriers = try acceptedCommitCarriers(evidence, repository.current, commitCarrierCache)
     if (carriers === undefined) return undefined
-    queue.push(...carriers)
+    queue.push(...discovered("ByCarrier", carriers))
     if (evidence.pull.merged_at !== null || evidence.indirectAcceptance !== undefined) {
       let census = censuses.get(evidence.repositoryNodeId)
       if (census === undefined) {
@@ -196,11 +216,11 @@ export effect function collectValueGroup(seed: WorkUnitSource, startAt: number, 
         censuses.set(evidence.repositoryNodeId, census)
       }
       if (evidence.pull.merged_at !== null && !census.ids.has(evidence.pull.node_id)) return undefined
-      for (const commit of acceptedWorkUnitCommits(evidence)) queue.push(...census.carriers.get(commit.sha) ?? [])
-      if (evidence.mergeCommitEvidence !== null) queue.push(...census.carriers.get(evidence.mergeCommitEvidence.sha) ?? [])
+      for (const commit of acceptedWorkUnitCommits(evidence)) queue.push(...discovered("ByCarrier", census.carriers.get(commit.sha) ?? []))
+      if (evidence.mergeCommitEvidence !== null) queue.push(...discovered("ByCarrier", census.carriers.get(evidence.mergeCommitEvidence.sha) ?? []))
     }
-    for (const related of evidence.relatedPullRequests) queue.push({ repository: related.repository, number: related.number, nodeId: related.id })
-    queue.push(...siblingsOf(visited.previous))
+    for (const related of evidence.relatedPullRequests) queue.push({ repository: related.repository, number: related.number, nodeId: related.id, discovery: "ByReference" })
+    queue.push(...discovered("ByMembership", siblingsOf(visited.previous)))
   }
   return [...sources.values()]
 }

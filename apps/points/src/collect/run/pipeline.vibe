@@ -1,0 +1,369 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { utf8 } from "@repo/platform/crypto"
+import { type CensusOutcome, type HistoricalClosedContext, ValueEvidenceRefused, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import { type ProjectView } from "../../../gen/points__census.effect.vibe"
+import { type Identities, NotCollected, type OpenCensus, OpenSetChanged, censusPass, collectOpen, identities, openEvidenceCurrent, openSource } from "../../census/collect.vibe"
+import { type CollectedTarget, collectedTargets, defaultRegistryOrigin, fetchRegistry } from "../../census/projects.vibe"
+import { type Recollection, recollectedOnce } from "../../census/reviews.vibe"
+import type { PenaltyHistoryRecord, RepositoryRegistry, SourceMetadata, UnavailableSource } from "../../client/snapshot/schema.vibe"
+import { validatePublishable } from "../../client/snapshot/validate.vibe"
+import { Graphql, SourceNodeUnavailable, type UnavailableSource as ProbedSource } from "../../ingestion/graphql.vibe"
+import { checkpointMessage } from "../../ingestion/read.vibe"
+import { valuePolicyAt } from "../../kernels/scoring/legacyV2.ts"
+import { readRegistry } from "../../snapshot/adaptPr.vibe"
+import { atomicWrite, attempt } from "../../snapshot/files.vibe"
+import { defaultSnapshotPath } from "../../snapshot/write.vibe"
+import { type WindowBounds, publishRefresh, startWindow, windowBounds, windowRun } from "../../window/window.vibe"
+import { participationBans } from "../feeds/bans.vibe"
+import { type AcceptedReviewHistory, type EvaluatedContribution, type Retained, acceptedReviewHistory, evaluatedContributions } from "../feeds/history.vibe"
+import { type PenaltyFeedRecord, projectPenaltyState } from "../feeds/penalties.vibe"
+import { type PullRequestEvidence, evidenceVerificationCandidates, verifyPullRequestEvidence } from "../evidence/artifacts.vibe"
+import { type MergedRepository, type MergedWork, type RepositoryCollection, collectMergedWork, confirmReviewCensus, probeUnavailableSources } from "../merged/collection.vibe"
+import { commitLineLoader } from "../merged/commits.vibe"
+import { type ImplementationCollected, type ImplementationRequest, implementationFacts } from "../implementation/facts.vibe"
+import type { MemoSession } from "../memo/memo.vibe"
+import { type IssueRecord, type PullRequestRecord, type ReviewRecord, maxTransientAttempts } from "../merged/hydrate.vibe"
+import { type MergedOutcome, dedupedById } from "../merged/wire.vibe"
+import { valueContextPullRequests } from "./contexts.vibe"
+import { type OpenRecords, openHydration, openRecords } from "./openFacts.vibe"
+
+export error CollectUsage { message: string }
+export error CollectDeferred { message: string }
+export error AssemblyRefused { message: string }
+
+export const collectUsage = "Usage: collect <registry.json> [--cutoff YYYY-MM-DDTHH:mm:ss.sssZ]"
+const exactInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const dayMs = 24 * 60 * 60 * 1000
+const verificationWindowDays = 35
+
+export interface CollectOptions {
+  readonly registryPath: string
+  readonly cutoffMs?: number
+}
+
+export interface CollectRequest extends CollectOptions {
+  readonly discussionCheckpoint?: { readonly deadlineMs: number }
+  readonly registryOrigin?: string
+  readonly dataRoot?: string
+  readonly output?: string
+  readonly memo?: MemoSession
+  readonly implementation?: ImplementationRequest
+  readonly evidenceToken?: Redacted.Redacted<string>
+}
+
+export interface OpenCollection {
+  readonly census: OpenCensus
+  readonly records: OpenRecords
+}
+
+export type CollectionSource = Omit<SourceMetadata, "evidenceVerification">
+
+export interface Collection {
+  readonly bounds: WindowBounds
+  readonly generatedAt: string
+  readonly valuePolicyEffectiveAt: string
+  readonly verificationWindowFrom: string
+  readonly registry: RepositoryRegistry
+  readonly targets: ReadonlyArray<CollectedTarget>
+  readonly work: MergedWork<OpenCollection>
+  readonly openIssues: ReadonlyArray<IssueRecord>
+  readonly openPullRequests: ReadonlyArray<PullRequestRecord>
+  readonly latestPreflightUpdate: string
+  readonly value: ValueInputsRead
+  readonly valueContextPullRequests: ReadonlyArray<ReviewRecord>
+  readonly evidence: PullRequestEvidence
+  readonly bans: ReadonlyMap<string, string>
+  readonly penalties: ReadonlyArray<PenaltyFeedRecord>
+  readonly penaltyHistory: ReadonlyArray<PenaltyHistoryRecord> | undefined
+  readonly acceptedReviewHistory: Retained<AcceptedReviewHistory>
+  readonly evaluatedContributions: Retained<{ readonly sourceRevision: string; readonly awards: ReadonlyArray<EvaluatedContribution> }> | undefined
+  readonly source: CollectionSource
+  readonly implementation?: ImplementationCollected
+}
+
+export service SnapshotAssembly {
+  assemble(collection: Collection): unknown!AssemblyRefused
+}
+
+export effect function collectArguments(args: ReadonlyArray<string>) {
+  const [registryPath, flag, cutoffText, ...rest] = args
+  if (registryPath === undefined || registryPath.startsWith("--") || rest.length > 0 || (flag !== undefined && (flag !== "--cutoff" || cutoffText === undefined))) {
+    throw new CollectUsage({ message: collectUsage })
+  }
+  if (flag === undefined || cutoffText === undefined) return { registryPath } satisfies CollectOptions
+  const inexact = new CollectUsage({ message: "--cutoff must be an exact UTC timestamp" })
+  const cutoffMs = millisOf(cutoffText)
+  if (!exactInstant.test(cutoffText) || !Number.isFinite(cutoffMs)) throw inexact
+  if ((try isoAt(cutoffMs)) !== cutoffText) throw inexact
+  if (cutoffMs > (try Clock.currentTimeMillis)) throw new CollectUsage({ message: "--cutoff cannot be in the future" })
+  return { registryPath, cutoffMs } satisfies CollectOptions
+}
+
+function underValuePolicy(acceptedAt: string | null | undefined, fromMs: number) {
+  return typeof acceptedAt === "string" && millisOf(acceptedAt) >= fromMs
+}
+
+export function mergedCensusOutcome(outcome: MergedOutcome): CensusOutcome {
+  return {
+    id: outcome.id,
+    url: outcome.url,
+    number: outcome.number,
+    headRefOid: outcome.headRefOid,
+    updatedAt: outcome.updatedAt,
+    mergedAt: outcome.mergedAt,
+    baseRefName: outcome.baseRefName,
+    commits: outcome.commits === null ? null : outcome.commits.map((commit) => ({ oid: commit.oid, author: commit.author, parentCount: commit.parentCount, additions: commit.additions, deletions: commit.deletions })),
+  }
+}
+
+function closedCensusOutcome(pull: PullRequestRecord): CensusOutcome {
+  return { id: pull.id, url: pull.url, number: pull.number, headRefOid: pull.headRefOid, updatedAt: pull.updatedAt, mergedAt: null, closedAt: pull.closedAt }
+}
+
+export function unavailableById(sources: ReadonlyArray<UnavailableSource>) {
+  const merged = new Map<string, UnavailableSource>()
+  for (const source of sources) merged.set(source.nodeId, { ...merged.get(source.nodeId), ...source })
+  return [...merged.values()].sort((left, right) => left.nodeId.localeCompare(right.nodeId))
+}
+
+export effect function openCollection(repository: MergedRepository, reservedCost: number, bounds: WindowBounds, ids: Identities, views: ReadonlyMap<string, ProjectView>) {
+  const view = views.get(repository.target.projectId)
+  if (view === undefined) throw new NotCollected({ projectId: repository.target.projectId })
+  const records = openRecords()
+  const census = try collectOpen({
+    census: { lowerDay: bounds.lowerDay, publishedLower: 0, referenceTime: bounds.toMs, repositoryId: repository.preflight.id, identities: ids },
+    projectId: repository.target.projectId,
+    view,
+    repository: { owner: repository.target.owner, name: repository.target.name },
+    hydrate: openHydration(repository.target, repository.preflight.id, records),
+    options: { reservedCost },
+  })
+  return { census, records } satisfies OpenCollection
+}
+
+export interface OpenContext {
+  readonly bounds: WindowBounds
+  readonly ids: Identities
+  readonly views: ReadonlyMap<string, ProjectView>
+}
+
+function openPullRequestsOf(collection: RepositoryCollection<OpenCollection>) {
+  return [...collection.open.records.pullRequests.values()]
+}
+
+effect function reopenedPullRequests(collection: RepositoryCollection<OpenCollection>, open: OpenContext) {
+  const { target, preflight } = collection
+  const view = open.views.get(target.projectId)
+  if (view === undefined) throw new NotCollected({ projectId: target.projectId })
+  const records: OpenRecords = { issues: collection.open.records.issues, pullRequests: new Map() }
+  const pullRequests = try censusPass(
+    { lowerDay: open.bounds.lowerDay, publishedLower: 0, referenceTime: open.bounds.toMs, repositoryId: preflight.id, identities: open.ids, projectId: target.projectId, view },
+    openSource({ owner: target.owner, name: target.name }, "PullRequestItem", openHydration(target, preflight.id, records)),
+  )
+  return { ...collection, open: { census: { issues: collection.open.census.issues, pullRequests }, records } satisfies OpenCollection }
+}
+
+effect function evidenceAttempt(collected: MergedWork<OpenCollection>, open: OpenContext, repositories: ReadonlyArray<string>, token: Redacted.Redacted<string> | undefined, attempt: number) {
+  const reopened: RepositoryCollection<OpenCollection>[] = []
+  if (attempt > 1) for (const collection of collected.collections) reopened.push(try reopenedPullRequests(collection, open))
+  const work = attempt > 1 ? { ...collected, collections: reopened } : collected
+  const detailed = work.mergedPullRequests.filter((pull) => work.plan.detailEligibleIds.has(pull.id))
+  const pulls = dedupedById(work.collections.flatMap(openPullRequestsOf))
+  const evidence = try verifyPullRequestEvidence([...detailed, ...pulls], { repositories, ...(token === undefined ? {} : { token }) })
+  for (const collection of work.collections) {
+    const listed = openPullRequestsOf(collection)
+    const candidates = new Set(evidenceVerificationCandidates(listed, repositories).map(({ pullRequest }) => pullRequest.id))
+    try openEvidenceCurrent({ owner: collection.target.owner, name: collection.target.name }, collection.preflight.id, listed.filter((pull) => candidates.has(pull.id)))
+  }
+  return { work, evidence }
+}
+
+export effect function verifiedEvidence(collected: MergedWork<OpenCollection>, open: OpenContext, repositories: ReadonlyArray<string>, token: Redacted.Redacted<string> | undefined) {
+  for (let attempt = 1; attempt <= maxTransientAttempts; attempt += 1) {
+    const verified: { readonly work: MergedWork<OpenCollection>; readonly evidence: PullRequestEvidence } | undefined = evidenceAttempt(collected, open, repositories, token, attempt) catch effect (error) => {
+      if (error._tag !== "OpenSetChanged") throw error
+      return undefined
+    }
+    if (verified !== undefined) return verified
+  }
+  throw new OpenSetChanged({ message: `Open evidence changed during ${maxTransientAttempts} consecutive verification attempts` })
+}
+
+export function censusSourceIds(work: MergedWork<OpenCollection>) {
+  return new Set([...work.outcomes, ...work.closedUnmergedPullRequests].map((source) => source.id))
+}
+
+export effect function penaltyFeeds(projectIds: ReadonlyArray<string>, cutoff: string) {
+  const penalties: PenaltyFeedRecord[] = []
+  const history: PenaltyHistoryRecord[] = []
+  let hasHistory = false
+  for (const projectId of projectIds) {
+    const state = try projectPenaltyState(projectId)
+    if (state.history === null) {
+      try Console.warn(`[penalties] ${projectId}: retained history unavailable on the deployed Worker; active debits only`)
+      penalties.push(...state.penalties)
+      continue
+    }
+    hasHistory = true
+    const atCutoff = state.history
+      .filter((row) => row.recordedAt <= cutoff)
+      .map((row) => (row.reversedAt !== null && row.reversedAt > cutoff ? { ...row, reversedAt: null, reversal: null } : row))
+    history.push(...atCutoff)
+    penalties.push(...atCutoff.filter((row) => row.reversedAt === null))
+  }
+  return { penalties, history: hasHistory ? history : undefined }
+}
+
+function failureMessage(error: { readonly _tag: string }) {
+  return "message" in error && typeof error.message === "string" ? error.message : error._tag
+}
+
+export interface HistoricalValue {
+  readonly valuePolicyFromMs: number
+  readonly closedContexts: ReadonlyMap<string, HistoricalClosedContext>
+}
+
+export effect function valueInputs(work: MergedWork<OpenCollection>, recollection: Recollection, historical?: HistoricalValue) {
+  const graphql = try Graphql
+  const held: ProbedSource[] = []
+  const unconfirmed: SourceNodeUnavailable[] = []
+  const unavailableJointSources = (ids: ReadonlyArray<string>) => effect {
+    const probed = provideService(probeUnavailableSources(ids, recollection, true), Graphql, graphql) catch effect (error) => {
+      if (error._tag === "SourceNodeUnavailable") unconfirmed.push(error)
+      throw new ValueEvidenceRefused({ message: failureMessage(error) })
+    }
+    held.push(...probed)
+    return probed.map((source) => source.nodeId)
+  }
+  const value = (try ValueInputs).load({
+    value: [...work.outcomes.map(mergedCensusOutcome), ...work.closedUnmergedPullRequests.map(closedCensusOutcome)].filter((source) => underValuePolicy(source.mergedAt ?? source.closedAt, historical?.valuePolicyFromMs ?? valuePolicyAt)),
+    attribution: work.outcomes.map(mergedCensusOutcome),
+    unavailableJointSources,
+    ...(historical === undefined ? {} : { historicalClosedContexts: historical.closedContexts }),
+  }) catch effect (error) => {
+    const [first] = unconfirmed
+    if (first !== undefined) throw first
+    throw error
+  }
+  return { value, held }
+}
+
+effect function generation(request: CollectRequest, bounds: WindowBounds, registry: RepositoryRegistry, recollection: Recollection) {
+  const registered = try fetchRegistry(request.registryOrigin ?? defaultRegistryOrigin)
+  const targets = try collectedTargets(registered)
+  const views = new Map(registered.map((project) => [project.projectId, project.view] as const))
+  const ids = identities()
+  if (request.memo !== undefined) try request.memo.beginPass()
+  request.implementation?.memo?.beginPass()
+  const verificationFromMs = bounds.toMs - verificationWindowDays * dayMs
+  const collected = try collectMergedWork({
+    targets,
+    nowMs: bounds.toMs,
+    windowFromMs: bounds.fromMs,
+    verificationFromMs,
+    valuePolicyFromMs: valuePolicyAt,
+    evaluatedReviewKeys: new Set(),
+    recollection,
+  }, (repository, reservedCost) => openCollection(repository, reservedCost, bounds, ids, views), commitLineLoader(undefined, request.memo?.commitLines))
+  try confirmReviewCensus(collected)
+  const implementation = request.implementation === undefined ? undefined : try implementationFacts({ repositories: collected.collections, windowFrom: bounds.from, recordedThrough: bounds.to, request: request.implementation })
+  const { work, evidence } = try verifiedEvidence(collected, { bounds, ids, views }, registry.targets.map((target) => target.id), request.evidenceToken)
+  const { value, held } = try valueInputs(work, recollection)
+  const contexts = try valueContextPullRequests(value.jointValueDecisions, censusSourceIds(work))
+  const deadline = request.discussionCheckpoint?.deadlineMs
+  const checkedAt = try Clock.currentTimeMillis
+  if (deadline !== undefined && checkedAt >= deadline) throw new CollectDeferred({ message: checkpointMessage })
+  const bans = try participationBans()
+  const cutoff = bounds.to
+  const feeds = try penaltyFeeds([...new Set(registry.registered.map((repository) => repository.projectId))].sort(), cutoff)
+  const root = request.dataRoot ?? "."
+  const reviewHistory = try acceptedReviewHistory(root)
+  const evaluated = try evaluatedContributions(root)
+  const openIssues = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.issues.values()]))
+  const openPullRequests = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.pullRequests.values()]))
+  const graphql = try Graphql
+  const rateLimit = try graphql.rateLimit()
+  const generatedAt = try isoAt(try Clock.currentTimeMillis)
+  const verificationWindowFrom = try isoAt(verificationFromMs)
+  const unavailableSources = unavailableById([...work.unavailableSources, ...held])
+  const detailed = work.mergedPullRequests.filter((pull) => work.plan.detailEligibleIds.has(pull.id))
+  const latestPreflightUpdate = work.collections.length === 0
+    ? cutoff
+    : work.collections.map((collection) => collection.preflight.updatedAt).reduce((latest, current) => (millisOf(current) > millisOf(latest) ? current : latest))
+  const source: CollectionSource = {
+    provider: "github-graphql",
+    fetchedAt: generatedAt,
+    cutoffAt: cutoff,
+    repositoryId: work.collections[0]?.preflight.id ?? null,
+    repositories: work.collections.map((collection) => ({ id: collection.target.id, repositoryId: collection.preflight.id })),
+    requestCount: try graphql.requestCount(),
+    searchSliceCount: work.searchSliceCount,
+    unavailableSources,
+    heldWorkUnits: value.heldWorkUnits,
+    rateLimit,
+    counts: {
+      unavailableSources: unavailableSources.length,
+      unavailableMergedPullRequests: unavailableSources.filter((unavailable) => unavailable.unavailableInMergedCensus === true).length,
+      heldWorkUnits: value.heldWorkUnits.length,
+      mergedPullRequests: work.outcomes.length,
+      detailedMergedPullRequests: detailed.length,
+      closedIssues: work.closedIssueCount,
+      detailedClosedIssues: work.closedIssues.length,
+      resolvedIssues: 0,
+      openIssues: openIssues.length,
+      openPullRequests: openPullRequests.length,
+    },
+    verificationWindow: { days: verificationWindowDays, from: verificationWindowFrom, to: cutoff },
+  }
+  const collection: Collection = {
+    bounds,
+    generatedAt,
+    valuePolicyEffectiveAt: try isoAt(valuePolicyAt),
+    verificationWindowFrom,
+    registry,
+    targets,
+    work,
+    openIssues,
+    openPullRequests,
+    latestPreflightUpdate,
+    value,
+    valueContextPullRequests: contexts,
+    evidence,
+    bans,
+    penalties: feeds.penalties,
+    penaltyHistory: feeds.history,
+    acceptedReviewHistory: reviewHistory,
+    evaluatedContributions: evaluated,
+    source,
+    ...(implementation === undefined ? {} : { implementation }),
+  }
+  const raw = try (try SnapshotAssembly).assemble(collection)
+  const censuses = work.collections.flatMap((repository) => [repository.open.census.issues.census, repository.open.census.pullRequests.census])
+  return { censuses, collection, raw }
+}
+
+effect function written(path: string, raw: unknown, registry: RepositoryRegistry) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const snapshot = try validatePublishable(raw, registry, try Clock.currentTimeMillis)
+  const target = files.resolve(path)
+  try attempt(fs.makeDirectory(files.dirname(target), { recursive: true }), target, "Leaderboard directory could not be created")
+  try atomicWrite(target, utf8(`${JSON.stringify(raw)}\n`))
+  return snapshot
+}
+
+export effect function collectSnapshot(request: CollectRequest) {
+  const clockMs = try Clock.currentTimeMillis
+  const nowMs = request.cutoffMs ?? clockMs
+  const bounds = try windowBounds(nowMs)
+  const registry = try readRegistry(request.registryPath)
+  const window = try windowRun()
+  try startWindow(window, bounds)
+  const output = request.output ?? defaultSnapshotPath
+  const refresh = recollectedOnce((recollection) => generation(request, bounds, registry, recollection))
+  const snapshot = try publishRefresh(window, refresh, (refreshed) => written(output, refreshed.raw, registry))
+  const { source } = snapshot
+  try Console.log(`[slop.cash] wrote ${output} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${source.requestCount} GitHub requests, ${source.rateLimit.remaining}/${source.rateLimit.limit} GraphQL points remaining)`)
+  return snapshot
+}

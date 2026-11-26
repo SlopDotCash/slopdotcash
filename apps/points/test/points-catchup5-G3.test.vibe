@@ -1,0 +1,297 @@
+// spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"; spec/points/protectedMonths.md, "The generator reads the protected months only from this site's own route, once, with a bounded answer"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { pointsRule } from "../src/client/journal.vibe"
+import { type Coverage, type Journal, type Revision, type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
+import { journalFile, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { holdProtected } from "../src/journal/hold.vibe"
+import { journalOf, storeOf } from "../src/journal/ledger.vibe"
+import { importJournal } from "../src/publication/import.vibe"
+import { projectionFiles } from "../src/publication/projections.vibe"
+import { type ProtectionEnvironment, resolveProtection } from "../src/publication/protectedMonths.vibe"
+import { ProtectedMonthsRoutes, protectedMonthsAccess } from "../src/publication/protectedRoute.vibe"
+import { recoverPublished } from "../src/recovery/published.vibe"
+import type { Protection } from "../gen/points__protectedMonths.ts"
+import { type Answer, type WebHandler, listing, resetSite, routeRequest, routedFetch, site } from "./support/catchup5/web.ts"
+import { november2026, october2026 } from "../gen/points__periods.ts"
+
+interface Seed {
+  readonly project: string
+  readonly source: string
+  readonly amount: number
+  readonly occurredAt: string
+  readonly previous?: Revision
+  readonly category?: string
+}
+
+service World {
+  readonly db: D1Database
+  readonly open: WebHandler
+  readonly closed: WebHandler
+  readonly short: WebHandler
+}
+
+schema Counted { revisions: number }
+
+const origin = "https://slop.cash"
+const route = `${origin}/api/v1/operator/protected-point-months`
+const secret = "s".repeat(40)
+const october = "2026-10-05T00:00:00.000Z"
+const later = "2026-11-04T00:00:00.000Z"
+const actor = { id: "MDQ6VXNlcjEwMQ==", login: "alice" }
+const committed = [{ projectId: "alpha", period: "2026-10" }]
+const committedOnly: Protection = { months: [{ project: "alpha", period: october2026 }], everyMonthProjects: [] }
+const configured: ProtectionEnvironment = { url: route, token: Redacted.make(secret) }
+
+effect function handlerOf(db: D1Database, token: string | undefined) {
+  const routes = ProtectedMonthsRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, Layer.mergeAll(d1(db), protectedMonthsAccess(token))), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return web.handler as WebHandler
+}
+
+const Started = Layer.effect(World, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "points-protected-months" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "SLOP_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  const db = try promise(() => database(mf, "SLOP_DB"))
+  return { db, open: try handlerOf(db, secret), closed: try handlerOf(db, undefined), short: try handlerOf(db, "short") }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function recording(out: string[], warnings: string[]): Console.Console {
+  const ignore = () => undefined
+  return {
+    assert: ignore, clear: ignore, count: ignore, countReset: ignore, debug: ignore, dir: ignore, dirxml: ignore, error: ignore,
+    group: ignore, groupCollapsed: ignore, groupEnd: ignore, info: ignore, table: ignore, time: ignore, timeEnd: ignore,
+    timeLog: ignore, trace: ignore,
+    log: (...args: ReadonlyArray<unknown>) => { out.push(args.join(" ")) },
+    warn: (...args: ReadonlyArray<unknown>) => { warnings.push(args.join(" ")) },
+  }
+}
+
+effect function revision(seed: Seed) {
+  const category = seed.category ?? "resolved-issue"
+  const key = try pointKey({ projectId: seed.project, actorId: actor.id, category, sourceId: seed.source })
+  const body: RevisionBody = {
+    previous: seed.previous?.id ?? null,
+    recordedAt: seed.previous === undefined ? "2026-11-02T00:00:00.000Z" : "2026-11-03T00:00:00.000Z",
+    sourceDigest: "a".repeat(64),
+    sourceRule: "slop-score-v2",
+    award: { key, actor, projectId: seed.project, category, amount: seed.amount, occurredAt: seed.occurredAt, sourceId: seed.source, sourceUrl: `https://github.com/acme/${seed.project}/issues/1`, workUnitId: seed.source, provisional: false },
+  }
+  return { id: try pointRevisionId(body), ...body } satisfies Revision
+}
+
+effect function fixture(generatedAt: string, revisions: ReadonlyArray<Revision>) {
+  const coverage: ReadonlyArray<Coverage> = [{ repository: "acme/alpha", from: "2026-09-15T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", digest: "b".repeat(64) }]
+  return try journalFile(`${journalText({ schemaVersion: "1", ruleVersion: pointsRule, generatedAt, coverage, revisions })}\n`)
+}
+
+effect function held(known: ReadonlyArray<Revision>, candidates: ReadonlyArray<Revision>, protection: Protection, names: ReadonlyMap<string, string>) {
+  const store = try storeOf("2026-11-03T00:00:00.000Z", [], candidates)
+  const count = try holdProtected(store, new Set(known.map((row) => row.id)), protection)
+  return { count, kept: store.revisions.map((row) => names.get(row.id) ?? row.id) }
+}
+
+function answer(months: ReadonlyArray<unknown>, everyMonthProjects: ReadonlyArray<unknown>, extra: Readonly<Record<string, unknown>> = {}) {
+  return { schema: "slop-protected-point-months-v1", generatedAt: "2026-11-21T00:00:00.000Z", months, everyMonthProjects, ...extra }
+}
+
+effect function resolvedBy(environment: ProtectionEnvironment, fetch: typeof globalThis.fetch) {
+  const out: string[] = []
+  const warnings: string[] = []
+  provide Console.Console = recording(out, warnings) {
+    const protection = try provideService(resolveProtection(committed, environment, origin), FetchHttpClient.Fetch, fetch)
+    const leaked = [...out, ...warnings].some((line) => line.includes(secret) || line.includes("alpha") || line.includes("feed"))
+    return { protection, logs: out.length, warnings: warnings.length, leaked }
+  }
+}
+
+effect function privateRead(environment: ProtectionEnvironment, respond: Answer) {
+  const fake = site(respond)
+  const resolved = try resolvedBy(environment, fake.fetch)
+  return { ...resolved, sent: fake.sent }
+}
+
+effect function routeAnswer(handler: WebHandler, path: string, init: RequestInit = {}) {
+  return try promise(() => routeRequest(handler, `${origin}${path}`, init))
+}
+
+function bearer(token: string) {
+  return { headers: { authorization: `Bearer ${token}` } }
+}
+
+effect function pagesOf(journal: Journal) {
+  const files = try projectionFiles(journal)
+  const entries: [string, string][] = [["/data/points.json", files.index]]
+  for (const [position, text] of files.shards.entries()) entries.push([`/data/points/${position.toString(16)}.json`, text])
+  return new Map(entries)
+}
+
+effect function resetScenario(scenario: string, journal: Journal) {
+  const files = try pagesOf(journal)
+  const candidate = { schemaVersion: "1", ruleVersion: pointsRule, generatedAt: journal.generatedAt, coverage: journal.coverage, revisions: journal.revisions }
+  const checkpoint = { batch: try sha256Hex(JSON.stringify(candidate)), generatedAt: journal.generatedAt, coverage: journal.coverage, revisions: journal.revisions, total: journal.revisions.length, next: null }
+  const target = scenario === "index-reset" ? "/data/points.json" : "/data/points/1.json"
+  const waits: number[] = []
+  const reset = resetSite({ scenario, target, checkpoint, files })
+  const recovered = provideService(recoverPublished({ environment: "Production", bootstrap: false, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, reset.fetch) catch effect (error) => {
+    return error._tag === "RecoveryRefused" ? error.outcome : error._tag
+  }
+  const outcome = typeof recovered === "string" ? recovered : recovered !== null && journalText(recovered) === journalText(journal) ? "Recovered" : "Other"
+  return { outcome, attempts: reset.attempts(), waits, indexReads: reset.indexReads() }
+}
+
+layer(Layer.mergeAll(Started, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Hold candidate revisions in protected project months (spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+    const paid = try revision({ project: "alpha", source: "issue-1", amount: 30, occurredAt: october })
+    const changed = try revision({ project: "alpha", source: "issue-1", amount: 60, occurredAt: october, previous: paid })
+    const chained = try revision({ project: "alpha", source: "issue-1", amount: 90, occurredAt: october, previous: changed })
+    const moved = try revision({ project: "alpha", source: "issue-1", amount: 30, occurredAt: later, previous: paid })
+    const unchanged = try revision({ project: "alpha", source: "issue-1", amount: 30, occurredAt: october, previous: paid })
+    const payout = try revision({ project: "alpha", source: "payout:2026-10", amount: 5, occurredAt: october, category: "payout-received" })
+    const open = try revision({ project: "beta", source: "issue-2", amount: 10, occurredAt: october })
+    const whole = try revision({ project: "beta", source: "issue-3", amount: 10, occurredAt: later })
+    const names = new Map([[paid.id, "paid"], [changed.id, "changed"], [chained.id, "chained"], [moved.id, "moved"], [unchanged.id, "unchanged"], [payout.id, "payout"], [open.id, "open"], [whole.id, "whole"]])
+    const paidMonth: Protection = { months: [{ project: "alpha", period: october2026 }], everyMonthProjects: [] }
+    try same({
+      changedWithSuccessor: try held([paid], [paid, changed, chained, open], paidMonth, names),
+      movedOut: try held([paid], [paid, moved, payout], paidMonth, names),
+      unchangedIdentity: try held([paid], [paid, unchanged], paidMonth, names),
+      knownNeverHeld: try held([paid, changed], [paid, changed, open], paidMonth, names),
+      everyMonthProject: try held([], [open, whole, paid], { months: [], everyMonthProjects: ["beta"] }, names),
+      unprotected: try held([paid], [paid, changed, chained], { months: [{ project: "alpha", period: november2026 }], everyMonthProjects: [] }, names),
+    }, {
+      changedWithSuccessor: { count: 2, kept: ["paid", "open"] },
+      movedOut: { count: 1, kept: ["paid", "payout"] },
+      unchangedIdentity: { count: 0, kept: ["paid", "unchanged"] },
+      knownNeverHeld: { count: 0, kept: ["paid", "changed", "open"] },
+      everyMonthProject: { count: 2, kept: ["paid"] },
+      unprotected: { count: 0, kept: ["paid", "changed", "chained"] },
+    })
+  })
+
+  it.effect('Read the private protected months only from this site\'s route (spec/points/protectedMonths.md, "The generator reads the protected months only from this site\'s own route, once, with a bounded answer"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month")', () => effect {
+    const union = answer([{ projectId: "feed", period: "2026-10" }, { projectId: "alpha", period: "2026-10" }], ["eliza"])
+    const notConfigured = try privateRead({ url: "", token: Redacted.make(secret) }, listing(union))
+    const noToken = try privateRead({ url: route, token: Redacted.make("") }, listing(union))
+    const foreign = try privateRead({ url: "https://elsewhere.example/api/v1/operator/protected-point-months", token: Redacted.make(secret) }, listing(union))
+    const empty = try privateRead(configured, listing(answer([], [])))
+    const answered = try privateRead(configured, listing(union))
+    const refusals = [
+      try privateRead(configured, listing(union, 404)),
+      try privateRead(configured, listing(" ".repeat(1048577))),
+      try privateRead(configured, listing("{")),
+      try privateRead(configured, listing(answer([], [], { extra: true }))),
+      try privateRead(configured, listing(answer([{ projectId: "feed", period: "2026-13" }], []))),
+      try privateRead(configured, listing(answer([{ projectId: "feed", period: "2026-10", amount: 1 }], []))),
+      try privateRead(configured, listing(answer([], ["x".repeat(201)]))),
+      try privateRead(configured, listing(answer([], ["a\u0000b"]))),
+      try privateRead(configured, listing(answer([], [], { generatedAt: "yesterday" }))),
+      try privateRead(configured, listing(answer([], [], { schema: "other" }))),
+      try privateRead(configured, listing(answer(Array.from({ length: 20001 }, () => ({ projectId: "f", period: "2026-10" })), []))),
+    ]
+    const fileOnly = { protection: committedOnly, logs: 0, warnings: 1, leaked: false, sent: 1 }
+    try same({
+      notConfigured: { ...notConfigured, sent: notConfigured.sent.length },
+      noToken: { ...noToken, sent: noToken.sent.length },
+      foreign: { ...foreign, sent: foreign.sent.length },
+      empty: { ...empty, sent: empty.sent.length },
+      answered,
+      refusals: refusals.map((read) => ({ ...read, sent: read.sent.length })),
+    }, {
+      notConfigured: { protection: committedOnly, logs: 0, warnings: 0, leaked: false, sent: 0 },
+      noToken: { protection: committedOnly, logs: 1, warnings: 0, leaked: false, sent: 0 },
+      foreign: { protection: committedOnly, logs: 0, warnings: 1, leaked: false, sent: 0 },
+      empty: { protection: committedOnly, logs: 1, warnings: 0, leaked: false, sent: 1 },
+      answered: {
+        protection: { months: [{ project: "alpha", period: october2026 }, { project: "feed", period: october2026 }], everyMonthProjects: ["eliza"] },
+        logs: 1,
+        warnings: 0,
+        leaked: false,
+        sent: [{ url: route, authorization: `Bearer ${secret}`, accept: "application/json" }],
+      },
+      refusals: refusals.map(() => fileOnly),
+    })
+  })
+
+  it.effect('The import refuses the candidate, and accepts it once the generator holds what the route names (spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months")', () => effect {
+    const world = try World
+    const waits: number[] = []
+    const wait = (millis: number) => sync(() => { waits.push(millis) })
+    const alice = try revision({ project: "alpha", source: "issue-11", amount: 30, occurredAt: october })
+    const bob = try revision({ project: "beta", source: "issue-12", amount: 10, occurredAt: october })
+    const aliceChanged = try revision({ project: "alpha", source: "issue-11", amount: 60, occurredAt: october, previous: alice })
+    const aliceChained = try revision({ project: "alpha", source: "issue-11", amount: 90, occurredAt: october, previous: aliceChanged })
+    const carol = try revision({ project: "gamma", source: "issue-13", amount: 20, occurredAt: october })
+    const viaRoute = routedFetch(world.open)
+    provide d1(world.db) {
+      const published = try importJournal(try fixture("2026-11-02T00:00:00.000Z", [alice, bob]), { wait })
+      try (try D1).run(sql`INSERT INTO payment_direct_transfers (network, transaction_id, project_id, contribution_month, github_user_id, github_node_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path, imported_at) VALUES ('base-mainnet', '0x01', 'alpha', '2026-10', '101', 'MDQ6VXNlcjEwMQ==', 'alice', 'base', '0x0000000000000000000000000000000000000001', '1000000', '2026-10-25T00:00:00.000Z', '1', 'direct/alpha.json', '2026-10-25T00:00:00.000Z')`)
+      const candidate = try fixture("2026-11-03T00:00:00.000Z", [alice, bob, aliceChanged, aliceChained, carol])
+      const refused = Effect.as(importJournal(candidate, { wait }), "imported") catch (error) => error._tag
+      const closed = [
+        try routeAnswer(world.open, "/api/v1/operator/protected-point-months"),
+        try routeAnswer(world.open, "/api/v1/operator/protected-point-months", bearer("t".repeat(40))),
+        try routeAnswer(world.closed, "/api/v1/operator/protected-point-months", bearer(secret)),
+        try routeAnswer(world.short, "/api/v1/operator/protected-point-months", bearer("short")),
+      ]
+      const wrongMethod = try routeAnswer(world.open, "/api/v1/operator/protected-point-months", { method: "POST", ...bearer(secret) })
+      const listed = try routeAnswer(world.open, "/api/v1/operator/protected-point-months", bearer(secret))
+      const slashed = try routeAnswer(world.open, "/api/v1/operator/protected-point-months/", bearer(secret))
+      const read = try resolvedBy(configured, viaRoute)
+      const store = try storeOf(candidate.generatedAt, candidate.coverage, candidate.revisions)
+      const count = try holdProtected(store, new Set([alice.id, bob.id]), read.protection)
+      const accepted = try importJournal(try journalFile(`${journalText(journalOf(store))}\n`), { wait })
+      const stored = try rows(Counted, sql`SELECT COUNT(*) AS revisions FROM points_revisions`)
+      const body = listed.body as Readonly<Record<string, unknown>>
+      try same({
+        published: published.revisions,
+        refused,
+        closed: closed.map((answered) => [answered.status, (answered.body as Readonly<Record<string, unknown>> | null)?.error ?? null]),
+        wrongMethod: [wrongMethod.status, wrongMethod.cache, wrongMethod.body],
+        listed: [listed.status, listed.cache, body.schema, typeof body.generatedAt, body.months, body.everyMonthProjects, Object.keys(body).sort()],
+        slashed: [slashed.status, slashed.body !== null && JSON.stringify((slashed.body as Readonly<Record<string, unknown>>).months) === JSON.stringify(body.months)],
+        read,
+        held: count,
+        accepted: accepted.revisions,
+        stored,
+      }, {
+        published: 2,
+        refused: "ImportFailed",
+        closed: [[404, "not_found"], [404, "not_found"], [404, "not_found"], [404, "not_found"]],
+        wrongMethod: [405, "no-store", { error: "method_not_allowed" }],
+        listed: [200, "no-store", "slop-protected-point-months-v1", "string", [{ projectId: "alpha", period: "2026-10" }], [], ["everyMonthProjects", "generatedAt", "months", "schema"]],
+        slashed: [200, true],
+        read: { protection: committedOnly, logs: 1, warnings: 0, leaked: false },
+        held: 2,
+        accepted: 3,
+        stored: [{ revisions: 3 }],
+      })
+    }
+  })
+
+  it.effect('Projection transport resets preserve verified history (spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"; spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment")', () => effect {
+    const first = try revision({ project: "alpha", source: "issue-21", amount: 30, occurredAt: october })
+    const second = try revision({ project: "beta", source: "issue-22", amount: 10, occurredAt: october })
+    const journal = try fixture("2026-11-02T00:00:00.000Z", [first, second])
+    const scenarios = ["index-reset", "shard-reset", "body-reset", "persistent-reset", "reset-then-corrupt", "other-error"]
+    const results: Record<string, unknown> = {}
+    for (const scenario of scenarios) results[scenario] = try resetScenario(scenario, journal)
+    try same(results, {
+      "index-reset": { outcome: "Recovered", attempts: 2, waits: [1000], indexReads: 1 },
+      "shard-reset": { outcome: "Recovered", attempts: 3, waits: [1000, 1000], indexReads: 1 },
+      "body-reset": { outcome: "Recovered", attempts: 2, waits: [1000], indexReads: 1 },
+      "persistent-reset": { outcome: "SourceUnavailable", attempts: 3, waits: [1000, 1000], indexReads: 1 },
+      "reset-then-corrupt": { outcome: "UnverifiedCopy", attempts: 2, waits: [1000], indexReads: 2 },
+      "other-error": { outcome: "SourceUnavailable", attempts: 1, waits: [], indexReads: 1 },
+    })
+  })
+})

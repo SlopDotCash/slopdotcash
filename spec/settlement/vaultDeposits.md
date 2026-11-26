@@ -119,3 +119,72 @@ pure val rowValues = Set({ network: "base", transaction: "0xa", eventIndex: 0, d
 pure val weight_startPage = 3
 pure val weight_completePage = 3
 ```
+
+## Story: List who funded a project
+
+> As a visitor, I want the newest deposits into a project's vaults with the
+> funder's name only where the funder proved the wallet, so that a
+> registration alone can neither claim nor hide somebody else's deposit.
+
+### The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration
+
+`GET /api/v1/payments/projects/:id/deposits` answers the project's recorded
+deposits, each joined to the asset address and decimals of the vault
+snapshot it entered (same project, network and vault), ordered by block
+time descending, then network ascending, then transaction and event index
+descending, at most `fundersPage` (50) of them, with the count of every
+recorded deposit the deployment tier lists: production leaves testnet
+networks out and staging keeps them, as the vault totals do. A listed row
+that is not a valid deposit, or whose asset decimals lie outside 0 to 36,
+fails the read rather than being shown. Sources at development `8660a6121`:
+`backend/payments/vault-deposits.ts` (`VAULT_DEPOSIT_PAGE`,
+`projectVaultDeposits`) and its test.
+
+A depositor is named by GitHub login only when exactly one distinct login
+holds the deposit's address among the registrations that count: a current
+effective wallet claim of that address (on Solana for a Solana deposit, on
+any EVM network for an EVM deposit, EVM addresses compared lower-case, as
+the record stores them) that the wallet itself signed (a wallet
+authorization exists for the claim and its account), whose account Points
+does not record as private or closed. An unsigned registration, and one of
+a private or closed account, is left out before counting, so it neither
+names a depositor nor hides one; two counted logins name nobody, and the
+address alone is shown. The read changes nothing; the page shows the name
+the server gives ([projections](../frontend/projections.md)).
+
+```quint
+pure val fundersPage = 50
+type Registrant = { login: str, solana: bool, address: str, walletSigned: bool, privateAccount: bool, closedAccount: bool }
+pure def countedRegistrant(reg: Registrant): bool = reg.walletSigned and not(reg.privateAccount) and not(reg.closedAccount)
+pure def holdsDeposit(depositSolana: bool, depositor: str, reg: Registrant): bool =
+  reg.solana == depositSolana and reg.address == depositor
+pure def namingLogins(depositSolana: bool, depositor: str, regs: List[Registrant]): Set[str] =
+  regs.foldl(Set(), (names, reg) =>
+    if (countedRegistrant(reg) and holdsDeposit(depositSolana, depositor, reg)) names.union(Set(reg.login)) else names)
+pure def depositorLogin(depositSolana: bool, depositor: str, regs: List[Registrant]): str =
+  if (namingLogins(depositSolana, depositor, regs).size() == 1)
+    regs.foldl("", (name, reg) => if (countedRegistrant(reg) and holdsDeposit(depositSolana, depositor, reg)) reg.login else name)
+  else ""
+pure def fundersTotal(testnets: List[bool], staging: bool): int =
+  testnets.foldl(0, (n, testnet) => if (staging or not(testnet)) n + 1 else n)
+pure def fundersShown(total: int): int = if (total > fundersPage) fundersPage else total
+pure def lawUnsignedRegistrationNamesNobody(reg: Registrant): bool =
+  not(reg.walletSigned) implies depositorLogin(reg.solana, reg.address, List(reg)) == ""
+pure def lawUncountedRegistrationHidesNobody(reg: Registrant, other: Registrant): bool =
+  (countedRegistrant(reg) and not(countedRegistrant(other)))
+    implies depositorLogin(reg.solana, reg.address, List(reg, other)) == reg.login
+pure def lawTwoSignedAccountsNameNobody(reg: Registrant, other: Registrant): bool =
+  (countedRegistrant(reg) and countedRegistrant(other) and holdsDeposit(reg.solana, reg.address, other) and reg.login != other.login)
+    implies depositorLogin(reg.solana, reg.address, List(reg, other)) == ""
+pure def lawPageBounded(total: int): bool =
+  total >= 0 implies (fundersShown(total) >= 0 and fundersShown(total) <= fundersPage and fundersShown(total) <= total)
+pure def lawProductionLeavesTestnetsOut(testnets: List[bool]): bool =
+  fundersTotal(testnets.append(true), false) == fundersTotal(testnets, false)
+pure val signedRegistrant: Registrant = { login: "ada", solana: false, address: "0xd", walletSigned: true,
+  privateAccount: false, closedAccount: false }
+pure val regValues = Set(signedRegistrant, { ...signedRegistrant, walletSigned: false }, { ...signedRegistrant, solana: true })
+pure val otherValues = Set({ ...signedRegistrant, login: "bob" }, { ...signedRegistrant, login: "bob", walletSigned: false },
+  { ...signedRegistrant, login: "bob", privateAccount: true }, { ...signedRegistrant, login: "bob", closedAccount: true },
+  { ...signedRegistrant, login: "bob", address: "0xe" }, signedRegistrant)
+pure val totalValues = Set(0, 1, 49, 50, 51)
+```
