@@ -1144,6 +1144,7 @@ describe("Public project funding", () => {
     const row = { id: "d1", projectId: "slop", network: "base-mainnet", chain: "base", vault: usdcSnapshot.vault, depositor: otherAccount.address, githubLogin: null, amountBase: "253000000", assetAddress: usdcSnapshot.assetAddress, assetDecimals: 6, transactionId: hash("d"), depositedAt: "2026-11-20T12:00:00.000Z" };
     const replies = [
       new Response(JSON.stringify({ error: "unavailable", message: "Unavailable" }), { status: 503, headers: { "content-type": "application/json" } }),
+      new Response(JSON.stringify({ error: "unavailable", message: "Unavailable" }), { status: 503, headers: { "content-type": "application/json" } }),
       new Response(JSON.stringify({ projectId: "other", deposits: [{ ...row, projectId: "other" }], total: 1, servedAt: "2026-11-20T12:00:00.000Z" }), { status: 200, headers: { "content-type": "application/json" } }),
       new Response(JSON.stringify({ projectId: "slop", deposits: [row], total: 3, servedAt: "2026-11-20T12:00:00.000Z" }), { status: 200, headers: { "content-type": "application/json" } }),
     ];
@@ -1165,7 +1166,7 @@ describe("Public project funding", () => {
     }));
     expect({ views, asked }).toEqual({
       views: [["FundersError", undefined], ["FundersError", undefined], ["FundersListed", 3]],
-      asked: Array.from({ length: 3 }, () => "/api/v1/payments/projects/slop/deposits"),
+      asked: Array.from({ length: 4 }, () => "/api/v1/payments/projects/slop/deposits"),
     });
   });
 
@@ -1379,7 +1380,7 @@ describe("Owner monthly transactions", () => {
 describe("Read the private bounty vault's funds under current authority", () => {
   it("a failed private read shows an error and no balance, and the next read shows the finalized snapshot's funds to the current owner", async () => {
     const funds = { currency: "USDC", decimals: 6, network: "base", freeMinor: "5000000", snapshotAt: "2026-11-20T12:00:00.000Z", availableMinor: "5000000", assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", deploymentNetwork: "base-mainnet" };
-    const { asked, fetch } = replying([{ status: 503, body: { error: "unavailable", message: "Unavailable" } }, { body: { revision: 3, canSetup: true, networks: ["base-mainnet"], funds } }]);
+    const { asked, fetch } = replying([{ status: 503, body: { error: "unavailable", message: "Unavailable" } }, { status: 503, body: { error: "unavailable", message: "Unavailable" } }, { body: { revision: 3, canSetup: true, networks: ["base-mainnet"], funds } }]);
     const runtime = ManagedRuntime.make(Layer.provide(bountyFundsServices("slop"), fetch));
     cleanups.push(() => void runtime.dispose());
     const reads = await runtime.runPromise(Effect.gen(function* () {
@@ -1391,7 +1392,7 @@ describe("Read the private bounty vault's funds under current authority", () => 
     }));
     expect({ reads, asked: asked.map((entry) => `${entry.path}${entry.query}`) }).toEqual({
       reads: [[undefined, "FundsError"], [{ canSetup: true, funds }, "FundsReady"]],
-      asked: Array.from({ length: 2 }, () => "/api/v1/project-vaults/slop?purpose=security-bounty"),
+      asked: Array.from({ length: 3 }, () => "/api/v1/project-vaults/slop?purpose=security-bounty"),
     });
   });
 });

@@ -7,7 +7,7 @@ import { isNetworkKey, NETWORKS } from "@repo/settlement/kernels/networks";
 import type { Tier } from "../../platform/config.vibe";
 import type { ProfileActor, ProfileActorSource } from "../../projections/profile.ts";
 import { type ProjectCycleView, type ProjectTerms, projectCycleViews } from "../../projections/projectView.ts";
-import { type GlobalStanding, globalStandings, openMonthScores } from "../../projections/standings.ts";
+import { type GlobalStanding, globalStandings, penaltyAppliedThirds } from "../../projections/standings.ts";
 import type { RegistryBoot } from "../../reads/registry.vibe";
 
 export interface MembershipFacts {
@@ -32,6 +32,7 @@ export interface SnapshotStandings {
   readonly views: ReadonlyArray<ProjectCycleView>;
   readonly global: ReadonlyArray<GlobalStanding>;
   readonly applied: ReadonlyMap<string, number>;
+  readonly appliedFor: (journalApplied?: ReadonlyMap<string, number>) => ReadonlyMap<string, number>;
 }
 
 export const shownRecords = 5;
@@ -109,7 +110,12 @@ export function snapshotStandings(snapshot: LeaderboardSnapshot, registry: Repos
   try {
     const views = projectCycleViews({ snapshot, registry, projects });
     const request = { snapshot, registry, projects, views, cycles };
-    return { views, global: globalStandings(request), applied: openMonthScores(request).deductions.byPenalty };
+    return {
+      views,
+      global: globalStandings(request),
+      applied: penaltyAppliedThirds(request),
+      appliedFor: (journalApplied) => penaltyAppliedThirds(request, journalApplied),
+    };
   } catch {
     return undefined;
   }

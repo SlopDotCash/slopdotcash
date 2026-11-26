@@ -1,9 +1,13 @@
 // spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
 import type * as HttpClientResponse from "effect/http/HttpClientResponse"
-import { BodyUnreadable, boundedBytes } from "@repo/platform/browser"
+import { BodyUnreadable, boundedBytes, readRetryDelayMs } from "@repo/platform/browser"
 import { NetworkError, Refused, deadlineMs } from "./api.vibe"
 
 export { BodyTooLarge, BodyUnreadable, boundedBytes } from "@repo/platform/browser"
+
+function retryableStatus(status: number): boolean {
+  return status === 500 || status === 502 || status === 503
+}
 
 effect function jsonOf(bytes: Uint8Array, label: string) {
   const text = try Effect.try({
@@ -34,5 +38,12 @@ export effect function fetchBoundedBytes(url: string, limitBytes: number, label:
 }
 
 export effect function fetchBounded(url: string, limitBytes: number, label: string) {
-  return try jsonOf(try fetchBoundedBytes(url, limitBytes, label, { accept: "application/json" }), label)
+  const bytes = fetchBoundedBytes(url, limitBytes, label, { accept: "application/json" }) catch effect (error) => {
+    if (error._tag === "Refused" && retryableStatus(error.status)) {
+      try sleep(readRetryDelayMs)
+      return try fetchBoundedBytes(url, limitBytes, label, { accept: "application/json" })
+    }
+    throw error
+  }
+  return try jsonOf(bytes, label)
 }

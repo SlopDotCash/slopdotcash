@@ -3,7 +3,7 @@ import { type Event, type NotAnEvent, type ReadResult, type ReadState, type Reje
 import { type CallFailure, NetworkError, readResultOf } from "../platform/api.vibe"
 import type { BodyTooLarge, BodyUnreadable } from "../platform/bounded.vibe"
 
-export const loadTimeoutMs = 12_000
+export const loadTimeoutMs = 60_000
 
 export error Unreadable { message: string }
 

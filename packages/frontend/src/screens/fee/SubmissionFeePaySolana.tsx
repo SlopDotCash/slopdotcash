@@ -1,6 +1,7 @@
 // spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"
 import { reclaimDays } from "@repo/backend/client";
 import { Address, Alert, Button, ExternalLink, Field, Input, WalletChooser } from "@repo/ui";
+import { Effect } from "effect";
 import { useState } from "react";
 import { useAction } from "../../app/hooks.ts";
 import { networkLabel } from "../../kernels/assetText.ts";
@@ -22,7 +23,8 @@ import {
   type SolanaReclaimPlan,
 } from "../../wallets/fee/solanaDeposit.vibe";
 import { useView } from "../account/useView.ts";
-import { type FeeRuntime, watchOffers } from "./runtime.vibe";
+import type { PayRefused } from "./payFlow.vibe";
+import { type FeeRuntime, type FeeServices, watchOffers } from "./runtime.vibe";
 
 const lamportsText = (lamports: string) => `${formatTokenUnits(lamports, 9)} SOL`;
 
@@ -32,13 +34,14 @@ export interface SubmissionFeePaySolanaProps {
   readonly way: SolanaFeeWay | null;
   readonly reclaim: SolanaFeeWay | null;
   readonly defaultDepositAddress?: string;
+  readonly confirmDue?: () => Effect.Effect<void, PayRefused, FeeServices>;
   readonly onDeposit: () => void;
 }
 
-export function SubmissionFeePaySolana({ runtime, subject, way, reclaim, defaultDepositAddress = "", onDeposit }: SubmissionFeePaySolanaProps) {
+export function SubmissionFeePaySolana({ runtime, subject, way, reclaim, defaultDepositAddress = "", confirmDue, onDeposit }: SubmissionFeePaySolanaProps) {
   const offers = useView(runtime, watchOffers) ?? [];
   const solanaOffers = offers.filter((offer) => offer.family === "solana");
-  const { busy, error, notice, setNotice, act } = useAction(runtime);
+  const { busy, error, notice, setNotice, act } = useAction<FeeServices>(runtime);
   const [connection, setConnection] = useState<SolanaConnection | null>(null);
   const [feePlan, setFeePlan] = useState<SolanaFeePlan | null>(null);
   const [reclaimDeposit, setReclaimDeposit] = useState(defaultDepositAddress);
@@ -70,7 +73,10 @@ export function SubmissionFeePaySolana({ runtime, subject, way, reclaim, default
 
   const sendPay = () => {
     if (connection === null || feePlan === null) return;
-    void act(sendSolanaFee(connection, feePlan), (sig) => {
+    const work = confirmDue !== undefined
+      ? Effect.flatMap(confirmDue(), () => sendSolanaFee(connection, feePlan))
+      : sendSolanaFee(connection, feePlan);
+    void act(work, (sig) => {
       setSignature(sig);
       setStatus("pending");
       setNotice("Deposit transaction sent. Check its finality below.");
@@ -78,8 +84,8 @@ export function SubmissionFeePaySolana({ runtime, subject, way, reclaim, default
   };
 
   const checkPay = () => {
-    if (connection === null || way === null || feePlan === null) return;
-    void act(checkSolanaFee(subject, way, connection.address, feePlan.nonce, signature), (next) => {
+    if (connection === null || feePlan === null || signature === null) return;
+    void act(checkSolanaFee(subject, connection.address, feePlan.nonce, feePlan.blockhash, signature), (next) => {
       setStatus(next);
       if (next === "finalized") {
         setNotice("Your Solana deposit is final on chain.");
@@ -93,8 +99,9 @@ export function SubmissionFeePaySolana({ runtime, subject, way, reclaim, default
   };
 
   const reviewReclaim = () => {
-    if (connection === null || reclaim === null || reclaimDeposit.trim() === "") return;
-    void act(reviewSolanaReclaim(subject, reclaim, connection.address, reclaimDeposit.trim()), (plan) => {
+    if (connection === null || reclaim === null) return;
+    const trimmed = reclaimDeposit.trim();
+    void act(reviewSolanaReclaim(subject, reclaim, connection.address, trimmed === "" ? undefined : trimmed), (plan) => {
       setReclaimPlan(plan);
       setSignature(null);
       setStatus(null);
@@ -111,8 +118,8 @@ export function SubmissionFeePaySolana({ runtime, subject, way, reclaim, default
   };
 
   const checkReclaim = () => {
-    if (connection === null || reclaim === null || reclaimPlan === null) return;
-    void act(checkSolanaReclaim(subject, reclaim, connection.address, reclaimPlan.deposit, signature), (next) => {
+    if (connection === null || reclaimPlan === null || signature === null) return;
+    void act(checkSolanaReclaim(subject, connection.address, reclaimPlan.deposit, reclaimPlan.blockhash, signature), (next) => {
       setStatus(next);
       if (next === "finalized") {
         setNotice("Your Solana deposit was returned to your wallet.");
@@ -129,101 +136,101 @@ export function SubmissionFeePaySolana({ runtime, subject, way, reclaim, default
 
   return (
     <section aria-label={isReclaim ? "Take back a Solana deposit" : "Pay on Solana"} className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4">
-        <h2 className="text-lg font-semibold text-foreground">{isReclaim ? "Take back a Solana deposit" : "Pay from a Solana wallet"}</h2>
-        {error ? <Alert variant="destructive">{error}</Alert> : null}
-        {notice ? <p role="status" className="text-sm text-foreground">{notice}</p> : null}
-        <WalletChooser
-          legend="Choose a Solana wallet"
-          wallets={solanaOffers.map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
-          address={connection?.address}
-          disabled={busy}
-          onConnect={(option) => connect(Number(option.id))}
-        />
-        {connection !== null && !isReclaim && way !== null ? (
-          <div className="flex flex-col gap-3">
-            <div>
-              <Button variant="secondary" loading={busy} onClick={reviewPay}>
-                Review Solana deposit ({amountText(way)} on {networkLabel(way.network)})
-              </Button>
-            </div>
-            {feePlan !== null ? (
-              <div className="flex flex-col gap-3 text-sm">
-                <dl className="grid gap-2 sm:grid-cols-[max-content_1fr]">
-                  <dt className="text-muted-foreground">Amount</dt>
-                  <dd>{amountText(way)}</dd>
-                  <dt className="text-muted-foreground">Program</dt>
-                  <dd><Address value={way.programId} label="Deposit program" /></dd>
-                  <dt className="text-muted-foreground">Deposit record</dt>
-                  <dd>{feePlan.deposit ? <Address value={feePlan.deposit} label="Deposit record" /> : "Derived on chain"}</dd>
-                  <dt className="text-muted-foreground">Estimated network fee</dt>
-                  <dd>{lamportsText(feePlan.networkFeeLamports)}</dd>
-                  <dt className="text-muted-foreground">Account rent (returned on settle)</dt>
-                  <dd>{lamportsText(feePlan.rentLamports)}</dd>
-                </dl>
-                <div className="flex flex-wrap gap-2">
-                  <Button loading={busy} disabled={signature !== null && status === "pending"} onClick={sendPay}>
-                    Confirm deposit in Solana wallet
-                  </Button>
-                  {signature !== null ? (
-                    <Button variant="outline" loading={busy} onClick={checkPay}>
-                      Check finality
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
+      <h2 className="text-lg font-semibold text-foreground">{isReclaim ? "Take back a Solana deposit" : "Pay from a Solana wallet"}</h2>
+      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {notice ? <p role="status" className="text-sm text-foreground">{notice}</p> : null}
+      <WalletChooser
+        legend="Choose a Solana wallet"
+        wallets={solanaOffers.map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
+        address={connection?.address}
+        disabled={busy}
+        onConnect={(option) => connect(Number(option.id))}
+      />
+      {connection !== null && !isReclaim && way !== null ? (
+        <div className="flex flex-col gap-3">
+          <div>
+            <Button variant="secondary" loading={busy} onClick={reviewPay}>
+              Review Solana deposit ({amountText(way)} on {networkLabel(way.network)})
+            </Button>
           </div>
-        ) : null}
-        {connection !== null && isReclaim && reclaim !== null ? (
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              The wallet that paid a Solana deposit can take it back from the deposit program {reclaimDays} days after payment if nothing settled it.
-            </p>
-            <Field label="Solana deposit record address">
-              <Input
-                value={reclaimDeposit}
-                onChange={(event) => setReclaimDeposit(event.currentTarget.value)}
-                placeholder="Deposit record address"
-                disabled={busy}
-              />
-            </Field>
-            <div>
-              <Button variant="secondary" loading={busy} disabled={reclaimDeposit.trim() === ""} onClick={reviewReclaim}>
-                Review reclaim
-              </Button>
-            </div>
-            {reclaimPlan !== null ? (
-              <div className="flex flex-col gap-3 text-sm">
-                <dl className="grid gap-2 sm:grid-cols-[max-content_1fr]">
-                  <dt className="text-muted-foreground">Deposit record</dt>
-                  <dd><Address value={reclaimPlan.deposit} label="Deposit record" /></dd>
-                  <dt className="text-muted-foreground">Estimated network fee</dt>
-                  <dd>{lamportsText(reclaimPlan.networkFeeLamports)}</dd>
-                </dl>
-                <div className="flex flex-wrap gap-2">
-                  <Button loading={busy} disabled={signature !== null && status === "pending"} onClick={sendReclaim}>
-                    Confirm reclaim in Solana wallet
+          {feePlan !== null ? (
+            <div className="flex flex-col gap-3 text-sm">
+              <dl className="grid gap-2 sm:grid-cols-[max-content_1fr]">
+                <dt className="text-muted-foreground">Amount</dt>
+                <dd>{amountText(way)}</dd>
+                <dt className="text-muted-foreground">Program</dt>
+                <dd><Address value={way.programId} label="Deposit program" /></dd>
+                <dt className="text-muted-foreground">Deposit record</dt>
+                <dd>{feePlan.deposit ? <Address value={feePlan.deposit} label="Deposit record" /> : "Derived on chain"}</dd>
+                <dt className="text-muted-foreground">Estimated network fee</dt>
+                <dd>{lamportsText(feePlan.networkFeeLamports)}</dd>
+                <dt className="text-muted-foreground">Account rent (returned on settle)</dt>
+                <dd>{lamportsText(feePlan.rentLamports)}</dd>
+              </dl>
+              <div className="flex flex-wrap gap-2">
+                <Button loading={busy} disabled={signature !== null && status === "pending"} onClick={sendPay}>
+                  Confirm deposit in Solana wallet
+                </Button>
+                {signature !== null ? (
+                  <Button variant="outline" loading={busy} onClick={checkPay}>
+                    Check finality
                   </Button>
-                  {signature !== null ? (
-                    <Button variant="outline" loading={busy} onClick={checkReclaim}>
-                      Check finality
-                    </Button>
-                  ) : null}
-                </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
-        ) : null}
-        {signature !== null ? (
-          <p className="text-xs text-muted-foreground">
-            Signature:{" "}
-            {explorerHref ? (
-              <ExternalLink href={explorerHref} className="font-mono">{signature}</ExternalLink>
-            ) : (
-              <code className="font-mono break-all">{signature}</code>
-            )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {connection !== null && isReclaim && reclaim !== null ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            The wallet that paid a Solana deposit can take it back from the deposit program {reclaimDays} days after payment if nothing settled it.
           </p>
-        ) : null}
-      </section>
+          <Field label="Solana deposit record address (optional)">
+            <Input
+              value={reclaimDeposit}
+              onChange={(event) => setReclaimDeposit(event.currentTarget.value)}
+              placeholder="Deposit record address"
+              disabled={busy}
+            />
+          </Field>
+          <div>
+            <Button variant="secondary" loading={busy} onClick={reviewReclaim}>
+              Review reclaim
+            </Button>
+          </div>
+          {reclaimPlan !== null ? (
+            <div className="flex flex-col gap-3 text-sm">
+              <dl className="grid gap-2 sm:grid-cols-[max-content_1fr]">
+                <dt className="text-muted-foreground">Deposit record</dt>
+                <dd><Address value={reclaimPlan.deposit} label="Deposit record" /></dd>
+                <dt className="text-muted-foreground">Estimated network fee</dt>
+                <dd>{lamportsText(reclaimPlan.networkFeeLamports)}</dd>
+              </dl>
+              <div className="flex flex-wrap gap-2">
+                <Button loading={busy} disabled={signature !== null && status === "pending"} onClick={sendReclaim}>
+                  Confirm reclaim in Solana wallet
+                </Button>
+                {signature !== null ? (
+                  <Button variant="outline" loading={busy} onClick={checkReclaim}>
+                    Check finality
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {signature !== null ? (
+        <p className="text-xs text-muted-foreground">
+          Signature:{" "}
+          {explorerHref ? (
+            <ExternalLink href={explorerHref} className="font-mono">{signature}</ExternalLink>
+          ) : (
+            <code className="font-mono break-all">{signature}</code>
+          )}
+        </p>
+      ) : null}
+    </section>
   );
 }

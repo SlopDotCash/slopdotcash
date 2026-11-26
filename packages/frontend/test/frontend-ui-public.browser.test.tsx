@@ -221,11 +221,11 @@ describe("Open every product route at its existing address", () => {
     await shown(projects).toMatchObject({ visible: true });
 
     await site.open("/projects/nobody/funding?x=1#monthly-awards");
-    await at("/projects/nobody/funding?x=1#monthly-awards");
+    await at("/projects/nobody?x=1#monthly-awards");
     await shown(heading("Project not found")).toMatchObject({ visible: true });
 
     await site.open("/projects/nobody/awards");
-    await at("/projects/nobody/awards");
+    await at("/projects/nobody#monthly-awards");
     await shown(heading("Project not found")).toMatchObject({ visible: true });
     expect((await site.layout()).mains).toBe(1);
   });

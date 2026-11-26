@@ -30,7 +30,13 @@ const RefusalBody = Schema.Record(Schema.String, Schema.Unknown)
 
 export const defaultDeadlineMs = 15_000
 
+export const readRetryDelayMs = 800
+
 export const defaultLimitBytes = 1_048_576
+
+function isRetryableStatus(status: number): boolean {
+  return status === 500 || status === 502 || status === 503
+}
 
 const browserInit: globalThis.RequestInit = { credentials: "same-origin", redirect: "error", cache: "no-store" }
 
@@ -118,10 +124,19 @@ export effect function request<B, A>(route: Route<B, A, Access>, input: RequestI
   if (route.request !== undefined) body = try orDie(Schema.encodeUnknownEffect(route.request)(input.body))
   else if (route.access === "sessionWrite") body = {}
   const headers: Readonly<Record<string, string>> = options.expectedActor === undefined ? { ...options.headers } : { ...options.headers, "x-slop-expected-github-id": options.expectedActor }
-  const exchange = provideService(exchanged(outgoing(route.method, url, body, headers), options.limitBytes ?? defaultLimitBytes), FetchHttpClient.RequestInit, browserInit)
-  const outcome = try Effect.timeoutOrElse(exchange, {
-    duration: options.deadlineMs ?? defaultDeadlineMs,
-    orElse: () => Effect.fail(new DeadlineExceeded()),
-  })
+  const deadline = options.deadlineMs ?? defaultDeadlineMs
+  const limit = options.limitBytes ?? defaultLimitBytes
+  const attempt = () =>
+    Effect.timeoutOrElse(
+      provideService(exchanged(outgoing(route.method, url, body, headers), limit), FetchHttpClient.RequestInit, browserInit),
+      { duration: deadline, orElse: () => Effect.fail(new DeadlineExceeded()) },
+    )
+  const first = try attempt()
+  const outcome = route.method === "GET" && first.kind !== "unreachable" && isRetryableStatus(first.status)
+    ? try effect {
+        try sleep(readRetryDelayMs)
+        return try attempt()
+      }
+    : first
   return try answerOf(route.answer, outcome)
 }
