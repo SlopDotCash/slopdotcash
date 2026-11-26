@@ -1,11 +1,12 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { relative, sep } from "node:path"
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import js from "@eslint/js"
 import react from "@eslint-react/eslint-plugin"
 import tailwind from "eslint-plugin-better-tailwindcss"
 import boundaries from "eslint-plugin-boundaries"
 import reactHooks from "eslint-plugin-react-hooks"
 import { defineConfig, globalIgnores } from "eslint/config"
+import ts from "typescript"
 import tseslint from "typescript-eslint"
 import vibelang from "vibelang/eslint"
 import { designSystem } from "./vibestack/design/eslint.ts"
@@ -90,6 +91,68 @@ const vibeParser = {
     // The parser has already analyzed the synthetic for-try bindings past the break.
     removeSyntheticLoopBindings(parsed.ast, parsed.visitorKeys)
     return parsed
+  },
+}
+
+const root = realpathSync(import.meta.dirname)
+const programs = new Map()
+const sidecarDirectories = new Map()
+const declarationPaths = new Map()
+
+function physicalDeclaration(file) {
+  if (!/\.d\.vibex?\.ts$|\.vibex?\.[^/\\]+\.d\.ts$/u.test(file) || existsSync(file)) return undefined
+  const directory = dirname(file)
+  if (!existsSync(directory)) return undefined
+  const original = join(realpathSync(directory), basename(file))
+  const [parent, workspace] = relative(root, original).split(sep)
+  if ((parent !== "apps" && parent !== "packages") || workspace === undefined) return undefined
+  const owner = join(root, parent, workspace)
+  if (!sidecarDirectories.has(owner)) {
+    const options = ts.readConfigFile(join(owner, "tsconfig.json"), ts.sys.readFile).config?.vibe
+    sidecarDirectories.set(owner, typeof options?.sidecarDir === "string" ? resolve(owner, options.sidecarDir) : undefined)
+  }
+  const sidecars = sidecarDirectories.get(owner)
+  if (sidecars === undefined) return undefined
+  const declaration = join(sidecars, relative(owner, original))
+  return existsSync(declaration) ? declaration : undefined
+}
+
+function declarationOf(file) {
+  if (!declarationPaths.has(file)) declarationPaths.set(file, physicalDeclaration(file))
+  return declarationPaths.get(file)
+}
+
+function workspaceProgram(config) {
+  const parsed = ts.getParsedCommandLineOfConfigFile(config, {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic(diagnostic) {
+      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
+    },
+  })
+  const host = ts.createCompilerHost(parsed.options, true)
+  const { fileExists, readFile, getSourceFile } = host
+  // Checkouts keep each package's generated Vibe declarations outside its source tree.
+  // Present the declaration beside its source so cross-package relative imports resolve in TypeScript.
+  host.fileExists = (file) => fileExists.call(host, file) || declarationOf(file) !== undefined
+  host.readFile = (file) => readFile.call(host, declarationOf(file) ?? file)
+  host.getSourceFile = (file, language, onError, shouldCreate) => {
+    const declaration = declarationOf(file)
+    if (declaration === undefined) return getSourceFile.call(host, file, language, onError, shouldCreate)
+    return ts.createSourceFile(file, readFileSync(declaration, "utf8"), language, true)
+  }
+  return ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, host, projectReferences: parsed.projectReferences })
+}
+
+const workspaceParser = {
+  ...tseslint.parser,
+  parseForESLint(text, options) {
+    if (!options.projectService || typeof options.filePath !== "string") return tseslint.parser.parseForESLint(text, options)
+    const [parent, workspace] = relative(root, options.filePath).split(sep)
+    if ((parent !== "apps" && parent !== "packages") || workspace === undefined) return tseslint.parser.parseForESLint(text, options)
+    const config = join(root, parent, workspace, "tsconfig.json")
+    if (!existsSync(config)) return tseslint.parser.parseForESLint(text, options)
+    if (!programs.has(config)) programs.set(config, workspaceProgram(config))
+    return tseslint.parser.parseForESLint(text, { ...options, projectService: false, programs: [programs.get(config)] })
   },
 }
 
@@ -557,7 +620,7 @@ export default defineConfig(
       "no-restricted-syntax": ["error", { selector: "JSXOpeningElement[name.name=/^(input|textarea)$/]", message: "Use Input, Textarea or Checkbox from @repo/ui." }],
     },
   },
-  { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(tseslint.parser) } },
+  { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(workspaceParser) } },
   {
     files: ["{apps,packages}/**/*.{vibe,vibex}"],
     languageOptions: { parser: guarded(vibeParser) },
