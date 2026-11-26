@@ -470,41 +470,54 @@ pure val normalizedHostValues = Set("slop.cash", "slop.tech", "www.slop.tech", "
 ### Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt
 
 Beside the prompt and its Copy button ("Copy", "Copied", or "Select text" when
-the clipboard refuses), "Open in" offers Cursor, Claude, ChatGPT, Grok, Meta AI
-(Muse Spark), OpenClaw and Hermes Agent. The web agents open their own
-new-chat page with the prompt prefilled in a new tab without a referrer;
-OpenClaw opens its own scheme with the prompt as a message, and Hermes Agent,
-which has no prompt link, opens its confirmed skill install for the page's
-skill address, both in the same tab. On Home the prompt and that address are
-the selected journey's (`/contribute/SKILL.md` or `/maintain/SKILL.md`,
-below); on project and bounty pages they stay the page's own prompt and
-this site's `/SKILL.md` (development `src/App.tsx` `AgentPromptBox` and
-`InstallPanel` at `67fd54fd4`). Opening any of them also copies the prompt.
-Any provider, model and agent client may participate, so the list is never
-exclusive: the generic prompt and copy stay available whatever the list holds.
+the clipboard refuses), "Open in" offers desktop agent shortcuts aligned with
+`lalalune/agent-deeplinks`: Claude Code, Codex, Cursor, Antigravity, OpenClaw,
+Hermes Agent, GitHub Copilot, Grok Bot, Meta Muse and OpenCode. Claude Code,
+Codex, Cursor (double-encoded to preserve literal `+` and percent escapes),
+Antigravity, OpenClaw (up to its 240-grapheme limit, falling back to its
+dashboard launch), GitHub Copilot and Grok Bot open their native desktop app
+schemes with the prompt in the same tab. Hermes Agent opens its confirmed
+desktop skill install (`hermes://skill/install`) for the page's skill address
+in the same tab: on Home the selected journey's (`/contribute/SKILL.md` or
+`/maintain/SKILL.md`, below), on a cleared project page that project's
+`/projects/<slug>/SKILL.md`, and on uncleared project and security bounty pages
+this site's `/SKILL.md`. Meta Muse opens its desktop Universal Link handoff
+(`https://agent.meta.ai/chat`) in a new tab without a referrer, and OpenCode
+launches its desktop app (`opencode://`) in the same tab; neither carries a
+prompt parameter. Opening any shortcut also copies the prompt to the clipboard.
+One concise note under the row states that a desktop coding agent with a
+terminal and the GitHub CLI is required. Any provider, model and agent client
+may participate, so the list is never exclusive: the generic prompt and copy
+stay available whatever the list holds.
 
 ```quint
-type AgentTarget = WebChat | AppScheme
-type AgentShortcut = { agent: str, target: AgentTarget, carriesPrompt: bool }
+type AgentTarget = DesktopHandoff | AppScheme
+type AgentPayload = PromptPayload | SkillPayload | LaunchOnly
+type AgentShortcut = { agent: str, target: AgentTarget, payload: AgentPayload }
 pure val agentShortcuts = List(
-  { agent: "Cursor", target: WebChat, carriesPrompt: true },
-  { agent: "Claude", target: WebChat, carriesPrompt: true },
-  { agent: "ChatGPT", target: WebChat, carriesPrompt: true },
-  { agent: "Grok", target: WebChat, carriesPrompt: true },
-  { agent: "Meta AI (Muse Spark)", target: WebChat, carriesPrompt: true },
-  { agent: "OpenClaw", target: AppScheme, carriesPrompt: true },
-  { agent: "Hermes Agent", target: AppScheme, carriesPrompt: false })
+  { agent: "Claude Code", target: AppScheme, payload: PromptPayload },
+  { agent: "Codex", target: AppScheme, payload: PromptPayload },
+  { agent: "Cursor", target: AppScheme, payload: PromptPayload },
+  { agent: "Antigravity", target: AppScheme, payload: PromptPayload },
+  { agent: "OpenClaw", target: AppScheme, payload: PromptPayload },
+  { agent: "Hermes Agent", target: AppScheme, payload: SkillPayload },
+  { agent: "GitHub Copilot", target: AppScheme, payload: PromptPayload },
+  { agent: "Grok Bot", target: AppScheme, payload: PromptPayload },
+  { agent: "Meta Muse", target: DesktopHandoff, payload: LaunchOnly },
+  { agent: "OpenCode", target: AppScheme, payload: LaunchOnly })
 pure val siteSkillPath = "/SKILL.md"
-pure def shortcutSkillPath(onHome: bool, journey: HomeAudience): str = if (onHome) skillPath(journey) else siteSkillPath
-pure def opensNewTab(shortcut: AgentShortcut): bool = shortcut.target == WebChat
+pure def shortcutSkillPath(onHome: bool, journey: HomeAudience, projectSkillPath: str): str =
+  if (onHome) skillPath(journey) else if (projectSkillPath != "") projectSkillPath else siteSkillPath
+pure def opensNewTab(shortcut: AgentShortcut): bool = shortcut.target == DesktopHandoff
 pure def openingCopiesPrompt(shortcut: AgentShortcut): bool = true
 pure def genericPromptAvailable(shortcuts: List[AgentShortcut]): bool = true
 pure def lawOpeningAnyShortcutCopies(shortcut: AgentShortcut): bool = openingCopiesPrompt(shortcut)
 pure def lawShortcutsNeverReplaceGenericSetup(shortcuts: List[AgentShortcut]): bool = genericPromptAvailable(shortcuts)
-pure def lawOnlyWebChatsOpenNewTabs(shortcut: AgentShortcut): bool = opensNewTab(shortcut) iff shortcut.target == WebChat
+pure def lawOnlyDesktopHandoffsOpenNewTabs(shortcut: AgentShortcut): bool = opensNewTab(shortcut) iff shortcut.target == DesktopHandoff
 pure val shortcutValues = Set(
-  { agent: "Claude", target: WebChat, carriesPrompt: true },
-  { agent: "Hermes Agent", target: AppScheme, carriesPrompt: false })
+  { agent: "Claude Code", target: AppScheme, payload: PromptPayload },
+  { agent: "Hermes Agent", target: AppScheme, payload: SkillPayload },
+  { agent: "Meta Muse", target: DesktopHandoff, payload: LaunchOnly })
 pure val shortcutsValues = Set(List(), agentShortcuts)
 ```
 
