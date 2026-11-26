@@ -671,6 +671,57 @@ export type AppCredentials = {
   now: () => Date;
 };
 
+/** The current login of one GitHub account id, or why it is not known. */
+export type IdentityFacts =
+  | { state: "found"; login: string }
+  | { state: "missing" }
+  | { state: "unavailable" };
+
+/**
+ * Resolves a numeric account id to its current login with the App JWT. GitHub
+ * never reuses an id, so the id is the durable identity and the login is the
+ * display name that renames change. `missing` is a real answer from GitHub;
+ * `unavailable` means the caller must retry instead of guessing.
+ */
+export function githubAppIdentityReader(
+  options: AppCredentials,
+): (githubId: string) => Promise<IdentityFacts> {
+  return async (githubId) => {
+    try {
+      const jwt = await githubAppJwt(
+        options.appId,
+        options.privateKey,
+        options.now(),
+      );
+      const response = await options.fetch(
+        `${options.apiOrigin}/user/${encodeURIComponent(githubId)}`,
+        {
+          headers: githubHeaders(jwt, USER_AGENT),
+          redirect: "manual",
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (response.status === 404) {
+        await response.body?.cancel().catch(() => undefined);
+        return { state: "missing" };
+      }
+      if (response.status !== 200) {
+        await response.body?.cancel().catch(() => undefined);
+        return { state: "unavailable" };
+      }
+      const body = (await readBoundedJson(response, 64 * 1024, "GitHub")) as {
+        id?: unknown;
+        login?: unknown;
+      };
+      return String(body?.id) === githubId && typeof body.login === "string"
+        ? { state: "found", login: body.login }
+        : { state: "unavailable" };
+    } catch {
+      return { state: "unavailable" };
+    }
+  };
+}
+
 /** The App installation on a repository, with the App JWT that found it. */
 async function repositoryInstallation(
   options: AppCredentials,

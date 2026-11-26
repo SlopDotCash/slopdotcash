@@ -1989,7 +1989,25 @@ async function planChange(
         fail(409, "conflicted", "The reporter cannot triage their own case");
       const guard = triagerEvent(row, idempotencyKey, action, githubId);
       if (action === "assign-triager") {
-        const githubLogin = stringField(body, "githubLogin", GITHUB_LOGIN);
+        const sentLogin = stringField(body, "githubLogin", GITHUB_LOGIN);
+        // The role is held by id and shown by login. Resolve the login from
+        // the id so a mistyped, stale or swapped pair cannot sign the grant
+        // with another person's name.
+        const facts = await deps.identityRead?.(githubId);
+        if (facts?.state === "unavailable")
+          fail(502, "github_unavailable", "GitHub is unavailable");
+        if (facts?.state === "missing")
+          fail(404, "account_not_found", "GitHub has no account with this id");
+        const githubLogin = facts?.state === "found" ? facts.login : sentLogin;
+        if (
+          facts?.state === "found" &&
+          facts.login.toLowerCase() !== sentLogin.toLowerCase()
+        )
+          fail(
+            409,
+            "identity_mismatch",
+            `GitHub id ${githubId} is @${facts.login}, not @${sentLogin}`,
+          );
         return {
           kind: action,
           role: "security-maintainer",
