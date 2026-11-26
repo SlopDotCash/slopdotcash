@@ -7603,7 +7603,7 @@
     },
     {
       "path": "spec/designSystem/index.md",
-      "sha256": "b0251bbaf2d46565c9efecac2cabe1df718be022ddec91de7db9a20662db1bc8",
+      "sha256": "decf3cec0124ac75434f2d8e87e62f6b784ac4a6bb7d073f52017f69e0f433f3",
       "module": "designSystem",
       "stories": [
         {
@@ -13566,7 +13566,7 @@
     },
     {
       "path": "spec/frontend/views.md",
-      "sha256": "ed4c2ab81bc3caa0c4c195fd013c0d7df1d0ec986090dd2c4e8bf80f8bd863e8",
+      "sha256": "94fc4591fbaa5fb87bd784100fd02a7d087c7e3c54cf38189c7b606b6cf55f97",
       "module": "frontend__views",
       "stories": [
         {
@@ -13575,11 +13575,11 @@
         },
         {
           "heading": "Story: Read a contributor's profile",
-          "line": 232
+          "line": 233
         },
         {
           "heading": "Story: Read the sponsor statistics without mistaking them for scores",
-          "line": 304
+          "line": 305
         }
       ],
       "rules": [
@@ -13625,7 +13625,7 @@
         },
         {
           "heading": "Story: Read a project's rewards and activity at a glance / Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before",
-          "line": 118,
+          "line": 119,
           "definitions": [
             "WantedIssue",
             "WantedRead",
@@ -13643,7 +13643,7 @@
         },
         {
           "heading": "Story: Read a project's rewards and activity at a glance / A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap",
-          "line": 158,
+          "line": 159,
           "definitions": [
             "ReminderLifecycle",
             "ReminderInput",
@@ -13656,7 +13656,7 @@
         },
         {
           "heading": "Story: Read a project's rewards and activity at a glance / Cycle archive filters keep only selections that a published cycle supports",
-          "line": 190,
+          "line": 191,
           "definitions": [
             "CycleRecord",
             "ArchiveFilter",
@@ -13673,7 +13673,7 @@
         },
         {
           "heading": "Story: Read a contributor's profile / A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login",
-          "line": 240,
+          "line": 241,
           "definitions": [
             "ProfileSource",
             "MemberRecord",
@@ -13700,7 +13700,7 @@
         },
         {
           "heading": "Story: Read the sponsor statistics without mistaking them for scores / Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest",
-          "line": 309,
+          "line": 310,
           "definitions": [
             "whoBuildsDate",
             "whoBuildsSha256",
@@ -13711,7 +13711,7 @@
         },
         {
           "heading": "Story: Read the sponsor statistics without mistaking them for scores / Model outcome statistics aggregate self-reported identities against accepted outcomes and never change a score",
-          "line": 328,
+          "line": 329,
           "definitions": [
             "ModelDeclaration",
             "declarationCounts",
@@ -13740,15 +13740,15 @@
         },
         {
           "target": "../backend/projects.md",
-          "line": 80
+          "line": 81
         },
         {
           "target": "../backend/mergeActivity.md",
-          "line": 121
+          "line": 122
         },
         {
           "target": "../points/modelAttribution.md",
-          "line": 338
+          "line": 339
         }
       ]
     },

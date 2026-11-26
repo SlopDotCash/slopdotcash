@@ -17,6 +17,7 @@ export interface Amendment {
   readonly from?: { readonly route: string; readonly name: string; readonly keep: ReadonlyArray<string> };
   readonly replaces?: ReadonlyArray<string>;
   readonly success?: ReadonlyArray<number>;
+  readonly refusalOnly?: true;
   readonly refusals: ReadonlyArray<AmendedRefusal>;
 }
 
@@ -132,7 +133,7 @@ export const amendments: ReadonlyArray<Amendment> = [
   { route: "GET /api/v1/submission-fee/items/:repositoryId/:pullNumber", from: { ...plainJson, name: "getSubmissionFeeItemsByRepositoryIdByPullNumber" }, refusals: submissionFeeRefusals(215, submissionFeeCache) },
   { route: "GET /api/v1/submission-fee/reports/:caseId", from: { ...plainJson, name: "getSubmissionFeeReportsByCaseId" }, refusals: submissionFeeRefusals(251, "no-store") },
   { route: "GET /api/v1/operator/reserved-awards", from: { ...plainJson, name: "getOperatorReservedAwards" }, success: [], refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
-  { route: "POST /api/v1/operator/reserved-awards", from: { ...plainJson, name: "postOperatorReservedAwards" }, success: [], refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
+  { route: "POST /api/v1/operator/reserved-awards", from: { ...plainJson, name: "postOperatorReservedAwards" }, success: [], refusalOnly: true, refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
   { route: "GET /api/v1/operator/protected-point-months", from: { ...plainJson, name: "getOperatorProtectedPointMonths" }, success: [], refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
-  { route: "POST /api/v1/operator/protected-point-months", from: { ...plainJson, name: "postOperatorProtectedPointMonths" }, success: [], refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
+  { route: "POST /api/v1/operator/protected-point-months", from: { ...plainJson, name: "postOperatorProtectedPointMonths" }, success: [], refusalOnly: true, refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
 ];
