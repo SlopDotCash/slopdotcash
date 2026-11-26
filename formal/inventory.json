@@ -9812,7 +9812,8 @@
       "models": [
         "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/api/points_dispute_lease.qnt",
-        "formal/models/slopbot/bot_appeal.qnt"
+        "formal/models/slopbot/bot_appeal.qnt",
+        "formal/models/slopbot/bot_submission_fee.qnt"
       ],
       "candidateLines": [1, 84, 118, 172, 186, 218, 252],
       "review": "mapped-abstraction"
@@ -10077,7 +10078,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "1a404498778a3c9d824653e89585d072eb8de0c318ff3d957c34c780cac9a992",
+      "sha256": "d2cf67717bbeced1ac9f0af95f609f854d16e959e111595af23b03ed0fefb401",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -10093,13 +10094,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 171, 287, 302, 311, 321, 324, 523, 677, 856, 885, 895, 1030, 1035,
-        1040, 1042, 1045, 1047, 1048, 1059, 1062, 1064, 1121, 1122, 1124, 1125,
-        1141, 1147, 1198, 1226, 1227, 1235, 1240, 1341, 1343, 1363, 1382, 1465,
-        1470, 1629, 1751, 1764, 1765, 1802, 1819, 1822, 1823, 1986, 1991, 2053,
-        2066, 2071, 2078, 2079, 2083, 2084, 2092, 2108, 2165, 2319, 2380, 2386,
-        2397, 2423, 2453, 2478, 2486, 2509, 2514, 2595, 2596, 2647, 2682, 2733,
-        2878, 3149, 3224, 3411, 3422, 3430, 3528, 3529, 3569, 3619, 3633, 3649
+        3, 172, 288, 303, 312, 322, 325, 524, 678, 857, 886, 896, 1031, 1036,
+        1041, 1043, 1046, 1048, 1049, 1060, 1063, 1065, 1122, 1123, 1125, 1126,
+        1142, 1148, 1199, 1227, 1228, 1236, 1241, 1342, 1344, 1364, 1383, 1466,
+        1471, 1630, 1752, 1765, 1766, 1803, 1820, 1823, 1824, 1987, 1992, 2054,
+        2067, 2072, 2079, 2080, 2084, 2085, 2093, 2109, 2166, 2320, 2381, 2387,
+        2398, 2424, 2454, 2479, 2487, 2510, 2515, 2596, 2597, 2648, 2684, 2737,
+        2882, 3153, 3228, 3417, 3428, 3436, 3534, 3535, 3575, 3625, 3639, 3655
       ],
       "review": "mapped-abstraction"
     },
@@ -10150,18 +10151,18 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "840c813d847595b0feea71d2a32538871659419e1561259c841c805bf961f15b",
+      "sha256": "ff3085067616902c0b3d30ff78ac3eb2ee73e4a14cf4ea30e96cef4987212858",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
       "candidateLines": [
-        345, 365, 376, 385, 387, 389, 398, 454, 475, 480, 487, 490, 492, 526,
-        527, 529, 530, 541, 547, 572, 581, 582, 613, 617, 651, 682, 730, 741,
-        742, 752, 809, 811, 865, 950, 983, 1000, 1012, 1020, 1022, 1024, 1025,
-        1026, 1047, 1049, 1081, 1082, 1084, 1087, 1088, 1102, 1103, 1273, 1294,
-        1321, 1361, 1365, 1371, 1395, 1408, 1424, 1445, 1464, 1485, 1508, 1512,
-        1556, 1557, 1559, 1584
+        346, 385, 396, 405, 407, 409, 418, 474, 495, 500, 507, 510, 512, 546,
+        547, 549, 550, 561, 567, 592, 601, 602, 633, 637, 671, 702, 750, 761,
+        762, 772, 829, 831, 885, 970, 1003, 1020, 1032, 1040, 1042, 1044, 1045,
+        1046, 1067, 1069, 1101, 1102, 1104, 1107, 1108, 1122, 1123, 1298, 1320,
+        1347, 1387, 1391, 1397, 1421, 1434, 1450, 1471, 1490, 1524, 1547, 1551,
+        1565, 1577, 1583, 1634, 1635, 1637, 1662
       ],
       "review": "mapped-abstraction"
     },
@@ -18567,13 +18568,14 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "9c744efff087ccfb83bd34d1470792f81af1871dc11a168280fd0bc7854d8d50",
+      "sha256": "3ee433da055f6ab4aa39a0c45cff0741d27f222160d1ca4dfd9fe1bc4652a084",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
         "src/lib/submission-fee-setting.mjs",
         "src/lib/submission-fee.mjs",
         "src/lib/wanted-label.mjs",
+        "workers/slopbot/appeals.ts",
         "workers/slopbot/index.ts",
         "workers/slopbot/ready-label.ts",
         "workers/slopbot/review-cap.ts",
@@ -18581,14 +18583,19 @@
         "workers/slopbot/submission-fee.ts"
       ],
       "scenarios": [
+        "appealOfSlopbotCloseHoldsTheFeeTest",
         "authorGainingAccessReleasesTest",
+        "clearInsideTheWorkerRaceEndsKeptTest",
         "closedIsKeptAfterTheWaitTest",
         "crashDoesNotDuplicateTheCommentTest",
+        "deniedAppealKeepsTheFeeTest",
         "dryRunRecordsAndReviewsTest",
         "exemptAuthorIsNeverAskedTest",
         "firstSightAsksOnceTest",
         "fullMonthIsNotAskedTest",
         "fullMonthIsNotRecordedInDryRunTest",
+        "lateAppealAfterSendKeepsTest",
+        "lateAppealBeforeSendReopensTest",
         "mergedIsDueBackTest",
         "offDoesNothingTest",
         "openedBeforeTheSettingIsReviewedTest",
@@ -18600,6 +18607,7 @@
         "undecidedIsDueBackTest",
         "unpaidIsNeverReadyTest",
         "unpaidMergeHasNothingDueTest",
+        "upheldAppealReopensAndRefundsTest",
         "wantedClosedIsSentBackTest",
         "wantedMarkedIsKeptTest",
         "wantedUnreadableWaitsTest",

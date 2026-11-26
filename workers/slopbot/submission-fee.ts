@@ -9,7 +9,8 @@
 //                the review;
 //   outcome      merged, or still open 14 days after payment: `refund_due`.
 //                Closed without a merge and still closed 7 days later:
-//                `kept_due`. The Worker sends what is due.
+//                `kept_due`, never while an appeal of Slopbot's own close
+//                is undecided. The Worker sends what is due.
 // Slopbot moves no money and never closes a pull request for an unpaid fee. A
 // maintainer can review and merge an unpaid pull request; scoring is unchanged.
 //
@@ -357,6 +358,25 @@ function itemRow(db: store.D1Database, job: PullRef) {
     )
     .bind(job.repositoryId, job.number)
     .first<ItemRow>();
+}
+
+function slopbotCloseAppeal(
+  db: store.D1Database,
+  job: PullRef,
+  nodeId: string,
+) {
+  return db
+    .prepare(
+      `SELECT
+         EXISTS (SELECT 1 FROM slopbot_appeals WHERE repository_id = ?1 AND item_node_id = ?2
+           AND appeal_key NOT LIKE 'value-appeal:%' AND resolved_at IS NULL) AS open,
+         (SELECT MAX(resolved_at) FROM slopbot_appeals WHERE repository_id = ?1 AND item_node_id = ?2
+           AND appeal_key NOT LIKE 'value-appeal:%' AND resolution = 'upheld') AS upheld_at
+       WHERE EXISTS (SELECT 1 FROM slopbot_actions WHERE repository_id = ?1 AND item_node_id = ?2
+         AND action = 'close')`,
+    )
+    .bind(job.repositoryId, nodeId)
+    .first<{ open: number; upheld_at: string | null }>();
 }
 
 function gateRow(db: store.D1Database, job: PullRef) {
@@ -1116,6 +1136,8 @@ export type FeeOutcomeFacts = {
   /** Closed without a merge. */
   closed: boolean;
   closedAt: string | null;
+  appealOpen: boolean;
+  appealUpheldAt: string | null;
   /**
    * The pull request closes an issue of its own repository that carried
    * `slop-wanted` when the pull request was opened. null: not readable now.
@@ -1149,9 +1171,12 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
     // Without a close time, wait rather than keep a fee on a guess.
     if (!Number.isFinite(closedAt) || !Number.isFinite(paid))
       return wait(time + FEE_RECHECK_MS);
+    if (facts.appealOpen) return wait(time + FEE_RECHECK_MS);
+    const upheldAt = Date.parse(facts.appealUpheldAt ?? "");
     // A deposit made after the close still gets the full wait.
     const due =
-      Math.max(closedAt, paid) + SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS * DAY_MS;
+      Math.max(closedAt, paid, Number.isFinite(upheldAt) ? upheldAt : 0) +
+      SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS * DAY_MS;
     if (time < due) return wait(due);
     // Invited work is not charged for losing to another pull request; only
     // a maintainer's explicit mark keeps it. Unknown: ask GitHub again.
@@ -1290,6 +1315,7 @@ async function ensureKeepLabel(github: GitHubClient, job: PullRef) {
 // The scheduled and event-driven check of one asked pull request.
 
 type Pull = {
+  node_id: string;
   number: number;
   state: string;
   created_at?: string;
@@ -1462,6 +1488,9 @@ export async function refreshSubmissionFee(
   let nextCheckAt: string | null = null;
   if (row.outcome === null) {
     const closed = pull.state !== "open" && !merged;
+    const appeal = closed
+      ? await slopbotCloseAppeal(db, job, pull.node_id)
+      : null;
     const wanted = closed ? await closesWantedIssue(github, job) : false;
     if (wanted) await ensureKeepLabel(github, job);
     const decided = feeOutcome(
@@ -1470,6 +1499,8 @@ export async function refreshSubmissionFee(
         merged,
         closed,
         closedAt: pull.closed_at ?? null,
+        appealOpen: appeal?.open === 1,
+        appealUpheldAt: appeal?.upheld_at ?? null,
         wanted,
         keepMarked: (pull.labels ?? []).some(
           (label) => label.name === SUBMISSION_FEE_KEEP_LABEL,
@@ -1478,6 +1509,14 @@ export async function refreshSubmissionFee(
       now,
     );
     nextCheckAt = decided.nextCheckAt;
+    if (decided.outcome === null && gate.reason.startsWith("kept_due"))
+      commentId = await writeFeeComment(
+        env,
+        github,
+        job,
+        commentId,
+        feePaidComment({ ...paidFacts, outcome: null }),
+      );
     if (decided.outcome !== null) {
       // Slopbot only ever sets a due outcome on a paid, undecided row.
       const written = await db
@@ -1512,6 +1551,45 @@ export async function refreshSubmissionFee(
     gate.state === "paid" ? `submission fee: ${reason}` : "submission fee paid",
     review,
   );
+}
+
+export async function reopenKeptFee(
+  db: store.D1TransactionalDatabase,
+  appealKey: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const at = now.toISOString();
+  const [cleared] = await db.batch([
+    db
+      .prepare(
+        `UPDATE submission_fee_items SET outcome = NULL, outcome_at = NULL
+         WHERE outcome = 'kept_due' AND paid_at IS NOT NULL
+           AND (repository_id, pull_number) IN (
+             SELECT a.repository_id, json_extract(a.job_json, '$.number') FROM slopbot_appeals a
+             WHERE a.appeal_key = ?1
+               AND json_extract(a.job_json, '$.itemKind') = 'pull_request'
+               AND (a.resolved_at IS NULL OR a.resolution = 'upheld')
+               AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = a.repository_id
+                 AND c.item_node_id = a.item_node_id AND c.action = 'close'))
+           AND NOT EXISTS (
+             SELECT 1 FROM submission_fee_sends s, json_each(s.deposits) e
+             WHERE s.network = submission_fee_items.paid_network
+               AND s.state IN ('submitted', 'unknown', 'finalized')
+               AND json_extract(e.value, '$.id') = submission_fee_items.paid_deposit_id)`,
+      )
+      .bind(appealKey),
+    db
+      .prepare(
+        `UPDATE slopbot_fee_gates SET next_check_at = ?2
+         WHERE (repository_id, pull_number) IN (
+           SELECT i.repository_id, i.pull_number FROM submission_fee_items i
+           JOIN slopbot_appeals a ON a.repository_id = i.repository_id
+             AND json_extract(a.job_json, '$.number') = i.pull_number
+           WHERE a.appeal_key = ?1 AND i.outcome IS NULL AND i.paid_at IS NOT NULL)`,
+      )
+      .bind(appealKey, at),
+  ]);
+  return (cleared.meta?.changes ?? 0) === 1;
 }
 
 /** The review job that runs once a pull request's fee is paid or released. */
