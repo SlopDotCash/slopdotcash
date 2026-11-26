@@ -79,6 +79,7 @@ const changeOf = (event: Event): Change | undefined => {
     case "publishConfig":
       return { type: "publishConfig", release: releaseOf(event.config) };
     case "save":
+      if (event.kind === "TraceLicensingAvailable") return undefined;
       return {
         type: "save",
         notice: {
