@@ -811,18 +811,40 @@ export async function loadValueInputs(
     return hydrate(collected);
   }
 
+  // Every feed read of this phase, ahead of or in the history loop, shares one limit.
+  let feedReads = 0;
+  const feedQueue: (() => void)[] = [];
+  async function feedRead<T>(read: () => Promise<T>): Promise<T> {
+    if (feedConcurrency > 1) {
+      if (feedReads >= feedConcurrency)
+        await new Promise<void>((resolve) => feedQueue.push(resolve));
+      else feedReads += 1;
+    }
+    try {
+      return await read();
+    } finally {
+      if (feedConcurrency > 1) {
+        const following = feedQueue.shift();
+        if (following) following();
+        else feedReads -= 1;
+      }
+    }
+  }
+
   async function legacy(collected: WorkUnitSource) {
     const id = collected.evidence.pull.node_id;
     const cached = valueDecisions.get(id);
     if (cached) return cached;
     const decision = await readValueDecisionFromHistory(
       (after) =>
-        fetchValueHistoryPage(
-          collected.evidence.repository,
-          collected.evidence.pull.number,
-          after,
-          transport,
-          collected.evidence.repositoryNodeId,
+        feedRead(() =>
+          fetchValueHistoryPage(
+            collected.evidence.repository,
+            collected.evidence.pull.number,
+            after,
+            transport,
+            collected.evidence.repositoryNodeId,
+          ),
         ),
       sourceCache.get(id)?.evidence ?? collected.evidence,
       collected.policy,
@@ -1256,34 +1278,58 @@ export async function loadValueInputs(
   // First history pages read ahead of the loop below, keyed by the outcome's
   // position and the exact arguments of its first read. The loop takes each
   // page at most once and reads every other page itself.
-  const warmedJointPages = new Map<string, JointPage>();
-  const warmedSinglePages = new Map<string, Page>();
+  type Warmed = {
+    joint: Promise<JointPage | null>;
+    single: Promise<Page | null>;
+  };
+  const warmed = new Map<string, Warmed>();
   const firstPageKey = (
     index: number,
     repositoryId: string,
     pull: number,
     repositoryNodeId: string,
   ) => JSON.stringify([index, repositoryId, pull, repositoryNodeId]);
-  function takeWarmed<T>(pages: Map<string, T>, key: string): T | undefined {
-    const page = pages.get(key);
-    pages.delete(key);
-    return page;
+  const emptyJointPage = (page: JointPage) =>
+    page.records.length === 0 &&
+    page.nextAfter === null &&
+    page.totalRecords === 0;
+  function takeWarmed(key: string): Warmed | undefined {
+    const pages = warmed.get(key);
+    warmed.delete(key);
+    return pages;
+  }
+
+  // The read-ahead runs beside the loop and stays at most this many outcomes
+  // in front of it, so a page it reads is never older than the loop's last
+  // few outcomes. Reading every page before the loop let a record published
+  // or replaced during the loop be decided from the page read before it.
+  const readAheadWindow = 2 * feedConcurrency;
+  let loopIndex = -1;
+  let readAheadOpen = true;
+  let readAheadWaiters: (() => void)[] = [];
+  function moveLoop(index: number) {
+    loopIndex = index;
+    const waiting = readAheadWaiters;
+    readAheadWaiters = [];
+    for (const resume of waiting) resume();
   }
 
   /**
-   * Reads the first joint page of every outcome, and the first single page
-   * where that joint history is empty, a bounded number at a time. It only
-   * saves waiting: it calls the same readers with the arguments the loop
-   * uses, decides nothing and reports nothing. A read that fails here is
-   * dropped and ends the read-ahead, so the loop repeats that read in its
-   * own turn and its failure surfaces there, in order, as without it.
+   * Reads the first joint page of each outcome, and the first single page
+   * where that joint history is empty, a bounded number at a time and at most
+   * readAheadWindow outcomes ahead of the loop. It only saves waiting: it
+   * calls the same readers with the arguments the loop uses and decides
+   * nothing. A read that fails here is dropped, logged and ends the
+   * read-ahead, so the loop repeats that read in its own turn and its failure
+   * surfaces there, in order, as without it.
    */
-  async function warmFirstHistoryPages() {
-    const targets: ({ repositoryId: string; nodeId: string } | null)[] = [];
+  type Target = { repositoryId: string; nodeId: string } | null;
+  async function readAheadTargets() {
+    const targets: Target[] = [];
     const unresolved = new Set<string>();
     // Resolve each repository once, in outcome order, before any feed read.
     for (const outcome of outcomes) {
-      let target: (typeof targets)[number] = null;
+      let target: Target = null;
       try {
         const [owner, repo] = new URL(outcome.url).pathname
           .split("/")
@@ -1301,51 +1347,72 @@ export async function loadValueInputs(
       }
       targets.push(target);
     }
+    return targets;
+  }
+  async function warmFirstHistoryPages(targets: readonly Target[]) {
     let next = 0;
-    let stopped = false;
+    let pages = 0;
+    let dropped: { outcome: number; error: string } | null = null;
+    const drop = (index: number, error: unknown) => {
+      readAheadOpen = false;
+      dropped ??= {
+        outcome: index,
+        error: error instanceof Error ? error.name : typeof error,
+      };
+      return null;
+    };
     const worker = async () => {
-      while (!stopped && next < outcomes.length) {
+      while (readAheadOpen && next < outcomes.length) {
+        if (next > loopIndex + readAheadWindow) {
+          await new Promise<void>((resume) => readAheadWaiters.push(resume));
+          continue;
+        }
         const index = next++;
         const target = targets[index];
-        if (!target) continue;
+        // The loop reads its current and earlier outcomes itself.
+        if (!target || index <= loopIndex) continue;
         const pull = outcomes[index].number;
-        const key = firstPageKey(
-          index,
-          target.repositoryId,
-          pull,
-          target.nodeId,
-        );
-        try {
-          const joint = await fetchWorkUnitHistoryPage(
+        const joint = feedRead(() =>
+          fetchWorkUnitHistoryPage(
             target.repositoryId,
             pull,
             0,
             null,
             transport,
             target.nodeId,
-          );
-          warmedJointPages.set(key, joint);
-          // The loop reads the single history only after an empty joint one.
-          if (
-            stopped ||
-            joint.records.length !== 0 ||
-            joint.nextAfter !== null ||
-            joint.totalRecords !== 0
-          )
-            continue;
-          warmedSinglePages.set(
-            key,
-            await fetchValueHistoryPage(
-              target.repositoryId,
-              pull,
-              0,
-              transport,
-              target.nodeId,
-            ),
-          );
-        } catch {
-          stopped = true;
-        }
+          ),
+        ).then(
+          (page) => {
+            pages += 1;
+            return page;
+          },
+          (error) => drop(index, error),
+        );
+        // The loop reads the single history only after an empty joint one.
+        const single = joint.then((page) =>
+          readAheadOpen && page && emptyJointPage(page)
+            ? feedRead(() =>
+                fetchValueHistoryPage(
+                  target.repositoryId,
+                  pull,
+                  0,
+                  transport,
+                  target.nodeId,
+                ),
+              ).then(
+                (page) => {
+                  pages += 1;
+                  return page;
+                },
+                (error) => drop(index, error),
+              )
+            : null,
+        );
+        warmed.set(
+          firstPageKey(index, target.repositoryId, pull, target.nodeId),
+          { joint, single },
+        );
+        await single;
       }
     };
     await Promise.all(
@@ -1358,206 +1425,241 @@ export async function loadValueInputs(
       JSON.stringify({
         event: "value_history_first_pages_warmed",
         concurrency: feedConcurrency,
+        window: readAheadWindow,
         outcomes: outcomes.length,
-        pages: warmedJointPages.size + warmedSinglePages.size,
+        // Outcomes whose repository or URL the read-ahead could not resolve;
+        // the loop reads and reports those itself.
+        unresolved: targets.filter((target) => !target).length,
+        pages,
+        ...(dropped ? { dropped } : {}),
       }),
     );
   }
-  if (feedConcurrency > 1 && outcomes.length > 0) await warmFirstHistoryPages();
-
-  for (const [index, outcome] of outcomes.entries()) {
-    onProgress({
-      phase: "value-histories",
-      completed: index,
-      total: outcomes.length,
-    });
-    const [owner, repo] = new URL(outcome.url).pathname
-      .split("/")
-      .filter(Boolean);
-    const { repository, identity } = await repositoryIdentity(
-      `${owner}/${repo}`,
-    );
-    const firstPage = firstPageKey(
-      index,
-      repository.id,
-      outcome.number,
-      identity.node_id,
-    );
-    const graph = await readWorkUnitHistory(
-      (after, through) => {
-        const warmed =
-          after === 0 && through === null
-            ? takeWarmed(warmedJointPages, firstPage)
-            : undefined;
-        return warmed
-          ? Promise.resolve(warmed)
-          : fetchWorkUnitHistoryPage(
-              repository.id,
-              outcome.number,
-              after,
-              through,
-              transport,
-              identity.node_id,
-            );
-      },
-      { repositoryNodeId: identity.node_id, pullRequestNodeId: outcome.id },
-    );
-    const groupDigest = graph.current?.row.record_digest ?? null;
-    if (
-      observedGroups.has(outcome.id) &&
-      observedGroups.get(outcome.id) !== groupDigest
-    )
-      throw new Error("Joint value history changed during snapshot collection");
-    observedGroups.set(outcome.id, groupDigest);
-    if (graph.current) {
-      const bindings = graph.current.record.sources;
-      for (const member of bindings) {
-        if (
-          observedGroups.has(member.pullRequestNodeId) &&
-          observedGroups.get(member.pullRequestNodeId) !== groupDigest
-        )
-          throw new Error(
-            "Joint members disagree about their current decision",
-          );
-        observedGroups.set(member.pullRequestNodeId, groupDigest);
-      }
-      let decision = groups.get(graph.current.row.record_digest);
-      if (!decision) {
-        // Only probe members outside the complete live census. NOT_FOUND is
-        // classified by the caller; transport, permission and partial responses throw.
-        const references = bindings
-          .filter((member) => !census.has(member.pullRequestNodeId))
-          .map((member) => member.pullRequestNodeId);
-        const unavailable =
-          references.length && unavailableJointSources
-            ? await unavailableJointSources(references)
-            : [];
-        if (unavailable.length) {
-          if (unavailable.some((id) => !references.includes(id)))
-            throw new Error("Unavailable joint source was not requested");
-          decision = {
-            status: "unresolved" as const,
-            sourceUnavailable: true,
-            history: graph.history,
-            throughSequence: graph.throughSequence,
-            latestDigest: graph.current.row.record_digest,
-          };
-          heldWorkUnits.push({
-            recordDigest: graph.current.row.record_digest,
-            sourceNodeIds: bindings
-              .map((member) => member.pullRequestNodeId)
-              .sort(),
-            unavailableNodeIds: [...new Set(unavailable)].sort(),
-          });
-          groups.set(graph.current.row.record_digest, decision);
-          for (const member of bindings)
-            jointValueDecisions.set(member.pullRequestNodeId, decision);
-          continue;
-        }
-        const members: WorkUnitSource[] = [];
-        const legacyDigests = new Map<string, string | null>();
-        for (const member of bindings) {
-          const collected = await source(
-            member.repository,
-            member.pullRequestNumber,
-            member.pullRequestNodeId,
-            member.contextPaths ?? [],
-            member.mergeRecipe,
-          );
-          members.push(collected);
-          legacyDigests.set(
-            member.pullRequestNodeId,
-            (await legacy(collected)).latestDigest,
-          );
-        }
-        decision = await consumeWorkUnitHistory(graph, members, legacyDigests);
-        const closure = historicalClosedContexts?.get(outcome.id);
-        if (
-          decision.status === "stale" &&
-          closure?.standaloneReview &&
-          closure.digest === groupDigest &&
-          members.length === 1
-        ) {
-          const rebound = await rebindHistoricalStandaloneReview(
-            members[0],
-            graph.current.record,
-            github,
-          );
-          if (rebound !== members[0])
-            decision = await consumeWorkUnitHistory(
-              graph,
-              [rebound],
-              legacyDigests,
-            );
-        }
-        groups.set(graph.current.row.record_digest, decision);
-        if (decision.status === "assessed") {
-          const actors = new Set(
-            decision.evidence.claims.flatMap(
-              (claim) => claim.implementationActorNodeIds,
-            ),
-          );
-          // Current allocation uses primary commit authors on every branch.
-          // Preserve the original evidence/claims for valuation digest checks.
-          for (const claim of decision.evidence.claims)
-            for (const id of workUnitCreditActorIds(decision.evidence, claim) ??
-              [])
-              actors.add(id);
-          const positiveReviews = new Set(
-            decision.assessment.units.flatMap((unit) =>
-              unit.assessment.reviews
-                .filter((review) => review.tier !== "none")
-                .map((review) => review.sourceId),
-            ),
-          );
-          for (const member of decision.evidence.sources)
-            for (const review of member.evidence.reviews)
-              if (positiveReviews.has(review.node_id) && review.user)
-                actors.add(review.user.node_id);
-          await hydrateActors(actors);
-        }
-      }
-      for (const member of bindings)
-        jointValueDecisions.set(member.pullRequestNodeId, decision);
-      continue;
-    }
-    const first =
-      takeWarmed(warmedSinglePages, firstPage) ??
-      (await fetchValueHistoryPage(
-        repository.id,
-        outcome.number,
-        0,
-        transport,
-        identity.node_id,
-      ));
-    if (first.records.length === 0 && first.nextAfter === null) {
-      valueDecisions.set(outcome.id, {
-        status: "missing",
-        history: [],
-        latestDigest: null,
-        implementationActorNodeIds: [],
+  const readAhead =
+    feedConcurrency > 1 && outcomes.length > 0
+      ? warmFirstHistoryPages(await readAheadTargets())
+      : null;
+  try {
+    for (const [index, outcome] of outcomes.entries()) {
+      onProgress({
+        phase: "value-histories",
+        completed: index,
+        total: outcomes.length,
       });
-      continue;
+      moveLoop(index);
+      const [owner, repo] = new URL(outcome.url).pathname
+        .split("/")
+        .filter(Boolean);
+      const { repository, identity } = await repositoryIdentity(
+        `${owner}/${repo}`,
+      );
+      const ahead = takeWarmed(
+        firstPageKey(index, repository.id, outcome.number, identity.node_id),
+      );
+      let aheadJoint = ahead?.joint;
+      const graph = await readWorkUnitHistory(
+        async (after, through) => {
+          // Only an empty page read ahead is used. A history with records is
+          // read again in this turn, so a record replaced since the read-ahead
+          // is decided as the one-at-a-time reader decides it.
+          const read =
+            after === 0 && through === null ? await aheadJoint : null;
+          aheadJoint = undefined;
+          const warmedJoint = read && emptyJointPage(read) ? read : null;
+          return (
+            warmedJoint ??
+            feedRead(() =>
+              fetchWorkUnitHistoryPage(
+                repository.id,
+                outcome.number,
+                after,
+                through,
+                transport,
+                identity.node_id,
+              ),
+            )
+          );
+        },
+        { repositoryNodeId: identity.node_id, pullRequestNodeId: outcome.id },
+      );
+      const groupDigest = graph.current?.row.record_digest ?? null;
+      if (
+        observedGroups.has(outcome.id) &&
+        observedGroups.get(outcome.id) !== groupDigest
+      )
+        throw new Error(
+          "Joint value history changed during snapshot collection",
+        );
+      observedGroups.set(outcome.id, groupDigest);
+      if (graph.current) {
+        const bindings = graph.current.record.sources;
+        for (const member of bindings) {
+          if (
+            observedGroups.has(member.pullRequestNodeId) &&
+            observedGroups.get(member.pullRequestNodeId) !== groupDigest
+          )
+            throw new Error(
+              "Joint members disagree about their current decision",
+            );
+          observedGroups.set(member.pullRequestNodeId, groupDigest);
+        }
+        let decision = groups.get(graph.current.row.record_digest);
+        if (!decision) {
+          // Only probe members outside the complete live census. NOT_FOUND is
+          // classified by the caller; transport, permission and partial responses throw.
+          const references = bindings
+            .filter((member) => !census.has(member.pullRequestNodeId))
+            .map((member) => member.pullRequestNodeId);
+          const unavailable =
+            references.length && unavailableJointSources
+              ? await unavailableJointSources(references)
+              : [];
+          if (unavailable.length) {
+            if (unavailable.some((id) => !references.includes(id)))
+              throw new Error("Unavailable joint source was not requested");
+            decision = {
+              status: "unresolved" as const,
+              sourceUnavailable: true,
+              history: graph.history,
+              throughSequence: graph.throughSequence,
+              latestDigest: graph.current.row.record_digest,
+            };
+            heldWorkUnits.push({
+              recordDigest: graph.current.row.record_digest,
+              sourceNodeIds: bindings
+                .map((member) => member.pullRequestNodeId)
+                .sort(),
+              unavailableNodeIds: [...new Set(unavailable)].sort(),
+            });
+            groups.set(graph.current.row.record_digest, decision);
+            for (const member of bindings)
+              jointValueDecisions.set(member.pullRequestNodeId, decision);
+            continue;
+          }
+          const members: WorkUnitSource[] = [];
+          const legacyDigests = new Map<string, string | null>();
+          for (const member of bindings) {
+            const collected = await source(
+              member.repository,
+              member.pullRequestNumber,
+              member.pullRequestNodeId,
+              member.contextPaths ?? [],
+              member.mergeRecipe,
+            );
+            members.push(collected);
+            legacyDigests.set(
+              member.pullRequestNodeId,
+              (await legacy(collected)).latestDigest,
+            );
+          }
+          decision = await consumeWorkUnitHistory(
+            graph,
+            members,
+            legacyDigests,
+          );
+          const closure = historicalClosedContexts?.get(outcome.id);
+          if (
+            decision.status === "stale" &&
+            closure?.standaloneReview &&
+            closure.digest === groupDigest &&
+            members.length === 1
+          ) {
+            const rebound = await rebindHistoricalStandaloneReview(
+              members[0],
+              graph.current.record,
+              github,
+            );
+            if (rebound !== members[0])
+              decision = await consumeWorkUnitHistory(
+                graph,
+                [rebound],
+                legacyDigests,
+              );
+          }
+          groups.set(graph.current.row.record_digest, decision);
+          if (decision.status === "assessed") {
+            const actors = new Set(
+              decision.evidence.claims.flatMap(
+                (claim) => claim.implementationActorNodeIds,
+              ),
+            );
+            // Current allocation uses primary commit authors on every branch.
+            // Preserve the original evidence/claims for valuation digest checks.
+            for (const claim of decision.evidence.claims)
+              for (const id of workUnitCreditActorIds(
+                decision.evidence,
+                claim,
+              ) ?? [])
+                actors.add(id);
+            const positiveReviews = new Set(
+              decision.assessment.units.flatMap((unit) =>
+                unit.assessment.reviews
+                  .filter((review) => review.tier !== "none")
+                  .map((review) => review.sourceId),
+              ),
+            );
+            for (const member of decision.evidence.sources)
+              for (const review of member.evidence.reviews)
+                if (positiveReviews.has(review.node_id) && review.user)
+                  actors.add(review.user.node_id);
+            await hydrateActors(actors);
+          }
+        }
+        for (const member of bindings)
+          jointValueDecisions.set(member.pullRequestNodeId, decision);
+        continue;
+      }
+      const warmedSingle = await ahead?.single;
+      const first =
+        (warmedSingle &&
+        warmedSingle.records.length === 0 &&
+        warmedSingle.nextAfter === null
+          ? warmedSingle
+          : null) ??
+        (await feedRead(() =>
+          fetchValueHistoryPage(
+            repository.id,
+            outcome.number,
+            0,
+            transport,
+            identity.node_id,
+          ),
+        ));
+      if (first.records.length === 0 && first.nextAfter === null) {
+        valueDecisions.set(outcome.id, {
+          status: "missing",
+          history: [],
+          latestDigest: null,
+          implementationActorNodeIds: [],
+        });
+        continue;
+      }
+      const collected = await source(repository.id, outcome.number, outcome.id);
+      const decision = await readValueDecisionFromHistory(
+        (after) =>
+          after === 0
+            ? Promise.resolve(first)
+            : feedRead(() =>
+                fetchValueHistoryPage(
+                  repository.id,
+                  outcome.number,
+                  after,
+                  transport,
+                  identity.node_id,
+                ),
+              ),
+        collected.evidence,
+        collected.policy,
+        (evidence, paths) => collectValueContext(github, evidence, paths),
+      );
+      valueDecisions.set(outcome.id, decision);
+      if (decision.status === "assessed")
+        await hydrateActors(new Set(decision.implementationActorNodeIds));
     }
-    const collected = await source(repository.id, outcome.number, outcome.id);
-    const decision = await readValueDecisionFromHistory(
-      (after) =>
-        after === 0
-          ? Promise.resolve(first)
-          : fetchValueHistoryPage(
-              repository.id,
-              outcome.number,
-              after,
-              transport,
-              identity.node_id,
-            ),
-      collected.evidence,
-      collected.policy,
-      (evidence, paths) => collectValueContext(github, evidence, paths),
-    );
-    valueDecisions.set(outcome.id, decision);
-    if (decision.status === "assessed")
-      await hydrateActors(new Set(decision.implementationActorNodeIds));
+  } finally {
+    readAheadOpen = false;
+    moveLoop(outcomes.length);
+    await readAhead;
   }
   onProgress({
     phase: "value-histories",

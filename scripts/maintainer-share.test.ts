@@ -393,7 +393,8 @@ test("the read counts only outside pull requests merged or closed in the month b
   const graphql = async (query: string, variables: Record<string, unknown>) => {
     expect(query).toBe(DECISIONS_QUERY);
     requests.push(variables);
-    const index = requests.length - 1;
+    const after = variables.after as string | null;
+    const index = after === null ? 0 : Number(after.split("-")[1]) + 1;
     return {
       repository: {
         id: project.authority.repositoryNodeId,
@@ -415,6 +416,8 @@ test("the read counts only outside pull requests merged or closed in the month b
   expect(requests).toEqual([
     { owner: "elizaOS", name: "eliza", first: 50, after: null },
     { owner: "elizaOS", name: "eliza", first: 50, after: "cursor-0" },
+    // A second pass from the top finds no change, so the read is complete.
+    { owner: "elizaOS", name: "eliza", first: 50, after: null },
   ]);
   expect(collected.repositories).toEqual(["elizaOS/eliza"]);
   expect(
@@ -509,6 +512,110 @@ test("a close caused by deleting the head branch or fork is not a maintainer dec
     [33, "ben"],
     [34, "ana"],
   ]);
+});
+
+test("a pull request updated while the read runs still counts", async () => {
+  const project = sharedProject(2000);
+  // GitHub pages this order by a cursor on (updatedAt, id): a pull request
+  // updated after the read passed the top moves above the cursor, and the
+  // pages that follow never return it.
+  const nodes = [
+    pull(30, {
+      updatedAt: "2026-09-25T00:00:00Z",
+      ...mergedBy(user(11, "ana")),
+    }),
+    pull(31, {
+      updatedAt: "2026-09-24T00:00:00Z",
+      ...mergedBy(user(11, "ana")),
+    }),
+    pull(32, {
+      updatedAt: "2026-09-23T00:00:00Z",
+      ...closedBy(user(22, "ben")),
+    }),
+    pull(33, {
+      updatedAt: "2026-09-22T00:00:00Z",
+      ...mergedBy(user(33, "cal")),
+    }),
+    pull(34, {
+      updatedAt: "2026-08-20T00:00:00Z",
+      ...mergedBy(user(11, "ana"), "2026-08-19T00:00:00Z"),
+    }),
+  ];
+  const order = () =>
+    [...nodes].sort(
+      (left, right) =>
+        String(right.updatedAt).localeCompare(String(left.updatedAt)) ||
+        Number(right.number) - Number(left.number),
+    );
+  const key = (node: PullNode) => `${node.updatedAt}|${node.number}`;
+  let served = 0;
+  const graphql = async (
+    _query: string,
+    variables: Record<string, unknown>,
+  ) => {
+    const list = order();
+    const after = variables.after as string | null;
+    const start =
+      after === null
+        ? 0
+        : list.findIndex(
+            (node) =>
+              String(node.updatedAt) < after.split("|")[0] ||
+              (String(node.updatedAt) === after.split("|")[0] &&
+                Number(node.number) < Number(after.split("|")[1])),
+          );
+    const page = list.slice(start, start + 2);
+    served += 1;
+    // A comment on pull request 32 after the first page was served.
+    if (served === 1)
+      nodes[2] = { ...nodes[2], updatedAt: "2026-10-02T09:00:00Z" };
+    return {
+      repository: {
+        id: project.authority.repositoryNodeId,
+        pullRequests: {
+          pageInfo: {
+            hasNextPage: start + 2 < list.length,
+            endCursor: key(page[page.length - 1]),
+          },
+          nodes: page,
+        },
+      },
+    };
+  };
+  const collected = await collectMaintainerDecisions(
+    project,
+    SEPTEMBER,
+    graphql,
+  );
+  expect(
+    collected.decisions.map((entry) => [entry.number, entry.login]),
+  ).toEqual([
+    [30, "ana"],
+    [31, "ana"],
+    [32, "ben"],
+    [33, "cal"],
+  ]);
+  // A read that never settles is refused, never split from a partial record.
+  let minute = 0;
+  await expect(
+    collectMaintainerDecisions(project, SEPTEMBER, async () => {
+      minute += 1;
+      return {
+        repository: {
+          id: project.authority.repositoryNodeId,
+          pullRequests: {
+            pageInfo: { hasNextPage: false },
+            nodes: [
+              pull(40, {
+                updatedAt: `2026-10-02T09:${String(minute).padStart(2, "0")}:00Z`,
+                ...mergedBy(user(11, "ana")),
+              }),
+            ],
+          },
+        },
+      };
+    }),
+  ).rejects.toThrow("kept changing during the read");
 });
 
 test("the GitHub reader retries a refused answer and never returns a GraphQL error as data", async () => {
@@ -743,6 +850,104 @@ test("a month with a maintainer share distributes exactly its amount and stores 
     expect(() =>
       sqlite.exec("DELETE FROM monthly_maintainer_share_rows"),
     ).toThrow();
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a busy month's decision record is stored exactly through statements within D1's limit", () => {
+  // D1 refuses a statement over 100 KB, and the import is one transaction:
+  // one oversized statement would leave every project in the file unstored.
+  // elizaOS/eliza merged about 3,900 scored pull requests in 30 days of the
+  // public ledger; 1,200 decisions make a record of about 250 KB.
+  const ids = ["1001", "1002", "1003", "1004"];
+  const decisionBytes = maintainerDecisionBytes(
+    record(
+      Array.from({ length: 1200 }, (_, index) =>
+        decision(30_000 + index, ids[index % 4], `maintainer-${index % 4}`),
+      ),
+    ),
+  );
+  expect(decisionBytes.length).toBeGreaterThan(200_000);
+  const policyBytes = Buffer.from(JSON.stringify(sharedProject(2000)));
+  const base = buildMonthlyBase(
+    { projectId: "eliza", period: SEPTEMBER, generatedAt: GENERATED_AT },
+    snapshotBytes,
+    policyBytes,
+    decisionBytes,
+  );
+  const sql = monthlyBasesSql(
+    {
+      period: SEPTEMBER,
+      skipped: [],
+      bases: [{ ...base, manifest: policyBytes.toString() }],
+    },
+    "2026-10-01T00:11:00.000Z",
+  );
+  const statements = sql.trimEnd().split("\n");
+  expect(
+    Math.max(...statements.map((line) => Buffer.byteLength(line))),
+  ).toBeLessThanOrEqual(100_000);
+  // SQLite orders group_concat's input only by an ORDER BY inside the
+  // aggregate; the order of a subquery it reads from is not promised.
+  expect(
+    statements.find((line) =>
+      line.startsWith("INSERT INTO monthly_maintainer_shares("),
+    ),
+  ).toContain("group_concat(part,'' ORDER BY sequence)");
+
+  const { sqlite } = sqliteD1(
+    readdirSync("migrations")
+      .filter((name) => name.endsWith(".sql"))
+      .sort(),
+  );
+  // One transaction, like the D1 import. Statement by statement, because
+  // Bun's exec of several statements raises only the last one's error.
+  const apply = (lines: string[]) => {
+    sqlite.exec("BEGIN");
+    try {
+      for (const line of lines) sqlite.run(line);
+      sqlite.exec("COMMIT");
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  };
+  try {
+    // A lost part stores nothing: the share statement fails the import.
+    const first = statements.findIndex((line) => line.includes("_parts("));
+    expect(() =>
+      apply(statements.filter((_, index) => index !== first)),
+    ).toThrow("NOT NULL");
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM monthly_reward_bases").get(),
+    ).toEqual({ n: 0 });
+    // Parts written in reverse and scanned in reverse still join in order.
+    sqlite.exec("PRAGMA reverse_unordered_selects=ON");
+    const parts = statements.filter((line) => line.includes("_parts("));
+    apply([
+      ...statements.slice(0, first),
+      ...parts.toReversed(),
+      ...statements.slice(first + parts.length),
+    ]);
+    apply(statements);
+    expect(
+      sqlite
+        .query(
+          "SELECT decisions,decisions_sha256 digest FROM monthly_maintainer_shares",
+        )
+        .all(),
+    ).toEqual([
+      {
+        decisions: new TextDecoder().decode(decisionBytes),
+        digest: base.maintainerShare?.decisionsSha256 ?? "",
+      },
+    ]);
+    expect(
+      sqlite
+        .query("SELECT COUNT(*) n FROM monthly_maintainer_share_parts")
+        .get(),
+    ).toEqual({ n: 0 });
   } finally {
     sqlite.close();
   }

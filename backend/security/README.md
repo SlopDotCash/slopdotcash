@@ -255,7 +255,7 @@ records one decision per case revision:
 
 | Decision | Rule | Case change in `live` |
 |---|---|---|
-| `duplicate` | Same report digest as an earlier case of the program (no model call), or both calls name the same earlier case | `receipt_state: duplicate`, `duplicate_of`, event `decide` |
+| `duplicate` | Same report digest as an earlier case of the program (no model call), or both calls name the same earlier case. The calls omit earlier cases waiting on the pass's own request for proof or closed by the pass as `no-proof-received` | `receipt_state: duplicate`, `duplicate_of`, event `decide` |
 | `does-not-qualify` | Both calls name the same published line and neither finds loss of funds plausible | `receipt_state: out-of-scope`, the line quoted in the reason, event `decide` |
 | `needs-proof` | Both calls find no reproduction steps or runnable proof | `receipt_state: needs-information`, a 14-day clock in `next_action_due_at`, event `request-information` |
 | `no-proof-received` | The clock ran out with no new report version | `receipt_state: rejected`, event `decide` |
@@ -446,9 +446,19 @@ project turned the deposit off; a released row keeps `outcome_reason =
 'turned-off'` and the time in `outcome_at`, with no outcome. It then starts
 the work that waited, three reports per sweep: the screening of a saved
 report still `queued`, or the owner's notice and the analysis of a linked
-GitHub report that has neither. Only a paid ask and a released ask are looked
-at; a row that record-only mode wrote is never touched. Each start is safe to
-repeat.
+GitHub report that has neither, or the owner's notice of an older-style link
+GitHub has not confirmed yet. That claim notice is tried once: the sweep sets
+`claim_notice_at` after a try that wrote the notice or found nobody to tell
+(no technical approver with current GitHub authority, or a retired project),
+so such a claim never takes the sweep's slots again. A try that fails, on a
+GitHub outage or on any other error, is not recorded there; the sweep sets
+`claim_retry_at` instead, logs an error that is not an outage by name, goes
+on to the next claim, and orders retried claims behind claims not tried yet,
+oldest retry first, so a lasting failure on some claims cannot keep a later
+claim from its notice.
+Only a paid ask and a
+released ask are looked at; a row that record-only mode wrote is never
+touched. Each start is safe to repeat.
 
 **Outcome.** The same sweep sets `refund_due` or `kept_due` on a paid row
 with no outcome (`reportDepositOutcome`), with one fixed reason:

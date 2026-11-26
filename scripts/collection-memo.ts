@@ -732,7 +732,8 @@ export class CollectionMemoSession {
 
   /**
    * Counts why one live attribution was not recorded for reuse. Diagnostic
-   * only: numbers, hashes and paths are masked so reasons group by kind.
+   * only: 40-character hex hashes and digit runs are masked; other text,
+   * such as a repository path, is kept, so such reasons group by that text.
    */
   noteNotReusable(reasons: readonly string[]) {
     const kinds = new Set(
