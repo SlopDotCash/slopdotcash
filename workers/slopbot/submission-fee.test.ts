@@ -62,6 +62,7 @@ import {
   feeSettingSince,
   feeUnpaid,
   feeWays,
+  keepMarkAt,
   refreshSubmissionFee,
   reopenKeptFee,
   wantedAtOpen,
@@ -211,6 +212,8 @@ function world(options: WorldOptions = {}) {
      * closes none. `graphqlDown` makes the linked-issue read fail.
      */
     wantedEvents: null as { type: string; at: string; label: string }[] | null,
+    /** When the keep-fee label was added; defaults to the close time. */
+    keepLabelAt: null as string | null,
     graphqlDown: false,
     repoLabels: [] as string[],
     draft: options.draft ?? false,
@@ -399,6 +402,20 @@ function world(options: WorldOptions = {}) {
             repository: {
               pullRequest: {
                 createdAt: options.openedAt ?? OPENED_AFTER,
+                timelineItems: {
+                  nodes: github.labels.includes(SUBMISSION_FEE_KEEP_LABEL)
+                    ? [
+                        {
+                          __typename: "LabeledEvent",
+                          createdAt:
+                            github.keepLabelAt ??
+                            github.closedAt ??
+                            OPENED_AFTER,
+                          label: { name: SUBMISSION_FEE_KEEP_LABEL },
+                        },
+                      ]
+                    : [],
+                },
                 closingIssuesReferences: {
                   nodes:
                     github.wantedEvents === null
@@ -991,6 +1008,36 @@ test("closed for a wanted issue: refunded unless a maintainer adds the keep labe
     } finally {
       w.close();
     }
+  }
+});
+
+test("closed for a wanted issue: a keep label added after the 7 days does not keep the fee", async () => {
+  const w = world();
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    w.pay(paid.toISOString());
+    await w.check(paid);
+    w.github.wantedEvents = [
+      {
+        type: "LabeledEvent",
+        at: "2026-11-01T00:00:00Z",
+        label: "slop-wanted",
+      },
+    ];
+    const closed = new Date(paid.getTime() + 2 * DAY);
+    w.github.state = "closed";
+    w.github.closedAt = closed.toISOString();
+    await w.check(new Date(closed.getTime() + DAY));
+    // The maintainer marks it only after the 7-day window has passed.
+    w.github.labels.push(SUBMISSION_FEE_KEEP_LABEL);
+    w.github.keepLabelAt = new Date(closed.getTime() + 8 * DAY).toISOString();
+    expect((await w.check(new Date(closed.getTime() + 9 * DAY))).outcome).toBe(
+      "submission fee: refund_due: wanted",
+    );
+    expect(w.item()).toMatchObject({ outcome: "refund_due" });
+  } finally {
+    w.close();
   }
 });
 
@@ -2016,6 +2063,7 @@ test("the outcome rule", () => {
     appealUpheldAt: null,
     wanted: false,
     keepMarked: false,
+    keepMarkedAt: null,
   };
   expect(feeOutcome({ ...open, merged: true }, at(0))).toEqual({
     outcome: "refund_due",
@@ -2077,8 +2125,45 @@ test("the outcome rule", () => {
     nextCheckAt: null,
   });
   expect(
-    feeOutcome({ ...closed, wanted: true, keepMarked: true }, at(10)),
+    feeOutcome(
+      {
+        ...closed,
+        wanted: true,
+        keepMarked: true,
+        keepMarkedAt: at(5).toISOString(),
+      },
+      at(10),
+    ),
   ).toEqual({ outcome: "kept_due", why: "marked", nextCheckAt: null });
+  // A mark added after the 7-day window does not keep the fee, even when
+  // the check that sees it runs after the window.
+  expect(
+    feeOutcome(
+      {
+        ...closed,
+        wanted: true,
+        keepMarked: true,
+        keepMarkedAt: at(10.5).toISOString(),
+      },
+      at(11),
+    ),
+  ).toEqual({ outcome: "refund_due", why: "wanted", nextCheckAt: null });
+  // A mark added exactly at the due time is within the window.
+  expect(
+    feeOutcome(
+      {
+        ...closed,
+        wanted: true,
+        keepMarked: true,
+        keepMarkedAt: at(10).toISOString(),
+      },
+      at(10),
+    ).outcome,
+  ).toBe("kept_due");
+  // A mark whose addition time cannot be read waits, never keeps on a guess.
+  expect(
+    feeOutcome({ ...closed, wanted: true, keepMarked: true }, at(10)),
+  ).toEqual({ outcome: null, why: null, nextCheckAt: at(11).toISOString() });
   expect(feeOutcome({ ...closed, wanted: true }, at(9.9)).outcome).toBeNull();
   expect(feeOutcome({ ...closed, wanted: null }, at(10))).toEqual({
     outcome: null,
@@ -2096,6 +2181,7 @@ test("the wanted label counts only if it was on the issue when the pull request 
     repository: {
       pullRequest: {
         createdAt: "2026-11-20T00:00:00Z",
+        timelineItems: { nodes: [] },
         closingIssuesReferences: {
           nodes: [
             {
@@ -2144,6 +2230,50 @@ test("the wanted label counts only if it was on the issue when the pull request 
   expect(
     wantedAtOpen(answer([["LabeledEvent", "2026-11-19T00:00:00Z"]]), 8),
   ).toBe(false);
+});
+
+test("the keep mark reads the current label addition time", () => {
+  const answer = (events: [string, string, string][]) => ({
+    repository: {
+      pullRequest: {
+        createdAt: "2026-11-20T00:00:00Z",
+        timelineItems: {
+          nodes: events.map(([type, at, name]) => ({
+            __typename: type,
+            createdAt: at,
+            label: { name },
+          })),
+        },
+        closingIssuesReferences: { nodes: [] },
+      },
+    },
+  });
+  expect(keepMarkAt(answer([]))).toBeNull();
+  expect(
+    keepMarkAt(
+      answer([["LabeledEvent", "2026-11-21T00:00:00Z", "slop-keep-fee"]]),
+    ),
+  ).toBe("2026-11-21T00:00:00Z");
+  // Removed after adding: no current mark.
+  expect(
+    keepMarkAt(
+      answer([
+        ["LabeledEvent", "2026-11-21T00:00:00Z", "slop-keep-fee"],
+        ["UnlabeledEvent", "2026-11-22T00:00:00Z", "slop-keep-fee"],
+      ]),
+    ),
+  ).toBeNull();
+  // Re-added: the current addition is the later one; other labels ignored.
+  expect(
+    keepMarkAt(
+      answer([
+        ["LabeledEvent", "2026-11-21T00:00:00Z", "slop-keep-fee"],
+        ["UnlabeledEvent", "2026-11-22T00:00:00Z", "slop-keep-fee"],
+        ["LabeledEvent", "2026-11-23T00:00:00Z", "bug"],
+        ["LabeledEvent", "2026-11-24T00:00:00Z", "slop-keep-fee"],
+      ]),
+    ),
+  ).toBe("2026-11-24T00:00:00Z");
 });
 
 test("through the Worker: a deposit releases the review, and a merge event sets the refund", async () => {

@@ -1146,6 +1146,11 @@ export type FeeOutcomeFacts = {
   wanted: boolean | null;
   /** A maintainer's `slop-keep-fee` label is on the pull request. */
   keepMarked: boolean;
+  /**
+   * When the current `slop-keep-fee` label was added. Null when the label
+   * is absent or its addition time could not be read.
+   */
+  keepMarkedAt: string | null;
 };
 
 export type FeeOutcome =
@@ -1183,6 +1188,17 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
     if (facts.wanted === null) return wait(time + FEE_RECHECK_MS);
     if (facts.wanted && !facts.keepMarked)
       return { outcome: "refund_due", why: "wanted", nextCheckAt: null };
+    if (facts.wanted) {
+      // The mark keeps the fee only when a maintainer added it by the due
+      // time (PRD section 5: "added `slop-keep-fee` within 7 days"). A
+      // label added later, seen by a check that runs after the window,
+      // does not keep it; an unreadable addition time waits like an
+      // unreadable close time rather than keeping a fee on a guess.
+      const markedAt = Date.parse(facts.keepMarkedAt ?? "");
+      if (!Number.isFinite(markedAt)) return wait(time + FEE_RECHECK_MS);
+      if (markedAt > due)
+        return { outcome: "refund_due", why: "wanted", nextCheckAt: null };
+    }
     return {
       outcome: "kept_due",
       why: facts.wanted ? "marked" : "closed",
@@ -1204,6 +1220,13 @@ const WANTED_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       createdAt
+      timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], last: 100) {
+        nodes {
+          __typename
+          ... on LabeledEvent { createdAt label { name } }
+          ... on UnlabeledEvent { createdAt label { name } }
+        }
+      }
       closingIssuesReferences(first: 10) {
         nodes {
           repository { databaseId }
@@ -1230,6 +1253,7 @@ type WantedAnswer = {
   repository: {
     pullRequest: {
       createdAt: string;
+      timelineItems: { nodes: LabelEvent[] };
       closingIssuesReferences: {
         nodes: {
           repository: { databaseId: number } | null;
@@ -1267,20 +1291,46 @@ export function wantedAtOpen(answer: WantedAnswer, repositoryId: number) {
   });
 }
 
+/**
+ * When the pull request's current keep-fee label was added, or null when
+ * the label is absent. The fetched events are the most recent label
+ * events, so the last keep-label event is the current addition whenever
+ * the label stands; a label whose addition fell outside that window
+ * reads as absent here and the caller waits instead of guessing.
+ */
+export function keepMarkAt(answer: WantedAnswer): string | null {
+  const pull = answer.repository?.pullRequest;
+  if (!pull) return null;
+  const events = pull.timelineItems.nodes
+    .filter(
+      (event) =>
+        event.label?.name === SUBMISSION_FEE_KEEP_LABEL &&
+        Number.isFinite(Date.parse(event.createdAt ?? "")),
+    )
+    .sort(
+      (a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""),
+    );
+  const last = events.at(-1);
+  return last?.__typename === "LabeledEvent" ? (last.createdAt ?? null) : null;
+}
+
 /** Whether the pull request closes a wanted issue; null when unreadable. */
 async function closesWantedIssue(
   github: GitHubClient,
   job: PullRef & { repositoryId: number },
-): Promise<boolean | null> {
+): Promise<{ wanted: boolean | null; keepMarkedAt: string | null }> {
   try {
     const answer = await github.graphql<WantedAnswer>(WANTED_QUERY, {
       owner: job.owner,
       repo: job.repo,
       number: job.number,
     });
-    return wantedAtOpen(answer, job.repositoryId);
+    return {
+      wanted: wantedAtOpen(answer, job.repositoryId),
+      keepMarkedAt: keepMarkAt(answer),
+    };
   } catch {
-    return null;
+    return { wanted: null, keepMarkedAt: null };
   }
 }
 
@@ -1491,7 +1541,10 @@ export async function refreshSubmissionFee(
     const appeal = closed
       ? await slopbotCloseAppeal(db, job, pull.node_id)
       : null;
-    const wanted = closed ? await closesWantedIssue(github, job) : false;
+    const wantedFacts = closed
+      ? await closesWantedIssue(github, job)
+      : { wanted: false, keepMarkedAt: null };
+    const wanted = wantedFacts.wanted;
     if (wanted) await ensureKeepLabel(github, job);
     const decided = feeOutcome(
       {
@@ -1505,6 +1558,7 @@ export async function refreshSubmissionFee(
         keepMarked: (pull.labels ?? []).some(
           (label) => label.name === SUBMISSION_FEE_KEEP_LABEL,
         ),
+        keepMarkedAt: wantedFacts.keepMarkedAt,
       },
       now,
     );
