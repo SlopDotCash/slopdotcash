@@ -16,6 +16,8 @@
  * writes the history.
  */
 
+import { resolveRewardCapMinor } from "./reward-cap.mjs";
+
 /** Basis points of the monthly amount. */
 export const MAINTAINER_SHARE_LIMITS = Object.freeze({ min: 0, max: 3000 });
 
@@ -121,9 +123,11 @@ function nextCycle(cycleId) {
  */
 export function publishedMaintainerShare(project, now) {
   const reward = project?.reward;
-  if (reward?.kind !== "monthly-pool" || BigInt(reward.monthlyCapMinor) === 0n)
-    return null;
+  if (reward?.kind !== "monthly-pool") return null;
   const cycleId = now.toISOString().slice(0, 7);
+  // This month's amount is its cycle override when one is set, as every
+  // other monthly amount display resolves it.
+  if (BigInt(resolveRewardCapMinor(project, cycleId)) === 0n) return null;
   const current = maintainerShareBasisPoints(project, cycleId);
   const next = reward.maintainerShare ?? 0;
   if (current === 0 && next === 0) return null;

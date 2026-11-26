@@ -183,6 +183,28 @@ test("public lines name this month's share and a pending change", () => {
       now,
     ),
   ).toBeNull();
+  // This month's amount is its cycle override when one is set: a positive
+  // override on a zero base still has an amount to take a share of, and a
+  // zero override on a positive base has none this month.
+  const overrideUp = {
+    reward: {
+      ...steady.reward,
+      monthlyCapMinor: "0",
+      cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "250000000" }],
+    },
+  };
+  expect(maintainerShareNotice(overrideUp, now)).toBe(
+    "Maintainer share: 20% of the monthly amount, split among the maintainers who merge or close outside pull requests.",
+  );
+  expect(maintainerShareCardLine(overrideUp, now)).toBe("Maintainer share 20%");
+  const overrideDown = {
+    reward: {
+      ...steady.reward,
+      cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "0" }],
+    },
+  };
+  expect(maintainerShareNotice(overrideDown, now)).toBeNull();
+  expect(maintainerShareCardLine(overrideDown, now)).toBeNull();
 });
 
 test("the share is split by decisions, never exceeds its part, and skips excluded accounts", () => {
