@@ -106,11 +106,40 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function incompleteAssessment(projectId: string, id: string) {
+const privateScanFinding = "Private fixture finding text";
+const privateScanGap = "Private fixture coverage note";
+const privateScanPath = "slop-skill-template/private-fixture.md";
+
+async function incompleteAssessment(projectId: string, id: string, repository?: string) {
   const commit = "c".repeat(40);
   const template = "d".repeat(64);
-  const result = JSON.stringify({ schemaVersion: "slop-vetting-result-v2", assessmentId: id, disposition: "incomplete", assessed: { commitSha: commit, templateSha256: template } });
   const at = new Date().toISOString();
+  const [current] = await site.sql("SELECT revision, manifest_sha256 FROM projects WHERE id = ?", projectId);
+  const assessed = { commitSha: commit, templateSha256: template };
+  const result = JSON.stringify({
+    schemaVersion: "slop-vetting-result-v2",
+    assessmentId: id,
+    disposition: "incomplete",
+    assessed,
+    ...(repository === undefined ? {} : {
+      projectId,
+      revision: current?.revision,
+      manifestSha256: current?.manifest_sha256,
+      policyVersion: "fixture",
+      assessed: { ...assessed, repository, inputManifestSha256: "a".repeat(64), dependencyLocks: [] },
+      scan: { runId: "scan-1", startedAt: new Date(Date.now() - 1000).toISOString(), completedAt: at, reportSha256: "b".repeat(64) },
+      coverage: Object.fromEntries(["source", "manifests", "dependencies", "installScripts", "downloads", "agentInstructions"].map((surface) => [surface, { state: "complete", items: 1 }])),
+      checks: Object.fromEntries(["wallet-drainer", "credential-theft", "secret-exfiltration", "unsafe-execution", "prompt-injection"].map((check) => [check, "passed"])),
+      visibilityGaps: [privateScanGap],
+      execution: null,
+      reusedAssessmentId: null,
+      primaryReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-policy", inputManifestSha256: "a".repeat(64), runId: "primary", status: "completed", verdict: "findings", risk: "ambiguous", findingCount: 1 },
+      specialistReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-policy", inputManifestSha256: "a".repeat(64), runId: "specialist", status: "completed", verdict: "findings", risk: "ambiguous", findingCount: 1 },
+      artifacts: [],
+      findings: [{ severity: "medium", category: "other", summary: privateScanFinding, evidence: privateScanPath }],
+      confirmation: null,
+    }),
+  });
   await site.sql(
     "INSERT INTO vetting_assessments(id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at) SELECT ?, id, revision, manifest_sha256, ?, ?, ?, '9001', 'octo-root', ?, 'Browser journey fixture', 'incomplete', 'fixture', ?, ?, ?, ? FROM projects WHERE id = ?",
     id, "b".repeat(64), commit, template, at, result, await sha256(result), "e".repeat(64), at, projectId,
@@ -547,8 +576,22 @@ describe('Exempt only by the frozen set or an audited owner-approved grant (spec
     const fullName = await repository(users.eli, "exempt");
     const id = await createProject(users.eli, fullName, "Exempt");
     const assessment = `vet_${"7".repeat(32)}`;
-    await incompleteAssessment(id, assessment);
+    await incompleteAssessment(id, assessment, fullName);
+    await manage(id);
+    const reasons = named("region", "Why the scan did not clear");
+    await shown(reasons).toMatchObject({ visible: true, text: expect.stringContaining("Specialist: ambiguous") });
+    await shown(text("Findings in Slop's skill template block clearance.", true)).toMatchObject({ visible: true });
+    const checkPath = `/api/v1/project-setup/${encodeURIComponent(id)}/check`;
+    const ownerSetup = await site.fetch("POST", checkPath, {});
+    expect(ownerSetup.status).toBe(200);
+    expect(JSON.stringify(ownerSetup)).not.toMatch(/Private fixture|private-fixture/iu);
+    const publicProject = await site.fetch("GET", `/api/v1/projects/${encodeURIComponent(id)}`);
+    expect(JSON.stringify(publicProject)).not.toMatch(/block clearance|Private fixture|private-fixture/iu);
     await signOut(users.eli.login);
+    await signIn(users.pia.login, "/");
+    const strangerSetup = await site.fetch("POST", checkPath, {});
+    expect(JSON.stringify(strangerSetup)).not.toMatch(/block clearance|Private fixture|private-fixture|Slop-side block/iu);
+    await signOut(users.pia.login);
 
     await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=security`);
     await shown(named("heading", "Owner-approved exemption")).toMatchObject({ visible: true });

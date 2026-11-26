@@ -11,7 +11,7 @@ import { type Pin, pinOrUndefined } from "./livePin.vibe"
 import { pinReads } from "./pins.vibe"
 import { type Plan, type Requester, queueRepositories, requeueTemplate } from "./queue.vibe"
 import { reinstateFromScan } from "./record.vibe"
-import { type Assessment, nextAssessmentNumber, projectAssessments } from "./store.vibe"
+import { type Assessment, incompleteScan, nextAssessmentNumber, projectAssessments } from "./store.vibe"
 
 const maxAutomaticScans = 25
 export const freshScanReason = "Automatic fresh scan after two contributor flags paused the project"
@@ -80,6 +80,7 @@ export const ScanRequestsLive = Layer.effect(ScanRequests, effect {
   const services = try Effect.context<ScanNeeds>()
   return {
     queue: (ask) => Effect.provide(automaticScan(ask), services),
+    incomplete: (read) => Effect.provide(incompleteScan(read), services),
   } satisfies ScanRequests.Shape
 })
 

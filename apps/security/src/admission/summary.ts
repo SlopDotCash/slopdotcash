@@ -1,5 +1,5 @@
 // spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
-import { type RecordedResult, type ScanResult, type ScanReview, isScanResult, resultReviewers, scanSurfaces, scanThreats, specialistRequired, templatePrefix } from "./result.ts";
+import { type RecordedResult, type ScanResult, type ScanReview, advisoryReviewGap, isScanResult, resultReviewers, scanSurfaces, scanThreats, specialistRequired, templatePrefix } from "./result.ts";
 
 export type AssessmentState = "pending" | "clean" | "incomplete" | "malicious";
 export type FindingsLocation = "repository" | "template" | "both" | "unknown";
@@ -122,10 +122,19 @@ export function summarize(assessment: AssessmentFacts): Summary {
 }
 
 /** @throws {never} */
-export function quarantinedScanMessage(completedAt: string | null, location: FindingsLocation | undefined): string {
-  if (completedAt === null || location === undefined) return "The last scan could not finish, so it did not clear the project.";
+export function quarantinedScanMessage(completedAt: string | null, result: RecordedResult | undefined): string {
+  if (completedAt === null || result === undefined) return "The last scan could not finish, so it did not clear the project.";
+  const location = findingsLocationOf(result);
   if (location === "template") return "Findings in Slop's skill template block clearance.";
   if (location === "repository") return "Findings in the project repository block clearance.";
   if (location === "both") return "Findings in both the repository and skill template block clearance.";
-  return "Findings block clearance.";
+  if (location === "unknown") return "Findings block clearance.";
+  if (isScanResult(result) && result.primaryReview.status === "completed"
+    && (result.specialistReview?.status === "completed" || (result.specialistReview === null && !specialistRequired(result)))
+    && scanThreats.every((threat) => result.checks[threat] !== "not-run")
+    && scanSurfaces.every((surface) => result.coverage[surface].state === "complete")
+    && result.visibilityGaps.every(advisoryReviewGap)) {
+    return "The last scan finished, but it did not establish clearance.";
+  }
+  return "The last scan could not finish, so it did not clear the project.";
 }

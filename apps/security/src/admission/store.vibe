@@ -1,9 +1,11 @@
 // spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/security/enforcement.md, "A recorded result updates its repository once and confirmed malice bans at once"
 import { type Statement, first, rows, sql } from "@repo/platform/d1"
 import { Notices } from "@repo/ports/operations"
+import type { IncompleteScanRead } from "@repo/ports/security"
+import { scanClearanceView } from "../client/enforcement.vibe"
 import { owners } from "../enforcement/statements.vibe"
-import { type RecordedResult, storedResult } from "./result.ts"
-import { type AssessmentFacts, type Summary, findingsLocationOf, quarantinedScanMessage, summarize } from "./summary.ts"
+import { type RecordedResult, advisoryReviewGap, storedResult } from "./result.ts"
+import { type AssessmentFacts, type Summary, quarantinedScanMessage, summarize } from "./summary.ts"
 
 export schema AssessmentRow {
   row: number
@@ -77,6 +79,23 @@ function assessmentOf(row: AssessmentRow): Assessment {
 export effect function assessment(id: string) {
   const found = try first(AssessmentRow, sql`SELECT ${columns} FROM vetting_assessments a WHERE a.id = ${id}`)
   return found === undefined ? undefined : assessmentOf(found)
+}
+
+export effect function incompleteScan(read: { readonly projectId: string; readonly assessment: number }) {
+  const row = try first(AssessmentRow, sql`SELECT ${columns} FROM vetting_assessments a WHERE a.project_id = ${read.projectId} AND a.rowid = ${read.assessment} AND a.state = 'incomplete'`)
+  if (row === undefined) return undefined
+  const found = assessmentOf(row)
+  const result = found.result
+  if (result === undefined || found.completedAt === null || result.disposition !== "incomplete" || result.assessmentId !== found.id
+    || result.projectId !== found.projectId || result.revision !== found.revision || result.manifestSha256 !== found.manifestSha256
+    || result.assessed.commitSha !== found.commitSha || result.assessed.templateSha256 !== found.templateSha256) return undefined
+  const summary = summarize(found)
+  const facts = summary.scan
+  const visibilityGaps = facts?.visibilityGaps.some((gap) => !advisoryReviewGap(gap)) ? ["Additional coverage gaps were recorded."] : []
+  return {
+    message: quarantinedScanMessage(found.completedAt, found.result),
+    clearance: facts === undefined ? null : scanClearanceView({ ...summary, scan: { ...facts, visibilityGaps } }),
+  } satisfies IncompleteScanRead
 }
 
 export effect function projectAssessments(projectId: string) {
@@ -162,7 +181,7 @@ export effect function resultWrites(recording: Recording) {
     recipients: owners(result.projectId),
     kind: "ProjectScanFailed",
     subject: result.projectId,
-    detail: quarantinedScanMessage(recording.at, findingsLocationOf(result)),
+    detail: quarantinedScanMessage(recording.at, result),
     actionPath: `/projects/${result.projectId}`,
     sourceAt: recording.at,
     onlyIf: recorded,
