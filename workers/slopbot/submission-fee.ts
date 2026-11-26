@@ -1323,13 +1323,14 @@ function keepMarkAtFromNodes(nodes: LabelEvent[]): string | null {
 export function keepMarkAt(answer: WantedAnswer): string | null {
   const pull = answer.repository?.pullRequest;
   if (!pull) return null;
-  return keepMarkAtFromNodes(pull.timelineItems.nodes);
+  return keepMarkAtFromNodes(pull.timelineItems?.nodes ?? []);
 }
 
 /** Whether the pull request closes a wanted issue; null when unreadable. */
 async function closesWantedIssue(
   github: GitHubClient,
   job: PullRef & { repositoryId: number },
+  keepMarked: boolean,
 ): Promise<{ wanted: boolean | null; keepMarkedAt: string | null }> {
   try {
     const read = (before: string | null) =>
@@ -1342,12 +1343,15 @@ async function closesWantedIssue(
     const answer = await read(null);
     const pull = answer.repository?.pullRequest;
     if (!pull) return { wanted: false, keepMarkedAt: null };
-    let nodes = pull.timelineItems.nodes;
-    let pageInfo = pull.timelineItems.pageInfo;
+    const wanted = wantedAtOpen(answer, job.repositoryId);
+    let nodes = pull.timelineItems?.nodes ?? [];
+    let pageInfo = pull.timelineItems?.pageInfo;
     // A standing label whose addition is older than the newest 100 label
-    // events still has an addition time; page back until it is found so
-    // the deposit reaches an outcome instead of waiting on the window.
+    // events still has an addition time; page back only when the pull request
+    // is invited work and actually carries the keep label.
     while (
+      wanted &&
+      keepMarked &&
       keepEvents(nodes).length === 0 &&
       pageInfo?.hasPreviousPage &&
       pageInfo.startCursor
@@ -1355,13 +1359,14 @@ async function closesWantedIssue(
       const cursor = pageInfo.startCursor;
       const older = await read(cursor);
       const olderPull = older.repository?.pullRequest;
-      if (!olderPull || olderPull.timelineItems.nodes.length === 0) break;
-      nodes = [...olderPull.timelineItems.nodes, ...nodes];
-      pageInfo = olderPull.timelineItems.pageInfo;
+      const olderNodes = olderPull?.timelineItems?.nodes ?? [];
+      if (olderNodes.length === 0) break;
+      nodes = [...olderNodes, ...nodes];
+      pageInfo = olderPull?.timelineItems?.pageInfo;
       if (pageInfo?.startCursor === cursor) break;
     }
     return {
-      wanted: wantedAtOpen(answer, job.repositoryId),
+      wanted,
       keepMarkedAt: keepMarkAtFromNodes(nodes),
     };
   } catch {
@@ -1576,8 +1581,11 @@ export async function refreshSubmissionFee(
     const appeal = closed
       ? await slopbotCloseAppeal(db, job, pull.node_id)
       : null;
+    const keepMarked = (pull.labels ?? []).some(
+      (label) => label.name === SUBMISSION_FEE_KEEP_LABEL,
+    );
     const wantedFacts = closed
-      ? await closesWantedIssue(github, job)
+      ? await closesWantedIssue(github, job, keepMarked)
       : { wanted: false, keepMarkedAt: null };
     const wanted = wantedFacts.wanted;
     if (wanted) await ensureKeepLabel(github, job);
@@ -1590,9 +1598,7 @@ export async function refreshSubmissionFee(
         appealOpen: appeal?.open === 1,
         appealUpheldAt: appeal?.upheld_at ?? null,
         wanted,
-        keepMarked: (pull.labels ?? []).some(
-          (label) => label.name === SUBMISSION_FEE_KEEP_LABEL,
-        ),
+        keepMarked,
         keepMarkedAt: wantedFacts.keepMarkedAt,
       },
       now,
