@@ -331,7 +331,10 @@ function watch(opened: BrowserContext, into: Session) {
   });
   opened.on("weberror", (error) => into.console.push(`pageerror ${error.error().message}`));
   opened.on("requestfailed", (request) => {
-    if (request.url().startsWith(site)) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${request.failure()?.errorText ?? ""}`);
+    const error = request.failure()?.errorText ?? "";
+    const resource = request.resourceType();
+    if (error === "net::ERR_ABORTED" && request.method() === "GET" && (resource === "fetch" || resource === "xhr")) return;
+    if (request.url().startsWith(site)) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${error}`);
   });
   opened.on("response", (response) => {
     if (response.url().startsWith(site) && response.status() >= 400) into.failed.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
