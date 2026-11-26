@@ -3,6 +3,7 @@
 // @source backend/submission-fee/handler.ts
 // @source src/lib/security-report-deposit.mjs
 // @source migrations/0145_security_report_deposits.sql
+// @source migrations/0155_security_report_deposit_claim_notice.sql
 // @evidence backend/security/report-deposit.test.ts
 // @evidence backend/security/submissions.test.ts
 // @evidence scripts/security-report-deposit.test.ts
@@ -21,6 +22,14 @@
 // when the mode is not live or the project turned the deposit off;
 // decideOutcomes sets refund_due or kept_due on a paid row by
 // reportDepositOutcome; the Worker then records refunded or kept.
+// startReleasedWork, older-style link: a claim GitHub has not confirmed yet
+// whose row was paid or released gets one try at its owner's notice;
+// claim_notice_at records a try that ended, whether or not anyone could be
+// told, so the claim never takes the sweep's slots again. A try that failed,
+// on a GitHub outage or on any other error, records no try, though notice
+// rows written before the error stay; claim_retry_at orders such a claim
+// behind claims not tried yet (ordering is covered by the unit tests, not
+// modelled).
 // reportDepositOutcome: not live or project off sends back; a first response
 // that is not a keeping close sends back; 14 silent days send back; a
 // duplicate, an out-of-scope close or a person's rejection marked spam keeps
@@ -36,7 +45,8 @@ module api_security_report_deposit {
     paid: bool, paidAt: int, outcome: str, reason: str, receipt: str,
     appeal: str, from: str, closedAt: int, spam: bool, request: str,
     screened: bool, notified: bool, forwarded: bool, now: int, asks: int,
-    askedOutsideLive: bool, keptBad: bool, touchedHeld: bool }
+    askedOutsideLive: bool, keptBad: bool, touchedHeld: bool,
+    claim: bool, released: bool, claimTried: bool }
   var s: Deposit
   pure val SILENT = 2
   pure val STOOD = 1
@@ -47,7 +57,8 @@ module api_security_report_deposit {
     row: "none", paid: false, paidAt: -1, outcome: "none", reason: "none",
     receipt: "none", appeal: "none", from: "none", closedAt: -1, spam: false,
     request: "none", screened: false, notified: false, forwarded: false, now: 0,
-    asks: 0, askedOutsideLive: false, keptBad: false, touchedHeld: false }
+    asks: 0, askedOutsideLive: false, keptBad: false, touchedHeld: false,
+    claim: false, released: false, claimTried: false }
 
   val held = s.row == "asked" and not(s.paid) and s.outcome == "none"
   val turnedOff = s.mode != "live" or not(s.on)
@@ -57,12 +68,19 @@ module api_security_report_deposit {
   action ownerSets(on: bool): bool = all { s.on != on, s' = s.with("on", on) }
 
   // The report is accepted and stored at once; the row commits with its case.
-  action accept(exempt: bool, rate: bool): bool = all { not(s.exists),
+  // `claim` is an older-style link (`createCase`, mode `claim`) that GitHub
+  // has not confirmed yet.
+  def accepted(exempt: bool, rate: bool, claim: bool): Deposit = {
     val asks = s.mode != "off" and s.on and rate and not(exempt)
     val row = if (not(asks)) "none" else if (s.mode == "live") "asked" else "recorded"
-    s' = s.with("exists", true).with("receipt", "received").with("row", row)
+    s.with("exists", true).with("receipt", "received").with("row", row)
       .with("asks", if (row == "asked") s.asks + 1 else s.asks)
-      .with("askedOutsideLive", s.askedOutsideLive or (row == "asked" and s.mode != "live")) }
+      .with("askedOutsideLive", s.askedOutsideLive or (row == "asked" and s.mode != "live"))
+      .with("claim", claim) }
+  action accept(exempt: bool, rate: bool): bool = all { not(s.exists),
+    s' = accepted(exempt, rate, false) }
+  action acceptClaim(exempt: bool, rate: bool): bool = all { not(s.exists),
+    s' = accepted(exempt, rate, true) }
   // A report from before the switch-on: it has a case and no row.
   action existedBefore = all { not(s.exists), s.mode != "live",
     s' = s.with("exists", true).with("before", true).with("receipt", "received") }
@@ -112,7 +130,20 @@ module api_security_report_deposit {
   action tick = all { s.now < 4, s' = s.with("now", s.now + 1) }
 
   // releaseUnpaid: an unpaid ask that no longer applies holds nothing.
-  action sweepRelease = all { held, turnedOff, s' = s.with("row", "recorded") }
+  action sweepRelease = all { held, turnedOff,
+    s' = s.with("row", "recorded").with("released", true) }
+  // startReleasedWork, older-style link: one try at the owner's notice of a
+  // paid or released claim. `reachable` is whether a technical approver with
+  // current authority exists; the try is recorded either way.
+  val claimReady = s.claim and not(held) and not(s.claimTried) and
+    ((s.row == "asked" and s.paid) or (s.row == "recorded" and s.released))
+  action sweepClaimNotice(reachable: bool): bool = all { claimReady,
+    s' = touch(s.with("claimTried", true).with("notified", s.notified or reachable)) }
+  // A try that failed (a permission-provider outage, or any other error of
+  // the notice) is not recorded: the claim stays ready for a later sweep.
+  // `partly` is whether some notice rows were written before the error.
+  action sweepClaimFailed(partly: bool): bool = all { claimReady,
+    s' = touch(s.with("notified", s.notified or partly)) }
   // reportDepositOutcome, on a paid row with no outcome.
   val stood = s.appeal != "open" and s.closedAt >= 0 and s.now >= s.closedAt + STOOD
   val decision: str =
@@ -140,6 +171,9 @@ module api_security_report_deposit {
     { nondet m = Set("off", "dry_run", "live").oneOf() setMode(m) },
     { nondet on = Set(true, false).oneOf() ownerSets(on) },
     { nondet e = Set(true, false).oneOf() nondet r = Set(true, false).oneOf() accept(e, r) },
+    { nondet e = Set(true, false).oneOf() nondet r = Set(true, false).oneOf() acceptClaim(e, r) },
+    { nondet reach = Set(true, false).oneOf() sweepClaimNotice(reach) },
+    { nondet partly = Set(true, false).oneOf() sweepClaimFailed(partly) },
     { nondet o = Set("triaging", "duplicate", "out-of-scope", "rejected", "needs-information").oneOf() routine(o) },
     { nondet o = Set("confirmed", "duplicate", "out-of-scope", "rejected").oneOf()
       nondet sp = Set(true, false).oneOf() decide(o, sp) },
@@ -163,6 +197,8 @@ module api_security_report_deposit {
     (s.outcome == "kept_due" or s.outcome == "kept") implies keeping.contains(s.reason),
     // An open appeal is the reviewer's path.
     (s.appeal == "open") iff (s.receipt == "disputed"),
+    // Only a claim whose row was paid or released is ever tried.
+    s.claimTried implies (s.claim and (s.paid or s.released)),
   }
 
   run liveAskHoldsTest = init.then(setMode("live")).then(accept(false, true))
@@ -240,6 +276,26 @@ module api_security_report_deposit {
     .expect(s.outcome == "refund_due" and s.reason == "turned-off" and invariant)
   run reorganisedPaymentWaitsAgainTest = init.then(setMode("live")).then(accept(false, true)).then(pay)
     .then(unpay).expect(held and invariant).then(screen.fail())
+  run heldClaimIsNotToldTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .expect(held and invariant).then(sweepClaimNotice(true).fail())
+  run paidClaimIsToldOnceTest = init.then(setMode("live")).then(acceptClaim(false, true)).then(pay)
+    .then(sweepClaimNotice(true)).expect(s.notified and s.claimTried and invariant)
+    .then(sweepClaimNotice(true).fail())
+  run unreachableClaimIsTriedOnceTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .then(pay).then(sweepClaimNotice(false))
+    .expect(not(s.notified) and s.claimTried and invariant)
+    .then(sweepClaimNotice(true).fail())
+  run failedClaimIsTriedAgainTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .then(pay).then(sweepClaimFailed(false)).expect(not(s.claimTried) and not(s.notified) and invariant)
+    .then(sweepClaimFailed(true)).expect(not(s.claimTried) and s.notified and invariant)
+    .then(sweepClaimNotice(true)).expect(s.notified and s.claimTried and invariant)
+  run heldClaimFailsNoTryTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .expect(held and invariant).then(sweepClaimFailed(true).fail())
+  run turnedOffClaimIsToldTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .then(ownerSets(false)).then(sweepRelease).then(sweepClaimNotice(true))
+    .expect(s.notified and not(held) and invariant)
+  run dryRunClaimIsNotSweptTest = init.then(acceptClaim(false, true))
+    .expect(s.row == "recorded" and not(held)).then(sweepClaimNotice(true).fail())
   run decidedDepositKeepsItsPaymentTest = init.then(setMode("live")).then(accept(false, true)).then(pay)
     .then(screen).then(routine("triaging")).then(sweepOutcome).then(unpay.fail())
 }

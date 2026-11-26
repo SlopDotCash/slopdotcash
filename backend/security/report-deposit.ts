@@ -48,6 +48,7 @@ import {
   reportingContext,
   type SecurityApiDependencies,
 } from "./case-store";
+import { reportingAuthorityUnavailable } from "./project-access";
 import { depositHeldSql } from "./report-deposit-hold";
 import { ROUTINE_ACTOR, ROUTINE_PROOF_NEXT_ACTION } from "./routine-decisions";
 
@@ -495,6 +496,25 @@ async function startReleasedWork(
     )
     .bind(RELEASE_LIMIT)
     .all<{ id: string; project_id: string; reporter_github_id: string }>();
+  // An older-style link that GitHub has not confirmed yet has no analysis to
+  // start, but its owner's notice of the claim waited too. It is tried once:
+  // `claim_notice_at` is set after a try that wrote the notice or found
+  // nobody to tell (no recipient, or a retired project), so a claim nobody
+  // can be told about never takes these slots again. A claim whose try
+  // failed, on a GitHub outage or on any other error, keeps waiting, but
+  // behind every claim not tried yet and behind claims retried longer ago
+  // (`claim_retry_at`), so a failure that lasts cannot hold the slots.
+  const claimed = await deps.db
+    .prepare(
+      `SELECT c.id, c.project_id FROM security_report_deposits d
+         JOIN security_cases c ON c.id = d.case_id
+        WHERE ${ready} AND NOT ${depositHeldSql("d.case_id")}
+          AND c.submission_state = 'claimed' AND d.claim_notice_at IS NULL
+        ORDER BY d.claim_retry_at IS NOT NULL, d.claim_retry_at ASC,
+                 d.asked_at ASC, d.case_id ASC LIMIT ?1`,
+    )
+    .bind(RELEASE_LIMIT)
+    .all<{ id: string; project_id: string }>();
   let started = 0;
   for (const row of saved.results) {
     await work.screen(row.submission_id);
@@ -505,7 +525,47 @@ async function startReleasedWork(
     await work.analyze(row.id);
     started++;
   }
+  for (const row of claimed.results) {
+    // Only a try that ended is recorded. A failed one leaves the claim for a
+    // later sweep; an error that is not a permission-provider outage is
+    // logged by name, and never stops the claims after it.
+    let failed = false;
+    await ownerNotice(deps, row.id, row.project_id).catch((error: unknown) => {
+      if (projectRetired(error)) return;
+      failed = true;
+      if (!reportingAuthorityUnavailable(error))
+        console.error(
+          "security report deposit claim notice failed",
+          error instanceof Error ? error.name : "unknown",
+        );
+    });
+    if (failed) {
+      await deps.db
+        .prepare(
+          "UPDATE security_report_deposits SET claim_retry_at = ?1 WHERE case_id = ?2 AND claim_notice_at IS NULL",
+        )
+        .bind(deps.now().toISOString(), row.id)
+        .run();
+      continue;
+    }
+    await deps.db
+      .prepare(
+        "UPDATE security_report_deposits SET claim_notice_at = ?1 WHERE case_id = ?2 AND claim_notice_at IS NULL",
+      )
+      .bind(deps.now().toISOString(), row.id)
+      .run();
+    started++;
+  }
   return started;
+}
+
+/** `reportingContext` refuses a retired or unknown project: nobody to tell. */
+function projectRetired(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "project_not_found"
+  );
 }
 
 /**
@@ -520,7 +580,7 @@ async function ownerNotice(
 ): Promise<void> {
   const event = await deps.db
     .prepare(
-      "SELECT case_revision, idempotency_key FROM security_case_events WHERE case_id = ? AND kind IN ('submit', 'submit-direct', 'receive', 'verify-link') ORDER BY case_revision DESC LIMIT 1",
+      "SELECT case_revision, idempotency_key FROM security_case_events WHERE case_id = ? AND kind IN ('submit', 'submit-direct', 'receive', 'verify-link', 'claim') ORDER BY case_revision DESC LIMIT 1",
     )
     .bind(caseId)
     .first<{ case_revision: number; idempotency_key: string }>();
