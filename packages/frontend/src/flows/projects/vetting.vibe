@@ -42,7 +42,7 @@ schema RevokeRequest { reason: string; decisionReference: string; confirmation: 
 
 const ScanRequest = Schema.Struct({ projectId: Schema.String, revision: Schema.Number, reason: Schema.String, repository: Schema.optionalKey(Schema.String) })
 
-schema GrantedAnswer { exemption: AdmissionExemption; replayed?: boolean; setup?: null; clearance: ProjectClearance }
+const GrantedAnswer = Schema.Struct({ exemption: AdmissionExemption, replayed: Schema.optionalKey(Schema.Boolean), setup: Schema.optionalKey(Schema.Null), clearance: ProjectClearance })
 
 const granting = route({ ...grantExemption, request: GrantRequest, answer: GrantedAnswer })
 const revoking = route({ ...revokeExemption, request: RevokeRequest })
