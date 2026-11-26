@@ -26,15 +26,19 @@ import { forwardingRoutes } from "./forwarding/routes.vibe"
 import { intakeSettings } from "./intake/availability.vibe"
 import { submissionReadRoutes } from "./intake/list.vibe"
 import { intakeRoutes } from "./intake/routes.vibe"
+import { operatorQueueRoutes, readSecurityQueue, runSecurityQueueRetry, securityQueueAccess } from "./operator/queue.vibe"
+import { sendOwnerReminders } from "./operator/reminders.vibe"
 import { AuditLive } from "./privacy/port.vibe"
 import { reportBucket } from "./privacy/reads.vibe"
 import { SecurityProgramPublicationLive } from "./program/publication.vibe"
+import { readKeyRoutes } from "./readKey/routes.vibe"
+import { importGithubReports } from "./cases/receiptCheck.vibe"
 import { reportingProgramsLive } from "./receipt/program.vibe"
 import { remediationAct, remediationContribution } from "./remediation/routes.vibe"
 import { readRoutine, routineRoutes, routineSettings, routineSweep, runRoutine } from "./routine/routes.vibe"
 import { screeningRoutes } from "./screening/routes.vibe"
 
-export { AccessJournalLive, AuditLive, ClearanceLive, EnforcementLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ReportDepositsLive, ScanRequestsLive, SecurityNoticeAccessLive, SecurityProgramPublicationLive, VettingBansLive, approvedAwardsLive, caseActionHandlersLive, chainedHandlers, enforcementPorts, remediationAct, remediationContribution, withDecidingEvidence, withRetainedEvidence }
+export { AccessJournalLive, AuditLive, ClearanceLive, EnforcementLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ReportDepositsLive, ScanRequestsLive, SecurityNoticeAccessLive, SecurityProgramPublicationLive, VettingBansLive, approvedAwardsLive, caseActionHandlersLive, chainedHandlers, enforcementPorts, importGithubReports, readSecurityQueue, remediationAct, remediationContribution, runSecurityQueueRetry, securityQueueAccess, sendOwnerReminders, withDecidingEvidence, withRetainedEvidence }
 
 export interface SecurityEnv {
   readonly VETTING_EVIDENCE: R2Bucket
@@ -50,6 +54,7 @@ export interface SecurityEnv {
   readonly SLOP_INTAKE_GRANT_KEY?: string
   readonly SECURITY_ROUTINE_DECISIONS?: string
   readonly SECURITY_REPORT_DEPOSIT?: string
+  readonly OPERATOR_FEED_TOKEN?: string
 }
 
 export function securityBindings(env: SecurityEnv) {
@@ -64,6 +69,7 @@ export function securityBindings(env: SecurityEnv) {
     privateRoute({ apiKey: env.SURPLUS_API_KEY, ...env.SLOP_ANALYSIS_API_ORIGIN === undefined ? {} : { baseUrl: env.SLOP_ANALYSIS_API_ORIGIN } }),
     routineSettings(env.SECURITY_ROUTINE_DECISIONS),
     reportDepositSettings(env.SECURITY_REPORT_DEPOSIT),
+    securityQueueAccess(env.OPERATOR_FEED_TOKEN),
   )
 }
 
@@ -89,7 +95,7 @@ const behindSecurityRequests = HttpRouter.use((router) => router.addGlobalMiddle
 export const security = area({
   name: "security",
   api: [...api, readRoutine, runRoutine],
-  routes: Layer.mergeAll(evidenceRoutes, intakeRoutes, submissionReadRoutes, admissionRoutes, enforcementRoutes, caseRoutes, forwardingRoutes, screeningRoutes, routineRoutes, behindSecurityRequests),
+  routes: Layer.mergeAll(evidenceRoutes, intakeRoutes, submissionReadRoutes, admissionRoutes, enforcementRoutes, caseRoutes, forwardingRoutes, screeningRoutes, routineRoutes, readKeyRoutes, operatorQueueRoutes, behindSecurityRequests),
   provides: Layer.provideMerge(
     Layer.mergeAll(AuditLive, VettingBansLive, Layer.provideMerge(ScanRequestsLive, ProjectEventsLive), approvedAwardsLive, awardClearancesLive, caseActionHandlersLive, SecurityNoticeAccessLive, SecurityProgramPublicationLive, ReportDepositsLive),
     reportingProgramsLive,

@@ -43,6 +43,8 @@ schema BaseRepository { readonly id: number }
 export schema PullRead {
   readonly draft: boolean
   readonly merged: boolean
+  readonly merged_at?: string | null
+  readonly created_at?: string | null
   readonly head: Commit
   readonly base: { readonly sha: string; readonly ref: string; readonly repo: BaseRepository }
   readonly additions: number

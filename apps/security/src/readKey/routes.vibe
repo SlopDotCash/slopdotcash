@@ -1,0 +1,102 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { base64url, randomBytes, sha256Hex } from "@repo/platform/crypto"
+import { D1, first, sql } from "@repo/platform/d1"
+import { type Actor, type Admission, Caller, handle, handleRaw, json, methodNotAllowed } from "@repo/platform/http"
+import type { AnyRoute, Route } from "@repo/platform/route"
+import {
+  SECURITY_READ_KEY_PATTERN,
+  SECURITY_READ_KEY_PREFIX,
+  SECURITY_READ_KEY_ROUTES,
+  type SecurityReadKeyCreated,
+  type SecurityReadKeyStatus,
+  createSecurityReadKey,
+  deleteSecurityReadKey,
+  readKeyApi,
+  readSecurityReadKey,
+} from "../client/readKey.vibe"
+
+schema KeyStatusRow {
+  created_at: string
+  last_used_at: string | null
+}
+
+schema KeyActorRow {
+  actor_id: string
+  github_id: string
+  login: string
+  last_used_at: string | null
+}
+
+const lastUsedStepMs = 60 * 60 * 1000
+const readKeyRouteSet: ReadonlySet<string> = new Set(SECURITY_READ_KEY_ROUTES)
+
+function apiParts(url: string): ReadonlyArray<string> {
+  const path = new URL(url, "http://security.invalid").pathname
+  if (!path.startsWith("/api/v1/")) return []
+  return path.slice("/api/v1/".length).split("/").filter((part) => part !== "")
+}
+
+effect function keyStatus(githubId: string) {
+  const row = try first(KeyStatusRow, sql`SELECT created_at, last_used_at FROM security_read_keys WHERE github_id = ${githubId} AND revoked_at IS NULL`)
+  return { key: row === undefined ? null : { createdAt: row.created_at, lastUsedAt: row.last_used_at } } satisfies SecurityReadKeyStatus
+}
+
+effect function createdKey(actor: Actor) {
+  const at = try isoNow()
+  const secret = `${SECURITY_READ_KEY_PREFIX}${base64url(try randomBytes(32))}`
+  const hash = try sha256Hex(secret)
+  try (try D1).batch([
+    sql`UPDATE security_read_keys SET revoked_at = ${at} WHERE github_id = ${actor.githubId} AND revoked_at IS NULL`,
+    sql`INSERT INTO security_read_keys (key_sha256, github_id, created_at) VALUES (${hash}, ${actor.githubId}, ${at})`,
+  ])
+  return { ...(try keyStatus(actor.githubId)), secret } satisfies SecurityReadKeyCreated
+}
+
+effect function revokedKey(actor: Actor) {
+  const at = try isoNow()
+  try (try D1).batch([sql`UPDATE security_read_keys SET revoked_at = ${at} WHERE github_id = ${actor.githubId} AND revoked_at IS NULL`])
+  return try keyStatus(actor.githubId)
+}
+
+export effect function securityReadKeyActor() {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (request.method !== "GET") return undefined
+  const parts = apiParts(request.originalUrl)
+  if (parts.length < 1 || parts.length > 2 || !readKeyRouteSet.has(parts[0] ?? "")) return undefined
+  const header = request.headers.authorization ?? ""
+  if (!header.startsWith("Bearer ")) return undefined
+  const secret = header.slice("Bearer ".length)
+  if (!SECURITY_READ_KEY_PATTERN.test(secret)) return undefined
+  const hash = try sha256Hex(secret)
+  const row = try first(KeyActorRow, sql`SELECT m.actor_id, m.github_id, m.login, k.last_used_at FROM security_read_keys k JOIN points_members m ON m.github_id = k.github_id WHERE k.key_sha256 = ${hash} AND k.revoked_at IS NULL AND m.closed_at IS NULL`)
+  if (row === undefined) return undefined
+  const nowMs = try Clock.currentTimeMillis
+  if (row.last_used_at === null || nowMs - millisOf(row.last_used_at) >= lastUsedStepMs) {
+    try (try D1).run(sql`UPDATE security_read_keys SET last_used_at = ${try isoNow()} WHERE key_sha256 = ${hash} AND revoked_at IS NULL`)
+  }
+  return { actorId: row.actor_id, githubId: row.github_id, login: row.login } satisfies Actor
+}
+
+export effect function securityReadActor(route: Pick<AnyRoute, "actorMismatch">) {
+  return (try Caller).current(route) catch effect (error) => {
+    if (error._tag !== "Unauthenticated" && error._tag !== "SessionExpired") throw error
+    const fromKey = try securityReadKeyActor()
+    if (fromKey !== undefined) return fromKey
+    throw error
+  }
+}
+
+export function handleSecurityRead<B, A, E, R>(route: Route<B, A, "session">, f: (input: Admission<"session">) => HttpServerResponse.HttpServerResponse!E!R) {
+  return handleRaw({ ...route, access: "public" as const }, (input) => effect {
+    const actor = try securityReadActor(route)
+    return try f({ ...input, actor })
+  })
+}
+
+export const readKeyRoutes = Layer.mergeAll(
+  handle(readSecurityReadKey, (input) => keyStatus(input.actor.githubId)),
+  handle(createSecurityReadKey, (input) => createdKey(input.actor)),
+  handle(deleteSecurityReadKey, (input) => revokedKey(input.actor)),
+  methodNotAllowed(readKeyApi, succeed(json({ error: "method_not_allowed", message: "Method not allowed" }, 405))),
+)

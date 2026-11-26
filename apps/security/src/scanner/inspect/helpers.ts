@@ -249,7 +249,11 @@ function localPath(directory: string | null, word: Word, allowRoot = false): str
 /** @throws {never} */
 function scriptAlias(text: string, target: string): unknown {
   try {
-    return (JSON.parse(text) as { scripts?: Record<string, unknown> } | null)?.scripts?.[target];
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null || !("scripts" in parsed)) return undefined;
+    const scripts = parsed.scripts;
+    if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts)) return undefined;
+    return Object.getOwnPropertyDescriptor(scripts, target)?.value;
   } catch {
     return undefined;
   }

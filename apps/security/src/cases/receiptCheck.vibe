@@ -10,11 +10,13 @@ import { zero } from "../../gen/settlement__money.effect.vibe"
 import { markerLine } from "../forwarding/advisories.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import { type PrivateReport, privateReports } from "../receipt/github.vibe"
-import { type ReportingProgram, termsAtReceipt } from "../receipt/program.vibe"
+import { type ReportingProgram, ReportingPrograms, termsAtReceipt } from "../receipt/program.vibe"
 import { type CaseRole, caseEvent, caseInsert } from "../receipt/statements.vibe"
+import { routineActorGithubId } from "../routine/reasons.ts"
 import { awardColumns, caseRecord } from "./rows.vibe"
 import { depositAsk } from "../deposit/ask.vibe"
 import { depositHeld } from "../deposit/held.vibe"
+import { recordAdvisoryStates } from "./advisoryStates.vibe"
 import { accessLog, caseNotices } from "./store.vibe"
 
 export type Reconciled = { readonly kind: "ok"; readonly received: ReadonlyArray<string> } | { readonly kind: "unavailable" }
@@ -126,6 +128,7 @@ export effect function reconcileProgram(projectId: string, program: ReportingPro
   const listed = try privateReports(program.repository)
   if (listed === undefined) return { kind: "unavailable" } satisfies Reconciled
   const reports = scope === "own" ? listed.filter((report) => report.author.githubId === actor.githubId) : listed
+  if (scope === "all") try recordAdvisoryStates(program.repository, listed)
   const receivedCases: string[] = []
   for (const report of reports) {
     const caseId = try receivedReport(projectId, program, report, actor)
@@ -133,4 +136,32 @@ export effect function reconcileProgram(projectId: string, program: ReportingPro
   }
   try rejectUnconfirmed(projectId, program, listed, actor, scope === "own" ? actor.githubId : null)
   return { kind: "ok", received: receivedCases } satisfies Reconciled
+}
+
+const automaticImportPrograms = 5
+const automaticActor: Actor = { actorId: routineActorGithubId, githubId: routineActorGithubId, login: routineActorGithubId }
+
+export effect function importGithubReports() {
+  const programs = try rows(Held, sql`SELECT id FROM projects WHERE status = 'active' AND json_type(manifest, '$.securityBounty') = 'object' ORDER BY id`)
+  const nowMs = try Clock.currentTimeMillis
+  const start = programs.length > automaticImportPrograms ? Math.floor(nowMs / 300_000) % programs.length : 0
+  const turn = [...programs.slice(start), ...programs.slice(0, start)].slice(0, automaticImportPrograms)
+  const reporting = try ReportingPrograms
+  let received = 0
+  let unavailable = 0
+  for (const { id } of turn) {
+    const outcome = effect {
+      const program = try reporting.current(id)
+      if (program === undefined) return undefined
+      const result = try reconcileProgram(id, program, automaticActor, "all")
+      if (result.kind !== "ok") return undefined
+      return result.received.length
+    } catch effect () => {
+      try Effect.logError("security automatic import: one program failed")
+      return undefined
+    }
+    if (outcome === undefined) unavailable += 1
+    else received += outcome
+  }
+  return { programs: turn.length, received, unavailable }
 }

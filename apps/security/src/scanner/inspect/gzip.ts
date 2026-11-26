@@ -8,6 +8,13 @@ interface Inflated {
   readonly engine: { readonly bytesWritten: number };
 }
 
+function isInflated(value: unknown): value is Inflated {
+  if (typeof value !== "object" || value === null || !("buffer" in value) || !("engine" in value)) return false;
+  if (!(value.buffer instanceof Uint8Array)) return false;
+  const engine = value.engine;
+  return typeof engine === "object" && engine !== null && "bytesWritten" in engine && typeof engine.bytesWritten === "number";
+}
+
 /** @throws {never} */
 function latin1(bytes: Uint8Array): string {
   let text = "";
@@ -62,13 +69,14 @@ function gzipHeader(bytes: Uint8Array, archiveSha256: string, sourcePath: string
 
 /** @throws {Error} */
 function members(bytes: Uint8Array, digest: string, path: string): { payload: Uint8Array; headers: string[] } {
-  const decoded = gunzipSync(bytes, { info: true }) as unknown as Inflated;
-  if (decoded.engine.bytesWritten !== bytes.byteLength) throw new Error("Unconsumed compressed-object bytes");
+  const decoded: unknown = gunzipSync(bytes, { info: true });
+  if (!isInflated(decoded) || decoded.engine.bytesWritten !== bytes.byteLength) throw new Error("Unconsumed compressed-object bytes");
   const headers: string[] = [];
   let offset = 0;
   while (offset < bytes.length) {
     const header = gzipHeader(bytes.subarray(offset), digest, path, headers.length + 1, offset);
-    const member = inflateRawSync(bytes.subarray(offset + header.length), { info: true }) as unknown as Inflated;
+    const member: unknown = inflateRawSync(bytes.subarray(offset + header.length), { info: true });
+    if (!isInflated(member)) throw new Error("Invalid gzip member");
     offset += header.length + member.engine.bytesWritten + 8;
     if (offset > bytes.length) throw new Error("Truncated gzip member");
     headers.push(header.text);

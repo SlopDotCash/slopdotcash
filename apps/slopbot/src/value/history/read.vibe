@@ -52,14 +52,14 @@ export effect function valueHistoryPage(repository: HistoryRepository, pullReque
 }
 
 export effect function workUnitHistoryPage(repository: HistoryRepository, pullRequestNumber: number, after: number, through: number | null) {
-  const path = repository.nodeId === null ? "$.repository" : "$.repositoryNodeId"
+  const identity = repository.nodeId === null ? sql`repository` : sql`repository_node_id`
   const found = try first(JointJson, sql`WITH RECURSIVE
     bounds AS (SELECT COALESCE(MAX(sequence), 0) AS maximum, COALESCE(${through}, MAX(sequence), 0) AS through_sequence FROM slopbot_work_unit_journal),
     lineage(record_digest) AS (
-      SELECT j.record_digest FROM slopbot_work_unit_journal j, bounds b
-      WHERE j.sequence <= b.through_sequence AND EXISTS (
-        SELECT 1 FROM json_each(j.record_json, '$.sources') s
-        WHERE json_extract(s.value, ${path}) = ${repository.nodeId ?? repository.id} AND json_extract(s.value, '$.pullRequestNumber') = ${pullRequestNumber})
+      SELECT j.record_digest FROM slopbot_work_unit_source_numbers n
+      JOIN slopbot_work_unit_journal j ON j.record_digest = n.record_digest, bounds b
+      WHERE n.${identity} = ${repository.nodeId ?? repository.id} AND n.pull_request_number = ${pullRequestNumber}
+        AND j.sequence <= b.through_sequence
       UNION
       SELECT p.predecessor_digest FROM slopbot_work_unit_predecessors p JOIN lineage l ON p.record_digest = l.record_digest
     )
