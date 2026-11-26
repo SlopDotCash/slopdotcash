@@ -18,7 +18,7 @@ import { QualificationFailed, qualificationTransport, qualifyValueModels, qualif
 import { consumePendingValueRequests } from "../src/value/inference/consumer.vibe"
 import { type Verdict, background, gateOf, importEnv, importReceipt, importServed } from "./support/catchup/importWorker.vibe"
 import { importRequest as requestFor } from "./support/catchup/requests.ts"
-import { commitPagePath, currentPath, registeredUnderFormerPath, renamed, requestedAtCurrentPath, scriptedAtCurrentPath, servedWithBlobUrls } from "./support/catchup/renamed.vibe"
+import { commitPagePath, currentPath, registeredUnderFormerPath, renamed, requestedAtCurrentPath, requestedAtFormerPath, scriptedAtCurrentPath, servedWithBlobUrls } from "./support/catchup/renamed.vibe"
 import { type World, installed, producerRevision, qualificationProviders, seeded, services, unresolvedVerdict } from "./support/inferenceWorker.vibe"
 
 service Journey {
@@ -313,6 +313,13 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     const outcome = try consumePendingValueRequests()
     const rows = try (try D1).all(sql`SELECT json_extract(record_json, '$.repositoryDatabaseId') AS repositoryId, json_extract(record_json, '$.pullRequestNumber') AS pull FROM slopbot_value_journal`)
     try same({ outcome, rows }, { outcome: ["Published"], rows: [{ repositoryId: 7001, pull: 1 }] })
+  })
+
+  it.effect('A value request at a renamed repository former path stays parked and never authorizes review (spec/slopbot/repositoryScope.md, "A former path kept as an alias is history")', () => effect {
+    try (try D1).batch(requestedAtFormerPath("catchup-renamed-former-1", 2, "2026-11-10T00:00:00.000Z"))
+    const outcome = try consumePendingValueRequests()
+    const rows = try (try D1).all(sql`SELECT json_extract(record_json, '$.repositoryDatabaseId') AS repositoryId, json_extract(record_json, '$.pullRequestNumber') AS pull FROM slopbot_value_journal WHERE json_extract(record_json, '$.pullRequestNumber') = 2`)
+    try same({ outcome, rows }, { outcome: ["Parked"], rows: [] })
   })
 
   it.effect('The qualification transport allows one fallback after an exact Orbio quota refusal, stops on any other unreceipted error, an Orbio quota type with another code included, charges the refusal its bound, and a real run needs both keys; each value path asks Surplus Sonnet first and, after a spending denial, finishes through Orbio in two requests (spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route")', () => effect {
