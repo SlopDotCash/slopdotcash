@@ -13,6 +13,7 @@ import { type ApiMethod, type ApiResponse, type AutoMergeApi, githubAutoMergeApi
 import { mergeComment } from "../src/ready/autoMergeRules.ts"
 import { lostQueueNumber } from "./support/ingressNumbers.vibe"
 import { journeyBuild } from "./support/journey.vibe"
+import { type Api, mergeComment, pilotRepository, pilotRepositoryId, projectFile, readyLabel, runReadyAutoMerge, slopbotBot } from "../src/programs/readyAutoMerge.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -337,6 +338,86 @@ layer(ReadyArea, { excludeTestServices: true, timeout: "240 seconds" })((it) => 
       open: { labels: [], line: null, row: { state: "off", head_sha: open.head, reason: "ready label is off for this project", next_check_at: null } },
       closed: ["slopbot:ready"],
     })
+  })
+
+  it.effect('Ready auto-merge merges only clean pull requests targeting the registered integration branch, labeled by Slopbot, approved at head, and touching nothing under .github/ (spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending")', () => effect {
+    const head = "a".repeat(40)
+    const projectContent = btoa(JSON.stringify({ repository: { fullName: pilotRepository, id: String(pilotRepositoryId), integrationBranch: "develop" } }))
+    const makePull = (number: number, overrides: Readonly<Record<string, unknown>> = {}) => ({
+      number,
+      state: "open",
+      merged: false,
+      draft: false,
+      mergeable: true,
+      mergeable_state: "clean",
+      head: { sha: head },
+      base: { ref: "develop", repo: { id: pilotRepositoryId } },
+      user: { id: 1001 },
+      changed_files: 1,
+      labels: [{ name: readyLabel }],
+      ...overrides,
+    })
+    const mergedCalls: Array<readonly [string, unknown]> = []
+    const commentCalls: Array<readonly [string, unknown]> = []
+    const pulls = new Map<number, Readonly<Record<string, unknown>>>([
+      [10, makePull(10)],
+      [11, makePull(11, { base: { ref: "main", repo: { id: pilotRepositoryId } } })],
+      [12, makePull(12)],
+      [13, makePull(13)],
+    ])
+    const api: Api = (method, path, body) => effect {
+      if (method === "GET" && path === `/repos/${pilotRepository}`) return { status: 200, data: { id: pilotRepositoryId, full_name: pilotRepository, default_branch: "main" } }
+      if (method === "GET" && path.startsWith(`/repos/${pilotRepository}/issues?state=open&labels=`)) {
+        return { status: 200, data: [10, 11, 12, 13].map((number) => ({ number, pull_request: {} })) }
+      }
+      if (method === "GET" && path.startsWith(`/repos/${pilotRepository}/contents/${projectFile}`)) {
+        return { status: 200, data: { encoding: "base64", content: projectContent } }
+      }
+      const pullMatch = /^\/repos\/SlopDotCash\/slopdotcash\/pulls\/(\d+)$/u.exec(path)
+      if (method === "GET" && pullMatch !== null) return { status: 200, data: pulls.get(Number(pullMatch[1])) }
+      const eventMatch = /^\/repos\/SlopDotCash\/slopdotcash\/issues\/(\d+)\/events/u.exec(path)
+      if (method === "GET" && eventMatch !== null) {
+        const number = Number(eventMatch[1])
+        const actor = number === 12 ? { id: 999, login: "human", type: "User" } : { ...slopbotBot, type: "Bot" }
+        return { status: 200, data: [{ event: "labeled", label: { name: readyLabel }, created_at: "2026-11-25T10:05:00Z", actor }] }
+      }
+      const reviewMatch = /^\/repos\/SlopDotCash\/slopdotcash\/pulls\/(\d+)\/reviews/u.exec(path)
+      if (method === "GET" && reviewMatch !== null) {
+        return { status: 200, data: [{ state: "APPROVED", commit_id: head, submitted_at: "2026-11-25T10:00:00Z", user: { id: 2002, login: "reviewer", type: "User" } }] }
+      }
+      if (method === "GET" && path === `/repos/${pilotRepository}/collaborators/reviewer/permission`) {
+        return { status: 200, data: { permission: "write", user: { id: 2002 } } }
+      }
+      const filesMatch = /^\/repos\/SlopDotCash\/slopdotcash\/pulls\/(\d+)\/files/u.exec(path)
+      if (method === "GET" && filesMatch !== null) {
+        const filename = Number(filesMatch[1]) === 13 ? ".github/workflows/ci.yml" : "apps/slopbot/src/x.ts"
+        return { status: 200, data: [{ filename }] }
+      }
+      if (method === "PUT" && path.endsWith("/merge")) {
+        mergedCalls.push([path, body])
+        return { status: 200, data: { merged: true } }
+      }
+      if (method === "POST" && path.endsWith("/comments")) {
+        commentCalls.push([path, body])
+        return { status: 201, data: { id: 1 } }
+      }
+      return { status: 404, data: null }
+    }
+    const offLines: string[] = []
+    const off = try runReadyAutoMerge({ api, repository: pilotRepository, enabled: "off", dryRun: false, log: (line) => sync(() => { offLines.push(line) }) })
+    const dry = try runReadyAutoMerge({ api, repository: pilotRepository, enabled: "off", dryRun: true, log: () => Effect.void })
+    const live = try runReadyAutoMerge({ api, repository: pilotRepository, enabled: "on", dryRun: false, log: () => Effect.void })
+    try same(
+      { off, offLines, dryActions: dry.map((entry) => [entry.number, entry.action]), liveActions: live.map((entry) => [entry.number, entry.action]), mergedCalls, commentCalls },
+      {
+        off: [],
+        offLines: ["SLOPBOT_AUTO_MERGE is not on; nothing was read or merged."],
+        dryActions: [[10, "would-merge"], [11, "skipped"], [12, "skipped"], [13, "skipped"]],
+        liveActions: [[10, "merged"], [11, "skipped"], [12, "skipped"], [13, "skipped"]],
+        mergedCalls: [[`/repos/${pilotRepository}/pulls/10/merge`, { sha: head, merge_method: "merge" }]],
+        commentCalls: [[`/repos/${pilotRepository}/issues/10/comments`, { body: mergeComment(head, ["reviewer"]) }]],
+      },
+    )
   })
 })
 

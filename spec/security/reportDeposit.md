@@ -195,7 +195,22 @@ starts at most 3 held works whose row is paid or released (never a row that
 record-only mode wrote): the screening of a saved report still queued with
 no review, or the owner notice keyed by the receipt event and the analysis
 of a report linked from GitHub that has neither yet (`startReleasedWork`).
-Each start is safe to repeat.
+Each start is safe to repeat. A reporter's claim that GitHub has not
+confirmed yet has no analysis to start, but its owner notice waited too
+(development pull request 3226, migration
+`0155_security_report_deposit_claim_notice.sql` there, `0204` here). The same
+sweep tries the notice of at most 3 such claims whose row is paid or
+released: the notice the claim would have written without a deposit, keyed by
+its `claim` event. A try that told the owners, or found nobody to tell (no
+program, a project that is unknown or retired, or no technical recipient
+other than the reporter), is recorded on the row (`claim_notice_at`) and that
+claim is never tried again; a claim GitHub confirms later is told by its
+`receive` event. A try that failed, because the owners' authority could not
+be read or for any other error, is not recorded as tried: only its time is
+kept (`claim_retry_at`), it is logged by name unless the authority was
+unavailable, and the sweep takes claims with no failed try first and then
+the one whose failed try is oldest, so a failure that lasts cannot hold the
+three places (`claimNoticeAfter`).
 
 ```quint
 pure def turnedOff(r: ReportDeposit): bool = r.mode != DepositLive or not(r.projectOn)
@@ -206,6 +221,20 @@ pure def stepReleaseOnlyWhenTurnedOff(before: ReportDeposit, via: str, after: Re
     and not(before.deposit.paid) and after.deposit.reason == TurnedOff and after.deposit.outcome == NoOutcome
 pure def sometimesReleased(r: ReportDeposit): bool = r.deposit.row == Recorded and r.deposit.reason == TurnedOff
 pure def sometimesReleasedAndScreened(r: ReportDeposit): bool = r.deposit.reason == TurnedOff and r.screening.phase == S::Running
+type ClaimTry = OwnersTold | NobodyToTell | TryFailed
+type ClaimNotice = { triedAt: int, retriedAt: int }
+pure val noClaimTry: ClaimNotice = { triedAt: 0, retriedAt: 0 }
+pure def claimNoticeAfter(notice: ClaimNotice, result: ClaimTry, nowMs: int): ClaimNotice =
+  if (notice.triedAt > 0) notice
+  else if (result == TryFailed) { ...notice, retriedAt: nowMs }
+  else { ...notice, triedAt: nowMs }
+pure def lawFailedClaimTryIsNotRecorded(notice: ClaimNotice, result: ClaimTry, nowMs: int): bool =
+  result == TryFailed implies claimNoticeAfter(notice, result, nowMs).triedAt == notice.triedAt
+pure def lawEndedClaimTryIsRecorded(notice: ClaimNotice, result: ClaimTry, nowMs: int): bool =
+  (result != TryFailed and notice.triedAt == 0) implies
+    claimNoticeAfter(notice, result, nowMs) == { ...notice, triedAt: nowMs }
+pure def lawRecordedClaimTryIsFinal(notice: ClaimNotice, result: ClaimTry, nowMs: int): bool =
+  notice.triedAt > 0 implies claimNoticeAfter(notice, result, nowMs) == notice
 ```
 
 ### A paid deposit is sent back on a first response and kept only after a keeping close stood seven days
@@ -316,6 +345,8 @@ routine pass, -3 the security API's own steps and -4 the fee side. The facts
 cover every receipt state with and without a spam mark, routing, a routine
 request, an answered request, an open or returned appeal, and the switch or
 the project off; the instants sit on either side of the 7- and 14-day bounds.
+The claim notices are one never tried, one whose try failed, and two already
+recorded, each with every result of a try.
 
 ```quint
 pure val byValues = Set(-4, -3, -2, 1, 2, 4)
@@ -344,6 +375,8 @@ pure val factsValues = Set(C::Received, C::NeedsInformation, C::Triaging, C::Con
     { ...baseFacts, receipt: receipt, mode: DepositDryRun },
     { ...baseFacts, receipt: receipt, projectOn: false, spamByPerson: true })))
 pure val nowMsValues = Set(1, 604800000, 604800001, 1209600001)
+pure val noticeValues = Set(noClaimTry, { triedAt: 0, retriedAt: 1 }, { triedAt: 1, retriedAt: 0 }, { triedAt: 604800000, retriedAt: 1 })
+pure val resultValues = Set(OwnersTold, NobodyToTell, TryFailed)
 pure val weight_pay = 6
 pure val weight_advance = 6
 pure val weight_decideOutcome = 8

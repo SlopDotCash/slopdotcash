@@ -5,6 +5,7 @@ import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { github } from "@repo/platform/github"
+import { unconfiguredGitHubApp } from "@repo/platform/github/app"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { githubFake } from "@repo/platform/testing/github"
@@ -16,6 +17,8 @@ import { dispatchFeeChecks } from "../src/fee/dispatch.vibe"
 import { gateSubmissionFee } from "../src/fee/gate.vibe"
 import { reopenKeptFee } from "../src/fee/items.vibe"
 import { feeReviewJob, refreshSubmissionFee } from "../src/fee/refresh.vibe"
+import { checkStandingDeposits } from "../src/fee/standing.vibe"
+import { standingDepositBatch } from "../src/fee/standingRules.ts"
 import { SubmissionFeeMode, feeUnpaid } from "../src/fee/store.vibe"
 import { webhookSettings } from "../src/ingress/webhook.vibe"
 import { type Job, JobQueue, readyJob } from "../src/jobs/job.vibe"
@@ -133,7 +136,7 @@ function servicesOf(fees: Fees, token: string) {
   const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, asFetch(handlerOf(() => fees))))
   const githubLayer = Layer.provide(github({ authority: fees.fake.authority, token: Redacted.make(token), userAgent: "slopbot-fee-journeys" }), http)
   const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-journeys-secret", SLOPBOT_APP_USER_ID: String(fees.fake.app.bot.id) })
-  return Layer.mergeAll(d1(fees.db), webCrypto, fees.clock.layer, ports, githubLayer, settings)
+  return Layer.mergeAll(d1(fees.db), webCrypto, fees.clock.layer, ports, http, githubLayer, unconfiguredGitHubApp, settings)
 }
 
 const World = Layer.effect(FeeWorld, effect {
@@ -463,6 +466,41 @@ layer(World, { timeout: "240 seconds" })((it) => {
       open: { paused: false, reviewedBefore: false },
       paused: { paused: true, reviewedBefore: false },
       reviewed: { paused: true, reviewedBefore: true },
+    })
+  })
+
+  it.effect('Active standing deposits beyond one batch never starve a due withdrawal or strike (spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on")', () => effect {
+    const { fees } = try FeeWorld
+    const activeInserts = Array.from({ length: standingDepositBatch }, (_, index) => {
+      const n = index + 1
+      return fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id)
+         VALUES (?, ?, 1, ?, '755000000000000000000', '75.4717', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', 'robinhood-standing', ?)`,
+      ).bind(`sd_active_${String(n).padStart(4, "0")}`, 1000 + n, `0x${String(n).padStart(64, "0")}`, n)
+    })
+    try Effect.promise(() => fees.db.batch([
+      ...activeInserts,
+      fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id, withdraw_requested_at)
+         VALUES ('sd_due_withdrawn', 9001, 1, ?, '755000000000000000000', '75.4717', '2026-11-05T00:00:00.000Z', '2026-11-05T00:00:00.000Z', 'robinhood-standing', 9001, '2026-11-06T00:00:00.000Z')`,
+      ).bind(`0x${"9001".padStart(64, "0")}`),
+      fees.db.prepare(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id)
+         VALUES ('sd_due_struck', 9002, 1, ?, '755000000000000000000', '75.4717', '2026-11-05T00:00:00.000Z', '2026-11-05T00:00:00.000Z', 'robinhood-standing', 9002)`,
+      ).bind(`0x${"9002".padStart(64, "0")}`),
+      fees.db.prepare(
+        `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+         VALUES (?, 99, 'sd_due_struck', 9002, ?, ?, 'ada', 'widgets', '2026-11-06T00:00:00.000Z', '2026-11-06T00:00:00.000Z', '2026-11-06T00:00:00.000Z', 'strike', 0, '2026-11-08T00:00:00.000Z', NULL, '2026-11-10T00:00:00.000Z')`,
+      ).bind(repositoryId, projectId, installationId),
+    ]))
+    const result = try at(Date.parse("2026-11-27T00:00:00.000Z"), checkStandingDeposits())
+    const rows = (try Effect.promise(() => fees.db.prepare("SELECT id, outcome, outcome_reason, strike_repository_id, strike_pull_number FROM standing_deposits WHERE id IN ('sd_due_withdrawn', 'sd_due_struck') ORDER BY id").all())).results
+    try same({ result, rows }, {
+      result: { read: 0, decided: 2 },
+      rows: [
+        { id: "sd_due_struck", outcome: "kept_due", outcome_reason: "strike", strike_repository_id: repositoryId, strike_pull_number: 99 },
+        { id: "sd_due_withdrawn", outcome: "refund_due", outcome_reason: "withdrawn", strike_repository_id: null, strike_pull_number: null },
+      ],
     })
   })
 })
