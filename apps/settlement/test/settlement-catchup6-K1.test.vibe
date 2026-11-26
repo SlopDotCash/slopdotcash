@@ -283,7 +283,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       try seed(db, "INSERT INTO points_staging (batch_id, sequence, payload) SELECT ?, ROW_NUMBER() OVER (ORDER BY rowid) - 1, payload FROM points_revisions", pointsBatch)
       try seed(db, "INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (?, ?, ?, 3)", pointsBatch, generatedAt, JSON.stringify([{ repository: asiRepository.id, from: "2026-11-01T00:00:00.000Z", to: cutoff, digest: snapshotSha256 }]))
 
-      const untrustedInvocations: ReadonlyArray<Readonly<Record<string, string>>> = [{ GITHUB_REPOSITORY: "fork/slopdotcash" }, { GITHUB_REF: "refs/heads/vibestack" }, { GITHUB_EVENT_NAME: "workflow_run" }]
+      const untrustedInvocations: ReadonlyArray<Readonly<Record<string, string>>> = [{ GITHUB_REPOSITORY: "fork/slopdotcash" }, { GITHUB_REF: "refs/heads/develop" }, { GITHUB_EVENT_NAME: "workflow_run" }]
       for (const untrusted of untrustedInvocations) {
         const refused = try run(world, { ...untrusted, ASI_CLOSEOUT_MODE: "inspect" })
         try same([refused.status, refused.stage.includes(refusedDuring("trusted invocation"))], [1, true])

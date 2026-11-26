@@ -24880,7 +24880,7 @@
     },
     {
       "path": "spec/settlement/asiNovemberCloseout.md",
-      "sha256": "ee2b8550119b216fb152bee274b2bd2809cf6258626d035341d7a274e8ab874d",
+      "sha256": "b89b3fe79db3251f9628fd8df5e9e5c73809bb6d8ca8e65160483870d3563aa6",
       "module": "settlement__asiNovemberCloseout",
       "stories": [
         {
