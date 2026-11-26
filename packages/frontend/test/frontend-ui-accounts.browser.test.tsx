@@ -263,7 +263,7 @@ describe('Replace a payout wallet without losing the current destination (spec/b
 });
 
 describe('Confirm a payout wallet for the awarded vault (spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault")', () => {
-  it('restores the stored authorization after reload and shows the binding only after finality (spec/backend/bindingConsent.md, "Payouts reopens with the current wallet authorization or finalized binding"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', async () => {
+  it('restores the stored authorization after reload and shows the binding only after finality (spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', async () => {
     await site.wallets({ evm: { name: "Anvil Wallet" } });
     await site.backendRpc();
     await signIn(users.kai.login, "/account#wallets");

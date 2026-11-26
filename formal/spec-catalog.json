@@ -909,7 +909,7 @@
     },
     {
       "path": "spec/backend/bindingConsent.md",
-      "sha256": "922227626ca354b382caf613015c465542e413140f94a1d7ecfb1b5cf9efce40",
+      "sha256": "d63009379a4e468697e48ae0a5e0f28d6a886b00bd82bd400e29a217a4d516fe",
       "module": "backend__bindingConsent",
       "stories": [
         {
@@ -973,17 +973,8 @@
           ]
         },
         {
-          "heading": "Story: Consent to bind the authorized payout wallet to a project vault / Payouts reopens with the current wallet authorization or finalized binding",
-          "line": 166,
-          "definitions": [
-            "PayoutBindingStatus",
-            "RetainedPayoutConsent",
-            "payoutBindingStatus"
-          ]
-        },
-        {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / A Solana binding is one half-signed transaction per generation that only the wallet slot completes",
-          "line": 192,
+          "line": 166,
           "definitions": [
             "absentPayment",
             "paymentFor",
@@ -1016,7 +1007,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox",
-          "line": 317,
+          "line": 291,
           "definitions": [
             "canSolanaAdmitAttempt",
             "solanaAdmitAttempt",
@@ -1031,7 +1022,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / The wallet registries move underneath through their own guarded events",
-          "line": 366,
+          "line": 340,
           "definitions": [
             "canObserveTime",
             "observeTime",
@@ -1064,7 +1055,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / Renewal, replacement, expiry, private completion and a replaced Solana claim are reachable",
-          "line": 424,
+          "line": 398,
           "definitions": [
             "consumedSample",
             "authorizedSample",
@@ -1127,7 +1118,7 @@
         },
         {
           "target": "../settlement/paymentDispatch.md",
-          "line": 323
+          "line": 297
         }
       ]
     },
@@ -25441,7 +25432,7 @@
     },
     {
       "path": "spec/settlement/bindingAuthority.md",
-      "sha256": "15e685e2e9e83eeff5cea2ffa54445fe059cbe7e17b3ee459f1ae8c90e619fc1",
+      "sha256": "43c30bba4ccb5836c3057c00f78c812373f812cb20bce5062d7eab76607f3846",
       "module": "settlement__bindingAuthority",
       "stories": [
         {
@@ -25454,11 +25445,11 @@
         },
         {
           "heading": "Story: Rotate the identity authority without the attester's cooperation",
-          "line": 164
+          "line": 191
         },
         {
           "heading": "Story: State the guarantees and the accepted risk",
-          "line": 207
+          "line": 234
         }
       ],
       "rules": [
@@ -25524,8 +25515,17 @@
           ]
         },
         {
+          "heading": "Story: Let the owner cancel an unpaid binding inside its window / Payouts reopens with the current wallet authorization or finalized binding",
+          "line": 164,
+          "definitions": [
+            "PayoutBindingStatus",
+            "RetainedPayoutConsent",
+            "payoutBindingStatus"
+          ]
+        },
+        {
           "heading": "Story: Rotate the identity authority without the attester's cooperation / The registrar on EVM, or the project owner on Solana, proposes and may cancel one rotation at a time",
-          "line": 166,
+          "line": 193,
           "definitions": [
             "rotationProposer",
             "excludedAuthority",
@@ -25537,7 +25537,7 @@
         },
         {
           "heading": "Story: Rotate the identity authority without the attester's cooperation / Solana needs the rotation authority's confirmation; anyone executes after the delay",
-          "line": 191,
+          "line": 218,
           "definitions": [
             "canConfirmRotation",
             "confirmRotation",
@@ -25547,7 +25547,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / Versions only grow, history is retained and the cancellation budget is bounded",
-          "line": 209,
+          "line": 236,
           "definitions": [
             "alwaysActorsUnique",
             "alwaysCancelBudget",
@@ -25565,7 +25565,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / With the owner-decision zero delay no cancellation window is ever open",
-          "line": 242,
+          "line": 269,
           "definitions": [
             "alwaysZeroDelayLeavesNoVeto",
             "sometimesCancelledWithDelay",
@@ -25579,7 +25579,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / Simulation samples",
-          "line": 264,
+          "line": 291,
           "definitions": [
             "byValues",
             "namedValues",
@@ -25598,7 +25598,9 @@
           ]
         }
       ],
-      "imports": [],
+      "imports": [
+        "backend__bindingConsent"
+      ],
       "references": [
         {
           "target": "./escrow.md",
