@@ -360,12 +360,33 @@ export function payingVaultFreeMinor(
   const read = (index.get(project.id) ?? []).filter(
     (vault) =>
       vault.freeBalance !== null &&
+      BASE_UNITS.test(vault.freeBalance) &&
       recorded.has(vaultKey(vault.network, vault.vault)),
   );
   if (read.length === 0) return null;
   return read
     .reduce((sum, vault) => sum + BigInt(vault.freeBalance as string), 0n)
     .toString();
+}
+
+/**
+ * The funded amount shown by one cycle's meter, in the reward asset's base
+ * units. An open cycle shows its on-chain pledge when pledge-locked or its
+ * recorded paying vaults' free funds; a closed cycle keeps the legacy
+ * committed amount it was recorded under.
+ */
+export function cyclePoolFundedMinor(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  cycleId: string,
+  now: Date,
+): string {
+  if (project.reward.kind !== "monthly-pool") return "0";
+  if (cycleId !== utcMonth(now)) return project.reward.committedMinor;
+  const status = poolFundingStatus(project, index, now);
+  if (status.state === "funded" && status.locked)
+    return status.owedMinor.toString();
+  return payingVaultFreeMinor(project, index) ?? project.reward.committedMinor;
 }
 
 /**

@@ -3,8 +3,9 @@ import { Link } from "./Link";
 import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
 import {
   cyclePoolFunded,
+  cyclePoolFundedMinor,
   loadPoolFunding,
-  payingVaultFreeMinor,
+  utcMonth,
 } from "./lib/pool-funding";
 import {
   type ProjectContributor,
@@ -54,14 +55,21 @@ export function CycleAllocation({
     (left, right) =>
       left.rank - right.rank || left.actor.id.localeCompare(right.actor.id),
   );
+  const now = new Date();
+  const openCycle = view.cycle.id === utcMonth(now);
   const [funding] = usePublicResource(
-    view.reward.kind === "monthly-pool",
+    view.reward.kind === "monthly-pool" && openCycle,
     loadPoolFunding,
     "Pool funding unavailable",
   );
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  const now = new Date();
   const funded = cyclePoolFunded(
+    view.project,
+    fundingIndex,
+    view.cycle.id,
+    now,
+  );
+  const fundedMinor = cyclePoolFundedMinor(
     view.project,
     fundingIndex,
     view.cycle.id,
@@ -81,14 +89,10 @@ export function CycleAllocation({
           <p>
             {funded ? (
               <FundedMeter
-                fundedMinor={
-                  payingVaultFreeMinor(view.project, fundingIndex) ??
-                  view.project.reward.committedMinor
-                }
+                fundedMinor={fundedMinor}
                 capMinor={view.reward.capMinor}
                 funded={formatRewardMinor(
-                  payingVaultFreeMinor(view.project, fundingIndex) ??
-                    view.project.reward.committedMinor,
+                  fundedMinor,
                   view.project.rewardAsset,
                 )}
                 cap={formatRewardMinor(

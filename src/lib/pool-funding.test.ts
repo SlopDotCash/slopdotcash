@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   asShown,
   cyclePoolFunded,
+  cyclePoolFundedMinor,
   listedThisMonth,
   listingPoolReward,
   monthsCovered,
@@ -607,4 +608,35 @@ test("paying vault free funds sum the recorded vaults only", () => {
     payingVaultFreeMinor(project("250000000"), index({ freeBalance: null })),
   ).toBeNull();
   expect(payingVaultFreeMinor(project("250000000"), null)).toBeNull();
+});
+
+test("cycle meter uses pledged or free vault funds for open cycles and committed funds for closed ones", () => {
+  const pool = project("250000000", "base-mainnet", {
+    fundingState: "pledged",
+    committedMinor: "0",
+  });
+  expect(cyclePoolFundedMinor(pool, index({}), "2026-11", NOW)).toBe(
+    "250000000",
+  );
+  const pledgedVault = index({
+    freeBalance: "0",
+    openPledgedGross: "250000000",
+    pledges: [{ period: "2026-11", amount: "250000000", open: true }],
+  });
+  expect(cyclePoolFunded(pool, pledgedVault, "2026-11", NOW)).toBe(true);
+  expect(cyclePoolFundedMinor(pool, pledgedVault, "2026-11", NOW)).toBe(
+    "250000000",
+  );
+  const committed = project("250000000", "base-mainnet", {
+    fundingState: "committed",
+    committedMinor: "125000000",
+  });
+  expect(
+    cyclePoolFundedMinor(
+      committed,
+      index({ freeBalance: "900000000" }),
+      "2026-10",
+      NOW,
+    ),
+  ).toBe("125000000");
 });
