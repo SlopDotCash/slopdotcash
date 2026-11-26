@@ -2,7 +2,7 @@
 import { switchedOn as submissionFeeSwitchedOn } from "@repo/backend/client"
 import { reportDepositPath, submissionFeePath } from "@repo/fees/client"
 import { REPORT_DEPOSIT_SWITCHED_ON } from "@repo/security/client"
-import { type ChainResult, type FreshRead, type Machine, type PayFlow, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConfirmUnsent, canConnectWallet, canDisconnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
+import { type ChainResult, type Event, type FreshRead, type NotAnEvent, type PayFlow, type Rejected, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConfirmUnsent, canConnectWallet, canDisconnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
 import type { Attempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { networkLabel } from "../../kernels/assetText.ts"
 import { fetchBounded } from "../../platform/bounded.vibe"
@@ -120,11 +120,18 @@ type Read =
   | { readonly kind: "checked"; readonly checked: ReturnType<typeof checkedRecord> }
   | { readonly kind: "failed" }
 
+export interface PayFlowMachine {
+  readonly changes: Stream.Stream<PayFlow>
+  get(): PayFlow!!
+  send(event: Event, by: number, isCurrent?: (state: PayFlow) => boolean): PayFlow!Rejected
+  receive(input: unknown, by: number): PayFlow!(NotAnEvent | Rejected)
+}
+
 export interface FeePay {
   readonly noun: Noun
   readonly address: PayAddress
   readonly repository: FeeRepository | undefined
-  readonly machine: Machine.Shape
+  readonly machine: PayFlowMachine
   readonly changes: Stream.Stream<FeeShown>
   open(): PayFlow!!HttpClient.HttpClient
   shown(): FeeShown!!
@@ -220,7 +227,7 @@ effect function attemptFeeCheck(connection: EvmConnection, saved: SavedDeposit, 
   return { check: try feeChainCheck(connection, saved, attempt, item, keeper, onSaved), failure: "" } satisfies Attempted
 }
 
-effect function followFeeDesk(machine: Machine.Shape, onAutoCheck: () => PayFlow!!Needs, onObserveNow: () => void!!, onReload: () => PayFlow!!HttpClient.HttpClient) {
+effect function followFeeDesk(machine: PayFlowMachine, onAutoCheck: () => PayFlow!!Needs, onObserveNow: () => void!!, onReload: () => PayFlow!!HttpClient.HttpClient) {
   const autoChecks = effect {
     while (true) {
       const before = try machine.get()
@@ -277,7 +284,7 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
 
   const machine = try machineOver(load, keep)
 
-  effect function sent(event: Parameters<Machine.Shape["send"]>[0], by: number) {
+  effect function sent(event: Parameters<PayFlowMachine["send"]>[0], by: number) {
     return try keptOrChanged(Effect.ignore(machine.send(event, by)))
   }
 

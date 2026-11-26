@@ -43,6 +43,7 @@ export function PayoutRow({ chain, network, projectId, amount, note, status, sta
   const name = networkLabel(network);
   const context = [testNetwork(network) ? name : undefined, note].filter((part): part is string => part !== undefined);
   const shown = <Status presentation={status} title={statusTitle} />;
+  const statusLabel = statusTitle === undefined ? undefined : statusTitle.toLowerCase().includes(status.label.toLowerCase()) ? statusTitle : `${status.label} — ${statusTitle}`;
   return (
     <ListItem
       className="flex-wrap"
@@ -61,7 +62,7 @@ export function PayoutRow({ chain, network, projectId, amount, note, status, sta
       actions={
         <>
           {statusHref !== undefined ? (
-            <a href={statusHref} aria-label={statusTitle} className={cn(focusRing, target, "rounded-sm hover:underline")}>
+            <a href={statusHref} aria-label={statusLabel} className={cn(focusRing, target, "rounded-sm hover:underline")}>
               {shown}
             </a>
           ) : explorerUrl !== undefined ? (

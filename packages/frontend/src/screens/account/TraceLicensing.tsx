@@ -45,6 +45,7 @@ export function TraceLicensing({ runtime, githubId }: { runtime: PageRuntime; gi
           <Button
             variant={setting.enabled ? "outline" : "primary"}
             size="sm"
+            className="h-auto py-2 whitespace-normal text-left"
             loading={busy}
             onClick={() =>
               void act(setTraceLicensing(githubId, !setting.enabled), (next) => {
@@ -59,6 +60,7 @@ export function TraceLicensing({ runtime, githubId }: { runtime: PageRuntime; gi
             <Button
               variant="secondary"
               size="sm"
+              className="h-auto py-2 whitespace-normal text-left"
               loading={busy}
               onClick={() =>
                 void act(updateTraceLicences(githubId, "opt-in"), (next) => {

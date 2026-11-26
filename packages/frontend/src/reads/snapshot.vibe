@@ -2,7 +2,7 @@
 import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type LeaderboardSnapshot, type ModelAttribution, type RepositoryRegistry, type ScoreEvent, PartsInvalid, SnapshotTooLarge, maxPartBytes, maxSnapshotBytes, readParts, validateScoreAndPayment } from "@repo/points/client"
-import { type Change, type EventKind, type LedgerRow, type Marker, type PaymentBasis, type Snapshot, Machine, initial, machineOver, noBasis, noMarker } from "../../gen/frontend__rankedSnapshot.effect.vibe"
+import { type Change, type Event, type EventKind, type LedgerRow, type Marker, type NotAnEvent, type PaymentBasis, type RankedSnapshot, type Rejected, type Snapshot, initial, machineOver, noBasis, noMarker } from "../../gen/frontend__rankedSnapshot.effect.vibe"
 import { fetchBoundedBytes } from "../platform/bounded.vibe"
 import { Deployment } from "../platform/config.vibe"
 import { Unreadable } from "./resource.vibe"
@@ -111,7 +111,14 @@ effect function leaderboardBytes(attempt: number, retry: number) {
   }
 }
 
-effect function readLeaderboard(ranked: Machine.Shape, registry: RepositoryRegistry, attempt: number, retry: number) {
+interface RankedMachine {
+  readonly changes: Stream.Stream<RankedSnapshot>
+  get(): RankedSnapshot!!
+  send(event: Event, isCurrent?: (state: RankedSnapshot) => boolean): RankedSnapshot!Rejected
+  receive(input: unknown): RankedSnapshot!(NotAnEvent | Rejected)
+}
+
+effect function readLeaderboard(ranked: RankedMachine, registry: RepositoryRegistry, attempt: number, retry: number) {
   const bytes = try leaderboardBytes(attempt, retry)
   const raw = try Effect.try({
     try: (): unknown => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),

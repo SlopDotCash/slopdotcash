@@ -16,7 +16,7 @@ export function ProjectList({ projects }: ProjectListProps) {
     <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
       {projects.map((project) => (
         <li key={project.id}>
-          <a href={adminHref(project.id)} onClick={openWithin(adminHref(project.id))} aria-label={`Open ${project.manifest.name}`} className="flex items-center gap-4 p-4 hover:bg-accent">
+          <a href={adminHref(project.id)} onClick={openWithin(adminHref(project.id))} title={`Open ${project.manifest.name}`} className="flex items-center gap-4 p-4 hover:bg-accent">
             <FolderGit2 aria-hidden className="size-5 shrink-0 text-muted-foreground" />
             <div className="flex min-w-0 flex-1 flex-col">
               <h3 className="font-semibold text-foreground">{project.manifest.name}</h3>

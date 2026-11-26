@@ -32,7 +32,7 @@ export function pageRuntime(route: Route): PageRuntime {
 export effect function watchSession(show: (shown: SessionShown) => void!!) {
   const deployment = try Deployment
   const session = try Session
-  for try (const view of session.changes) try show({ view, deployment })
+  try Stream.runForEach(session.changes, (view) => show({ view, deployment }))
 }
 
 export effect function signOut() {

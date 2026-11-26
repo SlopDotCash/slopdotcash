@@ -65,5 +65,5 @@ export effect function saveDraft(text: string) {
 }
 
 export effect function watchReferral(show: (view: ReferralView) => void!!) {
-  for try (const view of (try ReferralName).changes) try show(view)
+  try Stream.runForEach((try ReferralName).changes, show)
 }

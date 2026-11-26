@@ -54,21 +54,21 @@ function fakeWallet(unclearNonces: ReadonlyArray<bigint>) {
   const mined: Mined[] = [];
   const sent: string[] = [];
   const provider = {
-    async request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
+    request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
       const [first] = params as ReadonlyArray<Record<string, string>>;
-      if (method === "eth_requestAccounts" || method === "eth_accounts") return [payer];
-      if (method === "eth_chainId") return quantity(BigInt(chainId));
-      if (method === "eth_getTransactionCount") return quantity(firstNonce + BigInt(mined.length));
-      if (method === "eth_estimateGas") return "0x5208";
+      if (method === "eth_requestAccounts" || method === "eth_accounts") return Promise.resolve([payer]);
+      if (method === "eth_chainId") return Promise.resolve(quantity(BigInt(chainId)));
+      if (method === "eth_getTransactionCount") return Promise.resolve(quantity(firstNonce + BigInt(mined.length)));
+      if (method === "eth_estimateGas") return Promise.resolve("0x5208");
       if (method === "eth_sendTransaction") {
         const nonce = BigInt(String(first?.nonce));
         sent.push(String(first?.nonce));
         const entry = { hash: hash(mined.length + 1), nonce, to: String(first?.to), value: String(first?.value) };
         mined.push(entry);
-        if (unclearNonces.includes(nonce)) throw new Error("The wallet connection closed.");
-        return entry.hash;
+        if (unclearNonces.includes(nonce)) return Promise.reject(new Error("The wallet connection closed."));
+        return Promise.resolve(entry.hash);
       }
-      throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
+      return Promise.reject(Object.assign(new Error(`unsupported ${method}`), { code: 4200 }));
     },
   };
   return { provider, mined, sent };
@@ -147,15 +147,18 @@ const walletId = walletNamed("Payer wallet");
 const failureOf = <A, E extends { readonly _tag: string; readonly message?: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.match(effect, { onFailure: (error) => `${error._tag}: ${error.message ?? ""}`, onSuccess: () => "succeeded" });
 
-describe('Make wallet outcomes recoverable without repeating an uncertain send (spec/frontend/directBountyPrompt.md, "Story: Make wallet outcomes recoverable without repeating an uncertain send"; spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Verification candidates merge atomically with current storage"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request")', () => {
-  it("the payer sends both legs once, an uncertain second leg survives a reload and blocks a resend, and verification sends both hashes for the exact request", async () => {
+// spec/frontend/directBountyPrompt.md, "Story: Make wallet outcomes recoverable without repeating an uncertain send"; spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Verification candidates merge atomically with current storage"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"
+describe("Direct bounty payment recovery", () => {
+  it("uncertain second leg survives reload, blocks resend, and verifies both hashes", async () => {
     const wallet = fakeWallet([firstNonce + 1n]);
     const backend = fakeSite(wallet);
     const key = directKey(caseId, 0, false, owner);
 
     const first = page(backend.fetch);
     const sending = await first.runPromise(Effect.gen(function* () {
-      yield* (yield* BrowserSession).observe("load");
+      const browser = yield* BrowserSession;
+      yield* browser.observe("load");
+      yield* browser.navigate("SecurityCases");
       announce("5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", wallet.provider);
       const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
       const { form, authority } = yield* openCasePayment(bountyStorage(), seen);
@@ -174,7 +177,9 @@ describe('Make wallet outcomes recoverable without repeating an uncertain send (
 
     const reloaded = page(backend.fetch);
     const recovered = await reloaded.runPromise(Effect.gen(function* () {
-      yield* (yield* BrowserSession).observe("load");
+      const browser = yield* BrowserSession;
+      yield* browser.observe("load");
+      yield* browser.navigate("SecurityCases");
       announce("6b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", wallet.provider);
       const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
       const { form, authority } = yield* openCasePayment(bountyStorage(), seen);
@@ -325,14 +330,17 @@ function savedSolana() {
 }
 
 const solanaOpened = Effect.gen(function* () {
-  yield* (yield* BrowserSession).observe("load");
+  const browser = yield* BrowserSession;
+  yield* browser.observe("load");
+  yield* browser.navigate("SecurityCases");
   const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
   const { form, authority } = yield* openCaseSolanaPayment(bountyStorage(), seen);
   const connection = yield* connectSolanaPayer(yield* walletNamed("Payer Solana"), form.payer, authority);
   return { form, authority, connection };
 });
 
-describe('Send each prepared message at most once and recover it after expiry (spec/frontend/solanaBountyPrompt.md, "Story: Send each prepared message at most once and recover it after expiry"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt")', () => {
+// spec/frontend/solanaBountyPrompt.md, "Story: Send each prepared message at most once and recover it after expiry"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
+describe("Send each prepared message at most once and recover it after expiry", () => {
   it("a signature typed beside the saved one is stored as the candidate and is the one the case verifies", async () => {
     const payer = await solanaPayer();
     const wallet = solanaWallet(payer, () => undefined);
@@ -344,21 +352,21 @@ describe('Send each prepared message at most once and recover it after expiry (s
       const checked = yield* form.verify(otherSignature, authority);
       return { signature, saved, paid: checked.current.settlement?.state, phase: (yield* form.current()).phase };
     }));
-    expect(outcome).toEqual({ signature: wallet.sent[0], saved: { transaction: payer.transaction, signature: wallet.sent[0], attemptId: expect.any(String) }, paid: "paid", phase: "Verified" });
+    expect(outcome).toEqual({ signature: wallet.sent[0], saved: { transaction: payer.transaction, signature: wallet.sent[0], attemptId: expect.any(String) as unknown }, paid: "paid", phase: "Verified" });
     expect(wallet.sent).toHaveLength(1);
     expect(backend.actions).toEqual([{ action: "verify-payment", transactionIds: [otherSignature], signatures: undefined }]);
   });
 
   it("a signature the browser cannot save stays in page memory and is verified from the same page", async () => {
     const payer = await solanaPayer();
-    const setItem = Storage.prototype.setItem;
+    const descriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
     let blocked = false;
     Storage.prototype.setItem = function (this: Storage, key: string, value: string) {
       if (blocked) throw new DOMException("Storage is full.", "QuotaExceededError");
-      setItem.call(this, key, value);
+      if (typeof descriptor?.value === "function") (descriptor.value as (this: Storage, k: string, v: string) => void).call(this, key, value);
     };
     cleanups.push(() => {
-      Storage.prototype.setItem = setItem;
+      if (descriptor !== undefined) Object.defineProperty(Storage.prototype, "setItem", descriptor);
     });
     const wallet = solanaWallet(payer, () => {
       blocked = true;

@@ -36,7 +36,7 @@ effect function asked(provider: Eip1193, method: string, params: ReadonlyArray<u
     try: () => providerRequest(provider, method, params),
     catch: (caught) => {
       const failure = failureOf(caught)
-      return failure.code === 4001 ? new WalletDeclined({ message: declinedMessage }) : new WalletFailed({ message: failure.message === "" ? "The wallet request failed." : failure.message })
+      return failure.code === 4001 ? new WalletDeclined({ message: declinedMessage }) : new WalletFailed({ message: failure.message === "" ? "The wallet request failed." : failure.message, code: failure.code, cause: caught })
     },
   })
 }

@@ -56,6 +56,7 @@ const presentations: Readonly<Record<NotificationKind, (n: Notice) => NoticePres
   slopbot_appeal_review: appeal("Points dispute to review", "Appeal to decide"),
   slopbot_appeal_resolved: appeal("Points dispute resolved", "Appeal resolved"),
   slopbot_scam_review: (n) => present(`${n.subject} scam closure: review author`, "Open closed item on GitHub"),
+  trace_licensing_available: () => present("You can now license your traces", "Open trace licensing"),
 };
 
 const deliveryLabels: Readonly<Record<EmailDelivery, string>> = {

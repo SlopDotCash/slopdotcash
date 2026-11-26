@@ -31,7 +31,7 @@ export const meta: ComponentMeta<PendingCheckProps> = {
     // spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"
     Disconnected: async () => {
       onCheck.mockClear();
-      await userEvent.click(screen.getByRole("button", { name: "Check transaction" }));
+      await expect(screen.getByRole("button", { name: "Check transaction" })).toBeDisabled();
       await expect(onCheck).not.toHaveBeenCalled();
     },
   },

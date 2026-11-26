@@ -3,7 +3,7 @@ import type { OwnerRequest } from "@repo/settlement/client";
 import { Address, CopyButton, TokenAmount } from "@repo/ui";
 import { Check, Download } from "lucide-react";
 import { useState } from "react";
-import { Fact } from "../cases/parts.tsx";
+import { CaseFact } from "../cases/parts.tsx";
 import { requestDownload, requestSymbol, requestText, transferAmount } from "./request.ts";
 
 export type UnsignedRequestProps = {
@@ -25,12 +25,12 @@ export function UnsignedRequest({ request, raw }: UnsignedRequestProps) {
         Transfers due
       </h5>
       <dl className="flex flex-col gap-2">
-        <Fact term="From">
+        <CaseFact term="From">
           <Address value={request.payer.address} label="Payer wallet" copyLabel="Copy payer wallet" />
-        </Fact>
-        <Fact term="Asset">
+        </CaseFact>
+        <CaseFact term="Asset">
           <Address value={request.asset.address} label="Payment asset" copyLabel="Copy payment asset" />
-        </Fact>
+        </CaseFact>
       </dl>
       <ul className="flex flex-col gap-3">
         {request.transfers.map((transfer, index) => {

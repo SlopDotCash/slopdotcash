@@ -606,7 +606,7 @@ export effect function watchProvisional(connection: EvmConnection, hidden: () =>
 }
 
 export effect function watchSetupOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
-  for try (const offers of (try WalletChoice).offers) try show(offers)
+  try Stream.runForEach((try WalletChoice).offers, show)
 }
 
 export service BountyFundsDesk {
