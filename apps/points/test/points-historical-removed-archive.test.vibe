@@ -26,6 +26,7 @@ interface Scenario {
   readonly branch?: string
   readonly pullStatus?: number
   readonly branchStatus?: number
+  readonly currentCompareStatus?: number
   readonly archiveSha?: string
   readonly parentSha?: string
   readonly absentGraphQL?: boolean
@@ -62,8 +63,11 @@ function githubFixture(seen: string[], scenario: Scenario, name: string, nodeId:
     if (path === `${root}/git/commits/${merge}`) return reply(200, { sha: merge, parents: [{ sha: "3".repeat(40) }, { sha: scenario.parentSha ?? head }] })
     if (path === `${root}/git/ref/heads/${branch}`) return reply(scenario.branchStatus ?? 404, { ref: `refs/heads/${branch}`, object: { type: "commit", sha: current } })
     if (path === `${root}/git/ref/heads/develop-old`) return reply(200, { ref: "refs/heads/develop-old", object: { type: "commit", sha: scenario.archiveSha ?? archive } })
-    const tip = scenario.branchStatus === 200 ? current : archive
-    if (path === `${root}/compare/${merge}...${tip}?per_page=1`) return reply(200, { status: "ahead", behind_by: scenario.behindBy ?? 0, base_commit: { sha: merge }, merge_base_commit: { sha: merge } })
+    if (path === `${root}/compare/${merge}...${current}?per_page=1`) {
+      const status = scenario.currentCompareStatus ?? 200
+      return reply(status, { status: "ahead", behind_by: scenario.behindBy ?? 0, base_commit: { sha: merge }, merge_base_commit: { sha: merge } })
+    }
+    if (path === `${root}/compare/${merge}...${archive}?per_page=1`) return reply(200, { status: "ahead", behind_by: scenario.behindBy ?? 0, base_commit: { sha: merge }, merge_base_commit: { sha: merge } })
     return reply(404, { message: "Unexpected request" })
   })
   return Layer.provide(github({ token: Redacted.make("t"), userAgent: "slopbot" }), Layer.succeed(HttpClient.HttpClient, client))
@@ -96,6 +100,14 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
     const live = try observed({ branchStatus: 200 })
     try Effect.try(() => assert.deepStrictEqual(live.result, [pull]))
     try Effect.try(() => assert.isFalse(live.seen.some((path) => path.includes("develop-old"))))
+    const cutover = try observed({ branch: "develop", branchStatus: 200, currentCompareStatus: 404 })
+    try Effect.try(() => assert.deepStrictEqual(cutover, { result: [pull], seen: [
+      `${root}/pulls/${number}`, "/graphql", `${root}/git/commits/${merge}`, `${root}/git/ref/heads/develop`,
+      `${root}/compare/${merge}...${current}?per_page=1`, `${root}/git/ref/heads/develop-old`, `${root}/compare/${merge}...${archive}?per_page=1`,
+    ] }))
+    const onDevelop = try observed({ branch: "develop", branchStatus: 200 })
+    try Effect.try(() => assert.deepStrictEqual(onDevelop.result, [pull]))
+    try Effect.try(() => assert.isFalse(onDevelop.seen.some((path) => path.includes("develop-old"))))
   })
 
   it.effect('Archive proof refuses the wrong scope, non-absence and mismatched native acceptance (spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
@@ -105,6 +117,10 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
       [{ branchStatus: 403 }, "GitHubRefused"], [{ branchStatus: 503 }, "GitHubUnavailable"],
       [{ pullStatus: 403 }, "GitHubRefused"], [{ absentGraphQL: false }, "InvalidAssessmentJournal"],
       [{ parentSha: "5".repeat(40) }, "InvalidAssessmentJournal"],
+      [{ branch: "develop", branchStatus: 200, currentCompareStatus: 403 }, "GitHubRefused"],
+      [{ branch: "develop", branchStatus: 200, currentCompareStatus: 503 }, "GitHubUnavailable"],
+      [{ branch: "develop", branchStatus: 200, currentCompareStatus: 404, repositoryNodeId: "R_other" }, "NotFound"],
+      [{ branch: "develop", branchStatus: 200, behindBy: 1 }, "InvalidAssessmentJournal"],
     ] as const satisfies ReadonlyArray<readonly [Scenario, string]>
     for (const [input, expected] of noArchive) {
       const result = try observed(input)
@@ -117,6 +133,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
     for (const input of [{ archiveSha: "6".repeat(40) }, { behindBy: 1 }]) {
       const result = try observed(input)
       try Effect.try(() => assert.strictEqual(result.result, "InvalidAssessmentJournal"))
+      const cutover = try observed({ ...input, branch: "develop", branchStatus: 200, currentCompareStatus: 404 })
+      try Effect.try(() => assert.strictEqual(cutover.result, "InvalidAssessmentJournal"))
     }
   })
 })

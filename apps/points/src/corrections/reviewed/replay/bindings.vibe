@@ -50,24 +50,38 @@ effect function unless(holds: boolean) {
   if (!holds) throw new InvalidAssessmentJournal({ message: "Invalid protected assessment journal" })
 }
 
-effect function archivedIntegrationTip(root: string, branch: string, projectId: string, repositoryNodeId: unknown) {
+effect function integrationTip(root: string, branch: string, expected?: string) {
   const github = try GitHub
-  const path = `${root}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`
-  const current = github.json(path, Schema.Unknown) catch effect (error) => {
-    if (error._tag !== "NotFound" || error.path !== path || branch !== "development" || projectId !== "slopdotcash" ||
-      root.toLowerCase() !== "/repos/slopdotcash/slopdotcash" || repositoryNodeId !== "R_kgDOTqq9PQ") throw error
+  const tip = fields(try github.json(`${root}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`, Schema.Unknown))
+  const object = fields(tip.object)
+  try unless(tip.ref === `refs/heads/${branch}` && object.type === "commit" && typeof object.sha === "string" &&
+    sha.test(object.sha) && (expected === undefined || object.sha === expected))
+  return String(object.sha)
+}
+
+effect function integrationAncestry(root: string, mergeSha: string, tip: string, allowMissing = false) {
+  const github = try GitHub
+  const path = `${root}/compare/${mergeSha}...${tip}?per_page=1`
+  const answer = github.json(path, Schema.Unknown) catch effect (error) => {
+    if (error._tag !== "NotFound" || error.path !== path || !allowMissing) throw error
     return undefined
   }
-  if (current === undefined) {
-    const archived = fields(try github.json(`${root}/git/ref/heads/develop-old`, Schema.Unknown))
-    const object = fields(archived.object)
-    try unless(archived.ref === "refs/heads/develop-old" && object.type === "commit" && object.sha === slopDevelopmentArchive)
-    return slopDevelopmentArchive
+  if (answer === undefined) return false
+  const comparison = fields(answer)
+  try unless((comparison.status === "ahead" || comparison.status === "identical") && comparison.behind_by === 0 &&
+    fields(comparison.base_commit).sha === mergeSha && fields(comparison.merge_base_commit).sha === mergeSha)
+  return true
+}
+
+effect function verifyRemovedMergeAncestry(root: string, branch: string, mergeSha: string, projectId: string, repositoryNodeId: unknown) {
+  const slopCutover = projectId === "slopdotcash" && root.toLowerCase() === "/repos/slopdotcash/slopdotcash" && repositoryNodeId === "R_kgDOTqq9PQ"
+  const tip = integrationTip(root, branch) catch effect (error) => {
+    if (error._tag !== "NotFound" || error.path !== `${root}/git/ref/heads/development` || branch !== "development" || !slopCutover) throw error
+    return undefined
   }
-  const tip = fields(current)
-  const object = fields(tip.object)
-  try unless(tip.ref === `refs/heads/${branch}` && object.type === "commit" && typeof object.sha === "string" && sha.test(object.sha))
-  return String(object.sha)
+  if (tip !== undefined && (try integrationAncestry(root, mergeSha, tip, slopCutover && branch === "develop"))) return
+  const archive = try integrationTip(root, "develop-old", slopDevelopmentArchive)
+  try integrationAncestry(root, mergeSha, archive)
 }
 
 effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive: HistoricalArchiveScope, projectId: string) {
@@ -104,10 +118,7 @@ effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive
     const merge = fields(try github.json(`${root}/git/commits/${mergeSha}`, Schema.Unknown))
     const parents = list(merge.parents).map(fields)
     try unless(merge.sha === mergeSha && parents.length === 2 && typeof parents[0]?.sha === "string" && sha.test(parents[0].sha) && parents[1]?.sha === source.headSha)
-    const tip = try archivedIntegrationTip(root, branch, projectId, source.repositoryNodeId)
-    const comparison = fields(try github.json(`${root}/compare/${mergeSha}...${tip}?per_page=1`, Schema.Unknown))
-    try unless((comparison.status === "ahead" || comparison.status === "identical") && comparison.behind_by === 0 &&
-      fields(comparison.base_commit).sha === mergeSha && fields(comparison.merge_base_commit).sha === mergeSha)
+    try verifyRemovedMergeAncestry(root, branch, mergeSha, projectId, source.repositoryNodeId)
     removed.add(id)
   }
   return removed
