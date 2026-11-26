@@ -198,6 +198,37 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Monthly owner writes require same-origin JSON and refuse other methods privately (spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount")', () => effect {
+    const { env } = try Journey
+    const paths = [
+      "/alpha/monthly-settings",
+      "/alpha/monthly/2026-11/allocations",
+      "/alpha/monthly/2026-11/finalize",
+      "/alpha/monthly/2026-11/commitment",
+      "/alpha/monthly/2026-11/solana-commitment",
+    ]
+    const requests = [
+      { method: "POST", origin: "https://other.test", type: "application/json", actor: steward, status: 403, error: "origin_forbidden" },
+      { method: "POST", origin: "https://slop.test", type: "application/x-www-form-urlencoded", actor: steward, status: 403, error: "origin_forbidden" },
+      { method: "PUT", origin: "https://slop.test", type: "application/json", actor: steward, status: 403, error: "origin_forbidden" },
+      { method: "GET", origin: "https://slop.test", type: "application/json", actor: steward, status: 404, error: "not_found" },
+      { method: "GET", origin: "https://slop.test", type: "application/json", actor: undefined, status: 401, error: "not_signed_in" },
+    ]
+    const observations = []
+    for (const path of paths) {
+      for (const { method, origin, type, actor, status, error } of requests) {
+        const headers = { origin, "content-type": type, ...actor === undefined ? {} : { "x-test-actor": actor } }
+        const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects${path}`, { method, headers, body: method === "GET" ? undefined : "{}" })))
+        const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
+        const body = try promise(() => response.text())
+        observations.push({ path, method, type, actor, status: response.status, cache: response.headers.get("cache-control"), body, expected: { status, error } })
+      }
+    }
+    try same(observations.map(({ expected: _expected, ...answer }) => answer), observations.map(({ path, method, type, actor, expected }) => ({
+      path, method, type, actor, status: expected.status, cache: "private, no-store", body: JSON.stringify({ error: expected.error }),
+    })))
+  })
+
   it.effect('Owner adjusts another recipient, never their own row, and a banned owner is refused (spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount")', () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
