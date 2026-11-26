@@ -74,6 +74,7 @@ export interface Row {
   readonly path: string;
   readonly entry: OldEntry;
   readonly success: ReadonlyArray<number>;
+  readonly refusalOnly?: true;
   readonly answers: ReadonlyArray<Expected>;
 }
 
@@ -149,7 +150,15 @@ function amended(rows: ReadonlyArray<Row>, amendment: Amendment): ReadonlyArray<
   if (from !== undefined) {
     const base = rows.find((row) => row.id === from.route);
     if (base === undefined) throw new Error(`the amendment ${amendment.route} starts from ${from.route}, which reference/parity does not list`);
-    const added: Row = { ...base, ...pathOf(amendment.route), id: amendment.route, name: from.name, success: amendment.success ?? base.success, answers: base.answers.filter((answer) => from.keep.includes(answer.key)) };
+    const added: Row = {
+      ...base,
+      ...pathOf(amendment.route),
+      id: amendment.route,
+      name: from.name,
+      success: amendment.success ?? base.success,
+      ...amendment.refusalOnly === true ? { refusalOnly: true } : {},
+      answers: base.answers.filter((answer) => from.keep.includes(answer.key)),
+    };
     return [...rows, { ...added, answers: [...added.answers, ...amendment.refusals.map((refusal) => amendedOf(base, refusal))] }];
   }
   if (!rows.some((row) => row.id === amendment.route)) throw new Error(`the amendment names ${amendment.route}, which reference/parity does not list`);
@@ -329,7 +338,7 @@ function routeKey(method: string, path: string): string {
 export function undeclared(declared: ReadonlyArray<Declared>): ReadonlyArray<string> {
   const keys = new Set(declared.map((route) => routeKey(route.method, route.path)));
   return rows
-    .filter((row) => row.entry === "pages" && row.method !== "*" && row.path.startsWith("/api/v1/") && excuseOf(row) === undefined && !keys.has(routeKey(row.method, row.path)))
+    .filter((row) => row.entry === "pages" && row.method !== "*" && row.path.startsWith("/api/v1/") && row.refusalOnly !== true && excuseOf(row) === undefined && !keys.has(routeKey(row.method, row.path)))
     .map((row) => row.id);
 }
 

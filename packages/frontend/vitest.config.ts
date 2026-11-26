@@ -5,8 +5,9 @@ import { project } from "vibestack/testing/vitest";
 import type { ViteUserConfig } from "vitest/config";
 import type { BrowserCommand, TestProject, Vitest } from "vitest/node";
 import type { Op, Result } from "./test/support/ui/protocol.ts";
+import type * as SiteModule from "./test/support/ui/site.ts";
 
-const harness = (on: TestProject) => on.import<typeof import("./test/support/ui/site.ts")>(join(import.meta.dirname, "test/support/ui/site.ts"));
+const harness = (on: TestProject) => on.import<typeof SiteModule>(join(import.meta.dirname, "test/support/ui/site.ts"));
 const site: BrowserCommand<[Op], Result<Op>> = async (context, op) => (await harness(context.project)).command(context, op);
 const siteCommands = {
   name: "slop:site-commands",

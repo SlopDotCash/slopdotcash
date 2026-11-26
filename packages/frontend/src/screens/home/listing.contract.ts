@@ -5,7 +5,7 @@ import { bounty, community, configured, funded, held, pointsOnly, pool, prize, p
 import { type CardReward, cardLines, cardReward, homeDescription, homeProjectOrder, homeProjects, homeSections, listedThisMonth, type ListedProject, onSponsors, sponsorPoolLine } from "./listing.ts";
 
 const separateBounty = (status: SecurityProgramStatus): ListedProject => ({
-  ...community[0]!,
+  ...community[0],
   id: `bounty-${status}`,
   slug: `bounty-${status}`,
   securityBounty: { rewardMode: "separate", status, eligibility: "in-scope-security", amount: { grossMinor: 50_000_000_000n, decimals: 6 }, funding: { state: "verified" } },
@@ -68,7 +68,7 @@ export const homeListsSettledListedPlacedProjectsWithoutBountyCards = vectors<Re
       pool,
       bounty,
       prize,
-      community[0]!,
+      community[0],
       named(pool, "paused", { status: "paused" }),
       named(pool, "retired", { listingTier: "retired" }),
       held,

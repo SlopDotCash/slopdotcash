@@ -1,5 +1,5 @@
 // spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
-import { type ComposeOutcome, type ComposeSlot, draftState, editReport, openCompose, openReceipt, recheckSession, reviewReport, submitReport } from "../../../flows/security/composeDraft.vibe"
+import { type ComposeOutcome, type ComposeSlot, draftState, editReport, openCompose, openReceipt, recheckSession, submitReport } from "../../../flows/security/composeDraft.vibe"
 import type { ReportDraft } from "../../../flows/security/private.vibe"
 import { BrowserSession } from "../../../session/browserSession.vibe"
 import { Session } from "../../../session/session.vibe"

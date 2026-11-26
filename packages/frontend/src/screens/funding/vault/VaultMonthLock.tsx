@@ -82,7 +82,7 @@ export function VaultMonthLock({ project, deployment, period, row, free, decimal
   const open = (row.pledges ?? []).filter((pledge) => pledge.open);
   const highest = open.reduce((most, pledge) => (pledge.amount > most ? pledge.amount : most), monthlyMinor);
   const [count, setCount] = useState(1);
-  const [amount, setAmount] = useState(formatBaseUnits({ value: highest, decimals, grouping: false }));
+  const [amount, setAmount] = useState(() => formatBaseUnits({ value: highest, decimals, grouping: false }));
   const [deposit, setDeposit] = useState("");
   const [review, setReview] = useState<LockReview>();
   const [releasing, setReleasing] = useState<number>();

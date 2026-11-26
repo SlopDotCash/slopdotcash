@@ -7,35 +7,101 @@
     "./app": "./src/app/index.ts",
     "./presentation": "./gen/frontend__presentation.ts",
     "./routes": "./gen/frontend__routes.ts",
-    "./platform/api": "./src/platform/api.vibe",
-    "./platform/bounded": "./src/platform/bounded.vibe",
-    "./platform/clipboard": "./src/platform/clipboard.vibe",
-    "./platform/clock": "./src/platform/clock.vibe",
-    "./platform/config": "./src/platform/config.vibe",
-    "./platform/layer": "./src/platform/layer.vibe",
-    "./platform/locks": "./src/platform/locks.vibe",
+    "./platform/api": {
+      "types": "./.vibe/declarations/src/platform/api.d.vibe.ts",
+      "default": "./src/platform/api.vibe"
+    },
+    "./platform/bounded": {
+      "types": "./.vibe/declarations/src/platform/bounded.d.vibe.ts",
+      "default": "./src/platform/bounded.vibe"
+    },
+    "./platform/clipboard": {
+      "types": "./.vibe/declarations/src/platform/clipboard.d.vibe.ts",
+      "default": "./src/platform/clipboard.vibe"
+    },
+    "./platform/clock": {
+      "types": "./.vibe/declarations/src/platform/clock.d.vibe.ts",
+      "default": "./src/platform/clock.vibe"
+    },
+    "./platform/config": {
+      "types": "./.vibe/declarations/src/platform/config.d.vibe.ts",
+      "default": "./src/platform/config.vibe"
+    },
+    "./platform/layer": {
+      "types": "./.vibe/declarations/src/platform/layer.d.vibe.ts",
+      "default": "./src/platform/layer.vibe"
+    },
+    "./platform/locks": {
+      "types": "./.vibe/declarations/src/platform/locks.d.vibe.ts",
+      "default": "./src/platform/locks.vibe"
+    },
     "./platform/site": "./src/platform/site.ts",
-    "./platform/storage": "./src/platform/storage.vibe",
-    "./session/adminAccess": "./src/session/adminAccess.vibe",
-    "./session/browserSession": "./src/session/browserSession.vibe",
-    "./session/emailAction": "./src/session/emailAction.vibe",
-    "./session/identity": "./src/session/identity.vibe",
-    "./session/localSignin": "./src/session/localSignin.vibe",
+    "./platform/storage": {
+      "types": "./.vibe/declarations/src/platform/storage.d.vibe.ts",
+      "default": "./src/platform/storage.vibe"
+    },
+    "./session/adminAccess": {
+      "types": "./.vibe/declarations/src/session/adminAccess.d.vibe.ts",
+      "default": "./src/session/adminAccess.vibe"
+    },
+    "./session/browserSession": {
+      "types": "./.vibe/declarations/src/session/browserSession.d.vibe.ts",
+      "default": "./src/session/browserSession.vibe"
+    },
+    "./session/emailAction": {
+      "types": "./.vibe/declarations/src/session/emailAction.d.vibe.ts",
+      "default": "./src/session/emailAction.vibe"
+    },
+    "./session/identity": {
+      "types": "./.vibe/declarations/src/session/identity.d.vibe.ts",
+      "default": "./src/session/identity.vibe"
+    },
+    "./session/localSignin": {
+      "types": "./.vibe/declarations/src/session/localSignin.d.vibe.ts",
+      "default": "./src/session/localSignin.vibe"
+    },
     "./session/loginReturn": "./src/session/loginReturn.ts",
-    "./session/maintainer": "./src/session/maintainer.vibe",
-    "./session/session": "./src/session/session.vibe",
-    "./reads/*": "./src/reads/*.vibe",
+    "./session/maintainer": {
+      "types": "./.vibe/declarations/src/session/maintainer.d.vibe.ts",
+      "default": "./src/session/maintainer.vibe"
+    },
+    "./session/session": {
+      "types": "./.vibe/declarations/src/session/session.d.vibe.ts",
+      "default": "./src/session/session.vibe"
+    },
+    "./reads/*": {
+      "types": "./.vibe/declarations/src/reads/*.d.vibe.ts",
+      "default": "./src/reads/*.vibe"
+    },
     "./reads/registryTerms": "./src/reads/registryTerms.ts",
-    "./flows/account/*": "./src/flows/account/*.vibe",
-    "./flows/projects/*": "./src/flows/projects/*.vibe",
+    "./flows/account/*": {
+      "types": "./.vibe/declarations/src/flows/account/*.d.vibe.ts",
+      "default": "./src/flows/account/*.vibe"
+    },
+    "./flows/projects/*": {
+      "types": "./.vibe/declarations/src/flows/projects/*.d.vibe.ts",
+      "default": "./src/flows/projects/*.vibe"
+    },
     "./flows/projects/proposal": "./src/flows/projects/proposal.ts",
-    "./flows/security/*": "./src/flows/security/*.vibe",
+    "./flows/security/*": {
+      "types": "./.vibe/declarations/src/flows/security/*.d.vibe.ts",
+      "default": "./src/flows/security/*.vibe"
+    },
     "./flows/security/bountyAsset": "./src/flows/security/bountyAsset.ts",
-    "./wallets/core/*": "./src/wallets/core/*.vibe",
+    "./wallets/core/*": {
+      "types": "./.vibe/declarations/src/wallets/core/*.d.vibe.ts",
+      "default": "./src/wallets/core/*.vibe"
+    },
     "./wallets/core/bindingPlan": "./src/wallets/core/bindingPlan.ts",
     "./wallets/core/solanaWire": "./src/wallets/core/solanaWire.ts",
-    "./wallets/owner/*": "./src/wallets/owner/*.vibe",
-    "./wallets/bounty/*": "./src/wallets/bounty/*.vibe",
+    "./wallets/owner/*": {
+      "types": "./.vibe/declarations/src/wallets/owner/*.d.vibe.ts",
+      "default": "./src/wallets/owner/*.vibe"
+    },
+    "./wallets/bounty/*": {
+      "types": "./.vibe/declarations/src/wallets/bounty/*.d.vibe.ts",
+      "default": "./src/wallets/bounty/*.vibe"
+    },
     "./wallets/bounty/records": "./src/wallets/bounty/records.ts",
     "./projections/*": "./src/projections/*.ts",
     "./kernels/*": "./src/kernels/*.ts"

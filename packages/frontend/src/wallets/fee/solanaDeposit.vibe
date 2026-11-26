@@ -54,20 +54,20 @@ export error SolanaFeeError {
   readonly message: string
 }
 
-const ReviewPlanSchema = Schema.Struct({
-  blockhash: Schema.String,
-  lastValidBlockHeight: Schema.Number,
-  transaction: Schema.String,
-  networkFeeLamports: Schema.String,
-  deposit: Schema.optional(Schema.String),
-  mint: Schema.optional(Schema.String),
-  amount: Schema.optional(Schema.String),
-  rentLamports: Schema.optional(Schema.String),
-})
+schema ReviewPlanSchema {
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+  readonly deposit?: string
+  readonly mint?: string
+  readonly amount?: string
+  readonly rentLamports?: string
+}
 
-const StatusSchema = Schema.Struct({
-  status: Schema.Literals(["pending", "failed", "finalized"]),
-})
+schema StatusSchema {
+  readonly status: "pending" | "failed" | "finalized"
+}
 
 effect function postSolanaFee(body: Readonly<Record<string, unknown>>) {
   const response = HttpClient.post(SOLANA_FEE_PATH, {

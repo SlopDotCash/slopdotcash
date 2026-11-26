@@ -20,14 +20,14 @@ export type DelistButtonProps = {
 export function DelistButton({ runtime, project, actorId, onAccessLost, onDone }: DelistButtonProps) {
   const [confirmation, send] = useConfirmation();
   const [reason, setReason] = useState<string | null>(null);
-  const inFlight = useRef(false);
+  const inFlightRef = useRef(false);
   if (project.manifest.listingTier === "retired") return null;
   const delist = async () => {
-    if (inFlight.current) return false;
-    inFlight.current = true;
+    if (inFlightRef.current) return false;
+    inFlightRef.current = true;
     setReason(null);
     const acted = await act(runtime, delistProject({ id: project.id, revision: project.revision, manifest: project.raw }, actorId), isAdminActionAccessLoss, "Delisting could not be confirmed.");
-    inFlight.current = false;
+    inFlightRef.current = false;
     if (acted.ok) {
       onDone(adminMessages.saved);
       return true;

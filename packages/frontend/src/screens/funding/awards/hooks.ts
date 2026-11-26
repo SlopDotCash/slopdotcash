@@ -110,7 +110,7 @@ export function useFollowedMonth(runtime: AwardsRuntime, account: number, github
 export function useAwardAction(runtime: AwardsRuntime) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const act = async <A, E>(work: Effect.Effect<A, E, AwardsServices>, then?: (value: A) => void): Promise<boolean> => {
+  const actAsync = async <A, E>(work: Effect.Effect<A, E, AwardsServices>, then?: (value: A) => void): Promise<boolean> => {
     setBusy(true);
     setError("");
     const done = await run(runtime, work);
@@ -119,5 +119,8 @@ export function useAwardAction(runtime: AwardsRuntime) {
     else setError(done.message);
     return done.ok;
   };
-  return { busy, error, act };
+  const act = <A, E>(work: Effect.Effect<A, E, AwardsServices>, then?: (value: A) => void): void => {
+    void actAsync(work, then);
+  };
+  return { busy, error, act, actAsync };
 }

@@ -28,6 +28,9 @@ export type CopyButtonProps = Omit<ButtonProps, "children" | "onClick" | "onCopy
 
 const visible = (labels: CopyLabels, status: CopyStatus) => (status === "Copied" ? labels.copied : status === "CopyFailed" ? labels.failed : labels.ready);
 
+const accessibleLabel = (label: string, shown: string | undefined, iconOnly: boolean) =>
+  iconOnly ? label : shown === undefined ? undefined : label.toLowerCase().includes(shown.toLowerCase()) ? label : `${shown} — ${label}`;
+
 /**
  * Copies a value and says whether the browser accepted it, without moving focus. `data-copy` carries the state, for
  * a layout that draws the control differently once a copy failed.
@@ -35,34 +38,35 @@ const visible = (labels: CopyLabels, status: CopyStatus) => (status === "Copied"
  */
 export function CopyButton({ text, onCopy = (value) => navigator.clipboard.writeText(value), label = "Copy", variant = "icon", labels, tone = "quiet", restAfter = 2000, disabled, className, ...props }: CopyButtonProps) {
   const [state, send] = useReducer(step, initial);
-  const mounted = useRef(true);
-  const resting = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  const restingRef = useRef<AbortController | null>(null);
   const failed = state.status === "CopyFailed";
   const copied = state.status === "Copied";
   const iconOnly = variant === "icon" && !labels;
+  const shown = labels ? visible(labels, state.status) : undefined;
 
   const bindRoot = useCallback((node: HTMLSpanElement | null) => {
-    mounted.current = node !== null;
-    if (node === null) resting.current?.abort();
+    mountedRef.current = node !== null;
+    if (node === null) restingRef.current?.abort();
   }, []);
 
   const press = async () => {
     if (!enabled(state, { type: "copy" })) return;
-    resting.current?.abort();
-    resting.current = null;
+    restingRef.current?.abort();
+    restingRef.current = null;
     send({ type: "copy" });
     const written = await Promise.resolve(text).then(onCopy).then(() => true, () => false);
-    if (!mounted.current) return;
+    if (!mountedRef.current) return;
     send({ type: "answer", written });
     const next = step(step(state, { type: "copy" }), { type: "answer", written });
     if (!canRest(next)) return;
     const controller = new AbortController();
-    resting.current = controller;
+    restingRef.current = controller;
     const timer = AbortSignal.timeout(restAfter);
     timer.addEventListener(
       "abort",
       () => {
-        if (!controller.signal.aborted && mounted.current) send({ type: "rest" });
+        if (!controller.signal.aborted && mountedRef.current) send({ type: "rest" });
       },
       { once: true, signal: controller.signal },
     );
@@ -73,7 +77,7 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
       <Button
         variant={tone === "primary" ? "primary" : iconOnly ? "ghost" : "outline"}
         size={tone === "primary" ? "md" : iconOnly ? "icon" : "sm"}
-        aria-label={iconOnly || labels ? label : undefined}
+        aria-label={accessibleLabel(label, shown, iconOnly)}
         data-copy={state.status}
         className={cn(tone === "primary" && copied && "bg-ok text-primary-foreground hover:bg-ok", className)}
         onClick={() => void press()}
@@ -81,7 +85,7 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
         {...controlState(disabled, state.status === "Copying")}
       >
         {failed && tone === "quiet" ? <StatusIcon icon="Alert" className="text-destructive" /> : copied ? <StatusIcon icon="Check" /> : <Clipboard aria-hidden />}
-        {labels ? <span data-copy-label>{visible(labels, state.status)}</span> : variant === "labeled" && label}
+        {shown !== undefined ? <span data-copy-label>{shown}</span> : variant === "labeled" && label}
       </Button>
       <span role="status" className={failed && !labels ? "text-xs text-destructive" : "sr-only"}>
         {copyAnnouncement(state)}

@@ -9,23 +9,14 @@ import { formatDate } from "../projects/summary.ts";
 import { pitchLink, type RepoRequestAction, type RequestedView } from "./flow.vibe";
 
 export type RequestedReposProps = {
-  /** The page's machine state with the board, the last answer and the viewer it was read for. */
   view: RequestedView;
-  /** The origin a pitch's link is built on. */
   origin: string;
-  /** The `?flag=` repository of this visit, as typed in the address. */
   flag: string | null;
-  /** Whether the visitor is signed in, as the session last said. */
   session: SessionView;
-  /** Where sign-in returns to this page with the same `?flag=`. */
   signInHref: string;
-  /** Flags, renews or withdraws a repository for the signed-in viewer. */
   onAct: (repo: string, action: RepoRequestAction) => void;
-  /** Reads the board again after it failed. */
   onRetry: () => void;
-  /** Opens the `?flag=` panel for a signed-out visitor who typed a repository. */
   onSignedOutFlag: (repo: string) => void;
-  /** Writes a pitch to the clipboard. */
   onCopy?: (text: string) => Promise<void>;
 };
 
@@ -196,8 +187,6 @@ function YourFlags({ view, busy, onAct }: { view: RequestedView; busy: boolean; 
 }
 
 /**
- * `/requested`: the repositories Slop contributors with merged work would work on, by count, each with a pitch to
- * copy, and the signed-in viewer's own flags.
  * @model spec/frontend/requestedRepos.md
  */
 export function RequestedRepos({ view, origin, flag, session, signInHref, onAct, onRetry, onSignedOutFlag, onCopy }: RequestedReposProps) {

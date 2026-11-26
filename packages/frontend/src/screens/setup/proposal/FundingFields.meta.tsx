@@ -39,7 +39,7 @@ export const meta: ComponentMeta<FundingFieldsProps> = {
     },
     // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
     PrivateBounty: async () => {
-      await expect(screen.getByLabelText("Award per accepted finding (USDC)")).toBeTruthy();
+      await expect(screen.getByLabelText("Award (USDC)")).toBeTruthy();
     },
   },
 };
