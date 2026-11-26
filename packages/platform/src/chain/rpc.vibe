@@ -1,6 +1,7 @@
 // spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"
+import { BodyTooLarge, BodyUnreadable, boundedBytes } from "../browser.vibe"
 
-export error RpcUnavailable { method: string; endpoint: number; message: string }
+export error RpcUnavailable { method: string; endpoint: number; message: string; httpStatus?: number }
 export error RpcMalformed { method: string; issue: string }
 export error RpcRefused {
   method: string
@@ -50,17 +51,16 @@ const Envelope = Schema.Struct({ id: Schema.Unknown, result: Schema.optionalKey(
 const WireError = Schema.Struct({ code: Schema.Number, message: Schema.String, data: Schema.optionalKey(Schema.Unknown) })
 
 effect function request(client: HttpClient.HttpClient, url: string, endpoint: number, method: string, params: ReadonlyArray<unknown>, options: JsonRpcOptions, urls: ReadonlyArray<string>) {
-  const unavailable = (message: string) => new RpcUnavailable({ method, endpoint, message: scrubbed(message, urls) })
+  const unavailable = (message: string, httpStatus?: number) => new RpcUnavailable({ method, endpoint, message: scrubbed(message, urls), ...(httpStatus === undefined ? {} : { httpStatus }) })
   const payload = try orDie(Effect.try(() => JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })))
   const outgoing = HttpClientRequest.bodyText(HttpClientRequest.post(url, { acceptJson: true }), payload, "application/json")
   const bytes = timeout(effect {
     const response = client.execute(outgoing) catch effect (error) => { throw unavailable(`transport failure: ${boundedMessage(error)}`) }
-    if (response.status < 200 || response.status > 299) throw unavailable(`RPC HTTP failure: ${response.status}`)
-    const declared = Number(response.headers["content-length"] ?? "0")
-    if (declared > options.maxBytes) throw new RpcMalformed({ method, issue: `answer of ${declared} bytes exceeds ${options.maxBytes}` })
-    const body = response.arrayBuffer catch effect (error) => { throw unavailable(`unreadable answer: ${boundedMessage(error)}`) }
-    if (body.byteLength > options.maxBytes) throw new RpcMalformed({ method, issue: `answer of ${body.byteLength} bytes exceeds ${options.maxBytes}` })
-    return new Uint8Array(body)
+    if (response.status < 200 || response.status > 299) throw unavailable(`RPC HTTP failure: ${response.status}`, response.status)
+    return boundedBytes(response, options.maxBytes, method) catch effect (error) => match (error) {
+      when BodyTooLarge: throw new RpcMalformed({ method, issue: `answer exceeds ${options.maxBytes} bytes` });
+      when BodyUnreadable: throw unavailable(`unreadable answer: ${boundedMessage(error.cause ?? error.reason)}`);
+    }
   }, Duration.millis(options.timeoutMs)) catch effect (error) => match (error) {
     when RpcUnavailable: throw error;
     when RpcMalformed: throw error;

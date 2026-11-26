@@ -44,7 +44,6 @@ export function ConfirmDialog({ state, onSend, title, children, confirmLabel, ca
   };
   const working = state.phase === "Working";
   return (
-    // Escape and the Cancel button ask to close; a click outside never does. While working, cancel is not allowed.
     <AlertDialog.Root open={state.phase !== "Closed"} onOpenChange={(open) => send({ type: open ? "open" : "cancel" })}>
       {trigger ? <AlertDialog.Trigger asChild>{trigger}</AlertDialog.Trigger> : null}
       <AlertDialog.Portal>

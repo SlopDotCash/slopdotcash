@@ -24,16 +24,28 @@ export type CommandBlockProps = Omit<ComponentProps<"div">, "onCopy" | "children
 
 const breaks = /(https?:\/\/[^/\s]+\/|github\.com\/)/u;
 
+function commandSegments(command: string) {
+  const parts = command.split(breaks);
+  const result: Array<{ readonly key: string; readonly segment: string; readonly breakAfter: boolean }> = [];
+  let offset = 0;
+  for (let i = 0; i < parts.length; i += 1) {
+    const segment = parts[i] ?? "";
+    result.push({ key: `${offset}:${segment.length}`, segment, breakAfter: i % 2 === 1 });
+    offset += segment.length;
+  }
+  return result;
+}
+
 /** A command or code a person copies and runs: kept whole and scrolled rather than wrapped, or as a wrapped prompt in one row with its copy action. */
 export function CommandBlock({ command, label = "Command", copyLabel = "Copy command", onCopy, links, layout = "block", copyLabels, restAfter, className, ...props }: CommandBlockProps) {
   if (layout === "inline") {
     return (
       <div className={cn("grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-foreground/22 bg-card py-3 pr-3 pl-6 max-md:p-4", className)} {...props}>
         <code role="group" aria-label={label} className="min-w-0 font-mono text-prompt font-medium break-normal whitespace-normal text-foreground wrap-anywhere max-md:text-copy">
-          {command.split(breaks).map((segment, index) => (
-            <span key={index}>
+          {commandSegments(command).map(({ key, segment, breakAfter }) => (
+            <span key={key}>
               {segment}
-              {index % 2 === 1 ? <wbr /> : null}
+              {breakAfter ? <wbr /> : null}
             </span>
           ))}
         </code>

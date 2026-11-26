@@ -2,7 +2,7 @@
 import type { Issue } from "effect/SchemaIssue"
 import type { Fetcher } from "./bindings.ts"
 import { DeploymentTier } from "./config.vibe"
-import type { D1Error } from "./d1.vibe"
+import { type D1Error, databaseTemporarilyUnavailable } from "./d1.vibe"
 import { fetchVia } from "./fetcher.ts"
 import { type Access, type AnyRoute, type Refusal, type Route, cacheControl, corsHeadersOf } from "./route.vibe"
 import { type SignatureRefused, type SignedRequest, serviceKeys, verifySigned } from "./signed.vibe"
@@ -34,6 +34,7 @@ export const admission = {
   github: { status: 503, code: "github_unavailable", message: "GitHub could not be checked. Retry." },
   rpc: { status: 503, code: "rpc_unavailable", message: "The network could not be checked. Retry." },
   service: { status: 503, code: "service_unavailable", message: "A required service is unavailable. Retry." },
+  temporarilyUnavailable: { status: 503, code: "temporarily_unavailable", message: "Temporarily unavailable. Try again." },
   internal: { status: 500, code: "internal_error", message: "Internal error" },
 } satisfies Readonly<Record<string, Refusal>>
 
@@ -79,7 +80,7 @@ function tooLarge(error: { readonly reason: { readonly _tag: string } }) {
 }
 
 function sameOriginJson(request: HttpServerRequest.HttpServerRequest) {
-  return request.headers.origin === originOf(request) && declaredType(request) === "application/json"
+  return request.headers.origin === originOf(request) && mediaType(request) === "application/json"
 }
 
 function isJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -92,7 +93,9 @@ export effect function sameOriginWrite() {
 
 export effect function jsonBody(limitKib: number) {
   const request = try HttpServerRequest.HttpServerRequest
-  const buffer = provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.kibibytes(limitKib)) catch effect () => {
+  const limitBytes = limitKib * 1024
+  const buffer = provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.bytes(limitBytes)) catch effect (error) => {
+    if (tooLarge(error)) throw refusedBy(payloadTooLarge(limitBytes))
     throw refusedBy(admission.invalidJson)
   }
   const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(buffer))), catch: () => refusedBy(admission.invalidJson) })
@@ -204,8 +207,35 @@ function tagOf(error: unknown) {
   return typeof error === "object" && error !== null && "_tag" in error ? error._tag : undefined
 }
 
+export function failureShape(caught: unknown): string {
+  if (!(caught instanceof Error)) {
+    const tag = tagOf(caught)
+    return typeof tag === "string" ? tag : `thrown:${typeof caught}`
+  }
+  const tag = tagOf(caught)
+  const label = typeof tag === "string" ? tag : caught.name
+  const code =
+    /^(D1_[A-Z_]+|SQLITE_[A-Z_]+)/u.exec(caught.message)?.[1] ??
+    (/network connection lost/iu.test(caught.message)
+      ? "network-connection-lost"
+      : /overloaded/iu.test(caught.message)
+        ? "overloaded"
+        : /timed? ?out/iu.test(caught.message)
+          ? "timeout"
+          : undefined)
+  const frames = (caught.stack ?? "")
+    .split("\n")
+    .slice(1, 6)
+    .map((line) => /at (?:async )?([\w$.<>]+) /u.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined)
+  return [label, code, frames.join("<")]
+    .filter((part): part is string => part !== undefined && part !== "")
+    .join(" ")
+}
+
 function refusalOf(error: unknown, routing: Routing): Refusal | undefined {
   if (error instanceof Refused) return { status: error.status, code: error.code, message: error.message, headers: error.headers }
+  if (databaseTemporarilyUnavailable(error)) return admission.temporarilyUnavailable
   switch (tagOf(error)) {
     case "Rejected": return { ...admission.rejected, code: routing.rejected }
     case "Conflict": return admission.conflict
@@ -229,20 +259,20 @@ function refusalResponse(refusal: Refusal) {
   return json(refusalBody(refusal), refusal.status, refusal.headers)
 }
 
-effect function internal() {
+effect function internal(error: unknown) {
   const request = try HttpServerRequest.HttpServerRequest
-  try Effect.logError(admission.internal.code, request.headers["cf-ray"] ?? "")
+  try Effect.logError(admission.internal.code, { ray: request.headers["cf-ray"] ?? "", shape: failureShape(error) })
   return refusalResponse(admission.internal)
 }
 
 effect function respond(error: unknown, routing: Routing) {
   const refusal = refusalOf(error, routing)
   if (refusal !== undefined) return refusalResponse(refusal)
-  return try internal()
+  return try internal(error)
 }
 
 export effect function answered<E, R>(handler: HttpServerResponse.HttpServerResponse!E!R, routing: Routing = unrouted) {
-  return try Effect.catchDefect(Effect.catch(handler, (error) => respond(error, routing)), () => internal())
+  return try Effect.catchDefect(Effect.catch(handler, (error) => respond(error, routing)), (defect) => databaseTemporarilyUnavailable(defect) ? succeed(refusalResponse(admission.temporarilyUnavailable)) : internal(defect))
 }
 
 effect function tierOrigins(route: AnyRoute) {
@@ -357,9 +387,9 @@ effect function admissionOf<X extends Access>(route: Route<unknown, unknown, X>,
 export function handle<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admitted<B, X>) => A!E!R): Handled<X, R> {
   return HttpRouter.add(route.method, route.path, served(route, effect {
     const credential = try credentialOf(route, true)
+    const admitted = try admissionOf(route, credential)
     let decoded: unknown = undefined
     if (route.request !== undefined) decoded = try body(route.request, route.limitKib, route.invalid)
-    const admitted = try admissionOf(route, credential)
     const answer = try f({ ...admitted, body: decoded as B })
     const encoded = try orDie(Schema.encodeUnknownEffect(route.answer)(answer))
     return json(encoded, route.status ?? 200, { "cache-control": cacheControl(route.cache) })

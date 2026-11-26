@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useCallback, useReducer, useRef } from "react";
 import { Clipboard } from "lucide-react";
 import { type CopyStatus, canRest, copyAnnouncement, enabled, initial, step } from "../../gen/ui__copy.ts";
 import { cn } from "../lib/cn.ts";
@@ -34,27 +34,42 @@ const visible = (labels: CopyLabels, status: CopyStatus) => (status === "Copied"
  */
 export function CopyButton({ text, onCopy = (value) => navigator.clipboard.writeText(value), label = "Copy", variant = "icon", labels, tone = "quiet", restAfter = 2000, disabled, className, ...props }: CopyButtonProps) {
   const [state, send] = useReducer(step, initial);
+  const mounted = useRef(true);
+  const resting = useRef<AbortController | null>(null);
   const failed = state.status === "CopyFailed";
   const copied = state.status === "Copied";
   const iconOnly = variant === "icon" && !labels;
 
-  // spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
-  useEffect(() => {
-    if (!canRest(state)) return;
-    const timer = setTimeout(() => send({ type: "rest" }), restAfter);
-    return () => clearTimeout(timer);
-  }, [state, restAfter]);
+  const bindRoot = useCallback((node: HTMLSpanElement | null) => {
+    mounted.current = node !== null;
+    if (node === null) resting.current?.abort();
+  }, []);
 
-  // spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"
+  // spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"; "Success settles back to ready; failure stays until the next attempt"
   const press = async () => {
     if (!enabled(state, { type: "copy" })) return;
+    resting.current?.abort();
+    resting.current = null;
     send({ type: "copy" });
     const written = await Promise.resolve(text).then(onCopy).then(() => true, () => false);
+    if (!mounted.current) return;
     send({ type: "answer", written });
+    const next = step(step(state, { type: "copy" }), { type: "answer", written });
+    if (!canRest(next)) return;
+    const controller = new AbortController();
+    resting.current = controller;
+    const timer = AbortSignal.timeout(restAfter);
+    timer.addEventListener(
+      "abort",
+      () => {
+        if (!controller.signal.aborted && mounted.current) send({ type: "rest" });
+      },
+      { once: true, signal: controller.signal },
+    );
   };
 
   return (
-    <span className="inline-flex items-center gap-2">
+    <span ref={bindRoot} className="inline-flex items-center gap-2">
       <Button
         variant={tone === "primary" ? "primary" : iconOnly ? "ghost" : "outline"}
         size={tone === "primary" ? "md" : iconOnly ? "icon" : "sm"}

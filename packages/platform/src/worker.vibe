@@ -8,7 +8,11 @@ module subtle {
   import type { ExecutionContext } from "./bindings.ts"
   /** @throws {never} */
   export function keepRunning<E, R>(context: ExecutionContext, services: Context.Context<R>, program: Effect.Effect<void, E, R>): void {
-    context.waitUntil(Effect.runPromiseWith(services)(program))
+    context.waitUntil(
+      Effect.runPromiseWith(services)(program).catch((cause) => {
+        Effect.runFork(Effect.logError("background_failed", cause))
+      }),
+    )
   }
 }
 import { keepRunning } from subtle
@@ -120,8 +124,10 @@ export function worker<Env extends object, S, LE, A, RE, SE, QE>(app: WorkerApp<
 effect function settle<SE, S>(batch: MessageBatch, handle: (message: QueueMessage, queue: string) => (Redelivery | void)!SE!S) {
   for (const message of batch.messages) {
     const outcome = try exit(handle(message, batch.queue))
-    if (Exit.isFailure(outcome)) message.retry()
-    else if (outcome.value === undefined) message.ack()
+    if (Exit.isFailure(outcome)) {
+      try Effect.logError("queue_message_failed", { queue: batch.queue, messageId: message.id, attempts: message.attempts })
+      message.retry()
+    } else if (outcome.value === undefined) message.ack()
     else message.retry({ delaySeconds: outcome.value.delaySeconds })
   }
 }

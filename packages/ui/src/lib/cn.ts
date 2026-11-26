@@ -2,8 +2,6 @@ import { type ClassValue, clsx } from "clsx";
 import { extendTailwindMerge } from "tailwind-merge";
 import tokens from "@repo/design-system/tokens.json" with { type: "json" };
 
-// The token groups that name utilities (vibestack/design/generate.ts), so a later `text-body` replaces a
-// size and not a color. Each group is optional in tokens.json.
 const groups: Record<string, unknown> = tokens;
 const names = (group: string) => Object.keys(groups[group] ?? {});
 const twMerge = extendTailwindMerge({
@@ -27,7 +25,6 @@ export const inactive = "disabled:pointer-events-none disabled:opacity-50 aria-d
  */
 export const target = "relative after:absolute after:top-1/2 after:left-1/2 after:size-full after:min-h-11 after:min-w-11 after:-translate-1/2";
 
-// The same, written out because Tailwind reads class names whole: change them together.
 /** `focusRing` for each child, such as the links of a row. */
 export const childFocusRing = "*:outline-none *:focus-visible:ring-2 *:focus-visible:ring-ring";
 /** `target` for each child, such as the links of a row. */
