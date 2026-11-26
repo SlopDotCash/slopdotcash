@@ -207,7 +207,7 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
     site: (request) => mf.dispatchFetch(request),
     identity: (request) => mf.dispatchFetch(request),
     github,
-    rows: async (text, params) => (await (await database(mf, "SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
+    rows: async (text, params) => (await (await database(mf, "SLOP_DB", "worker")).prepare(text).bind(...params).all()).results,
     verifications,
     deployed: () => deployed,
     deploy: async (deployment) => {

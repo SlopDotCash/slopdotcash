@@ -57,8 +57,9 @@ const suppression = new RegExp(String.raw`^ eslint-disable(?:-next-line|-line)? 
 const configs = [suppression, /^ eslint-enable\b/]
 const throwsType = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*`
 const throwsDirective = new RegExp(String.raw`^\*(?:[\s*]*@throws \{[ \t]*${throwsType}(?:[ \t]*\|[ \t]*${throwsType})*[ \t]*\})+[\s*]*$`)
+const proofDirective = /^@ (?:backend|requires|ensures|invariant|decreases|assert|pure|type|ghost)(?: |$)/
 const directives = {
-  Line: [cited, suppression, /^@ (?:backend|requires|ensures|invariant|decreases|assert|pure|type|ghost)(?: |$)/, /^\/ <reference /, /^ @vitest-environment [\w-]+$/],
+  Line: [cited, suppression, proofDirective, /^\/ <reference /, /^ @vitest-environment [\w-]+$/],
   Block: [cited, ...configs, /^\*(?:[\s*]*@(?:model|design) \S+)+[\s*]*$/, throwsDirective],
   Shebang: [/^/],
 }
@@ -160,7 +161,7 @@ const warningComments = {
       Program() {
         for (const comment of context.sourceCode.getAllComments()) {
           const marker = /\b(?:todo|fixme|legacy|deprecated)\b/iu.exec(comment.value)?.[0]
-          if (marker !== undefined && !cited.test(comment.value)) {
+          if (marker !== undefined && !cited.test(comment.value) && !(comment.type === "Line" && proofDirective.test(comment.value))) {
             context.report({ loc: comment.loc, message: "Unexpected '{{marker}}' comment.", data: { marker } })
           }
         }
