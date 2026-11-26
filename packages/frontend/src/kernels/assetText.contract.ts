@@ -1,5 +1,5 @@
 // spec/frontend/presentation.md, "Project tokens have one dollar prefix while native and approved stablecoin tickers have none"; spec/frontend/presentation.md, "Amounts display exactly in their asset's decimals with grouped whole digits and no trailing fraction zeros"
-import { type AssetTicker, assetSymbol, formatAssetAmount, formatRewardCapDisplay, formatRewardMinor, monthlyPoolLabel, networkLabel, type PaymentAsset, type PoolCommitment, type RewardAmountAsset } from "./assetText.ts";
+import { type AssetTicker, assetSymbol, formatAssetAmount, formatRewardCapDisplay, formatRewardMinor, knownAsset, monthlyPoolLabel, networkLabel, type PaymentAsset, type PoolCommitment, type RewardAmountAsset } from "./assetText.ts";
 import { vectors } from "./vectors.ts";
 
 const oneEth = 10n ** 18n;
@@ -68,6 +68,19 @@ export const paymentAmountsNameOnlyReviewedAssets = vectors<readonly [bigint, Pa
   [[1n, { network: "anvil", assetAddress: "0x1234567890abcdef1234567890abcdef12345678", assetDecimals: 18 }], "0.000000000000000001 token 0x1234…5678"],
   [[12_345_000_000n, { network: "robinhood-mainnet", assetAddress: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", assetDecimals: 6 }], "12,345 USDG"],
 ], ([value, asset]) => formatAssetAmount(value, asset));
+
+export const paymentAmountsNameNativeCoins = vectors<readonly [bigint, PaymentAsset], string>([
+  [[1_500_000_000_000_000_000n, { network: "base-mainnet", assetAddress: "0x0000000000000000000000000000000000000000", assetDecimals: 18 }], "1.5 ETH"],
+  [[1_500_000_000n, { network: "solana-mainnet", assetAddress: "11111111111111111111111111111111", assetDecimals: 9 }], "1.5 SOL"],
+  [[1_500_000n, { network: "base-mainnet", assetAddress: "0x0000000000000000000000000000000000000000", assetDecimals: 6 }], "1.5 token 0x0000…0000"],
+], ([value, asset]) => formatAssetAmount(value, asset));
+
+export const knownAssetsKeepTheirKind = vectors<PaymentAsset, AssetTicker | undefined>([
+  [{ network: "base-mainnet", assetAddress: "0x0000000000000000000000000000000000000000", assetDecimals: 18 }, { kind: "native", symbol: "ETH" }],
+  [{ network: "solana-mainnet", assetAddress: "11111111111111111111111111111111", assetDecimals: 9 }, { kind: "native", symbol: "SOL" }],
+  [{ network: "base-mainnet", assetAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", assetDecimals: 6 }, { kind: "stablecoin", symbol: "USDC" }],
+  [{ network: "base-mainnet", assetAddress: "0x0000000000000000000000000000000000000000", assetDecimals: 6 }, undefined],
+], knownAsset);
 
 export const networksShowTheirRecordedLabel = vectors<string, string>([
   ["base-mainnet", "Base"],
