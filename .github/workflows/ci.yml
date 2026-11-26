@@ -30,7 +30,9 @@ jobs:
         with:
           solana: "true"
       - id: verify-tasks
-        run: pnpm verify --continue=dependencies-successful --summarize --log-order=stream
+        env:
+          VITEST_MAX_WORKERS: "2"
+        run: pnpm verify --continue=dependencies-successful --concurrency=3 --summarize --log-order=stream
       - name: Report Turbo task timings
         if: ${{ !cancelled() }}
         run: |
