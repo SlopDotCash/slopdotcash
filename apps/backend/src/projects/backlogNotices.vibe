@@ -44,7 +44,7 @@ effect function readBacklogCounts() {
   const index = new Map<string, BacklogCountRow[]>()
   for (const row of found) {
     const entry: BacklogCountRow = { observedAt: row.observed_at, waitingOutside: row.waiting_outside, lastMergedAt: row.last_merged_at }
-    index.set(row.project_id, [...index.get(row.project_id) ?? [], entry])
+    index.set(row.project_id, [...(index.get(row.project_id) ?? []), entry])
   }
   return index
 }
@@ -74,8 +74,7 @@ export effect function sendBacklogNotices(projects: ReadonlyArray<{ readonly pro
           (SELECT r.actor_github_id FROM project_revisions r WHERE r.project_id = p2.id ORDER BY r.revision ASC LIMIT 1)
         ) AS recipient FROM projects p2
         WHERE p2.id = ${notice.projectId} AND json_extract(p2.manifest, '$.steward.github.type') = 'Organization'
-      ) audience
-      WHERE recipient IS NOT NULL
+      ) WHERE recipient IS NOT NULL
     ) audience
     WHERE p.id = ${notice.projectId}
     AND substr(${notice.eventKey}, 1, length(${prefix})) = ${prefix}
