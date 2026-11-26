@@ -245,22 +245,37 @@ when the steward is an Organization, under the Inbox kind
 `project_revision`, with event keys under `backlog-rule:`:
 `backlog-rule:<project>:preview` once, before 1 December 2026, when the
 project would leave on the current figures;
-`backlog-rule:<project>:warn:<last merge>` once when dormancy is four days
-away; and one notice each time the project leaves rotation, keyed as
-`backlog-rule:<project>:out:<backlog | dormant>:<last merge or none>`.
+`backlog-rule:<project>:warn:<last merge ISO instant or none>` once when
+dormancy is four days away and no catch-up pause is running; and one notice
+each time the project leaves rotation, keyed as
+`backlog-rule:<project>:out:<backlog | dormant>:<last merge ISO instant or none>`.
 The scheduled Slopbot run sends them right after it refreshes merge
-activity; a failure to send never fails that read. The Slopbot sender 
-itself is a later change. No notice names a contributor or an amount.
+activity; a failure to send never fails that read. No notice names a
+contributor or an amount.
+
+At most one notice is due for a project in a run: before 1 December 2026,
+only the preview when the project would leave; from 1 December 2026 onward,
+the out notice when it has left rotation, otherwise the warning when
+dormancy is four days away and no catch-up pause is running.
 
 ```quint
 pure val inboxKind = "project_revision"
 pure val backlogRuleKeyPrefix = "backlog-rule:"
 pure def canSendNotice(s: Backlog, key: str, by: str): bool = by == schedule and not(s.sentKeys.contains(key))
 pure def sendNotice(s: Backlog, key: str, by: str): Backlog = { ...s, sentKeys: s.sentKeys.union(Set(key)) }
+pure def noticeDue(s: Backlog): str =
+  if (s.now < startsAtHours) (if (wouldLeave(s)) "preview" else "none")
+  else if (outOfRotation(s)) "out"
+  else if (s.active and not(s.exempt) and not(catchUpRunning(s)) and dormantWarningDue(s.reads, s.now)) "warn"
+  else "none"
 pure def lawNoticeSentOnce(s: Backlog, key: str): bool =
   s.sentKeys.contains(key) implies not(canSendNotice(s, key, schedule))
 pure def lawPreviewBeforeStart(s: Backlog, key: str): bool =
   (s.now < startsAtHours and wouldLeave(s) and not(s.sentKeys.contains(key))) implies canSendNotice(s, key, schedule)
+pure def lawNoticeBeforeStartOnlyPreview(s: Backlog): bool =
+  s.now < startsAtHours implies (noticeDue(s) == "none" or noticeDue(s) == "preview")
+pure def lawCatchUpSuppressesNotice(s: Backlog): bool =
+  catchUpRunning(s) implies noticeDue(s) == "none"
 pure def sometimesNoticeSent(s: Backlog): bool = s.sentKeys.size() > 0
 pure val readsValues = Set(List(unreadRead, unreadRead),
   List({ read: true, waiting: 50, lastMergedAt: 498800, observedAt: 498911 }, unreadRead),
@@ -281,7 +296,7 @@ pure val lastStartMonthValues = Set(0, 202611, 202612)
 pure val nowMonthValues = Set(202611, 202612)
 pure val repositoryValues = Set(0, 1)
 pure val historyValues = Set(List(), List(498912))
-pure val keyValues = Set("backlog-rule:example:preview", "backlog-rule:example:warn:498800", "backlog-rule:example:out:backlog:498800")
+pure val keyValues = Set("backlog-rule:example:preview", "backlog-rule:example:warn:2026-11-25T08:00:00.000Z", "backlog-rule:example:out:backlog:2026-11-25T08:00:00.000Z")
 pure val byValues = Set(owner, registry, schedule, browserReader, discoveryServer, slopbot)
 pure val weight_storeRead = 3
 pure val weight_startCatchUp = 2
