@@ -1,10 +1,21 @@
-// spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"
+// spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced or when the attribution rules changed"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomId, sha256Hex, utf8 } from "@repo/platform/crypto"
-import { type CommitLine, type Event, type MemoFile, type MemoRun, type ModeReason, type RunContext, Rejected, commitLineFor, enabled, initial, machineOver, memoWithinBounds, trustedMemoUse } from "../../../gen/points__collectionMemo.effect.vibe"
+import { type CommitLine, type Event, type MemoFile, type MemoRun, type ModeReason, type RunContext, Rejected, auditOneIn, auditedAt, changedCodeAuditOneIn, commitLineFor, enabled, fullIntervalMs, initial, machineOver, memoWithinBounds, trustedMemoUse } from "../../../gen/points__collectionMemo.effect.vibe"
 
-export const collectionMemoFormat = "slop-collection-memo-v1"
+export const collectionMemoFormat = "slop-collection-memo-v2"
+const collectionMemoFormatV1 = "slop-collection-memo-v1"
 export const untrustedMemoUse = "Only a trusted main collection may use a collection memo"
+export const attributionRefreshMs = fullIntervalMs
+export const attributionAuditOneIn = auditOneIn
+export const attributionChangedCodeAuditOneIn = changedCodeAuditOneIn
+export const attributionRulesVersion = 1
+export const ATTRIBUTION_RULES_VERSION = attributionRulesVersion
+export const implementationMemoAuditOneIn = 50
+export const implementationMemoChangedCodeAuditOneIn = 10
+export const implementationMemoRulesVersion = 1
+export const IMPLEMENTATION_MEMO_RULES_VERSION = implementationMemoRulesVersion
+export const slowAttributionMs = 3 * 60 * 1000
 
 const nodeId = /^[A-Za-z0-9_=+/-]{1,128}$/u
 const sha = /^[a-f0-9]{40}$/u
@@ -47,6 +58,7 @@ export interface AttributionMemoFence {
 
 export interface AttributionMemoEntry {
   readonly outcomeId: string
+  readonly computedAt?: string | null
   readonly fence: AttributionMemoFence
   readonly pulls: ReadonlyArray<AttributionPullDependency>
   readonly references: ReadonlyArray<AttributionReferenceDependency>
@@ -60,8 +72,19 @@ export interface CollectionMemoFile {
   readonly cutoffAt: string
   readonly lastFullAt: string
   readonly attributionCodeDigest: string
+  readonly attributionRulesVersion: number
   readonly commitLines: ReadonlyArray<CommitLineRow>
   readonly attributions: ReadonlyArray<AttributionMemoEntry>
+}
+
+export interface AttributionLog {
+  readonly thresholdMs?: number
+  readonly write?: (line: string) => void!!
+}
+
+export interface RulesSource {
+  readonly path: string
+  readonly region?: string
 }
 
 export type LiveAnswer =
@@ -218,17 +241,19 @@ effect function resultAt(value: unknown, path: string) {
   return { kind: "authors", authors } satisfies AttributionMemoResult
 }
 
-effect function entryAt(value: unknown, index: number) {
+effect function entryAt(value: unknown, index: number, v1ComputedAt: string | null) {
   const path = `attributions[${index}]`
   const entry = try objectAt(value, path)
-  try exactKeys(entry, ["outcomeId", "fence", "pulls", "references", "incoming", "result"], path)
+  try exactKeys(entry, ["outcomeId", ...(v1ComputedAt === null ? ["computedAt"] : []), "fence", "pulls", "references", "incoming", "result"], path)
+  const computedAt = v1ComputedAt ?? entry.computedAt
+  if (!isoInstant(computedAt)) throw invalid(`${path}.computedAt`)
   const fence = try fenceAt(entry.fence, path)
   const pulls = try pullsAt(entry.pulls, path)
   const references = try referencesAt(entry.references, path)
   const incoming = entry.incoming
   if (!Array.isArray(incoming) || !incoming.every((source) => typeof source === "string")) throw invalid(`${path}.incoming`)
   const result = try resultAt(entry.result, path)
-  return { outcomeId: try text(entry.outcomeId, `${path}.outcomeId`, 128), fence, pulls, references, incoming: [...(incoming as ReadonlyArray<string>)], result } satisfies AttributionMemoEntry
+  return { outcomeId: try text(entry.outcomeId, `${path}.outcomeId`, 128), computedAt, fence, pulls, references, incoming: [...(incoming as ReadonlyArray<string>)], result } satisfies AttributionMemoEntry
 }
 
 export effect function parseCollectionMemo(source: string, byteLength: number) {
@@ -236,8 +261,11 @@ export effect function parseCollectionMemo(source: string, byteLength: number) {
   const parsed = parsedJson(source)
   if ("failure" in parsed) throw new MemoInvalid({ message: parsed.failure })
   const value = try objectAt(parsed.value, "memo")
-  try exactKeys(value, ["format", "producedAt", "cutoffAt", "lastFullAt", "attributionCodeDigest", "commitLines", "attributions"], "memo")
-  if (value.format !== collectionMemoFormat) throw invalid("unsupported format")
+  const v1 = value.format === collectionMemoFormatV1
+  if (!v1 && value.format !== collectionMemoFormat) throw invalid("unsupported format")
+  try exactKeys(value, ["format", "producedAt", "cutoffAt", "lastFullAt", "attributionCodeDigest", ...(v1 ? [] : ["attributionRulesVersion"]), "commitLines", "attributions"], "memo")
+  const rawRulesVersion = v1 ? 1 : value.attributionRulesVersion
+  if (typeof rawRulesVersion !== "number" || !Number.isSafeInteger(rawRulesVersion) || rawRulesVersion < 1) throw invalid("attribution rules version")
   const { producedAt, cutoffAt, lastFullAt, attributionCodeDigest, commitLines, attributions } = value
   if (!isoInstant(producedAt) || !isoInstant(cutoffAt) || !isoInstant(lastFullAt) || Date.parse(lastFullAt) > Date.parse(producedAt)) throw invalid("timestamps")
   if (typeof attributionCodeDigest !== "string" || !codeDigestPattern.test(attributionCodeDigest)) throw invalid("attribution code digest")
@@ -245,7 +273,10 @@ export effect function parseCollectionMemo(source: string, byteLength: number) {
   const lines: CommitLineRow[] = []
   for (const [index, row] of (commitLines as ReadonlyArray<unknown>).entries()) lines.push(try commitLineAt(row, index))
   const entries: AttributionMemoEntry[] = []
-  for (const [index, entry] of (attributions as ReadonlyArray<unknown>).entries()) entries.push(try entryAt(entry, index))
+  for (const [index, entry] of (attributions as ReadonlyArray<unknown>).entries()) entries.push(try entryAt(entry, index, v1 ? lastFullAt : null))
+  for (const entry of entries) {
+    if (Date.parse(entry.computedAt ?? "") > Date.parse(producedAt)) throw invalid("an attribution was computed after the memo")
+  }
   const commits = new Set<string>()
   for (const [repository, commit] of lines) {
     const key = `${repository}\0${commit}`
@@ -257,7 +288,7 @@ export effect function parseCollectionMemo(source: string, byteLength: number) {
     if (outcomes.has(entry.outcomeId)) throw invalid("attributions repeat an outcome")
     outcomes.add(entry.outcomeId)
   }
-  return { format: collectionMemoFormat, producedAt, cutoffAt, lastFullAt, attributionCodeDigest, commitLines: lines, attributions: entries } satisfies CollectionMemoFile
+  return { format: collectionMemoFormat, producedAt, cutoffAt, lastFullAt, attributionCodeDigest, attributionRulesVersion: rawRulesVersion, commitLines: lines, attributions: entries } satisfies CollectionMemoFile
 }
 
 function lineKey(repositoryNodeId: string, commitNodeId: string) {
@@ -307,11 +338,70 @@ export effect function auditSample(outcomeId: string, cutoffAt: string) {
   return Number.parseInt(digest.slice(0, 8), 16)
 }
 
+export effect function attributionRefreshAge(outcomeId: string) {
+  const digest = try sha256Hex(`slop-attribution-refresh\0${outcomeId}`)
+  const fraction = Number.parseInt(digest.slice(0, 8), 16) / 0x1_0000_0000
+  return Math.floor((attributionRefreshMs * (1 + fraction)) / 2)
+}
+
+export effect function rulesDigest(root: string, sources: ReadonlyArray<RulesSource>, marker: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const parts: Array<ReadonlyArray<string>> = []
+  for (const { path, region } of sources) {
+    const source = try fs.readFileString(files.join(root, path))
+    if (region === undefined) {
+      parts.push([path, source])
+      continue
+    }
+    const begin = `// ${marker}: begin ${region}\n`
+    const end = `// ${marker}: end ${region}\n`
+    const start = source.indexOf(begin)
+    const stop = source.indexOf(end)
+    if (start < 0 || stop < start || source.indexOf(begin, start + 1) >= 0 || source.indexOf(end, stop + 1) >= 0) {
+      throw invalid(`${marker} region ${region} in ${path} is not marked once`)
+    }
+    parts.push([path, region, source.slice(start, stop + end.length)])
+  }
+  return try sha256Hex(JSON.stringify(parts))
+}
+
+export effect function watchAttribution<A, E, R>(pull: string, run: A!E!R, describe: (value: A) => string, log: AttributionLog = {}): A!E!R {
+  const thresholdMs = log.thresholdMs ?? slowAttributionMs
+  const write = log.write ?? ((line: string) => Console.error(line.trimEnd()))
+  const minutes = (ms: number) => (ms / 60_000).toFixed(1)
+  const startedAt = try Clock.currentTimeMillis
+  const watchdog = thresholdMs > 0
+    ? try Effect.forkChild(effect {
+        try sleep(Duration.millis(thresholdMs))
+        try write(`[slop.cash] slow attribution still running: ${pull}, over ${minutes(thresholdMs)} minutes\n`)
+      })
+    : undefined
+  const finished = effect {
+    const result = try run
+    const elapsed = (try Clock.currentTimeMillis) - startedAt
+    if (elapsed >= thresholdMs) try write(`[slop.cash] slow attribution: ${pull} took ${minutes(elapsed)} minutes, ${describe(result)}\n`)
+    return result
+  }
+  return try ensuring(finished, watchdog === undefined ? Effect.void : Fiber.interrupt(watchdog))
+}
+
+export function collectionMemoStatsLines(session: MemoSession): string {
+  const lines = session.commitLines.counts
+  const { stats } = session
+  const counts = `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${stats.reused} reused, ${stats.live} computed live, ${session.expired} past their refresh age, ${stats.audited} audited (1 in ${session.auditOneIn}), ${stats.auditMismatches} audit mismatches, ${stats.fenceMisses} changed since the last collection\n`
+  if (session.notReusable.size === 0) return counts
+  const reasons = [...session.notReusable].sort((left, right) => right[1] - left[1]).slice(0, topNotReusable).map(([reason, total]) => `${total} x ${reason}`).join("; ")
+  return `${counts}[slop.cash] attributions not recorded for reuse: ${reasons}\n`
+}
+
 export interface MemoSession {
   readonly mode: "full" | "incremental"
   readonly reason: string
   readonly codeDigest: string
   readonly lastFullAt: string
+  readonly auditOneIn: number
+  readonly expired: number
   readonly commitLines: CommitLineMemo
   readonly prior: ReadonlyMap<string, AttributionMemoEntry>
   readonly next: ReadonlyMap<string, AttributionMemoEntry>
@@ -320,6 +410,7 @@ export interface MemoSession {
   state(): MemoRun
   beginPass(): void!Rejected
   noteNotReusable(reasons: ReadonlyArray<string>): void
+  audits(outcomeId: string, cutoffAt: string): boolean!!Experimental.Crypto.Crypto
   audit(outcomeId: string, sample: number, live: LiveAnswer): boolean!Rejected
   finishAudit(): void!Rejected
   canReuse(outcomeId: string, sample: number): boolean
@@ -335,6 +426,7 @@ export interface OpenMemoOptions {
   readonly forceFull: boolean
   readonly nowMs: number
   readonly codeDigest: string
+  readonly rulesVersion?: number
   readonly context: RunContext
 }
 
@@ -346,8 +438,8 @@ export interface OpenedMemo {
 const reasonText: Readonly<Record<ModeReason, string>> = {
   NoPreviousMemo: "no previous memo",
   FullRequested: "full collection requested",
-  WeeklyFull: "weekly full collection",
-  CodeChanged: "attribution code changed",
+  RulesChanged: "attribution rules changed",
+  CodeChanged: `code changed since the previous memo; auditing 1 in ${attributionChangedCodeAuditOneIn}`,
   MemoMatches: "previous memo matches",
 }
 
@@ -373,17 +465,31 @@ export effect function memoRun() {
 
 export effect function openSession(options: OpenMemoOptions) {
   const { memo, codeDigest } = options
+  const rulesVersion = options.rulesVersion ?? attributionRulesVersion
   const outcomeNumber = interner(1)
   const versionNumber = interner(0)
   const resultNumber = interner(0)
+  const attributions: Array<{ readonly outcomeId: number; readonly version: number; readonly result: number; readonly expired: boolean }> = []
+  const currentEntries: Array<readonly [string, AttributionMemoEntry]> = []
+  let expiredCount = 0
+  if (memo !== null) {
+    for (const entry of memo.attributions) {
+      const computedAt = entry.computedAt ?? memo.lastFullAt
+      const expired = options.nowMs - millisOf(computedAt) >= (try attributionRefreshAge(entry.outcomeId))
+      attributions.push({ outcomeId: outcomeNumber(entry.outcomeId), version: versionNumber(versionKey(entry)), result: resultNumber(canonicalJson(entry.result)), expired })
+      if (expired) expiredCount += 1
+      else currentEntries.push([entry.outcomeId, entry] as const)
+    }
+  }
   const memoFile: MemoFile = memo === null
-    ? { usable: false, producedAt: 0, lastFullAt: 0, sameCode: false, attributions: [] }
+    ? { usable: false, producedAt: 0, lastFullAt: 0, sameRules: false, sameCode: false, attributions: [] }
     : {
         usable: true,
         producedAt: millisOf(memo.producedAt),
         lastFullAt: millisOf(memo.lastFullAt),
+        sameRules: memo.attributionRulesVersion === rulesVersion,
         sameCode: memo.attributionCodeDigest === codeDigest,
-        attributions: memo.attributions.map((entry) => ({ outcomeId: outcomeNumber(entry.outcomeId), version: versionNumber(versionKey(entry)), result: resultNumber(canonicalJson(entry.result)) })),
+        attributions,
       }
   const opening: Event = { type: "openMemo", memo: memoFile, context: options.context, forced: options.forceFull, now: options.nowMs }
   let machine = try memoRun()
@@ -391,7 +497,8 @@ export effect function openSession(options: OpenMemoOptions) {
   if (opened.refusal === "UntrustedRun") throw new MemoRefused({ message: untrustedMemoUse })
   if (opened.refusal === "FutureMemo") throw invalid("memo was produced in the future")
   const mode = opened.mode === "IncrementalCollection" ? "incremental" : "full"
-  const prior = new Map<string, AttributionMemoEntry>(mode === "incremental" && memo !== null ? memo.attributions.map((entry) => [entry.outcomeId, entry] as const) : [])
+  const prior = new Map<string, AttributionMemoEntry>(mode === "incremental" ? currentEntries : [])
+  const expired = mode === "incremental" ? expiredCount : 0
   const lastFullAt = memo === null ? try isoAt(options.nowMs) : memo.lastFullAt
   const commitLines = commitLineMemo(memo === null ? [] : memo.commitLines)
   const next = new Map<string, AttributionMemoEntry>()
@@ -405,7 +512,7 @@ export effect function openSession(options: OpenMemoOptions) {
   }
 
   function recordedEntry(outcomeId: string, live: LiveAnswer) {
-    if (live.kind === "fenced") next.set(outcomeId, live.entry)
+    if (live.kind === "fenced") next.set(outcomeId, { ...live.entry, computedAt: live.entry.computedAt ?? null })
   }
 
   function priorVersion(outcomeId: string) {
@@ -426,6 +533,8 @@ export effect function openSession(options: OpenMemoOptions) {
     reason: reasonText[opened.reason],
     codeDigest,
     lastFullAt,
+    auditOneIn: opened.auditRate,
+    expired,
     commitLines,
     prior,
     next,
@@ -449,6 +558,9 @@ export effect function openSession(options: OpenMemoOptions) {
     noteNotReusable(reasons: ReadonlyArray<string>) {
       const kinds = new Set((reasons.length > 0 ? reasons : ["no reason recorded"]).map(maskedReason))
       for (const kind of kinds) notReusable.set(kind, (notReusable.get(kind) ?? 0) + 1)
+    },
+    effect audits(outcomeId: string, cutoffAt: string) {
+      return auditedAt(try auditSample(outcomeId, cutoffAt), opened.auditRate)
     },
     effect audit(outcomeId: string, sample: number, live: LiveAnswer) {
       const before = run
@@ -495,8 +607,11 @@ export effect function openSession(options: OpenMemoOptions) {
         cutoffAt,
         lastFullAt: mode === "full" ? producedAt : lastFullAt,
         attributionCodeDigest: codeDigest,
+        attributionRulesVersion,
         commitLines: commitLines.rows(),
-        attributions: [...next.values()].sort((left, right) => (left.outcomeId < right.outcomeId ? -1 : left.outcomeId > right.outcomeId ? 1 : 0)),
+        attributions: [...next.values()]
+          .map((entry) => ({ ...entry, computedAt: entry.computedAt ?? producedAt }))
+          .sort((left, right) => (left.outcomeId < right.outcomeId ? -1 : left.outcomeId > right.outcomeId ? 1 : 0)),
       }
       return `${JSON.stringify(file)}\n`
     },
@@ -519,7 +634,7 @@ export effect function readCollectionMemo(path: string) {
   return try parseCollectionMemo(new TextDecoder().decode(bytes), bytes.length)
 }
 
-export effect function openMemoFromEnv(codeDigest: string) {
+export effect function openMemoFromEnv(codeDigest: string, rulesVersion = attributionRulesVersion) {
   const input = try environment("SLOP_COLLECTION_MEMO")
   const output = try environment("SLOP_COLLECTION_MEMO_OUT")
   const full = (try environment("SLOP_COLLECTION_FULL")) || "false"
@@ -534,7 +649,7 @@ export effect function openMemoFromEnv(codeDigest: string) {
       return null
     }
   }
-  const session = try openSession({ memo, forceFull: full === "true", nowMs: try Clock.currentTimeMillis, codeDigest, context })
+  const session = try openSession({ memo, forceFull: full === "true", nowMs: try Clock.currentTimeMillis, codeDigest, rulesVersion, context })
   try Console.error(`[slop.cash] collection mode: ${session.mode} (${session.reason})`)
   return { session, output: output === "" ? undefined : output } satisfies OpenedMemo
 }
@@ -554,13 +669,7 @@ effect function kept(output: string, contents: string) {
 
 export effect function writeMemo(opened: OpenedMemo, cutoffAt: string) {
   const { session } = opened
-  const lines = session.commitLines.counts
-  const { stats } = session
-  try Console.error(`[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${stats.reused} reused, ${stats.live} computed live, ${stats.audited} audited, ${stats.auditMismatches} audit mismatches, ${stats.fenceMisses} changed since the last collection`)
-  if (session.notReusable.size > 0) {
-    const reasons = [...session.notReusable].sort((left, right) => right[1] - left[1]).slice(0, topNotReusable).map(([reason, total]) => `${total} x ${reason}`).join("; ")
-    try Console.error(`[slop.cash] attributions not recorded for reuse: ${reasons}`)
-  }
+  try Console.error(collectionMemoStatsLines(session).trimEnd())
   try session.snapshotWritten()
   if (opened.output === undefined) return
   const producedAtMs = try Clock.currentTimeMillis

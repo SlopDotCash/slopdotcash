@@ -1,6 +1,6 @@
 // spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"; spec/points/journal.md, "Undecided policy is refused: an upheld dispute appends no correction"
 import { pointsAnswer } from "@repo/backend/points"
-import { rows, sql } from "@repo/platform/d1"
+import { databaseTemporarilyUnavailable, rows, sql } from "@repo/platform/d1"
 import { type Actor, Caller, bytesBody, handleRaw, json } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { later } from "@repo/platform/worker"
@@ -74,18 +74,12 @@ effect function signedIn() {
   }
 }
 
-const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
-
-function isBusyD1(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
-}
-
 effect function asMember<E, R>(refusals: { readonly notSignedIn: Row; readonly accountChanged: Row; readonly internalError: Row }, handler: (actor: Actor) => HttpServerResponse.HttpServerResponse!E!R) {
   const actor = try signedIn()
   if (actor === "signedOut") return refused(refusals.notSignedIn)
   if (actor === "changed") return refused(refusals.accountChanged)
   return handler(actor) catch effect (error) => {
-    if (isBusyD1(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, privateNoStore)
+    if (databaseTemporarilyUnavailable(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, privateNoStore)
     try Effect.logError("Points dispute unavailable")
     return refused(refusals.internalError)
   }
