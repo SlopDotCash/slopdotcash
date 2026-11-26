@@ -1,5 +1,4 @@
 // spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
-import type { EnforcementPreview } from "@repo/backend/client";
 import type { FeeReport } from "./feeReport.ts";
 import { type AdminProject, adminProjectsOf, type Enforcement, type ListedProject } from "./projects.ts";
 import type { EvidenceRunView } from "./EvidenceRunCard.tsx";
@@ -89,22 +88,6 @@ export const projects: ReadonlyArray<AdminProject> = projectsOf([
   { ...listed(decisionEnforcement, { ...engineManifest, id: "forge", slug: "forge", name: "Forge", repositories: [{ id: "octo-org/forge" }] }), id: "forge" },
   { ...listed(clearEnforcement, { ...engineManifest, id: "docs", slug: "docs", name: "Docs", repositories: [{ id: "octo-org/docs" }] }), id: "docs", status: "paused" },
 ]);
-
-export const preview: EnforcementPreview = {
-  projectId: "forge",
-  projectName: "Forge",
-  action: "ban",
-  sequence: 2,
-  stateBefore: "quarantined",
-  stateAfter: "banned",
-  appealBefore: "none",
-  appealAfter: "none",
-  result: "revision_appended",
-  pendingReason: null,
-  maintainerBans: [{ githubId: "777", githubLogin: "forge-owner" }],
-  accountReinstatements: [],
-  revision: { before: 3, after: 4, statusBefore: "active", statusAfter: "paused", listingTierBefore: "community", listingTierAfter: "retired" },
-};
 
 export const feeReport: FeeReport = {
   schemaVersion: "1",

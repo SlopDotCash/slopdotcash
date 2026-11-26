@@ -1,6 +1,6 @@
 //@ backend dafny
 // spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews"; spec/points/reviews.md, "A review is empty unless it is an approval or a change request with twenty substantive characters or an inline comment"
-import { type ActorKind, type ReviewContent, type ReviewDecision, decided, emptyReview } from "../../../gen/points__reviews.ts";
+import { type ReviewContent, type ReviewDecision, decided, emptyReview } from "../../../gen/points__reviews.ts";
 
 export interface ReviewActor { id: string; login: string; kind: string }
 
@@ -108,13 +108,6 @@ export function reviewDecision(state: ReviewState): ReviewDecision {
 export function reviewContent(review: ReviewFacts): ReviewContent {
   //@ ensures \result.decision === reviewDecision(review.state) && \result.inlineComments === review.inlineCommentCount && \result.substantiveChars >= 0
   return { decision: reviewDecision(review.state), substantiveChars: substantiveLength(review.body), inlineComments: review.inlineCommentCount };
-}
-
-/** @throws {never} */
-export function reviewActorKind(actor: ReviewActor): ActorKind {
-  //@ ensures actor.kind === "Bot" ==> \result === "BotUser"
-  //@ ensures actor.kind !== "Bot" ==> \result === "HumanUser"
-  return actor.kind === "Bot" ? "BotUser" : "HumanUser";
 }
 
 /** @throws {never} */

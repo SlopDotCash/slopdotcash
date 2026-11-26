@@ -1,6 +1,9 @@
 // Knip reads .vibe files through VibeLang's compiler, which omits function bodies;
-// compileVibe appends same-file references for local exports that appear in the body
-// so ignoreExportsUsedInFile applies to .vibe/.vibex modules the same as .ts modules.
+// compileVibe strips inline VibeLang `module` imports (unquoted specifiers that break TS parsing)
+// and appends same-file references for local exports used in the body so ignoreExportsUsedInFile
+// applies to .vibe/.vibex modules the same as .ts modules.
+// compileTs marks exports referenced inside LemmaScript/Dafny `//@` contract comments or a sibling
+// `.proof.dfy` file as used in-file so verified contract helpers are not flagged as unused.
 // Each exception below names something Knip cannot follow:
 //   ignore vibestack/examples/**            standalone projects with their own install, outside the workspace
 //   ignore **/test/fixtures/**              inputs the tools' tests read as text, never imported
@@ -17,6 +20,7 @@
 //   platform anvil, solana-test-validator   local chains spawned by packages/platform/src/testing/chains/{anvil,validator}.ts
 //   entry security src/sandbox/job.vibe     the scan container's program, named only as a string in vite.sandbox.config.ts
 //   entry contracts test/**                 the conformance driver, loaded by path by the traces stage; evm/ and solana/ are Foundry and Cargo projects
+import { existsSync, readFileSync } from "node:fs"
 import vibelang from "vibelang/knip"
 
 const regexPrefixKeywords = new Set([
@@ -140,6 +144,7 @@ function sameFileUsedNames(code) {
 
 function compileVibe(text, filePath) {
   const compiled = vibelang(text, filePath)
+    .replace(/^import\s+[^\n]*\bfrom\s+[A-Za-z_$][\w$]*\s*;?\s*$/gmu, "")
   const exports = []
   for (const line of compiled.split("\n")) {
     const typeMatch = /^export\s+(?:type|interface)\s+([A-Za-z_$][\w$]*)\b/u.exec(line)
@@ -164,6 +169,33 @@ function compileVibe(text, filePath) {
   return extra.length > 0 ? `${compiled}${extra.join("\n")}\n` : compiled
 }
 
+function compileTs(text, filePath) {
+  if (!text.includes("//@")) return text
+  const contractLines = []
+  for (const line of text.split("\n")) {
+    const at = line.indexOf("//@")
+    if (at >= 0) contractLines.push(line.slice(at + 3))
+  }
+  const proofPath = filePath.endsWith(".ts") ? `${filePath.slice(0, -3)}.proof.dfy` : ""
+  if (proofPath && existsSync(proofPath)) contractLines.push(readFileSync(proofPath, "utf8"))
+  if (contractLines.length === 0) return text
+  const contractTokens = new Set(contractLines.join("\n").match(/[A-Za-z_$][\w$]*/gu) ?? [])
+  const extra = []
+  let typeIndex = 0
+  for (const line of text.split("\n")) {
+    const typeMatch = /^export\s+(?:type|interface)\s+([A-Za-z_$][\w$]*)\b/u.exec(line)
+    if (typeMatch && contractTokens.has(typeMatch[1])) {
+      extra.push(`type __dafnyUsed${typeIndex++} = ${typeMatch[1]}`)
+      continue
+    }
+    const declMatch = /^export\s+(?:async\s+)?(?:function|const|class|enum)\s+([A-Za-z_$][\w$]*)\b/u.exec(line)
+    if (declMatch && contractTokens.has(declMatch[1])) {
+      extra.push(`void ${declMatch[1]}`)
+    }
+  }
+  return extra.length > 0 ? `${text}\n${extra.join("\n")}\n` : text
+}
+
 const appProject = [
   "src/**/*.{ts,tsx,vibe,vibex}",
   "test/**/*.{ts,tsx,vibe,vibex}"
@@ -176,7 +208,7 @@ const appCommonEntry = [
 ]
 
 export default {
-  compilers: { vibe: compileVibe, vibex: compileVibe },
+  compilers: { ts: compileTs, vibe: compileVibe, vibex: compileVibe },
   "ignore": [
     "vibestack/examples/**",
     "**/test/fixtures/**",

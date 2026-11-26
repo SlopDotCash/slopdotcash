@@ -79,10 +79,6 @@ export effect function departDirect<R>(opened: DirectOpened<R>) {
   try opened.form.depart(opened.surface)
 }
 
-export effect function shownDirect<R>(opened: DirectOpened<R>) {
-  return try opened.form.shown(opened.surface)
-}
-
 export effect function openSolanaPayment(record: SecurityCase) {
   const seen = try seenOf(record)
   const opened = try openCaseSolanaPayment(bountyStorage(), seen)

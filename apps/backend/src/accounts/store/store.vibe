@@ -279,15 +279,6 @@ export effect function send(intent: Intent, sender: Sender, facts: Facts = noFac
   return try update(accounts(scope, now, supplied), (loaded) => decide(loaded, intent, sender, supplied, now))
 }
 
-export effect function receive(input: unknown, sender: Sender, facts: Facts = noFacts) {
-  return try send(try Schema.decodeUnknownEffect(Intent)(input), sender, facts)
-}
-
-export effect function account(sessionHash: string, facts: Facts = noFacts) {
-  const now = try nowSeconds()
-  return (try load(accounts(sql`SELECT actor_id FROM points_sessions WHERE token_hash = ${sessionHash}`, now, facts))).state.state
-}
-
 export effect function everyAccount(facts: Facts = noFacts) {
   const now = try nowSeconds()
   return (try load(accounts(sql`SELECT actor_id FROM points_members`, now, facts))).state.state

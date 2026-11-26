@@ -4,7 +4,7 @@ import type { DetailHeadings } from "../../../flows/security/details.vibe";
 import type { ReportDraft } from "../../../flows/security/private.vibe";
 import type { ReadinessShown } from "./runtime.vibe";
 import type { CaseSummary } from "./summary.ts";
-import type { ProgramProject, ProgramTerms } from "./terms.schema.ts";
+import type { ProgramTerms } from "./terms.schema.ts";
 
 const person = (githubLogin: string) => ({ githubLogin });
 
@@ -34,16 +34,6 @@ export const terms: ProgramTerms = {
   disclosure: "Coordinated disclosure after a fix ships, or 90 days after receipt.",
   safeHarbor: "Good-faith research under these terms is authorized.",
 };
-
-export const project: ProgramProject = {
-  id: "acme-vault",
-  slug: "acme-vault",
-  name: "Acme Vault",
-  links: { repository: "https://github.com/acme/vault" },
-  securityBounty: terms,
-};
-
-export const unpublished: ProgramProject = { id: "acme-docs", slug: "acme-docs", name: "Acme Docs" };
 
 export const fullAward: ProgramTerms = { ...terms, split: { researcherBasisPoints: 10000, slopBasisPoints: 0 }, sponsor: { name: "Slop" } };
 

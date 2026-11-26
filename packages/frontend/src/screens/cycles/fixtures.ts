@@ -24,13 +24,3 @@ export const paidCycle: CycleIndexEntry = {
   ],
   files,
 };
-
-export const reviewCycle: CycleIndexEntry = {
-  ...paidCycle,
-  projectId: "eliza",
-  cycleId: "2026-09",
-  state: "review",
-  approvedAt: null,
-  settledAt: null,
-  reward: { ...paidCycle.reward, approvedMinor: "0", paidMinor: "0" },
-};

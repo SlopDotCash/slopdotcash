@@ -3,7 +3,7 @@ import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { D1, first, sql } from "@repo/platform/d1"
 import { answered, handleRaw, json, jsonBody } from "@repo/platform/http"
-import { type AnyRoute, type Method, route } from "@repo/platform/route"
+import { type Method, route } from "@repo/platform/route"
 import { EmailEnrollment } from "@repo/ports/backend"
 import {
   notifyPostV1ActivityNotificationsDispatch,
@@ -49,10 +49,6 @@ const emailUnsubscribePath: Internal = { path: "/v1/email/unsubscribe", limitKib
 const projectApplicationsPath: Internal = { path: projectApplicationNoticePath, limitKib: 8 }
 const slopbotSpendPath: Internal = { path: slopbotSpendNoticePath, limitKib: 8 }
 const slopbotFailurePath: Internal = { path: slopbotFailureNoticePath, limitKib: 8 }
-
-const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, emailUnsubscribePath, projectApplicationsPath, slopbotSpendPath, slopbotFailurePath]
-
-export const notifyApi: ReadonlyArray<AnyRoute> = internals.flatMap((internal) => [descriptor("POST", internal.path, internal.limitKib), ...otherMethods.map((method) => descriptor(method, internal.path, 1))])
 
 interface Row {
   readonly status: number

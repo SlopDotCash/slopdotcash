@@ -6,7 +6,7 @@ import { draftMachine } from "../../../flows/security/composeDraft.vibe"
 import { type ReviewDecision, authorizeSubmission, readinessOf, reconcileSubmission, retrySubmissionScreening, reviewSubmission, reviseSubmission, sendSubmission } from "../../../flows/security/intake.vibe"
 import { reportHeadings } from "../../../flows/security/details.vibe"
 import { type ReportDraft, emptyReport } from "../../../flows/security/private.vibe"
-import { keepsReportText, loadReportText, pruneReportTexts, releaseReportText, saveReportText } from "../../../flows/security/reportText.vibe"
+import { keepsReportText, loadReportText, releaseReportText, saveReportText } from "../../../flows/security/reportText.vibe"
 import { untilTime } from "../../../platform/clock.vibe"
 import { Registry, findProject, registryLayer } from "../../../reads/registry.vibe"
 import { reportCompose } from "./compose.vibe"
@@ -129,10 +129,6 @@ export effect function submissionOpened(submissionId: string) {
     text: (try loadReportText(submissionId)) ?? emptyReport,
     headings: try reportHeadings(submissionId),
   }
-}
-
-export effect function submissionsLoaded(submissions: ReadonlyArray<SubmissionView>) {
-  try pruneReportTexts(submissions)
 }
 
 export effect function keepReportText(submission: SubmissionView) {

@@ -12,10 +12,6 @@ export const importStreamMediaType = "application/x-ndjson"
 
 export const importHeartbeatMillis = 15_000
 
-export schema ImportPendingFrame {
-  readonly status: "pending"
-}
-
 export schema ImportTerminalFailure {
   readonly stage: string
   readonly sourceIndex: number | null
@@ -39,8 +35,6 @@ export const ImportTerminalFrame = Schema.Union([
   Schema.Struct({ status: Schema.Literal(200), body: ImportReceipt }),
   Schema.Struct({ status: Schema.Literal(409), body: ImportRefusalBody }),
 ])
-
-export const ImportFrame = Schema.Union([ImportPendingFrame, ImportTerminalFrame])
 
 export const importLimitBytes = importBodyLimit
 

@@ -537,22 +537,8 @@ export const getProjects = {
   },
 } as const
 
-export const getProjectRevisions = {
-  ...withNotFound,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
-} as const
-
 export const getProjectRevisionsByIdByRevision = {
   notFoundRevisionNotFound: { status: 404, error: "not_found", message: "Revision not found", headers: jsonNoStoreSlopProjectApiContract },
-  ...withNotFound,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
-} as const
-
-export const getProjectAccountBans = {
   ...withNotFound,
   otherMethods: {
     ...withOriginForbiddenV2,
@@ -570,20 +556,6 @@ export const getProjectsById = {
 
 export const getProjectGithubOwnedRepositories = {
   ...withUnauthorized,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
-} as const
-
-export const getProjectGithubRepositoriesByOwnerByName = {
-  ...withUnauthorized,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
-} as const
-
-export const getProjectSession = {
-  ...withNotFound,
   otherMethods: {
     ...withOriginForbiddenV2,
   },
@@ -637,13 +609,6 @@ export const postProjectSetupByIdCheck = {
   invalidRequestInvalidRequestScan: { status: 400, error: "invalid_request", message: "Invalid requestScan", headers: jsonNoStoreSlopProjectApiContract },
 } as const
 
-export const getProjectApplicationsMine = {
-  ...withUnauthorizedAndInvalidExpectedActor,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
-} as const
-
 export const postProjectApplicationsByIdPublish = {
   ...withOriginForbidden,
   ...withNotFoundApplicationNotFound,
@@ -677,11 +642,6 @@ export const putAdminProjectsByIdManifest = {
   invalidManifestAReviewBudgetCannotAffectAnOpen: { status: 422, error: "invalid_manifest", message: "A review budget cannot affect an open or past cycle", headers: jsonNoStoreSlopProjectApiContract },
 } as const
 
-export const postAdminProjectsByIdEnforcementPreview = {
-  ...withOriginForbiddenAndUnauthorizedV2,
-  ...withEnforcementDecisions,
-} as const
-
 export const postAdminProjectsByIdEnforcement = {
   ...withOriginForbiddenAndUnauthorizedV2,
   ...withEnforcementDecisions,
@@ -693,13 +653,6 @@ export const postProjectAppeals = {
   invalidRequestUnsupportedAppealScope: { status: 400, error: "invalid_request", message: "Unsupported appeal scope", headers: jsonNoStoreSlopProjectApiContract },
   forbiddenOnlyACurrentlyBanned: { status: 403, error: "forbidden", message: "Only a currently banned account can file an account appeal", headers: jsonNoStoreSlopProjectApiContract },
   forbiddenOnlyTheProjectSteward: { status: 403, error: "forbidden", message: "Only the project steward, the account that listed the project, or an account banned by this project decision can appeal", headers: jsonNoStoreSlopProjectApiContract },
-} as const
-
-export const getProjectAppeals = {
-  ...withUnauthorizedAndInvalidExpectedActor,
-  otherMethods: {
-    ...withOriginForbiddenV2,
-  },
 } as const
 
 export const postReferralsCode = {
@@ -856,27 +809,9 @@ export const getPointsXProfile = {
   },
 } as const
 
-export const getPointsXCallback = {
-  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
-  otherMethods: {
-    ...withOriginForbiddenNoStoreAndRateLimitedV2,
-  },
-} as const
-
-export const getPointsXMe = {
-  ...withOriginForbiddenNoStoreAndPointsUnavailableV3,
-  otherMethods: {
-    ...withOriginForbiddenNoStoreAndRateLimitedV2,
-  },
-} as const
-
 export const postPointsXStart = {
   ...withOriginForbiddenNoStoreAndPointsUnavailable,
   xNotConfigured: { status: 503, error: "x_not_configured", headers: jsonNoStoreV2 },
-} as const
-
-export const postPointsXDisconnect = {
-  ...withOriginForbiddenNoStoreAndPointsUnavailableV2,
 } as const
 
 export const postPointsXVisibility = {
@@ -903,22 +838,6 @@ export const postPointsJoin = {
   accountClosedNoStore: { status: 409, error: "account_closed", fields: ["closedAt"], headers: jsonNoStore },
   otherMethods: {
     ...withNotFoundNoStoreV2,
-  },
-} as const
-
-export const getPointsMe = {
-  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
-  otherMethods: {
-    ...withOriginForbiddenNoStoreAndNotSignedInS401V2,
-    ...withNotFoundNoStoreV2,
-  },
-} as const
-
-export const getPointsSessions = {
-  ...withOriginForbiddenNoStoreAndNotSignedInS401V3,
-  ...withPointsUnavailable,
-  otherMethods: {
-    ...withOriginForbiddenNoStoreAndRateLimited,
   },
 } as const
 
@@ -1051,13 +970,6 @@ export const getReferralByCode = {
 
 export const identityPostV1LocalStart = {
   ...withRateLimitedTooManyRequestsTryAndServiceUnavailable,
-  otherMethods: {
-    ...withNotFoundNoStoreV2,
-  },
-} as const
-
-export const identityPostV1LocalPoll = {
-  ...withRateLimitedTooManyRequestsTry,
   otherMethods: {
     ...withNotFoundNoStoreV2,
   },

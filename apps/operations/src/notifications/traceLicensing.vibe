@@ -25,12 +25,6 @@ export const traceLicensingAvailableSql = `INSERT INTO notifications (event_key,
    WHERE true
   ON CONFLICT (event_key, recipient_github_id) DO NOTHING`
 
-export const traceLicensingRecipientsSql = `SELECT COUNT(*) AS recipients
-  FROM (${traceLicensingAudienceSql}) audience
- WHERE NOT EXISTS (SELECT 1 FROM notifications n
-                    WHERE n.event_key = '${traceLicensingEventKey}'
-                      AND n.recipient_github_id = audience.recipient)`
-
 export function notifyTraceLicensingAvailable(at: string): Statement {
   return sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
     SELECT ${traceLicensingEventKey}, audience.recipient,

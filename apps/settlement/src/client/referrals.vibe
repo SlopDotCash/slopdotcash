@@ -47,7 +47,6 @@ const ReferralClaimSchema = Schema.Struct({
   cumulativeBase: BaseUnits,
   proof: Schema.Array(Digest32).check(Schema.isMaxLength(256)),
 })
-export type ReferralClaim = typeof ReferralClaimSchema.Type
 
 export const ReferralAccountSchema = Schema.Struct({
   enabled: Schema.Literal(true),

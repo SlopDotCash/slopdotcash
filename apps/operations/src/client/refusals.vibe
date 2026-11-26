@@ -90,16 +90,6 @@ export const postSecurityCasesByIdAcknowledge = {
   internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
 } as const
 
-export const postNotificationsEmailUnsubscribe = {
-  ...withOriginForbiddenPrivateNoStore,
-  unsubscribeInvalid: { status: 409, error: "unsubscribe_invalid", headers: jsonPrivateNoStore },
-  emailUnavailable: { status: 503, error: "email_unavailable", headers: jsonPrivateNoStore },
-  ...withInternalErrorPrivateNoStore,
-  otherMethods: {
-    ...withMethodNotAllowed,
-  },
-} as const
-
 export const getNotificationsScamReviewsByPath = {
   ...withNotSignedIn,
   otherMethods: {
@@ -146,13 +136,6 @@ export const notifyPostV1EmailVerification = {
   },
 } as const
 
-export const notifyPostV1EmailUnsubscribe = {
-  ...withStatus503,
-  otherMethods: {
-    ...withStatus405,
-  },
-} as const
-
 export const notifyPostV1SecurityNotificationsDispatch = {
   ...withStatus503PrivateNoStore,
   otherMethods: {
@@ -186,13 +169,6 @@ export const notifyPostV1ActivityNotificationsReconcile = {
   ...withStatus503,
   otherMethods: {
     ...withStatus405,
-  },
-} as const
-
-export const notifyPostV1ProjectApplications = {
-  ...withNotFoundNoStore,
-  otherMethods: {
-    ...withMethodNotAllowedNoStore,
   },
 } as const
 

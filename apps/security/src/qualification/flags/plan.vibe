@@ -16,8 +16,6 @@ export const bucketBinding = "EVIDENCE_SOURCE"
 export const queueBinding = "EVIDENCE_BACKUP_QUEUE"
 export const flagActions = ["flags", "empty"] as const
 
-export type FlagAction = (typeof flagActions)[number]
-
 export const flagsSchema = `CREATE TABLE qualification_results(phase TEXT PRIMARY KEY, result TEXT NOT NULL CHECK(json_valid(result)));
 CREATE TABLE qualification_deliveries(id TEXT PRIMARY KEY, action TEXT NOT NULL);
 `

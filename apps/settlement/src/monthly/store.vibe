@@ -11,7 +11,7 @@ import { type BanExclusion, type Change, type Cut, type CutNotice, type Eligibil
 import { MAX_BASE_UNITS, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { type Period, formatPeriod, parsePeriod, periodStartSeconds } from "../kernels/calendar.ts"
 import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
-import { NETWORKS, isChain, isNetworkKey, maxBaseUnitsForChain } from "../kernels/networks.ts"
+import { isChain, isNetworkKey, maxBaseUnitsForChain } from "../kernels/networks.ts"
 import { pledgedIn } from "../../gen/settlement__monthPledges.effect.vibe"
 import { frozenTotal, obligationProgress, withinCap } from "../monthlyCommitment/execution.ts"
 import { earlyCloseAt } from "./closeout.vibe"
@@ -124,7 +124,6 @@ export error ProjectChanged { projectId: string; write: string }
 export error FundingStale { projectId: string; period: string }
 export error FundingFactsMissing { projectId: string; period: string }
 export error CutReasonMissing { projectId: string; period: string }
-export error MonthlyAwardAssetUnreviewed { network: string; asset: string }
 
 export interface MonthKey {
   readonly projectId: string
@@ -802,47 +801,4 @@ export effect function sendMonth(key: MonthKey, event: Event, extra: Extra = {})
 
 export function withoutProposal(state: Monthly): Monthly {
   return canCloseProposalWindow(state) ? closeProposalWindow(state) : state
-}
-
-export schema MonthlyAwardRow {
-  readonly projectId: string
-  readonly period: string
-  readonly network: string
-  readonly assetAddress: string
-  readonly assetDecimals: number | null
-  readonly grossBase: string
-  readonly feeBase: string
-  readonly netBase: string
-  readonly state: "awaiting-reservation" | "underfunded" | "conflict"
-}
-
-export interface MonthlyAward extends Omit<MonthlyAwardRow, "assetDecimals"> {
-  readonly assetDecimals: number
-  readonly chain: string
-}
-
-export function monthlyAwardsQuery(githubUserId: string): Statement {
-  return sql`SELECT json_group_array(json_object('projectId', project_id, 'period', period, 'network', network, 'assetAddress', asset, 'assetDecimals', decimals, 'grossBase', gross, 'feeBase', fee, 'netBase', net, 'state', state)) AS items FROM (SELECT r.project_id, r.period, r.network, json_extract(r.snapshot, '$.asset') AS asset, coalesce((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id = r.project_id AND v.network = r.network AND v.vault = r.vault AND lower(v.asset_address) = lower(json_extract(r.snapshot, '$.asset'))), CASE WHEN lower(json_extract(b.manifest, '$.rewardAsset.address')) = lower(json_extract(r.snapshot, '$.asset')) THEN json_extract(b.manifest, '$.rewardAsset.decimals') END) AS decimals, json_extract(a.value, '$.grossBase') AS gross, json_extract(a.value, '$.feeBase') AS fee, json_extract(a.value, '$.netBase') AS net, CASE WHEN EXISTS (SELECT 1 FROM payment_obligations c WHERE c.network = r.network AND c.vault = r.vault AND c.source_digest = json_extract(a.value, '$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END AS state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id = r.project_id AND b.period = r.period, json_each(r.snapshot, '$.awards') a WHERE json_extract(a.value, '$.githubUserId') = ${githubUserId} AND NOT EXISTS (SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id = r.project_id AND e.period = r.period AND e.source_digest = json_extract(a.value, '$.sourceDigest')) AND NOT EXISTS (SELECT 1 FROM payment_obligations o WHERE o.network = r.network AND o.vault = r.vault AND o.source_digest = json_extract(a.value, '$.sourceDigest') AND o.github_user_id = json_extract(a.value, '$.githubUserId') AND o.gross_base = json_extract(a.value, '$.grossBase')) ORDER BY r.period DESC, r.project_id)`
-}
-
-export effect function monthlyAwardsOf(items: string) {
-  const parsed = try Effect.try({ try: () => JSON.parse(items) as unknown, catch: () => new RowMismatch({ text: "monthly awards", issue: "not JSON" }) })
-  const rows = Schema.decodeUnknownEffect(Schema.Array(MonthlyAwardRow))(parsed) catch effect () => {
-    throw new RowMismatch({ text: "monthly awards", issue: "not monthly award rows" })
-  }
-  const awards: MonthlyAward[] = []
-  for (const row of rows) {
-    const network = isNetworkKey(row.network) ? NETWORKS[row.network] : undefined
-    const decimals = row.assetDecimals ?? network?.assets.find((entry) => entry.address.toLowerCase() === row.assetAddress.toLowerCase())?.decimals
-    if (network === undefined || decimals === undefined || !Number.isInteger(decimals)) throw new MonthlyAwardAssetUnreviewed({ network: row.network, asset: row.assetAddress })
-    awards.push({ ...row, assetDecimals: decimals, chain: network.chain })
-  }
-  return awards
-}
-
-schema AwardItems { readonly items: string }
-
-export effect function monthlyAwards(githubUserId: string) {
-  const found = try first(AwardItems, monthlyAwardsQuery(githubUserId))
-  return try monthlyAwardsOf(found?.items ?? "[]")
 }
