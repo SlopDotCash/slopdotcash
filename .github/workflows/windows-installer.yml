@@ -39,7 +39,7 @@ jobs:
       - name: Install the skill validator dependency
         shell: pwsh
         run: |
-          $python = (Get-Command python -CommandType Application).Source
+          $python = Join-Path $env:pythonLocation 'python.exe'
           & $python -m pip install PyYAML==6.0.3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "SLOP_PYTHON=$python" >> $env:GITHUB_ENV
