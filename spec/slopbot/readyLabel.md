@@ -441,7 +441,7 @@ PRD section 5 (operator decision of 25 November 2026) adds a pilot on
 The workflow acts only while `SLOPBOT_AUTO_MERGE` equals `on` (absent or any
 other value reads and merges nothing unless `--dry-run` is passed, which
 never writes). A base branch is permitted only when it is in the pilot
-repository, is not `main`, `vibestack` or the repository's default branch,
+repository, is not `main` or the repository's default branch,
 and `.github/slop-project.json` on that base branch names this repository
 and that branch as `integrationBranch`. Every candidate is verified from
 fresh GitHub reads before merging: open, not a draft, still carrying
@@ -489,7 +489,7 @@ type AutoMergeCandidate = {
 }
 pure def autoMergeSwitchActive(switchOn: bool, dryRun: bool): bool = switchOn or dryRun
 pure def autoMergePermittedBase(sameRepo: bool, baseRef: str, defaultBranch: str, registeredIntegrationBranch: bool): bool =
-  sameRepo and baseRef != "main" and baseRef != "vibestack" and baseRef != defaultBranch and registeredIntegrationBranch
+  sameRepo and baseRef != "main" and baseRef != defaultBranch and registeredIntegrationBranch
 pure def autoMergePullOk(prOpen: bool, prDraft: bool, prLabelled: bool, sameRepo: bool, baseRef: str,
   defaultBranch: str, registeredIntegrationBranch: bool, prMergeable: bool, prClean: bool): bool =
   prOpen and not(prDraft) and prLabelled and autoMergePermittedBase(sameRepo, baseRef, defaultBranch, registeredIntegrationBranch)
@@ -501,7 +501,7 @@ pure def autoMergeReason(candidate: AutoMergeCandidate): AutoMergeReason =
   else if (candidate.prDraft) AutoMergeIsDraft
   else if (not(candidate.prLabelled)) AutoMergeMissingLabel
   else if (not(candidate.sameRepo)) AutoMergeWrongRepo
-  else if (candidate.baseRef == "main" or candidate.baseRef == "vibestack" or candidate.baseRef == candidate.defaultBranch) AutoMergeDisallowedBase
+  else if (candidate.baseRef == "main" or candidate.baseRef == candidate.defaultBranch) AutoMergeDisallowedBase
   else if (not(candidate.prMergeable)) AutoMergeNotMergeable
   else if (not(candidate.prClean)) AutoMergeNotClean
   else if (not(candidate.registeredIntegrationBranch)) AutoMergeUnregisteredBase
@@ -527,7 +527,7 @@ pure def autoMergeWillWrite(candidate: AutoMergeCandidate): bool =
 pure def lawAutoMergeSwitchOffNeverWrites(candidate: AutoMergeCandidate): bool =
   not(candidate.switchOn) implies not(autoMergeWillWrite(candidate))
 pure def lawAutoMergeNeverTargetsMainOrDefault(candidate: AutoMergeCandidate): bool =
-  (candidate.baseRef == "main" or candidate.baseRef == "vibestack" or candidate.baseRef == candidate.defaultBranch
+  (candidate.baseRef == "main" or candidate.baseRef == candidate.defaultBranch
     or not(candidate.registeredIntegrationBranch) or not(candidate.sameRepo))
     implies not(autoMergeAllowed(candidate))
 pure def lawAutoMergeRequiresSlopbotFreshLabel(candidate: AutoMergeCandidate): bool =
@@ -546,7 +546,7 @@ pure def lawAutoMergeRecheckPinsHeadBaseAndRunCap(candidate: AutoMergeCandidate)
 pure val validAutoMergeCandidate: AutoMergeCandidate = {
   switchOn: true, dryRun: false, mergesSoFar: 0,
   prOpen: true, prDraft: false, prLabelled: true,
-  sameRepo: true, baseRef: "development", defaultBranch: "vibestack", registeredIntegrationBranch: true,
+  sameRepo: true, baseRef: "develop", defaultBranch: "main", registeredIntegrationBranch: true,
   prMergeable: true, prClean: true,
   labelSource: LabelBySlopbot, forcePushedAfterLabel: false, headReviewedBeforeLabel: true,
   writerChangeRequested: false, writerApprovalCount: 1,
@@ -560,7 +560,7 @@ pure val candidateValues = Set(
   { ...validAutoMergeCandidate, switchOn: false, dryRun: true },
   { ...validAutoMergeCandidate, mergesSoFar: 5 },
   { ...validAutoMergeCandidate, baseRef: "main" },
-  { ...validAutoMergeCandidate, baseRef: "vibestack" },
+  { ...validAutoMergeCandidate, baseRef: "trunk", defaultBranch: "trunk" },
   { ...validAutoMergeCandidate, baseRef: "feature", registeredIntegrationBranch: false },
   { ...validAutoMergeCandidate, labelSource: LabelByOther },
   { ...validAutoMergeCandidate, forcePushedAfterLabel: true },
