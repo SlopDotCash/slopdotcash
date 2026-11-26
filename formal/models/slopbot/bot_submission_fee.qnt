@@ -32,9 +32,9 @@
 // Wanted work (operator decision, 22 November 2026): `wanted` is a pull
 // request that closes an issue labelled `slop-wanted` before it was opened,
 // fixed at opening. Closed without a merge it is refund_due after KEPT_AFTER
-// unless a maintainer's `slop-keep-fee` label is on it then; the label may be
-// added or removed until the outcome is set. `wantedReadable` false is a
-// GitHub read that failed: nothing is decided.
+// unless a maintainer added `slop-keep-fee` by then; a label added after
+// then, including a re-add after a removal, does not keep it. A failed
+// GitHub read decides nothing.
 // Slopbot may itself close the pull request for a finding, and its author may
 // appeal that close. While the appeal is undecided no fee is kept; a denied
 // appeal leaves the close standing, and an upheld one reopens the pull request
@@ -64,7 +64,8 @@ module bot_submission_fee {
     comments: int,
     paidDays: int, closedDays: int,
     everMerged: bool, openAtRefundAge: bool, closedAtKeptAge: bool,
-    wanted: bool, keepMark: bool, decidedWithMark: bool,
+    wanted: bool, keepMark: bool, keepMarkLate: bool,
+    decidedWithTimelyMark: bool,
     slopClosed: bool,
     appeal: str,        // none, open, upheld, denied
     planned: bool, sent: bool, clearedWhileSent: bool
@@ -77,7 +78,8 @@ module bot_submission_fee {
     outcome: "none",
     label: "none", comments: 0, paidDays: 0, closedDays: 0,
     everMerged: false, openAtRefundAge: false, closedAtKeptAge: false,
-    wanted: false, keepMark: false, decidedWithMark: false,
+    wanted: false, keepMark: false, keepMarkLate: false,
+    decidedWithTimelyMark: false,
     slopClosed: false, appeal: "none",
     planned: false, sent: false, clearedWhileSent: false
   }
@@ -111,9 +113,9 @@ module bot_submission_fee {
   }
   // Only a maintainer can label a pull request on GitHub.
   action maintainerMarksKeep = all { s.opened, s.outcome == "none",
-    s' = s.with("keepMark", true) }
+    s' = s.with("keepMark", true).with("keepMarkLate", s.closedAtKeptAge) }
   action maintainerUnmarksKeep = all { s.keepMark, s.outcome == "none",
-    s' = s.with("keepMark", false) }
+    s' = s.with("keepMark", false).with("keepMarkLate", false) }
   action authorGainsAccess = all { s.opened, s.outsider,
     s' = s.with("outsider", false) }
   action push = all { s.opened, s.pr == "open", s.pushes < MAX_PUSHES,
@@ -123,10 +125,11 @@ module bot_submission_fee {
   action maintainerMerges = all { s.opened, s.pr == "open",
     s' = s.with("pr", "merged").with("everMerged", true) }
   action closes = all { s.opened, s.pr == "open",
-    s' = s.with("pr", "closed").with("closedDays", 0).with("slopClosed", false) }
+    s' = s.with("pr", "closed").with("closedDays", 0).with("slopClosed", false)
+      .with("keepMarkLate", false) }
   action slopbotCloses = all { s.opened, s.pr == "open",
     s' = s.with("pr", "closed").with("closedDays", 0).with("slopClosed", true)
-      .with("appeal", "none") }
+      .with("appeal", "none").with("keepMarkLate", false) }
   def reopenKept(state) = if (state.outcome == "kept_due" and not(state.sent))
       state.with("outcome", "none").with("clearedWhileSent", state.clearedWhileSent or state.sent)
     else state
@@ -140,6 +143,8 @@ module bot_submission_fee {
     val result = reopenKept(state.with("appeal", "upheld").with("closedDays", 0))
     result.with("closedAtKeptAge",
       if (result.outcome == "none") false else state.closedAtKeptAge)
+      .with("keepMarkLate",
+        if (result.outcome == "none") false else state.keepMarkLate)
   }
   action moderatorUpholds = all { s.appeal == "open", s' = upheld(s) }
   action workerPlans = all { s.outcome == "kept_due", not(s.sent),
@@ -149,7 +154,7 @@ module bot_submission_fee {
     s' = s.with("outcome", "kept") }
   // A pull request reopened past the refund age is open at that age at once.
   action reopens = all { s.pr == "closed",
-    s' = s.with("pr", "open").with("closedDays", 0)
+    s' = s.with("pr", "open").with("closedDays", 0).with("keepMarkLate", false)
       .with("openAtRefundAge", s.openAtRefundAge
         or (s.paid and s.paidDays >= REFUND_AFTER)) }
   // The submission-fee Worker accepts a deposit for a row Slopbot inserted.
@@ -157,7 +162,7 @@ module bot_submission_fee {
   // outcome is set.
   action workerMarksPaid = all { s.row, not(s.paid), s.outcome == "none",
     s' = s.with("paid", true).with("everPaid", true).with("paidDays", 0)
-      .with("closedDays", 0) }
+      .with("closedDays", 0).with("keepMarkLate", false) }
   // The resolver plans only a finalized deposit, which no reorganisation can
   // withdraw.
   action workerWithdrawsPayment = all { s.paid, s.outcome == "none", not(s.planned),
@@ -214,7 +219,8 @@ module bot_submission_fee {
   val dueOutcome = if (s.outcome != "none") s.outcome
     else if (s.pr == "merged") "refund_due"
     else if (s.pr == "closed" and s.appeal != "open" and s.closedDays >= KEPT_AFTER)
-      (if (s.wanted and not(s.keepMark)) "refund_due" else "kept_due")
+      (if (s.wanted and (not(s.keepMark) or s.keepMarkLate)) "refund_due"
+        else "kept_due")
     else if (s.pr == "open" and s.paidDays >= REFUND_AFTER) "refund_due"
     else "none"
   // A closed wanted pull request whose link GitHub could not answer waits.
@@ -229,8 +235,9 @@ module bot_submission_fee {
     else s' = s.with("gate", "paid").with("label", "paid").with("comments", 1)
       .with("outcome", if (not(readable) and s.pr == "closed" and s.outcome == "none")
         "none" else dueOutcome)
-      .with("decidedWithMark", if (s.outcome == "none") s.keepMark
-        else s.decidedWithMark)
+      .with("decidedWithTimelyMark",
+        if (s.outcome == "none") (s.keepMark and not(s.keepMarkLate))
+        else s.decidedWithTimelyMark)
   }
   action feeCheck = check(true)
   action feeCheckUnreadable = check(false)
@@ -262,10 +269,11 @@ module bot_submission_fee {
     (s.outcome == "kept_due" and s.appeal == "open") implies s.sent,
     // A recorded send is never cleared.
     not(s.clearedWhileSent),
-    // Invited work is kept only on a maintainer's mark.
-    (s.outcome == "kept_due" and s.wanted) implies s.decidedWithMark,
+    // Invited work is kept only on a maintainer's timely mark.
+    s.keepMarkLate implies s.keepMark,
+    (s.outcome == "kept_due" and s.wanted) implies s.decidedWithTimelyMark,
     s.outcome == "refund_due" implies (s.everMerged or s.openAtRefundAge
-      or (s.wanted and s.closedAtKeptAge and not(s.decidedWithMark))),
+      or (s.wanted and s.closedAtKeptAge and not(s.decidedWithTimelyMark))),
     // Off and record-only write nothing to GitHub and decide nothing.
     not(s.everLive) implies all { s.label == "none", s.comments == 0,
       s.gate == "none" or s.gate == "recorded", s.outcome == "none" },
@@ -319,7 +327,13 @@ module bot_submission_fee {
     .then(opensFor(true, true)).then(review(true)).then(askPosts).then(askRecords)
     .then(workerMarksPaid).then(feeCheck).then(closes).then(maintainerMarksKeep)
     .then(dayPasses).then(dayPasses).then(feeCheck)
-    .expect(s.outcome == "kept_due" and s.decidedWithMark)
+    .expect(s.outcome == "kept_due" and s.decidedWithTimelyMark)
+  run wantedLateMarkIsSentBackTest = init.then(ownerTurnsOn).then(setMode("live"))
+    .then(opensFor(true, true)).then(review(true)).then(askPosts).then(askRecords)
+    .then(workerMarksPaid).then(feeCheck).then(closes).then(dayPasses)
+    .then(dayPasses).then(maintainerMarksKeep).then(feeCheck)
+    .expect(s.outcome == "refund_due" and s.keepMarkLate
+      and not(s.decidedWithTimelyMark))
   run wantedUnreadableWaitsTest = init.then(ownerTurnsOn).then(setMode("live"))
     .then(opensFor(true, true)).then(review(true)).then(askPosts).then(askRecords)
     .then(workerMarksPaid).then(feeCheck).then(closes).then(dayPasses)
