@@ -13,9 +13,10 @@ import { graphqlClient } from "@repo/points/collect"
 import { type CensusOutcome, type ValueCensus, ValueInputs } from "@repo/ports/points"
 import { collectValueInputs } from "../src/value/collect/inputs.vibe"
 import { attributionSourceChanged } from "../src/value/collect/discussion.vibe"
-import { collectEvidence } from "../src/value/evidence/collect.vibe"
+import { collectEvidence, commitChanges } from "../src/value/evidence/collect.vibe"
 import { valueRubricVersion } from "../src/value/inference/assessment.vibe"
-import { loadValuePolicy } from "../src/value/inference/publish.vibe"
+import { loadValuePolicy, verifyCurrentValueSource } from "../src/value/inference/publish.vibe"
+import { unrecovered } from "../src/value/proofs/blob.vibe"
 import { sourceDigestOf } from "../src/value/workUnits/prepare.vibe"
 import { type Seeded, acceptanceRecorder, mergedAt, policyOf, policyText, repository, requested, seeded } from "./support/evidenceWorker.vibe"
 
@@ -186,4 +187,101 @@ it.live("retained assessment reads bind the ordinary and negotiated evidence for
   try same(try loadRetainedDecision(world, source, ordinary, ordinaryDigest), "unresolved")
   try same(try loadRetainedDecision(world, source, negotiated, negotiatedDigest), "unresolved")
   try same(try loadRetainedDecision(world, source, ordinary, negotiatedDigest), "stale")
+}, 90_000)
+
+const changedLineCount = 1_600
+const largeBefore = Array.from({ length: changedLineCount }, (_, index) => `old ${index}\n`)
+const largeAfter = Array.from({ length: changedLineCount }, (_, index) => `new ${index}\n`)
+const secondPath = "src/companion.txt"
+
+function patchFor(before: ReadonlyArray<string>, after: ReadonlyArray<string>) {
+  return `@@ -1,${before.length} +1,${after.length} @@\n` +
+    before.map((line) => `-${line}`).join("") + after.map((line) => `+${line}`).join("")
+}
+
+function diffSection(path: string, before: ReadonlyArray<string>, after: ReadonlyArray<string>) {
+  const prior = gitObjectId("blob", textBytes(before.join("")))
+  const next = gitObjectId("blob", textBytes(after.join("")))
+  return `diff --git a/${path} b/${path}\nindex ${prior}..${next} 100644\n--- a/${path}\n+++ b/${path}\n${patchFor(before, after)}`
+}
+
+effect function seededCountOmission(world: Seeded) {
+  const git = world.fake.world
+  const base = try Effect.try(() => git.addCommit(repository, { author: "ada", files: { "CONTRIBUTING.md": policyText, [omittedPath]: largeBefore.join(""), [secondPath]: beforeText } }))
+  const changes = { [omittedPath]: largeAfter.join(""), [secondPath]: afterText }
+  const head = try Effect.try(() => git.addCommit(repository, { branch: "count-omission", parents: [base], author: "ada", files: changes }))
+  const merge = try Effect.try(() => git.addCommit(repository, { branch: "accept-count-omission", parents: [base, head], author: "ada", files: changes }))
+  try Effect.try(() => {
+    git.setBranch(repository, "main", base)
+    git.addPull({ repo: repository, number: 5, author: "ada", title: "Change two files", createdAt: "2026-11-09T10:00:00Z", headSha: head, commits: [head], mergedAt, mergeCommit: merge,
+      files: [
+        { path: omittedPath, status: "modified", additions: changedLineCount, deletions: changedLineCount, patch: patchFor(largeBefore, largeAfter).slice(0, -1) },
+        { path: secondPath, status: "modified", additions: 1, deletions: 1, patch: patchFor([beforeText], [afterText]).slice(0, -1) },
+      ],
+    })
+  })
+  return { base, head, merge, nodeId: (try Effect.try(() => git.pull(repository, 5))).nodeId } satisfies NegotiatedSource
+}
+
+type CountScenario = "exact" | "altered-text" | "wrong-total" | "missing-file"
+
+function omittedCountReads(world: Seeded, head: string, scenario: CountScenario): Handler {
+  const path = `/repos/${repository}/commits/${head}`
+  const diff = diffSection(omittedPath, largeBefore, largeAfter) + diffSection(secondPath, [beforeText], [afterText])
+  return async (request) => {
+    if (new URL(request.url).pathname !== path) return world.fake.handler(request)
+    if (request.headers.get("accept") === "application/vnd.github.diff")
+      return new WebResponse(scenario === "altered-text" ? diff.replace("+new 0\n", "+wrong 0\n") : diff)
+    const response = await world.fake.handler(request)
+    if (response.status !== 200) return response
+    const body = await response.json() as { readonly stats: { readonly additions: number; readonly deletions: number }; readonly files: ReadonlyArray<Readonly<Record<string, unknown>>> }
+    const files = body.files.flatMap(({ patch: _patch, ...file }) => {
+      if (file["filename"] === omittedPath) return [{ ...file, additions: 0, deletions: 0 }]
+      return scenario === "missing-file" ? [] : [file]
+    })
+    const stats = scenario === "wrong-total" ? { ...body.stats, additions: body.stats.additions + 1 } : body.stats
+    return WebResponse.json({ ...body, files, stats })
+  }
+}
+
+it.live('An ordinary commit recovers omitted counts only when its exact patch and every changed path reconcile (spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit\'s totals")', () => effect {
+  const world = try seeded()
+  const { base, head } = try seededCountOmission(world)
+  for (const scenario of ["exact", "altered-text", "wrong-total", "missing-file"] as const) {
+    const handler = omittedCountReads(world, head, scenario)
+    const outbound = outboundVia({ fetch: async (request) => asFetch(handler)(request) })
+    provide Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot-evidence" }), outbound) {
+      const collected = try commitChanges(repository, head, "Commit proof", unrecovered, { ordinaryParent: base })
+      const file = collected.commit?.files.find((entry) => entry.filename === omittedPath)
+      if (scenario === "exact") {
+        try same(collected.limitations, [])
+        try same([file?.additions, file?.deletions, file?.patch !== undefined], [changedLineCount, changedLineCount, true])
+        const mismatchedParent = try commitChanges(repository, head, "Commit proof", unrecovered, { ordinaryParent: world.base })
+        try same(mismatchedParent.limitations, ["Incomplete commit proof additions", "Incomplete commit proof deletions"])
+      } else {
+        try same(collected.limitations, ["Incomplete commit proof additions", "Incomplete commit proof deletions"])
+        try same([file?.additions, file?.deletions, file?.patch], [0, 0, undefined])
+      }
+    }
+  }
+}, 90_000)
+
+it.live("publication and collection both recheck the recovered ordinary commit against the retained source digest", () => effect {
+  const world = try seeded()
+  const source = try seededCountOmission(world)
+  const handler = omittedCountReads(world, source.head, "exact")
+  const outbound = outboundVia({ fetch: async (request) => asFetch(handler)(request) })
+  const policy = policyOf(world)
+  provide Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot-evidence" }), outbound), acceptanceRecorder().layer, webCrypto {
+    const original = try collectEvidence({ repository, number: 5, policy })
+    try same(original.limitations, [`Incomplete commit ${source.head} additions`, `Incomplete commit ${source.head} deletions`])
+    const recovered = try collectEvidence({ repository, number: 5, policy, negotiatedDiff: true })
+    try same(recovered.limitations, [])
+    const valuePolicy = try loadValuePolicy(recovered.repositoryDatabaseId, source.base)
+    const digest = try sourceDigestOf(recovered, valuePolicy)
+    const published = try verifyCurrentValueSource(recovered, { policySha: source.base, sourceDigest: digest }, [policy])
+    try same(try sourceDigestOf(published.evidence, published.policy), digest)
+    try same(try loadRetainedDecision(world, source, handler, digest), "unresolved")
+    try same(try loadRetainedDecision(world, source, omittedCountReads(world, source.head, "altered-text"), digest), "incomplete")
+  }
 }, 90_000)

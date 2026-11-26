@@ -18,6 +18,8 @@ import { validateEvidenceAssessment, valueRubricVersion } from "../inference/ass
 import { producerRecognized } from "../inference/publish.vibe"
 import { retainedCopyBindings } from "../retained/copy.vibe"
 import { retention } from "../retained/repair.vibe"
+import { noChangePromotionDeferralOnly } from "../workUnits/acceptance.vibe"
+import { nativeMergeDeferralOnly } from "../workUnits/native.vibe"
 import { sourceDigestOf } from "../workUnits/prepare.vibe"
 import type { WorkUnitSource } from "../workUnits/types.vibe"
 import { readsAhead } from "../../../gen/slopbot__historyReadAhead.effect.vibe"
@@ -181,9 +183,9 @@ effect function policyAt(repositoryId: number, sha: string) {
   return { sha, text: files.some((file) => file.truncated) ? "" : files.map((file) => `${file.path}\n${file.text}`).join("\n\n") }
 }
 
-effect function hydrated(run: Run, repository: RegisteredRepository, identity: PublicRepository, raw: WorkUnitSource, contextPaths: ReadonlyArray<ContextSelection>, recipe: MergeRecipe | undefined) {
+effect function hydrated(run: Run, repository: RegisteredRepository, identity: PublicRepository, raw: WorkUnitSource, contextPaths: ReadonlyArray<ContextSelection>, recipe: MergeRecipe | undefined, negotiatedDiff = false) {
   const evidence = try collectContext(raw.evidence, contextPaths)
-  return try provideService(hydrateValueMergeSource({ ...raw, evidence }, recipe, identity, repository), GitHub, try run.pages.wrap)
+  return try provideService(hydrateValueMergeSource({ ...raw, evidence }, recipe, identity, repository, negotiatedDiff), GitHub, try run.pages.wrap)
 }
 
 function changedAfterCensus(evidence: WorkUnitSource["evidence"], id: string, identity: PublicRepository, outcome: CensusOutcome | undefined) {
@@ -208,26 +210,34 @@ effect function rawSource(run: Run, repository: RegisteredRepository, identity: 
   return collected
 }
 
-export effect function sourceWithExactDiffDigest(source: WorkUnitSource, evidence: WorkUnitSource["evidence"], expectedDigest: string) {
-  if (evidence.limitations.length > 0 || (try sourceDigestOf(evidence, source.policy)) !== expectedDigest) return undefined
+export effect function sourceWithExactDiffDigest(source: WorkUnitSource, evidence: WorkUnitSource["evidence"], expectedDigest: string, joint = false) {
+  const deferred = joint && (nativeMergeDeferralOnly(evidence) || noChangePromotionDeferralOnly(evidence))
+  if ((!deferred && evidence.limitations.length > 0) || (try sourceDigestOf(evidence, source.policy)) !== expectedDigest) return undefined
   return { ...source, evidence } satisfies WorkUnitSource
 }
 
-effect function negotiatedSource(run: Run, repository: RegisteredRepository, identity: PublicRepository, source: WorkUnitSource, contextPaths: ReadonlyArray<ContextSelection>, expectedDigest: unknown) {
-  if (typeof expectedDigest !== "string" || !/^[a-f0-9]{64}$/u.test(expectedDigest) || !needsFileRecovery(source) || source.evidence.pull.merged_at === null) return undefined
+effect function negotiatedSource(run: Run, repository: RegisteredRepository, identity: PublicRepository, source: WorkUnitSource, contextPaths: ReadonlyArray<ContextSelection>, expectedDigest: unknown, joint?: { readonly recipe: MergeRecipe | undefined }) {
+  const missingCommitCounts = source.evidence.commitAttribution.some(({ sha, limitations }) =>
+    limitations.includes(`Incomplete commit ${sha} additions`) || limitations.includes(`Incomplete commit ${sha} deletions`))
+  if (typeof expectedDigest !== "string" || !/^[a-f0-9]{64}$/u.test(expectedDigest) ||
+    (!needsFileRecovery(source) && !missingCommitCounts) || source.evidence.pull.merged_at === null) return undefined
   const { pull } = source.evidence
   const candidate = provideService(collectEvidence({ repository: repository.id, number: pull.number, policy: repository, negotiatedDiff: true }), GitHub, try run.pages.wrap) catch () => undefined
   if (candidate === undefined || changedAfterCensus(candidate, pull.node_id, identity, run.census.get(pull.node_id)) ||
     candidate.pull.base.sha !== pull.base.sha || candidate.pull.head.sha !== pull.head.sha || candidate.pull.merge_commit_sha !== pull.merge_commit_sha || candidate.pull.updated_at !== pull.updated_at) return undefined
+  if (joint?.recipe !== undefined) {
+    const resolved = hydrated(run, repository, identity, { ...source, evidence: candidate }, contextPaths, joint.recipe, true) catch () => undefined
+    return resolved === undefined ? undefined : try sourceWithExactDiffDigest(resolved, resolved.evidence, expectedDigest, true)
+  }
   const evidence = collectContext(candidate, contextPaths) catch () => undefined
-  return evidence === undefined ? undefined : try sourceWithExactDiffDigest(source, evidence, expectedDigest)
+  return evidence === undefined ? undefined : try sourceWithExactDiffDigest(source, evidence, expectedDigest, joint !== undefined)
 }
 
 effect function source(run: Run, repositoryId: string, number: number, id: string, contextPaths: ReadonlyArray<ContextSelection> = [], recipe?: MergeRecipe, expectedDigest?: string) {
   const { repository, identity } = try registered(run, repositoryId)
   const raw = try rawSource(run, repository, identity, number, id)
-  if (recipe === undefined && expectedDigest !== undefined) {
-    const matching = try negotiatedSource(run, repository, identity, raw, contextPaths, expectedDigest)
+  if (expectedDigest !== undefined) {
+    const matching = try negotiatedSource(run, repository, identity, raw, contextPaths, expectedDigest, { recipe })
     if (matching !== undefined) return matching
   }
   return try hydrated(run, repository, identity, raw, contextPaths, recipe)

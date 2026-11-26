@@ -203,6 +203,16 @@ recovered patch for an existing assessment only if the recomputed source
 digest matches that assessment. The regular file, binary and publication
 checks still apply.
 
+An ordinary one-parent commit can use the same diff response when one
+modified file has no patch and both JSON counts are zero, and the existing
+text comparison cannot account for the commit's totals. The parent must
+match the submitted commit listing. The complete hash-verified parent and
+commit trees must differ only at the listed regular-file modifications,
+with each new blob matching its listed identity and each mode unchanged.
+Every recovered patch must reproduce the verified text at its stated hunk
+positions. The other files keep their known counts and all counts must sum
+to the commit totals before any recovered count is used.
+
 ```quint
 type LineSource = ExactPatch | AddedText | RemovedText | ComparedText | NoLineSource
 type FileLines = { lineSource: LineSource, patchAdded: int, patchRemoved: int, additions: int, deletions: int,

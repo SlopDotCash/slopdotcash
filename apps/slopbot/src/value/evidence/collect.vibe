@@ -26,7 +26,7 @@ import {
   recoverUnchangedValueRenames,
 } from "../proofs/comparisons.vibe"
 import { fetched } from "../proofs/reads.vibe"
-import { recoverNegotiatedDiff } from "../proofs/recoverDiff.vibe"
+import { recoverNegotiatedDiff, recoverOmittedCommitCounts } from "../proofs/recoverDiff.vibe"
 import { Acceptance, type CollectedChanges, nativeMergeContext, noChangePromotionContext } from "./acceptance.vibe"
 import { collectBranchPolicy, matchesHistoricalIntegrationBranch } from "./branchPolicy.vibe"
 import { type ReferenceDiscussion, relatedPullRequests } from "./references.vibe"
@@ -181,7 +181,7 @@ function incomplete(name: string, listed: Listed<unknown>, reported: number) {
   return complete ? [] : [`Incomplete ${name}: ${listed.items.length}/${reported}`]
 }
 
-export effect function commitChanges(repository: string, sha: string, label: string, recovered: Recovered = unrecovered, negotiatedDiff = false) {
+export effect function commitChanges(repository: string, sha: string, label: string, recovered: Recovered = unrecovered, negotiatedDiff?: "accepted" | { readonly ordinaryParent: string }) {
   const root = `/repos/${repository}`
   let header: Omit<CommitChanges, "files"> | undefined
   let files: FileChange[] = []
@@ -199,7 +199,7 @@ export effect function commitChanges(repository: string, sha: string, label: str
       header = { sha: batch.sha, html_url: batch.html_url, parents: batch.parents.map((parent) => ({ sha: parent.sha })), stats: batch.stats }
     }
     files.push(...batch.files.map((file) => fileChange(file, recovered.intern)))
-    if (negotiatedDiff) rawFiles.push(...batch.files)
+    if (negotiatedDiff !== undefined) rawFiles.push(...batch.files)
     pageSizes.push(batch.files.length)
     if (capReached({ pageSizes, unavailable: false, reported: files.length, itemCap: commitFileCap, repeatedKeys: false })) {
       limitations.push(`${label} file limit reached; Git evidence required`)
@@ -214,7 +214,12 @@ export effect function commitChanges(repository: string, sha: string, label: str
     files = [...try recoverAddedValueComparisons(repository, files, parent, header.sha, recovered)]
     files = [...try recoverRemovedValueComparisons(repository, files, parent, header.sha, recovered)]
     files = [...try recoverFullValueComparisons(repository, files, parent, header.sha, recovered)]
-    if (negotiatedDiff) files = [...try recoverNegotiatedDiff({ repository, baseSha: parent, headSha: header.sha, kind: "commit" }, files, pinnedBlobs(rawFiles), recovered.intern)]
+    const source = { repository, baseSha: parent, headSha: header.sha, kind: "commit" as const }
+    if (negotiatedDiff === "accepted") files = [...try recoverNegotiatedDiff(source, files, pinnedBlobs(rawFiles), recovered.intern)]
+    else if (negotiatedDiff?.ordinaryParent === parent && header.parents.length === 1) {
+      const complete = recoverOmittedCommitCounts(source, files, pinnedBlobs(rawFiles), header.stats, recovered) catch () => files
+      files = [...complete]
+    }
   }
   files = [...try addedValuePatchRecovery(repository, recovered)(files, header.sha)]
   const additions = files.reduce((sum, file) => sum + valueAdditionCount(file), 0)
@@ -350,7 +355,7 @@ export effect function collectEvidence(collection: Collection) {
   if (pull.merged_at !== null) {
     if (pull.merge_commit_sha === null || pull.merge_commit_sha === "") limitations.push("Reported merge commit is unavailable")
     else {
-      const accepted = try commitChanges(repository, pull.merge_commit_sha, "Reported merge commit", recovered, useNegotiatedDiff)
+      const accepted = try commitChanges(repository, pull.merge_commit_sha, "Reported merge commit", recovered, useNegotiatedDiff ? "accepted" : undefined)
       limitations.push(...accepted.limitations)
       if (accepted.commit !== null) {
         let mergeFiles = try recoverAddedPatches(accepted.commit.files, pull.merge_commit_sha)
@@ -409,8 +414,9 @@ export effect function collectEvidence(collection: Collection) {
   ].filter((url): url is string => typeof url === "string")
   const commitAttribution: CommitAttribution[] = []
   for (const commit of commits.filter((entry) => entry.parents.length <= 1)) {
-    const changes = try commitChanges(repository, commit.sha, `Commit ${commit.sha}`, recovered)
     const parent = commit.parents[0]?.sha
+    const ordinary = useNegotiatedDiff && parent !== undefined ? { ordinaryParent: parent } : undefined
+    const changes = try commitChanges(repository, commit.sha, `Commit ${commit.sha}`, recovered, ordinary)
     const changed = changes.commit !== null && commit.parents.length === 1 && parent !== undefined
       ? { ...changes.commit, files: try withBinaries(recoverBinary, changes.commit.files, files, parent, commit.sha) }
       : changes.commit

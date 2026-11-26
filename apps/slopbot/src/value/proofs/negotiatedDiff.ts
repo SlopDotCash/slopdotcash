@@ -1,5 +1,5 @@
 // spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"
-import { hunkHeader, noNewlineMarker } from "./patchReplay.ts";
+import { hunkHeader, lineStarts, noNewlineMarker, parseHunks } from "./patchReplay.ts";
 
 export interface DiffSection {
   readonly patch: string;
@@ -71,4 +71,24 @@ export function modifiedDiffSection(diff: string, path: string): DiffSection | u
   const next = lines.findIndex((line, position) => position > start && line.startsWith("diff --git "));
   const hunks = lines.slice(start + 4, next < 0 ? lines.length : next);
   return completeHunks(hunks) ? { patch: hunks.join("\n"), beforePrefix: index[1] ?? "", afterPrefix: index[2] ?? "", mode: index[3] ?? "" } : undefined;
+}
+
+/** @throws {never} */
+export function patchMatchesTexts(patch: string, before: string, after: string): boolean {
+  const parsed = parseHunks(patch, false);
+  if (!parsed.ok) return false;
+  const oldStarts = lineStarts(before);
+  const newStarts = lineStarts(after);
+  let oldCursor = 0;
+  let newCursor = 0;
+  for (const hunk of parsed.hunks) {
+    const oldStart = oldStarts[hunk.oldStart - 1];
+    const newStart = newStarts[hunk.newStart - Number(hunk.newCount > 0)];
+    if (oldStart === undefined || newStart === undefined || oldStart < oldCursor || newStart < newCursor ||
+      before.slice(oldCursor, oldStart) !== after.slice(newCursor, newStart) ||
+      !before.startsWith(hunk.before, oldStart) || !after.startsWith(hunk.after, newStart)) return false;
+    oldCursor = oldStart + hunk.before.length;
+    newCursor = newStart + hunk.after.length;
+  }
+  return before.slice(oldCursor) === after.slice(newCursor);
 }
