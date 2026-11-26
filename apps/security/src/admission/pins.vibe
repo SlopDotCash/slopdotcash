@@ -1,10 +1,20 @@
 // spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"
-import type { ProjectView } from "@repo/ports/backend"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type ProjectView, RegistryManifests } from "@repo/ports/backend"
 import type { Enforcement, PinRead } from "../../gen/security__enforcement.ts"
 import { identityOf } from "../../gen/security__enforcement.effect.vibe"
+import { executableContent } from "./binding.ts"
 import { type Pin, pinOrUndefined } from "./livePin.vibe"
-import { contentSha256 } from "./queue.vibe"
 import type { Assessment } from "./store.vibe"
+
+export error ContentUnreadable { projectId: string }
+
+export effect function contentSha256(projectId: string) {
+  const text = (try (try RegistryManifests).project(projectId))?.manifest
+  const manifest: unknown = text === undefined ? undefined : try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ContentUnreadable({ projectId }) })
+  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) throw new ContentUnreadable({ projectId })
+  return try sha256Hex(executableContent(manifest as Record<string, unknown>))
+}
 
 effect function currentContent(projectId: string) {
   return contentSha256(projectId) catch effect (error) => {

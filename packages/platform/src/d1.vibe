@@ -88,6 +88,17 @@ export effect function decoded<S extends Schema.Constraint>(schema: S, found: Re
   return Schema.decodeUnknownEffect(Schema.Array(schema))(found) catch effect (error) => { throw new RowMismatch({ text, issue: error.message }) }
 }
 
+export effect function decodedJson<S extends Schema.Constraint>(schema: S, text: string, label: string) {
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new RowMismatch({ text: label, issue: "stored JSON is malformed" }) })
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "stored JSON does not match its shape" }) }
+}
+
+export function wholeNumber(text: string | undefined): number {
+  if (text === undefined) return -1
+  const value = /^0x[\da-f]{1,13}$/iu.test(text) || /^(?:0|[1-9]\d{0,15})$/u.test(text) ? Number(text) : -1
+  return Number.isSafeInteger(value) ? value : -1
+}
+
 export effect function rows<S extends Schema.Constraint>(schema: S, statement: Statement) {
   return try decoded(schema, try (try D1).all(statement), statement.text)
 }

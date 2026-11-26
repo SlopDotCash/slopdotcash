@@ -59,30 +59,40 @@ export schema WalletChallenge {
 
 export schema WalletAuthorized { readonly authorized: boolean }
 
-const loose = Schema.optionalKey(Schema.Unknown)
+const AnyField = Schema.Unknown
 
-export const RegisterFields = Schema.Struct({ chain: loose, address: loose })
-export type RegisterFields = typeof RegisterFields.Type
-export const ChallengeFields = Schema.Struct({ claimId: loose })
-export type ChallengeFields = typeof ChallengeFields.Type
-export const AuthorizeFields = Schema.Struct({ claimId: loose, challengeId: loose, signature: loose })
-export type AuthorizeFields = typeof AuthorizeFields.Type
-export const BearerClaimFields = Schema.Struct({ chain: loose, address: loose, supersedesClaimId: loose })
-export type BearerClaimFields = typeof BearerClaimFields.Type
-export const PossessionFields = Schema.Struct({ challenge: loose, signature: loose })
-export type PossessionFields = typeof PossessionFields.Type
-export const OperatorClaimFields = Schema.Struct({
-  githubActorId: loose,
-  githubLogin: loose,
-  address: loose,
-  observedAt: loose,
-  sourceBodySha256: loose,
-  supersedesClaimId: loose,
-  source: loose,
-  issueRepository: loose,
-  issueNumber: loose,
-})
-export type OperatorClaimFields = typeof OperatorClaimFields.Type
+export schema RegisterFields {
+  readonly chain?: AnyField
+  readonly address?: AnyField
+}
+export schema ChallengeFields {
+  readonly claimId?: AnyField
+}
+export schema AuthorizeFields {
+  readonly claimId?: AnyField
+  readonly challengeId?: AnyField
+  readonly signature?: AnyField
+}
+export schema BearerClaimFields {
+  readonly chain?: AnyField
+  readonly address?: AnyField
+  readonly supersedesClaimId?: AnyField
+}
+export schema PossessionFields {
+  readonly challenge?: AnyField
+  readonly signature?: AnyField
+}
+export schema OperatorClaimFields {
+  readonly githubActorId?: AnyField
+  readonly githubLogin?: AnyField
+  readonly address?: AnyField
+  readonly observedAt?: AnyField
+  readonly sourceBodySha256?: AnyField
+  readonly supersedesClaimId?: AnyField
+  readonly source?: AnyField
+  readonly issueRepository?: AnyField
+  readonly issueNumber?: AnyField
+}
 
 const traceBrowserOrigins = {
   production: [...deploymentOrigins("production").traceBrowserOrigins],

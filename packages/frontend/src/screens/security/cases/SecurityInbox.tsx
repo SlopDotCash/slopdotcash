@@ -1,7 +1,7 @@
 // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"
 import { Alert, Button, Field, Select, Spinner, Status } from "@repo/ui";
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { SignInPanel } from "../../../app/SignInPanel.tsx";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
@@ -131,6 +131,12 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
   const [filter, setFilter] = useState<ReportFilter>("all");
   const [selected, setSelected] = useState<string | null>(initialCase);
   const [note, setNote] = useState<string | null>(null);
+  const pendingScrollRef = useRef<string | null>(null);
+  const scrollDetailRef = (node: HTMLDivElement | null) => {
+    if (node === null || pendingScrollRef.current === null || pendingScrollRef.current !== selected) return;
+    pendingScrollRef.current = null;
+    node.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const reload = () => void run(section, loadCases(owner));
   const open = (caseId: string | null) => {
     setSelected(caseId);
@@ -143,12 +149,15 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
     }
     if (caseId) {
       reload();
-      if (typeof document !== "undefined") {
-        requestAnimationFrame(() => {
-          document.getElementById("security-case-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
+      if (selected === caseId && typeof document !== "undefined") {
+        document.getElementById("security-case-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        pendingScrollRef.current = caseId;
       }
-    } else void run(section, openCase(owner, null));
+    } else {
+      pendingScrollRef.current = null;
+      void run(section, openCase(owner, null));
+    }
   };
   const created = (value: unknown) => {
     const record = caseOf(value);
@@ -184,7 +193,7 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
           note={note}
           refreshError={list.refreshError}
           onReload={reload}
-          detail={selected ? <div id="security-case-detail"><CaseDetail key={selected} runtime={section} owner={owner} caseId={selected} payment={payment} /></div> : null}
+          detail={selected ? <div id="security-case-detail" ref={scrollDetailRef}><CaseDetail key={selected} runtime={section} owner={owner} caseId={selected} payment={payment} /></div> : null}
           reports={(cases) => (
             <SecurityReports
               runtime={runtime}

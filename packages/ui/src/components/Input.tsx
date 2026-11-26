@@ -10,7 +10,7 @@ export type InputProps = Omit<ComponentProps<"input">, "children"> & {
 export const fieldClass = cn(
   focusRing,
   inactive,
-  "w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive",
+  "w-full rounded-md border border-input bg-background px-4 text-base font-medium text-foreground placeholder:text-muted-foreground aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive",
 );
 
 /**

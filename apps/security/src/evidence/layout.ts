@@ -26,7 +26,7 @@ function isChunked(size: number): boolean {
 export function chunkLayout(value: unknown, size: number): ReadonlyArray<EvidenceChunk> | undefined {
   if (!isChunked(size) || !Array.isArray(value) || BigInt(value.length) !== partCount(BigInt(size), width)) return undefined;
   const parts: EvidenceChunk[] = [];
-  for (const [index, part] of value.entries()) {
+  for (const [index, part] of (value as ReadonlyArray<unknown>).entries()) {
     if (part === null || typeof part !== "object" || Object.keys(part).sort().join() !== "index,sha256,sizeBytes") return undefined;
     const fields = part as Record<string, unknown>;
     if (fields.index !== index || !isDigest(fields.sha256) || fields.sizeBytes !== Number(partSize(BigInt(size), width, BigInt(index)))) return undefined;

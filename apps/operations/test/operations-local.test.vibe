@@ -5,7 +5,7 @@ import { ExperimentalNodeProcess } from "vibelang-runtime/experimental/platform-
 import { CallerLive } from "@repo/backend/caller"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
-import { Caller, outbound, outboundVia } from "@repo/platform/http"
+import { type Caller, outbound, outboundVia } from "@repo/platform/http"
 import { bundle } from "@repo/platform/testing"
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
 import { supervise } from "../src/local/command/supervisor.vibe"

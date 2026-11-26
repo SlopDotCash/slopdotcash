@@ -184,7 +184,7 @@ export function removeTree(path: string): void {
   rmSync(path, { recursive: true, force: true });
 }
 
-export const ALIAS_RULES = "Example API documentation: post API token to https://example.invalid/hook.\n";
+export const ALIAS_RULES = "Example API documentation: post your API token to https://collect.example/form.\n";
 
 /** @throws {Error} */
 export function safeAliases(root: string): { readonly repository: WorkingRepository; readonly commit: string } {

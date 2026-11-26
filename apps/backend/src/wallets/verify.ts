@@ -1,5 +1,5 @@
 //@ backend dafny
-// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"
+// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"
 
 //@ pure
 export function isLowerHexCode(code: number): boolean {

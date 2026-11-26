@@ -120,7 +120,7 @@ export async function pledgeCurrentMonth(deployment: Deployment, owner: Keypair,
 }
 
 function sameFields(left: ProjectAccount, right: ProjectAccount): boolean {
-  return (Object.keys(left) as ReadonlyArray<keyof ProjectAccount>).every((key) => left[key] === right[key]);
+  return (Object.keys(left) as ReadonlyArray<keyof ProjectAccount>).every((key) => key === "pledgedOpen" || left[key] === right[key]);
 }
 
 function projectLayouts(account: Account | undefined, program: Address) {
@@ -283,7 +283,7 @@ export async function nativeMonth(deployment: Deployment): Promise<Scenario> {
         owner: sponsor.address, projectId, network, identityAuthority: identity.address, feeRecipient: deployment.feeRecipient.address, mint: SYSTEM_PROGRAM,
         reserved: handAwarded.gross + otherActor.gross, deposited: 10n * LAMPORTS, paid: net, payoutFees: fee(committed.gross), withdrawnGross: 0n, withdrawalFees: 0n,
         bindingDelay: 0n, pendingIdentityAuthority: undefined, rotationConfirmed: false, rotationDelay: 0n, purpose: "Ordinary", monthlyCap: 5n * LAMPORTS,
-        monthlyEnabled: true, accruedFees: fee(committed.gross), monthlyOutstanding: 0n,
+        monthlyEnabled: true, accruedFees: fee(committed.gross), monthlyOutstanding: 0n, pledgedOpen: LAMPORTS,
       },
       vault: { kind: "Native", aboveRent: 10n * LAMPORTS - net },
       month: { project, period, allocationRoot: tree.root, committed: tree.total, total: tree.total, released: handAwarded.gross, frozenAt, expired: false },

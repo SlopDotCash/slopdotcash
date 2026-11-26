@@ -304,6 +304,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       try Effect.try(() => assert.deepStrictEqual({
         busyFlag: busy.temporarilyUnavailable,
         busyClassified: databaseTemporarilyUnavailable(busy),
+        plainBusyClassified: databaseTemporarilyUnavailable(new Error("database is locked: SQLITE_BUSY")),
         constraintClassified: databaseTemporarilyUnavailable(constraint),
         shapeHasTag: shape.includes("DatabaseFailure"),
         shapeHasCode: shape.includes("D1_ERROR"),
@@ -314,6 +315,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       }, {
         busyFlag: true,
         busyClassified: true,
+        plainBusyClassified: false,
         constraintClassified: false,
         shapeHasTag: true,
         shapeHasCode: true,

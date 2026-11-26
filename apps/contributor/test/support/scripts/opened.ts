@@ -64,7 +64,7 @@ export async function theOpenedCommandRecordsOneEventOnItsOwnRun(): Promise<void
   try {
     const at = new Date().toISOString();
     await site.rows("INSERT INTO private_intake_status (singleton, enabled, verified_at) VALUES (1, 1, ?) ON CONFLICT(singleton) DO UPDATE SET enabled = excluded.enabled, verified_at = excluded.verified_at", at);
-    const receipts: Receipts = await import(pathToFileURL(committedSkill(checkout)).href);
+    const receipts = (await import(pathToFileURL(committedSkill(checkout)).href)) as Receipts;
     const reached: string[] = [];
     const fetchImpl = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
       const url = new URL(input instanceof Request ? input.url : String(input));

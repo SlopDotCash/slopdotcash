@@ -46,8 +46,8 @@ export effect function listedReads(manifest: Json, actor: AccessActor) {
     const id = typeof entry.id === "string" ? entry.id : ""
     const githubId = typeof entry.githubId === "string" ? entry.githubId : ""
     const path = currentPath(typeof entry.githubUrl === "string" ? entry.githubUrl : undefined) ?? id
-    const access = githubId === "" ? ({ state: "retry", message: `Slop has no permanent GitHub identity for ${id}.` } satisfies AccessCheck) : try readAccess({ path, githubId }, actor)
-    reads.push({ path: id, githubId, access })
+    const access = githubId === "" ? ({ state: "retry", message: `Slop has no permanent GitHub identity for ${path}.` } satisfies AccessCheck) : try readAccess({ path, githubId }, actor)
+    reads.push({ path, githubId, access })
   }
   return reads
 }
@@ -89,9 +89,9 @@ const scanNotQueued: Scan = { state: "unavailable", message: "The scan could not
 
 function installationCheck(manifest: Json, reads: Reads): Check & { readonly repository: string } {
   const primary = primaryOf(manifest)
-  const all = [{ repositoryId: primary.id, access: reads.checked.access }, ...reads.listed.map((read) => ({ repositoryId: read.path, access: read.access }))]
+  const all = [{ repositoryId: primary.path, access: reads.checked.access }, ...reads.listed.map((read) => ({ repositoryId: read.path, access: read.access }))]
   const unmet = all.find((read) => read.access.state === "retry" || read.access.access.installation !== "installed")
-  const repository = unmet?.repositoryId ?? primary.id
+  const repository = unmet?.repositoryId ?? primary.path
   if (unmet === undefined) return { state: "installed", message: all.length === 1 ? "Installed." : `Installed on ${all.slice(0, -1).map((read) => read.repositoryId).join(", ")} and ${all.at(-1)?.repositoryId ?? ""}.`, repository }
   if (unmet.access.state === "retry") return { state: "retry", message: unmet.access.message, repository }
   if (unmet.access.access.installation === "suspended") return { state: "suspended", message: all.length === 1 ? "Suspended on GitHub." : `Suspended on GitHub for ${repository}.`, repository }

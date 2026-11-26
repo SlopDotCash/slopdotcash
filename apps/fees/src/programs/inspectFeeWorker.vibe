@@ -1,14 +1,9 @@
 // spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
 import { boundedBytes } from "@repo/platform/browser"
+import { privateFile } from "@repo/platform/program"
 import type { Environment } from "../../gen/fees__runtime.effect.vibe"
 import { databaseBinding, expectedSecrets } from "../runtime/networks.vibe"
-
-module verified {
-  import { jsonValue } from "../solana/bytes.ts"
-  /** @throws {never} */
-  export function parsedJson(text: string): unknown { return jsonValue(text) }
-}
-import { parsedJson } from verified
+import { parsedJson } from "../kernels/verified.vibe"
 
 export error InspectionFailed { message: string }
 
@@ -217,9 +212,7 @@ export effect function inspectFeeWorker(args: ReadonlyArray<string>) {
     ],
   }
   const text = JSON.stringify(report)
-  const fs = try FileSystem.FileSystem
-  const path = try Path.Path
-  try fs.writeFileString(path.join(runnerTemp, "fee-worker-bindings.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 })
+  try privateFile(runnerTemp, "fee-worker-bindings.json", `${JSON.stringify(report, null, 2)}\n`)
   try Console.log(text)
   if (comparison.missing.length + comparison.extra.length + comparison.wrongKind.length > 0) {
     throw failed(`The deployed fee Worker bindings differ from the reviewed configuration: missing ${comparison.missing.join(",") || "none"}; extra ${comparison.extra.join(",") || "none"}; wrong kind ${comparison.wrongKind.join(",") || "none"}`)

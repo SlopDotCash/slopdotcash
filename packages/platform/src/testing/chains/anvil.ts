@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { type Abi, type Address, type Hex, encodeDeployData, getAddress, isAddress, isHex } from "viem";
 import type { Handler } from "../../testing.ts";
-import { type RpcCall, type Served, childEnvironment, forward, freePort, mapResults, replaceStrings, replay, rewriteCalls, rpc, rpcCalls, serve, supervised } from "./faults.ts";
+import { type RpcCall, type Served, childEnvironment, forward, freePort, isList, isRecord, mapResults, replaceStrings, replay, rewriteCalls, rpc, rpcCalls, serve, supervised } from "./faults.ts";
 
 export interface Account {
   readonly address: Address;
@@ -68,8 +68,6 @@ const baseChainId = 8453;
 const baseGasPriceOracle = "0x420000000000000000000000000000000000000f";
 const zeroWordCode = "0x600060005260206000f3";
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
-
 const quantity = (value: unknown, what: string): bigint => {
   if (typeof value !== "string" || !/^0x[0-9a-f]+$/iu.test(value)) throw new Error(`${what} is not a hex quantity`);
   return BigInt(value);
@@ -81,7 +79,7 @@ function finality(upstream: Handler, finalizedHeight: () => Promise<bigint>, opS
   const tagged = (calls: ReadonlyArray<RpcCall>) => calls.some((call) => /"(finalized|safe)"/u.test(JSON.stringify(call.params ?? null)));
   const receipts = (call: RpcCall, result: unknown): unknown => {
     if (call.method === "eth_getTransactionReceipt" && isRecord(result)) return { ...result, l1Fee: "0x0" };
-    if (call.method === "eth_getBlockReceipts" && Array.isArray(result)) return result.map((item) => (isRecord(item) ? { ...item, l1Fee: "0x0" } : item));
+    if (call.method === "eth_getBlockReceipts" && isList(result)) return result.map((item) => (isRecord(item) ? { ...item, l1Fee: "0x0" } : item));
     return result;
   };
   return async (request) => {
@@ -100,7 +98,7 @@ function finality(upstream: Handler, finalizedHeight: () => Promise<bigint>, opS
 
 async function readAccounts(path: string): Promise<ReadonlyArray<Account>> {
   const config: unknown = JSON.parse(await readFile(path, "utf8"));
-  if (!isRecord(config) || !Array.isArray(config.available_accounts) || !Array.isArray(config.private_keys)) throw new Error("anvil --config-out has no accounts");
+  if (!isRecord(config) || !isList(config.available_accounts) || !isList(config.private_keys)) throw new Error("anvil --config-out has no accounts");
   const keys = config.private_keys;
   return config.available_accounts.map((address, index) => {
     const privateKey = keys[index];
@@ -116,7 +114,7 @@ async function started(child: ChildProcess, url: string, chainId: number, config
     if (child.exitCode !== null || child.signalCode !== null) throw new Error(`anvil exited during startup (${child.exitCode ?? child.signalCode})`);
     const observed = await rpc(url, "eth_chainId").catch(() => undefined);
     if (observed !== undefined) {
-      if (quantity(observed, "eth_chainId") !== BigInt(chainId)) throw new Error(`anvil answered chain ${typeof observed === "string" ? observed : JSON.stringify(observed)}, not ${chainId}`);
+      if (quantity(observed, "eth_chainId") !== BigInt(chainId)) throw new Error(`anvil answered chain ${observed as string}, not ${chainId}`);
       const accounts = await readAccounts(configOut).catch(() => undefined);
       if (accounts !== undefined && accounts.length > 0) return accounts;
     }
@@ -134,7 +132,7 @@ export async function anvil(options: AnvilOptions): Promise<Anvil> {
   const port = await freePort();
   const upstreamUrl = `http://127.0.0.1:${port}`;
   const args = [
-    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--hardfork", "cancun", "--prune-history", "256", "--config-out", configOut,
+    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--hardfork", "cancun", "--prune-history", "64", "--config-out", configOut,
     ...(blockTime === undefined ? [] : ["--block-time", String(blockTime)]),
     ...(timestamp === undefined ? [] : ["--timestamp", String(timestamp)]),
   ];
@@ -189,7 +187,12 @@ export async function anvil(options: AnvilOptions): Promise<Anvil> {
       accounts,
       rpc: call,
       mine: async (blocks = 1) => {
-        await rpc(url, "anvil_mine", [hex(blocks)], 180_000);
+        const from = await latest();
+        const started = Date.now();
+        await rpc(url, "anvil_mine", [hex(blocks)], 180_000).catch(async (error: unknown) => {
+          const reached = await latest().catch(() => undefined);
+          throw new Error(`anvil_mine of ${blocks} blocks from block ${from} gave no answer after ${Date.now() - started} ms; anvil had reached block ${reached ?? "unknown"}`, { cause: error });
+        });
         return latest();
       },
       finalized,

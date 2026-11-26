@@ -227,6 +227,7 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
   const committed = row.award_state === "approved" || row.award_state === "reserved"
   const terms = verified ? withOwnerLines(try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: row.published_at }), scope) : initial.terms
   const triagers = numbers(members.filter((member) => member.revoked_at === null).map((member) => member.github_id)).filter((id) => id !== reporter)
+  const snapshotEpoch = triagers.length > 0 ? 1 : 0
   return {
     ...initial,
     reporter,
@@ -235,9 +236,9 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
     terms,
     revision: row.revision,
     reportVersion: verified ? row.report_version ?? 1 : 0,
-    authority: triagers.length > 0 ? { ...initial.authority, epoch: 1 } : initial.authority,
+    authority: { ...initial.authority, epoch: snapshotEpoch },
     triagers,
-    triagerEpoch: triagers.length > 0 ? 1 : 0,
+    triagerEpoch: snapshotEpoch,
     revokedTriagers: numbers([...members].filter((member) => member.revoked_at !== null).sort((left, right) => (left.revoked_at ?? "").localeCompare(right.revoked_at ?? "")).map((member) => member.github_id)),
     memberEvents: events.filter((event) => membership.has(event.kind)).length,
     receipt: receipts[row.receipt_state],

@@ -1,4 +1,5 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/backlogRule.md, "A catch-up pause keeps a project in rotation for at most fourteen days"
+import { catchUpCanMove, catchUpCanStart } from "../../../gen/backend__backlogRule.ts";
 import { maxCap, minCap } from "../../../gen/backend__intakeCap.ts";
 import { honorSystemValid, maxShareBasisPoints } from "../../../gen/backend__projects.ts";
 import { githubUserIdFromNodeId } from "../nodeId.ts";
@@ -55,6 +56,7 @@ const nodeIdPattern = /^[A-Za-z0-9_=-]+$/u;
 const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const cyclePattern = /^\d{4}-(?:0[1-9]|1[0-2])$/u;
 const maxProjectIdLength = 43;
+const hourMs = 3_600_000;
 const maxMonthlyCapMinor = 1_000_000_000_000_000n;
 const maxBaseUnits = (1n << 128n) - 1n;
 const maxSolanaBaseUnits = (1n << 64n) - 1n;
@@ -738,7 +740,7 @@ interface DefinitionOptions {
 const projectKeys = ["authority", "description", "eyebrow", "funding", "headline", "id", "links", "listingTier", "modelPolicy", "name", "repositories", "reviewSkill", "reward", "schemaVersion", "skill", "slug", "status", "steward", "terms"];
 const optionalProjectKeys = ["image", "escrow", "participation", "rewardAsset", "contribution", "security", "securityBounty", "slopbot"];
 
-const slopbotSettings = ["intakeCap", "readyLabel", "submissionFee", "wantedIssues"] as const;
+const slopbotSettings = ["catchUpUntil", "intakeCap", "readyLabel", "submissionFee", "wantedIssues"] as const;
 const submissionFeeMinor = /^[1-9][0-9]{0,15}$/u;
 const submissionFeeMinMinor = 1_000_000n;
 const submissionFeeMaxMinor = 10_000_000n;
@@ -755,9 +757,10 @@ function validateSlopbot(value: unknown): void {
   const field = "project.slopbot";
   const slopbot = record(value, field);
   const settings = slopbotSettings.filter((key) => slopbot[key] !== undefined);
+  const history = slopbot.catchUpHistory === undefined? []: ["catchUpHistory"];
   const consent = slopbot.automaticClosure === undefined ? [] : ["automaticClosure"];
-  if (consent.length + settings.length === 0) fail(`${field} has unexpected or missing fields`);
-  exactKeys(slopbot, [...consent, ...settings], field);
+    if (consent.length + history.length + settings.length === 0) fail(`${field} has unexpected or missing fields`);
+    exactKeys(slopbot, [...consent,...history,...settings], field);
   if (slopbot.automaticClosure !== undefined && typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
   const readyLabel = slopbot.readyLabel === undefined ? undefined : readyLabelProblem(slopbot.readyLabel, `${field}.readyLabel`);
   if (readyLabel !== undefined) fail(readyLabel);
@@ -765,6 +768,16 @@ function validateSlopbot(value: unknown): void {
   if (intakeCap !== undefined && (typeof intakeCap !== "number" || !Number.isSafeInteger(intakeCap) || intakeCap < minCap || intakeCap > maxCap)) fail(`${field}.intakeCap must be a whole number from ${minCap} to ${maxCap}`);
   if (slopbot.submissionFee !== undefined) validateSubmissionFee(slopbot.submissionFee, `${field}.submissionFee`);
   if (slopbot.wantedIssues !== undefined && typeof slopbot.wantedIssues !== "boolean") fail(`${field}.wantedIssues must be a boolean`);
+  if (slopbot.catchUpUntil!== undefined &&!isExactUtc(slopbot.catchUpUntil)) fail(`${field}.catchUpUntil is invalid`);
+  if (slopbot.catchUpHistory!== undefined) {
+    const catchUpHistory = slopbot.catchUpHistory;
+    if (!Array.isArray(catchUpHistory) || catchUpHistory.length === 0) fail(`${field}.catchUpHistory must be a nonempty array`);
+    let previous = "";
+    for (const entry of catchUpHistory) {
+      if (!isRecord(entry) || Object.keys(entry).sort().join()!== "startedAt" ||!isExactUtc(entry.startedAt) || entry.startedAt <= previous) fail(`${field}.catchUpHistory must list UTC start dates in chronological order`);
+      previous = entry.startedAt;
+}
+}
 }
 
 function validateSecurity(value: unknown): void {
@@ -841,10 +854,12 @@ function validateProjectDefinition(value: unknown, { trusted, historical }: Defi
   const seenNodeIds = new Set([String(authority.repositoryNodeId)]);
   repositories.forEach((repository, index) => {
     if (index === 0 || repository.githubId === undefined) return;
-    if (seenGithubIds.has(String(repository.githubId))) fail(`project.repositories[${index}].githubId duplicates another repository`);
-    if (seenNodeIds.has(String(repository.nodeId))) fail(`project.repositories[${index}].nodeId duplicates another repository`);
-    seenGithubIds.add(String(repository.githubId));
-    seenNodeIds.add(String(repository.nodeId));
+    const githubId = typeof repository.githubId === "string" || typeof repository.githubId === "number" ? String(repository.githubId) : "";
+    const nodeId = typeof repository.nodeId === "string" ? repository.nodeId : "";
+    if (seenGithubIds.has(githubId)) fail(`project.repositories[${index}].githubId duplicates another repository`);
+    if (seenNodeIds.has(nodeId)) fail(`project.repositories[${index}].nodeId duplicates another repository`);
+    seenGithubIds.add(githubId);
+    seenNodeIds.add(nodeId);
   });
   const terms = validateTerms(project.terms, primary, validReward, steward, { allowLegacyUnsupportedOwnershipClaim: historical });
   const receiptPolicy = record(terms.receiptPolicy, "project.terms.receiptPolicy");
@@ -870,7 +885,9 @@ function ownSections(value: unknown): Trusted {
 
 /** @throws {never} */
 export function definitionProblem(value: unknown, trusted: Trusted): string | undefined {
-  return problemOf(() => validateProjectDefinition(value, { trusted, historical: false }));
+    return problemOf(() => {
+    validateProjectDefinition(value, { trusted, historical: false});
+});
 }
 
 /** @throws {never} */
@@ -971,7 +988,10 @@ const offChainDeploymentKeys = ["maxNativeCostWei", "bindingConsentNonceLimit"];
 
 function implementationReview(review: unknown): string {
   const fields = isRecord(review) ? review : {};
-  return JSON.stringify(evmImplementationReviewKeys.map((key) => String(fields[key] ?? "").toLowerCase()));
+  return JSON.stringify(evmImplementationReviewKeys.map((key) => {
+    const value = fields[key];
+    return (typeof value === "string" || typeof value === "number" ? String(value) : "").toLowerCase();
+  }));
 }
 
 function assertEvmUpgradeHistory(previous: Json, next: Json): void {
@@ -1072,10 +1092,52 @@ function assertPayoutExclusionTransition(previous: unknown, next: unknown, nowIs
   for (let cycleId = first; cycleId <= openCycle; cycleId = nextCycle(cycleId)) if (excludedSet(before, cycleId) !== excludedSet(after, cycleId)) fail(`payout exclusions apply prospectively; ${cycleId} cannot change`);
 }
 
+function assertCatchUpTransition(previous: unknown, next: unknown, nowIso: string): void {
+  const previousSlopbot = isRecord(previous) && isRecord(previous.slopbot)? previous.slopbot: undefined;
+  const nextSlopbot = isRecord(next) && isRecord(next.slopbot)? next.slopbot: undefined;
+  if (canonical(previousSlopbot?.catchUpHistory)!== canonical(nextSlopbot?.catchUpHistory)) fail("project.slopbot.catchUpHistory is written by the server only");
+  const previousUntil = typeof previousSlopbot?.catchUpUntil === "string"? previousSlopbot.catchUpUntil: undefined;
+  const nextUntil = typeof nextSlopbot?.catchUpUntil === "string"? nextSlopbot.catchUpUntil: undefined;
+  if (nextUntil === undefined || nextUntil === previousUntil) return;
+  const nowHours = Math.floor(Date.parse(nowIso) / hourMs);
+  const untilHours = Math.floor(Date.parse(nextUntil) / hourMs);
+  const nowMonth = Number(nowIso.slice(0, 4) + nowIso.slice(5, 7));
+  const starts = list(nextSlopbot?.catchUpHistory).filter(isRecord).map((entry) => entry.startedAt).filter((startedAt): startedAt is string => typeof startedAt === "string");
+  const lastStart = starts.length === 0? undefined: starts[starts.length - 1];
+  const lastStartMonth = lastStart === undefined? 0: Number(lastStart.slice(0, 4) + lastStart.slice(5, 7));
+  if (previousUntil!== undefined && Date.parse(previousUntil) > Date.parse(nowIso)) {
+    if (untilHours <= Math.floor(Date.parse(previousUntil) / hourMs)) return;
+    const startedAtHours = lastStart === undefined? nowHours: Math.floor(Date.parse(lastStart) / hourMs);
+    if (!catchUpCanMove(startedAtHours, untilHours, nowHours)) fail("project.slopbot.catchUpUntil cannot move a running pause past fourteen days from its start");
+    return;
+  }
+  if (!catchUpCanStart(untilHours, nowHours, lastStartMonth, nowMonth)) fail("project.slopbot.catchUpUntil must start a pause at most fourteen days ahead and at most once per UTC month");
+}
+
 /** @throws {never} */
 export function transitionProblem(previous: unknown, next: unknown, nowIso: string, trusted: Trusted = ownSections(previous)): string | undefined {
   return problemOf(() => {
     assertPolicyTransition(previous, next, trusted);
     assertPayoutExclusionTransition(previous, next, nowIso);
+    assertCatchUpTransition(previous, next, nowIso);
   });
+}
+
+/** @throws {never} */
+export function applyCatchUpChange(previous: unknown, next: unknown, nowIso: string): unknown {
+  const previousSlopbot = isRecord(previous) && isRecord(previous.slopbot) ? previous.slopbot : undefined;
+  const nextSlopbot = isRecord(next) && isRecord(next.slopbot) ? next.slopbot : undefined;
+  const previousUntil = typeof previousSlopbot?.catchUpUntil === "string" ? previousSlopbot.catchUpUntil : undefined;
+  const nextUntil = typeof nextSlopbot?.catchUpUntil === "string" ? nextSlopbot.catchUpUntil : undefined;
+  if (nextUntil === undefined || nextUntil === previousUntil) return next;
+  if (previousUntil !== undefined && Date.parse(previousUntil) > Date.parse(nowIso)) return next;
+  if (!isRecord(next)) return next;
+  const history = list(nextSlopbot?.catchUpHistory).filter(isRecord);
+  return {
+    ...next,
+    slopbot: {
+      ...nextSlopbot,
+      catchUpHistory: [...history, { startedAt: nowIso }],
+    },
+  };
 }

@@ -11,7 +11,7 @@ import { type RoleGetter, feesClaimedLogs, roleAddress, roleCalldata, transferLo
 
 export error ClaimRefused { issue: string }
 
-export interface EvmVaultState {
+interface EvmVaultState {
   readonly deployment: EvmVaultDeployment
   readonly vault: Address
   readonly block: bigint

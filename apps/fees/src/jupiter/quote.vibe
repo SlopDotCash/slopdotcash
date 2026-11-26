@@ -5,16 +5,7 @@ import type { QuoteRead } from "../conversion/chain.vibe"
 import { decimalBps, jsonText, jsonValue, venuesOf, wholeText, wideOf } from "../solana/bytes.ts"
 import { refuse, solanaNativeAsset, wrappedSol } from "../solana/wire.vibe"
 import { noteProviderFailure } from "../kernels/providerFailure.ts"
-
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  import { minimumOutput as floor } from "../kernels/arithmetic.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-  /** @throws {never} */
-  export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint { return floor(amountOut, slippageBps) }
-}
-import { errorText, minimumOutput } from verified
+import { errorText, minimumOutput } from "../kernels/verified.vibe"
 
 export error JupiterUnavailable { path: string; detail: string }
 export error JupiterRefused { path: string; status: number; message: string }
@@ -26,7 +17,7 @@ export interface JupiterSettings {
   readonly feeMicro: bigint
 }
 
-export const responseLimitBytes = 2_000_000
+const responseLimitBytes = 2_000_000
 
 const Quote = Schema.Struct({
   inputMint: Schema.String,
@@ -54,7 +45,7 @@ export interface JupiterQuote {
   readonly routePlan: unknown
 }
 
-export interface SwapBuilt {
+interface SwapBuilt {
   readonly raw: Uint8Array
   readonly lastValidBlockHeight: number
 }

@@ -11,7 +11,8 @@ export type { DlnEvmOrder, DlnOrderScript, DlnSolanaOrder, DlnSolanaRequest } fr
 export { dlnSolanaChainId, dlnSourceAbi } from "./quotes/dln.ts";
 export type { JupiterQuoteScript, JupiterSwapRequest, JupiterSwapScript } from "./quotes/jupiter.ts";
 export type { KyberRouteScript } from "./quotes/kyberswap.ts";
-export { kyberNative, kyberRouterAbi } from "./quotes/kyberswap.ts";
+export { kyberNative } from "./quotes/kyberswap.ts";
+export { kyberRouterAbi } from "../chain/kyberswap.ts";
 export type { SignatureItem } from "./quotes/solanaHistory.ts";
 
 export type QuoteService = "kyberswap" | "jupiter" | "dln" | "solanaHistory";

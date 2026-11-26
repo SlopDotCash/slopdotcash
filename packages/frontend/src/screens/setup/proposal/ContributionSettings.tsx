@@ -23,12 +23,14 @@ export type ContributionSettingsProps = {
 function Setting({ name, value, label, hint, onChange }: { name: ContributionSetting; value: string; label: string; hint: ReactNode; onChange: (value: string) => void }) {
   const id = fieldId(name);
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-3">
+    <div className="flex flex-col">
+      <div className="flex min-h-11 items-center gap-2.5">
         <Checkbox id={id} name={name} checked={value === "true"} aria-describedby={`${id}-hint`} onCheckedChange={(checked) => onChange(String(checked === true))} />
-        <Label htmlFor={id}>{label}</Label>
+        <Label htmlFor={id} className="text-copy leading-page font-bold">
+          {label}
+        </Label>
       </div>
-      <p id={`${id}-hint`} className="text-sm text-muted-foreground">
+      <p id={`${id}-hint`} className="text-sm leading-summary text-muted-foreground">
         {hint}
       </p>
     </div>

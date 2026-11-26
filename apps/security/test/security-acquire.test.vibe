@@ -176,7 +176,7 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit), { excludeTestServices: true
         followed: ["CLAUDE.md", "README.md", "chain.md", "docs/CLAUDE.md"],
         layout: ["inventory.json", "objects"],
         tamperedLink: "Acquired object bytes changed",
-        policy: "2d8a7e997f52322edf46b37ca2f00b464fff55b7d66ee057a56ef75155a5cc91",
+        policy: "6530e81851dae187f16d18a4ae8a256157154969c4c7266e22196ff6461d2a58",
       },
     )
   }))
@@ -221,7 +221,7 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit), { excludeTestServices: true
       scanned.map(inspectionSummary),
       [
         {
-          inventorySha256: "735437429600224542c77e84ac779cb663d11e7b65c4ce1afaee6d1bea92eb0f",
+          inventorySha256: "79e38a67d1224e9d0792a85fa7fc92d71b13d5d985a87b46fbe35a3fe0ad313a",
           coverage: coverage(27),
           checks,
           findings: 21,
@@ -231,7 +231,7 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit), { excludeTestServices: true
           restSha256: "6f1189f2151b299dfab4fde5a9d25c2f54c226d4ab04cd72f42983ea19c361d3",
         },
         {
-          inventorySha256: "8639ff364de467566cd82d425eb8c4e62fc2e506331f7b091f00b89279e4e99b",
+          inventorySha256: "393c09273e0174bddea3a1b0e04f30319381ec0af64fce9f982a09cc5073bb69",
           coverage: coverage(1127),
           checks,
           findings: 21,

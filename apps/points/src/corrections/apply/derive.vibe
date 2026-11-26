@@ -2,9 +2,11 @@
 import { implementationCreditActors, isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import { mergeResolutionLineCounts } from "@repo/platform/git/evidence"
 import { type CensusCommit, unprovedZeroLinePromotion } from "../../../gen/points__corrections.effect.vibe"
-import { type CompleteProof, type CopiedClaim, type CorrectionActor, type CorrectionClaim, type CorrectionCommit, type CorrectionFile, type CorrectionSource, type ManifestCandidate, type OriginalContributorBinding, type OriginalContributorFollowup, type OriginalContributorRepair, type ResolutionAcceptance, CorrectionRefused } from "./manifest.vibe"
+import { type CompleteProof, type CopiedClaim, type CorrectionActor, type CorrectionClaim, type CorrectionCommit, type CorrectionFile, type CorrectionSource, type ManifestCandidate, type OriginalContributorBinding, type OriginalContributorFollowup, type OriginalContributorRepair, type ResolutionAcceptance, type CorrectionRefused, check, correctionClaimCommit, correctionFailure, digestPattern, isNodeId, validActor } from "./manifest.vibe"
 import { isOctober, isOriginalContributorContext } from "./october.vibe"
 import { isOriginalContributorFollowup, isOriginalContributorRepair, originalContributorSource, reviewedOriginalSource, validParentShas } from "./original.vibe"
+
+export { check, correctionClaimCommit, correctionFailure, digestPattern, isNodeId, validActor }
 
 export interface Scope { readonly commit: string; readonly path: string }
 
@@ -28,21 +30,8 @@ module verified {
 }
 import { legacyHolder } from verified
 
-const node = /^[A-Za-z0-9_=-]{4,256}$/u
-export const digestPattern = /^[a-f0-9]{64}$/u
 const sha = /^[a-f0-9]{40}$/u
 const pullPath = /^\/([^/]+\/[^/]+)\/pull\/[1-9][0-9]*$/u
-const botLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u
-const userLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
-const actorKinds: ReadonlyArray<string> = ["User", "Bot", "Mannequin", "Organization"]
-
-export function correctionFailure(message: string) {
-  return new CorrectionRefused({ message: `Implementation correction: ${message}` })
-}
-
-export effect function check(holds: boolean, message: string) {
-  if (!holds) throw correctionFailure(message)
-}
 
 export function isInstant(value: string | null): value is string {
   if (value === null) return false
@@ -63,15 +52,6 @@ export function sameSet(left: ReadonlyArray<string>, right: ReadonlyArray<string
   return distinct(left) && distinct(right) && left.length === right.length && left.every((item) => rightSet.has(item))
 }
 
-export function isNodeId(value: string) {
-  return node.test(value)
-}
-
-export effect function validActor(value: CorrectionActor | null) {
-  if (value === null) return
-  try check(node.test(value.id) && (value.kind === "Bot" ? botLogin : userLogin).test(value.login) && actorKinds.includes(value.kind), "invalid GitHub actor")
-}
-
 function eligible(value: CorrectionActor | null): value is CorrectionActor {
   return value !== null && value.kind === "User" && isCreditEligibleCommitAuthor(value)
 }
@@ -83,13 +63,6 @@ export effect function sourceRepository(url: string, projectId: string, projectO
   const repository = match?.[1] ?? ""
   try check(projectOf(repository) === projectId, "source repository does not belong to the project")
   return repository.toLowerCase()
-}
-
-export function correctionClaimCommit(commit: CorrectionCommit) {
-  const resolution = commit.mergeResolution
-  const parents = commit.parentShas
-  return commit.parentCount <= 1 || (resolution !== undefined && parents !== undefined &&
-    (mergeResolutionLineCounts(resolution, { sha: commit.sha, parents: parents.map((sha) => ({ sha })) })?.length ?? 0) > 0)
 }
 
 function sameFiles(left: ReadonlyArray<CorrectionFile> | null, right: ReadonlyArray<CorrectionFile> | undefined) {
@@ -124,7 +97,7 @@ effect function validCommit(commit: CorrectionCommit) {
   const parents = commit.parentShas
   try check(sha.test(commit.sha) && count(commit.parentCount) && (parents === undefined || validParentShas(commit)) &&
     (commit.additions === null || count(commit.additions)) && (commit.deletions === null || count(commit.deletions)) &&
-    (commit.firstAcceptedSourceId === null || node.test(commit.firstAcceptedSourceId)), "invalid commit proof")
+    (commit.firstAcceptedSourceId === null || isNodeId(commit.firstAcceptedSourceId)), "invalid commit proof")
   try validActor(commit.author)
   const resolution = commit.mergeResolution
   if (resolution !== undefined) {
@@ -140,7 +113,7 @@ effect function validCommit(commit: CorrectionCommit) {
 }
 
 effect function validSource(source: CorrectionSource, candidate: ManifestCandidate, projectOf: ProjectOfRepository, acceptedLater: boolean) {
-  try check(node.test(source.sourceId) && node.test(source.repositoryNodeId) && sha.test(source.headSha) && count(source.commitCount) &&
+  try check(isNodeId(source.sourceId) && isNodeId(source.repositoryNodeId) && sha.test(source.headSha) && count(source.commitCount) &&
     (source.occurredAt === null || (isInstant(source.occurredAt) && (source.occurredAt <= candidate.occurredAt || acceptedLater))) &&
     (try sourceRepository(source.sourceUrl, candidate.projectId, projectOf)) === source.repository.toLowerCase(), "invalid source identity")
   try validActor(source.author)
@@ -170,7 +143,7 @@ effect function credit(sources: ReadonlyMap<string, CorrectionSource>, source: C
   }
   if (retained === undefined) return eligible(source.author) ? source.author : null
   const files = commit.files ?? []
-  try check(digestPattern.test(retained.bindingDigest) && node.test(retained.originalSourceId) && sha.test(retained.originalCommitSha) &&
+  try check(digestPattern.test(retained.bindingDigest) && isNodeId(retained.originalSourceId) && sha.test(retained.originalCommitSha) &&
     retained.originalSourceId !== source.sourceId && files.length > 0 && sameSet(retained.boundPaths, files.map((file) => file.path)), "retained copy lacks complete accepted-path bindings")
   const original = sources.get(retained.originalSourceId)
   const originalCommit = original?.commits.find((item) => item.sha === retained.originalCommitSha)
@@ -204,7 +177,7 @@ effect function addClaims(tally: Tally, sources: ReadonlyMap<string, CorrectionS
   const expected = proof.expectedClaimIds ?? []
   try check(digestPattern.test(proof.decisionDigest ?? "") && expected.length > 0 && sameSet(expected, claims.map((claim) => claim.id)), "grouped claims do not match the retained unit scope")
   for (const claim of claims) {
-    try check(node.test(claim.id) && sha.test(claim.commitSha) && claim.path !== "", "invalid grouped claim")
+    try check(isNodeId(claim.id) && sha.test(claim.commitSha) && claim.path !== "", "invalid grouped claim")
     const source = sources.get(claim.sourceId)
     const commit = source?.commits.find((item) => item.sha === claim.commitSha)
     try check(source !== undefined && source.occurredAt !== null && commit !== undefined && correctionClaimCommit(commit) && commit.firstAcceptedSourceId === source.sourceId, "grouped claim has no unique accepted ordinary commit")

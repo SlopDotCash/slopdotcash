@@ -84,6 +84,18 @@ export effect function unpaidAwards(scope: string, limit: number) {
   })
 }
 
+schema ReserveRow { readonly reserve: string }
+schema ReservedEvidence { readonly sourceDigest: string }
+
+export effect function reservedSource(scope: string, id: string) {
+  const [row] = try inTransaction((tx) => effect {
+    return try decoded(ReserveRow, try tx.all(sql`SELECT reserve FROM awards WHERE scope = ${scope} AND id = ${id}`), "keeper award reserve")
+  })
+  if (row === undefined) return undefined
+  const evidence = Schema.decodeUnknownEffect(Schema.fromJsonString(ReservedEvidence))(row.reserve) catch () => undefined
+  return evidence?.sourceDigest
+}
+
 export effect function markChecked(scope: string, id: string, at: number) {
   try inTransaction((tx) => tx.run(sql`UPDATE awards SET checked = ${at} WHERE scope = ${scope} AND id = ${id}`))
 }

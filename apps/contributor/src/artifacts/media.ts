@@ -496,7 +496,7 @@ function jsonLines(text: string): ReadonlyArray<unknown> | null {
 
 function utf8Text(bytes: Uint8Array): string | null {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^﻿/, "").trim();
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/u, "").trim();
   } catch {
     return null;
   }
@@ -549,7 +549,7 @@ function documentProblem(bytes: Uint8Array, expectation: Pick<Expectation, "rowI
 
 function isHtmlResponse(contentType: string, bytes: Uint8Array): boolean {
   if (contentType === "text/html" || contentType === "application/xhtml+xml") return true;
-  const prefix = textDecoder.decode(bytes.subarray(0, 512)).replace(/^﻿/, "").trimStart().toLowerCase();
+  const prefix = textDecoder.decode(bytes.subarray(0, 512)).replace(/^\uFEFF/u, "").trimStart().toLowerCase();
   return prefix.startsWith("<!doctype html") || prefix.startsWith("<html") || prefix.startsWith("<head");
 }
 

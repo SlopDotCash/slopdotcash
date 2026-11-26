@@ -4,7 +4,7 @@ import { D1, first, rows, sql } from "@repo/platform/d1"
 import { retentionBucket } from "@repo/platform/r2"
 import { evidencePolicy } from "../../client/evidence.vibe"
 import { partBytes } from "../../evidence/layout.ts"
-import { location, partKey } from "../../evidence/objects.vibe"
+import { partKey } from "../../evidence/objects.vibe"
 import { type Ask, FixtureRefused, type Session, ask, endSessions, isoNow, now, promised, respond, session, signedAsk, status, verify } from "../flags/requests.vibe"
 import { type FixtureEnv, fixtureSite, publicReadToken } from "../flags/site.vibe"
 import { type SiteResponse, fixtureKeys, githubFixture } from "../flags/transport.ts"
@@ -12,7 +12,7 @@ import { type SiteResponse, fixtureKeys, githubFixture } from "../flags/transpor
 schema Granted { grant: string; expiresInSeconds: number }
 schema Closed { closedAt: string }
 schema StoredGrant { operator_github_id: string; reason: string; consumed_at: string | null }
-schema AuditRow { actor: string; action: string; reason: string }
+schema AuditRow { actor: string; action: string; reason: string | null }
 schema StateRow { state: string }
 schema ObjectRow { object_key: string; sha256: string; size_bytes: number; storage: string; storage_generation: string | null }
 
@@ -68,7 +68,7 @@ export effect function qualifyAccess(env: FixtureEnv) {
       chunks.push({ index: chunks.length, sha256: try sha256Hex(data.subarray(offset, offset + size)), sizeBytes: size, offset })
     }
     const service = `/api/v1/vetting/evidence/${id}/${runId}`
-    const object = { sha256: sha, sizeBytes: data.length, kind: "trace", label: "Harmless qualification bytes", contentType: "application/octet-stream", ...(chunked ? { chunks: chunks.map(({ offset, ...chunk }) => chunk) } : {}) }
+    const object = { sha256: sha, sizeBytes: data.length, kind: "trace", label: "Harmless qualification bytes", contentType: "application/octet-stream", ...(chunked ? { chunks: chunks.map(({ offset: _offset, ...chunk }) => chunk) } : {}) }
     try signedOk("POST", service, encoder.encode(JSON.stringify({ traceSha256: sha, objects: [object] })), "application/json")
     if (chunked) {
       for (const chunk of chunks) try signedOk("PUT", `${service}/${sha}/chunks/${chunk.index}`, data.subarray(chunk.offset, chunk.offset + chunk.sizeBytes), "application/octet-stream")
@@ -96,11 +96,13 @@ export effect function qualifyAccess(env: FixtureEnv) {
   effect function objectOf(id: string) {
     const row = try first(ObjectRow, sql`SELECT object_key,sha256,size_bytes,storage,storage_generation FROM vetting_evidence_objects WHERE assessment_id=${id}`)
     if (row === undefined) throw new FixtureRefused({ issue: "Fixture object row is missing" })
-    return (try partKey(row)) ?? location(row)
+    const key = try partKey(row)
+    if (key === undefined) throw new FixtureRefused({ issue: "Fixture object key is missing" })
+    return key
   }
 
   effect function auditOf(id: string) {
-    return try rows(AuditRow, sql`SELECT actor,action,reason FROM vetting_evidence_audit WHERE assessment_id=${id} AND actor NOT LIKE 'service:%'`)
+    return try rows(AuditRow, sql`SELECT actor,action,reason FROM vetting_evidence_audit WHERE assessment_id=${id}`)
   }
 
   effect function streamed(response: SiteResponse, limit?: number) {
@@ -164,9 +166,12 @@ export effect function qualifyAccess(env: FixtureEnv) {
   )
   try verify((try status(site, `${single.path}/body`, { as: cookieOf(owner), headers: { "x-vetting-read-grant": one } })) === 403, "Grant replay accepted")
   const storedGrant = try first(StoredGrant, sql`SELECT operator_github_id,reason,consumed_at FROM vetting_evidence_grants WHERE token_hash=${try sha256Hex(one)}`)
-  const readAudit = try auditOf(single.id)
+  const singleAudit = try auditOf(single.id)
+  const readAudit = singleAudit.filter((row) => !row.actor.startsWith("service:"))
   try verify(
     storedGrant?.operator_github_id === owner && storedGrant.consumed_at !== null && storedGrant.reason === grantReason
+      && singleAudit.some((row) => row.actor.startsWith("service:") && row.action === "register")
+      && singleAudit.some((row) => row.actor.startsWith("service:") && row.action === "upload")
       && readAudit.map((row) => row.action).toSorted().join() === "grant,read,read-attempt"
       && readAudit.every((row) => row.actor === owner && row.reason === grantReason),
     "Grant and read audit identity differs",
@@ -234,11 +239,15 @@ export effect function qualifyAccess(env: FixtureEnv) {
   try verify(assembled.length === large.data.length && (try sha256Hex(assembled)) === large.sha, "Download bytes changed")
   try verify((try downloadStatus(cookie)) === 403, "Download replay accepted")
   try streamed(try download(try downloaded()), 1)
-  const audit = try auditOf(large.id)
+  const largeAudit = try auditOf(large.id)
+  const audit = largeAudit.filter((row) => !row.actor.startsWith("service:"))
   try verify(
-    audit.filter((row) => row.action === "download-finished").length === 1
+    largeAudit.some((row) => row.actor.startsWith("service:") && row.action === "register")
+      && largeAudit.some((row) => row.actor.startsWith("service:") && row.action === "upload-chunk")
+      && largeAudit.some((row) => row.actor.startsWith("service:") && row.action === "finalize")
+      && audit.filter((row) => row.action === "download-finished").length === 1
       && audit.filter((row) => row.action === "download-cancelled").length === 1
-      && audit.every((row) => row.actor === owner && row.reason.length >= 8),
+      && audit.every((row) => row.actor === owner && (row.reason?.length ?? 0) >= 8),
     "Download audit differs",
   )
 

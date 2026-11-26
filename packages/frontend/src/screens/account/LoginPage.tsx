@@ -1,7 +1,6 @@
 // spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"
-import { PageHeader } from "@repo/ui";
+import { cn, PageHeader, shell } from "@repo/ui";
 import { LogIn } from "lucide-react";
-import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import type { SessionShown } from "../../app/runtime.vibe";
 import { loginHrefFor, useSession } from "../../app/useSession.ts";
@@ -19,8 +18,8 @@ export type LoginViewProps = Omit<JoinPointsProps, "session"> & {
 /** The login page: GitHub sign-in, then the redirect to where the visitor was going. */
 export function LoginView({ session, ...join }: LoginViewProps) {
   return (
-    <main className={pageShellClass("md", "8", "py-12")}>
-      <PageHeader title={session === "signedIn" ? "Signed in" : "Log in"} icon={<LogIn className="size-6" />} />
+    <main className={cn(shell, "flex max-w-120 flex-1 flex-col gap-8 py-[clamp(2rem,8vh,6rem)] max-md:gap-6")}>
+      <PageHeader title={session === "signedIn" ? "Signed in" : "Log in"} icon={<LogIn />} />
       {session === "signedIn" ? <p role="status">Redirecting…</p> : <JoinPoints session={session} {...join} />}
     </main>
   );

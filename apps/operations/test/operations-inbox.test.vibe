@@ -2,7 +2,7 @@ import { assert, layer } from "@effect/vitest"
 import { Request as WebRequest, Response as WebResponse } from "miniflare"
 import { CallerLive } from "@repo/backend/caller"
 import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
-import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { webCrypto } from "@repo/platform/crypto"
 import { D1, type Statement, d1, sql } from "@repo/platform/d1"
 import { rolesFrom } from "@repo/platform/roles"
 import { database, migrate, startWorker } from "@repo/platform/testing"
@@ -14,6 +14,7 @@ import { AssessmentQueue } from "@repo/ports/slopbot"
 import { inboxApi } from "../src/client/inbox.vibe"
 import { inboxRoutes } from "../src/inbox/routes.vibe"
 import { noticePorts } from "../src/notifications/statements.vibe"
+import { signedUp } from "@repo/platform/testing/members"
 
 interface Env {
   readonly SLOP_DB: D1Database
@@ -105,17 +106,6 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function signedUp(githubIds: ReadonlyArray<string>) {
-  const statements: Statement[] = []
-  for (const githubId of githubIds) {
-    statements.push(
-      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
-      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(tokenOf(githubId))}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
-    )
-  }
-  try (try D1).batch(statements)
-}
-
 const securityCases = [
   sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('inbox-journey', 1, '{"id":"inbox-journey"}', ${"a".repeat(64)}, 'Listed', ${seededAt})`,
   sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('inbox-journey', 'paused', 1, '{"id":"inbox-journey"}', ${"a".repeat(64)}, ${seededAt}, ${seededAt})`,
@@ -162,7 +152,7 @@ function at(minute: number) {
 
 layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Read the Inbox over HTTP without email details, mark only the recipient\'s own notices read, and acknowledge a report receipt once (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
-    try signedUp([member, other, moderator, listedModerator])
+    try signedUp([member, other, moderator, listedModerator], { joinedAt: seededAt, tokenOf })
     try (try D1).batch(securityCases)
     const signedOut = try ask("/api/v1/notifications")
     try save([notice("award-reserved:inbox-quiet", "AwardReserved", at(1))])
@@ -336,12 +326,25 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     ])
     const reversed = try ask(scamPath, { as: moderator })
     const listedAfter = try inbox(moderator)
+    try save([
+      notice("slopbot-points-dispute:inbox-1", "SlopbotAppealReview", at(41), other, "Points dispute", "/inbox"),
+      notice("slopbot-points-dispute:inbox-1:resolved", "SlopbotAppealReview", at(42), other, "Points dispute", "/inbox"),
+      notice("slopbot-points-dispute:inbox-1", "SlopbotAppealReview", at(41), moderator, "Points dispute", "/inbox"),
+    ], [
+      sql`INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES ('rev-inbox-dispute-1', 'source-inbox-1', NULL, ${seededAt}, '{}')`,
+      sql`INSERT INTO points_disputes (appeal_key, revision_id, item_node_id, appellant_github_id, statement, opened_at, due_at, escalated_at, escalation, resolved_at, resolution, resolved_by, resolution_reason, resolver_github_id)
+        VALUES ('points-dispute:inbox-1', 'rev-inbox-dispute-1', 'rev-inbox-dispute-1', ${other}, 'Review award.', ${seededAt}, '2030-01-08T00:00:00.000Z', ${seededAt}, 'moderator', ${at(42)}, 'upheld', 'moderator', 'Keep recorded award.', ${moderator})`,
+    ])
+    const appellantDispute = kinds((try inbox(other)).notifications).filter(([key]) => String(key).startsWith("slopbot-points-dispute:inbox-1"))
+    const moderatorDispute = kinds((try inbox(moderator)).notifications).filter(([key]) => String(key).startsWith("slopbot-points-dispute:inbox-1"))
     try same({
       listedBefore,
       notAdministrator: [notAdministrator.notifications, notAdministrator.unread, notAdministrator.incompleteAssessments],
       opened,
       reversed: [reversed.status, reversed.body],
       listedAfter: [kinds(listedAfter.notifications), listedAfter.unread],
+      appellantDispute,
+      moderatorDispute,
     }, {
       listedBefore: [["slopbot-appeal-inbox-1", "slopbot_appeal_review"], ["slopbot-scam-review:PR_inbox_scam", "slopbot_scam_review"]],
       notAdministrator: [[], 0, null],
@@ -359,6 +362,11 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       ],
       reversed: [404, { error: "not_found" }],
       listedAfter: [[["slopbot-appeal-inbox-1", "slopbot_appeal_resolved"]], 1],
+      appellantDispute: [
+        ["slopbot-points-dispute:inbox-1:resolved", "slopbot_appeal_resolved"],
+        ["slopbot-points-dispute:inbox-1", "slopbot_appeal_review"],
+      ],
+      moderatorDispute: [["slopbot-points-dispute:inbox-1", "slopbot_appeal_resolved"]],
     })
   })
 

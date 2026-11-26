@@ -95,6 +95,7 @@ export function VettingEvidencePage({ runtime }: PageProps) {
   const [open, setOpen] = useState(lookup === null);
   const [attempt, setAttempt] = useState(0);
   const assessmentInputRef = useRef<HTMLInputElement>(null);
+  const pendingFocusRef = useRef(false);
   if (shown === undefined)
     return (
       <Frame>
@@ -119,16 +120,24 @@ export function VettingEvidencePage({ runtime }: PageProps) {
     setAttempt((count) => count + 1);
     setOpen(false);
   };
+  const assessmentRef = (node: HTMLInputElement | null) => {
+    assessmentInputRef.current = node;
+    if (node !== null && pendingFocusRef.current) {
+      pendingFocusRef.current = false;
+      node.focus();
+    }
+  };
   const edit = () => {
+    if (open) return assessmentInputRef.current?.focus();
+    pendingFocusRef.current = true;
     setOpen(true);
-    requestAnimationFrame(() => assessmentInputRef.current?.focus());
   };
   return (
     <Frame>
       <Disclosure summary="Find evidence" open={open} onOpenChange={setOpen}>
         <form className="flex flex-col gap-4" onSubmit={inspect}>
           <Field label="Assessment ID">
-            <Input ref={assessmentInputRef} required value={assessmentId} onChange={(event) => setAssessmentId(event.target.value)} />
+            <Input ref={assessmentRef} required value={assessmentId} onChange={(event) => setAssessmentId(event.target.value)} />
           </Field>
           <Field label="Run ID">
             <Input required value={runId} onChange={(event) => setRunId(event.target.value)} />

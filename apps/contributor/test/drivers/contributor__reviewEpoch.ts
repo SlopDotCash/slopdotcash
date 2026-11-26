@@ -33,7 +33,7 @@ interface LiveReport {
   recheckReviewEpochCandidate(candidate: Candidate, currentHeadSha: string): { readonly publishable: boolean };
 }
 
-const live: LiveReport = await import(scriptRoot("review-epoch-driver").url);
+const live = (await import(scriptRoot("review-epoch-driver").url)) as LiveReport;
 const cutoff = "2026-11-10T00:00:00.000Z";
 const beforeCutoff = "2026-11-09T00:00:00.000Z";
 const afterCutoff = "2026-11-11T00:00:00.000Z";

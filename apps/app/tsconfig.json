@@ -23,7 +23,8 @@
     "test",
     "gen/*.ts",
     "gen/*.vibe",
-    "*.config.ts"
+    "*.config.ts",
+    "../../packages/platform/src/cloudflare.d.ts"
   ],
   "vibe": {
     "sidecarDir": ".vibe/declarations"

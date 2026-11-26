@@ -1,3 +1,4 @@
+// spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
 import { useCallback, useReducer, useRef } from "react";
 import { Clipboard } from "lucide-react";
 import { type CopyStatus, canRest, copyAnnouncement, enabled, initial, step } from "../../gen/ui__copy.ts";
@@ -27,6 +28,9 @@ export type CopyButtonProps = Omit<ButtonProps, "children" | "onClick" | "onCopy
 
 const visible = (labels: CopyLabels, status: CopyStatus) => (status === "Copied" ? labels.copied : status === "CopyFailed" ? labels.failed : labels.ready);
 
+const accessibleLabel = (label: string, shown: string | undefined, iconOnly: boolean) =>
+  iconOnly ? label : shown === undefined ? undefined : label.toLowerCase().includes(shown.toLowerCase()) ? label : `${shown} — ${label}`;
+
 /**
  * Copies a value and says whether the browser accepted it, without moving focus. `data-copy` carries the state, for
  * a layout that draws the control differently once a copy failed.
@@ -39,6 +43,7 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
   const failed = state.status === "CopyFailed";
   const copied = state.status === "Copied";
   const iconOnly = variant === "icon" && !labels;
+  const shown = labels ? visible(labels, state.status) : undefined;
 
   const bindRoot = useCallback((node: HTMLSpanElement | null) => {
     mountedRef.current = node !== null;
@@ -72,7 +77,7 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
       <Button
         variant={tone === "primary" ? "primary" : iconOnly ? "ghost" : "outline"}
         size={tone === "primary" ? "md" : iconOnly ? "icon" : "sm"}
-        aria-label={iconOnly || labels ? label : undefined}
+        aria-label={accessibleLabel(label, shown, iconOnly)}
         data-copy={state.status}
         className={cn(tone === "primary" && copied && "bg-ok text-primary-foreground hover:bg-ok", className)}
         onClick={() => void press()}
@@ -80,7 +85,7 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
         {...controlState(disabled, state.status === "Copying")}
       >
         {failed && tone === "quiet" ? <StatusIcon icon="Alert" className="text-destructive" /> : copied ? <StatusIcon icon="Check" /> : <Clipboard aria-hidden />}
-        {labels ? <span data-copy-label>{visible(labels, state.status)}</span> : variant === "labeled" && label}
+        {shown !== undefined ? <span data-copy-label>{shown}</span> : variant === "labeled" && label}
       </Button>
       <span role="status" className={failed && !labels ? "text-xs text-destructive" : "sr-only"}>
         {copyAnnouncement(state)}

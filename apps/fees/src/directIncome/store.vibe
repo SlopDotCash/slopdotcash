@@ -14,7 +14,7 @@ export interface DirectAward {
 
 export type ReceiptTime<E, R> = (receipt: Receipt) => TimedReceipt!E!R
 
-export interface Recognized {
+interface Recognized {
   readonly journal: FeeJournal
   readonly unknownCases: ReadonlyArray<number>
 }

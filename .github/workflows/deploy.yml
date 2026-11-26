@@ -680,6 +680,9 @@ jobs:
       - name: Publish the global skills, discovery index and sitemap
         run: node apps/contributor/dist/programs/main.js site --out "$BUNDLE/site" --registry "$BUNDLE/registry/snapshot.json"
 
+      - name: Publish the scanner input list of this commit
+        run: node apps/security/dist/programs/main.js scanner-inputs --out "$BUNDLE/site"
+
       - name: Bind the release manifest
         id: manifest
         run: |
@@ -722,6 +725,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           job: release-code
+          solana: "true"
       - run: pnpm all typecheck test
       - run: pnpm formal:check
       - name: Write the source-bound receipt
@@ -755,6 +759,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           job: release-models
+          solana: "true"
       - run: pnpm all check
       - name: Write the source-bound receipt
         env:

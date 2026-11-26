@@ -1,5 +1,5 @@
 // spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "A dispute still unresolved seven days after filing escalates without a lease"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import { Cause, Exit, Layer, ManagedRuntime } from "effect";
 import { sha256Hex, webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
@@ -21,7 +21,6 @@ const epoch = Date.UTC(2031, 0, 1);
 const span = 10_000_000_000;
 const clock = settableClock(epoch);
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, noticePorts));
-type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 const recordedAt = "2030-12-01T00:00:00.000Z";
 
@@ -111,7 +110,7 @@ function leaseOf(entry: Entry, token: number): Lease {
 
 async function sent(entry: Entry, intent: Intent, by: number): Promise<{ readonly outcome: "accepted" | "refused"; readonly token: string | undefined }> {
   clock.set(millisAt(entry.now));
-  const exit = await runtime.runPromiseExit(send(entry.appealKey, intent, by) as Effect.Effect<{ readonly dispute: Dispute; readonly token: string | undefined }, unknown, Services>);
+  const exit = await runtime.runPromiseExit(send(entry.appealKey, intent, by));
   if (Exit.isSuccess(exit)) return { outcome: "accepted", token: exit.value.token };
   const error = Cause.squash(exit.cause);
   if (typeof error === "object" && error !== null && "_tag" in error && (error._tag === "Rejected" || error._tag === "NotAnEvent")) return { outcome: "refused", token: undefined };
@@ -194,7 +193,7 @@ type View = ReturnType<typeof view>;
 async function observe(key: string): Promise<View> {
   const entry = await entryOf(key);
   clock.set(millisAt(entry.now));
-  const { dispute } = await runtime.runPromise(heldDispute(entry.appealKey) as Effect.Effect<{ readonly dispute: Dispute }, unknown, Services>);
+  const { dispute } = await runtime.runPromise(heldDispute(entry.appealKey));
   const shown = view(dispute);
   const base = secondsBase();
   return {

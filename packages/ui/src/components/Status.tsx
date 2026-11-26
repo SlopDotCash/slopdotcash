@@ -45,14 +45,14 @@ export function Status({ presentation: { tone, icon, label }, badge = false, cla
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5",
-        badge ? "rounded-md border border-current/25 bg-current/7 px-2 py-1 align-middle text-xs leading-snug font-bold wrap-anywhere" : "text-sm font-medium",
+        "inline-flex items-baseline gap-1.5",
+        badge ? "rounded-md border border-current/25 bg-current/7 px-2.25 py-1.25 align-middle text-xs leading-snug font-bold wrap-anywhere" : "text-sm font-medium",
         tones[tone].text,
         className,
       )}
       {...props}
     >
-      <StatusIcon icon={icon} className={badge ? "size-3.5" : undefined} />
+      <StatusIcon icon={icon} className={cn("self-center", badge && "size-3.5")} />
       {label}
     </span>
   );

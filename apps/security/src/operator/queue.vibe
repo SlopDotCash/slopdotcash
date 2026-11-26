@@ -8,7 +8,6 @@ import { importGithubReports } from "../cases/receiptCheck.vibe"
 import {
   SECURITY_QUEUE_PATH,
   SECURITY_QUEUE_SCHEMA,
-  type SecurityQueueProject,
 } from "../client/operator.vibe"
 import { depositHeld } from "../deposit/held.vibe"
 import { depositHeldOn } from "../deposit/hold.ts"

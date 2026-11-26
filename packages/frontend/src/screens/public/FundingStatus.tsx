@@ -21,7 +21,7 @@ export function FundingStatus({ project, networkPays, className }: FundingStatus
   if (project.reward.kind === "external-prize-share") return null;
   return (
     <div className={cn("flex", className)}>
-      <Status presentation={vaultPresentation(project, networkPays)} />
+      <Status presentation={vaultPresentation(project, networkPays)} badge />
     </div>
   );
 }

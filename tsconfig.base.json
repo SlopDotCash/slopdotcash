@@ -4,6 +4,7 @@
     "module": "nodenext",
     "strict": true,
     "noEmit": true,
+    "allowArbitraryExtensions": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   }

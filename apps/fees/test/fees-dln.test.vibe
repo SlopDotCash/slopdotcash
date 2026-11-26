@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import { type Hex, decodeFunctionData, encodeFunctionData } from "viem"
 import type { EvmRpc } from "@repo/platform/chain/evm"
@@ -11,12 +11,14 @@ import orders from "./fixtures/dln-orders.json" with { type: "json" }
 import { type FeeChain, feeChain } from "../src/evm/client.vibe"
 import { type FeeSolana, feeSolana } from "../src/solana/client.vibe"
 import { TOKEN_PROGRAM, parsedTransaction } from "../src/solana/wire.vibe"
-import type { EvmNetwork } from "../src/signer/intents.ts"
+import type { EvmNetwork } from "../src/evm/abi.ts"
 import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
 import { hexBytes } from "../src/dln/evmCalldata.ts"
 import { type EvmOrderProposal, proposeEvmOrder, recheckedEvmOrder } from "../src/dln/evmOrder.vibe"
 import { proposeSolanaOrder, recheckedSolanaOrder } from "../src/dln/solanaOrder.vibe"
 import { evmRefund, fill, solanaRefund, takeOrderStatus } from "../src/dln/evidence.vibe"
+import { same } from "./support/checks.vibe"
+import { words } from "./support/bytecode.ts"
 
 type Tamper = "none" | "receiver" | "orderAuthority" | "beneficiary" | "patchAuthority" | "externalCall" | "affiliateFee" | "referral" | "permit"
   | "unknownTaker" | "openTaker" | "trailing" | "notAnOrder" | "contract" | "value" | "overdelivery" | "malformed" | "orderId"
@@ -66,17 +68,6 @@ const finalizedHash = keyOf(12)
 const walletLamports = 1_000_000_000
 const orderLamports = 15_000_000
 const makerHeld = 600_000_000n
-
-function push(value: number) {
-  const digits = value.toString(16)
-  const even = digits.length % 2 === 0 ? digits : `0${digits}`
-  return `${(0x5f + even.length / 2).toString(16)}${even}`
-}
-
-function words(count: number) {
-  const loads = Array.from({ length: count }, (_, index) => `600435${index === 0 ? "" : `${push(index)}01`}54${push(index * 32)}52`).join("")
-  return `${loads}${push(count * 32)}${push(0)}f3`
-}
 
 function sourceStub() {
   const give = words(8)
@@ -276,10 +267,6 @@ const Started = Layer.effect(Bridges, effect {
     set: (next) => sync(() => { scenario = { ...plain, ...next } }),
   }
 })
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
 
 effect function onEvm<A, E>(network: EvmNetwork, program: A!E!(FeeChain | EvmRpc | HttpClient.HttpClient)) {
   const bridges = try Bridges

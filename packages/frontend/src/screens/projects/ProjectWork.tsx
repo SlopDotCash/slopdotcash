@@ -1,6 +1,6 @@
 // spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
 import type { WorkItem } from "@repo/points/client";
-import { Alert, Button, DataState, ExternalLink, Status } from "@repo/ui";
+import { Alert, Button, DataState, ExternalLink, Status, sectionTitle } from "@repo/ui";
 import { CircleDot, GitPullRequest, Star } from "lucide-react";
 import { useState } from "react";
 import { snapshotErrorShown, type WantedRead } from "../../../gen/frontend__views.ts";
@@ -35,10 +35,10 @@ function WorkLink({ row }: { row: Row }) {
   const kind = row.issue ? "Issue" : "PR";
   const Icon = row.note ? Star : row.issue ? CircleDot : GitPullRequest;
   return (
-    <ExternalLink href={row.url} label={`${row.note ? `${row.note}. ` : ""}${kind} #${row.number}: ${row.title}`} className="flex min-h-11 items-center gap-3 px-2 py-2 hover:bg-accent">
-      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 break-words text-foreground">{row.title}</span>
-      <span className="shrink-0 text-sm text-muted-foreground">
+    <ExternalLink href={row.url} label={`${row.note ? `${row.note}. ` : ""}${kind} #${row.number}: ${row.title}`} className="flex min-h-11 items-center gap-3 py-3 hover:bg-accent">
+      <Icon aria-hidden className="size-4.5 shrink-0 text-primary-hover" />
+      <span className="min-w-0 flex-1 break-words text-foreground underline underline-offset-4">{row.title}</span>
+      <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground">
         {row.note ? `${row.note} · ` : ""}
         {kind} #{row.number}
       </span>
@@ -51,9 +51,9 @@ function WorkList({ rows }: { rows: ReadonlyArray<Row> }) {
   if (!rows.length) return <p className="text-muted-foreground">Nothing open</p>;
   return (
     <>
-      <ul className="flex flex-col divide-y divide-border">
+      <ul className="flex flex-col">
         {(expanded ? rows : rows.slice(0, workShown)).map((row) => (
-          <li key={row.id}>
+          <li key={row.id} className="border-t border-border">
             <WorkLink row={row} />
           </li>
         ))}
@@ -70,8 +70,8 @@ function WorkList({ rows }: { rows: ReadonlyArray<Row> }) {
 /** Suggested work: the maintainers' wanted issues first, then the public snapshot's suggestions; GitHub stays the authority for taking it. */
 export function ProjectWork({ work, wanted, onRetry }: ProjectWorkProps) {
   return (
-    <section aria-label="Suggested work" className="flex flex-col gap-4">
-      <h2 className="text-xl font-semibold text-foreground">Suggested work</h2>
+    <section aria-label="Suggested work" className="flex flex-col gap-7">
+      <h2 className={sectionTitle}>Suggested work</h2>
       {work.status === "loading" ? (
         <Status presentation={{ tone: "Neutral", icon: "Spinner", label: "Loading work…" }} />
       ) : work.status === "failed" ? (

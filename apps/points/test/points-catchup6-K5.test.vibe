@@ -14,7 +14,7 @@ import { batchDigest, pointKey, pointRevisionId } from "../src/kernels/records/i
 import type { SourceAudit } from "../src/corrections/reviewed/packet.vibe"
 import { type HistoricalAssessmentCatalog, type HistoricalAssessmentJournalHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition, readHistoricalAssessmentCatalog, readHistoricalAssessmentJournalHeads } from "../src/corrections/reviewed/audit/catalog.vibe"
 import { classifyHistoricalAssessmentScope } from "../src/corrections/reviewed/audit/reconcile.vibe"
-import { capturedCut, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
+import { capturedCut, historicalReplayRequiresCollection, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
 import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings, historicalEvidence } from "../src/corrections/reviewed/replay/bindings.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
 import { jsonReply } from "./support/catchup3-e2/replies.ts"
@@ -102,9 +102,9 @@ effect function joint(pull: string) {
   try (try D1).run(sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (${sha256Of(raw)}, ${sha256Of(`joint ${raw}`)}, 'fixture', ${sourceDigest}, ${raw}, ${recordedAt})`)
 }
 
-effect function conclusion(catalog: HistoricalAssessmentCatalog, fresh: boolean) {
+effect function conclusion(catalog: HistoricalAssessmentCatalog, fresh: boolean, requireNoActive = false) {
   const classified = try classifyHistoricalAssessmentScope(catalog, audit, "fixture")
-  const sealed = sealedCut(try capturedCut(classified, catalog.heads), fresh) catch (error) => error._tag
+  const sealed = sealedCut(try capturedCut(classified, catalog.heads, requireNoActive), fresh) catch (error) => error._tag
   return { receipt: classified.receipt.status, blockers: classified.receipt.blockers, sealed: typeof sealed === "string" ? sealed : sealed.status }
 }
 
@@ -204,10 +204,15 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
       const empty = try readHistoricalAssessmentCatalog(scope)
       try same([empty.heads.jointThrough, empty.heads.legacyThrough, empty.joint.length, empty.legacy.length], [0, 0, 0, 0])
       try same(try conclusion(empty, true), { receipt: "no-scoped-active-assessments", blockers: [], sealed: "NoScopedActiveAssessments" })
+      try same(try conclusion(empty, true, true), { receipt: "no-scoped-active-assessments", blockers: [], sealed: "NoScopedActiveAssessments" })
+      try same([try historicalReplayRequiresCollection("no-scoped-active-assessments", true), try historicalReplayRequiresCollection("requires-value-replay", false)], [false, true])
+      const blockedReplay = historicalReplayRequiresCollection("requires-value-replay", true) catch (error) => error._tag
+      try same(blockedReplay, "ReviewedRefused")
 
       try legacy("PR_known")
       const active = try readHistoricalAssessmentCatalog(scope)
       try same(try conclusion(active, true), { receipt: "requires-value-replay", blockers: [], sealed: "RequiresValueReplay" })
+      try same(try conclusion(active, true, true), { receipt: "requires-value-replay", blockers: [], sealed: "ReviewedRefused" })
       const found = try classifyHistoricalAssessmentScope(active, audit, "fixture")
       try same(found.receipt.records.map((record) => record.sources.map((source) => source.finding)), [["audited-head"]])
 

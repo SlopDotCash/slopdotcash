@@ -1,7 +1,7 @@
 // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
 import { Button, StatusIcon } from "@repo/ui";
 import { ListChecks } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { normalizeRepositoryInput } from "../../../flows/projects/proposal.ts";
 import { focusField, SelectField, TextField } from "../fields/ProjectFields.tsx";
 
@@ -23,15 +23,23 @@ const other = "__other";
 /** One repository control: the account's repositories, with entry of any other public repository by name or URL. */
 export function RepositoryChoice({ selected, onChoose, list, onRetryList, error, onRetryLookup }: RepositoryChoiceProps) {
   const [manual, setManual] = useState(false);
+  const pendingFocusRef = useRef(false);
   const repositories = list.status === "ready" ? list.repositories : [];
   const option = repositories.find((entry) => entry.repository.toLowerCase() === selected.toLowerCase())?.repository ?? selected;
   const typed = manual || list.status === "error" || (list.status === "ready" && repositories.length === 0);
+  const containerRef = (node: HTMLDivElement | null) => {
+    if (node !== null && pendingFocusRef.current) {
+      pendingFocusRef.current = false;
+      focusField("repository");
+    }
+  };
   const switchTo = (next: boolean) => {
+    if (manual === next) return focusField("repository");
+    pendingFocusRef.current = true;
     setManual(next);
-    requestAnimationFrame(() => focusField("repository"));
   };
   return (
-    <div className="flex flex-col gap-2">
+    <div ref={containerRef} className="flex flex-col gap-2">
       {typed ? (
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">

@@ -1,29 +1,19 @@
 // spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"
-import { Effect, Layer, ManagedRuntime } from "effect";
-import { webCrypto } from "@repo/platform/crypto";
-import { d1 } from "@repo/platform/d1";
+import { Effect } from "effect";
 import { outcome } from "@repo/platform/testing/area";
-import { settableClock } from "@repo/platform/testing/clock";
-import type { Driver, Options } from "../../gen/fees__conversion.conformance.ts";
+import type { Options } from "../../gen/fees__conversion.conformance.ts";
 import type { Event, Fee } from "../../gen/fees__conversion.ts";
-import type { Sender } from "../../gen/fees__runtime.ts";
 import type { Instance } from "../../src/journal/codec.vibe";
 import { journal, send } from "../../src/journal/store.vibe";
-import { type GenerationNames, factsFor, generationInstance, generationNames, journalDatabase, seedRecorded } from "../support/journal.ts";
+import { type GenerationNames, factsFor, generationInstance, generationNames, journalDriver, journalHarness, seedRecorded, senderOf } from "../support/journal.ts";
 
-const senders: ReadonlyArray<Sender> = ["ReleaseWorkflow", "Owner", "Worker", "Other"];
-const started = await journalDatabase("fee-conversion-conformance");
-const clock = settableClock(0);
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(started.db), webCrypto, clock.layer));
+const harness = await journalHarness("fee-conversion-conformance");
+const { clock, runtime } = harness;
 
 let generation = 0;
 let instance: Instance = generationInstance(generation);
 let names: GenerationNames = generationNames(generation);
 let elapsed = 0;
-
-function senderOf(by: unknown): Sender {
-  return senders.find((sender) => sender === by) ?? "Other";
-}
 
 function begin() {
   generation += 1;
@@ -38,7 +28,7 @@ async function recordedHistory(event: Extract<Event, { type: "importRecorded" }>
   const runId = book.runs.get(event.runId);
   const token = book.tokens[event.recorded.token - 1];
   if (runId === undefined || token === undefined) return;
-  await seedRecorded({ db: started.db, instance, names, runId, token, recorded: event.recorded, now: new Date(instance.epoch + elapsed).toISOString() });
+  await seedRecorded({ db: harness.db, instance, names, runId, token, recorded: event.recorded, now: new Date(instance.epoch + elapsed).toISOString() });
 }
 
 async function dispatch(event: Event, by: unknown) {
@@ -60,16 +50,6 @@ async function observe(): Promise<Fee> {
   return runtime.runPromise(journal(instance, names).pipe(Effect.map((loaded) => loaded.state)));
 }
 
-begin();
-
-export const driver: Driver & AsyncDisposable = {
-  reset: () => begin(),
-  dispatch: (_key, event, by) => dispatch(event, by),
-  observe: () => observe(),
-  [Symbol.asyncDispose]: async () => {
-    await runtime.dispose();
-    await started[Symbol.asyncDispose]();
-  },
-};
+export const driver = journalDriver<Event, Fee>(harness, { reset: begin, dispatch, observe });
 
 export const options: Options = { keys: ["journal"], walks: 5, steps: 12 };

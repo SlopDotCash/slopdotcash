@@ -88,6 +88,11 @@ export async function session(world: World, githubId: string): Promise<string> {
   return token;
 }
 
+export async function holdPartUntilSessionEnds(world: World, githubId: string, part: number): Promise<void> {
+  const answer = await request(world, "/api/v1/test/evidence-faults", { method: "POST", body: JSON.stringify({ githubId, part }), json: true });
+  if (answer.status !== 200) throw new Error(`hold plan refused: ${answer.status}`);
+}
+
 export async function endSession(world: World, githubId: string): Promise<void> {
   const token = tokens.get(githubId);
   if (token === undefined) return;
@@ -194,14 +199,10 @@ export async function overwrite(world: World, key: string, bytes: Uint8Array, sh
 }
 
 export async function partialDownload(world: World, path: string, as: string, cookie: string, stopAfter: number, interrupt: () => Promise<void>): Promise<{ readonly status: number; readonly received: number; readonly failed: boolean }> {
-  await request(world, "/api/v1/test/pause-session-after", { method: "POST", body: JSON.stringify({ reads: 3 }), json: true });
   const response = await respond(world, path, { as, headers: { cookie, "sec-fetch-site": "same-origin" } });
   const stream = response.body;
-  if (stream === null) {
-    await request(world, "/api/v1/test/resume-session", { method: "POST", body: "{}", json: true });
-    return { status: response.status, received: 0, failed: false };
-  }
-  const readerOf = stream.getReader();
+  if (stream === null) return { status: response.status, received: 0, failed: false };
+  const readerOf = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>;
   let received = 0;
   let interrupted = false;
   try {
@@ -212,14 +213,9 @@ export async function partialDownload(world: World, path: string, as: string, co
       if (!interrupted && received >= stopAfter) {
         interrupted = true;
         await interrupt();
-        await request(world, "/api/v1/test/resume-session", { method: "POST", body: "{}", json: true });
       }
     }
   } catch {
-    if (!interrupted) {
-      await interrupt();
-      await request(world, "/api/v1/test/resume-session", { method: "POST", body: "{}", json: true });
-    }
     return { status: response.status, received, failed: true };
   }
 }

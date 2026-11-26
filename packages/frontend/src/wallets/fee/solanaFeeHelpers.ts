@@ -26,9 +26,9 @@ export function encodeBase58Bytes(bytes: Uint8Array): string {
   while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
   const digits: number[] = [0];
   for (let i = zeros; i < bytes.length; i++) {
-    let carry = bytes[i]!;
+    let carry = bytes[i] ?? 0;
     for (let j = 0; j < digits.length; j++) {
-      carry += digits[j]! << 8;
+      carry += (digits[j] ?? 0) << 8;
       digits[j] = carry % 58;
       carry = Math.floor(carry / 58);
     }
@@ -38,6 +38,6 @@ export function encodeBase58Bytes(bytes: Uint8Array): string {
     }
   }
   let out = "1".repeat(zeros);
-  for (let i = digits.length - 1; i >= 0; i--) out += BASE58_ALPHABET[digits[i]!]!;
+  for (let i = digits.length - 1; i >= 0; i--) out += BASE58_ALPHABET[digits[i] ?? 0] ?? "";
   return out;
 }

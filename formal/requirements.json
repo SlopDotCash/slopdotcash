@@ -890,11 +890,16 @@
           "rules": [
             "Story: Read each repository once a day and keep the last values on failure / Wanted issues are read with the activity and their label is created once"
           ]
+        },
+        {
+          "spec": "spec/backend/backlogRule.md",
+          "rules": [
+            "Story: Keep the lists to projects whose maintainers are keeping up"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation",
-      "gap": "The backlog rule (operator decision of 23 November 2026, in effect from 1 December 2026) has no spec yet: the 50-waiting-pull-request limit, the three-day merge activity read, the exclusions and the catching-up mark are not modelled. The owners above cover the rest of this subsection only."
+      "implementationEvidence": "pending-implementation"
     },
     {
       "section": 5,
@@ -2253,11 +2258,16 @@
           "rules": [
             "Story: Pause new contributors while the review queue is full"
           ]
+        },
+        {
+          "spec": "spec/backend/backlogRule.md",
+          "rules": [
+            "Story: Keep the lists to projects whose maintainers are keeping up"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation",
-      "gap": "Leaving a project the backlog rule takes out of rotation off the homepage, /sponsors and agent discovery from 1 December 2026 (operator decision of 23 November 2026) has no spec yet; the owners above cover the rest of this subsection only."
+      "implementationEvidence": "pending-implementation"
     },
     {
       "section": 7,
@@ -2347,13 +2357,16 @@
         {
           "spec": "spec/security/scanController.md",
           "rules": [
-            "Story: Dispatch a scan only for the deployed release of the branch head"
+            "Story: Dispatch a scan only for the deployed release of the branch head",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since / A deployed release serves the scanner input list of its own commit",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since / A later head dispatches only when it descends from the release and no scanner input changed",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since / The controller runs a pass only on the same commit or an unchanged earlier commit of its branch"
           ]
         }
       ],
       "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation",
-      "gap": "The scan-pass runner rule of 23 November 2026 (a pass may run on the deployed runner at an earlier commit of the same branch when no scanner input changed since, with the input list published at /scanner-inputs.json) is not yet modelled: spec/security/scanController.md still dispatches only for the deployed release of the branch head."
+      "implementationEvidence": "pending-implementation"
     },
     {
       "section": 8,

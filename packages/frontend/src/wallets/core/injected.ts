@@ -86,7 +86,7 @@ const legacyEvmNames = [
 
 /** @throws {never} */
 function browserWindow(): (Window & WalletWindow) | undefined {
-  return typeof window === "undefined" ? undefined : (window as Window & WalletWindow);
+  return typeof window === "undefined" ? undefined : window;
 }
 
 /** @throws {never} */

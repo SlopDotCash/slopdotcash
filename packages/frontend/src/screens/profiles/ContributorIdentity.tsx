@@ -10,17 +10,17 @@ export type ContributorIdentityProps = {
   children?: ReactNode;
 };
 
-const linkClass = "inline-flex items-center gap-1 text-primary underline underline-offset-4 hover:decoration-2";
+const linkClass = "inline-flex min-h-6 items-center gap-1.5 rounded-sm hover:text-foreground";
 
 /** One identity header for scored, historical and newly registered contributors; an unconfirmed login links to no GitHub profile. */
 export function ContributorIdentity({ actor, children }: ContributorIdentityProps) {
   return (
-    <section className="flex items-center gap-4">
-      {actor.url ? <Avatar size="lg" name={actor.login} src={actor.avatarUrl} /> : null}
+    <section className="flex items-center gap-3.5 pt-1 pb-5 md:gap-5.5">
+      {actor.url ? <Avatar size="lg" name={actor.login} src={actor.avatarUrl} className="size-14 border border-border bg-secondary md:size-20" /> : null}
       <div className="flex min-w-0 flex-col gap-2">
-        <h1 className="truncate text-3xl font-semibold text-foreground">{actor.login}</h1>
+        <h1 className="truncate text-heading leading-heading font-extrabold tracking-tighter text-foreground uppercase lg:text-4xl xl:text-hero xl:leading-none">{actor.login}</h1>
         {actor.url ? (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-ui font-semibold text-muted-foreground">
             <ExternalLink href={actor.url} label={`GitHub · @${actor.login}`} className={linkClass}>
               <FolderGit2 aria-hidden className="size-4" />@{actor.login}
             </ExternalLink>

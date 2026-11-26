@@ -90,8 +90,7 @@ function keeperIndexer(target: PaymentDeployment, scope: string, scan: ScanMachi
       try scan.send({ type: "beginReceipt" })
       const indexed = effect {
         const reference: EventReference = { kind: event.kind, transactionId: event.transactionId, eventIndex: event.eventIndex, obligationId: event.obligationId }
-        const storedSource = event.kind === "paid" ? try reservedSource(scope, event.obligationId) : undefined
-        const evidence = try verifyFinalized(target, reference, storedSource)
+        const evidence = try verifyFinalized(target, reference, event.kind === "paid" ? try reservedSource(scope, event.obligationId) : undefined)
         try scan.send({ type: "verifyReceipt", verified: true })
         if (event.kind === "reserved") try indexReserved(scope, event.obligationId, evidence.githubUserId, evidenceText(evidence))
         else if ((try indexPaid(scope, event.obligationId, evidenceText(evidence))) !== 1) throw new KeeperRefused({ message: "Finalized payment has no indexed funded award" })

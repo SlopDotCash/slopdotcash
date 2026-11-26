@@ -4,9 +4,18 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": "./src/client/index.vibe",
-    "./live": "./src/live.vibe",
-    "./program": "./src/client/program.vibe"
+    "./client": {
+      "types": "./.vibe/declarations/src/client/index.d.vibe.ts",
+      "default": "./src/client/index.vibe"
+    },
+    "./live": {
+      "types": "./.vibe/declarations/src/live.d.vibe.ts",
+      "default": "./src/live.vibe"
+    },
+    "./program": {
+      "types": "./.vibe/declarations/src/client/program.d.vibe.ts",
+      "default": "./src/client/program.vibe"
+    }
   },
   "scripts": {
     "build": "vite build && vite build -c vite.sandbox.config.ts",

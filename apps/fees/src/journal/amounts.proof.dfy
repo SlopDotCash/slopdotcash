@@ -1,5 +1,4 @@
-// The megawei ceiling is the Euclidean quotient of wei plus one less than a megawei, so its remainder bounds both directions;
-// the total is proved by induction on how many amounts it has added.
+// The megawei ceiling is the Euclidean quotient of wei plus one less than a megawei, so its remainder bounds both directions.
 
 lemma nativeUnits_ensures(wei: int, solana: bool)
   requires (wei >= 0)
@@ -37,20 +36,6 @@ lemma withinReservation_ensures(gas: int, feePerGas: int, maximum: int)
   requires (feePerGas >= 0)
   ensures (withinReservation(gas, feePerGas, maximum) <==> ((gas * feePerGas) <= maximum))
 {
-}
-
-lemma sumOf_ensures(values: seq<int>, count: int)
-  requires (0 <= count)
-  requires (count <= |values|)
-  requires forall i: int :: ((0 <= i) ==> (i < |values|) ==> (values[i] >= 0))
-  ensures (sumOf(values, count) >= 0)
-  ensures ((count > 0) ==> (sumOf(values, count) >= values[(count - 1)]))
-  decreases count
-{
-  if count > 0 {
-    sumOf_ensures(values, count - 1);
-    assert values[count - 1] >= 0;
-  }
 }
 
 lemma CeilingBounds(n: int, d: int)

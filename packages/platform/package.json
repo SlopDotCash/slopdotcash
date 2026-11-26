@@ -6,36 +6,112 @@
   "sideEffects": false,
   "exports": {
     "./bindings": "./src/bindings.ts",
-    "./d1": "./src/d1.vibe",
-    "./r2": "./src/r2.vibe",
-    "./crypto": "./src/crypto.vibe",
-    "./http": "./src/http.vibe",
-    "./stored": "./src/stored.vibe",
-    "./worker": "./src/worker.vibe",
+    "./d1": {
+      "types": "./.vibe/declarations/src/d1.d.vibe.ts",
+      "default": "./src/d1.vibe"
+    },
+    "./r2": {
+      "types": "./.vibe/declarations/src/r2.d.vibe.ts",
+      "default": "./src/r2.vibe"
+    },
+    "./crypto": {
+      "types": "./.vibe/declarations/src/crypto.d.vibe.ts",
+      "default": "./src/crypto.vibe"
+    },
+    "./http": {
+      "types": "./.vibe/declarations/src/http.d.vibe.ts",
+      "default": "./src/http.vibe"
+    },
+    "./stored": {
+      "types": "./.vibe/declarations/src/stored.d.vibe.ts",
+      "default": "./src/stored.vibe"
+    },
+    "./worker": {
+      "types": "./.vibe/declarations/src/worker.d.vibe.ts",
+      "default": "./src/worker.vibe"
+    },
     "./testing": "./src/testing.ts",
     "./vite": "./src/vite.ts",
-    "./clock": "./src/clock.vibe",
-    "./roles": "./src/roles.vibe",
-    "./config": "./src/config.vibe",
-    "./program": "./src/program.vibe",
+    "./clock": {
+      "types": "./.vibe/declarations/src/clock.d.vibe.ts",
+      "default": "./src/clock.vibe"
+    },
+    "./roles": {
+      "types": "./.vibe/declarations/src/roles.d.vibe.ts",
+      "default": "./src/roles.vibe"
+    },
+    "./config": {
+      "types": "./.vibe/declarations/src/config.d.vibe.ts",
+      "default": "./src/config.vibe"
+    },
+    "./program": {
+      "types": "./.vibe/declarations/src/program.d.vibe.ts",
+      "default": "./src/program.vibe"
+    },
     "./entrypoints": "./src/entrypoints.ts",
-    "./cache": "./src/cache.vibe",
-    "./journal": "./src/journal.vibe",
-    "./d1Http": "./src/d1Http.vibe",
-    "./route": "./src/route.vibe",
-    "./browser": "./src/browser.vibe",
-    "./binding": "./src/binding.vibe",
-    "./signed": "./src/signed.vibe",
-    "./github": "./src/github/client.vibe",
-    "./github/app": "./src/github/app.vibe",
-    "./github/oauth": "./src/github/oauth.vibe",
-    "./github/webhook": "./src/github/webhook.vibe",
-    "./providers": "./src/providers/client.vibe",
-    "./chain/rpc": "./src/chain/rpc.vibe",
-    "./chain/evm": "./src/chain/evm.vibe",
-    "./chain/solana": "./src/chain/solana.vibe",
+    "./cache": {
+      "types": "./.vibe/declarations/src/cache.d.vibe.ts",
+      "default": "./src/cache.vibe"
+    },
+    "./journal": {
+      "types": "./.vibe/declarations/src/journal.d.vibe.ts",
+      "default": "./src/journal.vibe"
+    },
+    "./d1Http": {
+      "types": "./.vibe/declarations/src/d1Http.d.vibe.ts",
+      "default": "./src/d1Http.vibe"
+    },
+    "./route": {
+      "types": "./.vibe/declarations/src/route.d.vibe.ts",
+      "default": "./src/route.vibe"
+    },
+    "./browser": {
+      "types": "./.vibe/declarations/src/browser.d.vibe.ts",
+      "default": "./src/browser.vibe"
+    },
+    "./binding": {
+      "types": "./.vibe/declarations/src/binding.d.vibe.ts",
+      "default": "./src/binding.vibe"
+    },
+    "./signed": {
+      "types": "./.vibe/declarations/src/signed.d.vibe.ts",
+      "default": "./src/signed.vibe"
+    },
+    "./github": {
+      "types": "./.vibe/declarations/src/github/client.d.vibe.ts",
+      "default": "./src/github/client.vibe"
+    },
+    "./github/app": {
+      "types": "./.vibe/declarations/src/github/app.d.vibe.ts",
+      "default": "./src/github/app.vibe"
+    },
+    "./github/oauth": {
+      "types": "./.vibe/declarations/src/github/oauth.d.vibe.ts",
+      "default": "./src/github/oauth.vibe"
+    },
+    "./github/webhook": {
+      "types": "./.vibe/declarations/src/github/webhook.d.vibe.ts",
+      "default": "./src/github/webhook.vibe"
+    },
+    "./providers": {
+      "types": "./.vibe/declarations/src/providers/client.d.vibe.ts",
+      "default": "./src/providers/client.vibe"
+    },
+    "./chain/rpc": {
+      "types": "./.vibe/declarations/src/chain/rpc.d.vibe.ts",
+      "default": "./src/chain/rpc.vibe"
+    },
+    "./chain/evm": {
+      "types": "./.vibe/declarations/src/chain/evm.d.vibe.ts",
+      "default": "./src/chain/evm.vibe"
+    },
+    "./chain/solana": {
+      "types": "./.vibe/declarations/src/chain/solana.d.vibe.ts",
+      "default": "./src/chain/solana.vibe"
+    },
     "./chain/solanaWire": "./src/chain/solanaWire.ts",
     "./chain/reviewed": "./src/chain/reviewed.ts",
+    "./chain/kyberswap": "./src/chain/kyberswap.ts",
     "./git": "./src/git/index.ts",
     "./git/bytes": "./src/git/bytes.ts",
     "./git/evidence": "./src/git/evidence.ts",
@@ -44,6 +120,14 @@
     "./testing/mail": "./src/testing/mail.ts",
     "./testing/cloudflare": "./src/testing/cloudflare.ts",
     "./testing/clock": "./src/testing/clock.ts",
+    "./testing/git": {
+      "types": "./.vibe/declarations/src/testing/git.d.vibe.ts",
+      "default": "./src/testing/git.vibe"
+    },
+    "./testing/members": {
+      "types": "./.vibe/declarations/src/testing/members.d.vibe.ts",
+      "default": "./src/testing/members.vibe"
+    },
     "./testing/frozen": "./src/testing/frozen.ts",
     "./testing/paths": "./src/testing/paths.ts",
     "./testing/github": "./src/testing/github.ts",

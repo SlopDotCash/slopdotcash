@@ -2,15 +2,23 @@
 import { keepFeeLabel } from "@repo/backend/client"
 import { GitHub } from "@repo/platform/github"
 import { wantedLabelName } from "../../gen/backend__mergeActivity.effect.vibe"
-import { type ClosingIssue, type LabelEvent, invitedOf } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { type ClosingIssue, type LabelEvent, type WantedLink, invitedOf, keepMarkAt } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
 import { requireScope } from "../publish/scope.vibe"
 import { type FeeTarget, scopedOf } from "./gate.vibe"
 import { type PullRef, secondsOf } from "./store.vibe"
 
-export const wantedQuery = `query($owner: String!, $repo: String!, $number: Int!) {
+export const wantedQuery = `query($owner: String!, $repo: String!, $number: Int!, $before: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       createdAt
+      timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], last: 100, before: $before) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes {
+          __typename
+          ... on LabeledEvent { createdAt label { name } }
+          ... on UnlabeledEvent { createdAt label { name } }
+        }
+      }
       closingIssuesReferences(first: 10) {
         nodes {
           repository { databaseId }
@@ -32,32 +40,56 @@ const keepLabelDescription = "A maintainer keeps this pull request's Slop submis
 
 schema WantedLabelRead { readonly name: string }
 schema WantedEventRead { readonly __typename: string; readonly createdAt?: string; readonly label?: WantedLabelRead | null }
-schema WantedEventsRead { readonly nodes: ReadonlyArray<WantedEventRead> }
+schema WantedPageInfo { readonly hasPreviousPage: boolean; readonly startCursor: string | null }
+schema WantedEventsRead { readonly nodes: ReadonlyArray<WantedEventRead>; readonly pageInfo?: WantedPageInfo }
 schema WantedRepositoryRead { readonly databaseId: number }
 schema ClosingIssueRead { readonly repository: WantedRepositoryRead | null; readonly timelineItems: WantedEventsRead }
 schema ClosingIssuesRead { readonly nodes: ReadonlyArray<ClosingIssueRead> }
-schema WantedPullRead { readonly createdAt: string; readonly closingIssuesReferences: ClosingIssuesRead }
+schema WantedPullRead { readonly createdAt: string; readonly timelineItems?: WantedEventsRead; readonly closingIssuesReferences: ClosingIssuesRead }
 schema WantedRepoRead { readonly pullRequest: WantedPullRead | null }
 schema WantedAnswer { readonly repository: WantedRepoRead | null }
 
-function labelEventsOf(issue: ClosingIssueRead): LabelEvent[] {
-  return issue.timelineItems.nodes.flatMap((event) => {
+export interface WantedFacts {
+  readonly invited: WantedLink
+  readonly keepMarkedAt: number
+}
+
+function labelEventsOf(events: ReadonlyArray<WantedEventRead>, labelName: string): LabelEvent[] {
+  return events.flatMap((event) => {
     const at = secondsOf(event.createdAt)
-    return event.label?.name === wantedLabelName && at > 0 ? [{ label: wantedLabelName, added: event.__typename === "LabeledEvent", at }] : []
+    return event.label?.name === labelName && at > 0 ? [{ label: labelName, added: event.__typename === "LabeledEvent", at }] : []
   })
 }
 
 function closingIssueOf(issue: ClosingIssueRead, repositoryId: number): ClosingIssue {
-  return { ownRepository: issue.repository?.databaseId === repositoryId, events: labelEventsOf(issue) }
+  return { ownRepository: issue.repository?.databaseId === repositoryId, events: labelEventsOf(issue.timelineItems.nodes, wantedLabelName) }
 }
 
-export effect function wantedLink(pull: PullRef) {
+export effect function wantedLink(pull: PullRef, keepMarked = false) {
   const github = try GitHub
-  const answer: WantedAnswer | undefined = github.graphql(wantedQuery, { owner: pull.owner, repo: pull.repo, number: pull.number }, WantedAnswer) catch () => undefined
-  if (answer === undefined) return invitedOf(false, [], 0)
+  const readPage = effect (before: string | null) => {
+    const answer: WantedAnswer | undefined = github.graphql(wantedQuery, { owner: pull.owner, repo: pull.repo, number: pull.number, before }, WantedAnswer) catch () => undefined
+    return answer
+  }
+  const answer = try readPage(null)
+  if (answer === undefined) return { invited: invitedOf(false, [], 0), keepMarkedAt: 0 } satisfies WantedFacts
   const read = answer.repository?.pullRequest ?? null
-  if (read === null) return invitedOf(true, [], 0)
-  return invitedOf(true, read.closingIssuesReferences.nodes.map((issue) => closingIssueOf(issue, pull.repositoryId)), secondsOf(read.createdAt))
+  if (read === null) return { invited: invitedOf(true, [], 0), keepMarkedAt: 0 } satisfies WantedFacts
+  const invited = invitedOf(true, read.closingIssuesReferences.nodes.map((issue) => closingIssueOf(issue, pull.repositoryId)), secondsOf(read.createdAt))
+  let nodes: ReadonlyArray<WantedEventRead> = read.timelineItems?.nodes ?? []
+  let pageInfo = read.timelineItems?.pageInfo
+  while (invited === "InvitedWork" && keepMarked && labelEventsOf(nodes, keepFeeLabel).length === 0 && pageInfo?.hasPreviousPage === true && pageInfo.startCursor !== null) {
+    const cursor = pageInfo.startCursor
+    const older = try readPage(cursor)
+    if (older === undefined) return { invited: invitedOf(false, [], 0), keepMarkedAt: 0 } satisfies WantedFacts
+    const olderPull = older.repository?.pullRequest
+    const olderNodes = olderPull?.timelineItems?.nodes ?? []
+    if (olderNodes.length === 0) break
+    nodes = [...olderNodes, ...nodes]
+    pageInfo = olderPull?.timelineItems?.pageInfo
+    if (pageInfo?.startCursor === cursor) break
+  }
+  return { invited, keepMarkedAt: keepMarkAt(labelEventsOf(nodes, keepFeeLabel)) } satisfies WantedFacts
 }
 
 effect function createdKeepLabel(target: FeeTarget) {

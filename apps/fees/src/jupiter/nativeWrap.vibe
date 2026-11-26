@@ -58,12 +58,12 @@ export effect function wrapNativeRoute(raw: Uint8Array, parsed: ParsedTransactio
     .filter((instruction) => !(instruction.program === ASSOCIATED_TOKEN_PROGRAM && creations.some((entry) => entry.index === instruction.accounts[1] && proof.keys[entry.index] === source)))
     .map((instruction) => ({ program: instruction.program, accounts: instruction.accounts.map((index) => proof.keys[index] ?? ""), data: instruction.data }) satisfies Planned)
   const instructions = [...existing.filter((instruction) => instruction.program === computeBudgetProgram), ...own, ...existing.filter((instruction) => instruction.program !== computeBudgetProgram)]
-  const parts: Uint8Array[] = parsed.legacy ? [] : [Uint8Array.of(128)]
+  const parts: Uint8Array[] = parsed.unversioned ? [] : [Uint8Array.of(128)]
   parts.push(Uint8Array.of(parsed.requiredSignatures, parsed.readonlySigned, parsed.readonlyUnsigned + added.length), shortVec(staticKeys.length))
   for (const key of staticKeys) parts.push(try keyBytes(key))
   parts.push(raw.slice(parsed.blockhashOffset, parsed.blockhashOffset + 32), shortVec(instructions.length))
   for (const instruction of instructions) parts.push(try compiled(instruction, keys))
-  if (!parsed.legacy) {
+  if (!parsed.unversioned) {
     parts.push(shortVec(lookups.length))
     for (const lookup of lookups) parts.push(try keyBytes(lookup.address), shortVec(lookup.writable.length), Uint8Array.from(lookup.writable), shortVec(lookup.readonly.length), Uint8Array.from(lookup.readonly))
   }

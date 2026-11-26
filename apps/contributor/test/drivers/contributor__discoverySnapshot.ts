@@ -13,7 +13,7 @@ interface LiveReport {
   retryChangedLiveInventory<T>(collect: (attempt: { readonly attempt: number }) => T, onRetry: () => void, createCommandBudget: () => CommandBudget): T;
 }
 
-const live: LiveReport = await import(scriptRoot("snapshot-driver").url);
+const live = (await import(scriptRoot("snapshot-driver").url)) as LiveReport;
 
 class Pending extends Error {}
 class ReadFailed extends Error {}

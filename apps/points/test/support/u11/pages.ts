@@ -49,10 +49,10 @@ export function site(options: SiteOptions): Site {
     const file = options.files[url.pathname];
     return file === undefined ? new Response("", { status: 404 }) : new Response(file, { status: 200 });
   };
-  return { fetch: fetch as typeof globalThis.fetch, requests };
+  return { fetch, requests };
 }
 
 /** @throws {never} */
 export function absentService(): Handler {
-  return async () => new WorkerResponse(null, { status: 404 });
+  return () => Promise.resolve(new WorkerResponse(null, { status: 404 }));
 }

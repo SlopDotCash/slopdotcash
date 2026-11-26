@@ -1,5 +1,5 @@
 // spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
-import { EvmRpc } from "@repo/platform/chain/evm"
+import type { EvmRpc } from "@repo/platform/chain/evm"
 import type { RpcFailure } from "@repo/platform/chain/rpc"
 import { SolanaRpc } from "@repo/platform/chain/solana"
 import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"

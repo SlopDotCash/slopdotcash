@@ -5,7 +5,7 @@ import { nextReplacement } from "@repo/settlement/kernels/feeReplacement"
 import { isNativeAssetAddress } from "@repo/settlement/kernels/networks"
 import { type NetworkFeeObservation, additionalReserve, maximumSafeValue, replacementDeadlineMarginMs } from "../../gen/fees__conversion.effect.vibe"
 import { ClaimRefused, evmClaimEvidence, failedClaim, verifyEvmClaim } from "../claims/evm.vibe"
-import { type DeploymentRefused, VaultDeployments } from "../claims/deployments.vibe"
+import type { DeploymentRefused, VaultDeployments } from "../claims/deployments.vibe"
 import { type Type2, decodedApproval, parsedType2, wholeBig } from "../evm/abi.ts"
 import { ApprovalRefused, approvalSettled, isNative, spenderAddress } from "../evm/approval.vibe"
 import { ChainRefused, FeeChain, type Landed as Included, type Unlanded, allowanceOf, attemptStatus, baseFee, broadcast as sendRaw, credited, nativeBalance, nativeCost, tokenBalance } from "../evm/client.vibe"
@@ -17,23 +17,18 @@ import { kyberswap } from "../runtime/pins.ts"
 import { carryProviderFailure } from "../kernels/providerFailure.ts"
 import type { VaultFact } from "../runtime/reviewed.vibe"
 import { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, type SignRefused, type Signed as WalletSigned } from "../signer/feeWallet.vibe"
-import type { EvmNetwork, FeeIntent, FirstEvmIntent } from "../signer/intents.ts"
+import type { EvmNetwork } from "../evm/abi.ts"
+import type { FeeIntent, FirstEvmIntent } from "../signer/intents.ts"
 import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, type QuoteRead, type Replacement, type Reservable, type SendIntent, SendRefused, type SendStatus, type Signed, safeNumber, wideNumber } from "./chain.vibe"
 
+import { errorText, megaweiCeiling, weiOfMegawei } from "../kernels/verified.vibe"
+
 module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
   import { spendableNative as spendable } from "../kernels/arithmetic.ts"
-  import { nativeUnits as units, nativeWei as wei } from "../journal/amounts.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
   /** @throws {never} */
   export function spendableNative(balance: bigint, reserve: bigint): bigint { return spendable(balance, reserve) }
-  /** @throws {never} */
-  export function megaweiCeiling(value: bigint): bigint { return units(value, false) }
-  /** @throws {never} */
-  export function weiOfMegawei(value: bigint): bigint { return wei(value, false) }
 }
-import { errorText, megaweiCeiling, spendableNative, weiOfMegawei } from verified
+import { spendableNative } from verified
 
 export error WalletMismatch { network: string; wallet: string }
 error Withdrawn

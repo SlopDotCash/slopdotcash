@@ -2,12 +2,12 @@
 import { D1, rows, sql } from "@repo/platform/d1"
 import { type IntakeCount, IntakeCounts } from "@repo/ports/backend"
 
-schema CountRow { project_id: string; observed_at: string; open_outside: number }
+schema CountRow { project_id: string; observed_at: string; open_outside: number; waiting_outside: number | null; last_merged_at: string | null }
 
 effect function counts() {
-  const found = try rows(CountRow, sql`SELECT project_id, observed_at, open_outside FROM repository_merge_activity WHERE observed_at IS NOT NULL AND open_outside IS NOT NULL`)
+  const found = try rows(CountRow, sql`SELECT project_id, observed_at, open_outside, waiting_outside, last_merged_at FROM repository_merge_activity WHERE observed_at IS NOT NULL AND open_outside IS NOT NULL`)
   const index = new Map<string, IntakeCount[]>()
-  for (const row of found) index.set(row.project_id, [...index.get(row.project_id) ?? [], { openOutside: row.open_outside, observedAt: row.observed_at }])
+  for (const row of found) index.set(row.project_id, [...index.get(row.project_id) ?? [], { openOutside: row.open_outside, observedAt: row.observed_at, waitingOutside: row.waiting_outside ?? 0, lastMergedAt: row.last_merged_at }])
   return index
 }
 

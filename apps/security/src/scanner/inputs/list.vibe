@@ -1,0 +1,85 @@
+// spec/security/scanController.md, "A deployed release serves the scanner input list of its own commit"; spec/security/scanController.md, "The controller runs a pass only on the same commit or an unchanged earlier commit of its branch"
+import { gitBytes } from "@repo/platform/git"
+import { utf8Text } from "@repo/platform/git/bytes"
+import { type Workspace, type WorkspacePackage, SCANNER_ENTRIES, SCANNER_FILES, codeImports, directoryInputs, followsImports, resolveImport, resolveSpecImport, specImports, specOfModule } from "./paths.ts"
+
+export error ScannerInputsRefused { message: string }
+
+function refusedWith(message: string) {
+  return new ScannerInputsRefused({ message })
+}
+
+const manifestPath = /^(?:(?:apps|packages)\/[^/]+\/)?package\.json$/u
+
+effect function trackedFiles(root: string) {
+  const bytes = gitBytes({ args: ["-C", root, "ls-files", "-z"], limit: 64 * 1024 * 1024, seconds: 120 }, "The checkout's tracked files are unreadable") catch effect () => {
+    throw refusedWith("The checkout's tracked files are unreadable")
+  }
+  const text = utf8Text(bytes)
+  if (text === undefined) throw refusedWith("The checkout's tracked file list is not UTF-8")
+  return new Set(text.split("\0").filter((path) => path !== ""))
+}
+
+effect function textOf(root: string, path: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString((try Path.Path).join(root, path)) catch effect () => {
+    throw refusedWith(`Scanner input ${path} is unreadable`)
+  }
+  return text
+}
+
+effect function packagesOf(root: string, tracked: ReadonlySet<string>) {
+  const packages: WorkspacePackage[] = []
+  for (const path of [...tracked].filter((candidate) => manifestPath.test(candidate)).sort()) {
+    const text = try textOf(root, path)
+    const manifest = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refusedWith(`${path} is not JSON`) })
+    if (typeof manifest !== "object" || manifest === null) throw refusedWith(`${path} is not a package manifest`)
+    const name = "name" in manifest ? manifest.name : undefined
+    const exports = "exports" in manifest ? manifest.exports : undefined
+    if (typeof name !== "string") continue
+    const directory = path === "package.json" ? "." : path.slice(0, -"/package.json".length)
+    packages.push({ name, directory, exports: typeof exports === "object" && exports !== null ? (exports as Readonly<Record<string, unknown>>) : {} })
+  }
+  return packages
+}
+
+export effect function scannerInputs(root: string) {
+  const tracked = try trackedFiles(root)
+  const workspace: Workspace = { tracked, packages: try packagesOf(root, tracked) }
+  const inputs = new Set<string>()
+  const queue: string[] = [...SCANNER_ENTRIES]
+  while (queue.length > 0) {
+    const path = queue.pop() ?? ""
+    if (inputs.has(path)) continue
+    if (!tracked.has(path)) throw refusedWith(`Scanner input ${path} is not tracked`)
+    inputs.add(path)
+    if (!followsImports(path)) continue
+    const text = try textOf(root, path)
+    if (path.endsWith(".md")) {
+      for (const specifier of specImports(text)) {
+        const target = resolveSpecImport(path, specifier, workspace)
+        if (target === undefined) throw refusedWith(`Unresolved spec import ${specifier} in ${path}`)
+        queue.push(target)
+      }
+      continue
+    }
+    for (const specifier of codeImports(text)) {
+      const target = resolveImport(path, specifier, workspace)
+      if (target.kind === "unresolved") throw refusedWith(`Unresolved scanner import ${specifier} in ${path}`)
+      if (target.kind === "external") continue
+      if (target.manifest !== undefined) queue.push(target.manifest)
+      if (target.kind === "file") {
+        queue.push(target.path)
+        continue
+      }
+      const spec = specOfModule(target.module, workspace)
+      if (spec === undefined) throw refusedWith(`Generated module ${target.module} imported by ${path} has no spec`)
+      if (spec !== null) queue.push(spec)
+    }
+  }
+  for (const path of [...directoryInputs(tracked), ...SCANNER_FILES]) {
+    if (!tracked.has(path)) throw refusedWith(`Scanner input ${path} is not tracked`)
+    inputs.add(path)
+  }
+  return [...inputs].sort()
+}

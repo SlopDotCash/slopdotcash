@@ -24,7 +24,7 @@ export const pages: Readonly<Record<PageKind, RegisteredPage>> = {
   HowItWorks: HowItWorksPage,
   Sponsors: SponsorsRoute,
   CycleArchive: CycleArchivePage,
-  Cycle: (props) => <CyclePage {...props} repositoryRegistry={repositoryRegistryOf} projectTerms={projectTermsOf} />,
+  Cycle: (props) => <CyclePage {...props} networkPays={networkPays} repositoryRegistry={repositoryRegistryOf} projectTerms={projectTermsOf} />,
   Points: PointsPage,
   Account: SettingsPage,
   Login: LoginPage,

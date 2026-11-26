@@ -284,7 +284,7 @@ interface Built {
 
 function bindingsOf(worker: string, options: Bindings, namespaces: { next: number }, compatibility: string): Built {
   const mailers: WorkerConfig[] = [];
-  const email = Object.fromEntries(Object.entries(options.email ?? {}).map(([binding, option]) => {
+  const email = Object.fromEntries(Object.entries(options.email ?? {}).map(([binding, option]): readonly [string, Env[string]] => {
     const { allowedDestinationAddresses, destinationAddress, sink }: MailBinding = option === true ? {} : typeof option === "function" ? { sink: option } : option;
     if (sink === undefined) {
       return [binding, {
@@ -399,8 +399,10 @@ export async function queue(mf: Miniflare, name: string, bodies: ReadonlyArray<u
   return ((await mf.getWorker()) as unknown as Triggers).queue(name, messages);
 }
 
-export async function database(mf: Miniflare, binding: string): Promise<D1Database> {
-  return (await mf.getD1Database(binding)) as unknown as D1Database;
+export async function database(mf: Miniflare, binding: string, worker?: string): Promise<D1Database> {
+  const found = (await mf.getBindings<Readonly<Record<string, D1Database | undefined>>>(worker))[binding];
+  if (found === undefined) throw new Error(`the worker has no D1 binding ${binding}`);
+  return found;
 }
 
 export async function storage(mf: Miniflare, binding: string): Promise<R2Bucket> {

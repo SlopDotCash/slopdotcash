@@ -119,6 +119,35 @@ const publishedPaths = (projectId: string) =>
     ];
   });
 
+const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.byteLength === right.byteLength &&
+  Buffer.from(left.buffer, left.byteOffset, left.byteLength).equals(Buffer.from(right.buffer, right.byteOffset, right.byteLength));
+
+const sameFiles = (left: ReadonlyMap<string, Uint8Array>, right: ReadonlyMap<string, Uint8Array>): boolean => {
+  if (left.size !== right.size) return false;
+  const rightIter = right.entries();
+  for (const [key, bytes] of left.entries()) {
+    const next = rightIter.next();
+    if (next.done || next.value[0] !== key || !sameBytes(bytes, next.value[1])) return false;
+  }
+  return true;
+};
+
+const runPublication = (input: PublicationInput): Publication => {
+  const output = buildProjectPublication(input);
+  if (output.kind !== "published") return output;
+  return {
+    kind: "published",
+    files: output.files,
+    [Equal.symbol](that: unknown): boolean {
+      return typeof that === "object" && that !== null && "kind" in that && that.kind === "published" && "files" in that && that.files instanceof Map && sameFiles(output.files, that.files);
+    },
+    [Hash.symbol](): number {
+      return Hash.number(output.files.size);
+    },
+  } as Publication;
+};
+
 const bindsArtifacts = (input: PublicationInput, output: Publication) => {
   if (output.kind !== "published") return false;
   const { files } = output;
@@ -139,7 +168,7 @@ const bindsArtifacts = (input: PublicationInput, output: Publication) => {
         Option.isSome(manifest) &&
         textAt(`downloads/${name}.skill.sha256`) === `${archiveDigest}  ${name}.skill\n` &&
         manifest.value.archive.sha256 === archiveDigest &&
-        textAt(`${prefix}claude-code.md`) === textAt(`${prefix}claude.md`) &&
+        sameBytes(bytesAt(`${prefix}claude-code.md`), bytesAt(`${prefix}claude.md`)) &&
         guideFiles.every(([client, file]) => {
           const record = manifest.value.guides[client];
           return (
@@ -153,36 +182,7 @@ const bindsArtifacts = (input: PublicationInput, output: Publication) => {
   );
 };
 
-const samePublication = (left: Publication, right: Publication): boolean => {
-  if (left.kind !== right.kind) return false;
-  if (left.kind !== "published" || right.kind !== "published") return Equal.equals(left, right);
-  if (left.files.size !== right.files.size) return false;
-  for (const [path, bytes] of left.files) {
-    const other = right.files.get(path);
-    if (other === undefined || Buffer.compare(bytes, other) !== 0) return false;
-  }
-  return true;
-};
-
-class ComparedPublication implements Equal.Equal {
-  readonly publication: Publication;
-  constructor(publication: Publication) {
-    this.publication = publication;
-  }
-  [Equal.symbol](that: unknown): boolean {
-    return that instanceof ComparedPublication && samePublication(this.publication, that.publication);
-  }
-  [Hash.symbol](): number {
-    return Hash.string(this.publication.kind);
-  }
-}
-
-export const publicationBindsItsArtifacts = contract({
-  input: inputs,
-  run: (input) => new ComparedPublication(buildProjectPublication(input)),
-  deterministic: true,
-  invariant: (input, output) => bindsArtifacts(input, output.publication),
-});
+export const publicationBindsItsArtifacts = contract({ input: inputs, run: runPublication, deterministic: true, invariant: bindsArtifacts });
 
 const guideRequests = Arbitrary.schema(Schema.Struct({ id: Schema.String, reviewer: Schema.Boolean, client: Schema.Literals(installClients) })).pipe(
   Arbitrary.map(({ id, reviewer, client }): GuideRequest => {

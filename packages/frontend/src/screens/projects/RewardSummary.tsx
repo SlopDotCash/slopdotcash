@@ -23,7 +23,7 @@ export type RewardSummaryProps = {
 
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 
-const lineClass = "text-lg font-medium text-foreground";
+const lineClass = "text-gold";
 
 /** A promised token pool's amount reads exactly; a stablecoin's already does. @throws {RangeError} */
 function poolAmount(summary: string, project: ShownProject, promised: string): string {

@@ -2,8 +2,7 @@
 import { sha256Hex } from "@repo/platform/crypto"
 import { implementationCreditActors, isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import { githubLinkDestinations, sameRepositoryCommitHints } from "../collect/retained.vibe"
-import { check, correctionClaimCommit, correctionFailure, digestPattern, validActor } from "./derive.vibe"
-import type { CorrectionActor, CorrectionClaim, CorrectionCommit, CorrectionSource, OriginalContributorBinding, OriginalContributorFollowup, OriginalContributorRepair } from "./manifest.vibe"
+import { type CorrectionActor, type CorrectionClaim, type CorrectionCommit, type CorrectionSource, type OriginalContributorBinding, type OriginalContributorFollowup, type OriginalContributorRepair, check, correctionClaimCommit, correctionFailure, digestPattern, validActor } from "./manifest.vibe"
 import { verifiedHuman } from "./october.vibe"
 
 const sha = /^[a-f0-9]{40}$/u

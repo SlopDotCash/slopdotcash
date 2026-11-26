@@ -1,5 +1,6 @@
 // spec/slopbot/intakeHistory.md, "Story: Report a bounded, unsampled and stable projection of retained intake failures"; spec/slopbot/intakeHistory.md, "An inspection is admitted only for a valid window, and makes at most three dry calls"; spec/slopbot/intakeHistory.md, "Only a bounded, unsampled answer over an unchanged deployment yields rows, and only a complete one passes"
 import { isoAt } from "@repo/platform/clock"
+import { privateFile } from "@repo/platform/program"
 import { type Event, type IntakeHistory, Machine, initial, machineOver, maximumEvents } from "../../gen/slopbot__intakeHistory.effect.vibe"
 import { type HistoricalIntakeFailure, projectHistoricalIntakeFailure } from "../import/diagnostics.vibe"
 import {
@@ -16,7 +17,6 @@ import {
   failureOf,
   fieldsOf,
   mainRunner,
-  privateFile,
   readFailed,
   setting,
 } from "./inspectValueIntake.vibe"

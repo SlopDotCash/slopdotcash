@@ -10,18 +10,18 @@ import { park, probeAlone } from "./parked.vibe"
 import { message } from "./steps.vibe"
 import { storedDeposit } from "./store.vibe"
 
-export schema SendState = "recorded" | "submitted" | "unknown" | "finalized" | "failed"
+schema SendState = "recorded" | "submitted" | "unknown" | "finalized" | "failed"
 
 schema SendMode = "dry_run" | "live"
 
 export type SendOutcome = "none" | "in_flight" | "sent" | "recorded" | "unchanged" | "gas_budget" | "no_resolver_key" | "parked" | "reverted"
 
-export interface Sent {
+interface Sent {
   readonly send: SendOutcome
   readonly parked: number
 }
 
-export interface SendRow {
+interface SendRow {
   readonly id: string
   readonly network: string
   readonly mode: SendMode
@@ -36,7 +36,7 @@ export interface SendRow {
   readonly createdAt: string
 }
 
-export error SendConflict { network: string }
+error SendConflict { network: string }
 
 schema SendRecord {
   readonly id: string
@@ -115,12 +115,12 @@ function spentSince(network: string, day: string) {
     FROM submission_fee_sends WHERE network = ${network} AND mode = 'live' AND created_at >= ${day})`
 }
 
-export effect function openSend(network: string) {
+effect function openSend(network: string) {
   const found = try first(SendRecord, sql`SELECT ${columns} FROM submission_fee_sends WHERE network = ${network} AND state IN ('submitted', 'unknown')`)
   return found === undefined ? null : try rowOf(found)
 }
 
-export effect function latestDryRun(network: string) {
+effect function latestDryRun(network: string) {
   const found = try first(SendRecord, sql`SELECT ${columns} FROM submission_fee_sends WHERE network = ${network} AND mode = 'dry_run' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
   return found === undefined ? null : try rowOf(found)
 }

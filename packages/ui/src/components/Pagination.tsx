@@ -50,23 +50,22 @@ export function Pagination({
     }
     onSend(event);
   };
-  const attachBack = (node: HTMLButtonElement | null) => {
-    backRef.current = node;
-    if (node !== null && !node.disabled && pendingFocusRef.current === "back") {
-      pendingFocusRef.current = null;
-      node.focus();
-    }
-  };
-  const attachForward = (node: HTMLButtonElement | null) => {
-    forwardRef.current = node;
-    if (node !== null && !node.disabled && pendingFocusRef.current === "forward") {
-      pendingFocusRef.current = null;
-      node.focus();
-    }
-  };
   return (
     <nav aria-label={label} className={cn("flex items-center justify-center gap-4", className)} {...props}>
-      <Button variant="outline" size="icon" aria-label={backLabel} ref={attachBack} disabled={!enabled(state, { type: "back" })} onClick={() => move({ type: "back" }, "forward", forwardRef)}>
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={backLabel}
+        ref={(node) => {
+          backRef.current = node;
+          if (node !== null && !node.disabled && pendingFocusRef.current === "back") {
+            pendingFocusRef.current = null;
+            node.focus();
+          }
+        }}
+        disabled={!enabled(state, { type: "back" })}
+        onClick={() => move({ type: "back" }, "forward", forwardRef)}
+      >
         <ArrowLeft aria-hidden />
       </Button>
       <span role="status" className="font-mono text-sm text-muted-foreground tabular-nums">
@@ -75,7 +74,20 @@ export function Pagination({
           {state.page} / {state.pages}
         </span>
       </span>
-      <Button variant="outline" size="icon" aria-label={forwardLabel} ref={attachForward} disabled={!enabled(state, { type: "forward" })} onClick={() => move({ type: "forward" }, "back", backRef)}>
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={forwardLabel}
+        ref={(node) => {
+          forwardRef.current = node;
+          if (node !== null && !node.disabled && pendingFocusRef.current === "forward") {
+            pendingFocusRef.current = null;
+            node.focus();
+          }
+        }}
+        disabled={!enabled(state, { type: "forward" })}
+        onClick={() => move({ type: "forward" }, "back", backRef)}
+      >
         <ArrowRight aria-hidden />
       </Button>
     </nav>

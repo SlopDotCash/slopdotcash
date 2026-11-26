@@ -6,7 +6,7 @@ pragma solidity 0.8.30;
 uint64 constant MONTHLY_CUTOFF_DELAY = 72 hours;
 
 /// @notice The calendar arithmetic of ProjectEscrow's monthly windows, loop-free so that the solc SMTChecker
-/// proves every checked step free of overflow and underflow, and test/smt/EscrowLemmas.sol proves its
+/// proves every checked step free of overflow and underflow, and test/smt/CalendarLemmas.sol proves its
 /// properties, for every input (packages/contracts/README.md, "Money invariants"). Steps are unchecked only
 /// where they divide, or add and multiply values that their uint64 and uint32 inputs keep below 2^100:
 /// checking them would put ProjectEscrow over the EIP-170 limit.

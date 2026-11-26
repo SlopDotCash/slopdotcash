@@ -65,7 +65,7 @@ function jobOf(key: string, kind: JobKind): Job {
   }
 }
 
-async function at(now: number) {
+function at(now: number) {
   clock.set(base + now * 1000);
 }
 
@@ -94,7 +94,7 @@ async function resolve(key: string, kind: JobKind, now: number) {
 }
 
 async function due(key: string, state: Held) {
-  await at(state.now);
+  at(state.now);
   const { jobs } = await runtime.runPromise(dueJobs(tableOf(state.kind)));
   return jobs.find((found) => found.key === rowKeyOf(key, state.kind));
 }
@@ -107,7 +107,7 @@ async function handled(key: string, state: Held, copy: Message, result: string, 
     : result === "Failed" ? Effect.fail(new Error("handler failed"))
     : result === "Resolved" ? Effect.promise(() => resolve(key, state.kind, state.now)).pipe(Effect.as("Resolved" as const))
     : Effect.succeed(result === "SourceChanged" ? "SourceChanged" as const : "Done" as const);
-  await at(state.now);
+  at(state.now);
   const redelivery = await runtime.runPromise(settle(message, handler));
   if (redelivery === undefined) Object.assign(copy, { status: "acked", settled: "ack" });
   else if (copy.deliveries > maxRetries) Object.assign(copy, { status: "deadLettered", settled: "retry" });

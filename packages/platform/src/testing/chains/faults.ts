@@ -34,7 +34,9 @@ const solanaTestnet = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
 
 class LostResponse extends Error {}
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const isList = (value: unknown): value is ReadonlyArray<unknown> => Array.isArray(value);
 
 const isCall = (value: unknown): value is RpcCall => isRecord(value) && typeof value.method === "string";
 

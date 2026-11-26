@@ -243,7 +243,8 @@ effect function independentDecisions(cases: Cases.Shape) {
   const proposed = stateOf(try act(maintainer, related, "award", amount("1000000")))
   const heldBack = try promise(() => rows(world, "SELECT COUNT(*) AS count FROM security_direct_awards WHERE case_id=?", related))
   const deciderReview = try act(maintainer, related, "decide-related-party", { outcome: "approve", reason: "I proposed this award myself." })
-  const approved = stateOf(try act(moderator, related, "decide-related-party", { outcome: "approve", reason: "Independent review of the proposal." }))
+  const approval = try act(moderator, related, "decide-related-party", { outcome: "approve", reason: "Independent review of the proposal." })
+  const approved = stateOf(try read(maintainer, related))
   const committedAward = try promise(() => rows(world, "SELECT gross_base FROM security_direct_awards WHERE case_id=?", related))
 
   const appealed = try submit(world, reporter, paid, "Reentrancy in the claim path")
@@ -253,12 +254,14 @@ effect function independentDecisions(cases: Cases.Shape) {
   const triage = try promise(() => rows(world, "SELECT state, proposed_outcome, escalation_reasons FROM security_appeal_triages WHERE case_id=?", appealed))
   const reporterView = (try read(reporter, appealed)).value?.case as Readonly<Record<string, unknown>> | undefined
   const moderatorView = (try read(moderator, appealed)).value?.case as Readonly<Record<string, unknown>> | undefined
-  const upheld = stateOf(try act(moderator, appealed, "decide-appeal", { outcome: "uphold", reason: "The rejection stands on the evidence." }))
+  const decidedAppeal = try act(moderator, appealed, "decide-appeal", { outcome: "uphold", reason: "The rejection stands on the evidence." })
+  const upheld = stateOf(try read(maintainer, appealed))
   try same({
     selfAward: selfAward.refused, proposed, heldBack, deciderReview: deciderReview.refused, approved, committedAward, opening, triage,
     reporterSeesDraft: reporterView === undefined ? undefined : Object.hasOwn(reporterView, "appealTriage"),
     moderatorDraft: (moderatorView?.appealTriage as Readonly<Record<string, unknown>> | undefined)?.escalationReasons,
     upheld,
+    moderatorAnswers: [approval, decidedAppeal].map((answer) => Object.keys((answer.value as { readonly case: object }).case).sort()),
   }, {
     selfAward: [403, "forbidden", "The project owner decides"],
     proposed: { receipt: "confirmed", award: "pending", appeal: "none", review: "pending", related: "related" },
@@ -271,6 +274,7 @@ effect function independentDecisions(cases: Cases.Shape) {
     reporterSeesDraft: false,
     moderatorDraft: ["private-security-case"],
     upheld: { receipt: "rejected", award: "pending", appeal: "upheld", review: "not-applicable", related: "unrelated" },
+    moderatorAnswers: [["id", "revision"], ["id", "revision"]],
   })
 }
 

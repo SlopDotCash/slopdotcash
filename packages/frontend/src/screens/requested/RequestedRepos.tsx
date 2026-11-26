@@ -1,9 +1,8 @@
 // spec/frontend/requestedRepos.md, "Story: See requested repos, flag one, renew or withdraw it"; spec/frontend/requestedRepos.md, "A board read keeps a ready board on screen and a failed one offers Try again"; spec/frontend/requestedRepos.md, "One flag, renew or withdraw is in flight per lifetime, a success reloads the board and a refusal changes nothing else"
 import { parseRepoInput, pitchText, repoInputRule, repoPathRule, repoUrl, validRepoPath } from "@repo/backend/client";
-import { Alert, Button, CopyButton, EmptyState, ExternalLink, Field, Input, PageHeader, Spinner, StatusIcon, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
+import { Alert, Button, CopyButton, cn, ExternalLink, Field, Input, PageHeader, shell, Spinner, StatusIcon, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
 import { Flag } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
-import { pageShellClass } from "../../app/PageShell.tsx";
 import { SignInPanel } from "../../app/SignInPanel.tsx";
 import type { SessionView } from "../../session/session.vibe";
 import { formatDate } from "../projects/summary.ts";
@@ -25,8 +24,8 @@ const link = "font-medium text-primary underline-offset-4 hover:underline";
 
 function Region({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-4">
-      <h2 id={id} className="text-xl font-semibold text-foreground">
+    <section aria-labelledby={id} className="flex flex-col gap-4 rounded-xl border border-border p-4 md:p-8">
+      <h2 id={id} className="mb-1 text-2xl leading-page font-extrabold tracking-amount text-foreground uppercase">
         {title}
       </h2>
       {children}
@@ -56,7 +55,7 @@ function FlagField({ busy, onFlag }: { busy: boolean; onFlag: (repo: string) => 
   return (
     <Region id="flag-field-heading" title="Flag a repo">
       <form className="flex flex-col items-start gap-4" onSubmit={submit}>
-        <Field label="Repository" className="w-full max-w-md" error={invalid ? <span role="alert">{repoInputRule}</span> : undefined}>
+        <Field label="Repository" className="w-full" error={invalid ? <span role="alert">{repoInputRule}</span> : undefined}>
           <Input
             type="text"
             autoCapitalize="none"
@@ -123,7 +122,7 @@ function Board({ view, origin, onRetry, onCopy }: Pick<RequestedReposProps, "vie
     );
   }
   if (page.board === "BoardLoading" || board === undefined) return <Spinner label="Loading requested repos" />;
-  if (board.repos.length === 0) return <EmptyState title="No repos are flagged yet." />;
+  if (board.repos.length === 0) return <p>No repos are flagged yet.</p>;
   const pitchTo = pitchLink(origin, view.viewer);
   return (
     <Table label="Requested repos">
@@ -187,11 +186,14 @@ function YourFlags({ view, busy, onAct }: { view: RequestedView; busy: boolean; 
   );
 }
 
+/**
+ * @model spec/frontend/requestedRepos.md
+ */
 export function RequestedRepos({ view, origin, flag, session, signInHref, onAct, onRetry, onSignedOutFlag, onCopy }: RequestedReposProps) {
   const signedIn = view.page.actor !== "";
   const busy = view.page.pending !== 0;
   return (
-    <main className={pageShellClass("lg", "8")}>
+    <main className={cn(shell, "flex min-h-[70vh] flex-1 flex-col gap-8 pt-9 pb-18")}>
       <PageHeader
         title="Requested repos"
         icon={<Flag className="size-6 text-primary" />}

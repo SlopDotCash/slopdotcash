@@ -11,5 +11,5 @@ export type TextareaProps = Omit<ComponentProps<"textarea">, "children"> & {
  * A text field of several lines. Name it with a `Field`, a `Label` or `aria-label`.
  */
 export function Textarea({ invalid = false, className, ...props }: TextareaProps) {
-  return <textarea aria-invalid={invalid || undefined} className={cn(fieldClass, "min-h-24 resize-y py-3", className)} {...props} />;
+  return <textarea aria-invalid={invalid || undefined} className={cn(fieldClass, "min-h-24 resize-y py-3.5 leading-body", className)} {...props} />;
 }

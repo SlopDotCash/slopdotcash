@@ -10,17 +10,15 @@ import { signedFees } from "./signedSend.ts"
 import { type Evaluation, type NetworkName, type StateName, releasedAt, rotationPrefix } from "./writes.vibe"
 
 module verified {
-  import { nativeUnits as unitsOf, nativeWei as weiAt, overran as above, sumOf as summed } from "./amounts.ts"
+  import { nativeUnits as unitsOf, nativeWei as weiAt, overran as above } from "./amounts.ts"
   /** @throws {never} */
   export function nativeUnits(wei: bigint, solana: boolean): bigint { return unitsOf(wei, solana) }
   /** @throws {never} */
   export function nativeWei(units: bigint, solana: boolean): bigint { return weiAt(units, solana) }
   /** @throws {never} */
   export function overran(actual: bigint, maximum: bigint): boolean { return above(actual, maximum) }
-  /** @throws {never} */
-  export function sumOf(values: ReadonlyArray<bigint>, count: number): bigint { return summed(values, count) }
 }
-import { nativeUnits, nativeWei, overran, sumOf } from verified
+import { nativeUnits, nativeWei, overran } from verified
 
 export type NameKind = "wallet" | "token" | "tx" | "run" | "vault" | "deployment" | "receipt" | "operator" | "hash" | "rotation" | "version" | "source" | "setting"
 
@@ -256,12 +254,6 @@ export effect function weiOf(units: number, network: Network) {
 
 export effect function exceeds(actual: string, maximum: string, label: string) {
   return overran(try amountOf(actual, label), try amountOf(maximum, label))
-}
-
-export effect function decimalTotal(values: ReadonlyArray<string>, label: string) {
-  const amounts: Array<bigint> = []
-  for (const value of values) amounts.push(try amountOf(value, label))
-  return sumOf(amounts, amounts.length).toString()
 }
 
 effect function jsonOf(text: string, label: string) {

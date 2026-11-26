@@ -9,7 +9,7 @@ import { loadAccess } from "../../access/store.vibe"
 import { AdminRevisionRequest, adminManifest, adminProjects } from "../../client/admin.vibe"
 import { getAdminProjects, putAdminProjectsByIdManifest } from "../../client/refusals.vibe"
 import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
-import { definitionProblem, registryProblem, transitionProblem } from "../owner/definition.ts"
+import { applyCatchUpChange, definitionProblem, registryProblem, transitionProblem } from "../owner/definition.ts"
 import { listedManifests } from "../owner/records.vibe"
 import { withBountyAmount } from "../owner/securityProgram.vibe"
 import { type Json, classified, objectOf, same } from "../owner/revisionChanges.ts"
@@ -160,7 +160,7 @@ effect function revise(actor: Actor, projectId: string) {
   const submittedSections = { escrow: next.escrow, securityBounty: next.securityBounty }
   const problem = definitionProblem(next, submittedSections) ?? transitionProblem(previous, next, now, submittedSections)
   if (problem !== undefined) throw invalid(problem)
-  const text = JSON.stringify(next)
+  const text = JSON.stringify(applyCatchUpChange(previous, next, now))
   const manifest = manifestOf(text, `administrator revision of ${projectId}`) catch effect () => { throw invalid("Project manifest is invalid") }
   const conflict = registryProblem([...(try listedManifests()).filter((listed) => listed.id !== projectId).map((listed) => listed.manifest), next])
   if (conflict !== undefined) throw refused(manifestRows.registryConflict, conflict)

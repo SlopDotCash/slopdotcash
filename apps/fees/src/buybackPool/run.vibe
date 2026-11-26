@@ -16,6 +16,7 @@ import { burnAddress, robinhoodUsdg, slopToken } from "../runtime/pins.ts"
 import { type PoolInstance, type SendRecord, assetToken, closedUnlanded } from "./codec.vibe"
 import { burnTransfers } from "./burnTransfers.ts"
 import { providerErrorLog } from "../kernels/providerFailure.ts"
+import { big, signedFacts as signedSend, tagOf } from "../buyback/send.vibe"
 import { type Facts, type QuoteFacts, type SignedFacts, PoolRefused, closeApproval, failPreparation, journalApproval, loseApproval, poolOf, send, sendFloors, settleApproval, settleClosed } from "./store.vibe"
 
 module verified {
@@ -49,14 +50,6 @@ export interface PoolResult { readonly instance: PoolInstance; readonly state: P
 const usdgToken = robinhoodUsdg as Address
 const slop = slopToken as Address
 
-function tagOf(error: unknown) {
-  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"
-}
-
-effect function big(text: string) {
-  return try orDie(Effect.try(() => BigInt(text)))
-}
-
 effect function exact(value: bigint, event: string, what: string) {
   const number = exactNumber(value)
   if (number === undefined) throw new PoolRefused({ event, issue: `${what} is outside the pool model's exact range` })
@@ -72,8 +65,8 @@ effect function step(running: Running, event: Event, facts: Facts = {}) {
 }
 
 function signedFacts(settings: PoolSettings, signed: EvmSigned) {
-  const { prepared } = signed
-  return { txId: signed.txId, rawTx: signed.rawTx, nonce: prepared.nonce, maximumWei: prepared.maximumWei.toString(), intentHash: prepared.unsigned.intentHash, limits: settings.native, ...prepared.expiresAt === undefined ? {} : { expiresAt: prepared.expiresAt } } satisfies SignedFacts
+  const { expiresAt } = signed.prepared
+  return { ...signedSend(settings.native, signed), ...expiresAt === undefined ? {} : { expiresAt } } satisfies SignedFacts
 }
 
 effect function signedEvm(signed: Signed, event: string) {

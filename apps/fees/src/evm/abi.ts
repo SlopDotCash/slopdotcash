@@ -15,6 +15,9 @@ import {
   type TransactionSerializableEIP1559,
   type TransactionSerialized,
 } from "viem";
+import type { Network } from "../../gen/fees__runtime.ts";
+
+export type EvmNetwork = Exclude<Network, "Solana">;
 
 export const dlnSourceAbi = parseAbi([
   "struct OrderCreation { address giveTokenAddress; uint256 giveAmount; bytes takeTokenAddress; uint256 takeAmount; uint256 takeChainId; bytes receiverDst; address givePatchAuthoritySrc; bytes orderAuthorityAddressDst; bytes allowedTakerDst; bytes externalCall; bytes allowedCancelBeneficiarySrc; }",
@@ -132,12 +135,6 @@ export function word(data: Hex): bigint | undefined {
 }
 
 /** @throws {never} */
-export function flag(data: Hex): boolean | undefined {
-  const value = word(data);
-  return value === 0n ? false : value === 1n ? true : undefined;
-}
-
-/** @throws {never} */
 export function oracleCalldata(selector: Hex, amount: bigint): Hex {
   return `${selector}${amount.toString(16).padStart(64, "0")}` as Hex;
 }
@@ -196,18 +193,30 @@ export interface TransferLog {
   readonly data: Hex;
 }
 
+export interface Transfer {
+  readonly from: string;
+  readonly to: string;
+  readonly value: bigint;
+}
+
 /** @throws {never} */
-export function creditedTo(logs: readonly TransferLog[], token: string, wallet: string): bigint {
-  let total = 0n;
+export function tokenTransfers(logs: readonly TransferLog[], token: string): Transfer[] {
+  const transfers: Transfer[] = [];
   for (const log of logs) {
     if (lower(log.address) !== lower(token)) continue;
     try {
-      const decoded = decodeEventLog({ abi: erc20Abi, eventName: "Transfer", topics: log.topics as [Hex, ...Hex[]], data: log.data });
-      if (lower(decoded.args.to) === lower(wallet)) total += decoded.args.value;
+      transfers.push(decodeEventLog({ abi: erc20Abi, eventName: "Transfer", topics: log.topics as [Hex, ...Hex[]], data: log.data }).args);
     } catch {
       continue;
     }
   }
+  return transfers;
+}
+
+/** @throws {never} */
+export function creditedTo(logs: readonly TransferLog[], token: string, wallet: string): bigint {
+  let total = 0n;
+  for (const transfer of tokenTransfers(logs, token)) if (lower(transfer.to) === lower(wallet)) total += transfer.value;
   return total;
 }
 

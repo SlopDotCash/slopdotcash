@@ -1,26 +1,19 @@
 // spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
 import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
+import { hostedSolanaOperator } from "@repo/platform/chain/solana"
 import { solanaGenesis } from "../runtime/pins.ts"
 
-export const publicNodeRpc = "https://solana-rpc.publicnode.com"
+const publicNodeRpc = "https://solana-rpc.publicnode.com"
 export const expiryTimeoutMs = 15_000
-export const expiryReadBytes = 8 * 1024 * 1024
+const expiryReadBytes = 8 * 1024 * 1024
 
 const loopback: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"])
 
-function hostedOperator(host: string) {
-  if (host === "api.mainnet-beta.solana.com") return "solana-public"
-  if (host === "solana-rpc.publicnode.com") return "allnodes-publicnode"
-  if (host === "public.rpc.solanavibestation.com") return "solana-vibe-station"
-  if (host.endsWith(".alchemy.com")) return "alchemy"
-  if (host.endsWith(".helius-rpc.com")) return "helius"
-  return undefined
-}
-
 export function recoveryOperator(endpoint: string, genesis: string): string | undefined {
+  const hosted = hostedSolanaOperator(endpoint)
+  if (hosted !== undefined) return hosted
   const url = URL.parse(endpoint)
   if (url === null) return undefined
-  if (url.protocol === "https:") return hostedOperator(url.hostname.toLowerCase())
   if (genesis !== solanaGenesis && url.protocol === "http:" && loopback.has(url.hostname)) return `local-validator:${url.host}`
   return undefined
 }

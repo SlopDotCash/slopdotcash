@@ -1,5 +1,5 @@
 // spec/operations/localCommand.md, "Only a current local stage can start the command"
-import { type LocalCommand, Machine, initial, machineOver } from "../../../gen/operations__localCommand.effect.vibe"
+import { type LocalCommand, type Machine, initial, machineOver } from "../../../gen/operations__localCommand.effect.vibe"
 
 export type CommandMachine = Machine.Shape
 

@@ -101,7 +101,7 @@ export effect function decideOutcomes(mode: ReportDepositMode, nowMs: number, at
 }
 
 effect function ownerNotice(report: LinkedReport) {
-  const event = try first(ReceiptEvent, sql`SELECT case_revision, at FROM security_case_events WHERE case_id = ${report.id} AND kind IN ('submit', 'submit-direct', 'receive', 'verify-link') ORDER BY case_revision DESC LIMIT 1`)
+  const event = try first(ReceiptEvent, sql`SELECT case_revision, at FROM security_case_events WHERE case_id = ${report.id} AND kind IN ('submit', 'submit-direct', 'receive', 'verify-link', 'claim') ORDER BY case_revision DESC LIMIT 1`)
   if (event === undefined) return
   const context = try routingContext({ caseId: report.id, projectId: report.project_id, reporterGithubId: report.reporter_github_id })
   if (!context.checked || context.recipients.length === 0) return

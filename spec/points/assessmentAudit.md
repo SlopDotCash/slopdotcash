@@ -40,17 +40,22 @@ sealed; an unrelated append changes nothing. Sealing a complete cut yields
 `no-scoped-active-assessments` when nothing relevant was read and
 `requires-value-replay` otherwise; anything else, or a rejected binding
 below, is `incomplete`, which prints the report and fails "Assessment
-catalog could not be reconciled".
+catalog could not be reconciled". A read-only replay may also set
+`require_no_active_assessments=true` (`requireNoActive`) to use a separate
+catalog queue: it completes the same catalog reconciliation and stages a
+qualified handoff only when the cut is complete and has no relevant active
+assessments, refusing to stage or seal if active assessments require the
+shared collector replay (#3313).
 
 ```quint
 type AuditPhase = AuditIdle | AuditReading | AuditStaged | AuditSealed
 type AuditStatus = AuditUnsealed | NoScopedActiveAssessments | RequiresValueReplay | AuditIncomplete
 type AuditDispatch = TrustedMainDispatch | OtherDispatch
 type AssessmentAudit = { phase: AuditPhase, jointExpected: int, legacyExpected: int, jointRead: int, legacyRead: int,
-  invalid: bool, relevant: bool, cutCurrent: bool, status: AuditStatus, reviewAvailable: bool, boundClosureReview: bool,
+  invalid: bool, relevant: bool, requireNoActive: bool, cutCurrent: bool, status: AuditStatus, reviewAvailable: bool, boundClosureReview: bool,
   retainedRemovedMerge: bool, rejectedRemovedMerge: bool, rejectedClosureReview: bool }
 pure val initial: AssessmentAudit = { phase: AuditIdle, jointExpected: 0, legacyExpected: 0, jointRead: 0, legacyRead: 0,
-  invalid: false, relevant: false, cutCurrent: true, status: AuditUnsealed, reviewAvailable: false, boundClosureReview: false,
+  invalid: false, relevant: false, requireNoActive: false, cutCurrent: true, status: AuditUnsealed, reviewAvailable: false, boundClosureReview: false,
   retainedRemovedMerge: false, rejectedRemovedMerge: false, rejectedClosureReview: false }
 pure def catalogsComplete(a: AssessmentAudit): bool =
   not(a.invalid) and a.jointRead == a.jointExpected and a.legacyRead == a.legacyExpected
@@ -58,10 +63,10 @@ pure def bindingRejected(a: AssessmentAudit): bool = a.rejectedClosureReview or 
 pure def sealedStatus(a: AssessmentAudit): AuditStatus =
   if (catalogsComplete(a) and not(bindingRejected(a))) (if (a.relevant) RequiresValueReplay else NoScopedActiveAssessments)
   else AuditIncomplete
-pure def canCapture(a: AssessmentAudit, scoped: bool, applyRequested: bool, jointCount: int, legacyCount: int, by: AuditDispatch): bool =
+pure def canCapture(a: AssessmentAudit, scoped: bool, applyRequested: bool, jointCount: int, legacyCount: int, requireNoActive: bool, by: AuditDispatch): bool =
   a.phase == AuditIdle and by == TrustedMainDispatch and scoped and not(applyRequested) and jointCount >= 0 and legacyCount >= 0
-pure def capture(a: AssessmentAudit, scoped: bool, applyRequested: bool, jointCount: int, legacyCount: int, by: AuditDispatch): AssessmentAudit =
-  { ...a, phase: AuditReading, jointExpected: jointCount, legacyExpected: legacyCount }
+pure def capture(a: AssessmentAudit, scoped: bool, applyRequested: bool, jointCount: int, legacyCount: int, requireNoActive: bool, by: AuditDispatch): AssessmentAudit =
+  { ...a, phase: AuditReading, jointExpected: jointCount, legacyExpected: legacyCount, requireNoActive: requireNoActive }
 pure def canObserve(a: AssessmentAudit, joint: bool, valid: bool, activeInScope: bool): bool =
   a.phase == AuditReading and (if (joint) a.jointRead < a.jointExpected else a.legacyRead < a.legacyExpected)
 pure def observe(a: AssessmentAudit, joint: bool, valid: bool, activeInScope: bool): AssessmentAudit =
@@ -70,7 +75,9 @@ pure def observe(a: AssessmentAudit, joint: bool, valid: bool, activeInScope: bo
 pure def canChangeCheckpoint(a: AssessmentAudit, affectsScope: bool): bool = a.phase == AuditReading or a.phase == AuditStaged
 pure def changeCheckpoint(a: AssessmentAudit, affectsScope: bool): AssessmentAudit =
   { ...a, cutCurrent: a.cutCurrent and not(affectsScope) }
-pure def canSeal(a: AssessmentAudit): bool = (a.phase == AuditReading or a.phase == AuditStaged) and a.cutCurrent
+pure def canSeal(a: AssessmentAudit): bool =
+  (a.phase == AuditReading or a.phase == AuditStaged) and a.cutCurrent and
+  (a.requireNoActive implies (catalogsComplete(a) and not(a.relevant)))
 pure def seal(a: AssessmentAudit): AssessmentAudit =
   { ...a, phase: AuditSealed, reviewAvailable: a.phase == AuditStaged, status: sealedStatus(a) }
 pure def alwaysReadsBounded(a: AssessmentAudit): bool =
@@ -84,7 +91,9 @@ pure def alwaysStatusOnlyWhenSealed(a: AssessmentAudit): bool =
 pure def alwaysConclusionAtCompleteCut(a: AssessmentAudit): bool =
   (a.status == NoScopedActiveAssessments implies (catalogsComplete(a) and not(a.relevant))) and
   (a.status == RequiresValueReplay implies (catalogsComplete(a) and a.relevant)) and
-  (a.phase == AuditSealed implies a.cutCurrent)
+  (a.phase == AuditSealed implies a.cutCurrent) and
+  ((a.requireNoActive and a.phase == AuditSealed) implies a.status == NoScopedActiveAssessments) and
+  ((a.requireNoActive and a.reviewAvailable) implies not(a.relevant))
 pure def sometimesNothingScoped(a: AssessmentAudit): bool = a.status == NoScopedActiveAssessments
 pure def sometimesValueReplayRequired(a: AssessmentAudit): bool = a.status == RequiresValueReplay
 pure def sometimesIncompleteCut(a: AssessmentAudit): bool = a.status == AuditIncomplete
@@ -93,6 +102,7 @@ pure val scopedValues = Set(true, false)
 pure val applyRequestedValues = Set(false, true)
 pure val jointCountValues = Set(0, 1)
 pure val legacyCountValues = Set(0, 1)
+pure val requireNoActiveValues = Set(false, true)
 pure val byValues = Set(TrustedMainDispatch, OtherDispatch)
 ```
 
@@ -208,12 +218,12 @@ that exact bundle for an authorized operator.
 
 ```quint
 pure def canStageReview(a: AssessmentAudit, explicit: bool, qualified: bool, verifiedReadback: bool): bool =
-  a.phase == AuditReading and a.cutCurrent and catalogsComplete(a) and not(bindingRejected(a)) and explicit and qualified and
+  a.phase == AuditReading and a.cutCurrent and catalogsComplete(a) and not(bindingRejected(a)) and not(a.requireNoActive and a.relevant) and explicit and qualified and
   verifiedReadback
 pure def stageReview(a: AssessmentAudit, explicit: bool, qualified: bool, verifiedReadback: bool): AssessmentAudit =
   { ...a, phase: AuditStaged }
 pure def alwaysStagedAtCompleteCut(a: AssessmentAudit): bool =
-  a.phase == AuditStaged implies (catalogsComplete(a) and not(bindingRejected(a)))
+  a.phase == AuditStaged implies (catalogsComplete(a) and not(bindingRejected(a)) and not(a.requireNoActive and a.relevant))
 pure def alwaysReviewOnlyFromCurrentCompleteCut(a: AssessmentAudit): bool =
   a.reviewAvailable implies (a.phase == AuditSealed and catalogsComplete(a) and a.cutCurrent and not(bindingRejected(a)))
 pure def stepSealedRunFixed(before: AssessmentAudit, after: AssessmentAudit): bool = before.phase == AuditSealed implies after == before
@@ -222,7 +232,7 @@ pure def sometimesStagedThenStale(a: AssessmentAudit): bool = a.phase == AuditSt
 pure val explicitValues = Set(true, false)
 pure val qualifiedValues = Set(true, false)
 pure val verifiedReadbackValues = Set(true, false)
-pure val eval_witness_sometimesClosureReviewBound = (("capture", true, false, 1, 0, TrustedMainDispatch),
+pure val eval_witness_sometimesClosureReviewBound = (("capture", true, false, 1, 0, false, TrustedMainDispatch),
   ("observe", true, true, true, TrustedMainDispatch), ("bindClosureReview", goodClosure, TrustedMainDispatch),
   ("stageReview", true, true, true, TrustedMainDispatch), ("seal", TrustedMainDispatch))
 ```

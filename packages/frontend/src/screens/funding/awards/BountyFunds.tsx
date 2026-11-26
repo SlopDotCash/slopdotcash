@@ -4,6 +4,7 @@ import { Alert, Button, Metric, MetricGrid, Spinner, Status } from "@repo/ui";
 import { RefreshCw } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useState } from "react";
 import { formatDateTime } from "../../../app/format.ts";
+import { useNow } from "../../../app/hooks.ts";
 import { assetSymbol } from "../../../kernels/assetText.ts";
 import { type BountyFunds as Funds, bountyFundsRuntime, readBountyFunds, setupMessages } from "../../../wallets/owner/vaultSetup.vibe";
 import { useSettled } from "../vault/hooks.ts";
@@ -73,6 +74,7 @@ export type BountyFundsProps = {
 
 export function BountyFunds({ project, account, githubId }: BountyFundsProps) {
   const runtime = bountyFundsRuntime(project.id);
+  const nowMs = useNow();
   const [reload, setReload] = useState(0);
   const [last, setLast] = useState<{ readonly account: number; readonly funds: Funds }>();
   const settled = useSettled(runtime, `bounty-funds:${account}:${reload}`, () => readBountyFunds(account, githubId));
@@ -84,7 +86,7 @@ export function BountyFunds({ project, account, githubId }: BountyFundsProps) {
   const canDeposit = read.status !== "failed" && shown?.canSetup === true;
   const refresh = () => setReload((count) => count + 1);
   const funding = bountyFundingOf(project);
-  const period = periodOf(Date.now());
+  const period = periodOf(nowMs);
   const vaults = (project.securityBounty.settlement?.deployments ?? []).map((deployment) => (
     <Suspense key={`${deployment.network}:${deployment.vault}`} fallback={<Spinner size="sm" label="Loading the funding form" />}>
       <VaultActions project={funding} deployment={deployment} period={period} account={account} payoutPolicy="security-bounty" canDeposit={canDeposit} onFinalized={refresh} />

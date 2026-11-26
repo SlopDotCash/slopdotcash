@@ -192,7 +192,7 @@ export function builtManifest(project: AdminProject, draft: ManifestDraft): Buil
             ...(isRecord(rest.escrow) ? { escrow: { ...rest.escrow, chain: asset.network } } : {}),
             rewardAsset: unchanged ? project.raw.rewardAsset : asset,
           }
-        : project.raw.rewardAsset !== undefined
+        : !draft.assetSelected && project.raw.rewardAsset !== undefined
           ? { rewardAsset: project.raw.rewardAsset }
           : {}),
     },

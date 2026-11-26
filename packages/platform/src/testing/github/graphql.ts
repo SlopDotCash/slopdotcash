@@ -235,6 +235,7 @@ function fieldsOf<P>(fields: Readonly<Record<string, { readonly type: string; re
   return fields as unknown as Readonly<Record<string, Field>>;
 }
 
+const text = (value: unknown): string => (typeof value === "string" ? value : "");
 const scalar = <P>(type: string, resolve: (parent: P, args: Args, ctx: GraphQLContext) => unknown) => ({ type, resolve });
 const github = "https://github.com";
 
@@ -344,7 +345,7 @@ function enumName(type: string): string {
 
 function timelineItems(item: Item, args: Args): Obj {
   const wanted = enumList(args.itemTypes);
-  const since = typeof args.since === "string" ? args.since : "";
+  const since = text(args.since);
   const entries: Array<{ createdAt: string; id: number; obj: Obj }> = [
     ...item.comments.map((comment) => ({ createdAt: comment.createdAt, id: comment.id, obj: new Obj("IssueComment", { comment, item }) })),
     ...item.timeline.map((event) => ({ createdAt: event.createdAt, id: event.id, obj: new Obj(eventType(event.event), { event, item }) })),
@@ -496,7 +497,7 @@ const types: Record<string, ObjectType> = {
           if (args.type !== "ISSUE" && args.type !== "ISSUE_ADVANCED") throw new FieldFailure(`The GitHub fake answers search(type: ISSUE) only, not ${String(args.type)}.`, "UNSUPPORTED");
           let found: Item[];
           try {
-            found = ctx.world.search(typeof args.query === "string" ? args.query : "", ctx.visible);
+            found = ctx.world.search(text(args.query), ctx.visible);
           } catch (error) {
             throw new FieldFailure(error instanceof Error ? error.message : "Invalid search query", "INVALID_SEARCH");
           }
@@ -555,7 +556,7 @@ const types: Record<string, ObjectType> = {
       ref: {
         type: "Ref",
         resolve: (repo, args) => {
-          const name = (typeof args.qualifiedName === "string" ? args.qualifiedName : "").replace(/^refs\/heads\//u, "");
+          const name = text(args.qualifiedName).replace(/^refs\/heads\//u, "");
           return refObj(repo, name);
         },
       },
@@ -563,7 +564,7 @@ const types: Record<string, ObjectType> = {
         type: "RefConnection",
         resolve: (repo, args) => {
           if (args.refPrefix !== "refs/heads/") return connection("Ref", [], args);
-          const query = typeof args.query === "string" ? args.query : "";
+          const query = text(args.query);
           const order = typeof args.orderBy === "object" && args.orderBy !== null && (args.orderBy as Record<string, unknown>).direction === "DESC" ? -1 : 1;
           const names = [...repo.branches.keys()].filter((name) => name.includes(query)).sort((a, b) => order * a.localeCompare(b));
           return connection("Ref", names.map((name) => refObj(repo, name)), args);
@@ -572,7 +573,7 @@ const types: Record<string, ObjectType> = {
       object: {
         type: "GitObject",
         resolve: (repo, args) => {
-          const expression = typeof args.oid === "string" ? args.oid : typeof args.expression === "string" ? args.expression : "";
+          const expression = typeof args.oid === "string" ? args.oid : text(args.expression);
           const colon = expression.indexOf(":");
           const sha = resolveRef(repo, colon === -1 ? expression : expression.slice(0, colon));
           const commit = sha === undefined ? undefined : repo.commits.get(sha);
@@ -609,9 +610,9 @@ const types: Record<string, ObjectType> = {
       pullRequest: { type: "PullRequest", resolve: (repo, args) => numbered(repo, args, "pull") },
       issue: { type: "Issue", resolve: (repo, args) => numbered(repo, args, "issue") },
       issueOrPullRequest: { type: "IssueOrPullRequest", resolve: (repo, args) => numbered(repo, args, undefined) },
-      labels: { type: "LabelConnection", resolve: (repo, args) => connection("Label", [...repo.labels.values()].filter((label) => label.name.includes(typeof args.query === "string" ? args.query : "")).map((label) => new Obj("Label", { label, repo })), args) },
+      labels: { type: "LabelConnection", resolve: (repo, args) => connection("Label", [...repo.labels.values()].filter((label) => label.name.includes(text(args.query))).map((label) => new Obj("Label", { label, repo })), args) },
       label: { type: "Label", resolve: (repo, args) => {
-        const label = repo.labels.get((typeof args.name === "string" ? args.name : "").toLowerCase());
+        const label = repo.labels.get(text(args.name).toLowerCase());
         return label === undefined ? null : new Obj("Label", { label, repo });
       } },
     }),

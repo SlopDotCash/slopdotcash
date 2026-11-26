@@ -1,8 +1,9 @@
 import { assert, describe, it, layer } from "@effect/vitest"
 import { CallerLive } from "@repo/backend/caller"
 import { api as backendApi, emailVerification, emailVerify } from "@repo/backend/client"
-import { backend, backendServices } from "@repo/backend/live"
+import { backend, backendServices, slopbotAccess } from "@repo/backend/live"
 import { api as contributorApi } from "@repo/contributor/client"
+import { contributorAudience } from "@repo/points/live"
 import { api as feesApi } from "@repo/fees/client"
 import { api as operationsApi } from "@repo/operations/client"
 import { noticePorts, operations } from "@repo/operations/live"
@@ -21,18 +22,17 @@ import { settableClock } from "@repo/platform/testing/clock"
 import { asFetch, held } from "@repo/platform/testing/quotes"
 import { pages } from "@repo/platform/worker"
 import { encodeParts, leaderboardMethodology, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, pointRevisionId, api as pointsApi, type RepositoryRegistry, type RevisionBody, ruleVersion, schemaVersion, scoreWindowDays, validatePaymentSnapshot, verificationWindowDays } from "@repo/points/client"
-import { contributorAudience } from "@repo/points/live"
 import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
-import { SecurityNoticeAccess } from "@repo/ports/security"
+import { PublicSecurity, SecurityNoticeAccess } from "@repo/ports/security"
 import { AssessmentQueue } from "@repo/ports/slopbot"
 import { api as securityApi } from "@repo/security/client"
-import { EnforcementRowsLive, PublicSecurityLive, security, securityBindings } from "@repo/security/live"
+import { security, securityBindings, enforcementPorts, EnforcementRowsLive } from "@repo/security/live"
 import { api as settlementApi } from "@repo/settlement/client"
 import { toAmount } from "@repo/settlement/kernels/amounts"
 import { parsePeriod } from "@repo/settlement/kernels/calendar"
-import { paymentNetworks, settlement } from "@repo/settlement/live"
+import { paymentNetworks, reservedAwardFeedAccess, settlement } from "@repo/settlement/live"
 import { api as slopbotApi } from "@repo/slopbot/client"
-import { repositoryAccessReader, slopbot } from "@repo/slopbot/live"
+import { slopbot } from "@repo/slopbot/live"
 import { Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
 import { Machine as EmailActions } from "../gen/frontend__emailAction.effect.vibe"
 import { readEntry } from "../gen/frontend__snapshotCache.effect.vibe"
@@ -130,10 +130,10 @@ module sessionWorld {
   function notify(sent: Array<Sent>): Handler {
     return async (request: WebRequest) => {
       const url = new URL(request.url)
+      const body = await request.json() as Record<string, string>
       if (url.pathname === "/v1/email/capabilities") return answer(200, { enrollmentAvailable: true })
       if (url.pathname === "/v1/activity-notifications/eligibility") return answer(200, { available: false })
       if (url.pathname === "/v1/email/verification") {
-        const body = await request.json() as Record<string, string>
         sent.push({ githubId: body.githubId ?? "", token: body.token ?? "" })
         return answer(204)
       }
@@ -291,7 +291,7 @@ module sessionWorld {
 import { type World as SessionWorld, identity as sessionIdentity, site as sessionSite, startWorld as sessionStartWorld } from sessionWorld
 
 module accountWorld {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import type { D1Database, Fetcher } from "@repo/platform/bindings"
   import { type Handler, type StartedWorker, bundle, database, migrate, startWorker } from "@repo/platform/testing"
   import { githubFake } from "@repo/platform/testing/github"
@@ -333,10 +333,10 @@ module accountWorld {
   function notify(sent: Array<Sent>): Handler {
     return async (request: WebRequest) => {
       const url = new URL(request.url)
+      const body = await request.json() as Record<string, string>
       if (url.pathname === "/v1/email/capabilities") return answer(200, { enrollmentAvailable: true })
       if (url.pathname === "/v1/activity-notifications/eligibility") return answer(200, { available: false })
       if (url.pathname === "/v1/email/verification") {
-        const body = await request.json() as Record<string, string>
         sent.push({ githubId: body.githubId ?? "", token: body.token ?? "" })
         return answer(204)
       }
@@ -420,7 +420,7 @@ module accountWorld {
 import { type World as AccountWorld, assets as accountAssets, site as accountSite, startWorld as accountStartWorld } from accountWorld
 
 module projectsWorld {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
   import { type StartedWorker, database, migrate, startWorker, storage } from "@repo/platform/testing"
   import { githubFake } from "@repo/platform/testing/github"
@@ -468,7 +468,7 @@ module projectsWorld {
   function slopbotAnswer(request: Request): Response {
     const url = new URL(request.url)
     const id = Number(url.searchParams.get("repositoryId"))
-    const path = url.searchParams.get("repository") || `member-${stewardId}/${id === otherId ? "other" : "tool"}`
+    const path = url.searchParams.get("repository") ?? ""
     const permission = url.searchParams.get("login") === `member-${stewardId}` ? "admin" : "read"
     return new Response(JSON.stringify({ installation: "installed", installationId: 77, permission, roleName: null, repository: { id, node_id: `R_${id}`, full_name: path, private: false, owner: owner() } }), { headers: { "content-type": "application/json" } })
   }
@@ -538,7 +538,7 @@ module projectsWorld {
     }
   }
 }
-import { type World as ProjectsWorld, adminId as projectsAdminId, otherId as projectsOtherId, primaryId as projectsPrimaryId, site as projectsSite, startWorld as projectsStartWorld, stewardId as projectsStewardId } from projectsWorld
+import { type World as ProjectsWorld, adminId as projectsAdminId, otherId as projectsOtherId, primaryId as projectsPrimaryId, startWorld as projectsStartWorld, stewardId as projectsStewardId } from projectsWorld
 
 module securityWorld {
   import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
@@ -590,10 +590,11 @@ module securityWorld {
       const headers = new Headers(outgoing.headers)
       headers.set("cf-connecting-ip", address)
       if (jar !== "") headers.set("cookie", `__Host-slop_points=${jar}`)
-      if (outgoing.method !== "GET") headers.set("origin", "https://slop.cash")
+      const localOrigin = "http://localhost:8788"
+      if (outgoing.method !== "GET") headers.set("origin", localOrigin)
       const body = outgoing.method === "GET" ? undefined : await outgoing.text()
       if (body !== undefined) bodies.push({ path: url.pathname, body })
-      const answer = await served(new Request(`https://slop.cash${url.pathname}${url.search}`, { method: outgoing.method, headers, ...body === undefined ? {} : { body } }))
+      const answer = await served(new Request(`${localOrigin}${url.pathname}${url.search}`, { method: outgoing.method, headers, ...body === undefined ? {} : { body } }))
       if (losing === url.pathname && outgoing.method === "POST") {
         losing = undefined
         throw new TypeError("Failed to fetch")
@@ -622,12 +623,12 @@ module securityWorld {
     }
   }
 }
-import { type World as SecurityWorld, maintainerId as securityMaintainerId, otherId as securityOtherId, reporterId as securityReporterId, site as securitySite, startWorld as securityStartWorld } from securityWorld
+import { type World as SecurityWorld, maintainerId as securityMaintainerId, otherId as securityOtherId, reporterId as securityReporterId, startWorld as securityStartWorld } from securityWorld
 
 module lateReadsWorld {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
-  import type { D1Database, ExecutionContext, Fetcher, R2Bucket } from "@repo/platform/bindings"
-  import { type StartedWorker, bundle, database, migrate, startWorker, storage } from "@repo/platform/testing"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
+  import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+  import { type StartedWorker, bundle, database, migrate, startWorker } from "@repo/platform/testing"
   import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
   import { asFetch } from "@repo/platform/testing/quotes"
 
@@ -637,8 +638,6 @@ module lateReadsWorld {
   export interface World {
     readonly fetch: typeof globalThis.fetch
     readonly db: D1Database
-    readonly evidence: R2Bucket
-    readonly traces: R2Bucket
     readonly requests: Array<string>
     readonly files: Map<string, string>
     /** @throws {never} */
@@ -666,11 +665,10 @@ module lateReadsWorld {
       ? startWorker({
         script: await bundle(`${repoRoot}/apps/points`, { entry: "disputes", config: "test/support/u12/vite.config.ts" }),
         d1: { SLOP_DB: "slop-private" },
-        r2: ["VETTING_EVIDENCE", "PRIVATE_TRACES"],
-        vars: { ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "18633264", SLOP_ENVIRONMENT: "production", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-late-reads-journey" },
+        vars: { PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788", ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "18633264", SLOP_ENVIRONMENT: "local", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-late-reads-journey" },
         services: { SLOPBOT: slopbot },
       })
-      : startWorker({ d1: { SLOP_DB: "slop-private" }, r2: ["VETTING_EVIDENCE", "PRIVATE_TRACES"] })
+      : startWorker({ d1: { SLOP_DB: "slop-private" } })
     const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined)
     if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`)
     const db = await database(mf, "SLOP_DB")
@@ -694,8 +692,12 @@ module lateReadsWorld {
       headers["cf-connecting-ip"] = "203.0.113.71"
       const body = request.method === "GET" ? undefined : await request.text()
       if (url.pathname.startsWith("/data/")) return new WebResponse(files.get(url.pathname) ?? "not found", { status: files.has(url.pathname) ? 200 : 404, headers: { "content-type": "application/json" } })
-      if (points) return mf.dispatchFetch(`https://slop.cash${url.pathname}${url.search}`, { method: request.method, headers: { ...headers, ...(request.method !== "GET" ? { origin: "https://slop.cash" } : {}) }, redirect: "manual", ...body === undefined ? {} : { body } })
-      if (served === undefined) return new WebResponse(files.get(url.pathname) ?? "not found", { status: files.has(url.pathname) ? 200 : 404, headers: { "content-type": "application/json" } })
+      if (points) {
+        const localOrigin = "http://localhost:8788"
+        if (request.method !== "GET") headers.origin = localOrigin
+        return mf.dispatchFetch(`${localOrigin}${url.pathname}${url.search}`, { method: request.method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
+      }
+      if (served === undefined) return new WebResponse("not found", { status: 404, headers: { "content-type": "application/json" } })
       const response = await served(new Request(url.toString(), { method: request.method, headers, ...body === undefined ? {} : { body } }), assets, context)
       return new WebResponse(await response.text(), { status: response.status, headers: Object.fromEntries(response.headers) })
     }
@@ -703,8 +705,6 @@ module lateReadsWorld {
     return {
       fetch: asFetch(browser),
       db,
-      evidence: await storage(mf, "VETTING_EVIDENCE"),
-      traces: await storage(mf, "PRIVATE_TRACES"),
       requests,
       files,
       useCookie: (token) => {
@@ -723,7 +723,7 @@ module lateReadsWorld {
     }
   }
 }
-import { type World as LateReadsWorld, site as lateReadsSite, startWorld as lateReadsStartWorld } from lateReadsWorld
+import { type World as LateReadsWorld, startWorld as lateReadsStartWorld } from lateReadsWorld
 
 module composedWorld {
   import { Request as WebRequest, Response as WebResponse } from "miniflare"
@@ -1107,8 +1107,8 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
   effect function member() {
     const area = try Area
     const session = "frontend-site-session-".padEnd(48, "x")
-    try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public) VALUES (?, ?, ?, ?, 1)", "actor", "42", "member", "2026-11-01T00:00:00.000Z")
-    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), "actor", new Date(Date.now() + 86_400_000).toISOString())
+    try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public) VALUES (?, ?, ?, ?, 0)", "actor", "42", "member", "2026-11-01T00:00:00.000Z")
+    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), "actor", new Date(Date.now() + 3_600_000).toISOString())
     return { cookie: `__Host-slop_points=${session}`, actorId: "actor", githubId: "42", login: "member" } satisfies Session
   }
 
@@ -1142,7 +1142,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       try same([named.status, named.headers.location, named.headers["cache-control"]], [302, "https://slop.test/projects/new", "no-store"])
     })
 
-    it.effect('Every area answers its API through the composed worker, an unknown API path answers JSON, and project artifacts come before the shell (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing")', () => effect {
+    it.effect('Every area answers its API through the composed worker, an unknown API path answers JSON, and project artifacts come before the shell (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing")', () => effect {
       const area = try Area
       served.html = shell
       const paths = ["/api/v1/points/people", "/api/v1/notifications", "/api/v1/vetting/sandbox", "/api/v1/private-request-intake", "/api/v1/points/journal", "/api/v1/slopbot/summary", "/api/v1/payments/received", "/api/v1/admin/fee-conversions"]
@@ -1585,6 +1585,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       provide page(world, stores) {
         const browser = try BrowserSession
         const erased: Array<number> = []
+        try stores.session.values.set("slop-report-compose:1", "private report text")
         try scoped(effect {
           try browser.onAccountChange((actorId) => effect {
             erased.push(actorId)
@@ -1602,7 +1603,6 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           const lifetime = try browser.lifetime()
           const received = try browser.acceptPrivate(lifetime, 3, true)
           const began = try browser.compose({ type: "beginReport", projectId: 1 })
-          try stores.session.values.set("slop-report-compose:1", "private report text")
           const writing = try shape()
           try browser.observe("revalidate")
           const refreshed = try shape()
@@ -1658,11 +1658,13 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       const { world } = try Browser
       const stores = try tab()
       const opened = <A, E, R>(steps: A!E!R) => onPage(world, stores, steps)
-      try opened(effect {
+      const octoCookie = try opened(effect {
         try signedInAs(world, "octo")
         const request = { email: "octo@example.test", enabled: true, idempotencyKey: "octo-request-0001", securityEnabled: true }
         try call(emailVerification, { body: request }, { limitBytes: 4096, expectedActor: "7" })
+        const cookie = world.cookie()
         try (try BrowserSession).signOut()
+        return cookie
       })
       const token = world.sent.find((mail) => mail.githubId === "7")?.token ?? ""
       const first = try opened(effect {
@@ -1677,7 +1679,6 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const afterSignIn = try actions.get()
         return { captured, signedOutCheck, beforeSignIn: [beforeSignIn.kind, beforeSignIn.tokenValid, beforeSignIn.signedIn, beforeSignIn.boundActor], stored: storedBefore?.kind, afterSignIn: [afterSignIn.signedIn, afterSignIn.generation] }
       })
-      const octoCookie = world.cookie()
       const reloaded = try opened(effect {
         const link = try EmailLink
         const actions = try EmailActions
@@ -2267,9 +2268,23 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     }, FetchHttpClient.Fetch, asFetch(serve)))
     it.effect(`A visitor reads a project's maintainer share from the live registry: a share set this month starts next month, and no setting shows nothing (spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits")`, () => Effect.provide(Effect.provideService(effect {
       const boot = try bootedRegistry()
-      try same(try orDie(Effect.try(() => listedProjects(boot).map((project) => [project.id, publishedShare(project, new Date(generatedMs))]))), [
+      const projects = listedProjects(boot)
+      const now = new Date(generatedMs)
+      const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
+      const slop = projects[0]
+      const pinnedPositive = {
+        ...slop,
+        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), monthlyCapUsd: 0, cycleCaps: { [month]: 500 } } },
+      }
+      const pinnedZero = {
+        ...slop,
+        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), cycleCaps: { [month]: 0 } } },
+      }
+      try same(try orDie(Effect.try(() => [...projects.map((project) => [project.id, publishedShare(project, now)]), ["pinnedPositive", publishedShare(pinnedPositive, now)], ["pinnedZero", publishedShare(pinnedZero, now)]])), [
         ["slop", { tag: "ChangingShare", thisMonth: 0, fromNext: 2000, fromPeriod: 202612 }],
         ["quiet", { tag: "NoShare" }],
+        ["pinnedPositive", { tag: "ChangingShare", thisMonth: 0, fromNext: 2000, fromPeriod: 202612 }],
+        ["pinnedZero", { tag: "NoShare" }],
       ])
     }, FetchHttpClient.Fetch, asFetch(serve)), onSite))
   })
@@ -2332,7 +2347,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const token = `account-journey-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
       sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
-      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 86_400_000).toISOString()})`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -2705,9 +2720,9 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       areas: [backend, security],
       services: (bound: typeof env) => {
         const base = Layer.mergeAll(d1(bound.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(bound))
-        const enforcement = Layer.provideMerge(EnforcementRowsLive, Layer.mergeAll(noticePorts, contributorAudience))
         const reads = Layer.provide(github({ token: Redacted.make(bound.SLOP_GITHUB_READ_TOKEN), userAgent: "slop-projects-journey" }), outbound)
-        return Layer.provideMerge(Layer.mergeAll(CallerLive, enforcement, backendServices(bound), securityBindings(bound), repositoryAccessReader(bound.SLOPBOT), reads), base)
+        const wired = Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(bound), securityBindings(bound), noticePorts, contributorAudience, reads), base)
+        return Layer.provideMerge(enforcementPorts, wired)
       },
       assets: "ASSETS",
     })
@@ -2819,7 +2834,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const token = `projects-journey-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
       sql`INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${String(githubId)}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
-      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 86_400_000).toISOString()})`,
+      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -2883,8 +2898,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     try (try D1).batch([
       sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, 1, ${text}, ${digest}, 'Seeded', ${String(stewardId)}, ${`member-${stewardId}`}, ${seededAt})`,
       sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login) VALUES (${id}, 'paused', 1, ${text}, ${digest}, ${seededAt}, ${seededAt}, NULL, NULL, NULL)`,
-      sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${`member-${stewardId}/${name}`}, ${id})`,
-      sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${`github:${githubId}`}, ${id})`,
+      sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${`member-${stewardId}/${name}`}, ${id}), (${`github:${githubId}`}, ${id})`,
     ])
     return text
   }
@@ -2926,7 +2940,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const reason = try (try D1).all(sql`SELECT reason FROM project_revisions WHERE project_id = ${id} AND revision = 3`)
         const application = "app_journey00001"
         const text = JSON.stringify(try manifest("journey-pending", "other", otherId))
-        try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at) VALUES (${application}, 'journey-pending', ${`member-${stewardId}/other`}, ${text}, ${try sha256Hex(text)}, 'Accepted pull requests with tests.', ${steward}, ${`member-${stewardId}`}, '2026-11-02T00:00:00.000Z', 'pending', 'sent', '2026-11-02T00:00:00.000Z')`)
+        try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification) VALUES (${application}, 'journey-pending', ${`member-${stewardId}/other`}, ${text}, ${try sha256Hex(text)}, 'Accepted pull requests with tests.', ${steward}, ${`member-${stewardId}`}, '2026-11-02T00:00:00.000Z', 'pending', 'sent')`)
         const cancelled = (try cancelProjectApplication(application, steward)).status
         try same({
           owned: owned.includes(`member-${stewardId}/tool`),
@@ -2955,7 +2969,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           checked: ["ready", "none", 2, "active"],
           revised: [3, ["headline"]],
           stale: ["Refused", 409, "stale_revision"],
-          reason: [{ reason: "Owner update by @member-41: presentation (headline) published. Clearer headline" }],
+          reason: [{ reason: "Clearer headline" }],
           cancelled: "cancelled",
           unexpected: [],
         })
@@ -3095,17 +3109,18 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       VETTING_EVIDENCE: started.evidence,
       PRIVATE_TRACES: started.reports,
       SLOP_PRIVATE_INTAKE_MODE: "on",
+      PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788",
+      TRACE_AUTH_SECRET: "trace-auth-secret-for-the-security-journey",
       ADMIN_GITHUB_IDS: "",
       PROJECT_MODERATOR_GITHUB_IDS: "",
-      SLOP_ENVIRONMENT: "production",
-      TRACE_AUTH_SECRET: "trace-auth-secret-for-the-security-report-journey",
+      SLOP_ENVIRONMENT: "local",
     }
     const reportSite = pages({
       areas: [backend, operations, slopbot, security],
       services: (bound: typeof env) => {
         const base = Layer.mergeAll(d1(bound.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(bound))
-        const enforcement = Layer.provideMerge(EnforcementRowsLive, Layer.mergeAll(noticePorts, contributorAudience))
-        return Layer.provideMerge(Layer.mergeAll(CallerLive, enforcement, backendServices(bound), securityBindings(bound)), base)
+        const wired = Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(bound), securityBindings(bound), noticePorts, contributorAudience), base)
+        return Layer.provideMerge(enforcementPorts, wired)
       },
       assets: "ASSETS",
     })
@@ -3142,7 +3157,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const token = `security-journey-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
       sql`INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${String(githubId)}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
-      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 86_400_000).toISOString()})`,
+      sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -3484,7 +3499,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const token = `late-reads-session-${githubId}`.padEnd(48, "x")
     try (try D1).batch([
       sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${actorId}, ${githubId}, ${login}, ${seededAt}, 1, 5)`,
-      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${actorId}, ${new Date(Date.now() + 86_400_000).toISOString()})`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${actorId}, ${new Date(Date.now() + 3_600_000).toISOString()})`,
     ])
     return token
   }
@@ -3516,8 +3531,12 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           rolesFrom({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" }),
           Layer.succeed(DeploymentTier, { tier: "production" }),
           Layer.succeed(HttpClient.HttpClient, HttpClient.make(() => die(new Error("a public read must never reach a chain or GitHub")))),
+          paymentNetworks({}),
+          reservedAwardFeedAccess(undefined),
+          slopbotAccess(undefined),
+          Layer.succeed(PublicSecurity, { restrictions: () => Effect.succeed([]), vetting: () => Effect.succeed({ state: "cleared" }) }),
         )
-        return Layer.provideMerge(Layer.mergeAll(Layer.provide(Layer.mergeAll(EnforcementRowsLive, PublicSecurityLive), Layer.mergeAll(noticePorts, contributorAudience, securityBindings({ VETTING_EVIDENCE: started.evidence, PRIVATE_TRACES: started.traces, ASSETS: accountAssets }))), backendServices({ SLOP_IDENTITY: accountAssets, SLOP_ENVIRONMENT: "production" }), paymentNetworks({ PAYMENT_NETWORKS: "[]" }), repositoryAccessReader(undefined)), base)
+        return Layer.provideMerge(Layer.provideMerge(EnforcementRowsLive, Layer.mergeAll(noticePorts, contributorAudience)), base)
       },
       assets: "ASSETS",
     })

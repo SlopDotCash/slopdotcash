@@ -38,7 +38,9 @@ export function EnforcementPanel({ runtime, project, actorId, onAccessLost, onDo
   const request = enforcementRequest({ action, reason, evidence, revision: project.revision, nextSequence: enforcement.nextSequence, decisionRequired: enforcement.decisionRequired, responsible });
   const requestKey = JSON.stringify({ actorId, projectId: project.id, request });
   const latestKeyRef = useRef(requestKey);
-  latestKeyRef.current = requestKey;
+  const syncLatestKey = (node: HTMLElement | null) => {
+    if (node !== null) latestKeyRef.current = requestKey;
+  };
   const preview = review?.key === requestKey ? review.reviewed.preview : null;
 
   const showPreview = async (event: FormEvent) => {
@@ -84,7 +86,7 @@ export function EnforcementPanel({ runtime, project, actorId, onAccessLost, onDo
   const locked = preview !== null;
   const destructive = preview !== null && (preview.action === "quarantine" || preview.action === "ban");
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-4 rounded-md border border-border p-4">
+    <section ref={syncLatestKey} aria-labelledby={headingId} className="flex flex-col gap-4 rounded-md border border-border p-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h4 id={headingId} className="text-base font-semibold text-foreground">
           Enforcement

@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
-// spec/ui/copy.md, "Story: Copy a value and know whether it worked"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"; spec/ui/pagination.md, "Story: Move through pages without leaving the list"; spec/ui/pagination.md, "The page stays within the pages that exist"; spec/ui/index.md, "Each control kind has one primitive, and every component has stories"
+// spec/ui/copy.md, "Story: Copy a value and know whether it worked"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
+// spec/ui/pagination.md, "Story: Move through pages without leaving the list"; spec/ui/pagination.md, "The page stays within the pages that exist"
+// spec/ui/index.md, "Each control kind has one primitive, and every component has stories"
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";

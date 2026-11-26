@@ -6,7 +6,8 @@ import type { DurableObjectNamespace, Queue, RateLimit, SendEmail } from "../bin
 import type { KeySet } from "../keys.ts"
 import { emailMessage } from "./mail.ts"
 import { checkAll, signAll } from "./primitives.vibe"
-import { Execution, handle, later, pages, route } from "./site.vibe"
+import { Execution, later } from "../../../src/worker.vibe"
+import { handle, pages, route } from "./site.vibe"
 import { cacheKey, cacheable, edgeCache, keep } from "./subtle.ts"
 
 export interface JournalStub {

@@ -5,6 +5,8 @@ import { cn, focusRing, inactive, target } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { StatusIcon } from "./Status.tsx";
 
+const outlined = "border border-foreground/22 bg-transparent text-foreground hover:border-foreground hover:bg-foreground/6 active:bg-foreground/12";
+
 /** The look of a button by variant and size, for an element that acts as one without being a `Button`. */
 export const buttonVariants = cva(
   [focusRing, inactive, target, "inline-flex items-center justify-center gap-2.5 rounded-md border border-transparent text-base leading-tight font-bold whitespace-nowrap transition-colors duration-fast ease-standard motion-reduce:transition-none [&_svg]:size-4.5 [&_svg]:shrink-0"],
@@ -14,8 +16,8 @@ export const buttonVariants = cva(
         primary: "bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-pressed",
         link: "text-primary underline underline-offset-4 hover:decoration-2",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        outline: "border border-foreground/22 bg-transparent text-foreground hover:border-foreground hover:bg-foreground/6 active:bg-foreground/12",
+        secondary: outlined,
+        outline: outlined,
         inverse: "border-0 bg-foreground text-background hover:bg-foreground/90",
         ghost: "hover:bg-accent hover:text-accent-foreground",
       },

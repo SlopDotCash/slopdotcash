@@ -320,14 +320,15 @@ const pausedLine = "Fees charged while the program is paused and the vault is em
 
 effect function unpaidReceipts(assessed: Assessed.Shape) {
   const { world, fake } = assessed
+  const unpaidReporter = "41052"
   try paused(world, 5, pausedLine)
-  const g = try submit(world, "assessment-case-g-01", reportG)
+  const g = try submit(world, "assessment-case-g-01", reportG, unpaidReporter)
   try qualify(world, g.id)
   fake.reply(about(reportG.summary), { text: proposal("A paused vault charges an uncapped fee.", []) })
   try assessQualified({ caseId: g.caseId, version: 1 })
   const pausedRun = fake.calls.at(-1)
   try paused(world, 6, undefined)
-  const h = try submit(world, "assessment-case-h-01", reportH)
+  const h = try submit(world, "assessment-case-h-01", reportH, unpaidReporter)
   try qualify(world, h.id)
   fake.reply(about(reportH.summary), { text: proposal("Withdrawals round the share price up.", []) })
   try assessQualified({ caseId: h.caseId, version: 1 })
@@ -349,7 +350,7 @@ effect function unpaidReceipts(assessed: Assessed.Shape) {
 }
 
 effect function unpaidScopeKept(world: World) {
-  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-scoped", idempotencyKey: "assessment-case-u-01", origin: "slop", report: reportF } }))
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: "41051", json: { projectId: "intake-scoped", idempotencyKey: "assessment-case-u-01", origin: "slop", report: reportF } }))
   if (answer.status !== 201) return try die(new Error(`unpaid report not received: ${answer.status} ${JSON.stringify(answer.body)}`))
   const received = caseOf(answer)
   const record = try caseRecord(received.caseId)

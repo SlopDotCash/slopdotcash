@@ -77,27 +77,20 @@ export const penaltyHistoryVersion = "slop-penalty-history:v1"
 
 export const maximumPageRecords = 100
 
-const AnyRecord = Schema.Unknown
+const OpaqueRecord = Schema.Unknown
 
 export schema ValueHistoryPage {
   readonly schemaVersion: string
   readonly repository?: string
   readonly repositoryNodeId?: string
   readonly pullRequestNumber: number
-  readonly records: ReadonlyArray<AnyRecord>
+  readonly records: ReadonlyArray<OpaqueRecord>
   readonly nextAfter: number | null
 }
 
-export schema WorkUnitHistoryPage {
-  readonly schemaVersion: string
-  readonly repository?: string
-  readonly repositoryNodeId?: string
-  readonly pullRequestNumber: number
-  readonly records: ReadonlyArray<AnyRecord>
-  readonly nextAfter: number | null
-  readonly throughSequence: number
-  readonly totalRecords: number
-}
+const WorkUnitHistoryFields = Schema.Struct({ ...ValueHistoryPage.fields, throughSequence: Schema.Number, totalRecords: Schema.Number })
+
+export schema WorkUnitHistoryPage = WorkUnitHistoryFields
 
 export schema WorkUnitHistoryRow {
   readonly sequence: number
@@ -122,7 +115,7 @@ export schema PenaltyRow {
 export schema PenaltyPage {
   readonly schemaVersion: string
   readonly project: string
-  readonly records: ReadonlyArray<AnyRecord>
+  readonly records: ReadonlyArray<OpaqueRecord>
   readonly nextAfter: string | null
 }
 

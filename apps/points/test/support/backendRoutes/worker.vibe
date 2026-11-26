@@ -1,5 +1,5 @@
 // spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"
-import type { D1Database } from "@repo/platform/bindings"
+import type { CacheStorage, D1Database } from "@repo/platform/bindings"
 import { CallerLive } from "@repo/backend/caller"
 import { type BackendVars, backend, backendServices } from "@repo/backend/live"
 import { edgeCache } from "@repo/platform/cache"
@@ -13,7 +13,8 @@ import { noticePorts } from "@repo/operations/live"
 import { type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { traceServices } from "@repo/contributor/live"
 import { contributorAudience } from "../../../src/live.vibe"
-import { workerCaches } from "./edgeCaches.ts"
+
+declare const caches: CacheStorage
 
 interface Env extends RoleVars, BackendVars, SecurityEnv {
   readonly SLOP_DB: D1Database
@@ -21,10 +22,9 @@ interface Env extends RoleVars, BackendVars, SecurityEnv {
 }
 
 function services(env: Env) {
-  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, edgeCache(workerCaches()), rolesFrom(env))
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, edgeCache(caches), rolesFrom(env))
   const reads = Layer.provide(github({ token: Redacted.make(env.SLOP_GITHUB_READ_TOKEN), userAgent: "slop-points-backend-routes" }), outbound)
   const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), base)
-  // The trace API's bearer routes (wallet registration) verify contributor bearer tokens as the pages Worker does.
   const shell = Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(env), securityBindings(env), traceServices(env), reads), notices)
   return Layer.provideMerge(enforcementPorts, shell)
 }

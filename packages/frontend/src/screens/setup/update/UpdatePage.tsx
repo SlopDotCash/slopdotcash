@@ -104,6 +104,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const [addition, setAddition] = useState<Addition>({ state: "idle" });
   const inFlightRef = useRef(false);
   const lookupsRef = useRef(0);
+  const pendingFocusRef = useRef<string | null>(null);
   const branch = useIntegrationBranch(runtime);
   const nowMs = useNow();
   const current = published !== undefined && published.revision >= base.revision ? published : base;
@@ -120,6 +121,12 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const valid = Object.keys(review.errors).length === 0;
   const publishing = submission.status === "publishing";
   const shown = (field: string) => (attempted ? review.errors[field] : undefined);
+  const mainRef = (node: HTMLElement | null) => {
+    if (node === null || pendingFocusRef.current === null) return;
+    const target = pendingFocusRef.current;
+    pendingFocusRef.current = null;
+    focusField(target);
+  };
   const update = (field: UpdateField, value: string) => store.update((latest) => withField(latest, field, value, managed.revision));
   const changePending = (change: (list: ReadonlyArray<PendingRepository>) => ReadonlyArray<PendingRepository>) =>
     store.update((latest) => withField(latest, "repositories", pendingText(change(pendingRepositories(latest.fields?.repositories ?? ""))), managed.revision));
@@ -129,9 +136,8 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     setAttempted(true);
     const invalid = Object.keys(review.errors);
     if (invalid.length > 0) {
+      pendingFocusRef.current = fieldIds[invalid[0] ?? ""] ?? invalid[0] ?? "";
       setOpen((groups) => new Set([...groups, ...invalid.map(groupOf)]));
-      const target = fieldIds[invalid[0] ?? ""] ?? invalid[0] ?? "";
-      requestAnimationFrame(() => focusField(target));
       return;
     }
     if (!review.changed || review.stale) return;
@@ -194,7 +200,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     </Button>
   );
   return (
-    <main className={page}>
+    <main ref={mainRef} className={page}>
       <nav aria-label="Breadcrumb" className="text-sm">
         <a href={`/projects/${manifest.slug}`} className="text-muted-foreground hover:text-foreground">
           {manifest.name}

@@ -292,3 +292,15 @@ export effect function verifyTransactionSignatures(transaction: DecodedTransacti
   }
   return transaction.signatures.length > 0
 }
+
+export function hostedSolanaOperator(endpoint: string): string | undefined {
+  const url = URL.parse(endpoint)
+  if (url === null || url.protocol !== "https:") return undefined
+  const host = url.hostname.toLowerCase()
+  if (host === "api.mainnet-beta.solana.com") return "solana-public"
+  if (host === "solana-rpc.publicnode.com") return "allnodes-publicnode"
+  if (host === "public.rpc.solanavibestation.com") return "solana-vibe-station"
+  if (host.endsWith(".alchemy.com")) return "alchemy"
+  if (host.endsWith(".helius-rpc.com")) return "helius"
+  return undefined
+}

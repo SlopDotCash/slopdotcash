@@ -1,5 +1,5 @@
 // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"
-import { Alert, Button, DataState, NotFound, PageHeader } from "@repo/ui";
+import { Alert, Button, cn, DataState, NotFound, PageHeader, shell } from "@repo/ui";
 import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
 import { reviewBudgetShown } from "../../../gen/frontend__views.ts";
@@ -19,7 +19,6 @@ import { FundedMeter } from "../cycles/CycleAllocation.tsx";
 import { copyText } from "../home/prompt.vibe";
 import type { NetworkPays } from "../public/funding.ts";
 import { retryOnce, type Settled, useMounted, useNow, useOnce } from "../../app/hooks.ts";
-import { pageShellClass } from "../../app/PageShell.tsx";
 import { managementAccess } from "../security/settings/runtime.vibe";
 import { FundsAndAwards } from "./FundsAndAwards.tsx";
 import { useShownRead } from "./hooks.ts";
@@ -33,7 +32,7 @@ import { ProjectWork, type WorkShown } from "./ProjectWork.tsx";
 import type { ShownProject } from "./project.schema.ts";
 import { loadProject, loadWork, type ProjectRuntime, projectName, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "./reads.vibe";
 import { RewardSummary } from "./RewardSummary.tsx";
-import { awardMonths, projectBacklogOutOfRotation, projectCycles, projectFunding, projectHeld, projectListing, projectPromiseOf, type ShownWanted, suggestedWork, wantedReadOf } from "./summary.ts";
+import { awardMonths, projectCycles, projectFunding, projectHeldOrOutOfRotation, projectListing, projectPromiseOf, type ShownWanted, suggestedWork, wantedReadOf } from "./summary.ts";
 
 export type ProjectPageProps = PageProps & {
   /** Whether payments run on a network: only vaults on paying networks hold a pool's monthly amount. */
@@ -53,7 +52,7 @@ type Found = {
   repositoryRegistry: RepositoryRegistryOf;
 };
 
-const pageClass = pageShellClass("lg", "12", "py-12");
+const pageClass = cn(shell, "flex flex-1 flex-col gap-16 pt-10 pb-8");
 
 function Loading() {
   return (
@@ -123,8 +122,7 @@ function Install({ runtime, project, reads, networkPays, nowMs }: Pick<Found, "r
       project={project}
       clearance={clearanceOf(discovery, project.id)}
       listing={projectListing({ project, networkPays, nowMs })}
-      held={projectHeld(project, merge, nowMs)}
-      outOfRotation={projectBacklogOutOfRotation(project, merge, nowMs)}
+      held={projectHeldOrOutOfRotation(project, merge, nowMs)}
       origin={pageOrigin()}
       onCopy={(text) => runtime.runPromise(copyText(text))}
     />
@@ -211,7 +209,7 @@ function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntim
   const budget = project.reward.reviewBudget;
   return (
     <main className={pageClass}>
-      <section className="flex flex-col gap-6">
+      <section className="flex flex-col gap-4">
         <ProjectHeader project={project} />
         <PoolSummary project={project} boot={boot} reads={reads} networkPays={networkPays} nowMs={nowMs} />
         <ProjectLinks record={project.record} />

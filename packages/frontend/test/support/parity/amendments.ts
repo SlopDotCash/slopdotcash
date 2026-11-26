@@ -17,6 +17,7 @@ export interface Amendment {
   readonly from?: { readonly route: string; readonly name: string; readonly keep: ReadonlyArray<string> };
   readonly replaces?: ReadonlyArray<string>;
   readonly success?: ReadonlyArray<number>;
+  readonly refusalOnly?: true;
   readonly refusals: ReadonlyArray<AmendedRefusal>;
 }
 
@@ -95,9 +96,19 @@ const operatorRefusals = (at: string): ReadonlyArray<AmendedRefusal> => [
   { key: "methodNotAllowedOperator", status: 405, error: "method_not_allowed", cacheControl: "no-store", like: "internalError", at },
 ];
 
+const catchUpNewProjectRefusal: AmendedRefusal = {
+  key: "catchUpRefusedANewProjectIs",
+  status: 422,
+  error: "catch_up_refused",
+  message: "A new project is not catching up on reviews; start it from the project's settings once it is listed",
+  like: "originForbidden",
+  at: "backend/projects/handler.ts:440",
+};
+
 export const amendments: ReadonlyArray<Amendment> = [
+  { route: "POST /api/v1/projects", refusals: [catchUpNewProjectRefusal] },
   { route: "PUT /api/v1/projects/:id", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage] },
-  { route: "POST /api/v1/project-applications/:id/publish", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage] },
+  { route: "POST /api/v1/project-applications/:id/publish", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage, catchUpNewProjectRefusal] },
   { route: "POST /api/v1/admin/projects/:id/enforcement-preview", refusals: enforcementCodes },
   { route: "POST /api/v1/admin/projects/:id/enforcement", refusals: enforcementCodes },
   { route: "POST /api/v1/project-appeals", refusals: enforcementCodes },
@@ -122,7 +133,7 @@ export const amendments: ReadonlyArray<Amendment> = [
   { route: "GET /api/v1/submission-fee/items/:repositoryId/:pullNumber", from: { ...plainJson, name: "getSubmissionFeeItemsByRepositoryIdByPullNumber" }, refusals: submissionFeeRefusals(215, submissionFeeCache) },
   { route: "GET /api/v1/submission-fee/reports/:caseId", from: { ...plainJson, name: "getSubmissionFeeReportsByCaseId" }, refusals: submissionFeeRefusals(251, "no-store") },
   { route: "GET /api/v1/operator/reserved-awards", from: { ...plainJson, name: "getOperatorReservedAwards" }, success: [], refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
-  { route: "POST /api/v1/operator/reserved-awards", from: { ...plainJson, name: "postOperatorReservedAwards" }, success: [], refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
+  { route: "POST /api/v1/operator/reserved-awards", from: { ...plainJson, name: "postOperatorReservedAwards" }, success: [], refusalOnly: true, refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
   { route: "GET /api/v1/operator/protected-point-months", from: { ...plainJson, name: "getOperatorProtectedPointMonths" }, success: [], refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
-  { route: "POST /api/v1/operator/protected-point-months", from: { ...plainJson, name: "postOperatorProtectedPointMonths" }, success: [], refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
+  { route: "POST /api/v1/operator/protected-point-months", from: { ...plainJson, name: "postOperatorProtectedPointMonths" }, success: [], refusalOnly: true, refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
 ];

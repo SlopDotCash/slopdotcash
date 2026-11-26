@@ -1,27 +1,19 @@
 // spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
 import { type Hex, keccak256, parseTransaction, serializeTransaction } from "viem"
-import { D1, RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import { D1, type RowMismatch, type Statement, sql } from "@repo/platform/d1"
 import { isoAt } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Event, type Fee, NotAState, type ProviderFinding, type RecordedSend, type Reservation, type Row, apply, day, decodeEvent, liabilityOf, maximumSafeValue, ownReservation, pendingIntent, recordedMaximum, vaultOf, wallet, worstCase } from "../../gen/fees__conversion.effect.vibe"
+import { type Event, type Fee, type NotAState, type ProviderFinding, type RecordedSend, type Reservation, type Row, apply, day, liabilityOf, maximumSafeValue, ownReservation, pendingIntent, recordedMaximum, vaultOf, wallet, worstCase } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, type Sender, dailyCeilingOf, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import { type Instance, type Intent, type Journal, type NameKind, type Names, amountOf, decodeJournal, networkNames, reasonText, revertedText, runText, stateName, unitsOf, weiAmount, weiOf } from "./codec.vibe"
 import { type EvmSend, type ReservedSend, verifiedEvmSend, verifiedSolanaSend } from "./signedSend.ts"
-import * as W from "./writes.vibe"
+import { type Evaluation, type RouteName, abandonReservation, abandonReserved, acquireLease, acquireRotationLease, claimed, evaluation, expiryProof, finalized, importReservation, inScope, releaseLease, releaseRotationLease, renewLease, renewRotationLease, replacement, reserve, reverted, rotationPrefix, scanStep, settled, signed, transition } from "./writes.vibe"
 import { type RecordedSwap, retainedSendReview } from "../solana/receipt.vibe"
 
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  import { withinReservation as within } from "./amounts.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-  /** @throws {never} */
-  export function withinReservation(gas: bigint, feePerGas: bigint, maximum: bigint): boolean { return within(gas, feePerGas, maximum) }
-}
-import { errorText, withinReservation } from verified
+import { errorText, withinReservation } from "../kernels/verified.vibe"
 
-export error JournalRefused { event: string; issue: string }
+error JournalRefused { event: string; issue: string }
 
 export interface ProviderContext { readonly firstAvailableSlot: number; readonly finalizedContextSlot: number; readonly signatureContextSlot: number }
 
@@ -31,7 +23,7 @@ export interface Facts {
   readonly token?: string
   readonly vault?: string
   readonly targetToken?: string
-  readonly route?: W.RouteName
+  readonly route?: RouteName
   readonly summary?: string
   readonly detail?: string
   readonly broadcast?: BroadcastStage
@@ -56,7 +48,7 @@ export interface Facts {
   readonly providers?: readonly [ProviderContext, ProviderContext]
 }
 
-export interface Sent { readonly state: Fee; readonly instance: Instance }
+interface Sent { readonly state: Fee; readonly instance: Instance }
 
 type RotationEvent = Extract<Event, { readonly type: "acquireRotationLease" | "renewRotationLease" | "releaseRotationLease" }>
 type JournalEvent = Exclude<Event, RotationEvent>
@@ -69,7 +61,7 @@ const rotationRefusals = {
 const rotationUnavailable = "Fee rotation database operation unavailable"
 
 function scoped(instance: Instance) {
-  return W.inScope(networkNames[instance.network], instance.scope)
+  return inScope(networkNames[instance.network], instance.scope)
 }
 
 function evidence(instance: Instance) {
@@ -165,7 +157,7 @@ effect function admitted(journal: Journal, current: Fee, nonce: number, maximum:
   if (liabilityOf([...keyed, candidate], day(current)) > dailyCeilingOf(current.network)) throw new JournalRefused({ event: event.type, issue: "the network's native budget for today is reached" })
 }
 
-function routeFor(network: Network): W.RouteName {
+function routeFor(network: Network): RouteName {
   return network === "Solana" ? "jupiter" : "kyberswap"
 }
 
@@ -201,7 +193,7 @@ effect function evaluated(journal: Journal, instance: Instance, event: Event, ne
   const network = networkNames[current.network]
   const row = try need(next.rows[next.rows.length - 1], event, "the evaluation added no row")
   const found = event.quote.route === "Found"
-  const evaluation: W.Evaluation = {
+  const entry: Evaluation = {
     id: try randomId(),
     runId: try need(journal.runs.get(event.runId), event, "the run is not in this journal"),
     network,
@@ -222,7 +214,33 @@ effect function evaluated(journal: Journal, instance: Instance, event: Event, ne
     reason: waitingText(row, facts),
     createdAt: try isoAt(current.clock + instance.epoch),
   }
-  return { intent: row.live && row.state === "Quoted", evaluated: { evaluation, row } } satisfies Evaluated
+  return { intent: row.live && row.state === "Quoted", evaluated: { evaluation: entry, row } } satisfies Evaluated
+}
+
+effect function scanWrite(journal: Journal, names: Names, event: Extract<JournalEvent, { type: "recordScan" }>, facts: Facts, now: string) {
+  const scan = event.scan
+  const held = try need(journal.gas.find((entry) => entry.tx !== null && names.number("tx", entry.tx) === scan.tx), event, "the scanned transaction has no signed reservation")
+  const txId = try need(held.tx ?? undefined, event, "the scanned transaction has no signed reservation")
+  const operator = try named(names, "operator", scan.operator, event)
+  const nextSlot = try need(facts.nextSlot, event, "the scan cursor is missing")
+  if (nextSlot !== scan.coverage.fromSlot) throw new JournalRefused({ event: event.type, issue: "the scan cursor is not the event's coverage start" })
+  const page = try need(facts.page, event, "the scanned page is missing")
+  if (page === "[]") throw new JournalRefused({ event: event.type, issue: "a scan step retains at least one block" })
+  const coverage = JSON.stringify({
+    txId,
+    operator,
+    blockhash: try need(facts.blockhash, event, "the scanned blockhash is missing"),
+    blockhashSlot: scan.blockhashSlot,
+    tipSlot: scan.coverage.tipSlot,
+    tipHash: try named(names, "hash", scan.coverage.tipHash, event),
+    nextSlot,
+    expectedHash: try need(facts.expectedHash, event, "the scan's expected hash is missing"),
+    blocks: scan.coverage.blocks,
+    digest: try named(names, "hash", scan.coverage.digest, event),
+    complete: scan.complete,
+    revision: scan.revision,
+  })
+  return scanStep({ txId, operator, revision: scan.revision, wallet: held.wallet, runId: try need(journal.runs.get(event.runId), event, "the run is not in this journal"), scan: coverage, page, now })
 }
 
 effect function writesFor(journal: Journal, instance: Instance, names: Names, event: JournalEvent, next: Fee, facts: Facts, created: Evaluated | undefined) {
@@ -241,7 +259,7 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
     const landed = try need(record.txs.find((text) => names.number("tx", text) === tx), event, "the receipt is not of one of the row's own attempts")
     const actualWei = try need(facts.actualWei, event, "the receipt's exact native fee is missing")
     try matchesNative(actualWei, actualNative, current.network, event, "the receipt's native fee")
-    return { landed, statements: W.settled({ ids: nonceGroup(row), landedTxId: landed, actualWei, day: now.slice(0, 10), blockHash: try need(facts.blockHash, event, "the receipt's block hash is missing") }) }
+    return { landed, statements: settled({ ids: nonceGroup(row), landedTxId: landed, actualWei, day: now.slice(0, 10), blockHash: try need(facts.blockHash, event, "the receipt's block hash is missing") }) }
   }
   switch (event.type) {
     case "chooseInstance":
@@ -260,17 +278,17 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       return []
     case "acquireLease": {
       const run = runText(instance.scope, try named(names, "run", event.runId, event), event.trigger)
-      return [...W.acquireLease(network, run, try isoAt(next.lease.expiresAt + epoch), now), W.abandonReserved(network, instance.scope)]
+      return [...acquireLease(network, run, try isoAt(next.lease.expiresAt + epoch), now), abandonReserved(network, instance.scope)]
     }
     case "renewLease":
-      return W.renewLease(network, try runOf(event.runId), try isoAt(next.lease.expiresAt + epoch), now)
+      return renewLease(network, try runOf(event.runId), try isoAt(next.lease.expiresAt + epoch), now)
     case "releaseLease":
-      return [W.releaseLease(network, try runOf(event.runId), now)]
+      return [releaseLease(network, try runOf(event.runId), now)]
     case "evaluate":
-      return created === undefined || created.intent ? [] : [W.evaluation(created.evaluated.evaluation)]
+      return created === undefined || created.intent ? [] : [evaluation(created.evaluated.evaluation)]
     case "reserveGas": {
       try admitted(journal, current, event.nonce, event.maximum, true, event)
-      return [W.reserve({
+      return [reserve({
         id: `fee-gas-${try randomId()}`,
         network,
         wallet: try walletText(wallet(current)),
@@ -296,16 +314,16 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const recorded = solana ? { token: pending.token, targetToken: pending.targetToken, amountIn: try amountOf(pending.amountIn, `fee conversion ${pending.id}`), minimumOutput: try amountOf(pending.minAmountOut, `fee conversion ${pending.id}`) } : undefined
       const checked = try verifiedSend(current.network, { txId, rawTx, intentHash: held.intent, wallet: held.wallet }, held.accountProof, event, recorded)
       try boundEvm(checked, event.send.nonce, try amountOf(held.maximumWei, `fee native gas ${held.id}`), event)
-      const signed = try need(next.rows[intent.id - 1], event, "the signed row is missing")
+      const signedRow = try need(next.rows[intent.id - 1], event, "the signed row is missing")
       const kind = event.send.kind === "Approval" ? "approval" : "conversion"
-      return [W.signed(pending, {
+      return [signed(pending, {
         kind,
         txId,
         rawTx,
         nonce: solana ? null : event.send.nonce,
         expiresAt: facts.expiresAt ?? null,
-        minAmountOut: kind === "approval" ? null : String(signed.minimumOutput),
-        journal: journalText(signed),
+        minAmountOut: kind === "approval" ? null : String(signedRow.minimumOutput),
+        journal: journalText(signedRow),
         gasId: held.id,
         now,
       })]
@@ -317,7 +335,7 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const intentHash = try recordedIntentHash(record.rawTx, event)
       const checked = try need(try verifiedSend(current.network, { txId: record.txId, rawTx: record.rawTx, intentHash, wallet: record.wallet }, null, event), event, "only EVM sends are imported")
       if (checked.nonce !== recorded.nonce || checked.gas.toString() !== String(recorded.gasLimit)) throw new JournalRefused({ event: event.type, issue: "the imported send differs from its recorded bytes" })
-      return W.importReservation({
+      return importReservation({
         id: `fee-gas-${try randomId()}`,
         network,
         wallet: record.wallet,
@@ -337,34 +355,34 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const held = journal.gas[ownReservation(current, event.runId).id - 1]
       const reason = detailOf("prepare: ", facts)
       return [
-        record.pending === undefined ? W.transition(record.id, ["quoted"], "failed", reason, now) : W.evaluation({ ...record.pending, state: "failed", reason }),
-        ...held === undefined ? [] : [W.abandonReservation(held.id)],
+        record.pending === undefined ? transition(record.id, ["quoted"], "failed", reason, now) : evaluation({ ...record.pending, state: "failed", reason }),
+        ...held === undefined ? [] : [abandonReservation(held.id)],
       ]
     }
     case "abandonIntent": {
       const record = try sendOf(event.id)
       return [record.pending === undefined
-        ? W.transition(record.id, ["quoted"], "failed", reasonText.RunEndedBeforeSigning, now)
-        : W.evaluation({ ...record.pending, state: "failed", reason: reasonText.RunEndedBeforeSigning })]
+        ? transition(record.id, ["quoted"], "failed", reasonText.RunEndedBeforeSigning, now)
+        : evaluation({ ...record.pending, state: "failed", reason: reasonText.RunEndedBeforeSigning })]
     }
     case "broadcastFail":
-      return [W.transition((try sendOf(event.id)).id, ["submitted"], "unknown", detailOf(`${facts.broadcast ?? "broadcast"}: `, facts), now)]
+      return [transition((try sendOf(event.id)).id, ["submitted"], "unknown", detailOf(`${facts.broadcast ?? "broadcast"}: `, facts), now)]
     case "rebroadcast": {
       const record = try sendOf(event.id)
       return [event.accepted
-        ? W.transition(record.id, ["unknown"], "submitted", null, now)
-        : W.transition(record.id, ["unknown"], "unknown", detailOf("rebroadcast: ", facts), now)]
+        ? transition(record.id, ["unknown"], "submitted", null, now)
+        : transition(record.id, ["unknown"], "unknown", detailOf("rebroadcast: ", facts), now)]
     }
     case "finalizeSend": {
       const row = try need(current.rows[event.id - 1], event, "the row is missing")
       const after = try need(next.rows[event.id - 1], event, "the row is missing")
       const record = try sendOf(event.id)
-      const settled = try settlement(row, event.receipt.tx, event.receipt.actualNative)
+      const landing = try settlement(row, event.receipt.tx, event.receipt.actualNative)
       return [
         after.state === "Finalized"
-          ? W.finalized({ id: record.id, amountOut: String(after.output), reason: after.reason === "BelowSignedMinimum" ? reasonText.BelowSignedMinimum : null, landedTxId: settled.landed, targetBalanceAfter: facts.targetBalanceAfter ?? null, now })
-          : W.reverted(record.id, revertedText(row.kind, current.network), settled.landed, now),
-        ...settled.statements,
+          ? finalized({ id: record.id, amountOut: String(after.output), reason: after.reason === "BelowSignedMinimum" ? reasonText.BelowSignedMinimum : null, landedTxId: landing.landed, targetBalanceAfter: facts.targetBalanceAfter ?? null, now })
+          : reverted(record.id, revertedText(row.kind, current.network), landing.landed, now),
+        ...landing.statements,
       ]
     }
     case "settleExpired": {
@@ -372,32 +390,9 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       return (try settlement(row, event.receipt.tx, event.receipt.actualNative)).statements
     }
     case "expireEvm":
-      return [W.transition((try sendOf(event.id)).id, ["submitted", "unknown"], "failed", reasonText.EvmExpired, now)]
-    case "recordScan": {
-      const scan = event.scan
-      const held = try need(journal.gas.find((entry) => entry.tx !== null && names.number("tx", entry.tx) === scan.tx), event, "the scanned transaction has no signed reservation")
-      const txId = try need(held.tx ?? undefined, event, "the scanned transaction has no signed reservation")
-      const operator = try named(names, "operator", scan.operator, event)
-      const nextSlot = try need(facts.nextSlot, event, "the scan cursor is missing")
-      if (nextSlot !== scan.coverage.fromSlot) throw new JournalRefused({ event: event.type, issue: "the scan cursor is not the event's coverage start" })
-      const page = try need(facts.page, event, "the scanned page is missing")
-      if (page === "[]") throw new JournalRefused({ event: event.type, issue: "a scan step retains at least one block" })
-      const coverage = JSON.stringify({
-        txId,
-        operator,
-        blockhash: try need(facts.blockhash, event, "the scanned blockhash is missing"),
-        blockhashSlot: scan.blockhashSlot,
-        tipSlot: scan.coverage.tipSlot,
-        tipHash: try named(names, "hash", scan.coverage.tipHash, event),
-        nextSlot,
-        expectedHash: try need(facts.expectedHash, event, "the scan's expected hash is missing"),
-        blocks: scan.coverage.blocks,
-        digest: try named(names, "hash", scan.coverage.digest, event),
-        complete: scan.complete,
-        revision: scan.revision,
-      })
-      return [W.scanStep({ txId, operator, revision: scan.revision, wallet: held.wallet, runId: try runOf(event.runId), scan: coverage, page, now })]
-    }
+      return [transition((try sendOf(event.id)).id, ["submitted", "unknown"], "failed", reasonText.EvmExpired, now)]
+    case "recordScan":
+      return [try scanWrite(journal, names, event, facts, now)]
     case "expireSolana": {
       const record = try sendOf(event.id)
       const txId = try need(record.txs[0], event, "the send has no attempt")
@@ -411,8 +406,8 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const a = try provider(event.proof.a, first)
       const proof = JSON.stringify({ txId, blockhash: try need(facts.blockhash, event, "the expired blockhash is missing"), blockhashSlot: event.proof.blockhashSlot, providers: [a, try provider(event.proof.b, second)] })
       return [
-        W.expiryProof({ txId, wallet: held.wallet, runId: try runOf(event.runId), proof, sha256: try sha256Hex(proof), now }),
-        W.transition(record.id, ["submitted", "unknown"], "failed", reasonText.SolanaExpired, now),
+        expiryProof({ txId, wallet: held.wallet, runId: try runOf(event.runId), proof, sha256: try sha256Hex(proof), now }),
+        transition(record.id, ["submitted", "unknown"], "failed", reasonText.SolanaExpired, now),
       ]
     }
     case "replace": {
@@ -435,9 +430,9 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       try admitted(journal, current, row.nonce, reserved.maximum, false, event)
       const gasId = `fee-gas-${try randomId()}`
       return [
-        W.reserve({ id: gasId, network, wallet: feeWallet, nonce: row.nonce, intentHash, runId: try runOf(event.runId), maximumWei: try weiOf(reserved.maximum, current.network), perTransactionWei: try weiOf(transactionCeilingOf(current.network), current.network), perDayWei: try weiOf(dailyCeilingOf(current.network), current.network), createdAt: now, blockhashSlot: null, accountProof: null, purpose: "fees" }),
-        W.replacement({ id: `fee-replacement-${try randomId()}`, conversionId: record.id, network, attempt: row.attempts.length, nonce: row.nonce, txId, rawTx, maxFeePerGas, maxPriorityFeePerGas, gasId, now }),
-        W.transition(record.id, ["submitted", "unknown"], "submitted", null, now),
+        reserve({ id: gasId, network, wallet: feeWallet, nonce: row.nonce, intentHash, runId: try runOf(event.runId), maximumWei: try weiOf(reserved.maximum, current.network), perTransactionWei: try weiOf(transactionCeilingOf(current.network), current.network), perDayWei: try weiOf(dailyCeilingOf(current.network), current.network), createdAt: now, blockhashSlot: null, accountProof: null, purpose: "fees" }),
+        replacement({ id: `fee-replacement-${try randomId()}`, conversionId: record.id, network, attempt: row.attempts.length, nonce: row.nonce, txId, rawTx, maxFeePerGas, maxPriorityFeePerGas, gasId, now }),
+        transition(record.id, ["submitted", "unknown"], "submitted", null, now),
       ]
     }
     case "claim": {
@@ -455,8 +450,8 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const gasId = `fee-gas-${try randomId()}`
       const run = try runOf(event.runId)
       return [
-        W.reserve({ id: gasId, network, wallet: feeWallet, nonce: claim.nonce, intentHash, runId: run, maximumWei: try weiOf(maximum, current.network), perTransactionWei: try weiOf(transactionCeilingOf(current.network), current.network), perDayWei: try weiOf(dailyCeilingOf(current.network), current.network), createdAt: now, blockhashSlot: solana ? claim.blockhashSlot : null, accountProof, purpose: "fees" }),
-        W.claimed({
+        reserve({ id: gasId, network, wallet: feeWallet, nonce: claim.nonce, intentHash, runId: run, maximumWei: try weiOf(maximum, current.network), perTransactionWei: try weiOf(transactionCeilingOf(current.network), current.network), perDayWei: try weiOf(dailyCeilingOf(current.network), current.network), createdAt: now, blockhashSlot: solana ? claim.blockhashSlot : null, accountProof, purpose: "fees" }),
+        claimed({
           id: try randomId(),
           runId: run,
           network,
@@ -534,12 +529,12 @@ effect function readEach(instance: Instance, names: Names) {
 }
 
 effect function rotationWrite(journal: Journal, instance: Instance, names: Names, event: RotationEvent, next: Fee) {
-  const runId = `${W.rotationPrefix}${instance.scope}${try named(names, "rotation", event.rotationId, event)}`
+  const runId = `${rotationPrefix}${instance.scope}${try named(names, "rotation", event.rotationId, event)}`
   const now = try isoAt(journal.state.clock + instance.epoch)
   switch (event.type) {
-    case "acquireRotationLease": return W.acquireRotationLease(runId, try isoAt(next.rotation.expiresAt + instance.epoch), now)
-    case "renewRotationLease": return W.renewRotationLease(runId, try isoAt(next.rotation.expiresAt + instance.epoch), now)
-    case "releaseRotationLease": return W.releaseRotationLease(runId)
+    case "acquireRotationLease": return acquireRotationLease(runId, try isoAt(next.rotation.expiresAt + instance.epoch), now)
+    case "renewRotationLease": return renewRotationLease(runId, try isoAt(next.rotation.expiresAt + instance.epoch), now)
+    case "releaseRotationLease": return releaseRotationLease(runId)
   }
 }
 
@@ -560,8 +555,4 @@ effect function sendRotation(instance: Instance, names: Names, event: RotationEv
 export effect function send(instance: Instance, names: Names, event: Event, by: Sender, facts: Facts = {}) {
   if (isRotation(event)) return try sendRotation(instance, names, event, by)
   return try update(aggregate(instance, names), (current) => decide(current, instance, names, event, by, facts))
-}
-
-export effect function receive(instance: Instance, names: Names, input: unknown, by: Sender, facts: Facts = {}) {
-  return try send(instance, names, try decodeEvent(input), by, facts)
 }

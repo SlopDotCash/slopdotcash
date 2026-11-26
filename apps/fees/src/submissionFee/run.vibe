@@ -38,7 +38,7 @@ export type DepositRun =
   | { readonly status: "off"; readonly solana?: SolanaRunResult }
   | { readonly status: "ran"; readonly mode: "dry_run" | "live"; readonly unset: ReadonlyArray<string>; readonly networks: ReadonlyArray<NetworkResult | NetworkFailure>; readonly solana?: SolanaRunResult }
 
-export effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: ResolverSigner | null) {
+effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: ResolverSigner | null) {
   const unread: NetworkResult = { network: network.network, status: "ran", finalizedThrough: null, recorded: 0, resolved: 0, judged: 0, paid: 0, send: "none", parked: 0, released: 0 }
   const connected = step("chain", submissionFeeChain({ network, signer })) catch effect (error) => {
     if (error._tag === "WrongChain") return null

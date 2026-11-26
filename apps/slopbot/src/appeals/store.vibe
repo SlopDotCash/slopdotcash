@@ -177,10 +177,6 @@ export function findingRows(itemNodeId: string): Statement {
       FROM slopbot_actions a WHERE a.item_node_id = ${itemNodeId} AND a.action = 'close')`
 }
 
-function coveredFinding(itemNodeId: string, covered: Covered): Statement {
-  return sql`SELECT category, revision, at FROM (${findingRows(itemNodeId)}) WHERE revision = ${covered.revision} OR at <= ${covered.occurredAt} ORDER BY at DESC, review_key DESC LIMIT 1`
-}
-
 effect function findingOfRow(row: typeof FindingRow.Type | undefined) {
   if (row === undefined || row.category === null || row.category === "none") return undefined
   const category = categoryOf(row.category)

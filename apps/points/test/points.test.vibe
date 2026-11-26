@@ -113,7 +113,7 @@ import { iso as isoE6, missingSource as missingSourceE6, project as projectE6, t
 import { historyText as historyTextU1 } from "./support/u1/history.ts"
 import { registry as registryU10, userNodeId } from "./support/u10/actors.ts"
 import { absentService, areaApi, type Site, site } from "./support/u11/pages.ts"
-import { actionsRepository, type Campaign, campaign, day as dayU13, fastClock, forkRun, mainHead, repository as repositoryU13, retained, searchPath, start as startU13, trustedRun } from "./support/u13/github.ts"
+import { actionsRepository, type Campaign, campaign, day as dayU13, forkRun, mainHead, repository as repositoryU13, retained, searchPath, start as startU13, trustedRun } from "./support/u13/github.ts"
 import { alpha, author, baseGeneratedAt, beta, carrier, censusDigest, collectedAt, correctionRule, gamma, type Pool, receiptSchema, registry as registryU14, sourceOf, transferSql, urlOf } from "./support/u14/fixtures.ts"
 import { ada, avatarOf, fetcherOf as fetcherOfU16, grace, linus, previousCensus, seeded as seededU16, startIso, start as startU16 } from "./support/u16/github.ts"
 import { type HistoricalCycle, historicalCycle, type HistoricalEvent } from "./support/u2/history.ts"
@@ -4962,16 +4962,7 @@ import { seededGithub, slopbotFake } from fakes
           ],
           persistent: { outcome: { status: 502, body: finalBody }, statuses: [502, 502, 502], waits: [1_000, 2_000] },
           quotaKept: { outcome: { status: 429, body: "limited" }, statuses: [502, 429, 422, 502, 429, 429, 429, 429], waits: [1_000, 3_000, 1_000, 2_000, 3_000, 3_000, 3_000] },
-          notCanonical: [
-            { statuses: [502, 200], waits: [1_000] },
-            { statuses: [502, 404], waits: [1_000] },
-            { statuses: [502, 200], waits: [1_000] },
-            { statuses: [502, 200], waits: [1_000] },
-            { statuses: [502, 422], waits: [1_000] },
-            { statuses: [502, 200], waits: [1_000] },
-            { statuses: [502, 200], waits: [1_000] },
-            once,
-          ],
+          notCanonical: [200, 404, 200, 200, 422, 200, 200].map((status) => ({ statuses: [502, status], waits: [1_000] })).concat([once]),
           elsewhere: [once, once],
         },
         checkpoint: undefined,
@@ -6004,8 +5995,7 @@ import { seededGithub, slopbotFake } from fakes
     const area = try Area
     const session = `backend-route-session-${githubId}-`.padEnd(48, "x")
     try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-    const expiresAt = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
-    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, expiresAt)
+    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
     return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
   }
 
@@ -6431,50 +6421,7 @@ import { seededGithub, slopbotFake } from fakes
       })
     })
 
-    it.effect('Every registered project with complete referral attribution is listed in registry order, retired rows included (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order")', () => effect {
-      const area = try Area
-      const projectsPath = "/api/v1/referrals/projects"
-      const empty = try area.request(projectsPath)
-      try registered("referred-paused", "paused", "community", "2026-11-01T00:00:00.000Z", 7002, ["42", "member-42"])
-      try registered("referred-active", "active", "featured", "2026-10-01T00:00:00.000Z", 7001, ["41", "member-41"])
-      try registered("referred-retired", "paused", "retired", "2026-10-15T00:00:00.000Z", 7003, ["42", "member-42"])
-      try registered("unreferred", "active", "community", "2026-09-01T00:00:00.000Z", 7004, undefined)
-      try registered("referred-tie", "active", "community", "2026-11-01T00:00:00.000Z", 7005, ["41", "member-41"])
-
-      const referred = try area.request(projectsPath)
-      const slash = try area.request(`${projectsPath}/`)
-      const head = try area.request(projectsPath, { method: "HEAD" })
-      const child = try area.request(`${projectsPath}/referred-active`)
-      const write = try area.request(projectsPath, { method: "POST", json: {} })
-
-      const expected = {
-        schema: "slop-referred-projects-v1",
-        projects: [
-          { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
-          { projectId: "referred-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
-          { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
-          { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
-        ],
-      }
-      try same({
-        empty: [empty.status, empty.body, empty.headers["cache-control"]],
-        listed: [referred.status, referred.body, referred.headers["cache-control"]],
-        slash: [slash.status, slash.body],
-        head: [head.status, head.body, head.headers["cache-control"]],
-        child: [child.status, child.body, child.headers["cache-control"]],
-        write: [write.status, write.body, write.headers["cache-control"]],
-      }, {
-        empty: [200, { schema: "slop-referred-projects-v1", projects: [] }, "public, max-age=300"],
-        listed: [200, expected, "public, max-age=300"],
-        slash: [200, expected],
-        head: [200, "", "public, max-age=300"],
-        child: [404, { error: "not_found" }, "public, max-age=300"],
-        write: [405, { error: "method_not_allowed" }, "public, max-age=300"],
-      })
-    })
-
     it.effect('Owner website and X links publish as presentation, validate and clear, and ready-label settings publish within their bounds (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting")', () => effect {
-      const area = try Area
       const steward = try member(stewardId)
       const linked = try listed("linked-tool", "linked", linkedId)
       const id = linked.id
@@ -6704,6 +6651,9 @@ import { seededGithub, slopbotFake } from fakes
       const investigation = try investigate(admin, id, first)
       const placerReinstates = try act(a, id, "reinstate")
       const reinstated = try act(b, id, "reinstate")
+      const reinstatedId = field(field(reinstated.body, "record"), "id")
+      const reinstatement = try area.sql("SELECT id FROM project_enforcements WHERE project_id = ? AND action = 'reinstate'", id)
+      const restoredReason = try area.sql("SELECT reason FROM project_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1", id)
       const rows = try area.sql("SELECT sequence, action, state_after, appeal_after, actor_role FROM project_enforcements WHERE project_id = ? ORDER BY sequence", id)
       const review = try area.sql("SELECT r.assessment_id FROM project_vetting_reinstatements r JOIN project_enforcements e ON e.id = r.enforcement_id WHERE e.project_id = ?", id)
       const pending = try area.sql("SELECT state FROM vetting_assessments WHERE project_id = ? ORDER BY rowid DESC LIMIT 1", id)
@@ -6721,6 +6671,7 @@ import { seededGithub, slopbotFake } from fakes
         investigation: [investigation.status, investigation.rows.length, pending],
         placerReinstates: refused(placerReinstates),
         reinstated: [outcome(reinstated), field(field(reinstated.body, "record"), "action")],
+        reinstatement: [reinstatement, restoredReason],
         rows,
         listing: try listing(id),
         review,
@@ -6737,6 +6688,7 @@ import { seededGithub, slopbotFake } from fakes
         investigation: [201, 1, [{ state: "pending" }]],
         placerReinstates: [403, "independent_review_required", "A moderator who did not place this restriction must decide the appeal"],
         reinstated: [[200, null], "reinstate"],
+        reinstatement: [[{ id: reinstatedId }], [{ reason: `Reinstated after independent review (${String(reinstatedId)})` }]],
         rows: [
           { sequence: 1, action: "quarantine", state_after: "quarantined", appeal_after: "none", actor_role: "project-moderator" },
           { sequence: 2, action: "request_reinstatement", state_after: "quarantined", appeal_after: "requested", actor_role: "project-steward" },
@@ -6744,6 +6696,50 @@ import { seededGithub, slopbotFake } from fakes
         ],
         listing: [{ revision: 3, status: "paused", tier: "community" }],
         review: [{ assessment_id: deciding.rows[0]?.id ?? "" }],
+      })
+    })
+  })
+
+  layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+    it.effect('Every registered project with complete referral attribution is listed in registry order, retired rows included (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order")', () => effect {
+      const area = try Area
+      const projectsPath = "/api/v1/referrals/projects"
+      const empty = try area.request(projectsPath)
+      try registered("referred-paused", "paused", "community", "2026-11-01T00:00:00.000Z", 7002, ["42", "member-42"])
+      try registered("referred-active", "active", "featured", "2026-10-01T00:00:00.000Z", 7001, ["41", "member-41"])
+      try registered("referred-retired", "paused", "retired", "2026-10-15T00:00:00.000Z", 7003, ["42", "member-42"])
+      try registered("unreferred", "active", "community", "2026-09-01T00:00:00.000Z", 7004, undefined)
+      try registered("referred-tie", "active", "community", "2026-11-01T00:00:00.000Z", 7005, ["41", "member-41"])
+
+      const referred = try area.request(projectsPath)
+      const slash = try area.request(`${projectsPath}/`)
+      const head = try area.request(projectsPath, { method: "HEAD" })
+      const child = try area.request(`${projectsPath}/referred-active`)
+      const write = try area.request(projectsPath, { method: "POST", json: {} })
+
+      const expected = {
+        schema: "slop-referred-projects-v1",
+        projects: [
+          { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+          { projectId: "referred-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
+          { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
+          { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+        ],
+      }
+      try same({
+        empty: [empty.status, empty.body, empty.headers["cache-control"]],
+        listed: [referred.status, referred.body, referred.headers["cache-control"]],
+        slash: [slash.status, slash.body],
+        head: [head.status, head.body, head.headers["cache-control"]],
+        child: [child.status, child.body, child.headers["cache-control"]],
+        write: [write.status, write.body, write.headers["cache-control"]],
+      }, {
+        empty: [200, { schema: "slop-referred-projects-v1", projects: [] }, "public, max-age=300"],
+        listed: [200, expected, "public, max-age=300"],
+        slash: [200, expected],
+        head: [200, "", "public, max-age=300"],
+        child: [404, { error: "not_found" }, "public, max-age=300"],
+        write: [405, { error: "method_not_allowed" }, "public, max-age=300"],
       })
     })
   })

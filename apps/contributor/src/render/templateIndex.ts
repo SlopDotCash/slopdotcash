@@ -79,13 +79,33 @@ export type VerifiedFiles =
 
 const encoder = new TextEncoder();
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"];
-const nodeCrypto = typeof process !== "undefined" && typeof process.getBuiltinModule === "function"
-  ? process.getBuiltinModule("node:crypto")
-  : undefined;
+
+interface NodeHasher {
+  update(data: Uint8Array): NodeHasher;
+  digest(encoding: "hex"): string;
+}
+
+interface NodeCrypto {
+  createHash(algorithm: "sha256"): NodeHasher;
+}
+
+function isNodeCrypto(value: unknown): value is NodeCrypto {
+  return typeof value === "object" && value !== null && "createHash" in value && typeof value.createHash === "function";
+}
+
+function builtinSha256(): NodeCrypto | undefined {
+  if (typeof globalThis.process !== "object" || globalThis.process === null) return undefined;
+  const loader: unknown = Reflect.get(globalThis.process, "getBuiltinModule");
+  if (typeof loader !== "function") return undefined;
+  const loaded: unknown = (loader as (name: string) => unknown)("node:crypto");
+  return isNodeCrypto(loaded) ? loaded : undefined;
+}
+
+const nativeCrypto = builtinSha256();
 
 /** @throws {never} */
 export function sha256Hex(bytes: Uint8Array): string {
-  return nodeCrypto !== undefined ? nodeCrypto.createHash("sha256").update(bytes).digest("hex") : bytesToHex(sha256(bytes));
+  return nativeCrypto !== undefined ? nativeCrypto.createHash("sha256").update(bytes).digest("hex") : bytesToHex(sha256(bytes));
 }
 
 const digests = (files: ReadonlyArray<FileDigest>) => files.map(({ path, sha256 }) => ({ path, sha256 }));

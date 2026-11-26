@@ -36,11 +36,11 @@ effect function collected<E>(stream: Stream.Stream<Uint8Array, E>) {
   const decoder = new TextDecoder()
   let size = 0
   let text = ""
-  for try (const chunk of stream) {
+  try Stream.runForEach(stream, (chunk) => effect {
     size += chunk.byteLength
     if (size > tableLimit) throw new OwnershipUnreadable({ reason: "the process table is too large" })
     text += decoder.decode(chunk, { stream: true })
-  }
+  })
   return text + decoder.decode()
 }
 

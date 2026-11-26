@@ -539,7 +539,6 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
   })
 
   it.effect('Owner website and X links publish as presentation, validate and clear, and ready-label settings publish within their bounds (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting")', () => effect {
-    const area = try Area
     const steward = try member(stewardId)
     const linked = try listed("linked-tool", "linked", linkedId)
     const id = linked.id

@@ -13,7 +13,7 @@ function memoryStorage(): SlotStorage {
   return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => void values.set(key, value), removeItem: (key) => void values.delete(key) };
 }
 
-const unreachable: typeof globalThis.fetch = async () => new Response(null, { status: 404 });
+const unreachable: typeof globalThis.fetch = () => Promise.resolve(new Response(null, { status: 404 }));
 const services = Layer.mergeAll(publishedSetup, webCrypto, FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, unreachable));
 const fresh = () => Effect.runPromise(Effect.provide(feeDesk({ kind: "report", caseId: "sc_conformance01" }, memoryStorage()), services));
 let pay: FeePay = await fresh();

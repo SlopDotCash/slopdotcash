@@ -129,7 +129,7 @@ function aggregate(deployment: Deployment, accrual: Accrual, day: number): Aggre
   const network = deployment.networkKey
   return {
     name: `referral publication on ${network}`,
-    version: sql`SELECT coalesce((SELECT group_concat(rowid || ':' || state || ':' || coalesce(length(reason), -1) || ':' || coalesce(block_number, '') || ':' || (void_acknowledged_at IS NOT NULL), ',') FROM (SELECT rowid, * FROM referral_root_posts WHERE network = ${network} ORDER BY rowid)), '') || '|' || (SELECT count(*) || ':' || count(actual_wei) FROM referral_post_gas WHERE network = ${network}) || '|' || coalesce((SELECT coalesce(observed_at, '') || ':' || coalesce(error_at, '') || ':' || coalesce(length(body), -1) FROM referral_claim_cache WHERE id = 'program'), '') AS version`,
+    version: sql`SELECT coalesce((SELECT group_concat(attempt || ':' || state || ':' || coalesce(length(reason), -1) || ':' || coalesce(block_number, '') || ':' || (void_acknowledged_at IS NOT NULL), ',') FROM (SELECT rowid AS attempt, state, reason, block_number, void_acknowledged_at FROM referral_root_posts WHERE network = ${network} ORDER BY rowid)), '') || '|' || (SELECT count(*) || ':' || count(actual_wei) FROM referral_post_gas WHERE network = ${network}) || '|' || coalesce((SELECT coalesce(observed_at, '') || ':' || coalesce(error_at, '') || ':' || coalesce(length(body), -1) FROM referral_claim_cache WHERE id = 'program'), '') AS version`,
     reads: [
       sql`SELECT ${postColumns} FROM referral_root_posts p LEFT JOIN referral_post_gas g ON g.post_id = p.id WHERE p.network = ${network} ORDER BY p.rowid`,
       sql`SELECT period, epoch, merkle_root, tree_total_base FROM referral_accrual_files ORDER BY epoch`,

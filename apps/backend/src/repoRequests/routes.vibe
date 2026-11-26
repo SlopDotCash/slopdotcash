@@ -172,6 +172,6 @@ export const RepoRequestRoutes = Layer.mergeAll(
   handleRaw(flagWrite, () => written()),
   HttpRouter.addAll([
     HttpRouter.route("HEAD", repoRequestsPath, answered(boardAnswer())),
-    ...otherMethods.map((method) => HttpRouter.route(method, repoRequestsPath, answered(succeed(json({ error: "method_not_allowed" }, 405, { allow: "GET, HEAD, POST" }))))),
+    ...otherMethods.map((method) => HttpRouter.route(method, repoRequestsPath, answered(effect { throw refused(rows.originForbidden) }))),
   ]),
 )

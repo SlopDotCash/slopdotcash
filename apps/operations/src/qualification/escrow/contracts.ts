@@ -1,5 +1,16 @@
 // spec/operations/escrowQualification.md, "Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation"
-import type { Abi } from "@repo/platform/chain/evm";
+
+interface AbiParameter {
+  readonly name: string;
+  readonly type: string;
+  readonly indexed?: boolean;
+}
+
+type AbiItem =
+  | { readonly type: "function"; readonly name: string; readonly stateMutability: "view" | "nonpayable" | "payable"; readonly inputs: ReadonlyArray<AbiParameter>; readonly outputs: ReadonlyArray<AbiParameter> }
+  | { readonly type: "event"; readonly name: string; readonly inputs: ReadonlyArray<AbiParameter> };
+
+type Abi = ReadonlyArray<AbiItem>;
 
 const input = (name: string, type: string) => ({ name, type });
 const indexed = (name: string, type: string) => ({ name, type, indexed: true });

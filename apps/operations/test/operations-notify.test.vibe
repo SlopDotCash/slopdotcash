@@ -225,7 +225,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     scripted(status(true))
     const badToken = try scheduled({ GITHUB_INTAKE_STATUS_TOKEN: "short" })
     const badTokenReads = seen.map((request) => request.authorization)
-    const anonymous = try renewed(status(true))
+    try renewed(status(true))
     try seed(0, "2100-01-01T00:00:00.000Z")
     const late = try renewed(status(true))
     const port = try intakePort()

@@ -1,6 +1,7 @@
 // spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"
 import { createHash } from "node:crypto";
 import { Schema } from "effect";
+import type { Socket } from "effect/socket";
 import { type Request, Response } from "miniflare";
 import { Disconnect, type Handler, statements } from "../testing.ts";
 
@@ -194,6 +195,117 @@ async function bundleBindings(bundle: { arrayBuffer(): Promise<ArrayBuffer> }): 
   return (await metadataOf(form)).bindings ?? [];
 }
 
+interface Sequence {
+  readonly next: () => string;
+  readonly createdOn: () => string;
+}
+
+/** @throws {never} */
+function pagesApi({ next, createdOn }: Sequence) {
+  const pagesDeployments: Record<string, PagesDeployment[]> = {};
+  const pagesProjects: Record<string, PagesProject> = {};
+  const pagesAssets = new Set<string>();
+
+  function projectOf(project: string): PagesProject {
+    return pagesProjects[project] ?? defaultProject;
+  }
+
+  function pagesView(project: string, deployment: PagesDeployment) {
+    return {
+      id: deployment.id,
+      url: `https://${deployment.id.slice(0, 8)}.${project}.pages.dev`,
+      created_on: deployment.createdOn,
+      environment: deployment.environment,
+      project_name: project,
+      is_skipped: false,
+      latest_stage: { name: "deploy", status: "success" },
+      deployment_trigger: { type: "ad_hoc", metadata: { branch: deployment.branch, commit_hash: deployment.commitHash, commit_dirty: deployment.commitDirty } },
+    };
+  }
+
+  function patchProject(project: string, patch: typeof PagesPatch.Type): void {
+    const current = projectOf(project);
+    const merged = (vars: Readonly<Record<string, EnvVar>>, changes: Readonly<Record<string, EnvVar | null>> | undefined) =>
+      Object.fromEntries(Object.entries({ ...vars, ...changes }).filter((entry): entry is [string, EnvVar] => entry[1] !== null));
+    const configs = patch.deployment_configs;
+    pagesProjects[project] = { ...current, production: merged(current.production, configs?.production?.env_vars), preview: merged(current.preview, configs?.preview?.env_vars) };
+  }
+
+  function envVars(vars: Readonly<Record<string, EnvVar>>) {
+    return Object.fromEntries(Object.entries(vars).map(([name, value]) => [name, value.type === "secret_text" ? { type: value.type } : value]));
+  }
+
+  function projectView(project: string) {
+    const configured = projectOf(project);
+    return { name: project, production_branch: configured.productionBranch, deployment_configs: { production: { env_vars: envVars(configured.production) }, preview: { env_vars: envVars(configured.preview) } } };
+  }
+
+  async function pages(request: Request, project: string, rest: ReadonlyArray<string>): Promise<Response> {
+    const [resource, item] = rest;
+    const configured = projectOf(project);
+    if (resource === undefined && request.method === "PATCH") {
+      patchProject(project, await decoded(PagesPatch, request));
+      return envelope(projectView(project));
+    }
+    if (resource === undefined && request.method === "GET") return envelope(projectView(project));
+    if (resource === "domains" && item !== undefined && request.method === "GET") return envelope({ name: item, status: "active" });
+    if (resource === "upload-token" && request.method === "GET") return envelope({ jwt: uploadToken(project) });
+    if (resource === "deployments" && request.method === "POST") {
+      const form = await request.formData();
+      const branch = text(form.get("branch")) ?? "main";
+      const worker = form.get("_worker.bundle") ?? form.get("_worker.js");
+      const environment = branch === configured.productionBranch ? "production" : "preview";
+      if (worker !== null && typeof worker !== "string" && text(form.get("wrangler_config_hash")) !== undefined) {
+        const vars = Object.fromEntries((await bundleBindings(worker)).flatMap((binding) => binding.type === "plain_text" && typeof binding.text === "string" ? [[binding.name, { type: "plain_text", value: binding.text } satisfies EnvVar]] : []));
+        const current = projectOf(project);
+        pagesProjects[project] = { ...current, [environment]: { ...current[environment], ...vars } };
+      }
+      const deployment: PagesDeployment = {
+        id: next(),
+        createdOn: createdOn(),
+        environment,
+        branch,
+        commitHash: text(form.get("commit_hash")) ?? "",
+        commitDirty: text(form.get("commit_dirty")) === "true",
+        manifest: Schema.decodeUnknownSync(Manifest)(JSON.parse(text(form.get("manifest")) ?? "{}")),
+        worker: worker === null || typeof worker === "string" ? undefined : sha256(new Uint8Array(await worker.arrayBuffer())),
+      };
+      (pagesDeployments[project] ??= []).push(deployment);
+      return envelope(pagesView(project, deployment));
+    }
+    if (resource === "deployments" && item !== undefined && request.method === "GET") {
+      const deployment = (pagesDeployments[project] ?? []).find((candidate) => candidate.id === item);
+      if (deployment === undefined) throw new Refusal(404, 8000007, `deployment ${item} does not exist for ${project}`);
+      return envelope(pagesView(project, deployment));
+    }
+    if (resource === "deployments" && request.method === "GET") {
+      const query = new URL(request.url).searchParams;
+      const environment = query.get("env");
+      const perPage = Math.min(Math.max(Number(query.get("per_page") ?? 25) || 25, 1), 100);
+      const page = Math.max(Number(query.get("page") ?? 1) || 1, 1);
+      const listed = [...pagesDeployments[project] ?? []].reverse().filter((deployment) => environment === null || deployment.environment === environment);
+      return pagedEnvelope(listed.slice((page - 1) * perPage, page * perPage).map((deployment) => pagesView(project, deployment)), { page, per_page: perPage, count: Math.min(perPage, Math.max(listed.length - (page - 1) * perPage, 0)), total_count: listed.length, total_pages: Math.ceil(listed.length / perPage) });
+    }
+    throw new Refusal(404, 7003, `Could not route to ${request.url}`);
+  }
+
+  async function assets(request: Request, action: string | undefined): Promise<Response> {
+    if (action === "check-missing" && request.method === "POST")
+      return envelope((await decoded(HashesBody, request)).hashes.filter((hash) => !pagesAssets.has(hash)));
+    if (action === "upload" && request.method === "POST") {
+      for (const asset of await decoded(AssetsBody, request)) pagesAssets.add(asset.key);
+      return envelope(null);
+    }
+    if (action === "upsert-hashes" && request.method === "POST") {
+      for (const hash of (await decoded(HashesBody, request)).hashes) pagesAssets.add(hash);
+      return envelope(null);
+    }
+    throw new Refusal(404, 7003, `Could not route to ${request.url}`);
+  }
+
+  return { pagesDeployments, pagesProjects, pagesAssets, projectOf, pages, assets };
+}
+
 /** @throws {never} */
 export function cloudflareApi({ accountId = "account-test" }: { readonly accountId?: string } = {}): CloudflareApi {
   const scripts: Record<string, Record<string, string>> = {};
@@ -202,9 +314,6 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
   const secrets: Record<string, string[]> = {};
   const schedules: Record<string, string[]> = {};
   const d1Migrations: Record<string, string[]> = {};
-  const pagesDeployments: Record<string, PagesDeployment[]> = {};
-  const pagesProjects: Record<string, PagesProject> = {};
-  const pagesAssets = new Set<string>();
   const subdomains: Record<string, Exposure> = {};
   const scriptSettings: Record<string, Record<string, unknown>> = {};
   const calls: CloudflareCall[] = [];
@@ -212,6 +321,7 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
   let sequence = 0;
   const next = () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, "0")}`;
   const createdOn = () => new Date(createdBase + sequence * 1_000).toISOString();
+  const { pagesDeployments, pagesProjects, pagesAssets, projectOf, pages, assets } = pagesApi({ next, createdOn });
 
   function known(script: string): void {
     if (versions[script] === undefined) throw new Refusal(404, 10007, `workers.api.error.script_not_found: ${script}`);
@@ -278,23 +388,6 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
     return deployment;
   }
 
-  function projectOf(project: string): PagesProject {
-    return pagesProjects[project] ?? defaultProject;
-  }
-
-  function pagesView(project: string, deployment: PagesDeployment) {
-    return {
-      id: deployment.id,
-      url: `https://${deployment.id.slice(0, 8)}.${project}.pages.dev`,
-      created_on: deployment.createdOn,
-      environment: deployment.environment,
-      project_name: project,
-      is_skipped: false,
-      latest_stage: { name: "deploy", status: "success" },
-      deployment_trigger: { type: "ad_hoc", metadata: { branch: deployment.branch, commit_hash: deployment.commitHash, commit_dirty: deployment.commitDirty } },
-    };
-  }
-
   function serviceView(name: string) {
     known(name);
     const created = versions[name]?.[0]?.createdOn;
@@ -310,23 +403,6 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
     if (item === "subdomain") return envelope(subdomains[name] ?? closed);
     if (item === "routes") return envelope([]);
     throw new Refusal(404, 7003, `Could not route to ${request.url}`);
-  }
-
-  function patchProject(project: string, patch: typeof PagesPatch.Type): void {
-    const current = projectOf(project);
-    const merged = (vars: Readonly<Record<string, EnvVar>>, changes: Readonly<Record<string, EnvVar | null>> | undefined) =>
-      Object.fromEntries(Object.entries({ ...vars, ...changes }).filter((entry): entry is [string, EnvVar] => entry[1] !== null));
-    const configs = patch.deployment_configs;
-    pagesProjects[project] = { ...current, production: merged(current.production, configs?.production?.env_vars), preview: merged(current.preview, configs?.preview?.env_vars) };
-  }
-
-  function envVars(vars: Readonly<Record<string, EnvVar>>) {
-    return Object.fromEntries(Object.entries(vars).map(([name, value]) => [name, value.type === "secret_text" ? { type: value.type } : value]));
-  }
-
-  function projectView(project: string) {
-    const configured = projectOf(project);
-    return { name: project, production_branch: configured.productionBranch, deployment_configs: { production: { env_vars: envVars(configured.production) }, preview: { env_vars: envVars(configured.preview) } } };
   }
 
   function query(databaseId: string, sql: string) {
@@ -419,69 +495,6 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
     throw new Refusal(404, 7003, `Could not route to ${request.url}`);
   }
 
-  async function pages(request: Request, project: string, rest: ReadonlyArray<string>): Promise<Response> {
-    const [resource, item] = rest;
-    const configured = projectOf(project);
-    if (resource === undefined && request.method === "PATCH") {
-      patchProject(project, await decoded(PagesPatch, request));
-      return envelope(projectView(project));
-    }
-    if (resource === undefined && request.method === "GET") return envelope(projectView(project));
-    if (resource === "domains" && item !== undefined && request.method === "GET") return envelope({ name: item, status: "active" });
-    if (resource === "upload-token" && request.method === "GET") return envelope({ jwt: uploadToken(project) });
-    if (resource === "deployments" && request.method === "POST") {
-      const form = await request.formData();
-      const branch = text(form.get("branch")) ?? "main";
-      const worker = form.get("_worker.bundle") ?? form.get("_worker.js");
-      const environment = branch === configured.productionBranch ? "production" : "preview";
-      if (worker !== null && typeof worker !== "string" && text(form.get("wrangler_config_hash")) !== undefined) {
-        const vars = Object.fromEntries((await bundleBindings(worker)).flatMap((binding) => binding.type === "plain_text" && typeof binding.text === "string" ? [[binding.name, { type: "plain_text", value: binding.text } satisfies EnvVar]] : []));
-        const current = projectOf(project);
-        pagesProjects[project] = { ...current, [environment]: { ...current[environment], ...vars } };
-      }
-      const deployment: PagesDeployment = {
-        id: next(),
-        createdOn: createdOn(),
-        environment,
-        branch,
-        commitHash: text(form.get("commit_hash")) ?? "",
-        commitDirty: text(form.get("commit_dirty")) === "true",
-        manifest: Schema.decodeUnknownSync(Manifest)(JSON.parse(text(form.get("manifest")) ?? "{}")),
-        worker: worker === null || typeof worker === "string" ? undefined : sha256(new Uint8Array(await worker.arrayBuffer())),
-      };
-      (pagesDeployments[project] ??= []).push(deployment);
-      return envelope(pagesView(project, deployment));
-    }
-    if (resource === "deployments" && item !== undefined && request.method === "GET") {
-      const deployment = (pagesDeployments[project] ?? []).find((candidate) => candidate.id === item);
-      if (deployment === undefined) throw new Refusal(404, 8000007, `deployment ${item} does not exist for ${project}`);
-      return envelope(pagesView(project, deployment));
-    }
-    if (resource === "deployments" && request.method === "GET") {
-      const query = new URL(request.url).searchParams;
-      const environment = query.get("env");
-      const perPage = Math.min(Math.max(Number(query.get("per_page") ?? 25) || 25, 1), 100);
-      const page = Math.max(Number(query.get("page") ?? 1) || 1, 1);
-      const listed = [...pagesDeployments[project] ?? []].reverse().filter((deployment) => environment === null || deployment.environment === environment);
-      return pagedEnvelope(listed.slice((page - 1) * perPage, page * perPage).map((deployment) => pagesView(project, deployment)), { page, per_page: perPage, count: Math.min(perPage, Math.max(listed.length - (page - 1) * perPage, 0)), total_count: listed.length, total_pages: Math.ceil(listed.length / perPage) });
-    }
-    throw new Refusal(404, 7003, `Could not route to ${request.url}`);
-  }
-
-  async function assets(request: Request, action: string | undefined): Promise<Response> {
-    if (action === "check-missing" && request.method === "POST")
-      return envelope((await decoded(HashesBody, request)).hashes.filter((hash) => !pagesAssets.has(hash)));
-    if (action === "upload" && request.method === "POST") {
-      for (const asset of await decoded(AssetsBody, request)) pagesAssets.add(asset.key);
-      return envelope(null);
-    }
-    if (action === "upsert-hashes" && request.method === "POST") {
-      for (const hash of (await decoded(HashesBody, request)).hashes) pagesAssets.add(hash);
-      return envelope(null);
-    }
-    throw new Refusal(404, 7003, `Could not route to ${request.url}`);
-  }
-
   async function route(request: Request, segments: ReadonlyArray<string>): Promise<Response> {
     const [first, second, third, fourth, fifth, ...rest] = segments;
     if (first === "user" && second === "tokens" && third === "verify") return envelope({ id: "token-test", status: "active" });
@@ -528,5 +541,39 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
       if (drop) throw new ResponseLost(`${request.method} ${path}: the response was lost after the change applied`);
       return response;
     },
+  };
+}
+
+export type TailEnding = "open" | "never" | "error" | number;
+
+export interface TailSeen {
+  readonly url: string;
+  readonly protocols: unknown;
+  readonly sent: Array<string>;
+}
+
+export type TailSockets = (url: string, options?: Socket.WebSocketConstructorOptions) => Socket.WebSocketLike;
+
+/** @throws {never} */
+export function tailSockets(frames: ReadonlyArray<string>, ending: TailEnding, seen: Array<TailSeen>): TailSockets {
+  return (url, protocols) => {
+    const record: TailSeen = { url, protocols, sent: [] };
+    seen.push(record);
+    const listeners = new Map<string, ReadonlyArray<(event: Socket.WebSocketEvent) => void>>();
+    const emit = (type: string, event: Socket.WebSocketEvent) => {
+      for (const listener of listeners.get(type) ?? []) listener(event);
+    };
+    return {
+      readyState: ending === "never" ? 0 : 1,
+      addEventListener: (type, listener) => { listeners.set(type, [...(listeners.get(type) ?? []), listener]); },
+      removeEventListener: (type, listener) => { listeners.set(type, (listeners.get(type) ?? []).filter((known) => known !== listener)); },
+      close: () => undefined,
+      send: (data) => {
+        record.sent.push(typeof data === "string" ? data : new TextDecoder().decode(data));
+        for (const frame of frames) emit("message", { type: "message", data: frame });
+        if (ending === "error") emit("error", { type: "error" });
+        if (typeof ending === "number") emit("close", { type: "close", code: ending });
+      },
+    };
   };
 }

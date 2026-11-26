@@ -13,7 +13,7 @@ import { judgeStandingDeposits } from "./standing.vibe"
 import { STANDING_DEPOSIT_LEDGER } from "./standingTerms.ts"
 import { setJudgement, setJudgementIfItemPaid, setJudgementIfReportPaid, unjudged } from "./store.vibe"
 
-export interface Judged {
+interface Judged {
   readonly judged: number
   readonly paid: number
 }

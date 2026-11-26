@@ -62,8 +62,8 @@ const projects: ReadonlyMap<string, ProjectView> = new Map([
   ["intake-restricted", fixture("intake-restricted", true)],
 ])
 
-schema StatusRow { enabled: number | null; verified_at: string | null; attempted_at: string; repository_id: string | null; repository_node_id: string | null; failure: string | null }
 schema RevisionRow { revision: number }
+schema StatusRow { enabled: number | null; verified_at: string | null; attempted_at: string; repository_id: string | null; repository_node_id: string | null; failure: string | null }
 
 const registered = { revision: 1, repositoryKey: "slop-test/intake", repositoryId: "1001", repositoryNodeId: "R_intake" }
 
@@ -87,11 +87,11 @@ function ports(env: Env) {
       const db = try D1
       return {
         project: (projectId) => provideService(effect {
-          const found = projects.get(projectId)
-          if (found === undefined) return undefined
+          const view = projects.get(projectId)
+          if (view === undefined) return undefined
           const now = new Date(try Clock.currentTimeMillis).toISOString()
-          const row = (try first(RevisionRow, sql`SELECT revision FROM project_revisions WHERE project_id=${projectId} AND created_at<=${now} ORDER BY revision DESC LIMIT 1`))
-          return row === undefined ? found : { ...found, revision: row.revision }
+          const row = try first(RevisionRow, sql`SELECT revision FROM project_revisions WHERE project_id=${projectId} AND created_at<=${now} ORDER BY revision DESC LIMIT 1`)
+          return row === undefined ? view : { ...view, revision: row.revision }
         }, D1, db),
         byRepository: () => succeed(undefined),
         byPath: () => succeed(undefined),

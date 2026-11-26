@@ -265,7 +265,7 @@ export effect function decodeConfig(vars: FeeVars, presentSecrets: ReadonlyArray
   } satisfies FeeConfig
 }
 
-export effect function environmentOf(vars: FeeVars) {
+effect function environmentOf(vars: FeeVars) {
   const tier = try tierOf(vars.SLOP_ENVIRONMENT)
   return (tier === "staging" ? "Staging" : "Production") satisfies Environment
 }
@@ -317,7 +317,7 @@ effect function readinessEntryOf(text: string) {
   return { network, wallet } satisfies ReadinessEntry
 }
 
-export effect function decodeReadiness(vars: FeeVars) {
+effect function decodeReadiness(vars: FeeVars) {
   const texts = [...new Set((vars.FEE_READY ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== ""))]
   const entries: Array<ReadinessEntry> = []
   for (const text of texts) entries.push(try readinessEntryOf(text))
@@ -326,7 +326,7 @@ export effect function decodeReadiness(vars: FeeVars) {
   return { entries, replacementActive: replacement === "true" } satisfies ReadinessSettings
 }
 
-export function sameReadiness(left: ReadinessSettings, right: ReadinessSettings) {
+function sameReadiness(left: ReadinessSettings, right: ReadinessSettings) {
   const pairs = (settings: ReadinessSettings) => [...new Set(settings.entries.map((entry) => `${entry.network}:${entry.wallet}`))].sort().join(",")
   return left.replacementActive === right.replacementActive && pairs(left) === pairs(right)
 }
@@ -347,7 +347,7 @@ function registered(wallets: ReadonlyArray<string>, addresses: ReadonlyArray<str
   return addresses.reduce<ReadonlyArray<string>>((list, address) => address === undefined || list.includes(address) ? list : [...list, address], wallets)
 }
 
-export function workerConfig(config: FeeConfig, source: number, wallets: ReadonlyArray<string>): WorkerConfig {
+function workerConfig(config: FeeConfig, source: number, wallets: ReadonlyArray<string>): WorkerConfig {
   return {
     source,
     converterMode: config.converterMode,
@@ -383,7 +383,7 @@ export function publishedWallet(held: Held, network: Network) {
   return held.wallets[walletOf(held.runtime, network) - 1]
 }
 
-export error ReadinessUnbound { network: Network }
+error ReadinessUnbound { network: Network }
 
 export effect function send(held: Held, event: RuntimeEvent, by: Sender) {
   if (event.type === "verifyReadiness" && !readinessEntryApplies(held.runtime, event.network, walletId(held.wallets, event.wallet))) throw new ReadinessUnbound({ network: event.network })

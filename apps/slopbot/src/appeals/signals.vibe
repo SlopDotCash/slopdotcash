@@ -1,9 +1,10 @@
 // spec/slopbot/appeals.md, "Only the author opens an appeal of a recorded finding, once per revision"; spec/slopbot/appeals.md, "A verified maintainer reopen of the revision resolves the appeal as upheld, even after escalation"; spec/slopbot/webhookDelivery.md, "A downstream reopen decision rechecks the exact retained source"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"
-import { isoAt, millisOf } from "@repo/platform/clock"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
 import { type ItemState, type ReopenObservation, type ReopenSource, type Webhook, reopenDecision } from "../../gen/slopbot__webhookDelivery.effect.vibe"
 import { githubClosedAt } from "../closeAttempt/github.vibe"
 import { activePenalty, reversePenalty } from "../closeAttempt/penalty.vibe"
 import { reconcileConfirmedReopen } from "../closeAttempt/reopen.vibe"
+import { reopenKeptFee } from "../fee/items.vibe"
 import { type Context, advance, delivery } from "../ingress/store.vibe"
 import type { AppealJob } from "../jobs/job.vibe"
 import { recordAction } from "../publish/actions.vibe"
@@ -71,7 +72,10 @@ effect function maintainerDecision(session: AppealSession, job: AppealJob, retai
     by: job.senderId,
     optional: true,
   }])
-  if (reopened.appeal.opened && reopened.appeal.via === "MaintainerReopen") try publishStage(session, appealKey, "resolution")
+  if (reopened.appeal.opened && reopened.appeal.via === "MaintainerReopen") {
+    try reopenKeptFee(appealKey, try isoNow())
+    try publishStage(session, appealKey, "resolution")
+  }
   if (reversalOnly(session)) return "human_reopen; project is retired, penalty reversal only"
   return cleaned ? "human_reopen" : "human_reopen; newer item state kept"
 }
@@ -82,6 +86,7 @@ effect function retiredAppeal(session: AppealSession, appealKey: string, opening
     { event: { type: "escalateRetired" }, by: 0, optional: true },
   ])
   if (!opened.appeal.opened) return "project is retired; no review"
+  try reopenKeptFee(appealKey, try isoNow())
   if (opened.appeal.resolution !== "Unresolved") return "appeal already resolved"
   if (opened.appeal.escalation === "NotEscalated") return "project is retired; no review"
   return `appeal escalated: ${(try loadAppeal(appealKey)).row?.escalation ?? ""}`
@@ -90,6 +95,7 @@ effect function retiredAppeal(session: AppealSession, appealKey: string, opening
 effect function openedAppeal(session: AppealSession, appealKey: string, opening: Opening) {
   const opened = try commitAppeal(appealKey, { opening }, (current) => [{ event: { type: "open", subject: current.candidate }, by: opening.author, optional: true }])
   if (!opened.appeal.opened) throw new AppealFailed({ reason: "Appeal was not stored" })
+  try reopenKeptFee(appealKey, try isoNow())
   if (opened.appeal.resolution !== "Unresolved") return "appeal already resolved"
   return try triageAppeal(session, appealKey)
 }

@@ -30,7 +30,7 @@ const legend = "px-1 text-sm font-semibold text-foreground";
 
 function ChangedValue({ value, empty }: { value: unknown; empty: string }) {
   if (value === undefined || value === null) return <>{empty}</>;
-  if (typeof value !== "object") return <>{String(value)}</>;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return <>{String(value)}</>;
   return <pre className="font-mono text-xs whitespace-pre-wrap">{JSON.stringify(value, null, 2)}</pre>;
 }
 

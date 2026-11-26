@@ -56,7 +56,7 @@ export schema RepositoryClearance { repositoryId: string; state: string; basis: 
 
 export schema ProjectClearance { state: string; repositories: ReadonlyArray<RepositoryClearance> }
 
-export schema ExemptionGranted { exemption: AdmissionExemption; replayed?: boolean; setup: null; clearance: ProjectClearance }
+export schema ExemptionGranted { exemption: AdmissionExemption; replayed?: boolean; setup?: null; clearance: ProjectClearance }
 
 export schema ExemptionRevoked { exemption: AdmissionExemption; replayed?: boolean; setup?: null }
 

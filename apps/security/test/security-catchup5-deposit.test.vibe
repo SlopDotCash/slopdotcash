@@ -303,7 +303,7 @@ effect function paid(world: World, caseId: string, depositId: number, at: string
 
 effect function closed(world: World, caseId: string, receipt: string, at: string, detail: Readonly<Record<string, unknown>>, actor: string, appeal = "none") {
   try promise(() => world.db.batch([
-    world.db.prepare("UPDATE security_cases SET submission_state='verified', received_at=COALESCE(received_at, ?), verified_at=COALESCE(verified_at, ?), verified_by_github_id=COALESCE(verified_by_github_id, ?), receipt_state=?, appeal_state=?, revision=revision+1 WHERE id=?").bind(at, at, maintainer, receipt, appeal, caseId),
+    world.db.prepare("UPDATE security_cases SET submission_state='verified', received_at=?, verified_at=?, verified_by_github_id=?, receipt_state=?, appeal_state=?, revision=revision+1 WHERE id=?").bind(at, at, maintainer, receipt, appeal, caseId),
     world.db.prepare("INSERT INTO security_case_events(case_id,case_revision,kind,actor_github_id,actor_role,idempotency_key,reason,evidence_reference,detail,at) SELECT id, revision, 'decide', ?, 'security-maintainer', ?, 'Closed.', NULL, ?, ? FROM security_cases WHERE id=?").bind(actor, `deposit-decide-${caseId}`, JSON.stringify(detail), at, caseId),
   ]))
 }
@@ -422,7 +422,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const cases = [acknowledged, silent, noProof, spam, appealed, racing]
     for (const [index, caseId] of cases.entries()) try paid(world, caseId, 100 + index, at(start))
     try closed(world, acknowledged, "triaging", at(start), { automatic: true }, "slop")
-    try promise(() => world.db.prepare("UPDATE security_cases SET submission_state='verified', received_at=COALESCE(received_at, ?), verified_at=COALESCE(verified_at, ?), verified_by_github_id=COALESCE(verified_by_github_id, ?) WHERE id=?").bind(at(start), at(start), maintainer, silent).run())
+    try promise(() => world.db.prepare("UPDATE security_cases SET submission_state='verified', received_at=?1, verified_at=?1, verified_by_github_id=?2 WHERE id=?3").bind(at(start), maintainer, silent).run())
     try closed(world, noProof, "rejected", at(start), { outcome: "rejected" }, "slop")
     try closed(world, spam, "rejected", at(start), { outcome: "rejected", spam: true }, maintainer)
     try closed(world, appealed, "duplicate", at(start), { outcome: "duplicate" }, maintainer, "open")

@@ -1,7 +1,7 @@
 // spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"
 import { type Period, periodContaining } from "@repo/settlement/kernels/calendar";
 import { lockedByPledges, type PoolDisplay } from "../../gen/frontend__projections.ts";
-import { type FundingMonthStart, type FundingPledge, type FundingVault, type PoolCap, type PoolFunding, poolFunding, promisedOwed, zeroedPoolCap } from "./poolFunding.ts";
+import { cyclePoolFunding, type FundingMonthStart, type FundingPledge, type FundingVault, type PoolCap, type PoolFunding, poolFunding, promisedOwed, zeroedPoolCap } from "./poolFunding.ts";
 import { vectors } from "./vectors.ts";
 
 const VAULT = "0x4F891b8c3d3fab9150fcdc94176b96863cd02899";
@@ -143,4 +143,24 @@ export const aVaultWithoutPledgeSupportReadsAsBeforeWhenTheFieldsAreAbsent = vec
   const omitted = shownFunding(fundingOf({ vaults: [legacy], now }));
   const explicit = shownFunding(fundingOf({ vaults: [{ ...legacy, openPledgedGross: null, pledges: [] }], now }));
   return omitted.display === explicit.display && omitted.owed === explicit.owed;
+});
+
+interface CycleFundingCase {
+  readonly cycleId: string;
+  readonly fundingState: "committed" | "pledged";
+  readonly committedMinor?: bigint;
+  readonly vaults: ReadonlyArray<Partial<FundingVault>>;
+  readonly now: string;
+}
+
+export const openCyclesReadVaultFundingWhileClosedCyclesKeepCommittedMinor = vectors<CycleFundingCase, ReturnType<typeof cyclePoolFunding>>([
+  [{ cycleId: "2026-12", fundingState: "pledged", vaults: [{ freeBalance: 600_000_000n, monthStarts: [start(600_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { funded: true, fundedMinor: 600_000_000n }],
+  [{ cycleId: "2026-12", fundingState: "pledged", vaults: [{ freeBalance: 0n, openPledgedGross: 250_000_000n, pledges: [pledge(december, 250_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { funded: true, fundedMinor: 250_000_000n }],
+  [{ cycleId: "2026-12", fundingState: "pledged", vaults: [{ freeBalance: 100_000_000n, monthStarts: [start(100_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { funded: false, fundedMinor: 100_000_000n }],
+  [{ cycleId: "2026-11", fundingState: "committed", committedMinor: 125_000_000n, vaults: [{ freeBalance: 600_000_000n, monthStarts: [start(600_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { funded: true, fundedMinor: 125_000_000n }],
+  [{ cycleId: "2026-11", fundingState: "pledged", committedMinor: 0n, vaults: [{ freeBalance: 600_000_000n, monthStarts: [start(600_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { funded: false, fundedMinor: 0n }],
+], ({ cycleId, fundingState, committedMinor, vaults, now }) => {
+  const fullVaults: ReadonlyArray<FundingVault> = vaults.map((vault) => ({ network: "base-mainnet", vault: VAULT.toLowerCase(), freeBalance: 250_000_000n, ...vault }));
+  const funding = fundingOf({ vaults, now });
+  return cyclePoolFunding({ cycleId, fundingState, committedMinor, funding, deployments: [{ network: "base-mainnet", vault: VAULT }], vaults: fullVaults, networkPays });
 });

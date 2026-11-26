@@ -149,8 +149,9 @@ async function closeAll() {
 
 function recordClipboard() {
   const copied: string[] = [];
-  vi.spyOn(navigator.clipboard, "writeText").mockImplementation(async (text) => {
+  vi.spyOn(navigator.clipboard, "writeText").mockImplementation((text) => {
     copied.push(text);
+    return Promise.resolve();
   });
   return copied;
 }

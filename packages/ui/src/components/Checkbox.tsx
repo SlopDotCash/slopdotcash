@@ -17,13 +17,13 @@ export function Checkbox({ invalid = false, className, ...props }: CheckboxProps
         focusRing,
         inactive,
         target,
-        "peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-input bg-background aria-invalid:border-destructive data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
+        "peer inline-flex size-5 shrink-0 items-center justify-center rounded-sm border border-input bg-background aria-invalid:border-destructive data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
         className,
       )}
       {...props}
     >
       <CheckboxPrimitive.Indicator>
-        <Check aria-hidden className="size-3" strokeWidth={2.5} />
+        <Check aria-hidden className="size-3.5" strokeWidth={2.5} />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   );

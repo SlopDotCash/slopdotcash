@@ -1,11 +1,12 @@
 // spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/projections.md, "Story: Let anyone fund a project from its public page and see who funded"
 import { fromAmount, parseBaseUnits, toAmount } from "@repo/settlement/kernels/amounts";
 import { type Period, periodContaining } from "@repo/settlement/kernels/calendar";
-import { Alert, DataState, NetworkMark, Spinner } from "@repo/ui";
+import { Alert, cn, DataState, NetworkMark, Spinner, sectionTitle } from "@repo/ui";
 import { Hourglass } from "lucide-react";
 import { useState } from "react";
 import { type Coverage, fundersView, lessThanOneMonthText, monthsCovered, type PoolFacts, publicFunding } from "../../../../gen/frontend__projections.ts";
 import { useMachine as useRead } from "../../../../gen/frontend__requests.react.ts";
+import { useNow } from "../../../app/hooks.ts";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { useAddress } from "../../../app/useAddress.ts";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
@@ -115,6 +116,7 @@ type DeploymentProps = {
   project: FundingProject;
   deployment: FundingDeployment;
   period: string;
+  now: Period;
   account: number;
   githubId: string;
   loginHref: string;
@@ -126,7 +128,7 @@ type DeploymentProps = {
 };
 
 /** One registered vault's wallet actions, with its month lock card sharing the wallet connected there. */
-function DeploymentFunding({ project, deployment, period, account, githubId, loginHref, pool, row, totals, onFinalized, onLocked }: DeploymentProps) {
+function DeploymentFunding({ project, deployment, period, now, account, githubId, loginHref, pool, row, totals, onFinalized, onLocked }: DeploymentProps) {
   const [wallet, setWallet] = useState<Connection>();
   const monthlyPool = project.reward.kind === "monthly-pool";
   const pledgeSupport = row?.openPledgedGross !== undefined && row.openPledgedGross !== null;
@@ -143,7 +145,7 @@ function DeploymentFunding({ project, deployment, period, account, githubId, log
           free={snapshot.freeBalance === null ? null : BigInt(snapshot.freeBalance)}
           decimals={snapshot.assetDecimals}
           wallet={wallet}
-          monthlyMinor={monthlyCapAt(project, periodContaining(Math.floor(Date.now() / 1000)))}
+          monthlyMinor={monthlyCapAt(project, now)}
           onLocked={onLocked}
         />
       ) : null}
@@ -159,10 +161,11 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
   const shownTotals = useTotals(totals, project.id);
   const shown = useSession(runtime);
   const address = useAddress();
+  const nowMs = useNow();
   const [revision, setRevision] = useState(0);
   const [registrationNotice, setRegistrationNotice] = useState("");
   if (listing !== undefined && deployments.length === 0) return null;
-  const period = periodOf(Date.now());
+  const period = periodOf(nowMs);
   const account = shown ? viewActor(shown.view) : 0;
   const githubId = shown?.view.status === "signedIn" ? shown.view.session.githubId : "";
   const loginHref = shown ? loginHrefFor(shown, address) : "";
@@ -175,7 +178,7 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
     refresh();
     setRevision((count) => count + 1);
   };
-  const now = periodContaining(Math.floor(Date.now() / 1000));
+  const now = periodContaining(Math.floor(nowMs / 1000));
   const snapshots = shownTotals?.snapshots ?? [];
   const covered = listing === undefined || shownTotals === undefined ? undefined : coverageText(publicCoverage(project, snapshots, listing.networkPays, now));
   const fundable =
@@ -183,7 +186,7 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
   const chain = project.escrow?.chain;
   return (
     <section className="flex flex-col gap-4" aria-label="Project escrow">
-      <h2 className="flex items-center gap-2 text-xl font-semibold text-foreground">
+      <h2 className={cn(sectionTitle, "flex items-center gap-3")}>
         Project vault {chain === "base" ? <NetworkMark network="Base" showName={false} /> : chain === "solana" ? <NetworkMark network="Solana" showName={false} /> : null}
       </h2>
       {deployments.length === 0 && account > 0 && onVaultRegistered !== undefined ? (
@@ -230,6 +233,7 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
                   project={project}
                   deployment={deployment}
                   period={period}
+                  now={now}
                   account={account}
                   githubId={githubId}
                   loginHref={loginHref}

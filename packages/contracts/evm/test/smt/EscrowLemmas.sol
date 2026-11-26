@@ -2,9 +2,8 @@
 pragma solidity 0.8.30;
 
 import {EscrowMath} from "../../src/EscrowMath.sol";
-import {MonthlyCalendar} from "../../src/MonthlyCalendar.sol";
 
-/// @notice Properties that ProjectEscrow relies on when it calls EscrowMath and MonthlyCalendar, as entry points for the SMTChecker's
+/// @notice Properties that ProjectEscrow relies on when it calls EscrowMath, as entry points for the SMTChecker's
 /// CHC engine, which proves them for every input (packages/contracts/README.md, "Money invariants"). The library
 /// functions are the internal ones ProjectEscrow inlines. Never deployed.
 contract EscrowLemmas {
@@ -38,32 +37,5 @@ contract EscrowLemmas {
     function splittingNeverLowersTheFee(uint128 a, uint128 b) external pure {
         if (uint256(a) + b > type(uint128).max) return;
         assert(uint256(EscrowMath.payoutFee(a)) + EscrowMath.payoutFee(b) >= EscrowMath.payoutFee(a + b));
-    }
-
-    /// @notice monthlyWindow refuses a period exactly when the library gives it no window: a valid period's
-    /// window never opens at zero.
-    function onlyAnInvalidPeriodHasNoWindow(uint32 period) external pure {
-        (uint64 opensAt, uint64 closesAt) = MonthlyCalendar.window(period);
-        uint256 year = period / 100;
-        uint256 month = period % 100;
-        bool valid = year >= 2000 && year <= 9999 && month >= 1 && month <= 12;
-        assert(valid ? opensAt != 0 : opensAt == 0 && closesAt == 0);
-    }
-
-    /// @notice A period's window opens before it closes, and the next period's window opens when it closes, so
-    /// window starts strictly increase from one period to the next and only one window is open at a time.
-    function windowStartIncreasesPerPeriod(uint32 period) external pure {
-        (uint64 opensAt, uint64 closesAt) = MonthlyCalendar.window(period);
-        if (opensAt == 0) return;
-        uint32 next = period % 100 == 12 ? period + 89 : period + 1;
-        (uint64 nextOpensAt,) = MonthlyCalendar.window(next);
-        assert(opensAt < closesAt);
-        assert(nextOpensAt == 0 || nextOpensAt == closesAt);
-    }
-
-    /// @notice currentPeriod is always a calendar month: its last two digits are 1 to 12.
-    function periodIsACalendarMonth(uint64 time) external pure {
-        uint32 period = MonthlyCalendar.periodAt(time);
-        assert(period % 100 >= 1 && period % 100 <= 12);
     }
 }

@@ -5,32 +5,13 @@ import { batchDigest } from "../../../kernels/records/ids.vibe"
 import type { HistoricalClosedBinding } from "../../../collect/run/historical.vibe"
 import { valueReferenceQuery } from "../../collect/cache.vibe"
 import type { HistoricalAssessmentHeads, Row } from "../audit/catalog.vibe"
-import { type HistoricalAssessmentReceipt, InvalidAssessmentJournal } from "../audit/reconcile.vibe"
+import { type EmptyLegacyClosureFacts, type HistoricalAssessmentReceipt, type HistoricalEvidence, InvalidAssessmentJournal, type JointCandidate, type VerifiedClosedFinding, type VerifiedClosure, isHistoricalClosedFinding, isStandaloneHistoricalReview } from "../audit/reconcile.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
 import { apply, catalogsComplete, goodClosure, goodRemoval } from "../../../../gen/points__assessmentAudit.effect.vibe"
 import { latestOf } from "./latest.vibe"
 import type { HistoricalEmptyLegacyClosureBinding } from "./merged.vibe"
 
-export type VerifiedClosedFinding = "verified-closed-context" | "verified-standalone-closed-review"
-
-export type VerifiedClosure = VerifiedClosedFinding | "verified-legacy-closure-without-awards"
-
-export interface JointCandidate {
-  readonly source: Row
-  readonly standalone: boolean
-}
-
-export interface EmptyLegacyClosureFacts {
-  readonly exactClosure: boolean
-  readonly noFormalReviews: boolean
-  readonly noPriorAward: boolean
-}
-
-export interface HistoricalEvidence {
-  readonly removed: ReadonlySet<string>
-  readonly verifiedClosed: ReadonlyMap<string, VerifiedClosure>
-  readonly legacyClosures: ReadonlyMap<string, EmptyLegacyClosureFacts>
-}
+export { type EmptyLegacyClosureFacts, type HistoricalEvidence, type JointCandidate, type VerifiedClosedFinding, type VerifiedClosure, isHistoricalClosedFinding, isStandaloneHistoricalReview }
 
 interface ClosedCandidate {
   readonly source: Row
@@ -62,22 +43,6 @@ function time(value: unknown): value is string {
 
 function sameInstant(left: unknown, right: unknown) {
   return time(left) && time(right) && Date.parse(left) === Date.parse(right)
-}
-
-export function isHistoricalClosedFinding(finding: string): finding is VerifiedClosedFinding {
-  return finding === "verified-closed-context" || finding === "verified-standalone-closed-review"
-}
-
-export function isStandaloneHistoricalReview(record: Row) {
-  const sources = list(record.sources).map(fields)
-  const units = list(record.units).map(fields)
-  const [source] = sources
-  const [unit] = units
-  const assessment = fields(unit?.assessment)
-  return sources.length === 1 && source !== undefined && source.indirectAcceptance === undefined && source.mergeRecipe === undefined &&
-    time(source.occurredAt) && time(record.assessedAt) && Date.parse(source.occurredAt) <= Date.parse(record.assessedAt) &&
-    Array.isArray(record.claims) && record.claims.length === 0 && units.length === 1 && Array.isArray(unit?.claimIds) && list(unit?.claimIds).length === 0 &&
-    assessment.status === "assessed" && assessment.tier === null && Array.isArray(assessment.reviews) && list(assessment.reviews).length > 0
 }
 
 effect function unless(holds: boolean) {

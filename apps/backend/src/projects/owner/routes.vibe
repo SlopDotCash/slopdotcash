@@ -5,7 +5,7 @@ import { ConstraintViolation } from "@repo/platform/d1"
 import { type Actor, Refused, admission, body, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { AccountStanding, Event, Registry, RegistryRead } from "../../../gen/backend__projectComposition.effect.vibe"
-import { Rejected, clearanceOf, exclusionsMayBecome, unbanned } from "../../../gen/backend__projectComposition.effect.vibe"
+import { clearanceOf, exclusionsMayBecome, unbanned } from "../../../gen/backend__projectComposition.effect.vibe"
 import type { AuthorityRead, BranchChange, Creation, NewRepository, OwnerChange, RepositoryFacts } from "../../../gen/backend__projects.effect.vibe"
 import { clearanceState } from "../../../gen/security__enforcement.effect.vibe"
 import { type Exclusion, covers, validList } from "../../../gen/settlement__payoutExclusions.effect.vibe"
@@ -23,7 +23,7 @@ import { verifiedAsset } from "../tokens/metadata.vibe"
 import { type BranchRevision, BranchRequest, branchReason, declarationMatches, primaryBranch, selectionOf, withBranch } from "./integrationBranch.vibe"
 import { fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinancialChange, refusal, shareHistoryOf, withMonthlyAmount } from "./manifest.vibe"
 import { type Json, appendedRepositories, classified, objectOf, same } from "./revisionChanges.ts"
-import { type Trusted, definitionProblem, registryProblem, transitionProblem } from "./definition.ts"
+import { type Trusted, applyCatchUpChange, definitionProblem, registryProblem, transitionProblem } from "./definition.ts"
 import { type StoredApplication, applicantApplications, applicationStatus, hasSignedIn, listedManifests, ownedProject, ownedProjects, parsedObject, projectRecord, publicApplication, storedApplication, storedProject } from "./records.vibe"
 import { managesContacts, publishedProgram, requestedStatus, stagedProgram, withBountyAmount } from "./securityProgram.vibe"
 import { primaryAuthority, primaryOf, refreshSetup } from "./setup.vibe"
@@ -438,6 +438,7 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
   const submitted = objectOf(request.manifest)
   if (submitted === undefined) throw refusal(putProjectsById.invalidManifestProjectManifestIsInvalid)
   const { current, state, by, checked } = try ownedCurrent(projectId, actor, expectedRevision, stored)
+  if (current.manifest.listingTier === "retired") throw refusal(putProjectsById.projectRestrictedS409, "A removed project cannot be changed.")
   let prepared = try withBountyAmount(try withMonthlyAmount(try withVerifiedAsset({ ...submitted, status: current.manifest.status, listingTier: current.manifest.listingTier }, current.manifest.rewardAsset), request.monthlyAmount), current.manifest.securityBounty, request.bountyAmount)
   const before = objectOf(current.manifest.reward)
   const after = objectOf(prepared.reward)
@@ -475,8 +476,9 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
   try decodedManifest(step.manifest, trusted)
   try transitionFits(current.manifest, step.manifest, now, trusted)
   try registryFits(step.manifest, true)
+  const manifest = applyCatchUpChange(current.manifest, step.manifest, now)
   const stale = refusal(putProjectsById.staleRevisionNoStore, "The project changed since you loaded it")
-  send({ projectId, event: step.event, by, revision: { manifestText: JSON.stringify(step.manifest), reason: summary, actor: revisionActor(actor) } }) catch effect (error) => {
+  send({ projectId, event: step.event, by, revision: { manifestText: JSON.stringify(manifest), reason: summary, actor: revisionActor(actor) } }) catch effect (error) => {
     if (error._tag === "Rejected") throw ownerRefusal(error.event, error.state, by, stale)
     throw storeRefusal(error, stale) ?? error
   }

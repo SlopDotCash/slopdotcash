@@ -1,7 +1,6 @@
 // spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { setTimeout as sleep } from "node:timers/promises";
 import type { SqlValue } from "@repo/platform/bindings";
 import { type ScheduledOutcome, type WorkerOptions, database, migrate, workerOptions } from "@repo/platform/testing";
 import { migrationsDir } from "@repo/platform/testing/paths";
@@ -98,13 +97,8 @@ export async function runAt(converter: Converter, at: string): Promise<string> {
   return (await worker.scheduled({ cron: converterCron, scheduledTime: new Date(at) })).outcome;
 }
 
-function converterEvents(converter: Converter): ReadonlyArray<ConverterEvent> {
+export function converterEvents(converter: Converter): ReadonlyArray<ConverterEvent> {
   return converter.logs.filter((line) => line.startsWith('{"event":"fee_converter_')).map((line) => JSON.parse(line) as ConverterEvent);
-}
-
-export async function settledEvents(converter: Converter, expected: number): Promise<ReadonlyArray<ConverterEvent>> {
-  for (let attempt = 0; attempt < 100 && converterEvents(converter).length < expected; attempt++) await sleep(20);
-  return converterEvents(converter);
 }
 
 async function rows<T>(converter: Converter, text: string, ...params: ReadonlyArray<SqlValue>): Promise<ReadonlyArray<T>> {

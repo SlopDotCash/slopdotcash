@@ -115,7 +115,7 @@ async function sessionCookie(world: World, githubId: string): Promise<string> {
   const token = `r${githubId.padStart(20, "0")}${String(cookies.size + 1).padStart(8, "0")}${"x".repeat(35)}`
   await world.db.batch([
     world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date().toISOString()),
-    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 30 * 86_400_000).toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 60 * 86_400_000).toISOString()),
   ])
   const cookie = `__Host-slop_points=${token}`
   cookies.set(githubId, cookie)
@@ -176,11 +176,11 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const copy = try submit(world, "52002", "routine-copy-0000001", "Oracle price is read before the update", "The oracle read in settle() happens before update(), so a stale price settles positions. Steps: call settle() in the same block as a price move.")
     const theft = try submit(world, "52003", "routine-theft-000001", "Any caller withdraws another depositor's balance", "withdraw(account, amount) pays msg.sender without checking the account owner. The attached test drains Alice.")
     const split = try submit(world, "52004", "routine-split-000001", "Rounding in fee accrual favours the vault", "accrue() rounds down twice; the test shows one wei lost per deposit.")
-    for (let pass = 0; pass < 2; pass += 1) {
-      fake.reply(routineOf("Oracle price is read before the update"), read({ severity: "high" }))
-      fake.reply(routineOf("Oracle price is read before the update"), read({ severity: "high" }))
-      fake.reply(routineOf("Any caller withdraws another depositor's balance"), read({ lossOfFundsPlausible: true, severity: "critical" }))
-      fake.reply(routineOf("Any caller withdraws another depositor's balance"), read({ lossOfFundsPlausible: true, severity: "critical" }))
+    for (const _pass of ["dry_run", "live"]) {
+      for (const _call of ["first", "reversed"]) {
+        fake.reply(routineOf("Oracle price is read before the update"), read({ severity: "high" }))
+        fake.reply(routineOf("Any caller withdraws another depositor's balance"), read({ lossOfFundsPlausible: true, severity: "critical" }))
+      }
       fake.reply(routineOf("Rounding in fee accrual favours the vault"), read({ proof: "missing", missing: ["runnable-proof"], severity: "low" }))
       fake.reply(routineOf("Rounding in fee accrual favours the vault"), read({ severity: "low" }))
     }
@@ -259,7 +259,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const { world, fake, clock } = routined
     const bare = try submit(world, "52005", "routine-bare-0000001", "Your contracts are probably insecure", "A scanner printed warnings. I have no steps, test or transaction to show.")
     const lapsed = try submit(world, "52006", "routine-lapse-000001", "The owner can pause withdrawals", "pause() stops withdrawals. I did not write a test and have no transaction to show.")
-    for (let call = 0; call < 2; call += 1) {
+    for (const _call of ["first", "reversed"]) {
       fake.reply(routineOf("Your contracts are probably insecure"), read({ proof: "missing", missing: ["reproduction-steps", "runnable-proof"], severity: "unresolved" }))
       fake.reply(routineOf("The owner can pause withdrawals"), read({ proof: "missing", missing: ["runnable-proof"], severity: "low" }))
     }
@@ -281,6 +281,58 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try same(
       { ended: ended.status, rejected: [rejected?.receipt, rejected?.nextAction, rejected?.due], kept: kept?.receipt, lapsedRows },
       { ended: 200, rejected: ["rejected", null, 0], kept: "needs-information", lapsedRows: [["needs-proof", "two-calls", 1, 2], ["no-proof-received", "clock", 1, 0]] },
+    )
+
+    const humanRejected = try submit(world, "52008", "routine-hrej-0000001", "Header check skips trailing whitespace", "parseHeader() trims only leading spaces. Reproduction: send trailing space.")
+    const waitingProof = try submit(world, "52009", "routine-wait-0000001", "Gas estimation could be tighter", "No reproduction steps or test attached.")
+    const humanState = try caseState(world, humanRejected.caseId)
+    const humanDecision = try exchanged(routined, routined.live, `/api/v1/security-cases/${humanRejected.caseId}/actions`, maintainer, { action: "decide", outcome: "rejected", severity: "low", loss: "not-verified", inScope: true, relatedParty: false, expectedRevision: humanState?.revision, idempotencyKey: "routine-hrej-decide-01", reason: "Not a security issue." })
+    for (const _call of ["first", "reversed"]) {
+      fake.reply(routineOf("Gas estimation could be tighter"), read({ proof: "missing", missing: ["runnable-proof"], severity: "low" }))
+    }
+    clock.set(clock.now() + 4 * minute)
+    try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+
+    const summaryAt = new Date(clock.now()).toISOString()
+    for (const [id, text] of [
+      [bare.caseId, "Human requested failing test"],
+      [lapsed.caseId, "Routine proof clock closed"],
+      [humanRejected.caseId, "Maintainer rejected non-issue"],
+      [waitingProof.caseId, "Routine waiting for proof"],
+    ] as const) {
+      try promise(() => world.db.prepare("INSERT INTO security_case_analyses (case_id, attempt, state, prompt_revision, summary, started_at, finished_at, report_version) VALUES (?, 1, 'complete', 'test-v1', ?, ?, ?, 1)").bind(id, text, summaryAt, summaryAt).run())
+    }
+
+    try submit(world, "52010", "routine-probe-000001", "Stale nonce accepted after bridge pause", "bridge() accepts the previous nonce after unpause(). Attached test reproduces.")
+    const seenEarlier: Array<ReadonlyArray<string>> = []
+    for (const _call of ["first", "reversed"]) {
+      fake.reply((call) => {
+        if (!routineOf("Stale nonce accepted after bridge pause")(call)) return false
+        const body = jsonValue(said(call)) as { readonly earlierReports?: ReadonlyArray<{ readonly id: string }> }
+        seenEarlier.push((body.earlierReports ?? []).map((entry) => entry.id))
+        return true
+      }, read({ severity: "high" }))
+    }
+    clock.set(clock.now() + 4 * minute)
+    const probed = try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+    const earlierIds = new Set(seenEarlier.flat())
+    try same(
+      {
+        humanDecision: humanDecision.status,
+        probed: probed.status,
+        includesHumanRejected: earlierIds.has(humanRejected.caseId),
+        includesHumanInfo: earlierIds.has(bare.caseId),
+        excludesRoutineClockClose: !earlierIds.has(lapsed.caseId),
+        excludesRoutineProofWait: !earlierIds.has(waitingProof.caseId),
+      },
+      {
+        humanDecision: 200,
+        probed: 200,
+        includesHumanRejected: true,
+        includesHumanInfo: true,
+        excludesRoutineClockClose: true,
+        excludesRoutineProofWait: true,
+      },
     )
   })
 })

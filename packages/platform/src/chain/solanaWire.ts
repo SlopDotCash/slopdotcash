@@ -183,7 +183,7 @@ export type Decoded<A, I> = { readonly kind: "decoded"; readonly value: A } | { 
 class Malformed<I> extends Error {
   readonly issue: I;
   constructor(issue: I) {
-    super(String(issue));
+    super("malformed wire bytes");
     this.issue = issue;
   }
 }
