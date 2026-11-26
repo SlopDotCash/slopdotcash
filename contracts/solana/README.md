@@ -680,9 +680,9 @@ submission deposits, the Solana counterpart of
 submission fee, USDC only, with the same outcomes). **It is not deployed on any
 cluster.** No Slop service reads it, the pay page does not offer it, and
 `src/lib/submission-fee.mjs` names no Solana network. The program id in the
-source, `HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t`, is a local placeholder
-whose key was discarded; the owner generates the real address before the
-verifiable build ([runbook](../../docs/submission-deposits-solana-deploy-runbook.md)).
+source, `4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7`, is the mainnet address
+the owner generated on 26 November 2026; nothing is deployed there until the
+[runbook](../../docs/submission-deposits-solana-deploy-runbook.md) has been run.
 It shares nothing with `slop-escrow`: its own id, its own accounts, no call
 between the two. It uses the escrow's two crates at the same versions and adds
 none, and the escrow's program bytes are unchanged by its presence in the

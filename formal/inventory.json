@@ -2022,7 +2022,7 @@
     },
     {
       "path": "contracts/solana/Anchor.toml",
-      "sha256": "2a8b5b301e391380f8d44a3f4e6025b9a9172a1018d2dd25d1b0f8dadc690586",
+      "sha256": "41e0a0187112be283cd38f280994cfcae687b2966b1bf22039e8085445d56c0f",
       "models": ["formal/models/contracts/contract_build_profile.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -2242,7 +2242,7 @@
     },
     {
       "path": "contracts/solana/programs/slop-submission-deposits/src/lib.rs",
-      "sha256": "42828469a7456d53a46177e7cba1f8c1e74b2154ff20d81a4cc43d9954080365",
+      "sha256": "270fb0c6504aea2ccb26509240243a7c9ad52c0a4f5b6ab6a8938cb4383ea16c",
       "models": ["formal/models/contracts/solana_submission_deposits.qnt"],
       "candidateLines": [12, 26, 235, 266, 267, 464, 562],
       "review": "mapped-abstraction"

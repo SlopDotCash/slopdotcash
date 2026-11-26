@@ -31,10 +31,10 @@ the Worker, the pay page and the fee switch each say so.
 
 ## 1. Decide five things
 
-- **The program address.** The address in the source,
-  `HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t`, is a local placeholder; its key
-  was discarded, so nothing can be deployed there. Generate the real program
-  keypair yourself (step 2). It is needed once, to deploy at that address, and
+- **The program address.** The address in the source since 26 November 2026,
+  `4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7`, is the one the owner generated
+  for mainnet (step 2, done); before that the source held a local placeholder
+  whose key was discarded. The owner holds the program keypair. It is needed once, to deploy at that address, and
   gives no power over the program afterwards.
 - **Owner** (`owner`). It can replace the resolver, pause new deposits and hand
   ownership over in two steps. It can never move, redirect or resolve a deposit.
