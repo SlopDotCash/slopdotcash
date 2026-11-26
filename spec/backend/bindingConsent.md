@@ -163,6 +163,32 @@ pure def lawStoredConsentUsableImmediately(b: Binding, by: str, signature: EvmCo
       and c.expiresAt == signature.expiresAt)
 ```
 
+### Payouts reopens with the current wallet authorization or finalized binding
+
+The signed-in account's reserved EVM payout shows stored wallet consent
+for its current claim, network, vault and finalized binding version,
+while the consent still leaves the submission window. It shows a
+binding as finalized only after the vault's finalized state names the
+current claim and destination, has a positive version, is active and
+has not been cancelled. An unreadable binding after retained consent
+shows authorization as unavailable and does not prompt for another
+signature. Earlier claims and other vaults and networks never supply
+this status. The read returns only a status, never proof bytes, and
+neither the signature nor the binding changes the award's payment state.
+If the effective claim changes while chain evidence is read, the
+retained status does not carry forward. The contributor can retry the read.
+
+```quint
+type PayoutBindingStatus = AwaitingConsent | ConsentPending | BindingFinalized | BindingUnavailable
+type RetainedPayoutConsent = { version: str, expiresAt: int }
+pure def payoutBindingStatus(readable: bool, currentClaimBound: bool, version: str, now: int,
+  consents: List[RetainedPayoutConsent]): PayoutBindingStatus =
+  if (not(readable)) BindingUnavailable
+  else if (currentClaimBound) BindingFinalized
+  else if (consents.some(c => c.version == version and c.expiresAt > now + submissionWindow)) ConsentPending
+  else AwaitingConsent
+```
+
 ### A Solana binding is one half-signed transaction per generation that only the wallet slot completes
 
 The settlement service reports, for each obligation, its owner, network and

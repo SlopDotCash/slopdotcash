@@ -8,15 +8,17 @@ import { type Anvil, anvil, forward } from "@repo/platform/testing/chains";
 import { githubFake } from "@repo/platform/testing/github";
 import { internet } from "@repo/platform/testing/internet";
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths";
-import { evmAddress } from "@repo/settlement/chain/evm/abi";
+import { IMPLEMENTATION_SLOT, bytes32, evmAddress } from "@repo/settlement/chain/evm/abi";
+import { decodeEscrowLogs } from "@repo/settlement/chain/evm/events";
+import { bindCalldata } from "@repo/settlement/chain/evm/typedData";
 import type {} from "@vitest/browser-playwright";
 import { Request, Response } from "miniflare";
 import type { Browser, BrowserContext, Download, Locator, Page, Route } from "playwright";
-import { encodeFunctionData, parseAbi } from "viem";
+import { encodeFunctionData, isHex, parseAbi } from "viem";
 import { createBuilder } from "vite";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
 import { feeNetworks } from "@repo/backend/client";
-import { escrowStack, word } from "@repo/settlement/testing/evm";
+import { FEE_RECIPIENT, type EscrowStack, escrowStack, word } from "@repo/settlement/testing/evm";
 import type { Answered, Box, Bucket, Deployed, Diagnostics, Downloaded, Layout, LeaderboardTransport, Method, Op, Published, Result, Roles, Row, Sent, Shown, Target, VaultPurpose, Verification } from "./protocol.ts";
 import { enlargeText } from "./textSize.ts";
 import { type Wallets, homeChainId, injectWallets } from "./wallets.ts";
@@ -164,7 +166,7 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
       ...roles,
       SLOP_ENVIRONMENT: "production",
       PUBLIC_SITE_URL: site,
-      PAYMENT_NETWORKS: "[]",
+      PAYMENT_NETWORKS: rpc ? JSON.stringify([vaultNetwork]) : "[]",
       MONTHLY_PAYMENT_SCHEDULE: '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}',
       SLOP_PRIVATE_INTAKE_MODE: "on",
       SECURITY_REPORT_DEPOSIT: "live",
@@ -411,7 +413,10 @@ type Fields = Readonly<Record<string, unknown>>;
 const fieldsOf = (value: unknown): Fields | undefined => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Fields) : undefined);
 
 function registered(manifest: Fields, deployment: Fields, purpose: VaultPurpose, now: string): Fields {
-  if (purpose === "ordinary") return { ...manifest, escrow: { ...fieldsOf(manifest.escrow), chain: "base", deployments: [deployment] } };
+  if (purpose === "ordinary") return {
+    ...manifest,
+    escrow: { schemaVersion: "1", effectiveCycle: now.slice(0, 7), feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...fieldsOf(manifest.escrow), chain: "base", deployments: [deployment] },
+  };
   const program = fieldsOf(manifest.securityBounty);
   const amount = fieldsOf(program?.amount);
   if (amount?.network !== vaultNetwork || amount.currency !== "USDC") throw new Error(`site: the project has no USDC bounty on ${vaultNetwork}`);
@@ -419,6 +424,28 @@ function registered(manifest: Fields, deployment: Fields, purpose: VaultPurpose,
   return {
     ...manifest,
     securityBounty: { ...program, settlement: { schemaVersion: "1", effectiveCycle: now.slice(0, 7), chain: vaultNetwork, feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...settlement, deployments: [deployment] } },
+  };
+}
+
+async function reviewedVault(stack: EscrowStack, vault: string, owner: string, block: bigint) {
+  const factorySlot = String(await stack.chain.rpc("eth_getStorageAt", [stack.factory, IMPLEMENTATION_SLOT, "latest"]));
+  const factoryImplementation = `0x${factorySlot.slice(-40)}`;
+  const creation = decodeEscrowLogs(stack.factory, await stack.logs(stack.factory, 0n, block))
+    .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault);
+  if (creation === undefined) throw new Error("site: recorded vault has no creation event");
+  const codeDigest = async (address: string) => sha256(Buffer.from(String(await stack.chain.rpc("eth_getCode", [address, "latest"])).slice(2), "hex"));
+  return {
+    network: vaultNetwork, vault, asset: stack.dollar, owner, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null,
+    identityAuthority: stack.roles.authority.address.toLowerCase(), feeRecipient: FEE_RECIPIENT, deploymentTransaction: creation.at.transaction,
+    sourceCommit: "a".repeat(40), codeSha256: await codeDigest(vault), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: stack.factory, factoryCodeSha256: await codeDigest(stack.factory), registrar: stack.roles.registrar.address.toLowerCase(),
+    evmUpgrade: {
+      authority: stack.roles.upgrader.address.toLowerCase(),
+      vaultImplementation: stack.implementation,
+      vaultImplementationCodeSha256: await codeDigest(stack.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: await codeDigest(factoryImplementation),
+    },
   };
 }
 
@@ -442,7 +469,7 @@ async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed
     const [author] = await started.rows("SELECT actor_github_id, actor_github_login FROM project_revisions WHERE project_id = ? ORDER BY revision LIMIT 1", [projectId]);
     if (record === undefined || author === undefined) throw new Error(`site: no project ${projectId}`);
     const recorded = fieldsOf(JSON.parse(String(record.manifest))) ?? {};
-    const deployment = { network: vaultNetwork, vault: created, asset: stack.dollar, owner: ownerAddress };
+    const deployment = purpose === "ordinary" ? await reviewedVault(stack, created, ownerAddress, block) : { network: vaultNetwork, vault: created, asset: stack.dollar, owner: ownerAddress };
     const now = new Date().toISOString();
     const active = { ...recorded, status: "active" };
     const revisions = [
@@ -465,6 +492,21 @@ async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed
   } finally {
     await stack.close();
   }
+}
+
+async function bindPayout(githubId: string, vault: string) {
+  const [row] = await backend().rows("SELECT b.signature, b.expires_at, b.expected_version, w.wallet_address, w.record_sha256 FROM payment_binding_authorizations b JOIN wallet_claims w ON w.id = b.claim_id WHERE b.github_user_id = ? AND b.vault = ?", [githubId, vault]);
+  const chain = await walletChain(current(), homeChainId);
+  const authority = chain.accounts[1];
+  const to = evmAddress(vault);
+  const destination = evmAddress(String(row?.wallet_address));
+  const claimDigest = bytes32(`0x${String(row?.record_sha256)}`);
+  const walletSignature = String(row?.signature);
+  if (row === undefined || authority === undefined || to === undefined || destination === undefined || claimDigest === undefined || !isHex(walletSignature))
+    throw new Error("site: no stored binding consent to relay");
+  const data = bindCalldata({ actor: BigInt(githubId), destination, expectedVersion: BigInt(String(row.expected_version)), claimDigest, expiresAt: BigInt(String(row.expires_at)), walletSignature });
+  const receipt = await chain.transact({ from: authority.address, to, data });
+  if (receipt.status !== "success") throw new Error("site: local binding reverted");
 }
 
 async function published(context: BrowserCommandContext, leaderboard: LeaderboardTransport): Promise<Published> {
@@ -582,10 +624,13 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return null;
     case "vault":
       return vault(op.projectId, op.purpose);
+    case "bindPayout":
+      await bindPayout(op.githubId, op.vault);
+      return null;
     case "backendRpc": {
-      await walletChain(current(), homeChainId);
+      if (op.enabled) await walletChain(current(), homeChainId);
       const started = backend();
-      await started.deploy({ ...started.deployed(), rpc: true });
+      await started.deploy({ ...started.deployed(), rpc: op.enabled });
       return null;
     }
     case "finalize": {

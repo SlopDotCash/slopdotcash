@@ -191,7 +191,7 @@ export function PayoutsPage({ runtime }: PageProps) {
       problem={read?.kind === "failed" ? read.message : feed.failed ? payoutMessages.privateUnavailable : undefined}
       account={account}
       onRetry={feed.restart}
-      consent={account ? (payment) => <PayoutConsent runtime={runtime} account={account} payment={payment} onAccessLost={(lost) => feed.publish(lostShown(lost))} /> : undefined}
+      consent={account && feed.settled ? (payment) => <PayoutConsent runtime={runtime} account={account} payment={payment} onAccessLost={(lost) => feed.publish(lostShown(lost))} onRefresh={feed.restart} /> : undefined}
       allocation={account ? <AllocationSection runtime={runtime} account={account} /> : undefined}
       referrals={actor !== "" ? <ReferralClaims runtime={runtime} githubId={actor} /> : undefined}
     />
