@@ -7,16 +7,29 @@ import { type ProjectChain, projectChains, websiteLabel, xHandle } from "../../k
 
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 
-const Deployments = Schema.Array(Schema.Struct({ network: Schema.String, asset: Schema.String }));
+const Deployments = Schema.Array(Schema.Struct({ network: Schema.String, asset: Schema.optional(Schema.NullOr(Schema.String)) }));
+const LinksField = Schema.Struct({ website: Schema.optional(Schema.NullOr(Schema.String)), x: Schema.optional(Schema.NullOr(Schema.String)) });
+const EscrowField = Schema.Struct({ deployments: Deployments });
+const BountyField = Schema.Struct({ settlement: Schema.optional(Schema.NullOr(EscrowField)) });
+const AssetField = Schema.Struct({ network: Schema.String, address: Schema.String, symbol: Schema.String });
 
-const LinkedRecord = Schema.Struct({
-  links: Schema.optional(Schema.Struct({ website: Schema.optional(Schema.String), x: Schema.optional(Schema.String) })),
-  escrow: Schema.optional(Schema.Struct({ deployments: Deployments })),
-  securityBounty: Schema.optional(Schema.Struct({ settlement: Schema.optional(Schema.Struct({ deployments: Deployments })) })),
-  rewardAsset: Schema.optional(Schema.Struct({ network: Schema.String, address: Schema.String, symbol: Schema.String })),
-});
+const decodeLinks = Schema.decodeUnknownResult(LinksField);
+const decodeEscrow = Schema.decodeUnknownResult(EscrowField);
+const decodeBounty = Schema.decodeUnknownResult(BountyField);
+const decodeAsset = Schema.decodeUnknownResult(AssetField);
 
-const decodeLinked = Schema.decodeUnknownResult(LinkedRecord);
+function decodedOf<T>(result: Result.Result<T, unknown>): T | undefined {
+  return Result.isSuccess(result) ? result.success : undefined;
+}
+
+function deploymentsOf(entries: ReadonlyArray<{ readonly network: string; readonly asset?: string | null }>): ReadonlyArray<{ readonly network: string; readonly asset?: string }> {
+  return entries.map(({ network, asset }) => (typeof asset === "string" ? { network, asset } : { network }));
+}
+
+function safeWebsite(url: string | null | undefined): string {
+  if (!url) return "";
+  return URL.parse(url)?.protocol === "https:" ? url : "";
+}
 
 export interface ProjectLinksProps {
   /** The project's registry record as the project read served it. */
@@ -26,12 +39,19 @@ export interface ProjectLinksProps {
 const chainText = (chains: ReadonlyArray<ProjectChain>) => `Chain: ${chains.map((chain) => (chain.symbol ? `${chain.name} (${chain.symbol})` : chain.name)).join(", ")}`;
 
 function linkParts(record: unknown): ReadonlyArray<{ key: string; node: ReactNode }> {
-  const decoded = decodeLinked(record);
-  if (!Result.isSuccess(decoded)) return [];
-  const linked = decoded.success;
-  const chains = projectChains(linked);
-  const website = linked.links?.website ?? "";
-  const x = linked.links?.x ?? "";
+  if (typeof record !== "object" || record === null || Array.isArray(record)) return [];
+  const raw = record as Readonly<Record<string, unknown>>;
+  const links = decodedOf(decodeLinks(raw.links));
+  const escrow = decodedOf(decodeEscrow(raw.escrow));
+  const settlement = decodedOf(decodeBounty(raw.securityBounty))?.settlement;
+  const rewardAsset = decodedOf(decodeAsset(raw.rewardAsset));
+  const chains = projectChains({
+    ...(escrow ? { escrow: { deployments: deploymentsOf(escrow.deployments) } } : {}),
+    ...(settlement ? { securityBounty: { settlement: { deployments: deploymentsOf(settlement.deployments) } } } : {}),
+    ...(rewardAsset ? { rewardAsset } : {}),
+  });
+  const website = safeWebsite(links?.website);
+  const x = links?.x ?? "";
   const handle = xHandle(x) ?? "";
   const shown = { website, xAccount: handle };
   return [
