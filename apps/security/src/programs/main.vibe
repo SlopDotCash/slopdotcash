@@ -1,4 +1,4 @@
-// spec/security/scanController.md, "A run dispatches only when every gate holds and otherwise skips"; spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/routineDecisions.md, "Two independent calls must agree before a close, and a plausible loss of funds closes nothing"; spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"
+// spec/security/scanController.md, "A run dispatches only when every gate holds and otherwise skips"; spec/security/scanController.md, "A deployed release serves the scanner input list of its own commit"; spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/routineDecisions.md, "Two independent calls must agree before a close, and a plausible loss of funds closes nothing"; spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"
 import { webCrypto } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
@@ -8,6 +8,7 @@ import { sandboxQualification } from "../qualification/sandbox.vibe"
 import { securityScreening } from "../qualification/screening.vibe"
 import { vettingControls } from "../qualification/vettingControls.vibe"
 import { vettingReviewQualification } from "../qualification/vettingReview.vibe"
+import { publishScannerInputs } from "./inputs.vibe"
 import { publicKey } from "./publicKey.vibe"
 import { scan } from "./scan.vibe"
 
@@ -20,6 +21,7 @@ program({
   commands: {
     scan: command(scan),
     "public-key": command(publicKey),
+    "scanner-inputs": command(publishScannerInputs),
     "sandbox-qualification": command(sandboxQualification),
     "security-screening": command(securityScreening),
     "security-routine-qualification": command(securityRoutineQualification),

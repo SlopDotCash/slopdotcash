@@ -680,6 +680,9 @@ jobs:
       - name: Publish the global skills, discovery index and sitemap
         run: node apps/contributor/dist/programs/main.js site --out "$BUNDLE/site" --registry "$BUNDLE/registry/snapshot.json"
 
+      - name: Publish the scanner input list of this commit
+        run: node apps/security/dist/programs/main.js scanner-inputs --out "$BUNDLE/site"
+
       - name: Bind the release manifest
         id: manifest
         run: |

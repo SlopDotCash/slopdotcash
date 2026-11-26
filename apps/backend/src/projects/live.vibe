@@ -28,17 +28,23 @@ function assetAddressOf(manifest: Manifest): string | undefined {
 }
 
 function aliasesOf(repository: Manifest["repositories"][number]): ReadonlyArray<string> {
-  const aliases = repository.aliases ?? []
-  const current = currentPath(repository.githubUrl)
-  const known = [repository.id, ...aliases].map((path) => path.toLowerCase())
-  return current === undefined || known.includes(current.toLowerCase()) ? aliases : [...aliases, current]
+  const current = (currentPath(repository.githubUrl) ?? repository.id).toLowerCase()
+  const seen = new Set<string>()
+  const aliases: string[] = []
+  for (const path of [repository.id, ...(repository.aliases ?? [])]) {
+    const lowered = path.toLowerCase()
+    if (lowered === current || seen.has(lowered)) continue
+    seen.add(lowered)
+    aliases.push(path)
+  }
+  return aliases
 }
 
 function repositoriesOf(manifest: Manifest) {
   return manifest.repositories.map((repository, index) => ({
     id: index === 0 ? String(manifest.authority.repositoryId) : repository.githubId ?? "",
     nodeId: index === 0 ? manifest.authority.repositoryNodeId : repository.nodeId ?? "",
-    fullName: repository.id,
+    fullName: currentPath(repository.githubUrl) ?? repository.id,
     integrationBranch: repository.integrationBranch ?? "",
     aliases: aliasesOf(repository),
   }))
