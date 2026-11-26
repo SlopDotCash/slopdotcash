@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { Schema } from "effect";
@@ -334,7 +334,7 @@ function workerConfig(name: string, source: string, options: Bindings, compatibi
       env: built.env,
       ...built.triggers.length === 0 ? {} : { triggers: built.triggers },
       ...Object.keys(built.exports).length === 0 ? {} : { exports: built.exports },
-      ...options.assets === undefined ? {} : { assets: { directory: options.assets, runWorkerFirst: true, hasUserWorker: true } },
+      ...options.assets === undefined ? {} : { assets: { directory: options.assets, runWorkerFirst: true, hasUserWorker: true, notFoundHandling: existsSync(join(options.assets, "404.html")) ? "404-page" : "none" } },
     },
     dev: { cacheAPI: true, ...outbound === undefined ? {} : { outboundService: connection(outbound, outboundErrors) } },
   }, ...built.mailers];
