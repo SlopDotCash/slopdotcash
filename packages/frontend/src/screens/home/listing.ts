@@ -41,7 +41,6 @@ export interface ListedProject extends CardProject {
   readonly escrow?: { readonly deployments: ReadonlyArray<{ readonly network: string }> };
   /** Whether the owner's intake cap holds the project out of the lists; never while the merge activity read is pending or failed. */
   readonly held?: boolean;
-  /** Whether the backlog rule holds the project out of rotation; never while the merge activity read is pending or failed. */
   readonly outOfRotation?: boolean;
   /** The owner's published maintainer share as a card line, when there is one. */
   readonly shareLine?: string;

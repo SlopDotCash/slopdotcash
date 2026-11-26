@@ -8,7 +8,7 @@ import { type MergeIndex, projectBacklogNotice, projectHeld } from "./summary.ts
 
 export type MergeActivityProps = {
   /** The project whose repositories the line describes; its intake cap decides the paused notice, and the backlog rule decides the out-of-rotation notice. */
-  project: Pick<ShownProject, "id" | "status" | "record" | "reward">;
+  project: Pick<ShownProject, "id" | "status" | "record" | "reward" | "securityBounty">;
   /** The stored merge activity of every project. */
   merge: Shown<MergeIndex>;
   /** Now, in milliseconds, against which the line's ages and the stored counts are told. */

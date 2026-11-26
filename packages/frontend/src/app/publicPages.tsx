@@ -12,7 +12,7 @@ import { repositoryRegistryOf } from "../reads/registryTerms.ts";
 import { HomePage, projectCoverage } from "../screens/home/index.ts";
 import type { ListedProject, MergeLine, Shown } from "../screens/home/index.ts";
 import { poolReadOf } from "../screens/projects/history.ts";
-import { type MergeIndex, projectFunding, projectHeld, projectOutOfRotation, projectPromiseOf, slopbotSettings } from "../screens/projects/summary.ts";
+import { type MergeIndex, backlogExempt, projectFunding, projectHeld, projectOutOfRotation, projectPromiseOf, slopbotSettings } from "../screens/projects/summary.ts";
 import { projectOf } from "../screens/projects/project.schema.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime } from "../screens/projects/reads.vibe";
 import { useShownRead } from "../screens/projects/hooks.ts";
@@ -26,8 +26,7 @@ type Reads = Effect.Success<ReturnType<typeof projectReads>>;
 interface Listing {
   readonly projects: Shown<ReadonlyArray<ListedProject>>;
   readonly funding: PoolRead;
-  readonly capped: boolean;
-  readonly outOfRotation: boolean;
+  readonly needsMerge: boolean;
 }
 
 const unread: Shown<never> = { status: "Loading", value: undefined };
@@ -70,8 +69,7 @@ function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>):
   return {
     projects: { status: registryStatus(boot), value: boot.error === undefined ? listed : undefined },
     funding: poolReadOf(pool.status),
-    capped: shown.some(({ project }) => slopbotSettings(project).intakeCap >= minCap),
-    outOfRotation: listed.some((project) => project.outOfRotation === true),
+    needsMerge: shown.some(({ project }) => slopbotSettings(project).intakeCap >= minCap || (project.status === "active" && !backlogExempt(project))),
   };
 }
 
@@ -93,8 +91,8 @@ function HomeMerged({ runtime, reads, boot }: ListedProps) {
 }
 
 function HomeListed({ runtime, reads, boot }: ListedProps) {
-  const { projects, funding, capped, outOfRotation } = useListing(reads, boot, unmerged);
-  return capped || outOfRotation ? <HomeMerged runtime={runtime} reads={reads} boot={boot} /> : <HomePage runtime={runtime} projects={projects} funding={funding} />;
+  const { projects, funding, needsMerge } = useListing(reads, boot, unmerged);
+  return needsMerge ? <HomeMerged runtime={runtime} reads={reads} boot={boot} /> : <HomePage runtime={runtime} projects={projects} funding={funding} />;
 }
 
 const failedRead: Shown<never> = { status: "Failed", value: undefined, onRetry: () => location.reload() };

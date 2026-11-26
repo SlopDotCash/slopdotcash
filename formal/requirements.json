@@ -890,11 +890,16 @@
           "rules": [
             "Story: Read each repository once a day and keep the last values on failure / Wanted issues are read with the activity and their label is created once"
           ]
+        },
+        {
+          "spec": "spec/backend/backlogRule.md",
+          "rules": [
+            "Story: Keep the lists to projects whose maintainers are keeping up"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation",
-      "gap": "The backlog rule (operator decision of 23 November 2026, in effect from 1 December 2026) has no spec yet: the 50-waiting-pull-request limit, the three-day merge activity read, the exclusions and the catching-up mark are not modelled. The owners above cover the rest of this subsection only."
+      "implementationEvidence": "pending-implementation"
     },
     {
       "section": 5,
@@ -2253,11 +2258,16 @@
           "rules": [
             "Story: Pause new contributors while the review queue is full"
           ]
+        },
+        {
+          "spec": "spec/backend/backlogRule.md",
+          "rules": [
+            "Story: Keep the lists to projects whose maintainers are keeping up"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation",
-      "gap": "Leaving a project the backlog rule takes out of rotation off the homepage, /sponsors and agent discovery from 1 December 2026 (operator decision of 23 November 2026) has no spec yet; the owners above cover the rest of this subsection only."
+      "implementationEvidence": "pending-implementation"
     },
     {
       "section": 7,

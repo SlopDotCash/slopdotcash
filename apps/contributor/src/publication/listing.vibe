@@ -1,6 +1,6 @@
-// spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"
+// spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why"
 import { type IntakeCount, IntakeCounts, type RegistryManifest } from "@repo/ports/backend"
-import type { StoredCount } from "../../gen/backend__intakeCap.effect.vibe" 
+import type { StoredCount } from "../../gen/backend__intakeCap.effect.vibe"
 import type { BacklogRead } from "../../gen/backend__backlogRule.effect.vibe"
 import { type IntakeListing, type MonthListing, intakeListingOf, monthListingOf } from "../../gen/contributor__publication.effect.vibe"
 import type { PoolFacts } from "../../gen/frontend__projections.effect.vibe"
@@ -76,13 +76,12 @@ function storedCount(count: IntakeCount): ReadonlyArray<StoredCount> {
 }
 
 export function intakeListingFor(read: IntakeRead, project: RegistryManifest, manifest: unknown, now: number): IntakeListing {
-  const counts = read?.get(project.projectId) 
+  const counts = read?.get(project.projectId)
   const nowHours = Math.floor(now / hourMs)
-    if (counts === undefined) return intakeListingOf(false, 0, project.active, nowHours, [], backlogExempt(manifest), catchUpUntilOf(manifest), [])
-  return intakeListingOf(true, capOf(manifest), project.active, nowHours, counts.flatMap((count) => storedCount(count)), backlogExempt(manifest), catchUpUntilOf(manifest), counts.flatMap((count) => storedBacklogRead(count))))
+  if (counts === undefined) return intakeListingOf(false, 0, project.active, nowHours, [], backlogExempt(manifest), catchUpUntilOf(manifest), [])
+  return intakeListingOf(true, capOf(manifest), project.active, nowHours, counts.flatMap((count) => storedCount(count)), backlogExempt(manifest), catchUpUntilOf(manifest), counts.flatMap((count) => storedBacklogRead(count)))
 }
 
-// Backlog-rule helpers for agent discovery (spec/contributor/publication.md).
 schema BountyOnlyProgram { readonly rewardMode: "bounty-only" }
 schema BountyOnlyField { readonly securityBounty: BountyOnlyProgram }
 schema CatchUpSetting { readonly catchUpUntil: string }
@@ -95,7 +94,7 @@ function backlogExempt(manifest: unknown): boolean {
   const pool = monthlyPoolOf(manifest) ? manifest.reward : undefined
   if (pool === undefined) return true
   if (bountyOnlyOf(manifest)) return true
-  return pool.monthlyCapMinor === "0"
+  return /^(?:0+|-\d+)$/u.test(pool.monthlyCapMinor)
 }
 
 function catchUpUntilOf(manifest: unknown): number {

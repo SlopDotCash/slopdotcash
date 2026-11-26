@@ -87,7 +87,7 @@ export effect function newProjectRefusal(manifest: Json, actor: Creator, storedA
     ],
   ]
   const broken = rules.find(([valid]) => !valid)
-  if (broken !== undefined) return broken[1] === "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md" ? refusal(putProjectsById.invalidManifestRootSkillPublicationIs) : broken[1] === "A new project is not catching up on reviews; start it from the project's settings once it is listed" ? refusal(putProjectsById.catchUpRefusedANewProjectIs) : invalidManifest(broken[1])
+  if (broken !== undefined) return broken[1] === "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md" ? refusal(putProjectsById.invalidManifestRootSkillPublicationIs) : broken[1] === "A new project is not catching up on reviews; start it from the project's settings once it is listed" ? refusal(postProjects.catchUpRefusedANewProjectIs) : invalidManifest(broken[1])
   if (program === undefined) return undefined
   const split = objectOf(program.split)
   if (split?.researcherBasisPoints === 10000 && split.slopBasisPoints === 0) return refusal(postProjects.securitySplitRestricted)

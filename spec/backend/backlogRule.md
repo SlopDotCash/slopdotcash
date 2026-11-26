@@ -78,8 +78,9 @@ pure def dormantWarningDue(reads: List[BacklogRead], now: int): bool =
   hasRecentRead(reads, now) and recentWaiting(reads, now) >= 1 and recentMerged(reads, now) != 0
     and now - recentMerged(reads, now) >= 240 and now - recentMerged(reads, now) < dormantHours
 pure def lawSingleRepoDormantHolds(r: BacklogRead, now: int): bool =
-  dormantHeld(List(r), now) == (r.read and r.waiting >= 1 and (r.lastMergedAt == 0 or now - r.lastMergedAt >= dormantHours)
-    and now - r.observedAt <= readMaxAgeHours)
+  r.lastMergedAt >= 0 implies
+    dormantHeld(List(r), now) == (r.read and r.waiting >= 1 and (r.lastMergedAt == 0 or now - r.lastMergedAt >= dormantHours)
+      and now - r.observedAt <= readMaxAgeHours)
 pure def lawQuietNeverDormant(reads: List[BacklogRead], now: int): bool =
   recentWaiting(reads, now) == 0 implies not(dormantHeld(reads, now))
 pure def lawNoReadHoldsNothing(reads: List[BacklogRead], now: int): bool =
@@ -154,7 +155,8 @@ maintainers are catching up until the date in `slopbot.catchUpUntil`.
 ```quint
 pure val overLimitNotice = "This project is not taking new work right now because at least 50 pull requests are waiting for review."
 pure val dormantNotice = "This project is not taking new work right now because its maintainers have not merged work in at least two weeks."
-pure def catchUpNotice(until: str): str = "This project's maintainers are catching up on reviews until " + until + "."
+pure val catchUpNoticePrefix = "This project's maintainers are catching up on reviews until "
+pure val catchUpNoticeSuffix = "."
 pure def canBrowserRead(s: Backlog, ok: bool, by: str): bool = by == browserReader
 pure def browserRead(s: Backlog, ok: bool, by: str): Backlog = { ...s, browser: if (ok) ListReady else ListFailed }
 pure def canServerRead(s: Backlog, ok: bool, by: str): bool = by == discoveryServer
@@ -259,7 +261,7 @@ pure def lawNoticeSentOnce(s: Backlog, key: str): bool =
   s.sentKeys.contains(key) implies not(canSendNotice(s, key, schedule))
 pure def lawPreviewBeforeStart(s: Backlog, key: str): bool =
   (s.now < startsAtHours and wouldLeave(s) and not(s.sentKeys.contains(key))) implies canSendNotice(s, key, schedule)
-pure def sometimesNoticeSent(s: Backlog, key: str): bool = s.sentKeys.contains(key)
+pure def sometimesNoticeSent(s: Backlog): bool = s.sentKeys.size() > 0
 pure val readsValues = Set(List(unreadRead, unreadRead),
   List({ read: true, waiting: 50, lastMergedAt: 498800, observedAt: 498911 }, unreadRead),
   List({ read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }, { read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }),
@@ -271,7 +273,7 @@ pure val rValues = Set(unreadRead, { read: true, waiting: 50, lastMergedAt: 4988
   { read: true, waiting: 1, lastMergedAt: 0, observedAt: 498911 },
   { read: true, waiting: 3, lastMergedAt: 498612, observedAt: 498911 })
 pure val waitingValues = Set(0, 1, 25, 49, 50, 51)
-pure val lastMergedValues = Set(0, 498500, 498612, 498800, 498911)
+pure val lastMergedAtValues = Set(0, 498500, 498612, 498800, 498911)
 pure val nowValues = Set(2, 498912, 498913)
 pure val untilValues = Set(0, 498913, 499248, 499249)
 pure val startedAtValues = Set(0, 498912)
@@ -283,4 +285,11 @@ pure val keyValues = Set("backlog-rule:example:preview", "backlog-rule:example:w
 pure val byValues = Set(owner, registry, schedule, browserReader, discoveryServer, slopbot)
 pure val weight_storeRead = 3
 pure val weight_startCatchUp = 2
+pure val eval_witness_sometimesBackByItself = (("observeClock", 498912, schedule), ("storeRead", 0, 50, 498800, schedule),
+  ("storeRead", 0, 1, 498911, schedule), ("storeRead", 1, 0, 498911, schedule), ("browserRead", true, browserReader))
+pure val eval_witness_sometimesCatchUpKeepsListed = (("observeClock", 498912, schedule), ("storeRead", 0, 50, 498800, schedule),
+  ("startCatchUp", 499248, 202612, owner), ("browserRead", true, browserReader))
+pure val eval_witness_sometimesCatchUpRecorded = (("observeClock", 498912, schedule), ("startCatchUp", 499248, 202612, owner),
+  ("recordCatchUp", schedule))
+pure val eval_witness_sometimesNoticeSent = ("sendNotice", "backlog-rule:example:preview", schedule)
 ```

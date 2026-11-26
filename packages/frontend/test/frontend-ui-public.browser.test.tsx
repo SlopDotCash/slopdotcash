@@ -710,6 +710,7 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
 const capped = pool("j4-capped", 1442, "300000000", "$300", { slopbot: { intakeCap: 2, wantedIssues: true } });
 const belowCap = pool("j4-below-cap", 1443, "300000000", "$300", { slopbot: { intakeCap: 5 } });
 const backlog = pool("j4-backlog", 1446, "300000000", "$300");
+const activeNoCap = pool("j4-active-no-cap", 1447, "300000000", "$300");
 const wantedIssue = { number: 7, title: "Fix the build cache", url: `https://github.com/${steward.login}/${capped.id}/issues/7`, openPullRequests: 0 };
 
 async function observed(project: Listed, openOutside: number, wanted: ReadonlyArray<typeof wantedIssue> | null, waitingOutside = 0, at: string | null = null) {
@@ -752,26 +753,26 @@ describe('Pause new contributors while the review queue is full (spec/backend/in
   });
 });
 
-  describe('Leave a project out of rotation while its review queue is over the backlog limit (spec/backend/backlogRule.md, "Story: Keep the lists to projects whose maintainers are keeping up"; spec/frontend/views.md, "Story: Read a project\'s rewards and activity at a glance")', () => {
-  it('a project with fifty or more outside pull requests waiting is left out of Home and /sponsors and its page says why (spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why")', async () => {
-    for (const project of [backlog, belowCap]) await list(project);
+describe('Backlog rule on Home and /sponsors (spec/backend/backlogRule.md, "Story: Keep the lists to projects whose maintainers are keeping up")', () => {
+  it('hides an over-limit project on Home and /sponsors even with no intake cap (spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why")', async () => {
+    for (const project of [backlog, activeNoCap]) await list(project);
     await site.clock("2026-12-02T00:00:00.000Z");
     await observed(backlog, 0, null, 50, "2026-12-02T00:00:00.000Z");
-    await observed(belowCap, 2, null, 0, "2026-12-02T00:00:00.000Z");
+    await observed(activeNoCap, 2, null, 0, "2026-12-02T00:00:00.000Z");
 
     expect((await site.open("/")).status).toBe(200);
     const listedCard = (project: Listed) => named("link", nameOf(project), { exact: false, within: projects });
-    await shown(listedCard(belowCap)).toMatchObject({ count: 1, visible: true });
+    await shown(listedCard(activeNoCap)).toMatchObject({ count: 1, visible: true });
     await shown(listedCard(backlog)).toMatchObject({ count: 0 });
 
     await opened("/sponsors", "Fund a project");
-    await shown(named("link", nameOf(belowCap), { exact: false })).toMatchObject({ visible: true, href: `/projects/${belowCap.id}/funding` });
+    await shown(named("link", nameOf(activeNoCap), { exact: false })).toMatchObject({ visible: true, href: `/projects/${activeNoCap.id}/funding` });
     await shown(named("link", nameOf(backlog), { exact: false })).toMatchObject({ count: 0 });
 
     expect((await site.open(`/projects/${backlog.id}`)).status).toBe(200);
     await shown({ text: overLimitNotice, exact: true }).toMatchObject({ visible: true });
   });
-  });
+});
 
 
 describe('Keep browsing on the last published registry when the live read fails (spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails")', () => {

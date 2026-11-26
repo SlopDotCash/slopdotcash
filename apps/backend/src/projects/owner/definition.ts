@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/backlogRule.md, "The owner sets slopbot.catchUpUntil in project settings as an immutable owner revision, not a material term; a date at most fourteen days ahead"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/backlogRule.md, "A catch-up pause keeps a project in rotation for at most fourteen days"
 import { catchUpCanMove, catchUpCanStart } from "../../../gen/backend__backlogRule.ts";
 import { maxCap, minCap } from "../../../gen/backend__intakeCap.ts";
 import { honorSystemValid, maxShareBasisPoints } from "../../../gen/backend__projects.ts";
@@ -1118,11 +1118,7 @@ export function transitionProblem(previous: unknown, next: unknown, nowIso: stri
   });
 }
 
-/**
- * Records the start of a catch-up pause the owner just started, so the
- * fourteen-day and once-per-month limits can be checked against it. A pause
- * that only moves or ends keeps the history the server already recorded.
- */
+/** @throws {never} */
 export function applyCatchUpChange(previous: unknown, next: unknown, nowIso: string): unknown {
   const previousSlopbot = isRecord(previous) && isRecord(previous.slopbot) ? previous.slopbot : undefined;
   const nextSlopbot = isRecord(next) && isRecord(next.slopbot) ? next.slopbot : undefined;

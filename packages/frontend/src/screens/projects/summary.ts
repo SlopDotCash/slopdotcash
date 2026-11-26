@@ -3,10 +3,10 @@ import type { MergeRepository, WantedIssue } from "@repo/backend/client";
 import type { WorkItem, WorkQueue } from "@repo/points/client";
 import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
 import { fromAmount, parseBaseUnits } from "@repo/settlement/kernels/amounts";
-import { formatPeriod, periodContaining, type Period } from "@repo/settlement/kernels/calendar";
+import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
 import { Result, Schema } from "effect";
 import type { BacklogRead } from "../../../gen/backend__backlogRule.ts";
-import { catchUpNotice, dormantNotice, overLimitHeld, overLimitNotice } from "../../../gen/backend__backlogRule.ts";
+import { catchUpNoticePrefix, catchUpNoticeSuffix, dormantNotice, overLimitHeld, overLimitNotice } from "../../../gen/backend__backlogRule.ts";
 import type { StoredCount } from "../../../gen/backend__intakeCap.ts";
 import { wantedLabelName } from "../../../gen/backend__mergeActivity.ts";
 import { backlogHeld, intakeHeld, type ListingFacts } from "../../../gen/frontend__poolListing.ts";
@@ -105,7 +105,7 @@ function storedCount(row: MergeRepository): StoredCount {
   return row.openOutside === null || !Number.isFinite(observed) ? { read: false, count: 0, observedAt: 0 } : { read: true, count: row.openOutside, observedAt: Math.floor(observed / hourMs) };
 }
 
-/** One repository's stored backlog read, in whole hours: the outside pull requests waiting seven days or more and the latest merge; a row without a date holds nothing. @throws {never} */
+/** @throws {never} */
 function storedBacklogRead(row: MergeRepository): BacklogRead {
   const observed = Date.parse(row.observedAt);
   const lastMergedAt = row.lastMergedAt === null ? 0 : Date.parse(row.lastMergedAt);
@@ -146,14 +146,14 @@ export function projectHeld(project: Pick<ShownProject, "id" | "status" | "recor
   return intakeHeld(intakeCap, active, (merge.value?.get(project.id) ?? []).map(storedCount), Math.floor(nowMs / hourMs));
 }
 
-/** Whether the backlog rule never judges this project: it is not a monthly-pool project, it only pays bounties, or its configured monthly cap is zero. @throws {never} */
+/** @throws {never} */
 export function backlogExempt(project: Pick<ShownProject, "reward" | "securityBounty">): boolean {
   if (project.reward.kind !== "monthly-pool") return true;
-    if (project.securityBounty?.rewardMode === "bounty-only") return true;
-    return project.reward.monthlyCapMinor <= 0n;
+  if (project.securityBounty?.rewardMode === "bounty-only") return true;
+  return project.reward.monthlyCapMinor <= 0n;
 }
 
-/** Whether the backlog rule holds this project out of rotation: active, judged, not catching up, and over the limit or dormant on a recent read; a pending or failed read holds nothing. @throws {RangeError} */
+/** @throws {RangeError} */
 export function projectOutOfRotation(project: Pick<ShownProject, "id" | "status" | "record" | "reward" | "securityBounty">, merge: Shown<MergeIndex>, nowMs: number): boolean {
   if (merge.status !== "Current" && merge.status !== "Stale") return false;
   const { active, catchUpUntil } = slopbotSettings(project);
@@ -163,14 +163,14 @@ export function projectOutOfRotation(project: Pick<ShownProject, "id" | "status"
   return backlogHeld(active, backlogExempt(project), until > now, until, (merge.value?.get(project.id) ?? []).map(storedBacklogRead), now);
 }
 
-/** The one line the project page shows while the backlog rule holds it out of rotation, or while a catch-up pause runs; nothing otherwise. @throws {RangeError} */
+/** @throws {RangeError} */
 export function projectBacklogNotice(project: Pick<ShownProject, "id" | "status" | "record" | "reward" | "securityBounty">, merge: Shown<MergeIndex>, nowMs: number): string | undefined {
   if (merge.status !== "Current" && merge.status !== "Stale") return undefined;
   const { active, catchUpUntil } = slopbotSettings(project);
   const parsed = catchUpUntil === undefined ? Number.NaN : Date.parse(catchUpUntil);
   const until = Number.isFinite(parsed) ? Math.floor(parsed / hourMs) : 0;
   const now = Math.floor(nowMs / hourMs);
-  if (until > now && catchUpUntil !== undefined) return catchUpNotice(formatDate(catchUpUntil));
+  if (until > now && catchUpUntil !== undefined) return `${catchUpNoticePrefix}${formatDate(catchUpUntil)}${catchUpNoticeSuffix}`;
   const reads = (merge.value?.get(project.id) ?? []).map(storedBacklogRead);
   if (!backlogHeld(active, backlogExempt(project), false, until, reads, now)) return undefined;
   return overLimitHeld(reads, now) ? overLimitNotice : dormantNotice;
@@ -272,7 +272,7 @@ export function awardMonths(cycles: ReadonlyArray<CycleIndexEntry>, projectId: s
   return cycles.filter((cycle) => cycle.projectId === projectId && cycle.kind === "monthly-pool" && cycle.contributors.length > 0).map((cycle) => cycle.cycleId);
 }
 
-/** Whether the project is held from agent discovery: at its intake cap, or out of rotation under the backlog rule. @throws {RangeError} */
+/** @throws {RangeError} */
 export function projectHeldOrOutOfRotation(project: Pick<ShownProject, "id" | "status" | "record" | "reward" | "securityBounty">, merge: Shown<MergeIndex>, nowMs: number): boolean {
   return projectHeld(project, merge, nowMs) || projectOutOfRotation(project, merge, nowMs);
 }
