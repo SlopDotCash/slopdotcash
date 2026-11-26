@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { Schema } from "effect";
-import { createBuilder, type BuildEnvironment } from "vite";
+import type { BuildEnvironment } from "vite";
 import { Miniflare, type MiniflareOptions, Request, Response } from "miniflare";
 import type { D1Database, R2Bucket } from "./bindings.ts";
 
@@ -147,6 +147,7 @@ function entryFile(environment: BuildEnvironment): string | undefined {
 }
 
 export async function bundle(root: string, { config = "vite.config.ts", entry }: BundleOptions = {}): Promise<string> {
+  const { createBuilder } = await import("vite");
   const configFile = join(root, config);
   const outDir = join(root, ".cache/worker");
   const probe = await createBuilder({ root, configFile, logLevel: "error" });
