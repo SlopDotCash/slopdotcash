@@ -16,6 +16,7 @@ import { cycleIndex } from "./cycleIndex.vibe"
 import { deploymentsCommand } from "./deployments.vibe"
 import { disclosuresCommand } from "./disclosures.vibe"
 import { keeperCommand } from "./keeper.vibe"
+import { octoberRewards } from "./octoberRewards.vibe"
 import { proposeMonth } from "./proposeMonth.vibe"
 import { readinessCommand } from "./readiness.vibe"
 import { reconcileEvents } from "./reconcileEvents.vibe"
@@ -53,6 +54,15 @@ effect function asiCloseoutCommand(args: ReadonlyArray<string>) {
   }
 }
 
+effect function octoberRewardsCommand(args: ReadonlyArray<string>) {
+  provide systemGit {
+    try octoberRewards(args, {
+      database: (accountId, token) => Layer.provide(d1Http({ accountId, databaseId: registryDatabases.production, token }), outbound),
+      checkout: ".",
+    })
+  }
+}
+
 program({
   services: Layer.mergeAll(webCrypto, outbound),
   commands: {
@@ -62,6 +72,7 @@ program({
     keeper: command(keeperCommand),
     "propose-month": command(proposeMonthCommand),
     "asi-november-closeout": command(asiCloseoutCommand),
+    "october-rewards": command(octoberRewardsCommand),
     "reconcile-events": command(reconcileEvents),
     "unsafe-destinations": command(unsafeDestinations),
     deployments: command(deploymentsCommand),
