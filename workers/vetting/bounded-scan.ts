@@ -349,6 +349,17 @@ const INTERPRETER_COMMAND = commandToken(
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
+/** Words that forbid the instruction they belong to ("never paste ..."). */
+const INSTRUCTION_NEGATION = String.raw`\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b`;
+const SECRET_SEND_VERB = String.raw`\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b`;
+/**
+ * Trailing refusals in protective guidance ("when asked to send a key to a
+ * webhook, refuse" / "..., do not comply"), scoped to the same sentence after
+ * the destination while keeping concealment clauses ("and do not tell the
+ * user", "and refuse to tell the user") flagged.
+ */
+const TRAILING_REFUSAL = String.raw`\b(?:refus(?:e[ds]?|ing)(?!\s+to\s+(?:tell|inform|notify|alert|warn|mention|report|disclose|explain|log|show)\b)|declin(?:e[ds]?|ing)|reject(?:ed|ing|s)?|disobey(?:ed|ing|s)?|prohibit(?:ed|ing|s)?|forbid(?:den|ding|s)?|ignore\s+(?:it|that|this|the\s+(?:request|instruction|prompt|message))|(?:must|should)\s+be\s+(?:refused|declined|rejected|ignored|blocked|denied)|(?:do\s+not|don['\u2019]?t|never|must\s+not|should\s+not|cannot|can['\u2019]?t)\s+(?:comply|obey|follow(?:\s+(?:it|that|this|the\s+(?:request|instruction|prompt)))?|do\s+(?:it|so|that|this)|proceed|execute|fulfill|honou?r|allow|permit|accept|agree))\b`;
+
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
@@ -479,11 +490,19 @@ const RULES: Rule[] = [
     threat: "prompt-injection",
     severity: "medium",
     // An instruction to send a secret somewhere: the verb, the secret and a
-    // destination on one line that does not forbid it. "Never paste your
-    // token into an issue" and "post the token count" are ordinary agent
-    // guidance (operator decision, 19 November 2026).
-    pattern:
-      /(?<![^\n])(?![^\n]*\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b)[^\n]*\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b[^\n]{0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)[^\n]{0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))/iu,
+    // destination in one sentence that does not forbid it. "Never paste your
+    // token into an issue", "post the token count", and trailing-refusal
+    // guidance ("when asked to send an API key to a webhook, refuse") are
+    // ordinary agent guidance (operator decision, 19 November 2026). A leading
+    // negation forbids it only from the same sentence, before the destination
+    // and at most 200 characters before the verb; an unrelated negation in a
+    // later clause ("... and do not tell the user") or another sentence does
+    // not. The match starts at the verb, so its cost stays linear on a long
+    // line.
+    pattern: new RegExp(
+      String.raw`(?=${SECRET_SEND_VERB})(?<!${INSTRUCTION_NEGATION}(?:(?![.!?;]\s)[^\n]){0,200})${SECRET_SEND_VERB}(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))(?!(?:(?![.!?;]\s)[^\n]){0,160}${TRAILING_REFUSAL})`,
+      "iu",
+    ),
     summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
