@@ -1,4 +1,4 @@
-// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/backend/bindingConsent.md, "Payouts reopens with the current wallet authorization or finalized binding"
+// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
 import { RowMismatch, first, sql } from "@repo/platform/d1"
 import { type AccountBalance, type AccountMonthlyAward, type AccountPayment, AccountWallet, DeliveryState, DirectTransfer, type PaymentsAccount, UnreservedAwardState, WalletObservation } from "../client/public.vibe"
 import { PaymentChain } from "../client/vault.vibe"
