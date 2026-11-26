@@ -4,7 +4,7 @@ import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { Restrictions } from "@repo/ports/backend"
 import { closeConfidence } from "../../gen/slopbot__categories.effect.vibe"
-import { type Binding, type Dispute, type DraftChoice, type Escalation, type Event, NotAState, type ProjectScope, type Resolution, type ResolvedVia, apply, decodeState, enabled, initial, partialJoint, slopModerators } from "../../gen/slopbot__valueDisputes.effect.vibe"
+import { type Binding, type Dispute, type DraftChoice, type Escalation, type Event, type NotAState, type ProjectScope, type Resolution, type ResolvedVia, apply, decodeState, enabled, initial, partialJoint, slopModerators } from "../../gen/slopbot__valueDisputes.effect.vibe"
 import { escalationStatements, publicationConfirmed, resolutionDays } from "../appeals/store.vibe"
 import type { AppealDueJob } from "../jobs/job.vibe"
 import { actionStatement } from "../publish/actions.vibe"

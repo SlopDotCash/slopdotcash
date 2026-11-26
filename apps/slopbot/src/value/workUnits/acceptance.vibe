@@ -10,7 +10,7 @@ import {
   type PromotionSource,
   noChangePromotionContext,
 } from "../evidence/acceptance.vibe"
-import { type AcceptedRange, type Evidence, EvidenceRefused, Head, type IndirectAcceptance, type NoChangePromotion, type RangeFile } from "../evidence/types.vibe"
+import { type AcceptedRange, type Evidence, EvidenceRefused, type Head, type IndirectAcceptance, type NoChangePromotion, type RangeFile } from "../evidence/types.vibe"
 import { verifiedBlobSha } from "../proofs/blob.vibe"
 import { type FileChange, hasCompleteValuePatch, hasVerifiedFullComparison, valueAdditionCount, valueDeletionCount, valuePatch } from "../proofs/changes.vibe"
 import { isSafePath } from "../proofs/gitObject.ts"

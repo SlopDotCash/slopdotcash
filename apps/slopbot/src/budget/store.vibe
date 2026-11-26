@@ -1,9 +1,9 @@
 // spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block"; spec/slopbot/budgetBlocks.md, "A due block is sent once while its claim is still the failed current one"
 import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
-import { RowMismatch, decoded, rows, sql } from "@repo/platform/d1"
+import { type RowMismatch, decoded, rows, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import type { Job as CronJob } from "@repo/platform/worker"
-import { type BudgetState, type Denial, NotAState, apply, decodeState, heldBack, noBlock } from "../../gen/slopbot__budgetBlocks.effect.vibe"
+import { type BudgetState, type Denial, type NotAState, apply, decodeState, heldBack, noBlock } from "../../gen/slopbot__budgetBlocks.effect.vibe"
 import { installationOf } from "../installation/store.vibe"
 import { type ReviewJob, parseJob, send } from "../jobs/job.vibe"
 

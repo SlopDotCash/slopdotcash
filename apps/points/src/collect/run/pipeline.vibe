@@ -8,7 +8,7 @@ import { type CollectedTarget, collectedTargets, defaultRegistryOrigin, fetchReg
 import { type Recollection, recollectedOnce } from "../../census/reviews.vibe"
 import type { PenaltyHistoryRecord, RepositoryRegistry, SourceMetadata, UnavailableSource } from "../../client/snapshot/schema.vibe"
 import { validatePublishable } from "../../client/snapshot/validate.vibe"
-import { Graphql, SourceNodeUnavailable, type UnavailableSource as ProbedSource } from "../../ingestion/graphql.vibe"
+import { Graphql, type SourceNodeUnavailable, type UnavailableSource as ProbedSource } from "../../ingestion/graphql.vibe"
 import { checkpointMessage } from "../../ingestion/read.vibe"
 import { valuePolicyAt } from "../../kernels/scoring/legacyV2.ts"
 import { readRegistry } from "../../snapshot/adaptPr.vibe"

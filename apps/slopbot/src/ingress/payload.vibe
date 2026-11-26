@@ -5,7 +5,7 @@ import type { InstallEvent, InstallEventKind } from "../../gen/slopbot__installa
 import type { ReadyTrigger, TriggerAction, TriggerEvent } from "../../gen/slopbot__readyLabel.effect.vibe"
 import { type Body, type GithubEvent, type JobKind, type ReopenSource, type ValueSource, noBody, noChange, noReopen, noValue } from "../../gen/slopbot__webhookDelivery.effect.vibe"
 import type { Account } from "../installation/store.vibe"
-import { AppealJob, type Job, type ReadyLabelJob, type SubmissionFeeJob, appealCommands, feeJob, readyJob } from "../jobs/job.vibe"
+import { type AppealJob, type Job, type ReadyLabelJob, type SubmissionFeeJob, appealCommands, feeJob, readyJob } from "../jobs/job.vibe"
 
 export const qualityMarker = "<!-- slopbot:quality-evidence:v1 -->"
 

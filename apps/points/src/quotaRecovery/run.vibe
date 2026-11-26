@@ -1,7 +1,7 @@
 // spec/points/quotaRecovery.md, "Quota waits use the strictest safe observation from the drained pass"; spec/points/quotaRecovery.md, "Each new request spends the invocation budget once and each response is retained"; spec/points/quotaRecovery.md, "Resume requires progress or a bounded number of refusals before the deadline"
 import { isoAt } from "@repo/platform/clock"
 import { secondaryLimitMessage } from "@repo/platform/github"
-import { type Admission, type Attempt, type Event, type Hint, type Output, type Reply, type Run, Machine, machineOver, newInvocation, productionBudget, productionDuration } from "../../gen/points__quotaRecovery.effect.vibe"
+import { type Admission, type Attempt, type Event, type Hint, type Output, type Reply, type Run, type Machine, machineOver, newInvocation, productionBudget, productionDuration } from "../../gen/points__quotaRecovery.effect.vibe"
 
 module verified {
   import { hintTime as time, secondsLater as later } from "./hintTimes.ts"

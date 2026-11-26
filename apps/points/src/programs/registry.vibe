@@ -1,6 +1,6 @@
 // spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/points/census.md, "Collection starts only for a collected project and never moves its window back"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"
 import { sha256Hex, utf8 } from "@repo/platform/crypto"
-import { RegistryRepository, collectedTargets, maxRegistryBytes, registeredProjects } from "../census/projects.vibe"
+import { type RegistryRepository, collectedTargets, maxRegistryBytes, registeredProjects } from "../census/projects.vibe"
 import type { RegisteredRepository, RepositoryRegistry } from "../client/snapshot/schema.vibe"
 import { atomicWrite, boundedFile } from "../snapshot/files.vibe"
 

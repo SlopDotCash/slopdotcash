@@ -3,7 +3,7 @@ import { maxMemoBytes } from "../../../gen/points__collectionMemo.effect.vibe"
 import { GitHub } from "@repo/platform/github"
 import { zipContent, zipEntries } from "../../ingestion/archive.ts"
 import { CheckpointInvalid } from "../../ingestion/discussions.vibe"
-import { ArtifactListing, type RestoreOptions, WorkflowRun, checkpointDirectoryName, downloaded, extracted, git, selectedArtifact } from "../../ingestion/restore.vibe"
+import { ArtifactListing, type RestoreOptions, type WorkflowRun, checkpointDirectoryName, downloaded, extracted, git, selectedArtifact } from "../../ingestion/restore.vibe"
 
 export const memoFileName = "collection-memo.json"
 export const implementationMemoFileName = "accepted-implementation-memo.json"

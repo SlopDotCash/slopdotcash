@@ -4,7 +4,7 @@ import { type IntakeReadiness, type PrivateReport, type SubmissionView, authoriz
 import { call } from "../../platform/api.vibe"
 import { requestKey } from "./cases.vibe"
 import { closeReportDetail, detailStamp, openReportDetail } from "./details.vibe"
-import { type Private, ReportBody, type ReportDraft, privateCall, privateMessages, reportBody } from "./private.vibe"
+import { type Private, type ReportBody, type ReportDraft, privateCall, privateMessages, reportBody } from "./private.vibe"
 import { keepsReportText, pruneReportTexts, saveReportText } from "./reportText.vibe"
 
 export const readinessLimitBytes = 16_384

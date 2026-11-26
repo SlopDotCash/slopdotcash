@@ -5,7 +5,7 @@ import { type Aggregate, type Decision, type Rows, load, update } from "@repo/pl
 import { Restrictions } from "@repo/ports/backend"
 import { type Notice, Notices } from "@repo/ports/operations"
 import { closeConfidence, currentTableVersion, escalationDebit } from "../../gen/slopbot__categories.effect.vibe"
-import { type Appeal, type AppealSubject, type DraftChoice, type Entry, type Escalation, type Event, NotAState, type ProjectScope, type Resolution, type ResolvedVia, type SiblingStatus, apply, decodeState, enabled, initial, noSubject, resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
+import { type Appeal, type AppealSubject, type DraftChoice, type Entry, type Escalation, type Event, type NotAState, type ProjectScope, type Resolution, type ResolvedVia, type SiblingStatus, apply, decodeState, enabled, initial, noSubject, resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
 import { pointsPerThird, tableVersionOf } from "../closeAttempt/penalty.vibe"
 import type { AppealDueJob } from "../jobs/job.vibe"
 import { actionStatement } from "../publish/actions.vibe"

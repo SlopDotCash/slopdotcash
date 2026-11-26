@@ -1,10 +1,10 @@
 // spec/slopbot/closeCapacity.md, "Confirmed closes in the rolling day plus every unresolved attempt consume the daily cap"; spec/slopbot/closeCapacity.md, "The reopen-rate breaker stops new reservations after more than one in ten recent closes was reversed"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/slopbot/closeCapacity.md, "A reservation, its confirmation and its rejection are each recorded once, on GitHub's evidence"
 import { isoAt, millisOf } from "@repo/platform/clock"
-import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { Registry } from "@repo/ports/backend"
 import { Enforcement } from "@repo/ports/security"
-import { type Admission, type Capacity, type Event, type Fence, type RegistryRead, type ReversalKind, NotAState, admission, apply, decodeState, defaultDailyCap, enabled, maxDailyCap, weekSeconds } from "../../gen/slopbot__closeCapacity.effect.vibe"
+import { type Admission, type Capacity, type Event, type Fence, type RegistryRead, type ReversalKind, type NotAState, admission, apply, decodeState, defaultDailyCap, enabled, maxDailyCap, weekSeconds } from "../../gen/slopbot__closeCapacity.effect.vibe"
 
 schema AttemptRow {
   readonly ordinal: number

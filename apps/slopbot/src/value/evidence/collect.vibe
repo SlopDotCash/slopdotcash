@@ -38,7 +38,7 @@ import {
   type CommitChanges,
   type Evidence,
   EvidenceRefused,
-  Head,
+  type Head,
   type Limitation,
   type NativeMergeAcceptance,
   type NoChangePromotion,
@@ -47,7 +47,7 @@ import {
   type RelatedPullRequest,
   type RepairBodyEdit,
   Review,
-  Stats,
+  type Stats,
   type UnavailableReference,
   sourceMatchesRegistration,
 } from "./types.vibe"

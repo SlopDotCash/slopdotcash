@@ -1,7 +1,7 @@
 // spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/reviews.md, "Review records preserve first qualification and highest band"; spec/points/scoringPolicy.md, "The acceptance instant selects the policy"
-import { type CommitAttribution, type Event as CommitEvent, NotAnEvent as CommitNotAnEvent, Rejected as CommitRejected, apply as applyCommit, decodeEvent as decodeCommit, initial as commitInitial } from "../../gen/points__authorship.effect.vibe"
-import { type Event as ReviewEvent, NotAnEvent as ReviewNotAnEvent, Rejected as ReviewRejected, type Reviews, apply as applyReviews, decodeEvent as decodeReview, initial as reviewsInitial } from "../../gen/points__reviews.effect.vibe"
-import { type Event as SourceEvent, NotAnEvent as SourceNotAnEvent, Rejected as SourceRejected, type Scored, apply as applyScored, decodeEvent as decodeSource, initial as scoredInitial } from "../../gen/points__scoringPolicy.effect.vibe"
+import { type CommitAttribution, type Event as CommitEvent, type NotAnEvent as CommitNotAnEvent, type Rejected as CommitRejected, apply as applyCommit, decodeEvent as decodeCommit, initial as commitInitial } from "../../gen/points__authorship.effect.vibe"
+import { type Event as ReviewEvent, type NotAnEvent as ReviewNotAnEvent, type Rejected as ReviewRejected, type Reviews, apply as applyReviews, decodeEvent as decodeReview, initial as reviewsInitial } from "../../gen/points__reviews.effect.vibe"
+import { type Event as SourceEvent, type NotAnEvent as SourceNotAnEvent, type Rejected as SourceRejected, type Scored, apply as applyScored, decodeEvent as decodeSource, initial as scoredInitial } from "../../gen/points__scoringPolicy.effect.vibe"
 
 export interface Book<S, E, F, D> {
   send(key: string, event: E): S!F

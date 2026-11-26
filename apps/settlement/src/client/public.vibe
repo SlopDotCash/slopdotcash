@@ -1,7 +1,7 @@
 // spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"
 import { type AnyRoute, type Refusal, route } from "@repo/platform/route"
 import { getPaymentsMe } from "./refusals.vibe"
-import { PaymentChain, PublicVaultPaymentPage, actorVaultPayments } from "@repo/ports/settlement"
+import { type PaymentChain, PublicVaultPaymentPage, actorVaultPayments } from "@repo/ports/settlement"
 
 export { CycleActor, CycleContributor, CycleContributorState, CycleFileReference, CycleFiles, CycleIndex, CycleIndexEntry, CycleMoneyLine, CycleMoneyLines, CycleReward, CycleState, CycleWalletProof, CycleWindow, ClaimWalletProof, FundingBasis, IssueWalletProof, PublicVaultPayment, PublicVaultPaymentPage, ReadmeWalletProof, actorVaultPayments, cycleIndexUrl } from "@repo/ports/settlement"
 

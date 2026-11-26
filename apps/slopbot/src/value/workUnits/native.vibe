@@ -1,7 +1,7 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
 import { gitObjectId, textBytes } from "@repo/platform/git/bytes"
 import { type MergedSource, nativeMergeContext } from "../evidence/acceptance.vibe"
-import { Commit, type CommitAttribution, type Evidence, type NativeMergeAcceptance, Pull, type RetainedFile, type TextVersion } from "../evidence/types.vibe"
+import { type Commit, type CommitAttribution, type Evidence, type NativeMergeAcceptance, Pull, type RetainedFile, type TextVersion } from "../evidence/types.vibe"
 import { type FileChange, hasCompleteValuePatch, valuePatch } from "../proofs/changes.vibe"
 import type { Reads } from "../proofs/reads.vibe"
 import { verifiedTree } from "../proofs/tree.vibe"

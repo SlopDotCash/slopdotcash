@@ -1,5 +1,5 @@
 // spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
-import { D1, first, sql } from "@repo/platform/d1"
+import { type D1, first, sql } from "@repo/platform/d1"
 import { VettingBans } from "@repo/ports/security"
 
 schema ServiceBan { ok: number }

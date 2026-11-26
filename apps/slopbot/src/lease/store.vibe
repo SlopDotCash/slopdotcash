@@ -1,6 +1,6 @@
 // spec/slopbot/reviewLease.md, "An expired claim can be replaced and cannot finalize while waiting for takeover"; spec/slopbot/reviewLease.md, "A late worker cannot publish a failed, skipped or complete review"
 import { isoAt } from "@repo/platform/clock"
-import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, load, update } from "@repo/platform/stored"
 import { type ClaimClose, type ClaimStatus, type PriorStart, type ReviewLease, canFinish, canRecordCall, decodeState, enabled, leaseSeconds, ownsClaim, apply } from "../../gen/slopbot__reviewLease.effect.vibe"
 import { type MergeHistory, NotAState as SlotsNotAState, Rejected as SlotsRejected, type Route } from "../../gen/slopbot__routing.effect.vibe"

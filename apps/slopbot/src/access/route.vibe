@@ -4,7 +4,7 @@ import { route } from "@repo/platform/route"
 import type { AccessAnswer, AccessQuery, GrantedPermission } from "../../gen/slopbot__reportingReadiness.ts"
 import { accessAnswer, accessQueryValid } from "../../gen/slopbot__reportingReadiness.effect.vibe"
 import { slopbotGetV1RepositoryAccess, slopbotPostGithubWebhook } from "../client/refusals.vibe"
-import { type AccessRequest, type Gathered, RepositoryIdentity, accessFacts, unavailableFacts } from "./facts.vibe"
+import { type AccessRequest, type Gathered, type RepositoryIdentity, accessFacts, unavailableFacts } from "./facts.vibe"
 
 export const repositoryAccessOrigin = "https://slopbot.internal"
 

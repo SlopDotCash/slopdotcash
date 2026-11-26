@@ -1,6 +1,6 @@
 // spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"; spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"
 import { D1, first, sql } from "@repo/platform/d1"
-import { type FeeDeposit, FeeOutcome, type FeePull, type FinalOutcome, type GoneDeposits, type ObservedDeposit, type SubmissionFeeItem, SubmissionFeeItems } from "@repo/ports/slopbot"
+import { type FeeDeposit, type FeeOutcome, type FeePull, type FinalOutcome, type GoneDeposits, type ObservedDeposit, type SubmissionFeeItem, SubmissionFeeItems } from "@repo/ports/slopbot"
 
 export type DueOutcome = "refund_due" | "kept_due"
 
