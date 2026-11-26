@@ -72,20 +72,19 @@ function manifest(id: string, status: string, paths: ReadonlyArray<string>, tier
 
 const Started = Layer.effect(World, effect {
   const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "merge-activity" } })), (running) => promise(() => running.dispose()))
-  try Effect.addFinalizer(() => promise(() => mf.dispose()))
-  try (try (try D1)).run(sql`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY)`)
-  try migrate(mf, migrationsDir)
-  const github = githubFake()
-  const clock = settableClock(start)
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) throw new MigrationFailed({ file: broken.file })
   const db = try promise(() => database(mf, "SLOP_DB"))
-  try populate(github)
-  const handler = Layer.provideMerge(World, github.handler)
-  return { fake: github, clock, db }
+  const clock = settableClock(start)
+  const fake = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+  try populate(fake)
+  return { fake, clock, db }
 })
 
 const Shell = Layer.unwrap(effect {
   const { fake, clock, db } = try World
-  const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]>) }
+  const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
   const http = outboundVia(viaFake)
   const app = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority, userAgent: "slop.cash-merge-activity" }), Layer.mergeAll(http, webCrypto, clock.layer))
   return Layer.mergeAll(d1(db), http, app)
@@ -138,116 +137,116 @@ function answerOf(projects: ReadonlyArray<{ readonly projectId: string; readonly
 }
 
 layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-it.effect('Merge activity refresh with a failed read keeps last values with their date (spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"; spec/backend/backlogRule.md, "The owner hears once before the rule starts, again four days before dormancy, and once more the day the project leaves rotation", () => effect {
-  const { fake } = try World
-  const db = try D1
-  try project("alpha", "active", [`${owner}/alpha`])
-  try project("beta", "active", [`${owner}/beta`])
-  try project("noapp", "active", [`elsewhere/noapp`])
-  try db.run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours) VALUES ('gone', 'gone-org/gone', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z', NULL, '2026-11-09T00:00:00.000Z', 3, 0, 4, 12.5)`)
+  it.effect('Merge activity refresh with a failed read keeps last values with their date (spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"; spec/backend/backlogRule.md, "The owner hears once before the rule starts, again four days before dormancy, and once more the day the project leaves rotation"', () => effect {
+    const { fake } = try World
+    const db = try D1
+    try project("alpha", "active", [`${owner}/alpha`])
+    try project("beta", "active", [`${owner}/beta`])
+    try project("noapp", "active", ["elsewhere/noapp"])
+    try db.run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours) VALUES ('gone', 'gone-org/gone', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z', NULL, '2026-11-09T00:00:00.000Z', 3, 0, 4, 12.5)`)
 
-  const first = try refreshed(0)
-  const firstServed = try mergeActivityAnswer()
-  const unchanged = try refreshed(hour / 2)
+    const first = try refreshed(0)
+    const firstServed = try mergeActivityAnswer()
+    const unchanged = try refreshed(hour / 2)
 
-  try orDie(Effect.try(() => fake.failNext("POST /graphql", { status: 502 })))
-  const failing = try refreshed(21 * hour)
-  const failingServed = try mergeActivityAnswer()
-  const failures = try rows(Failure, sql`SELECT project_id, repository, failure FROM repository_merge_activity WHERE failure IS NOT NULL ORDER BY project_id, repository`)
+    try orDie(Effect.try(() => fake.failNext("POST /graphql", { status: 502 })))
+    const failing = try refreshed(21 * hour)
+    const failingServed = try mergeActivityAnswer()
+    const failures = try rows(Failure, sql`SELECT project_id, repository, failure FROM repository_merge_activity WHERE failure IS NOT NULL ORDER BY project_id, repository`)
 
-  try project("beta", "paused", [`${owner}/beta`])
-  try project("alpha", "active", [`${owner}/alpha-renamed`])
-  try orDie(Effect.try(() => fake.world.renameRepo(`${owner}/alpha`, `${owner}/alpha-renamed`)))
-  const moved = try refreshed(21.5 * hour)
-  const movedServed = try mergeActivityAnswer()
+    try project("beta", "paused", [`${owner}/beta`])
+    try project("alpha", "active", [`${owner}/alpha-renamed`])
+    try orDie(Effect.try(() => fake.world.renameRepo(`${owner}/alpha`, `${owner}/alpha-renamed`)))
+    const moved = try refreshed(21.5 * hour)
+    const movedServed = try mergeActivityAnswer()
 
-  try project("many", "active", many)
-  const bounded = try refreshed(hour)
-  const boundedServed = try mergeActivityAnswer()
-  const rest = try refreshed(hour / 2)
-  const restServed = try mergeActivityAnswer()
-  const listedOf = (answer: typeof restServed) => answer.projects.find((found) => found.projectId === "many")?.repositories.map((repository) => repository.repository) ?? []
+    try project("many", "active", many)
+    const bounded = try refreshed(hour)
+    const boundedServed = try mergeActivityAnswer()
+    const rest = try refreshed(hour / 2)
+    const restServed = try mergeActivityAnswer()
+    const listedOf = (answer: typeof restServed) => answer.projects.find((found) => found.projectId === "many")?.repositories.map((repository) => repository.repository) ?? []
 
-  try Effect.try(() => assert.deepStrictEqual({
-    first,
-    firstServed,
-    unchanged,
-    failing,
-    failingServed,
-    failures,
-    moved,
-    movedServed,
-    bounded,
-    boundedMany: listedOf(boundedServed),
-    boundedRow: boundedServed.projects.find((found) => found.projectId === "many")?.repositories[0],
-    rest,
-    restMany: listedOf(restServed),
-  }, {
-    first: { read: 2, failed: 1, graphql: 4, beta: true },
-    firstServed: answerOf([
-      { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha`, t0, false)] },
-      { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t0)] },
-      { projectId: "gone", repositories: [gone] },
-    ]),
-    unchanged: { read: 0, failed: 0, graphql: 0, beta: false },
-    failing: { read: 1, failed: 2, graphql: 3, beta: true },
-    failingServed: answerOf([
-      { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha`, t0, true)] },
-      { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t21)] },
-      { projectId: "gone", repositories: [gone] },
-    ]),
-    failures: [
-      { project_id: "alpha", repository: `${owner}/alpha`, failure: "github-502" },
-      { project_id: "noapp", repository: "elsewhere/noapp", failure: "app-not-installed" },
-    ],
-    moved: { read: 1, failed: 1, graphql: 2, beta: false },
-    movedServed: answerOf([
-      { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha-renamed`, t43, false)] },
-      { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t21)] },
-      { projectId: "gone", repositories: [gone] },
-    ]),
-    bounded: { read: 15, failed: 0, graphql: 30, beta: false },
-    boundedMany: many.slice(0, 15),
-    boundedRow: emptyAt(many[0] ?? "", t44),
-    rest: { read: 1, failed: 1, graphql: 2, beta: false },
-    restMany: many,
-  }))
-const previewGamma = {
-  event_key: "backlog-rule:gamma:preview",
-  recipient_github_id: "1",
-  kind: "project_revision",
-  subject: "gamma",
-  detail: "From 1 December 2026, a project with 50 or more outside pull requests waiting a week for a maintainer, or no merge in 14 days while outside pull requests wait, leaves the home page, /sponsors and agent discovery until that is fixed. Your project would leave today: 52 outside pull requests have waited a week or more for a maintainer. You can mark it as catching up on reviews for up to 14 days from its settings.",
-  action_path: "/projects/gamma/manage",
-}
-const outGamma = {
-  event_key: "backlog-rule:gamma:out:backlog:2026-11-20T00:00:00.000Z",
-  recipient_github_id: "1",
-  kind: "project_revision",
-  subject: "gamma",
-  detail: "Your project left the home page, /sponsors and agent discovery: 52 outside pull requests have waited a week or more for a maintainer. It returns by itself once fewer than 50 wait. You can mark it as catching up on reviews for up to 14 days from its settings. Accepted work still records points.",
-  action_path: "/projects/gamma/manage",
-}
-const warnDelta = {
-  event_key: "backlog-rule:delta:warn:2026-11-21T00:00:00.000Z",
-  recipient_github_id: "1",
-  kind: "project_revision",
-  subject: "delta",
-  detail: "No pull request has been merged in 11 days while outside pull requests wait. After 14 days the project leaves the home page, /sponsors and agent discovery until a maintainer merges. You can mark it as catching up on reviews for up to 14 days from its settings.",
-  action_path: "/projects/delta/manage",
-}
-const monthlyPool = { reward: { kind: "monthly-pool" }, steward: { github: { actorId: "1", login: "member-1", nodeId: "MDQ6VXNlcjE=", profileUrl: "https://github.com/member-1", type: "User" } } }
-try project("gamma", "active", [`${owner}/gamma`], "monthly", monthlyPool)
-try project("delta", "active", [`${owner}/delta`], "monthly", monthlyPool)
-try db.run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, open_outside, waiting_outside) VALUES ('gamma', 'slop-test/gamma', '2026-11-30T12:00:00.000Z', '2026-11-30T12:00:00.000Z', NULL, '2026-11-20T00:00:00.000Z', 55, 52), ('delta', 'slop-test/delta', '2026-11-30T12:00:00.000Z', '2026-11-30T12:00:00.000Z', NULL, '2026-11-21T00:00:00.000Z', 3, 1)`)
-try refreshed(268 * hour)
-const previewNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
-try Effect.try(() => assert.deepStrictEqual(previewNotices, [previewGamma]))
-try refreshed(0)
-const previewAgainNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
-try Effect.try(() => assert.deepStrictEqual(previewAgainNotices, [previewGamma]))
-try refreshed(48 * hour)
-const outNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
-try Effect.try(() => assert.deepStrictEqual(outNotices, [warnDelta, outGamma, previewGamma]))
-})
+    try Effect.try(() => assert.deepStrictEqual({
+      first,
+      firstServed,
+      unchanged,
+      failing,
+      failingServed,
+      failures,
+      moved,
+      movedServed,
+      bounded,
+      boundedMany: listedOf(boundedServed),
+      boundedRow: boundedServed.projects.find((found) => found.projectId === "many")?.repositories[0],
+      rest,
+      restMany: listedOf(restServed),
+    }, {
+      first: { read: 2, failed: 1, graphql: 4, beta: true },
+      firstServed: answerOf([
+        { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha`, t0, false)] },
+        { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t0)] },
+        { projectId: "gone", repositories: [gone] },
+      ]),
+      unchanged: { read: 0, failed: 0, graphql: 0, beta: false },
+      failing: { read: 1, failed: 2, graphql: 3, beta: true },
+      failingServed: answerOf([
+        { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha`, t0, true)] },
+        { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t21)] },
+        { projectId: "gone", repositories: [gone] },
+      ]),
+      failures: [
+        { project_id: "alpha", repository: `${owner}/alpha`, failure: "github-502" },
+        { project_id: "noapp", repository: "elsewhere/noapp", failure: "app-not-installed" },
+      ],
+      moved: { read: 1, failed: 1, graphql: 2, beta: false },
+      movedServed: answerOf([
+        { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha-renamed`, t43, false)] },
+        { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t21)] },
+        { projectId: "gone", repositories: [gone] },
+      ]),
+      bounded: { read: 15, failed: 0, graphql: 30, beta: false },
+      boundedMany: many.slice(0, 15),
+      boundedRow: emptyAt(many[0] ?? "", t44),
+      rest: { read: 1, failed: 1, graphql: 2, beta: false },
+      restMany: many,
+    }))
+  const previewGamma = {
+    event_key: "backlog-rule:gamma:preview",
+    recipient_github_id: "1",
+    kind: "project_revision",
+    subject: "gamma",
+    detail: "From 1 December 2026, a project with 50 or more outside pull requests waiting a week for a maintainer, or no merge in 14 days while outside pull requests wait, leaves the home page, /sponsors and agent discovery until that is fixed. Your project would leave today: 52 outside pull requests have waited a week or more for a maintainer. You can mark it as catching up on reviews for up to 14 days from its settings.",
+    action_path: "/projects/gamma/manage",
+  }
+  const outGamma = {
+    event_key: "backlog-rule:gamma:out:backlog:2026-11-20T00:00:00.000Z",
+    recipient_github_id: "1",
+    kind: "project_revision",
+    subject: "gamma",
+    detail: "Your project left the home page, /sponsors and agent discovery: 52 outside pull requests have waited a week or more for a maintainer. It returns by itself once fewer than 50 wait. You can mark it as catching up on reviews for up to 14 days from its settings. Accepted work still records points.",
+    action_path: "/projects/gamma/manage",
+  }
+  const warnDelta = {
+    event_key: "backlog-rule:delta:warn:2026-11-21T00:00:00.000Z",
+    recipient_github_id: "1",
+    kind: "project_revision",
+    subject: "delta",
+    detail: "No pull request has been merged in 11 days while outside pull requests wait. After 14 days the project leaves the home page, /sponsors and agent discovery until a maintainer merges. You can mark it as catching up on reviews for up to 14 days from its settings.",
+    action_path: "/projects/delta/manage",
+  }
+  const monthlyPool = { reward: { kind: "monthly-pool" }, steward: { github: { actorId: "1", login: "member-1", nodeId: "MDQ6VXNlcjE=", profileUrl: "https://github.com/member-1", type: "User" } } }
+  try project("gamma", "active", [`${owner}/gamma`], "monthly", monthlyPool)
+  try project("delta", "active", [`${owner}/delta`], "monthly", monthlyPool)
+  try db.run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, open_outside, waiting_outside) VALUES ('gamma', 'slop-test/gamma', '2026-11-30T12:00:00.000Z', '2026-11-30T12:00:00.000Z', NULL, '2026-11-20T00:00:00.000Z', 55, 52), ('delta', 'slop-test/delta', '2026-11-30T12:00:00.000Z', '2026-11-30T12:00:00.000Z', NULL, '2026-11-21T00:00:00.000Z', 3, 1)`)
+  try refreshed(268 * hour)
+  const previewNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
+  try Effect.try(() => assert.deepStrictEqual(previewNotices, [previewGamma]))
+  try refreshed(0)
+  const previewAgainNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
+  try Effect.try(() => assert.deepStrictEqual(previewAgainNotices, [previewGamma]))
+  try refreshed(48 * hour)
+  const outNotices = try rows(Notice, sql`SELECT event_key, recipient_github_id, kind, subject, detail, action_path FROM notifications ORDER BY event_key`)
+  try Effect.try(() => assert.deepStrictEqual(outNotices, [warnDelta, outGamma, previewGamma]))
+  })
 })
