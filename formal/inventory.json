@@ -9582,7 +9582,7 @@
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "38ef0c7b0f2d9a5b5f2af43775d49bf9d465c3fedf5f0c093900c5083dab6110",
+      "sha256": "2f0d08f40a45cb7edb2962d94f916e9411f3984f0d43f273658699412c8de662",
       "models": [
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -9591,9 +9591,9 @@
       ],
       "candidateLines": [
         168, 190, 226, 279, 355, 356, 359, 360, 362, 364, 367, 369, 372, 377,
-        378, 386, 395, 404, 461, 471, 472, 473, 475, 476, 477, 478, 480, 482,
-        483, 490, 491, 492, 493, 502, 517, 570, 576, 682, 693, 703, 771, 772,
-        786, 799, 810
+        378, 381, 387, 396, 405, 462, 472, 473, 474, 476, 477, 478, 479, 481,
+        483, 484, 491, 492, 493, 494, 503, 518, 571, 577, 683, 694, 704, 772,
+        773, 787, 800, 811
       ],
       "review": "mapped-abstraction"
     },
@@ -16049,7 +16049,7 @@
     },
     {
       "path": "formal/models/payments/solana_executor_journal.qnt",
-      "sha256": "213baba64c72d08fc53bc10297e1fa8d860b07a8f8fe57f0d5a41aef720022b8",
+      "sha256": "84fa5ef8f317c326a2c30648c7d8b1d0e5288ee9a519701198bbb61aca456599",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/payment-executor/solana.ts"
@@ -16071,6 +16071,7 @@
         "knownSignatureReturnsBeforeExpiryReadTest",
         "laterRetirementDoesNotEraseExistingSignedBytesTest",
         "lostCommitReplyRetainsSignedBytesTest",
+        "paidBetweenLoadAndRefreshRefusesAttesterTest",
         "pendingFailureCannotReplaceKeeperTest",
         "quoteMayExpireBeforeCommitTest",
         "refreshedMatchingBindingRefusesReplacementTest",
