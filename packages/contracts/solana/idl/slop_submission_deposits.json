@@ -1,5 +1,5 @@
 {
-  "address": "HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t",
+  "address": "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
   "metadata": {
     "name": "slop_submission_deposits",
     "version": "0.1.0",
@@ -182,7 +182,7 @@
         },
         {
           "name": "program",
-          "address": "HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t"
+          "address": "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7"
         },
         {
           "name": "program_data"
