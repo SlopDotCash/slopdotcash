@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import {
   asShown,
+  cyclePoolFunded,
   listedThisMonth,
   listingPoolReward,
   monthsCovered,
   monthsCoveredLabel,
   type PoolFundingIndex,
+  payingVaultFreeMinor,
   poolFunded,
   poolFundingStatus,
   publicPoolReward,
@@ -573,4 +575,36 @@ test("extra money covers more months of the owner's monthly amount", () => {
       NOW,
     ),
   ).toBe(2);
+});
+
+test("the open cycle reads funded from its vault, not the legacy commitment", () => {
+  // Every registered pool is pledged with no committed instrument; the vault
+  // is the only funding mode, so the cycle standings must not call a
+  // vault-backed month unfunded.
+  const pool = project("250000000", "base-mainnet", {
+    fundingState: "pledged",
+    committedMinor: "0",
+  });
+  expect(cyclePoolFunded(pool, index({}), "2026-11", NOW)).toBe(true);
+  expect(
+    cyclePoolFunded(pool, index({ freeBalance: "249999999" }), "2026-11", NOW),
+  ).toBe(false);
+  expect(cyclePoolFunded(pool, null, "2026-11", NOW)).toBe(false);
+  // A closed cycle keeps its legacy basis: only a committed instrument funds it.
+  expect(cyclePoolFunded(pool, index({}), "2026-10", NOW)).toBe(false);
+  const committed = project("250000000", "base-mainnet", {
+    fundingState: "committed",
+    committedMinor: "250000000",
+  });
+  expect(cyclePoolFunded(committed, index({}), "2026-10", NOW)).toBe(true);
+});
+
+test("paying vault free funds sum the recorded vaults only", () => {
+  expect(payingVaultFreeMinor(project("250000000"), index({}))).toBe(
+    "250000000",
+  );
+  expect(
+    payingVaultFreeMinor(project("250000000"), index({ freeBalance: null })),
+  ).toBeNull();
+  expect(payingVaultFreeMinor(project("250000000"), null)).toBeNull();
 });

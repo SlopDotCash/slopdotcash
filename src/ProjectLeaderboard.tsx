@@ -2,6 +2,11 @@ import { Eye } from "lucide-react";
 import { Link } from "./Link";
 import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
 import {
+  cyclePoolFunded,
+  loadPoolFunding,
+  payingVaultFreeMinor,
+} from "./lib/pool-funding";
+import {
   type ProjectContributor,
   type ProjectView,
   requiredProjection,
@@ -10,6 +15,7 @@ import {
   type ReviewerLeader,
   selectReviewerLeaders,
 } from "./lib/reviewer-leaders";
+import { usePublicResource } from "./lib/use-public-resource";
 import {
   Avatar,
   EmptyState,
@@ -20,7 +26,6 @@ import {
   formatPercent,
   formatPointsFromThirds,
   formatRewardMinor,
-  monthlyPoolUnfunded,
   ReviewBudget,
   StatusBadge,
   UNFUNDED_POOL_HEADLINE,
@@ -49,6 +54,19 @@ export function CycleAllocation({
     (left, right) =>
       left.rank - right.rank || left.actor.id.localeCompare(right.actor.id),
   );
+  const [funding] = usePublicResource(
+    view.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const now = new Date();
+  const funded = cyclePoolFunded(
+    view.project,
+    fundingIndex,
+    view.cycle.id,
+    now,
+  );
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
@@ -61,18 +79,25 @@ export function CycleAllocation({
         ) : null}
         {view.reward.kind === "monthly-pool" ? (
           <p>
-            {monthlyPoolUnfunded(view.project.reward) ? (
-              <StatusBadge>{UNFUNDED_POOL_HEADLINE}</StatusBadge>
-            ) : (
+            {funded ? (
               <FundedMeter
-                fundedMinor={view.project.reward.committedMinor}
-                capMinor={view.project.reward.monthlyCapMinor}
+                fundedMinor={
+                  payingVaultFreeMinor(view.project, fundingIndex) ??
+                  view.project.reward.committedMinor
+                }
+                capMinor={view.reward.capMinor}
                 funded={formatRewardMinor(
-                  view.project.reward.committedMinor,
+                  payingVaultFreeMinor(view.project, fundingIndex) ??
+                    view.project.reward.committedMinor,
                   view.project.rewardAsset,
                 )}
-                cap={view.project.reward.monthlyCapDisplay}
+                cap={formatRewardMinor(
+                  view.reward.capMinor,
+                  view.project.rewardAsset,
+                )}
               />
+            ) : (
+              <StatusBadge>{UNFUNDED_POOL_HEADLINE}</StatusBadge>
             )}
           </p>
         ) : null}
@@ -91,8 +116,7 @@ export function CycleAllocation({
                 <th scope="col">Contributor</th>
                 <th scope="col">Points</th>
                 <th scope="col">
-                  {view.reward.kind === "monthly-pool" &&
-                  monthlyPoolUnfunded(view.project.reward)
+                  {view.reward.kind === "monthly-pool" && !funded
                     ? "Share"
                     : "Projected share"}
                 </th>
@@ -136,7 +160,11 @@ export function CycleAllocation({
                   </td>
                   <td>
                     <strong>
-                      <RewardValue leader={leader} view={view} />
+                      <RewardValue
+                        funded={funded}
+                        leader={leader}
+                        view={view}
+                      />
                     </strong>
                   </td>
                 </tr>
@@ -150,9 +178,11 @@ export function CycleAllocation({
 }
 
 function RewardValue({
+  funded,
   leader,
   view,
 }: {
+  funded: boolean;
   leader: ProjectContributor;
   view: ProjectView;
 }) {
@@ -180,7 +210,7 @@ function RewardValue({
   // A funded stablecoin is USDC. A funded token or native coin uses that
   // asset's base units. The cent-rounded display field is USDC-only, so a
   // token must use the exact simulated base units (PRD section 6).
-  if (!monthlyPoolUnfunded(view.project.reward)) {
+  if (funded) {
     const asset = view.project.rewardAsset;
     if (!asset || asset.kind === "stablecoin") {
       return formatMicroUsdc(
