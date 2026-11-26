@@ -1,3 +1,4 @@
+// spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"
 import { slopFeeBase, submissionFeeItem } from "@repo/backend/client";
 import { sha256Hex, webCrypto } from "@repo/platform/crypto";
 import { reportDepositItem } from "@repo/security/client";
@@ -371,34 +372,53 @@ describe('Pick a project from the Featured and Community sections, ten Community
 
 describe('Choose the contributor or maintainer journey on Home (spec/frontend/presentation.md, "Story: Choose the contributor or maintainer journey on Home"; spec/ui/copy.md, "Story: Copy a value and know whether it worked")', () => {
   it('the switch sets the heading, the prompt and the address together, and a copy answer does not carry across journeys (spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent\'s skill address together"; spec/ui/copy.md, "Copying starts from ready and reports the browser\'s answer"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt")', async () => {
+    // spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"
+    const contributorPrompt = "Read https://slop.cash/contribute/SKILL.md and follow it.";
+    const maintainerPrompt = "Read https://slop.cash/maintain/SKILL.md and follow it.";
     expect((await site.open("/")).status).toBe(200);
     await shown(named("button", "Contributor")).toMatchObject({ visible: true });
-    await shown(prompt).toMatchObject({ text: "Read https://slop.cash/contribute/SKILL.md and follow it." });
+    await shown(prompt).toMatchObject({ text: contributorPrompt });
+    await shown(named("link", "Claude Code")).toMatchObject({ visible: true, href: `claude://code/new?q=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Codex")).toMatchObject({ visible: true, href: `codex://new?prompt=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Cursor")).toMatchObject({ visible: true, href: `cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(encodeURIComponent(contributorPrompt))}` });
+    await shown(named("link", "Antigravity")).toMatchObject({ visible: true, href: `antigravity://open?prompt=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "OpenClaw")).toMatchObject({ visible: true, href: `openclaw://agent?message=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Hermes Agent")).toMatchObject({ visible: true, href: `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/contribute/SKILL.md")}` });
+    await shown(named("link", "GitHub Copilot")).toMatchObject({ visible: true, href: `ghapp://session/new?prompt=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Grok Bot")).toMatchObject({ visible: true, href: `grokbot://app/v1/prompt?text=${encodeURIComponent(contributorPrompt)}` });
+    await shown(named("link", "Meta Muse")).toMatchObject({ visible: true, href: "https://agent.meta.ai/chat" });
+    await shown(named("link", "OpenCode")).toMatchObject({ visible: true, href: "opencode://" });
+    await shown(named("link", "Meta AI (Muse Spark)")).toMatchObject({ count: 0 });
+    await shown(named("link", "ChatGPT")).toMatchObject({ count: 0 });
 
+    const copyButton = named("button", "Copy agent prompt", { exact: false });
     expect(await copyOutcome()).toBe("Ready");
-    await site.click(named("button", "Copy agent prompt"));
+    await site.click(copyButton);
     await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     const answered = await copyOutcome();
     if (answered === "Copied") await expect.poll(copyOutcome, { timeout: journeyMs }).toBe("Ready");
     else {
       expect(answered).toBe("CopyFailed");
-      await site.click(named("button", "Copy agent prompt"));
+      await site.click(copyButton);
       await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     }
 
-    await site.click(named("button", "Copy agent prompt"));
+    await site.click(copyButton);
     await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     await site.click(named("button", "Maintainer"));
     await at("/?audience=maintainer");
     await shown(maintainerHeading).toMatchObject({ visible: true });
     await shown(contributorHeading).toMatchObject({ count: 0 });
-    await shown(prompt).toMatchObject({ text: "Read https://slop.cash/maintain/SKILL.md and follow it." });
+    await shown(prompt).toMatchObject({ text: maintainerPrompt });
+    await shown(named("link", "Claude Code")).toMatchObject({ href: `claude://code/new?q=${encodeURIComponent(maintainerPrompt)}` });
+    await shown(named("link", "Hermes Agent")).toMatchObject({ href: `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/maintain/SKILL.md")}` });
     expect(await copyOutcome()).toBe("Ready");
 
     await site.click(named("button", "Contributor"));
     await at("/");
     await shown(contributorHeading).toMatchObject({ visible: true });
-    await shown(prompt).toMatchObject({ text: "Read https://slop.cash/contribute/SKILL.md and follow it." });
+    await shown(prompt).toMatchObject({ text: contributorPrompt });
+    await shown(named("link", "Hermes Agent")).toMatchObject({ href: `hermes://skill/install?identifier=${encodeURIComponent("https://slop.cash/contribute/SKILL.md")}` });
 
     await site.open("/?audience=maintainer#projects");
     await shown(maintainerHeading).toMatchObject({ visible: true });
@@ -704,6 +724,9 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
 
     await opened("/sponsors", "Fund a project");
     await shown({ text: "$50 monthly · in the vault" }).toMatchObject({ visible: true });
+
+    expect((await site.open(`/projects/${funded.id}`)).status).toBe(200);
+    await shown({ text: "Chain: Base", exact: false }).toMatchObject({ visible: true });
   });
 });
 

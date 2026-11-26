@@ -37,5 +37,7 @@ obligation.
 - [Private trace retries](./runEvidence.md)
 - [Contributor session exchange](./sessionExchange.md)
 - [Server-side trace run and progress events](./traceServer.md)
+- [Trace licensing consent records](./traceLicensing.md)
+- [Session export cleaner and kept contents](./sessionCleaner.md)
 - [Opened pull request record](./openedRun.md)
 - [Authenticated pull_request_opened evidence](./prOpened.md)

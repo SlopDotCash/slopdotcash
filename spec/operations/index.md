@@ -10,6 +10,7 @@ queues, separated local and production environments, and source-bound releases.
 - [Payout exception audience](./payoutAudience.md)
 - [Moderator and steward Inbox items](./moderation.md)
 - [Release and operational qualification](./release.md)
+- [Public record publication](./recordPublication.md)
 - [Staging order check with one quota retry](./stagingOrder.md)
 - [RPC rotation release runs](./rpcRotationRun.md)
 - [Robinhood RPC rotation of the fee Worker](./robinhoodRpcRotation.md)

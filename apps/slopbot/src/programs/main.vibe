@@ -1,4 +1,4 @@
-// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"
+// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/readyLabel.md, "The pilot workflow merges only on Slop's own repository when switched on, into the registered integration branch, and never touches `.github/`"
 import { webCrypto } from "@repo/platform/crypto"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
@@ -8,6 +8,7 @@ import { correctionsCommand } from "./corrections.vibe"
 import { inspectValueIntakeCommand } from "./inspectValueIntake.vibe"
 import { inspectValueIntakeHistoryCommand } from "./inspectValueIntakeHistory.vibe"
 import { qualifyValueModelsCommand } from "./qualify.vibe"
+import { readyAutoMergeCommand } from "./readyAutoMerge.vibe"
 import { reviewedReplay } from "./replay.vibe"
 import { valueSettingsCommand } from "./valueSettings.vibe"
 
@@ -25,5 +26,6 @@ program({
     "reviewed-replay": command(reviewedReplay),
     "value-settings": command(valueSettingsCommand),
     corrections: command(correctionsCommand),
+    "ready-auto-merge": command(readyAutoMergeCommand),
   },
 }).runMain()

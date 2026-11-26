@@ -97,6 +97,8 @@ export const eachRecordedVaultNetworkIsNamedOnceWithItsAgreedAsset = vectors<Cha
   ],
   [{ escrow: { deployments: [{ network: "base-mainnet", asset: usdcBase }, { network: "base-mainnet", asset: token }] } }, [{ name: "Base", symbol: null }]],
   [{ escrow: { deployments: [{ network: "base-sepolia", asset: "0x036cbd53842c5426634e7929541ec2318f3dcf7e" }] } }, [{ name: "Base testnet", symbol: "USDC" }]],
+  [{ securityBounty: { settlement: { deployments: [{ network: "base-mainnet", asset: "0x0000000000000000000000000000000000000000" }, { network: "solana-mainnet", asset: "11111111111111111111111111111111" }] } } }, [{ name: "Base", symbol: "ETH" }, { name: "Solana", symbol: "SOL" }]],
+  [{ escrow: { deployments: [{ network: "solana-mainnet", asset: "epjfwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v" }] } }, [{ name: "Solana", symbol: null }]],
   [{}, []],
 ], projectChains);
 

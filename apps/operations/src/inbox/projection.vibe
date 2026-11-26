@@ -73,6 +73,7 @@ schema Listed {
   readonly acknowledged_at: string | null
   readonly bound: number
   readonly appeal_resolved: number
+  readonly points_dispute_receipt: number
   readonly penalty_author: string | null
   readonly penalty_reversed: number
   readonly case_appellant: string | null
@@ -103,6 +104,11 @@ const appealResolved = sql`CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXIST
       AND (n.event_key = 'slopbot-' || p.appeal_key || ':resolved'
         OR (n.event_key = 'slopbot-' || p.appeal_key AND p.appellant_github_id <> n.recipient_github_id))) ELSE 0 END AS appeal_resolved`
 
+const pointsDisputeReceipt = sql`EXISTS (
+    SELECT 1 FROM points_disputes p
+     WHERE n.event_key = 'slopbot-' || p.appeal_key
+       AND p.appellant_github_id = n.recipient_github_id) AS points_dispute_receipt`
+
 const bound = sql`CASE WHEN s.id IS NOT NULL THEN s.destination_digest IS NOT NULL
     WHEN a.id IS NOT NULL THEN a.destination_digest IS NOT NULL ELSE 0 END AS bound`
 
@@ -113,7 +119,7 @@ function after(cursor: Cursor | undefined): Statement {
 function listing(recipient: string, cursor: Cursor | undefined): Statement {
   return sql`SELECT n.event_key, n.kind, n.subject, n.detail, n.action_path, n.source_at, n.created_at, n.read_at,
       coalesce(s.template_version, a.template_version) AS template_version, coalesce(s.state, a.state) AS state, s.acknowledged_at,
-      ${bound}, ${appealResolved}, ${facts}
+      ${bound}, ${appealResolved}, ${pointsDisputeReceipt}, ${facts}
     FROM notifications n
     LEFT JOIN security_notification_outbox s ON s.event_key = n.event_key AND s.recipient_github_id = n.recipient_github_id
       AND s.template_version IN ('security-inbox-v1', 'security-receipt-v1')
@@ -232,6 +238,7 @@ effect function shown(row: Listed) {
     createdAt: row.created_at,
     readAt: row.read_at,
     ...(item.asksAcknowledgment ? { acknowledgedAt: row.acknowledged_at } : {}),
+    ...(row.points_dispute_receipt === 1 ? { pointsDisputeReceipt: true } : {}),
     ...(delivery === undefined ? {} : { emailDelivery: delivery }),
   } satisfies InboxNotice
 }

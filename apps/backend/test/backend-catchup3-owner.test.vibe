@@ -283,6 +283,13 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const revisions = try area.sql("SELECT revision, reason FROM project_revisions WHERE project_id = ? ORDER BY revision", id)
     const kinds = try area.sql("SELECT kind FROM project_revision_kinds WHERE project_id = ? AND revision = ?", id, after.revision)
     const reason = String(revisions[revisions.length - 1]?.reason ?? "")
+    const baseLinks = field(after.manifest, "links") as Record<string, unknown>
+    const withLinks = { ...baseLinks, website: "https://owner-other.example", x: "https://x.com/owner_other" }
+    const linked = try revise(steward, id, { manifest: { ...after.manifest, links: withLinks }, expectedRevision: after.revision })
+    const afterLinks = try stored(id)
+    const invalidX = try revise(steward, id, { manifest: { ...afterLinks.manifest, links: { ...withLinks, x: "https://x.com/owner_other/status/1" } }, expectedRevision: afterLinks.revision })
+    const cleared = try revise(steward, id, { manifest: { ...afterLinks.manifest, links: baseLinks }, expectedRevision: afterLinks.revision })
+    const afterClear = try stored(id)
     try same({
       created: [created.status, fresh.revision, fresh.status],
       checked: [checked.status, afterCheck.status, afterCheck.revision],
@@ -291,6 +298,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       revisions: revisions.map((row) => row.revision),
       kinds,
       reasonParts: reason.split("; ").length,
+      linked: [linked.status, field(linked.body, "changes"), field(afterLinks.manifest, "links"), field(afterLinks.manifest, "terms")],
+      invalidX: outcome(invalidX),
+      cleared: [cleared.status, field(afterClear.manifest, "links")],
       unexpected: world.net.unexpected,
       outboundErrors: area.outboundErrors,
     }, {
@@ -301,6 +311,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       revisions: [1, 2],
       kinds: [{ kind: "RepositoryAppended" }],
       reasonParts: 3,
+      linked: [200, { presentation: ["links"], executable: [], financial: [] }, withLinks, field(after.manifest, "terms")],
+      invalidX: [422, "invalid_manifest"],
+      cleared: [200, baseLinks],
       unexpected: [],
       outboundErrors: [],
     })

@@ -1,6 +1,6 @@
 // spec/points/participation.md, "Membership keeps its join instant and its stored welcome value"; spec/points/participation.md, "An X account is claimed once, forever, by its first actor"; spec/points/participation.md, "Stored awards include rows recorded on the cutoff day, which never count"
 import { randomBytes } from "node:crypto";
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import { Cause, type Effect, Exit, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
@@ -74,7 +74,7 @@ async function firstOf(query: string, actor: number): Promise<Record<string, unk
 
 async function memberRow(actor: number): Promise<{ readonly closed_at: string | null } | undefined> {
   const row = await firstOf("SELECT closed_at FROM points_members WHERE actor_id = ?", actor);
-  return row === undefined ? undefined : { closed_at: row.closed_at === null ? null : String(row.closed_at) };
+  return row === undefined ? undefined : { closed_at: typeof row.closed_at === "string" ? row.closed_at : null };
 }
 
 async function linkOf(actor: number): Promise<{ readonly x_id: string; readonly verified_at: string } | undefined> {

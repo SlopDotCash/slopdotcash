@@ -12,6 +12,7 @@ import { restoreCollected } from "../release/run/restore.vibe"
 import { publisher } from "../release/publish/publisher.vibe"
 import { isAncestor } from "../release/run/heads.vibe"
 import { historyAnchor, release as publishRelease } from "../release/run/publish.vibe"
+import { describeRecordBuild, runRecordBuild } from "../release/record/build.vibe"
 
 export error ReleaseUsage { message: string }
 
@@ -21,6 +22,7 @@ const usage = [
   "release registry production|staging <bundle>",
   "release collect production|staging <bundle> [--retained]",
   "release restore-collection <run id> <out dir> [root]",
+  "release record <site dir> [leaderboard path]",
   "release manifest production|staging <bundle>",
   "release verify-bundle <bundle>",
   "release publish production|staging <bundle> <receipts> [root]",
@@ -101,6 +103,20 @@ export effect function release(args: ReadonlyArray<string>) {
     provide Layer.mergeAll(github({ token, userAgent: "slop-release" }), systemGit) {
       try restoreCollected({ facts, dataRun: first, out: second, root: third ?? ".", anchor: historyAnchor, token })
     }
+    return
+  }
+  if (command === "record" && first !== undefined && third === undefined) {
+    const enabled = (try trimmed("SLOP_RECORD_BUILD")) === "1"
+    const recordToken = Option.getOrUndefined(try Config.option(Config.Redacted("SLOP_RECORD_GITHUB_TOKEN")))
+      ?? Option.getOrUndefined(try Config.option(Config.Redacted("GITHUB_TOKEN")))
+      ?? Option.getOrUndefined(try Config.option(Config.Redacted("GH_TOKEN")))
+    const result = try runRecordBuild({
+      siteDir: first,
+      leaderboardPath: second,
+      enabled,
+      token: recordToken === undefined ? "" : Redacted.value(recordToken),
+    })
+    try Console.log(describeRecordBuild(result))
     return
   }
   if (command === "daily" && ((first === "start" && second === undefined) || (first === "follow-up" && runId.test(second ?? ""))) && third === undefined) {

@@ -46,7 +46,7 @@ const imports = {
 }
 const noReact = { patterns: [...imports.patterns, { regex: "^react(?:-dom)?(?:/|$)", message: `Tool and domain code does not import React: ${monorepo}.` }] }
 // What no tsconfig.json includes, so the type-aware rules cannot see it.
-const untyped = ["*.{js,ts}", "**/.storybook/**", "packages/design-system/**", "vibestack/design/test/**", "vibestack/stories/test/**"]
+const untyped = ["*.{js,ts}", "**/*.mjs", "**/.storybook/**", "packages/design-system/**", "vibestack/design/test/**", "vibestack/stories/test/**"]
 // Every React interface: Studio's page is built on the same theme (vibestack/studio/vite.config.ts).
 const tsx = ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}", "vibestack/studio/src/page/**/*.{ts,tsx}"]
 const design = "packages/design-system"
@@ -103,7 +103,20 @@ const effects = {
     return { ...Object.fromEntries(Object.entries(scheduling).map(([selector, message]) => [selector, (node) => found.push({ node, message })])), "Program:exit": (node) => excess(context, node, found, "scheduled") }
   },
 }
-const code = { rules: { comments, effects } }
+const warningTerm = /\b(?:todo|fixme|legacy|deprecated)\b/i
+const warnings = {
+  meta: { type: "problem", schema: [] },
+  create: (context) => ({
+    Program: () => {
+      for (const comment of context.sourceCode.getAllComments()) {
+        if (cited.test(comment.value)) continue
+        const match = warningTerm.exec(comment.value)
+        if (match) context.report({ loc: comment.loc, message: `Unexpected '${match[0].toLowerCase()}' comment (${writing}).` })
+      }
+    },
+  }),
+}
+const code = { rules: { comments, effects, warnings } }
 const own = ["apps/**", "packages/**"]
 const commented = {
   "apps/app/src/App.tsx": 4,
@@ -332,7 +345,6 @@ const commented = {
   "packages/ui/src/components/AccountMenu.tsx": 1,
   "packages/ui/src/components/Address.meta.tsx": 4,
   "packages/ui/src/components/Address.tsx": 1,
-  "packages/ui/src/components/AgentMark.meta.tsx": 1,
   "packages/ui/src/components/Alert.meta.tsx": 1,
   "packages/ui/src/components/Avatar.meta.tsx": 1,
   "packages/ui/src/components/BarChart.meta.tsx": 1,
@@ -394,13 +406,13 @@ const loose = Object.fromEntries(["no-explicit-any", "no-unsafe-argument", "no-u
 
 export default defineConfig(
   // Generated or disposable, and .claude/worktrees holds other checkouts of this repository.
-  globalIgnores(["**/gen/", "!vibestack/gen/", "**/.vibe/", "**/dist/", "**/.cache/", "**/.spec-cache/", "**/generated/", "**/storybook-static/", "**/test/fixtures/", "vibestack/examples/", "vibestack/fixtures/", ".claude/", ".lemmascript/", ".studio/", ".turbo/", "_apalache-out/", ...frozen]),
+  globalIgnores(["**/gen/", "!vibestack/gen/", "**/.build/", "**/.vibe/", "**/dist/", "**/.cache/", "**/.spec-cache/", "**/generated/", "**/storybook-static/", "**/test/fixtures/", "vibestack/examples/", "vibestack/fixtures/", ".claude/", ".lemmascript/", ".studio/", ".turbo/", "_apalache-out/", ...frozen]),
   { linterOptions: { reportUnusedDisableDirectives: "error", reportUnusedInlineConfigs: "error" } },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
-    plugins: { boundaries },
+    plugins: { boundaries, code },
     settings: {
       "boundaries/elements": [
         { type: "package", pattern: ["packages/*", "apps/*"], capture: ["name"] },
@@ -432,7 +444,7 @@ export default defineConfig(
       // Regular expressions here match the tools' column-aligned output, where literal spaces read as the output does.
       "no-regex-spaces": "off",
       // AGENTS.md, "Writing code": one path, so nothing is left for later or kept beside its replacement.
-      "no-warning-comments": ["error", { terms: ["todo", "fixme", "legacy", "deprecated"], location: "anywhere" }],
+      "code/warnings": "error",
     },
   },
   { files: untyped, extends: [tseslint.configs.disableTypeChecked] },
@@ -458,7 +470,8 @@ export default defineConfig(
     },
   },
   // VibeLang's parser gives .vibe files typescript-eslint's tree without a program, so the rules that need types stay off: `vibelang --noEmit` checks them.
-  { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibelang, parserOptions: { projectService: false } }, rules: { "no-undef": "off" } },
+  // VibeLang compiles `schema` fields and `try Service` into runtime value references that appear as type references in the ESTree, so consistent-type-imports cannot run on .vibe files.
+  { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibelang, parserOptions: { projectService: false } }, rules: { ...tseslint.configs.eslintRecommended.rules, "@typescript-eslint/consistent-type-imports": "off" } },
   // React belongs to interfaces: the tools apart from Studio's page, and schemas, contracts, drivers and the shell everywhere, do without it.
   // @repo/ui's drivers are the exception: they mount its React components to check them against their specs.
   {
@@ -493,7 +506,7 @@ export default defineConfig(
   },
   { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(tseslint.parser) } },
   { files: ["{apps,packages}/**/*.{vibe,vibex}"], languageOptions: { parser: guarded(vibelang) } },
-  { files: own, plugins: { code }, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
+  { files: own, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } },
   { files: ["packages/ui/src/components/**"], ignores: ["**/*.meta.tsx"], rules: { "code/comments": ["error", { jsdoc: true, left: commented }] } },
 )
 

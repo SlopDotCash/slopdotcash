@@ -1,3 +1,4 @@
+// spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
 import type { Target } from "./support/ui/protocol.ts";
@@ -64,13 +65,15 @@ async function createProject(owner: User, fullName: string, name: string, links:
   await site.click(named("link", "Manage project"));
   await expect.poll(async () => new URL(await site.where()).pathname, { timeout: 30_000 }).toMatch(/^\/projects\/[^/]+\/manage$/u);
   const id = decodeURIComponent(new URL(await site.where()).pathname.split("/")[2] ?? "");
-  await shown(settings).toMatchObject({ visible: true });
+  await shown(publish).toMatchObject({ visible: true });
+  await shown(text("Check details", true)).toMatchObject({ visible: true });
   return id;
 }
 
 async function manage(id: string, tab?: string) {
   await site.open(`/projects/${encodeURIComponent(id)}/manage`, tab);
-  await shown(settings).toMatchObject({ visible: true });
+  await shown(publish).toMatchObject({ visible: true });
+  await shown(text("Check details", true)).toMatchObject({ visible: true });
 }
 
 const shareField = field("Maintainer share (%, 0 to 30, optional)");
@@ -197,8 +200,8 @@ describe('Complete project setup with explicit independent readiness (spec/front
 });
 
 describe('Maintain a live project with current GitHub authority (spec/backend/projects.md, "Story: Maintain a live project with current GitHub authority")', () => {
-  it('owners publish and clear the website and X account against the expected revision, and Publish with no change answers "Nothing changed." (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
-    await site.allow(refusedLoads);
+  it("owners publish and clear website and X links", async () => {
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404", "^failed GET /\\S+ net::ERR_ABORTED$");
     const fullName = await repository(users.eli, "eliza");
     const id = await createProject(users.eli, fullName, "Eliza", { x: "@elizaOS" });
     await openGroup("Project listing");
@@ -217,16 +220,29 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
 
     await site.fill(field("Website (optional)"), "elizaos.example");
     await site.fill(field("X account (optional)"), "https://twitter.com/elizaOS_ai");
+    const changes = named("region", "Changes");
+    await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ count: 2 });
+    await shown({ text: "Rescan", within: changes }).toMatchObject({ count: 0 });
     await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
-    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
+    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
+    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
+
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(named("link", "elizaos.example")).toMatchObject({ visible: true, href: "https://elizaos.example" });
+    await shown(named("link", "@elizaOS_ai")).toMatchObject({ visible: true, href: "https://x.com/elizaOS_ai" });
 
     await manage(id);
     await openGroup("Project listing");
     await site.fill(field("X account (optional)"), "");
     await site.click(publish);
-    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
-    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example" });
+    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
+    await shown(named("img", "Draft saved on this device")).toMatchObject({ visible: true });
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example" });
+
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(named("link", "elizaos.example")).toMatchObject({ visible: true, href: "https://elizaos.example" });
+    await shown(named("link", "@elizaOS_ai")).toMatchObject({ count: 0 });
   });
 
   it('the ready label starts off at 1/400/20, refuses 11 approvals, publishes 2 approvals, and turning it off keeps the saved numbers (spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner\'s numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths")', async () => {

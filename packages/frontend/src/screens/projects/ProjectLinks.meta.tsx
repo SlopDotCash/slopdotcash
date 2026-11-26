@@ -20,8 +20,9 @@ export const meta: ComponentMeta<ProjectLinksProps> = {
         escrow: { deployments: [{ network: "robinhood-mainnet", asset: token }, { network: "solana-mainnet", asset: "So11111111111111111111111111111111111111112" }] },
       },
     },
-    WebsiteOnly: { record: { links: { repository: "https://github.com/ntwrk/party", website: "https://ntwrk.party/docs?tab=start" } } },
-    Nothing: { record: { links: { repository: "https://github.com/ntwrk/party", x: "https://example.org/slopcash" } } },
+    WebsiteOnly: { record: { links: { repository: "https://github.com/ntwrk/party", website: "https://ntwrk.party/docs?tab=start" }, escrow: null, rewardAsset: null } },
+    MissingAsset: { record: { links: { repository: "https://github.com/ntwrk/party", website: "https://ntwrk.party" }, escrow: { deployments: [{ network: "base-mainnet" }] } } },
+    Nothing: { record: { links: { repository: "https://github.com/ntwrk/party", website: "javascript:alert(1)", x: "https://example.org/slopcash" } } },
   },
   play: {
     // spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"
@@ -39,6 +40,10 @@ export const meta: ComponentMeta<ProjectLinksProps> = {
     // spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"
     WebsiteOnly: async () => {
       await expect(screen.getByText(/^Website:/u).textContent).toBe("Website: ntwrk.party/docs?tab=start");
+    },
+    // spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"
+    MissingAsset: async () => {
+      await expect(screen.getByText(/^Chain: Base/u).textContent).toBe("Chain: Base · Website: ntwrk.party");
     },
     // spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"
     Nothing: async () => {

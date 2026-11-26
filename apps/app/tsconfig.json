@@ -15,7 +15,9 @@
     "rootDir": ".",
     "rootDirs": [
       ".",
-      ".vibe/declarations"
+      ".vibe/declarations",
+      "../../packages/frontend",
+      "../../packages/frontend/.vibe/declarations"
     ]
   },
   "include": [

@@ -8,6 +8,7 @@ import type { PageRuntime } from "../../../app/runtime.vibe";
 import type { MonthlyPoolValue, Proposal } from "../../../flows/projects/proposal.ts";
 import { type BountyTerms, bountyAmountPreview, privateBountyDisclosure, privateBountyTesting } from "../../../flows/security/program.vibe";
 import { assetSymbol, CHAIN_NAMES, formatRewardCapDisplay } from "../../../kernels/assetText.ts";
+import { normalizeWebsiteInput, normalizeXInput, websiteLabel, xHandle } from "../../../kernels/projectLinks.ts";
 import type { SessionView } from "../../../session/session.vibe";
 import { ownerAvatar } from "../fields/ProjectImageField.tsx";
 import { type SkillProvenance, SkillPreview } from "../fields/SkillPreview.tsx";
@@ -64,6 +65,11 @@ export function ListingPreview({ proposal: p, pool, bounty, licenseKnown, referr
   const shares = bounty?.kind === "terms" ? bountyAmountPreview(bounty.terms.amount, p.monthlyPool) : undefined;
   const image = projectImage(p.image, ownerAvatar(p.stewardLogin));
   const choices = listingChoicesOf(p);
+  const websiteInput = normalizeWebsiteInput(p.website);
+  const website = websiteInput.ok ? websiteInput.value : null;
+  const xInput = normalizeXInput(p.x);
+  const x = xInput.ok ? xInput.value : null;
+  const handle = x ? xHandle(x) : null;
   return (
     <Card asChild className="gap-6">
       <article aria-label="Listing preview">
@@ -120,6 +126,8 @@ export function ListingPreview({ proposal: p, pool, bounty, licenseKnown, referr
             <Fact term="Private bounty">None</Fact>
           ) : null}
           {p.fundingMode === "monthly" ? <Fact term="Fee">2%</Fact> : null}
+          {website ? <Fact term="Website">{websiteLabel(website)}</Fact> : null}
+          {handle ? <Fact term="X account">@{handle}</Fact> : null}
           {referrer ? (
             <Fact term="Referred by">
               <Chip icon={<UserPlus aria-hidden />}>@{referrer}</Chip>

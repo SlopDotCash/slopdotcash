@@ -1,4 +1,4 @@
-// spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
+// spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
 import { burnAddress, networkTerms, slopDecimals, slopRatesAt } from "@repo/backend/client"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"

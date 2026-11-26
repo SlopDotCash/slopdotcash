@@ -1,5 +1,6 @@
 // spec/backend/repoRequests.md, "Story: Flag a repository a member would work on"; spec/backend/repoRequests.md, "Only a member with merged work flags a public, original, unarchived repository that is not theirs and not on Slop"; spec/backend/repoRequests.md, "A flag counts for 90 days, renews in place and is withdrawn without being deleted"; spec/backend/repoRequests.md, "A flag write is a same-origin JSON request naming exactly a repository and an action"; spec/backend/repoRequests.md, "Story: See which repositories members would work on"; spec/backend/repoRequests.md, "The public board counts active flags per repository, never names who flagged, and leaves out a repository on Slop"
 import { isoAt } from "@repo/platform/clock"
+import { DatabaseFailure, databaseTemporarilyUnavailable } from "@repo/platform/d1"
 import { type Actor, ActorChanged, Caller, Refused, SessionExpired, Unauthenticated, answered, handleRaw, json, jsonBody, sameOriginWrite } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { type Refusal, cacheControl } from "@repo/platform/route"
@@ -122,17 +123,12 @@ effect function decided() {
 }
 
 const flagWrite = { ...flagRepoRequest, access: "public" as const, request: undefined }
-const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
-
-function isBusyD1(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
-}
 
 effect function written() {
   if (!(try sameOriginWrite())) throw refused(rows.originForbidden)
   const answer = decided() catch effect (error) => {
     if (error instanceof Refused) throw error
-    if (isBusyD1(error)) throw new Refused({ status: 503, code: "temporarily_unavailable", message: "Temporarily unavailable. Try again.", headers: privateAnswer })
+    if (error instanceof DatabaseFailure && databaseTemporarilyUnavailable(error)) throw new Refused({ status: 503, code: "temporarily_unavailable", message: "Temporarily unavailable. Try again.", headers: privateAnswer })
     try Effect.logError("repo requests API failure")
     throw refused(rows.internalError)
   }
@@ -159,7 +155,7 @@ effect function boardRead() {
 
 effect function boardAnswer() {
   return boardRead() catch effect (error) => {
-    if (isBusyD1(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "no-store" })
+    if (error instanceof DatabaseFailure && databaseTemporarilyUnavailable(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "no-store" })
     try Effect.logError("repo requests read failure")
     return rowAnswer(getRepoRequests.internalError)
   }
