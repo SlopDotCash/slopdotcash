@@ -11,7 +11,10 @@ const harness = (on: TestProject) => on.import<typeof SiteModule>(join(import.me
 const site: BrowserCommand<[Op], Result<Op>> = async (context, op) => (await harness(context.project)).command(context, op);
 const siteCommands = {
   name: "slop:site-commands",
-  config: (): ViteUserConfig => ({ test: { browser: { commands: { site } } } }),
+  config: (): ViteUserConfig => ({
+    optimizeDeps: { force: true },
+    test: { browser: { commands: { site } } },
+  }),
   configureVitest: async ({ project: on, vitest }: { readonly project: TestProject; readonly vitest: Vitest }) => {
     if (!on.config.browser.enabled) return;
     const loaded = await harness(on);
