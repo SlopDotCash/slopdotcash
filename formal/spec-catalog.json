@@ -909,7 +909,7 @@
     },
     {
       "path": "spec/backend/bindingConsent.md",
-      "sha256": "d63009379a4e468697e48ae0a5e0f28d6a886b00bd82bd400e29a217a4d516fe",
+      "sha256": "922227626ca354b382caf613015c465542e413140f94a1d7ecfb1b5cf9efce40",
       "module": "backend__bindingConsent",
       "stories": [
         {
@@ -973,8 +973,17 @@
           ]
         },
         {
-          "heading": "Story: Consent to bind the authorized payout wallet to a project vault / A Solana binding is one half-signed transaction per generation that only the wallet slot completes",
+          "heading": "Story: Consent to bind the authorized payout wallet to a project vault / Payouts reopens with the current wallet authorization or finalized binding",
           "line": 166,
+          "definitions": [
+            "PayoutBindingStatus",
+            "RetainedPayoutConsent",
+            "payoutBindingStatus"
+          ]
+        },
+        {
+          "heading": "Story: Consent to bind the authorized payout wallet to a project vault / A Solana binding is one half-signed transaction per generation that only the wallet slot completes",
+          "line": 192,
           "definitions": [
             "absentPayment",
             "paymentFor",
@@ -1007,7 +1016,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox",
-          "line": 291,
+          "line": 317,
           "definitions": [
             "canSolanaAdmitAttempt",
             "solanaAdmitAttempt",
@@ -1022,7 +1031,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / The wallet registries move underneath through their own guarded events",
-          "line": 340,
+          "line": 366,
           "definitions": [
             "canObserveTime",
             "observeTime",
@@ -1055,7 +1064,7 @@
         },
         {
           "heading": "Story: Consent to bind the authorized payout wallet to a project vault / Renewal, replacement, expiry, private completion and a replaced Solana claim are reachable",
-          "line": 398,
+          "line": 424,
           "definitions": [
             "consumedSample",
             "authorizedSample",
@@ -1118,7 +1127,7 @@
         },
         {
           "target": "../settlement/paymentDispatch.md",
-          "line": 297
+          "line": 323
         }
       ]
     },
