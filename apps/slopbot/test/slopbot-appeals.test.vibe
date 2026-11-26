@@ -121,10 +121,10 @@ effect function found(area: AreaShape, login: Author, category: string) {
   try labelled(login, `slopbot: ${category}`)
 }
 
-effect function closedForScam(area: AreaShape, login: Author) {
+effect function closedForScam(area: AreaShape, login: Author, closedAt?: string) {
   const { fake } = try World
   const item = try itemOf(login)
-  const at = try isoNow()
+  const at = closedAt ?? (try isoNow())
   try Effect.try(() => {
     item.state = "closed"
     item.closedAt = at
@@ -193,10 +193,10 @@ effect function openedAt(area: AreaShape, login: Author) {
   return millisOf(String(row?.opened_at ?? ""))
 }
 
-effect function delivered(area: AreaShape, login: Author, sender: number) {
+effect function delivered(area: AreaShape, login: Author, sender: number, occurredAt?: string) {
   const { items } = try World
   const item = try itemOf(login)
-  const source = JSON.stringify({ installationId, repositoryId, itemKind: "pull_request", number: items[login] ?? 0, senderId: sender, itemNodeId: item.nodeId, revision: try headOf(login), occurredAt: try isoNow() })
+  const source = JSON.stringify({ installationId, repositoryId, itemKind: "pull_request", number: items[login] ?? 0, senderId: sender, itemNodeId: item.nodeId, revision: try headOf(login), occurredAt: occurredAt ?? (try isoNow()) })
   try area.sql("INSERT INTO slopbot_deliveries (delivery_id, event, received_at, reopen_source) VALUES (?, 'pull_request', ?, ?)", `human_reopen-${login}-${sender}`, try isoNow(), source)
 }
 
@@ -385,5 +385,41 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       marStages: [draftHeader, "**Appeal sent to a Slop moderator:** the appellant rejected the draft.", upheldBy("maintainer")],
       marSignal: [{ action: "appeal", detail: String(idOf("mar")) }, { action: "label", detail: appealLabel }, { action: "human_reopen", detail: "100" }],
     })
+  })
+
+  it.effect('A retained maintainer reopen reverses the covered debit after a later merge without changing the pull request (spec/slopbot/webhookDelivery.md, "A downstream reopen decision rechecks the exact retained source"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit")', () => effect {
+    const area = try Area
+    const { fake, items } = try World
+    try installed(area)
+    try found(area, "mar", "scam")
+    try closedForScam(area, "mar", "2026-11-23T13:50:21.000Z")
+    try reopenedBy("mar", "ada")
+    try delivered(area, "mar", 100, "2026-11-23T13:50:37.000Z")
+    const mergedAt = "2026-11-23T13:50:45.000Z"
+    try Effect.try(() => {
+      const pull = fake.world.pull(path, items.mar ?? 0)
+      const maintainer = fake.world.account("ada")
+      pull.state = "closed"
+      pull.closedAt = mergedAt
+      pull.mergedAt = mergedAt
+      pull.mergedBy = maintainer
+      fake.world.record(pull, "merged", maintainer)
+      fake.world.record(pull, "closed", maintainer)
+    })
+    const item = try itemOf("mar")
+    const requestStart = fake.requests.length
+    const processed = try signal(area, "mar", "human_reopen", 100)
+    const penalty = try area.sql("SELECT reversal, reversed_at FROM slopbot_penalties WHERE item_node_id = ?", item.nodeId)
+    const replayed = try signal(area, "mar", "human_reopen", 100)
+    const kept = try area.sql("SELECT reversal, reversed_at FROM slopbot_penalties WHERE item_node_id = ?", item.nodeId)
+    try same({ processed, replayed, reversal: penalty[0]?.reversal, reversed: typeof penalty[0]?.reversed_at === "string" }, {
+      processed: { result: "human_reopen; newer item state kept" },
+      replayed: { result: "human_reopen; newer item state kept" },
+      reversal: "maintainer_reopen",
+      reversed: true,
+    })
+    try same(kept, penalty)
+    try same(try area.sql("SELECT reopen_confirmed_at IS NOT NULL AS confirmed FROM slopbot_deliveries WHERE delivery_id = ?", "human_reopen-mar-100"), [{ confirmed: 1 }])
+    try same(fake.requests.slice(requestStart).filter((request) => request.method !== "GET"), [])
   })
 })
