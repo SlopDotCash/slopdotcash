@@ -63,6 +63,35 @@ const directives = {
   Shebang: [/^/],
 }
 const inline = /^\s*(?:eslint(?:-[a-z]+)*|exported|globals?)(?:\s|$)/
+function removeSyntheticLoopBindings(node, visitorKeys) {
+  if (node.type === "SwitchStatement" && node.discriminant.synthesized === true) {
+    const block = node.cases[0]?.consequent[0]
+    if (block?.type === "BlockStatement") {
+      const [head, loop, exit, ...bindings] = block.body
+      if (loop?.type === "ForOfStatement" && loop.right.synthesized === true && exit?.type === "BreakStatement") {
+        block.body = [head, loop, exit, ...bindings.filter((statement) => statement.type !== "VariableDeclaration" ||
+          !statement.declarations.every(({ id, init }) => id.synthesized === true && init === null))]
+      }
+    }
+  }
+  for (const key of visitorKeys[node.type] ?? []) {
+    const child = node[key]
+    if (Array.isArray(child)) {
+      for (const item of child) if (item) removeSyntheticLoopBindings(item, visitorKeys)
+    } else if (child) removeSyntheticLoopBindings(child, visitorKeys)
+  }
+}
+
+const vibeParser = {
+  ...vibelang,
+  parseForESLint(text, options) {
+    const parsed = vibelang.parseForESLint(text, options)
+    // The parser has already analyzed the synthetic for-try bindings past the break.
+    removeSyntheticLoopBindings(parsed.ast, parsed.visitorKeys)
+    return parsed
+  },
+}
+
 const guarded = (parser) => ({
   meta: { name: `${parser.meta.name} with code/inline`, version: parser.meta.version },
   parseForESLint: (text, options) => {
@@ -494,7 +523,7 @@ export default defineConfig(
     },
   },
   // VibeLang's parser gives .vibe files typescript-eslint's tree without a program, so the rules that need types stay off: `vibelang --noEmit` checks them.
-  { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibelang, parserOptions: { projectService: false } }, rules: { "no-undef": "off" } },
+  { files: ["**/*.{vibe,vibex}"], extends: [tseslint.configs.disableTypeChecked], languageOptions: { parser: vibeParser, parserOptions: { projectService: false } }, rules: { "no-undef": "off" } },
   // React belongs to interfaces: the tools apart from Studio's page, and schemas, contracts, drivers and the shell everywhere, do without it.
   // @repo/ui's drivers are the exception: they mount its React components to check them against their specs.
   {
@@ -530,7 +559,7 @@ export default defineConfig(
   { files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: guarded(tseslint.parser) } },
   {
     files: ["{apps,packages}/**/*.{vibe,vibex}"],
-    languageOptions: { parser: guarded(vibelang) },
+    languageOptions: { parser: guarded(vibeParser) },
     rules: { "no-redeclare": "off", "code/redeclarations": "error" },
   },
   { files: own, plugins: { code }, rules: { "no-console": "error", "no-warning-comments": "off", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }], "code/warningComments": "error" } },
