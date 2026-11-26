@@ -10145,9 +10145,9 @@
     },
     {
       "path": "workers/slopbot/submission-evidence.ts",
-      "sha256": "3983be1a566a2646b14e6d6cc0898a7b94b5c566b5d85a1af64536d6adabd50f",
+      "sha256": "ee0312878db893711370c1407cc66e7fed01d00241fa75b0dc6cff75dd1f4949",
       "models": ["formal/models/slopbot/bot_submission_evidence.qnt"],
-      "candidateLines": [57],
+      "candidateLines": [73],
       "review": "mapped-abstraction"
     },
     {

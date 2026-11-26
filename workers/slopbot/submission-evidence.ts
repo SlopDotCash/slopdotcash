@@ -52,13 +52,7 @@ function evidenceValue(section: string[], field: string): string | undefined {
 }
 
 function hasEvidence(field: string, value: string | undefined): boolean {
-  if (
-    !value ||
-    /^(?:n\/?a\b|not (?:applicable|run|tested)\b|none\b|tbd\b|todo\b|pending\b)/iu.test(
-      value,
-    )
-  )
-    return false;
+  if (!value) return false;
   const linked = (value.match(/https:\/\/[^\s<>()[\]]+/giu) ?? []).some(
     (reference) => {
       const url = URL.parse(reference);
@@ -72,6 +66,15 @@ function hasEvidence(field: string, value: string | undefined): boolean {
       );
     },
   );
+  // A placeholder word alone supplies nothing, but it does not erase an
+  // inspectable artifact link on the same line (for example a check that
+  // could not run locally beside its CI run link).
+  if (
+    /^(?:n\/?a\b|not (?:applicable|run|tested)\b|none\b|tbd\b|todo\b|pending\b)/iu.test(
+      value,
+    )
+  )
+    return linked;
   if (field === "UI video" || field === UI_SCREENSHOTS) return linked;
   return (
     linked || (value.match(/[\p{L}\p{N}][\p{L}\p{N}_./-]*/gu)?.length ?? 0) >= 5
