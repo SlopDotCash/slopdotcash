@@ -34,50 +34,50 @@ export function EnforcementPanel({ runtime, project, actorId, onAccessLost, onDo
   const [review, setReview] = useState<Review | null>(null);
   const [busy, setBusy] = useState<"preview" | "apply" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef(false);
+  const inFlightRef = useRef(false);
   const request = enforcementRequest({ action, reason, evidence, revision: project.revision, nextSequence: enforcement.nextSequence, decisionRequired: enforcement.decisionRequired, responsible });
   const requestKey = JSON.stringify({ actorId, projectId: project.id, request });
-  const latestKey = useRef(requestKey);
-  latestKey.current = requestKey;
+  const latestKeyRef = useRef(requestKey);
+  latestKeyRef.current = requestKey;
   const preview = review?.key === requestKey ? review.reviewed.preview : null;
 
   const showPreview = async (event: FormEvent) => {
     event.preventDefault();
-    if (inFlight.current) return;
+    if (inFlightRef.current) return;
     const key = requestKey;
-    inFlight.current = true;
+    inFlightRef.current = true;
     setBusy("preview");
     setError(null);
     const acted = await act(runtime, previewEnforcement(project.id, actorId, request), (failure) => failure._tag !== "PreviewMismatch" && isAdminActionAccessLoss(failure), "The preview could not be prepared.");
-    inFlight.current = false;
+    inFlightRef.current = false;
     setBusy(null);
     if (!acted.ok) {
       if (acted.accessLost) return onAccessLost();
-      if (latestKey.current === key) setError(acted.message);
+      if (latestKeyRef.current === key) setError(acted.message);
       return;
     }
-    if (latestKey.current !== key) return setError(requestChanged);
+    if (latestKeyRef.current !== key) return setError(requestChanged);
     setReview({ reviewed: acted.value, key });
   };
 
   const confirm = async () => {
-    if (inFlight.current || review === null || preview === null) return;
+    if (inFlightRef.current || review === null || preview === null) return;
     const submitted = review;
-    inFlight.current = true;
+    inFlightRef.current = true;
     setBusy("apply");
     setError(null);
     const acted = await act(runtime, decideEnforcement(project.id, actorId, submitted.reviewed), isAdminActionAccessLoss, "The decision could not be confirmed.");
-    inFlight.current = false;
+    inFlightRef.current = false;
     setBusy(null);
     if (!acted.ok) {
       if (acted.accessLost) return onAccessLost();
-      if (latestKey.current === submitted.key) {
+      if (latestKeyRef.current === submitted.key) {
         setReview(null);
         setError(acted.message);
       }
       return;
     }
-    if (latestKey.current !== submitted.key) return;
+    if (latestKeyRef.current !== submitted.key) return;
     onDone("Recorded.");
   };
 

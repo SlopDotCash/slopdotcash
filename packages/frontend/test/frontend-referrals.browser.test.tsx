@@ -129,10 +129,12 @@ async function openRequested(backend: Backend, search: string) {
 }
 
 async function visit(search: string) {
-  await act(() => {
-    history.replaceState(null, "", `${location.pathname}${search}`);
-    dispatchEvent(new PopStateEvent("popstate"));
-  });
+  await act(() =>
+    Promise.resolve().then(() => {
+      history.replaceState(null, "", `${location.pathname}${search}`);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }),
+  );
 }
 
 async function closeAll() {

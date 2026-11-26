@@ -28,19 +28,19 @@ interface Attempt {
 function ActorSetup({ runtime, projectId, actorId, generation = "initial", initial, onSetup, showProjectLink }: SetupStatusPanelProps) {
   const [view, setView] = useState<SetupView>({ setup: initial ?? null, busy: initial === undefined, error: null });
   const [attempt, setAttempt] = useState<Attempt>({ count: 0, requestScan: false });
-  const latest = useRef(view);
-  const started = useRef(new Set<string>());
+  const latestRef = useRef(view);
+  const startedRef = useRef(new Set<string>());
   const key = `setup:${projectId}:${actorId}:${generation}:${attempt.count}`;
   const show = (next: SetupView) =>
     Effect.sync(() => {
-      latest.current = next;
+      latestRef.current = next;
       setView(next);
       onSetup?.(next.setup);
     });
   const follow = () => {
-    const resumed = started.current.has(key);
-    started.current.add(key);
-    return followSetup({ projectId, actorId, requestScan: attempt.requestScan && !resumed, initial: latest.current.setup, checkFirst: resumed || attempt.count > 0 || initial === undefined }, show);
+    const resumed = startedRef.current.has(key);
+    startedRef.current.add(key);
+    return followSetup({ projectId, actorId, requestScan: attempt.requestScan && !resumed, initial: latestRef.current.setup, checkFirst: resumed || attempt.count > 0 || initial === undefined }, show);
   };
   const run = useRun(runtime, key, follow, setupUnfinished);
   const shown: SetupView = run?.status === "failed" ? { ...view, busy: false, error: run.message } : view;

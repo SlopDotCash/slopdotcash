@@ -97,14 +97,15 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const [published, setPublished] = useState<Published>();
   const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [attempted, setAttempted] = useState(false);
-  const [open, setOpen] = useState<ReadonlySet<FormGroup>>(new Set(["listing"]));
+  const [open, setOpen] = useState<ReadonlySet<FormGroup>>(() => new Set(["listing"]));
   const [submission, setSubmission] = useState<Submission>({ status: "idle" });
   const [removal, setRemoval] = useState<Removal>({ status: "idle" });
   const [repository, setRepository] = useState("");
   const [addition, setAddition] = useState<Addition>({ state: "idle" });
-  const inFlight = useRef(false);
-  const lookups = useRef(0);
+  const inFlightRef = useRef(false);
+  const lookupsRef = useRef(0);
   const branch = useIntegrationBranch(runtime);
+  const nowMs = useNow();
   const current = published !== undefined && published.revision >= base.revision ? published : base;
   const managed = managedOf(current.revision, current.manifest);
   if (managed === undefined)
@@ -114,7 +115,6 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
       </Frame>
     );
   const { manifest } = managed;
-  const nowMs = useNow();
   if (removal.status === "removed") return <ProjectRemoved name={manifest.name} />;
   const review = reviewOf(managed, edit, new Date(nowMs), branch.change);
   const valid = Object.keys(review.errors).length === 0;
@@ -125,7 +125,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     store.update((latest) => withField(latest, "repositories", pendingText(change(pendingRepositories(latest.fields?.repositories ?? ""))), managed.revision));
 
   const publish = async () => {
-    if (inFlight.current) return;
+    if (inFlightRef.current) return;
     setAttempted(true);
     const invalid = Object.keys(review.errors);
     if (invalid.length > 0) {
@@ -136,10 +136,10 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     }
     if (!review.changed || review.stale) return;
     const submitted = edit;
-    inFlight.current = true;
+    inFlightRef.current = true;
     setSubmission({ status: "publishing" });
     const exit = await runtime.runPromiseExit(publishUpdate({ projectId: base.projectId, manifest: review.next, expectedRevision: managed.revision, monthlyAmount: review.monthlyAmount, actor: actorId, branch: review.branchRequest }));
-    inFlight.current = false;
+    inFlightRef.current = false;
     if (Exit.isSuccess(exit)) {
       const { project, setup: answered } = exit.value;
       const after = managedOf(project.revision, project.manifest)?.manifest;
@@ -158,10 +158,10 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   };
 
   const remove = async () => {
-    if (inFlight.current) return false;
-    inFlight.current = true;
+    if (inFlightRef.current) return false;
+    inFlightRef.current = true;
     const exit = await runtime.runPromiseExit(removeManaged(base.projectId, managed.revision, actorId));
-    inFlight.current = false;
+    inFlightRef.current = false;
     if (Exit.isSuccess(exit)) {
       setRemoval({ status: "removed" });
       return true;
@@ -175,11 +175,11 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
 
   const add = async () => {
     const name = normalizeRepositoryInput(repository);
-    const lookup = ++lookups.current;
+    const lookup = ++lookupsRef.current;
     if (listedNames(manifest, review.added).includes(name.toLowerCase())) return setAddition({ state: "error", message: `${name} is already listed.` });
     setAddition({ state: "loading" });
     const exit = await runtime.runPromiseExit(lookupRepository(name));
-    if (lookup !== lookups.current) return;
+    if (lookup !== lookupsRef.current) return;
     if (Exit.isFailure(exit)) return setAddition({ state: "error", message: failureMessage(exit.cause, "Repository could not load.") });
     const refusal = additionRefusal(exit.value, listedNames(manifest, pendingRepositories(store.get().edit.fields?.repositories ?? "")));
     if (refusal !== undefined) return setAddition({ state: "error", message: refusal });

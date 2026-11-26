@@ -41,15 +41,15 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
   const [draftError, setDraftError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const latest = useRef(start);
-  const inFlight = useRef(false);
+  const latestRef = useRef(start);
+  const inFlightRef = useRef(false);
   const change = (next: ManifestDraft) => {
-    latest.current = next;
+    latestRef.current = next;
     setDraft(next);
     void runtime.runPromise(saveManifestDraft(project.id, project.revision, draftText(next))).then((saved) => setDraftError(!saved));
   };
-  const update = (patch: Partial<ManifestDraft>) => change({ ...latest.current, ...patch });
-  const updateAsset = (patch: Partial<AssetDraft>) => update({ asset: withAsset(latest.current.asset, patch), assetSelected: true });
+  const update = (patch: Partial<ManifestDraft>) => change({ ...latestRef.current, ...patch });
+  const updateAsset = (patch: Partial<AssetDraft>) => update({ asset: withAsset(latestRef.current.asset, patch), assetSelected: true });
   const fields = projectFieldsOf(draft.text);
   const errors = skillErrors(draft.skill);
   const built = builtManifest(project, draft);
@@ -58,17 +58,17 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (inFlight.current) return;
+    if (inFlightRef.current) return;
     if (built.kind === "invalid") return setError(built.message);
     const submitted = draftText(draft);
-    inFlight.current = true;
+    inFlightRef.current = true;
     setBusy(true);
     setError(null);
     const acted = await act(runtime, submitManifest({ projectId: project.id, revision: project.revision, manifest: built.manifest, reason: draft.reason, draft: submitted, actorGithubId: actorId }), isAdminActionAccessLoss, "The revision could not be confirmed.");
-    inFlight.current = false;
+    inFlightRef.current = false;
     setBusy(false);
     if (!acted.ok) return acted.accessLost ? onAccessLost() : setError(acted.message);
-    if (draftText(latest.current) !== submitted) return setError(editorMessages.newerEdits);
+    if (draftText(latestRef.current) !== submitted) return setError(editorMessages.newerEdits);
     onSaved(adminMessages.saved);
   };
 
@@ -123,7 +123,7 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
             return (
               <div key={field} className="flex flex-col gap-1">
                 <Field label={label} error={errors[field] ? <span title={bound.full}>{bound.short}</span> : undefined}>
-                  <Textarea aria-label={label} rows={field === "securityContact" ? 1 : 3} value={draft.skill[field]} onChange={(event) => update({ skill: { ...latest.current.skill, [field]: event.target.value } })} />
+                  <Textarea aria-label={label} rows={field === "securityContact" ? 1 : 3} value={draft.skill[field]} onChange={(event) => update({ skill: { ...latestRef.current.skill, [field]: event.target.value } })} />
                 </Field>
                 {errors[field] ? null : (
                   <small aria-hidden title={bound.full} className="text-xs text-muted-foreground">

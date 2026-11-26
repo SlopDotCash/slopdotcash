@@ -94,7 +94,7 @@ export function VettingEvidencePage({ runtime }: PageProps) {
   const [lookup, setLookup] = useState<EvidenceRun | null>(initial.assessmentId && initial.runId ? initial : null);
   const [open, setOpen] = useState(lookup === null);
   const [attempt, setAttempt] = useState(0);
-  const assessmentInput = useRef<HTMLInputElement>(null);
+  const assessmentInputRef = useRef<HTMLInputElement>(null);
   if (shown === undefined)
     return (
       <Frame>
@@ -121,14 +121,14 @@ export function VettingEvidencePage({ runtime }: PageProps) {
   };
   const edit = () => {
     setOpen(true);
-    requestAnimationFrame(() => assessmentInput.current?.focus());
+    requestAnimationFrame(() => assessmentInputRef.current?.focus());
   };
   return (
     <Frame>
       <Disclosure summary="Find evidence" open={open} onOpenChange={setOpen}>
         <form className="flex flex-col gap-4" onSubmit={inspect}>
           <Field label="Assessment ID">
-            <Input ref={assessmentInput} required value={assessmentId} onChange={(event) => setAssessmentId(event.target.value)} />
+            <Input ref={assessmentInputRef} required value={assessmentId} onChange={(event) => setAssessmentId(event.target.value)} />
           </Field>
           <Field label="Run ID">
             <Input required value={runId} onChange={(event) => setRunId(event.target.value)} />

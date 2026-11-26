@@ -17,7 +17,7 @@ export type BountyProject = typeof BountyProject.Type;
 
 const decodeProject = Schema.decodeUnknownResult(BountyProject);
 
-/** The project's public security bounty terms, or undefined for a project without one. @throws {never} */
+/** @throws {never} */
 export function bountyProjectOf(record: unknown): BountyProject | undefined {
   const decoded = decodeProject(record);
   return Result.isSuccess(decoded) ? decoded.success : undefined;
@@ -28,7 +28,7 @@ export function bountyChainOf(project: BountyProject): string | null {
   return project.securityBounty.settlement?.chain ?? project.securityBounty.amount.network;
 }
 
-/** The bounty vault as a vault its owner funds: its own reward kind, so no monthly pool promise applies to it. @throws {never} */
+/** @throws {never} */
 export function bountyFundingOf(project: BountyProject): FundingProject {
   return { id: project.id, slug: project.slug, reward: { kind: "security-bounty" } };
 }

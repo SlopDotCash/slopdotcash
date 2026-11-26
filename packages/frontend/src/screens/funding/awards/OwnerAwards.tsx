@@ -44,7 +44,7 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
   const followed = useFollowedMonth(runtime, account, githubId);
   const view = useMonthView(runtime);
   const monthly = useMonthly(runtime);
-  const { busy, error, act } = useAwardAction(runtime);
+  const { busy, error, act, actAsync } = useAwardAction(runtime);
   const [selected, setSelected] = useState<string>();
   const [savedActor, setSavedActor] = useState<string>();
   const [reserved, setReserved] = useState<Checked>();
@@ -83,7 +83,10 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
             manageHref={registered ? `/projects/${project.slug}/manage#vault-monthly-${registered.network}-${registered.vault}` : undefined}
             paymentsDisabled={paymentsDisabled}
             savedActor={savedActor}
-            onSave={(change) => ownerAct(saveAllocation(change.githubUserId, change.grossBase, change.cut, change.reason), setSavedActor)}
+            onSave={(change) => {
+              setSavedActor(undefined);
+              return actAsync(saveAllocation(change.githubUserId, change.grossBase, change.cut, change.reason), setSavedActor);
+            }}
             onFinalize={() => ownerAct(finalizeAwards())}
             onAutomaticChange={(automatic) => ownerAct(setAutomatic(automatic))}
             onReserve={(githubUserId) => {

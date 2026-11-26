@@ -104,7 +104,7 @@ type ProposalFormProps = Omit<ProposalPageProps, "route"> & {
 
 function ProposalForm({ runtime, store, view, shown, pendingApplications, setupStatus }: ProposalFormProps) {
   const [submission, setSubmission] = useState<Submission>({ status: "idle" });
-  const inFlight = useRef(false);
+  const inFlightRef = useRef(false);
   const session = shown.view;
   const actor = session.status === "signedIn" ? session.session : undefined;
   const loginHref = loginHrefFor(shown, signInReturn);
@@ -150,17 +150,17 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
   const clearReferrer = () => update((current) => ({ ...current, referrer: null }));
 
   const submit = async () => {
-    if (inFlight.current) return;
+    if (inFlightRef.current) return;
     if (!valid) return goTo(lastStep);
     if (actor === undefined) return void runtime.runPromise(refreshSession());
     const submitted = draftPayload(saved);
-    inFlight.current = true;
+    inFlightRef.current = true;
     setSubmission({ status: "submitting" });
     const funding = fundingOf(p);
     const exit = await runtime.runPromiseExit(
       createFromSetup({ manifest, referrer: saved.referrer, monthlyAmount: funding.mode === "monthly" ? funding.monthlyAmount.trim() : null, bountyAmount: p.fundingMode === "bounty" ? p.monthlyPool.trim() : null, actor: actor.githubId }),
     );
-    inFlight.current = false;
+    inFlightRef.current = false;
     if (Exit.isSuccess(exit)) {
       if (draftPayload(store.get().wizard) === submitted) clearReferrer();
       return setSubmission({ status: "created", projectId: exit.value.project.id, actorId: actor.githubId, setup: exit.value.setup, referrer: saved.referrer });

@@ -49,10 +49,17 @@ function intakeGitHubApp(env: PagesEnv) {
   return appId === "" || privateKey === "" ? unconfiguredGitHubApp : Layer.provide(githubApp({ appId, privateKey: Redacted.make(privateKey), userAgent: "slop.cash" }), outbound)
 }
 
+function isAllowedRpcUrl(url: string): boolean {
+  const parsed = URL.parse(url)
+  if (parsed === null) return false
+  if (parsed.protocol === "https:") return true
+  return parsed.protocol === "http:" && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]")
+}
+
 effect function reviewedRpcUrls(text: string | undefined) {
   const parsed = Effect.try(() => JSON.parse(text ?? "{}") as unknown) catch () => undefined
   const listed: Readonly<Record<string, unknown>> = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Readonly<Record<string, unknown>> : {}
-  return JSON.stringify(Object.fromEntries(Object.entries(listed).filter(([network, url]) => isNetworkKey(network) && typeof url === "string" && URL.parse(url)?.protocol === "https:")))
+  return JSON.stringify(Object.fromEntries(Object.entries(listed).filter(([network, url]) => isNetworkKey(network) && typeof url === "string" && isAllowedRpcUrl(url))))
 }
 
 function bindings(env: PagesEnv) {
@@ -110,7 +117,7 @@ const unmatchedApi = area({
   api: [],
   routes: HttpRouter.add("*", "/api/v1/*", effect {
     const path = URL.parse((try HttpServerRequest.HttpServerRequest).originalUrl)?.pathname ?? ""
-    const headers = path.startsWith("/api/v1/traces") ? { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } : undefined
+    const headers = path === "/api/v1/traces" || path.startsWith("/api/v1/traces/") ? { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } : undefined
     return json({ error: "not_found" }, 404, headers)
   }),
   provides: Layer.empty,

@@ -185,7 +185,7 @@ export function HowItWorksPage() {
           <Answer question="How do points work?">
             <p className="flex flex-wrap items-center gap-2 font-medium text-foreground">
               {formula.map((part, index) => (
-                <span key={`${part}-${index}`} className={index % 2 === 1 ? "text-muted-foreground" : index === formula.length - 1 ? "text-primary" : undefined}>
+                <span key={part} className={index % 2 === 1 ? "text-muted-foreground" : index === formula.length - 1 ? "text-primary" : undefined}>
                   {part}
                 </span>
               ))}
