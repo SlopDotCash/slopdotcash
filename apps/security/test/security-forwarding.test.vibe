@@ -105,7 +105,7 @@ function ports(clock: SettableClock) {
   )
 }
 
-function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: Array<Promise<unknown>>) {
+function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: Array<Promise<unknown>>, automatic = true) {
   const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
   const github = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority }), Layer.mergeAll(outboundVia(viaFake), webCrypto, clock.layer))
   const base = Layer.mergeAll(
@@ -116,7 +116,7 @@ function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: 
     rolesFrom({ ADMIN_GITHUB_IDS: "801", PROJECT_MODERATOR_GITHUB_IDS: "801" }),
     intakeSettings({ mode: "on", automatic: true }),
     outboundVia(viaFake),
-    Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: fake.app.clientId, clientSecret: Redacted.make(fake.app.clientSecret), webOrigin: fake.webAuthority, apiOrigin: fake.authority } }),
+    Layer.succeed(IntakeApp, { app: automatic ? { grantKey: Redacted.make(grantKey), clientId: fake.app.clientId, clientSecret: Redacted.make(fake.app.clientSecret), webOrigin: fake.webAuthority, apiOrigin: fake.authority } : undefined }),
     ports(clock),
     receiptNotices,
     reportDepositSettings("off"),
@@ -232,6 +232,39 @@ effect function markerOf(forwarding: Forwarding.Shape, id: string) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Private forwarding refuses the origin before checking availability and requires a reporter session when enabled (spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant")', () => scoped(effect {
+    const forwarding = try Forwarding
+    const routes = forwardingRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>
+    const disabled = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(forwarding.world, forwarding.fake, forwarding.clock, forwarding.pending, false)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+    const firstRequest = forwarding.fake.requests.length
+    effect function ask(handler: WebHandler, path: string, method: "GET" | "POST" | "PUT" = "POST", from = origin, contentType = "application/json", text = "{}") {
+      const sent = try Effect.try(() => new WorkerRequest(`${origin}/api/v1/security-submissions/ss_missing_fixture/${path}`, {
+        method,
+        ...method === "GET" ? {} : { headers: { origin: from, "content-type": contentType }, body: text },
+      }))
+      const response = try promise(() => handler(sent as unknown as globalThis.Request))
+      const body = try promise(() => response.json() as Promise<unknown>)
+      return [response.status, body, response.headers.get("cache-control"), response.headers.get("x-robots-tag")]
+    }
+    const forbidden = [403, { error: "origin_forbidden", message: "Requests must come from this site" }, "private, no-store", "noindex"]
+    const missing = [404, { error: "not_found", message: "Submission not found" }, "private, no-store", "noindex"]
+    const unauthorized = [401, { error: "unauthorized", message: "Sign in with GitHub" }, "private, no-store", "noindex"]
+    for (const path of ["authorize", "send", "reconcile", "verify"]) {
+      const off = disabled.handler as unknown as WebHandler
+      try same([
+        try ask(off, path),
+        try ask(off, path, "POST", origin, "application/json", "{"),
+        try ask(off, path, "POST", "https://other.test"),
+        try ask(forwarding.handler, path, "POST", origin, "application/x-www-form-urlencoded", "value=true"),
+        try ask(forwarding.handler, path),
+        try ask(forwarding.handler, path, "GET"),
+        try ask(forwarding.handler, path, "PUT", "https://other.test"),
+        try ask(forwarding.handler, path, "PUT"),
+      ], [missing, missing, forbidden, forbidden, unauthorized, missing, forbidden, missing])
+    }
+    try same(forwarding.fake.requests.length, firstRequest)
+  }))
+
   it.effect('Forward the approved saved report and verify its GitHub receipt (spec/security/forwarding.md, "Story: Forward the approved saved report using the researcher\'s consent"; spec/security/forwarding.md, "Story: Reconcile the exact privately submitted copy and verify its receipt"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter\'s grant")', () => effect {
     const forwarding = try Forwarding
     const id = try submitted(forwarding, "forward-journey-0001", "Export endpoint path traversal")

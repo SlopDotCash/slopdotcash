@@ -2,7 +2,8 @@
 import { isoAt } from "@repo/platform/clock"
 import { randomId, randomToken, utf8 } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
-import { type Actor, Caller, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
+import { type Actor, Caller, handleRaw, json, jsonBody, methodNotAllowed, refuse, sameOriginWrite } from "@repo/platform/http"
+import type { Route } from "@repo/platform/route"
 import { Authority, Registry, Restrictions } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { Rejected as CaseRejected, apply as applyCase, githubReceiptService, initial as noCase } from "../../gen/security__cases.effect.vibe"
@@ -14,7 +15,7 @@ import { scheduleReceiptAnalysis } from "../assessment/routes.vibe"
 import { caseNotices } from "../cases/store.vibe"
 import { depositAsk } from "../deposit/ask.vibe"
 import { depositHeld } from "../deposit/held.vibe"
-import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding, verifyForwarding } from "../client/forwarding.vibe"
+import { type Forwarded, authorizeForwarding, forwardingApi, forwardingCallback, reconcileForwarding, sendForwarding, verifyForwarding } from "../client/forwarding.vibe"
 import { getSecuritySubmissionsAuthorizeCallback as callbackRows, postSecuritySubmissions as createRows, postSecuritySubmissionsByIdAuthorize as authorizeRows, postSecuritySubmissionsByIdReconcile as reconcileRows, postSecuritySubmissionsByIdSend as sendRows, postSecuritySubmissionsByIdVerify as verifyRows } from "../client/refusals.vibe"
 import { type ReportingCache, projectId as projectPattern, reportingCache } from "../intake/availability.vibe"
 import { parseReport } from "../intake/report.vibe"
@@ -293,8 +294,7 @@ effect function lostClaim(actorGithubId: string) {
   return refused(standing.banned ? sendRows.participationBannedThisAccountCannotStart : stale)
 }
 
-effect function sendSubmission(actor: Actor, id: string) {
-  const app = try configured()
+effect function sendSubmission(app: IntakeAppConfig, actor: Actor, id: string) {
   if ((try (try Restrictions).account(actor.githubId)).banned) throw refused(sendRows.participationBannedThisAccountCannotStart)
   const ownedRow = try owned(actor, id)
   const body = try requestObject(sendRows.invalidRequestRequestBodyMustBe, ["expectedRevision"], ["report"], sendRows.invalidRequestRequestBodyHasUnexpected)
@@ -355,8 +355,7 @@ effect function sendSubmission(actor: Actor, id: string) {
   return try answer(try posted(app, { ...claiming, state: postingState }, claim, grant, nowSeconds, ledger, result))
 }
 
-effect function reconcileSubmission(actor: Actor, id: string) {
-  const app = try configured()
+effect function reconcileSubmission(app: IntakeAppConfig, actor: Actor, id: string) {
   const ownedRow = try owned(actor, id)
   const body = try requestObject(reconcileRows.invalidRequestRequestBodyMustBe, ["expectedRevision"], [], reconcileRows.invalidRequestRequestBodyHasUnexpected)
   if ((try expectedRevision(body)) !== ownedRow.revision) throw refused(stale)
@@ -384,8 +383,7 @@ effect function reconcileSubmission(actor: Actor, id: string) {
   return try answer({ status: next.phase === "Draft" ? 200 : 202, row: after.row })
 }
 
-effect function authorizeSubmission(actor: Actor, id: string) {
-  const app = try configured()
+effect function authorizeSubmission(app: IntakeAppConfig, actor: Actor, id: string) {
   const ownedRow = try owned(actor, id)
   try requestObject(authorizeRows.invalidRequestRequestBodyMustBe, [], [], authorizeRows.invalidRequestRequestBodyHasUnexpected)
   const ledger = try Ref.make(noVolatile)
@@ -574,8 +572,7 @@ effect function directVerified(app: IntakeAppConfig, row: SubmissionRow, grant: 
   return { status: 200, row: after } satisfies Outcome
 }
 
-effect function verifySubmission(actor: Actor, id: string) {
-  const app = try configured()
+effect function verifySubmission(app: IntakeAppConfig, actor: Actor, id: string) {
   const ownedRow = try owned(actor, id)
   const body = try requestObject(sendRows.invalidRequestRequestBodyMustBe, ["expectedRevision"], [], sendRows.invalidRequestRequestBodyHasUnexpected)
   if ((try expectedRevision(body)) !== ownedRow.revision) throw refused(verifyRows.staleRevisionTheSubmissionChangedSince)
@@ -586,10 +583,32 @@ effect function verifySubmission(actor: Actor, id: string) {
   return try answer(try directVerified(app, row, grant))
 }
 
+effect function forwardingOrigin() {
+  if (!(try sameOriginWrite())) throw refused(sendRows.originForbidden)
+}
+
+function forwardingWrite<E, R>(route: Route<undefined, Forwarded, "sessionWrite">, run: (app: IntakeAppConfig, actor: Actor, id: string) => HttpServerResponse.HttpServerResponse!E!R) {
+  return handleRaw({ ...route, access: "public" as const }, (input) => effect {
+    try forwardingOrigin()
+    const app = try configured()
+    const actor = (try Caller).current(route) catch effect (error) => {
+      if (error._tag === "Unauthenticated" || error._tag === "SessionExpired") throw refused(sendRows.unauthorized)
+      if (error._tag === "ActorChanged") throw refused(sendRows.actorChanged)
+      if (error._tag === "Refused" && error.code === sendRows.invalidExpectedActor.error) throw refused(sendRows.invalidExpectedActor)
+      throw error
+    }
+    return try run(app, actor, input.params.id ?? "")
+  })
+}
+
 export const forwardingRoutes = Layer.mergeAll(
-  handleRaw(authorizeForwarding, (input) => authorizeSubmission(input.actor, input.params.id ?? "")),
+  forwardingWrite(authorizeForwarding, authorizeSubmission),
+  forwardingWrite(sendForwarding, sendSubmission),
+  forwardingWrite(reconcileForwarding, reconcileSubmission),
+  forwardingWrite(verifyForwarding, verifySubmission),
   handleRaw(forwardingCallback, () => authorizationCallback()),
-  handleRaw(sendForwarding, (input) => sendSubmission(input.actor, input.params.id ?? "")),
-  handleRaw(reconcileForwarding, (input) => reconcileSubmission(input.actor, input.params.id ?? "")),
-  handleRaw(verifyForwarding, (input) => verifySubmission(input.actor, input.params.id ?? "")),
+  methodNotAllowed(forwardingApi.filter((route) => route.method === "POST"), effect {
+    if ((try HttpServerRequest.HttpServerRequest).method !== "GET") try forwardingOrigin()
+    throw refused(notFound)
+  }),
 )
