@@ -122,7 +122,7 @@ export function journal(converter: Converter): Promise<ReadonlyArray<JournalRow>
 }
 
 export async function heldLocks(converter: Converter): Promise<number> {
-  const [found] = await rows<{ readonly count: number }>(converter, "SELECT count(*) AS count FROM fee_converter_locks");
+  const [found] = await rows<{ readonly count: number }>(converter, "SELECT count(*) AS count FROM fee_converter_locks WHERE expires_at > '1970-01-01T00:00:00.000Z'");
   return found?.count ?? 0;
 }
 

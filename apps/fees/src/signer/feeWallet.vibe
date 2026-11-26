@@ -4,6 +4,7 @@ import type { RpcFailure } from "@repo/platform/chain/rpc"
 import { type SignedSend, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, type Runtime, buybackSigns, conversionSigns, replacementSigns } from "../../gen/fees__runtime.effect.vibe"
 import { type Type2, exactNumber, parsedType2, sameFields, signerOf, transactionId, unsignedType2, type Unsigned } from "../evm/abi.ts"
+import { tokenScale } from "../conversion/chain.vibe"
 import { type ApprovalRefused, boundedApproval } from "../evm/approval.vibe"
 import { type ChainRefused, FeeChain, chainPreflight, dataOperatorFee, feesPerGas, gasLimit, nativeBalance } from "../evm/client.vibe"
 import type { Facts } from "../journal/store.vibe"
@@ -230,9 +231,10 @@ export function evmFeeWallet(options: EvmWalletOptions) {
 export function modelSend(signed: EvmSigned, tx: number): SignedSend | undefined {
   const { prepared: ready } = signed
   const kind = ready.intent.kind === "KyberApprove" ? "Approval" : ready.intent.kind === "KyberSwap" ? "Conversion" : undefined
+  const scale = tokenScale(ready.approvedAmount > ready.allowance ? ready.approvedAmount : ready.allowance)
   const minimumOutput = exactNumber(ready.minimumOutput)
-  const approvedAmount = exactNumber(ready.approvedAmount)
-  const allowance = exactNumber(ready.allowance)
+  const approvedAmount = exactNumber(ready.approvedAmount / scale)
+  const allowance = exactNumber(ready.allowance / scale)
   const pricedFeeMicro = exactNumber(ready.pricedFeeMicro)
   if (kind === undefined || minimumOutput === undefined || approvedAmount === undefined || allowance === undefined || pricedFeeMicro === undefined) return undefined
   return {

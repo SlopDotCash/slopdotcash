@@ -39,11 +39,21 @@ const FeeWorldLive = Layer.effect(FeeWorld, effect {
   const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663 })), (started) => promise(() => started.close()))
   const built = try acquireRelease(promise(() => fixtureBuild()), (output) => promise(() => output.close()))
   const base = try promise(() => feeTokens(chain, built.out, circleUsdc.base as Address))
+  try promise(() => finalize(chain))
   const quotes = quotesFake()
   kyberRoutes(quotes, base)
+  const forwardBase = forward(chain.url)
+  const baseRpc: typeof forwardBase = async (request) => {
+    const body = await request.clone().text()
+    try {
+      const parsed = JSON.parse(body) as { readonly id?: unknown; readonly method?: string }
+      if (parsed.method === "eth_maxPriorityFeePerGas") return Response.json({ jsonrpc: "2.0", id: parsed.id ?? 1, result: "0x186a0" })
+    } catch {}
+    return forwardBase(request)
+  }
   const net = internet({
     quotes: simpleModeRouter(quotes.handler),
-    rpc: { [chain.url]: forward(chain.url), [robinhood.url]: forward(robinhood.url) },
+    rpc: { [chain.url]: baseRpc, [robinhood.url]: forward(robinhood.url) },
     hosts: { "ethereum.rpc.test": () => new Response("unavailable", { status: 503 }) },
   })
   return { base, robinhood, quotes, net }
@@ -185,7 +195,7 @@ const directFee = 4_000_000_000_000_000n
 const nativeReserve = 1_000_000_000_000_000n
 
 effect function completedNativeAward(running: Converter, feeWallet: Address) {
-  const caseId = "direct-native-1"
+  const caseId = "sc_direct_native_1"
   const payer = `0x${"a1".repeat(20)}`
   const reporter = `0x${"b2".repeat(20)}`
   const intent = JSON.stringify({
@@ -384,6 +394,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     const { base } = try FeeWorld
     const wallet = try walletAt(1)
     try minted(base.feeToken, wallet.address, received)
+    try finalized()
     const live = try converter(baseVars(wallet.address, base.chain.url, [base.feeToken], { FEE_CONVERTER_MODE: "live", FEE_WALLET_KEY_BASE: wallet.key, FEE_READY: `base:${wallet.address}` }))
     const outcomes = [try ran(live, at.recovery)]
     const approved = try chainFacts(wallet.address, base.feeToken)
@@ -459,6 +470,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     const wallet = try walletAt(5)
     const other = try walletAt(8)
     try minted(base.dustToken, wallet.address, quotable)
+    try finalized()
     const signer = try converter(baseVars(wallet.address, base.chain.url, [base.dustToken], { FEE_CONVERTER_MODE: "live", FEE_WALLET_KEY_BASE: wallet.key, FEE_READY: `base:${wallet.address}` }))
     const forged = { finalized: true, network: "base", txId: `0x${"f".repeat(64)}`, amountOut: "1000000000", owner: wallet.address }
     const answers = [

@@ -45,8 +45,11 @@ export effect function evaluateToken(session: Session, token: number, address: s
   try observeBalance(session, token, address)
   const available = spendable(session.state, token)
   if (available <= 0 || !canEvaluate(session.state, session.runId, probe(token, available), "Worker")) return undefined
-  const held = holding(session.state, token).asset === "NativeAsset" ? try chain.balance(address) : wideNumber(available)
-  let input = held < wideNumber(available) ? held : wideNumber(available)
+  const entry = session.instance.tokens[token - 1]
+  const scale = entry?.scale ?? 1n
+  const availableRaw = wideNumber(available) * scale
+  const held = holding(session.state, token).asset === "NativeAsset" ? try chain.balance(address) : (entry?.rawBalance ?? availableRaw)
+  let input = held < availableRaw ? held : availableRaw
   if (input <= 0n) return undefined
   const targetBalanceBefore = (try chain.balance(target)).toString()
   let read = try chain.quote(address, input)
@@ -57,13 +60,14 @@ export effect function evaluateToken(session: Session, token: number, address: s
     input = scaled
     read = try chain.quote(address, input)
   }
-  const amountIn = safeNumber(input)
+  const amountIn = safeNumber(input / scale)
   if (amountIn === undefined) throw new QuoteUnrepresentable({ token: address, field: "amountIn" })
   const quote = try factOf(token, address, amountIn, read)
   const outcome = outcomeOf(session.state, quote)
+  const exactFacts = scale === 1n ? {} : { amountIn: input.toString(), balanceBefore: held.toString() }
   const facts = read.kind === "noRoute"
-    ? { targetToken: target, detail: read.detail, targetBalanceBefore }
-    : { targetToken: target, route: read.route, summary: read.summary.slice(0, 8192), targetBalanceBefore }
+    ? { targetToken: target, detail: read.detail, targetBalanceBefore, ...exactFacts }
+    : { targetToken: target, route: read.route, summary: read.summary.slice(0, 8192), targetBalanceBefore, ...exactFacts }
   const next = try step(session, { type: "evaluate", runId: session.runId, quote }, facts)
   if (next === undefined) return undefined
   return { state: outcome.state, quote: read.kind === "found" ? { ...read, amountIn: input } : undefined } satisfies Evaluated

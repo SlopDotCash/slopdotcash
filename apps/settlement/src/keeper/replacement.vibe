@@ -43,7 +43,7 @@ export effect function replaceOrRebroadcast(context: SendContext, key: string, a
   const state = try context.core.inGroup(group, found, undefined)
   const base = exact(baseFee) ?? Number.MAX_SAFE_INTEGER
   if (!replacementDue(state, now, base)) {
-    try broadcastSigned(context, latest, false)
+    try broadcastSigned(context, latest, baseFee > latest.request.maxFeePerGas)
     return { transactionId: latest.id } satisfies Sent
   }
   const proposed = replacementFees(state)

@@ -370,16 +370,17 @@ interface EvmResolved {
 
 effect function evmPrepared(projectId: string, scope: PolicyScope, creator: Creator, record: Fields) {
   const owner = evmAddress(creator.owner)
+  const asset = evmAddress(creator.asset) ?? creator.asset
   const identityAuthority = evmAddress(textOf(record.identityAuthority) ?? "")
   const feeRecipient = evmAddress(textOf(record.feeRecipient) ?? "")
   if (owner !== undefined && identityAuthority !== undefined && feeRecipient !== undefined && roleConflict(owner, identityAuthority, feeRecipient)) throw refused(rows.vaultRoleConflict)
   const parsed = try reviewedDeployment(projectId, scope, NETWORKS[creator.network].chain, {
-    ...record, vault: PLACEHOLDER_VAULT, owner: creator.owner, asset: creator.asset, deploymentTransaction: PLACEHOLDER_TRANSACTION,
+    ...record, vault: PLACEHOLDER_VAULT, owner: owner ?? creator.owner, asset, deploymentTransaction: PLACEHOLDER_TRANSACTION,
     programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, rotationDelaySeconds: null,
   })
   if (parsed.family !== "evm") throw new PolicyInvalid({ message: "Escrow program does not match the network" })
   const factory = try forCreation(parsed)
-  const creation = creationOf({ owner: creator.owner, projectDigest: registryProjectDigest(projectId), asset: creator.asset, bounty: creator.bounty, monthlyCap: creator.cap, automatic: creator.automatic })
+  const creation = creationOf({ owner: owner ?? creator.owner, projectDigest: registryProjectDigest(projectId), asset, bounty: creator.bounty, monthlyCap: creator.cap, automatic: creator.automatic })
   const plan = creation === undefined ? undefined : creationPlan(factory, creation)
   if (creation === undefined || plan === undefined) throw new DeploymentMismatch({ message: CREATION_REFUSALS.unsupportedCreation })
   return { candidate: parsed, record, creation, plan } satisfies EvmResolved

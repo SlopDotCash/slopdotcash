@@ -251,7 +251,7 @@ effect function bridged(world: World, runId: string) {
   const chain = feeChain({ network: "Ethereum", wallet: wallet(world), urls: Redacted.make([ethereum.url]), timeoutMs: 10_000 })
   const signing = Layer.provideMerge(evmFeeWallet({ network: "Ethereum", wallet: wallet(world), key: Redacted.make(keyOf(world.generation)), runtime: world.leg.held.runtime, limits: ethereumLimits, gasMultiple: 10n, kyber: settings.kyber }), chain)
   const solana = feeSolana({ wallet: world.leg.held.wallets[1] ?? "", urls: Redacted.make([solanaUrl]), genesis: solanaGenesis, timeoutMs: 10_000 })
-  const ran = try Effect.provideService(Effect.provide(Effect.provide(bridgeLeg(world.leg, settings), Layer.mergeAll(services(world), signing, solana)), FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
+  const ran = try Effect.provideService(Effect.provide(Effect.provide(bridgeLeg(world.leg, { ...settings, solana }), Layer.mergeAll(services(world), signing, solana)), FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
   world.leg = ran.leg
   return ran
 }
@@ -353,15 +353,15 @@ effect function same(actual: unknown, expected: unknown) {
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee")', () => effect {
     const { db } = try Fixture
-    try seed(db, 1, "1a", "conversion", usdc, "900000000", start - dayMs)
-    try seed(db, 1, "1b", "conversion", usdc, "1200000000", start + hour)
-    try seed(db, 1, "1c", "claim", usdc, "600000000", start + hour)
-    try seed(db, 1, "1d", "conversion", "0x00000000000000000000000000000000000000bb", "700000000", start + hour)
+    try seed(db, 1, "0000001a", "conversion", usdc, "900000000", start - dayMs)
+    try seed(db, 1, "0000001b", "conversion", usdc, "1200000000", start + hour)
+    try seed(db, 1, "0000001c", "claim", usdc, "600000000", start + hour)
+    try seed(db, 1, "0000001d", "conversion", "0x00000000000000000000000000000000000000bb", "700000000", start + hour)
     const world = try opened(2, "Base")
     const booked = [{ receipt: "g1-direct-7", amount: 200000000n, chainTime: start + hour / 2 }, { receipt: "g1-direct-8", amount: 300000000n, chainTime: start - 1 }]
     const query = { network: "Base", wallet: generationInstance(1).held.wallets[0] ?? "", usdc, scope: "g1:", offset: offsetOf(1) } as const
     const evidence = try Effect.provide(incomeEvidence(query, booked, []), services(world))
-    const doubled = Effect.as(Effect.provide(incomeEvidence(query, [{ receipt: `0x${"1c".padStart(64, "0")}`, amount: 1n, chainTime: start + hour }], []), services(world)), "counted") catch (error) => error._tag
+    const doubled = Effect.as(Effect.provide(incomeEvidence(query, [{ receipt: `0x${"0000001c".padStart(64, "0")}`, amount: 1n, chainTime: start + hour }], []), services(world)), "counted") catch (error) => error._tag
     world.leg = { ...world.leg, evidence }
     const [first] = evidence
     const early = first === undefined ? "missing" : try tried(world, { type: "recordIncome", key: incomeKey(world.leg, first), incomeAmount: first.amount, chainTime: start - 1 })
@@ -382,7 +382,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       sources: state.sources.map((key) => key.kind),
       repeated,
     }, {
-      evidence: [["DirectFee", "g1-direct-7", [0, 0, 200], hour / 2], ["ConversionOutput", "1b", [0, 0, 200, 1], hour], ["UsdcClaim", "1c", [0, 0, 600], hour]],
+      evidence: [["DirectFee", "g1-direct-7", [0, 0, 200], hour / 2], ["ConversionOutput", "0000001b", [0, 0, 200, 1], hour], ["UsdcClaim", "0000001c", [0, 0, 600], hour]],
       doubled: "RowMismatch",
       early: "Rejected",
       again: "Rejected",

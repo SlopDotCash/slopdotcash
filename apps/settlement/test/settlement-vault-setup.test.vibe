@@ -146,6 +146,7 @@ const Started = Layer.effect(World, effect {
   const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
   const db = try migrated("settlement-vault-setup")
   const factory = try reviewedFactory(escrow)
+  chain.setFinalized(try promise(() => escrow.head()))
   const projects = new Map<string, Listed>()
   const access = new Map<string, AuthorityRead>([
     [OWNER.githubId, { actorGithubId: OWNER.githubId, repositoryId: "repo-1", permission: "PermissionVerified", installation: "Installed" }],

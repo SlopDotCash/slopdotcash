@@ -435,7 +435,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       const handle = try spawnKeeper(main, try writtenConfig("stalled.json", try operatorConfig(stalled.url)))
       try timeout(promise(() => gate.reached), "120 seconds")
       try handle.kill({ killSignal: "SIGKILL" })
-      return Number(try handle.exitCode)
+      return Number(handle.exitCode catch () => 137)
     })
     const committed = try gasRows()
     const resumed = try scoped(effect {
@@ -554,6 +554,8 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
     const group = (try gasRows()).filter((row) => original !== undefined && row.id.startsWith(original.id))
     try promise(() => escrow.chain.rpc("evm_setAutomine", [true]))
     try promise(() => escrow.chain.setNextBaseFee(1_000_000n))
+    try settled()
+    try keeperRun(text)
     try settled()
     try same({
       first: outcomeOf(first, id)?.state,

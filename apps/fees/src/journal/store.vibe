@@ -37,6 +37,8 @@ export interface Facts {
   readonly broadcast?: BroadcastStage
   readonly targetBalanceBefore?: string
   readonly targetBalanceAfter?: string
+  readonly amountIn?: string
+  readonly balanceBefore?: string
   readonly intentHash?: string
   readonly blockhashSlot?: number
   readonly accountProof?: string
@@ -207,14 +209,14 @@ effect function evaluated(journal: Journal, instance: Instance, event: Event, ne
     wallet: try need(instance.held.wallets[row.wallet - 1], event, "the fee wallet is not configured"),
     token: try need(journal.tokens[row.token - 1], event, "the token is not in this journal"),
     targetToken: try need(facts.targetToken, event, "the conversion target is missing"),
-    amountIn: String(row.amountIn),
+    amountIn: facts.amountIn ?? String(row.amountIn),
     route: found ? facts.route ?? routeFor(current.network) : null,
     quoteAmountOut: found ? String(event.quote.output) : null,
     minAmountOut: String(row.minimumOutput),
     quoteValueMicro: found && event.quote.output <= maximumSafeValue ? row.valueMicro : null,
     priceImpactBps: found && event.quote.impactBps >= 0 ? event.quote.impactBps : null,
     quote: facts.summary ?? null,
-    tokenBalanceBefore: String(row.balanceBefore),
+    tokenBalanceBefore: facts.balanceBefore ?? String(row.balanceBefore),
     targetBalanceBefore: facts.targetBalanceBefore ?? null,
     state: stateName[row.state],
     reason: waitingText(row, facts),
@@ -484,15 +486,21 @@ effect function observe(instance: Instance, journal: Journal, names: Names, even
   const added = event.type === "addToken" ? try need(facts.token, event, "the added token's address is missing") : undefined
   const address = effect (token: number) => try need(journal.tokens[token - 1] ?? (token === journal.tokens.length + 1 ? added : undefined), event, `the token ${token} has no address in this journal`)
   const tokens: Array<Instance["tokens"][number]> = []
-  for (const holding of next.holdings) tokens.push({
-    address: try address(holding.token),
-    asset: holding.asset,
-    received: holding.feeIncome - holding.claimed,
-    topUps: holding.topUps,
-    balance: holding.asset === "NativeAsset" ? undefined : holding.balance,
-    vault: holding.vault > 0 ? try named(names, "vault", holding.vault, event) : undefined,
-    vaultObserved: holding.vaultObserved,
-  })
+  for (const holding of next.holdings) {
+    const previous = instance.tokens[holding.token - 1]
+    const scale = previous?.scale ?? journal.scales.get(holding.token)
+    tokens.push({
+      address: try address(holding.token),
+      asset: holding.asset,
+      received: holding.feeIncome - holding.claimed,
+      topUps: holding.topUps,
+      balance: holding.asset === "NativeAsset" ? undefined : holding.balance,
+      vault: holding.vault > 0 ? try named(names, "vault", holding.vault, event) : undefined,
+      vaultObserved: holding.vaultObserved,
+      ...scale === undefined ? {} : { scale },
+      ...previous?.rawBalance === undefined ? {} : { rawBalance: previous.rawBalance },
+    })
+  }
   const receipts: Array<string> = []
   for (const receipt of next.receipts) receipts.push(try named(names, "receipt", receipt, event))
   const vaults: Array<Instance["vaults"][number]> = []
