@@ -49,6 +49,7 @@ export interface Route<B, A, X extends Access = Access> {
   readonly actorMismatch?: Refusal
   readonly unauthenticated?: Refusal
   readonly sessionExpired?: Refusal
+  readonly signersUnconfiguredHeaders?: Refusal["headers"]
 }
 
 export type AnyRoute = Route<unknown, unknown, Access>
