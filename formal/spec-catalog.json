@@ -18005,20 +18005,21 @@
     },
     {
       "path": "spec/points/collectionMemo.md",
-      "sha256": "5cead74b9f24fbc5d7e093baff9a438603b985c2f9c35274f3677687bcdf761b",
+      "sha256": "c0abb206dd56fd0cdf983e18ef9525c026cee88ee1363cea789c1f4c4b6b381d",
       "module": "points__collectionMemo",
       "stories": [
         {
           "heading": "Story: Reach the same collection with fewer reads",
-          "line": 30
+          "line": 33
         }
       ],
       "rules": [
         {
           "heading": "Story: Reach the same collection with fewer reads / Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection",
-          "line": 36,
+          "line": 39,
           "definitions": [
             "auditOneIn",
+            "changedCodeAuditOneIn",
             "fullIntervalMs",
             "maxMemoBytes",
             "maxCommitLines",
@@ -18041,28 +18042,30 @@
           ]
         },
         {
-          "heading": "Story: Reach the same collection with fewer reads / A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed",
-          "line": 85,
+          "heading": "Story: Reach the same collection with fewer reads / A collection runs in full without a usable memo, when forced or when the attribution rules changed",
+          "line": 90,
           "definitions": [
             "modeReason",
             "modeFor",
+            "auditRateFor",
             "canOpenMemo",
             "openMemo",
             "lawForcedRunIsFull",
-            "lawWeekOldMemoIsFull",
-            "lawChangedCodeIsFull",
+            "lawChangedRulesIsFull",
+            "lawChangedCodeStaysIncremental",
             "lawIncrementalNeedsMatchingMemo",
             "alwaysRefusedOnlyWithReason",
             "alwaysFullNeverReuses",
             "stepRefusalIsFinal",
-            "sometimesWeeklyFull",
+            "sometimesRulesChangedFull",
+            "sometimesChangedCodeIncremental",
             "sometimesFutureMemoFails",
             "sometimesUntrustedRunFails"
           ]
         },
         {
           "heading": "Story: Reach the same collection with fewer reads / Commit statistics are reused only for the same repository node, commit node and object id",
-          "line": 132,
+          "line": 148,
           "definitions": [
             "CommitLine",
             "commitLineFor",
@@ -18075,9 +18078,10 @@
         },
         {
           "heading": "Story: Reach the same collection with fewer reads / A collection reuses an earlier answer only while every input it was derived from is unchanged",
-          "line": 152,
+          "line": 168,
           "definitions": [
             "audited",
+            "auditedAt",
             "answered",
             "candidate",
             "priorResult",
@@ -18096,12 +18100,13 @@
             "alwaysAuditedIsRecomputed",
             "lawSampledEveryFiftieth",
             "sometimesAuditMismatchDiscardsReuse",
-            "sometimesReusedAfterCleanAudit"
+            "sometimesReusedAfterCleanAudit",
+            "sometimesExpiredNotReused"
           ]
         },
         {
           "heading": "Story: Reach the same collection with fewer reads / The next memo records exactly the live version of every fenced answer and is written only after the snapshot",
-          "line": 207,
+          "line": 229,
           "definitions": [
             "canComputeLive",
             "computeLive",
@@ -18123,10 +18128,11 @@
           ]
         },
         {
-          "heading": "Story: Reach the same collection with fewer reads / Simulation samples include a matching, a week-old, a changed-code and a future memo",
-          "line": 254,
+          "heading": "Story: Reach the same collection with fewer reads / Simulation samples include a matching, a changed-rules, a changed-code, an expired and a future memo",
+          "line": 276,
           "definitions": [
             "matchingMemo",
+            "expiredMemo",
             "trustedRun",
             "memoValues",
             "contextValues",
@@ -18141,7 +18147,9 @@
             "eval_witness_sometimesReusedAfterCleanAudit",
             "eval_witness_sometimesAuditMismatchDiscardsReuse",
             "eval_witness_sometimesFutureMemoFails",
-            "eval_witness_sometimesWeeklyFull",
+            "eval_witness_sometimesRulesChangedFull",
+            "eval_witness_sometimesChangedCodeIncremental",
+            "eval_witness_sometimesExpiredNotReused",
             "eval_witness_sometimesUntrustedRunFails",
             "eval_witness_sometimesHoldNotRecorded",
             "eval_witness_sometimesMemoNotWritten"
@@ -18996,7 +19004,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "0f804f8cef47fffe4398f392c0f486f2d2c0c7528120dacdc8e862bcbec0af93",
+      "sha256": "ee87e71d8ceae28a63d98ae9074d5313eb061d8fb3752858ee90b6fe1d5f0a41",
       "module": "points__journal",
       "stories": [
         {
@@ -19202,7 +19210,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
-          "line": 646,
+          "line": 650,
           "definitions": [
             "octoberOriginalContributorReason",
             "octoberDuplicateRetirementReason",
@@ -19233,7 +19241,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 725,
+          "line": 729,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -19242,7 +19250,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 755,
+          "line": 759,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -19251,7 +19259,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 786,
+          "line": 790,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -19265,7 +19273,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 823,
+          "line": 827,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -19281,7 +19289,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 851,
+          "line": 855,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -19294,7 +19302,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 885,
+          "line": 889,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -19322,7 +19330,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 951,
+          "line": 955,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -19346,7 +19354,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 977,
+          "line": 981,
           "definitions": [
             "gValues",
             "unitValues",
@@ -19450,19 +19458,19 @@
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 727
+          "line": 731
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 757
+          "line": 761
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 788
+          "line": 792
         },
         {
           "target": "./allocation.md",
-          "line": 794
+          "line": 798
         }
       ]
     },
