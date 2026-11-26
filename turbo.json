@@ -608,6 +608,7 @@
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/migrations/**",
         "$TURBO_ROOT$/frozen.json",
+        "$TURBO_ROOT$/.gitattributes",
         "$TURBO_ROOT$/skills/**",
         "$TURBO_ROOT$/src/lib/**",
         "$TURBO_ROOT$/scripts/render-install-guide.mjs"
@@ -616,6 +617,7 @@
         ".cache/test-result-*.json"
       ],
       "env": [
+        "SLOP_PYTHON",
         "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
