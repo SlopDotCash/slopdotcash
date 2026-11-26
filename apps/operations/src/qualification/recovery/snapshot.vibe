@@ -24,6 +24,30 @@ export const snapshotTables: ReadonlyArray<SnapshotTable> = [
       SELECT value ->> 'assessment_id', value ->> 'run_id', value ->> 'trace_sha256', value ->> 'manifest_sha256', value ->> 'manifest', value ->> 'policy', value ->> 'created_at', value ->> 'expires_at', value ->> 'assembly_sha256' FROM json_each(${rows})`,
   },
   {
+    name: "vetting_evidence_generations",
+    read: sql`SELECT * FROM vetting_evidence_generations ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_generations(id, sha256, state, created_at, retired_at)
+      SELECT value ->> 'id', value ->> 'sha256', value ->> 'state', value ->> 'created_at', value ->> 'retired_at' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_targets",
+    read: sql`SELECT * FROM vetting_evidence_targets ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_targets(target_key, generation_id, part_index, sha256, size_bytes, created_at)
+      SELECT value ->> 'target_key', value ->> 'generation_id', value ->> 'part_index', value ->> 'sha256', value ->> 'size_bytes', value ->> 'created_at' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_heads",
+    read: sql`SELECT * FROM vetting_evidence_heads ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_heads(generation_id, part_index, sha256, size_bytes, target_key)
+      SELECT value ->> 'generation_id', value ->> 'part_index', value ->> 'sha256', value ->> 'size_bytes', value ->> 'target_key' FROM json_each(${rows})`,
+  },
+  {
+    name: "vetting_evidence_target_retirements",
+    read: sql`SELECT * FROM vetting_evidence_target_retirements ORDER BY rowid`,
+    restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_target_retirements(target_key, outcome, backup_day, backup_key, observed_sha256, observed_size_bytes, observed_at)
+      SELECT value ->> 'target_key', value ->> 'outcome', value ->> 'backup_day', value ->> 'backup_key', value ->> 'observed_sha256', value ->> 'observed_size_bytes', value ->> 'observed_at' FROM json_each(${rows})`,
+  },
+  {
     name: "vetting_evidence_objects",
     read: sql`SELECT * FROM vetting_evidence_objects ORDER BY rowid`,
     restore: (rows) => sql`INSERT OR IGNORE INTO vetting_evidence_objects(assessment_id, run_id, sha256, size_bytes, kind, label, content_type, object_key, chunks, storage, storage_generation)
