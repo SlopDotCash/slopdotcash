@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Schema } from "effect";
+import { Cause, type Effect, Exit, Layer, ManagedRuntime, Schema } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
@@ -152,9 +152,9 @@ type Settled = { readonly outcome: "accepted"; readonly value: Projection } | { 
 const settled = async (sent: Effect.Effect<Projection, unknown, ManagedRuntime.ManagedRuntime.Services<typeof runtime>>): Promise<Settled> => {
   const exit = await runtime.runPromiseExit(sent);
   if (Exit.isSuccess(exit)) return { outcome: "accepted", value: exit.value };
-  const error = Cause.squash(exit.cause) as { readonly _tag?: unknown };
-  if (error._tag === "Rejected") return { outcome: "refused" };
-  throw error;
+  const error = Cause.squash(exit.cause);
+  if (typeof error === "object" && error !== null && "_tag" in error && error._tag === "Rejected") return { outcome: "refused" };
+  throw error instanceof Error ? error : new Error(String(error));
 };
 
 const followed = (copy: Record<string, unknown>, result: Settled) => {
@@ -242,7 +242,7 @@ export const driver: Driver<Seen> & AsyncDisposable = {
     const change = changeOf(event);
     if (change === undefined) return "refused";
     const result = await settled(send(scope(), change, githubId(Number(by)), releaseOf(world.config)));
-    return followed(event as unknown as Record<string, unknown>, result);
+    return followed({ ...event }, result);
   },
   receive: async (_key, raw, by) => {
     const copy = fieldsOnce(raw);
