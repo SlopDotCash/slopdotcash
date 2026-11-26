@@ -8,8 +8,6 @@ export type ValueTier = "none" | ScoreTier;
 export type ReviewTier = "none" | "triage" | "standard" | "deep" | "specialist";
 
 export const scoreTiers: ScoreTier[] = ["micro", "small", "medium", "large", "xl", "exceptional"];
-export const valueTiers: ValueTier[] = ["none", "micro", "small", "medium", "large", "xl", "exceptional"];
-export const reviewTiers: ReviewTier[] = ["none", "triage", "standard", "deep", "specialist"];
 
 /** @throws {never} */
 //@ pure
