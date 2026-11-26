@@ -385,8 +385,9 @@ effect function admissionOf<X extends Access>(route: Route<unknown, unknown, X>,
   return { params, query: new URL(request.originalUrl).searchParams, actor } as Admission<X>
 }
 
-export function handle<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admitted<B, X>) => A!E!R): Handled<X, R> {
+export function handle<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admitted<B, X>) => A!E!R, originRefusal?: Refusal): Handled<X, R> {
   return HttpRouter.add(route.method, route.path, served(route, effect {
+    if (originRefusal !== undefined && !(try sameOriginWrite())) throw refusedBy(originRefusal)
     const credential = try credentialOf(route, true)
     const admitted = try admissionOf(route, credential)
     let decoded: unknown = undefined

@@ -314,9 +314,10 @@ const fundingSite = worker({
   routes: ownerRoutes,
 })
 
-effect function posted(route: "solana-funding" | "solana-month-lock", body: unknown, origin?: string) {
-  const headers: Record<string, string> = origin === undefined ? { "content-type": "application/json" } : { "content-type": "application/json", origin }
-  const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects/route-project/${route}`, { method: "POST", headers, body: JSON.stringify(body) })))
+effect function posted(route: "solana-funding" | "solana-month-lock" | "solana-monthly-commitment", body: unknown, origin?: string, contentType = "application/json") {
+  const headers: Record<string, string> = origin === undefined ? { "content-type": contentType } : { "content-type": contentType, origin }
+  const textBody = typeof body === "string" ? body : JSON.stringify(body)
+  const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects/route-project/${route}`, { method: "POST", headers, body: textBody })))
   const response = try promise(() => fundingSite.fetch(request as unknown as globalThis.Request, {}, context))
   const text = try promise(() => response.text())
   return { status: response.status, body: try orDie(Effect.try(() => JSON.parse(text) as unknown)) }
@@ -332,6 +333,11 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
       try posted("solana-funding", { ...action, network: "base-mainnet" }, site),
       try posted("solana-funding", { ...action, network: "solana-testnet" }, site),
       try posted("solana-funding", action, site),
+    ]
+    const refusedOrigins = [
+      try posted("solana-funding", {}, "https://other.test"),
+      try posted("solana-month-lock", {}, "https://other.test"),
+      try posted("solana-monthly-commitment", "step=review", site, "application/x-www-form-urlencoded"),
     ]
     const lock = { step: "review", action: "lock", network: "solana-devnet", vault: SYSTEM_PROGRAM, wallet: SYSTEM_PROGRAM, count: 3, amount: "1" }
     const check = { step: "check", action: "lock", network: "solana-devnet", vault: SYSTEM_PROGRAM, wallet: SYSTEM_PROGRAM, blockhash: SYSTEM_PROGRAM, transactionId: "1", periods: [202611], amountMinor: "1" }
@@ -349,7 +355,7 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
       try posted("solana-month-lock", check, site),
     ]
     const invalidLock = { status: 400, body: { error: "invalid_month_lock" } }
-    try same({ answers, lockAnswers, routeOutbound }, {
+    try same({ answers, lockAnswers, refusedOrigins, routeOutbound }, {
       answers: [
         { status: 403, body: { error: "origin_forbidden" } },
         { status: 400, body: { error: "invalid_funding_action" } },
@@ -369,6 +375,7 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
         { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
         { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
       ],
+      refusedOrigins: Array.from({ length: 3 }, () => ({ status: 403, body: { error: "origin_forbidden" } })),
       routeOutbound: [],
     })
   })
