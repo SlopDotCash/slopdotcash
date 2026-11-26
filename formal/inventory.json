@@ -10155,7 +10155,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "393798ea4a6f830e86326908fdcdcd49ce99422617207728a43c0afd9f601167",
+      "sha256": "1017f299e7b0fbaa3a44538eaccca224b594fb1f5f41d7ef5e0a1674cd8acc0c",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
@@ -10164,9 +10164,9 @@
         346, 385, 396, 405, 407, 409, 418, 474, 495, 500, 507, 510, 512, 546,
         547, 549, 550, 561, 567, 592, 601, 602, 633, 637, 671, 702, 750, 761,
         762, 772, 829, 831, 885, 970, 1003, 1020, 1032, 1040, 1042, 1044, 1045,
-        1046, 1067, 1069, 1101, 1102, 1104, 1107, 1108, 1122, 1123, 1388, 1410,
-        1437, 1477, 1481, 1487, 1511, 1524, 1540, 1561, 1580, 1619, 1642, 1646,
-        1660, 1672, 1678, 1729, 1730, 1732, 1757
+        1046, 1067, 1069, 1101, 1102, 1104, 1107, 1108, 1122, 1123, 1394, 1416,
+        1443, 1483, 1487, 1493, 1517, 1530, 1546, 1567, 1586, 1625, 1648, 1652,
+        1666, 1678, 1684, 1735, 1736, 1738, 1763
       ],
       "review": "mapped-abstraction"
     },
@@ -18572,7 +18572,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "c3a6acd98ace3d7c0fb21893619dce3ef70a803e4e0fad644b6c42138c513905",
+      "sha256": "202b8dca5bb328aefd87f15be782d7e58d6999cbce50b5737e201c6fcf968b3b",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
@@ -18590,6 +18590,7 @@
         "appealOfSlopbotCloseHoldsTheFeeTest",
         "authorGainingAccessReleasesTest",
         "clearInsideTheWorkerRaceEndsKeptTest",
+        "closedAfterTheRefundAgeIsDueBackTest",
         "closedIsKeptAfterTheWaitTest",
         "crashDoesNotDuplicateTheCommentTest",
         "deniedAppealKeepsTheFeeTest",
@@ -18600,6 +18601,7 @@
         "fullMonthIsNotRecordedInDryRunTest",
         "lateAppealAfterSendKeepsTest",
         "lateAppealBeforeSendReopensTest",
+        "lateCloseWaitsForItsAppealThenIsDueBackTest",
         "mergedIsDueBackTest",
         "offDoesNothingTest",
         "openedBeforeTheSettingIsReviewedTest",
@@ -18612,6 +18614,7 @@
         "unpaidIsNeverReadyTest",
         "unpaidMergeHasNothingDueTest",
         "upheldAppealReopensAndRefundsTest",
+        "wantedClosedAfterTheRefundAgeIsDueBackTest",
         "wantedClosedIsSentBackTest",
         "wantedLateMarkIsSentBackTest",
         "wantedMarkedIsKeptTest",
