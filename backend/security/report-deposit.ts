@@ -146,8 +146,7 @@ export async function reportDepositExempt(
     actor,
   );
   return (
-    setupAuthority(access, actor, manifest.repositories[0].id).state ===
-    "verified"
+    setupAuthority(access, actor, manifest.repositories[0]).state === "verified"
   );
 }
 

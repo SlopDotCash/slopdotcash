@@ -166,6 +166,43 @@ test("an owner of a repository with a recorded rename keeps setup authority", as
   });
 });
 
+test("setup for a repository with a recorded rename names its current path", async () => {
+  // Slopbot is missing. GitHub's install picker lists only the current name.
+  const deps: ProjectApiDependencies = {
+    ...renamedProject("example/renamed-registry"),
+    repositoryAccess: async () => ({ installation: "missing" }),
+  };
+  const response = await handleProjectApi(
+    new Request("https://slop.cash/api/v1/project-setup/open-registry/check", {
+      method: "POST",
+      headers: {
+        origin: "https://slop.cash",
+        "content-type": "application/json",
+      },
+      body: "{}",
+    }),
+    deps,
+  );
+  if (response === null) throw new Error("No project API response");
+  expect(response.status).toBe(200);
+  const { setup } = (await response.json()) as {
+    setup: {
+      checks: Record<"installation" | "authority", { message: string }>;
+      nextAction: { message: string };
+    };
+  };
+  expect(setup.checks.installation.message).not.toContain(
+    "example/open-registry",
+  );
+  for (const message of [
+    setup.checks.authority.message,
+    setup.nextAction.message,
+  ]) {
+    expect(message).toContain("example/renamed-registry");
+    expect(message).not.toContain("example/open-registry");
+  }
+});
+
 async function reviseHeadline(deps: ProjectApiDependencies) {
   const current = await deps.persistence.getProject("open-registry");
   if (current === null) throw new Error("open-registry is not listed");

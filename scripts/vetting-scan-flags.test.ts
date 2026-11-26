@@ -287,7 +287,7 @@ const flagApi = (request: Request) =>
           },
         },
         actor,
-        manifest.repositories[0].id,
+        manifest.repositories[0],
       );
     },
     moderatorGithubIds: [ADMIN.githubId, MODERATOR.githubId],
