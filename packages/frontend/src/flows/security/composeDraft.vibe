@@ -8,7 +8,7 @@ import { type CallFailure, InvalidResponse, call } from "../../platform/api.vibe
 import { type BrowserStore, SessionStore, storageKeys } from "../../platform/storage.vibe"
 import { BrowserSession, type DraftEvent, compositionState } from "../../session/browserSession.vibe"
 import { actorNumber } from "../../session/session.vibe"
-import { type ReportBody, type ReportDraft, emptyReport, identityOf, modelNumber, reportBody } from "./private.vibe"
+import { ReportBody, type ReportDraft, emptyReport, identityOf, modelNumber, reportBody } from "./private.vibe"
 
 export const composeLimitBytes = 65_536
 

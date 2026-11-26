@@ -3,7 +3,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { collectVerifiedMergeResolutionBatch, recoverFiles, systemGit, unbundledStore, verifyMergeObjectStore } from "@repo/platform/git"
 import { lossyText, parsedJson, sha256Of, textBytes } from "@repo/platform/git/bytes"
-import { type FileRequest, MERGE_PROFILE, type MergeInput } from "@repo/platform/git/evidence"
+import { FileRequest, MERGE_PROFILE, MergeInput } from "@repo/platform/git/evidence"
 
 const fileLimit = 8 * 1024 * 1024
 const bundleLimit = 32 * 1024 * 1024

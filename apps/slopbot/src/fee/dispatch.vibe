@@ -7,7 +7,7 @@ import { feeSettingAbsent, feeSettingOn } from "../../gen/backend__submissionFee
 import { type FeeFacts, canDispatch, feeDispatchBatch } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
 import { feeJob, send } from "../jobs/job.vibe"
 import { parsedManifest, publishedWays, stepped, storedSettingOf } from "./gate.vibe"
-import { type StoredGate, SubmissionFeeMode, askLeaseMillis, claimCheck, gateModel, paidUndecided } from "./store.vibe"
+import { StoredGate, SubmissionFeeMode, askLeaseMillis, claimCheck, gateModel, paidUndecided } from "./store.vibe"
 
 export interface FeeCheckItem {
   readonly repositoryId: number

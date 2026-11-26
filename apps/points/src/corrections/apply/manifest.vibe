@@ -1,6 +1,6 @@
 // spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"
 import { sha256Hex } from "@repo/platform/crypto"
-import { type MergeResolution, mergeResolutionLineCounts } from "@repo/platform/git/evidence"
+import { MergeResolution, mergeResolutionLineCounts } from "@repo/platform/git/evidence"
 import { correctionRule, digestOf } from "../collect/inventory.vibe"
 import { assertCorrectionRegistry } from "../collect/registry.vibe"
 

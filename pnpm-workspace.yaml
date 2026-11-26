@@ -85,6 +85,7 @@ allowBuilds:
   protobufjs: false
 
 patchedDependencies:
+  '@typescript-eslint/eslint-plugin@8.72.2': patches/@typescript-eslint__eslint-plugin@8.72.2.patch
   '@vitest/browser@5.1.0': patches/@vitest__browser@5.1.0.patch
   picomatch@2.3.2: patches/picomatch@2.3.2.patch
   picomatch@4.0.7: patches/picomatch@4.0.7.patch

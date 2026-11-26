@@ -1,6 +1,6 @@
 // spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
 import { sha256Hex } from "@repo/platform/crypto"
-import { BundleRefused, type FileRecord, type Bounds, canonicalJson, checkedRecords, digestPattern, inventory } from "./inventory.vibe"
+import { BundleRefused, FileRecord, type Bounds, canonicalJson, checkedRecords, digestPattern, inventory } from "./inventory.vibe"
 
 export const releaseManifestName = "release-manifest.json"
 export const collectionName = "collection.json"

@@ -1,6 +1,6 @@
 // spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
 import { D1, type Statement, first, sql } from "@repo/platform/d1"
-import { type DepositOutcomeReason, type ReportDeposit, ReportDeposits } from "@repo/ports/security"
+import { DepositOutcomeReason, type ReportDeposit, ReportDeposits } from "@repo/ports/security"
 import { type FeeDeposit, FeeOutcome, type FinalOutcome, type GoneDeposits, type ObservedDeposit } from "@repo/ports/slopbot"
 
 schema DepositRow {

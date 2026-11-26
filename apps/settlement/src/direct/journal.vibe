@@ -7,7 +7,7 @@ import { type ArchivedIntent, type CaseApproval, type DirectBounty, type Event, 
 import type { Network } from "../../gen/fees__runtime.ts"
 import type { Amount } from "../../gen/settlement__money.ts"
 import { parseBaseUnits } from "../kernels/amounts.ts"
-import { DirectIntent, type PaymentAsset, type PaymentTransaction, type PaymentWallet } from "../client/direct.vibe"
+import { DirectIntent, PaymentAsset, type PaymentTransaction, PaymentWallet } from "../client/direct.vibe"
 import { type DirectAsset, type DirectTransfer, type EvmDirectRail, type EvmTransactionRequest, evmModel } from "./evm.vibe"
 
 module limbs {

@@ -1,0 +1,14 @@
+diff --git a/dist/rules/consistent-type-imports.js b/dist/rules/consistent-type-imports.js
+--- a/dist/rules/consistent-type-imports.js
++++ b/dist/rules/consistent-type-imports.js
+@@ -139,6 +139,10 @@
+                     }
+                     else {
+                         const onlyHasTypeReferences = variable.references.every(ref => {
++                            // VibeLang schemas lower their field types to runtime codec reads.
++                            if (ref.identifier.schemaValue === true) {
++                                return false;
++                            }
+                             /**
+                              * keep origin import kind when export
+                              * export { Type }

@@ -194,6 +194,9 @@ overrides:
   '@effect/platform-node-shared': 4.1.1
 
 patchedDependencies:
+  '@typescript-eslint/eslint-plugin@8.72.2':
+    hash: 5a39ebf1395bc1b27b34e76b87818b2dbbc3f7139717958595399f5e883a893d
+    path: patches/@typescript-eslint__eslint-plugin@8.72.2.patch
   '@vitest/browser@5.1.0':
     hash: 1769259a4e31f6cb0dba31453fec77feacdd3b79d4f787fe087a45b70bd5d352
     path: patches/@vitest__browser@5.1.0.patch
@@ -9317,7 +9320,7 @@ snapshots:
     dependencies:
       '@types/node': 26.6.6
 
-  '@typescript-eslint/eslint-plugin@8.72.2(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)':
+  '@typescript-eslint/eslint-plugin@8.72.2(patch_hash=5a39ebf1395bc1b27b34e76b87818b2dbbc3f7139717958595399f5e883a893d)(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)':
     dependencies:
       '@eslint-community/regexpp': 4.12.3
       '@typescript-eslint/parser': 8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
@@ -11683,7 +11686,7 @@ snapshots:
 
   typescript-eslint@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3):
     dependencies:
-      '@typescript-eslint/eslint-plugin': 8.72.2(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
+      '@typescript-eslint/eslint-plugin': 8.72.2(patch_hash=5a39ebf1395bc1b27b34e76b87818b2dbbc3f7139717958595399f5e883a893d)(@typescript-eslint/parser@8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3))(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
       '@typescript-eslint/parser': 8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)
       '@typescript-eslint/typescript-estree': 8.72.2(typescript@6.0.3)
       '@typescript-eslint/utils': 8.72.2(eslint@10.14.0(jiti@2.7.0))(typescript@6.0.3)

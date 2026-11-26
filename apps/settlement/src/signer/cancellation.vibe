@@ -6,7 +6,7 @@ import { type Entries, type Scope, within } from "../journal/journal.vibe"
 import { adoptedBinding, cancellationKey, consentCandidate, observationKey, pendingKeys, retainedConsent } from "./stored.vibe"
 import { cancellationFees } from "../../gen/settlement__signer.effect.vibe"
 import { CANCELLATION_GAS as cancellationGas, MAX_FEE_PER_GAS } from "../kernels/attesterLimits.ts"
-import { type Attempt, AttemptHeld, type Deployment, LimitRefused, MAX_GAS_CEILING, SignerUnavailable, attesterAccount, authorityInForce, frozenLimit, knownTransaction, plainSigner, readAttempt, sameAttempt, signedWithin, transactionAllowed } from "./evm.vibe"
+import { Attempt, AttemptHeld, type Deployment, LimitRefused, MAX_GAS_CEILING, SignerUnavailable, attesterAccount, authorityInForce, frozenLimit, knownTransaction, plainSigner, readAttempt, sameAttempt, signedWithin, transactionAllowed } from "./evm.vibe"
 import { reconcileBindingWinner } from "./winner.vibe"
 
 export interface ObsoleteIntent {
