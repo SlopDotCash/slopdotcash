@@ -287,7 +287,13 @@ describe('Confirm a payout wallet for the awarded vault (spec/backend/bindingCon
     const pending = { text: "Authorized · pending", exact: true };
     const finalized = { text: "Wallet bound", exact: true };
     await site.click(authorize);
+    await site.allow("^console Failed to load resource: the server responded with a status of 503", "^503 GET /api/v1/payments/me$");
+    await site.fail("GET", "/api/v1/payments/me", 503, { error: "payments_unavailable" });
     await site.click(named("button", "Sign with Anvil Wallet", { within: named("dialog", "Authorize payout wallet") }));
+    await shown(named("button", "Retry")).toMatchObject({ visible: true });
+    await shown(authorize).toMatchObject({ count: 0 });
+    await site.unfail("GET", "/api/v1/payments/me");
+    await site.click(named("button", "Retry"));
     await shown(pending).toMatchObject({ visible: true });
     const signs = () => site.walletAsked().then((asks) => asks.filter((ask) => ask.method === "eth_signTypedData_v4").length);
     expect(await signs()).toBe(1);
