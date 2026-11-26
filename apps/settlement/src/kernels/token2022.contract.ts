@@ -40,6 +40,10 @@ const describeResult = (result: Mint | TokenAccount | Refused): string => {
       return `Token2022 ${result.decimals} ${result.facts.extensions.map((e) => e.kind).join(",") || "none"}`;
     case "TokenAccount":
       return `TokenAccount ${result.program === TOKEN_PROGRAM ? "Classic" : "Token2022"} ${result.extensions.map((e) => e.kind).join(",") || "none"}`;
+    default: {
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
   }
 };
 

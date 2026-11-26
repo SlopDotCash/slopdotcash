@@ -4,6 +4,7 @@ import type { FeeDeposit as DepositKey, ObservedDeposit } from "@repo/ports/slop
 import { type FeeDeposit, initial, machineOver } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
 import { type ReportDeposit, initial as reportInitial, machineOver as reportMachineOver } from "../../gen/fees__submissionFeeReportDeposits.effect.vibe"
 import { DepositRecord, type StateText, depositColumns, depositOf } from "./codec.vibe"
+import { STANDING_DEPOSIT_LEDGER } from "./standingTerms.ts"
 
 export type FinalState = "refunded" | "kept" | "reclaimed"
 
@@ -86,12 +87,17 @@ export function advanceCursor(network: string, nextBlock: number) {
 }
 
 export effect function unjudged(network: string, limit: number) {
-  const found = try rows(DepositRecord, sql`SELECT ${columns} FROM submission_fee_deposits d
-    WHERE d.network = ${network} AND d.accepted IS NULL
-    ORDER BY (EXISTS (SELECT 1 FROM submission_fee_items i WHERE i.item = d.item)
-              OR EXISTS (SELECT 1 FROM security_report_deposits r WHERE r.item = d.item AND r.mode = 'asked')) DESC,
-             d.deposit_id
-    LIMIT ${limit}`)
+  const found = network === STANDING_DEPOSIT_LEDGER
+    ? try rows(DepositRecord, sql`SELECT ${columns} FROM submission_fee_deposits d
+      WHERE d.network = ${network} AND d.accepted IS NULL
+      ORDER BY EXISTS (SELECT 1 FROM standing_deposits s WHERE s.item = d.item) DESC, d.deposit_id
+      LIMIT ${limit}`)
+    : try rows(DepositRecord, sql`SELECT ${columns} FROM submission_fee_deposits d
+      WHERE d.network = ${network} AND d.accepted IS NULL
+      ORDER BY (EXISTS (SELECT 1 FROM submission_fee_items i WHERE i.item = d.item)
+                OR EXISTS (SELECT 1 FROM security_report_deposits r WHERE r.item = d.item AND r.mode = 'asked')) DESC,
+               d.deposit_id
+      LIMIT ${limit}`)
   return found.map(depositOf)
 }
 
@@ -99,6 +105,20 @@ export function setJudgement(deposit: DepositKey & { readonly txHash: string }, 
   return sql`UPDATE submission_fee_deposits
       SET accepted = ${judgement.accepted}, reject_reason = ${judgement.reason}, repository_id = ${judgement.repositoryId}, pull_number = ${judgement.pullNumber}
     WHERE network = ${deposit.network} AND deposit_id = ${deposit.depositId} AND accepted IS NULL AND tx_hash = ${deposit.txHash}`
+}
+
+export function setJudgementIfItemPaid(deposit: DepositKey & { readonly txHash: string }, pull: { readonly repositoryId: number; readonly pullNumber: number }) {
+  return sql`UPDATE submission_fee_deposits
+      SET accepted = 1, reject_reason = NULL, repository_id = ${pull.repositoryId}, pull_number = ${pull.pullNumber}
+    WHERE network = ${deposit.network} AND deposit_id = ${deposit.depositId} AND accepted IS NULL AND tx_hash = ${deposit.txHash}
+      AND EXISTS (SELECT 1 FROM submission_fee_items WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.pullNumber} AND paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId})`
+}
+
+export function setJudgementIfReportPaid(deposit: DepositKey & { readonly txHash: string }, caseId: string) {
+  return sql`UPDATE submission_fee_deposits
+      SET accepted = 1, reject_reason = NULL, repository_id = NULL, pull_number = NULL
+    WHERE network = ${deposit.network} AND deposit_id = ${deposit.depositId} AND accepted IS NULL AND tx_hash = ${deposit.txHash}
+      AND EXISTS (SELECT 1 FROM security_report_deposits WHERE case_id = ${caseId} AND paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId})`
 }
 
 export effect function resolvable(network: string) {

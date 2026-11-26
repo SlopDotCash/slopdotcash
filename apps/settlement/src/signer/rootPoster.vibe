@@ -6,7 +6,7 @@ import type { Publication } from "../../gen/settlement__referralPublication.ts"
 import type { Referral } from "../../gen/settlement__referrals.ts"
 import { alwaysActivationReady, mayPostOn } from "../../gen/settlement__referrals.effect.vibe"
 import { permittedOperation } from "../../gen/settlement__signer.effect.vibe"
-import { evmAddress } from "../chain/evm/abi.ts"
+import { bytes32, evmAddress } from "../chain/evm/abi.ts"
 import { type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
 import { fromAmount } from "../kernels/amounts.ts"
 import { type Deployment, postRootCalldata } from "../referrals/distributor.vibe"
@@ -68,7 +68,15 @@ export effect function signPostRoot(control: Referral, journaled: Publication, d
   const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(hash.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => refused("signing failed") })
   const recovery = signature[0]
   if (recovery !== 0 && recovery !== 1) throw refused("signing failed")
-  const raw = try Effect.try({ try: () => signedType2(request, { r: `0x${bytesToHex(signature.slice(1, 33))}` as never, s: `0x${bytesToHex(signature.slice(33, 65))}` as never, yParity: recovery }), catch: () => refused("signing failed") })
+  const raw = try Effect.try({
+    try: () => {
+      const r = bytes32(`0x${bytesToHex(signature.slice(1, 33))}`)
+      const s = bytes32(`0x${bytesToHex(signature.slice(33, 65))}`)
+      return r === undefined || s === undefined ? undefined : signedType2(request, { r, s, yParity: recovery })
+    },
+    catch: () => refused("signing failed"),
+  })
+  if (raw === undefined) throw refused("signing failed")
   const signed = readSignedType2(raw)
   if (signed === undefined || signed.sender !== deployment.poster || signed.request.to !== to || signed.request.data !== data) throw refused("the signed transaction differs from its intent")
   return { raw, txId: signed.id, poster: signed.sender } satisfies SignedRoot

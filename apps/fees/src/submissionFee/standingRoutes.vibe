@@ -1,0 +1,206 @@
+// spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
+import { burnAddress, networkTerms, slopDecimals, slopRatesAt } from "@repo/backend/client"
+import { isoNow } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
+import { Refused, handle } from "@repo/platform/http"
+import { SubmissionFeeRates } from "@repo/ports/backend"
+import { type StandingDepositAnswer, type StandingDepositCover, type StandingDepositRowAnswer, standingDepositAsk, standingDepositRead, standingDepositWithdraw } from "../client/standingDeposit.vibe"
+import { STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_COVER_LIMIT, STANDING_DEPOSIT_NETWORK, STANDING_DEPOSIT_START_BLOCK, standingDepositAmount, standingDepositDeployed, standingDepositItem } from "./standingTerms.ts"
+
+schema StandingQueryRow {
+  readonly id: string
+  readonly round: number
+  readonly item: string
+  readonly slop_amount: string
+  readonly asked_at: string
+  readonly paid_at: string | null
+  readonly paid_deposit_id: number | null
+  readonly withdraw_requested_at: string | null
+  readonly outcome: string | null
+  readonly outcome_reason: string | null
+  readonly outcome_at: string | null
+  readonly paid_token: string | null
+  readonly paid_amount: string | null
+  readonly paid_transaction: string | null
+  readonly paid_finalized_at: string | null
+  readonly resolve_transaction: string | null
+}
+
+schema CoverQueryRow {
+  readonly owner: string
+  readonly repo: string
+  readonly pull_number: number
+  readonly state: string
+  readonly pr_open: number
+}
+
+schema RoundRow {
+  readonly round: number
+}
+
+const rowColumns = sql`r.id, r.round, r.item, r.slop_amount, r.asked_at, r.paid_at,
+  r.paid_deposit_id, r.withdraw_requested_at, r.outcome, r.outcome_reason,
+  r.outcome_at,
+  d.token AS paid_token, d.amount AS paid_amount, d.tx_hash AS paid_transaction,
+  d.finalized_at AS paid_finalized_at, d.resolve_tx AS resolve_transaction`
+
+const rowJoin = sql`standing_deposits r
+  LEFT JOIN submission_fee_deposits d
+    ON d.network = r.paid_network AND d.deposit_id = r.paid_deposit_id`
+
+const currentFilter = sql`r.cancelled_at IS NULL
+  AND (r.outcome IS NULL OR r.outcome IN ('refund_due', 'kept_due'))`
+
+function deployedContract(): string | null {
+  return standingDepositDeployed(STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_START_BLOCK) ? STANDING_DEPOSIT_CONTRACT : null
+}
+
+effect function parseGithubId(raw: string) {
+  const id = Number(raw)
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Refused({ status: 401, code: "unauthorized", message: "Sign in with GitHub" })
+  return id
+}
+
+effect function latestRow(githubId: number) {
+  return try first(StandingQueryRow, sql`SELECT ${rowColumns} FROM ${rowJoin}
+    WHERE r.github_id = ${githubId} AND r.cancelled_at IS NULL
+    ORDER BY r.round DESC LIMIT 1`)
+}
+
+effect function currentRow(githubId: number) {
+  return try first(StandingQueryRow, sql`SELECT ${rowColumns} FROM ${rowJoin}
+    WHERE r.github_id = ${githubId} AND ${currentFilter}`)
+}
+
+effect function currentQuote() {
+  const all = try (try SubmissionFeeRates).all()
+  const inForce = slopRatesAt(all, try isoNow())
+  const current = inForce?.current ?? null
+  if (current === null) return null
+  const amount = standingDepositAmount(current.slopPerUsd)
+  return amount === undefined ? null : { amount, rate: current }
+}
+
+effect function depositAnswer(row: typeof StandingQueryRow.Type) {
+  const paid = row.paid_at !== null && row.paid_deposit_id !== null
+  if (paid && (row.paid_token === null || row.paid_transaction === null))
+    throw new Refused({ status: 503, code: "record_unavailable", message: "The deposit record is unavailable." })
+  return {
+    round: row.round,
+    item: row.item,
+    amount: row.slop_amount,
+    askedAt: row.asked_at,
+    paid: paid && row.paid_at !== null && row.paid_deposit_id !== null && row.paid_token !== null && row.paid_transaction !== null
+      ? {
+          at: row.paid_at,
+          network: STANDING_DEPOSIT_NETWORK,
+          depositId: row.paid_deposit_id,
+          token: row.paid_token,
+          amount: row.paid_amount,
+          transaction: row.paid_transaction,
+          finalized: row.paid_finalized_at !== null,
+        }
+      : null,
+    withdrawRequestedAt: row.withdraw_requested_at,
+    outcome: row.outcome,
+    outcomeReason: row.outcome_reason,
+    outcomeAt: row.outcome_at,
+    resolveTransaction: row.resolve_transaction,
+  } satisfies StandingDepositRowAnswer
+}
+
+effect function stateOf(githubId: number) {
+  const contract = deployedContract()
+  const row = try latestRow(githubId)
+  const covers: ReadonlyArray<StandingDepositCover> = row === undefined
+    ? []
+    : (try rows(CoverQueryRow, sql`SELECT owner, repo, pull_number, state, pr_open
+        FROM standing_deposit_covers
+        WHERE deposit_id = ${row.id}
+        ORDER BY covered_at DESC, repository_id, pull_number
+        LIMIT ${STANDING_DEPOSIT_COVER_LIMIT}`)).map((cover) => ({
+          repository: `${cover.owner}/${cover.repo}`,
+          pullNumber: cover.pull_number,
+          state: cover.state,
+          open: cover.pr_open === 1,
+        }))
+  const terms = networkTerms(STANDING_DEPOSIT_NETWORK)
+  const slop = terms.tokens.find((token) => token.kind === "SlopToken")
+  if (slop === undefined) return try die(new Error(`The published terms of ${STANDING_DEPOSIT_NETWORK} name no SLOP token`))
+  const quoted = contract === null ? null : (try currentQuote())?.amount ?? null
+  return {
+    schema: "slop-standing-deposit-v1",
+    deployed: contract !== null,
+    network: STANDING_DEPOSIT_NETWORK,
+    chainId: terms.chainId,
+    contract,
+    token: slop.address,
+    symbol: "SLOP",
+    decimals: slopDecimals,
+    keptTo: burnAddress,
+    quote: quoted,
+    deposit: row === undefined ? null : try depositAnswer(row),
+    covers,
+  } satisfies StandingDepositAnswer
+}
+
+effect function askDeposit(githubId: number) {
+  if (deployedContract() === null)
+    throw new Refused({ status: 409, code: "standing_deposit_not_deployed", message: "Standing deposits are not available yet." })
+  const priced = try currentQuote()
+  if (priced === null)
+    throw new Refused({ status: 409, code: "no_rate", message: "Slop has no published SLOP rate yet, so a standing deposit cannot be asked. Try again later." })
+  const current = try currentRow(githubId)
+  if (current !== undefined && current.paid_at !== null) return
+  if (current !== undefined) {
+    try (try D1).run(sql`UPDATE standing_deposits SET slop_amount = ${priced.amount}, slop_per_usd = ${priced.rate.slopPerUsd}
+      WHERE id = ${current.id} AND paid_at IS NULL AND cancelled_at IS NULL`)
+    return
+  }
+  const last = try first(RoundRow, sql`SELECT COALESCE(MAX(round), 0) AS round FROM standing_deposits WHERE github_id = ${githubId}`)
+  const round = (last?.round ?? 0) + 1
+  const item = standingDepositItem(githubId, round)
+  if (item === undefined) throw new Refused({ status: 409, code: "standing_deposit_invalid", message: "Standing deposit round is out of range." })
+  const id = `sd_${(try randomId()).replace(/-/gu, "")}`
+  const insert = (try D1).run(sql`INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at)
+    VALUES (${id}, ${githubId}, ${round}, ${item}, ${priced.amount}, ${priced.rate.slopPerUsd}, ${try isoNow()})`)
+  insert catch effect (error) => match (error) {
+    when ConstraintViolation: 0;
+    default: throw error;
+  }
+}
+
+effect function withdrawDeposit(githubId: number) {
+  const current = try currentRow(githubId)
+  if (current === undefined) throw new Refused({ status: 409, code: "no_deposit", message: "You have no standing deposit to withdraw." })
+  const now = try isoNow()
+  if (current.paid_at === null) {
+    const changes = try (try D1).run(sql`UPDATE standing_deposits SET cancelled_at = ${now}
+      WHERE id = ${current.id} AND paid_at IS NULL AND cancelled_at IS NULL`)
+    if (changes !== 1) throw new Refused({ status: 409, code: "deposit_changed", message: "Your deposit was just recorded as paid. Reload the page and withdraw it again." })
+    return
+  }
+  if (current.outcome !== null) throw new Refused({ status: 409, code: "already_settling", message: "This deposit is already being sent back or kept." })
+  if (current.withdraw_requested_at !== null) throw new Refused({ status: 409, code: "already_requested", message: "A withdrawal is already requested." })
+  const changes = try (try D1).run(sql`UPDATE standing_deposits SET withdraw_requested_at = ${now}
+    WHERE id = ${current.id} AND paid_at IS NOT NULL AND outcome IS NULL AND withdraw_requested_at IS NULL`)
+  if (changes !== 1) throw new Refused({ status: 409, code: "deposit_changed", message: "This deposit changed. Reload the page to see it." })
+}
+
+export const StandingDepositRoutes = Layer.mergeAll(
+  handle(standingDepositRead, (input) => effect {
+    const githubId = try parseGithubId(input.actor.githubId)
+    return try stateOf(githubId)
+  }),
+  handle(standingDepositAsk, (input) => effect {
+    const githubId = try parseGithubId(input.actor.githubId)
+    try askDeposit(githubId)
+    return try stateOf(githubId)
+  }),
+  handle(standingDepositWithdraw, (input) => effect {
+    const githubId = try parseGithubId(input.actor.githubId)
+    try withdrawDeposit(githubId)
+    return try stateOf(githubId)
+  }),
+)

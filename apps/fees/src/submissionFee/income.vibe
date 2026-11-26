@@ -35,9 +35,11 @@ effect function amountOf(amount: string | null) {
 }
 
 export effect function keptSubmissionFees(query: KeptFeesQuery) {
+  const tokenMatch = query.token.startsWith("0x") ? sql`lower(token) = lower(${query.token})` : sql`token = ${query.token}`
+  const walletMatch = query.feeWallet.startsWith("0x") ? sql`lower(kept_to) = lower(${query.feeWallet})` : sql`kept_to = ${query.feeWallet}`
   const found = try rows(KeptRecord, sql`SELECT network, deposit_id, token, kept_to, amount, resolved_at FROM submission_fee_deposits
     WHERE network IN ${list(query.networks)} AND ${kept} AND resolved_at >= ${query.since}
-      AND lower(token) = lower(${query.token}) AND lower(kept_to) = lower(${query.feeWallet})`)
+      AND ${tokenMatch} AND ${walletMatch}`)
   let total = 0n
   for (const row of found) total += try amountOf(row.amount)
   return total
