@@ -16,6 +16,7 @@ export interface World {
   readonly db: D1Database;
   readonly reports: R2Bucket;
   readonly mf: StartedWorker;
+  readonly workerScript: string;
 }
 
 export interface Answer {
@@ -58,8 +59,8 @@ function manifest(project: string, securityBounty: Readonly<Record<string, unkno
   return JSON.stringify({ id: project, status: "active", repositories, ...(securityBounty === undefined ? {} : { securityBounty }) });
 }
 
-export async function started(mode = "on"): Promise<World> {
-  const script = await bundle(root, { config: "test/support/intake/vite.config.ts", entry: "intake" });
+export async function started(mode = "on", workerScript?: string): Promise<World> {
+  const script = workerScript ?? await bundle(root, { config: "test/support/intake/vite.config.ts", entry: "intake" });
   const mf = startWorker({
     script,
     d1: { SLOP_DB: "slop-private" },
@@ -77,7 +78,7 @@ export async function started(mode = "on"): Promise<World> {
   ]);
   const published = db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,?,?)").bind("intake-fixture", 2, manifest("intake-fixture", bounty({ amount: { ...usdc, grossMinor: "2000000" } })), "b".repeat(64), "Published after the receipts", later);
   await db.batch([...seeded, published]);
-  return { db, reports: await storage(mf, "PRIVATE_TRACES"), mf };
+  return { db, reports: await storage(mf, "PRIVATE_TRACES"), mf, workerScript: script };
 }
 
 const sessions = new WeakMap<World, Map<string, string>>();
