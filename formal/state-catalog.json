@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f525252018ac4765eef91d2646adbf2d00a43edf273a338c2309221236266544",
+  "inventorySha256": "211308a3d7e95f6158f46e2261eeadb48e7a3366f95554f98a156611e37f9c8c",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -5165,7 +5165,7 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "line": 48,
+      "line": 49,
       "name": "state",
       "kind": "string-union",
       "values": ["clear", "pending", "strike", "watch"],
@@ -5175,7 +5175,7 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "line": 265,
+      "line": 297,
       "name": "reason",
       "kind": "string-union",
       "values": ["expired", "strike", "withdrawn"],
