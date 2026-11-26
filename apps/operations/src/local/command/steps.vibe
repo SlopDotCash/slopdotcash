@@ -1,7 +1,7 @@
 // spec/operations/localCommand.md, "Only a current local stage can start the command"
-import { type LocalCommand, type Machine, initial, machineOver } from "../../../gen/operations__localCommand.effect.vibe"
+import { type LocalCommand, initial, machineOver } from "../../../gen/operations__localCommand.effect.vibe"
 
-export type CommandMachine = Machine.Shape
+export type CommandMachine = Effect.Success<ReturnType<typeof machineOver>>
 
 export interface LaunchFacts {
   readonly loopbackHttp: boolean

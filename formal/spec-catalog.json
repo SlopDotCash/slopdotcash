@@ -5176,7 +5176,7 @@
     },
     {
       "path": "spec/contributor/index.md",
-      "sha256": "5df232bd954d1335281c855da1b40d9862b79ac09ea4d841fde8091d275e067d",
+      "sha256": "492bc360c82a839e544cfe9c43e96492b55b084e6a9a5fd48708b89526a57705",
       "module": "contributor",
       "stories": [],
       "rules": [],
@@ -5275,12 +5275,20 @@
           "line": 39
         },
         {
-          "target": "./openedRun.md",
+          "target": "./traceLicensing.md",
           "line": 40
         },
         {
-          "target": "./prOpened.md",
+          "target": "./sessionCleaner.md",
           "line": 41
+        },
+        {
+          "target": "./openedRun.md",
+          "line": 42
+        },
+        {
+          "target": "./prOpened.md",
+          "line": 43
         }
       ]
     },
@@ -6014,7 +6022,7 @@
     },
     {
       "path": "spec/contributor/publication.md",
-      "sha256": "7214281ea7c92cc8fc99831cf1838afbdb60ccd7d0249eaaeb351b4b7b0afe8a",
+      "sha256": "cee56317c7428f79e91599c565f22883e067a068f38126d35e1a23dfe06d6756",
       "module": "contributor__publication",
       "stories": [
         {
@@ -6023,15 +6031,15 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance",
-          "line": 254
+          "line": 255
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source",
-          "line": 363
+          "line": 364
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index",
-          "line": 597
+          "line": 603
         }
       ],
       "rules": [
@@ -6054,7 +6062,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / terms.json is served for every listed project, paused included, and carries only public program terms",
-          "line": 61,
+          "line": 62,
           "definitions": [
             "TermsField",
             "termsFields",
@@ -6065,7 +6073,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry",
-          "line": 80,
+          "line": 81,
           "definitions": [
             "artifactAnswer",
             "lawSkillNeedsFieldsAndClearance",
@@ -6075,7 +6083,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery lists one row per repository of each installable project with published generated skills",
-          "line": 122,
+          "line": 123,
           "definitions": [
             "RepositoryEntry",
             "DiscoveryRow",
@@ -6089,7 +6097,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing",
-          "line": 161,
+          "line": 162,
           "definitions": [
             "MonthListing",
             "IntakeListing",
@@ -6108,7 +6116,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD",
-          "line": 223,
+          "line": 224,
           "definitions": [
             "ArtifactResponse",
             "handled",
@@ -6120,7 +6128,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The template index binds templateSha256 to the template, renderer and accepted-revision digests",
-          "line": 265,
+          "line": 266,
           "definitions": [
             "RevisionStatus",
             "SourceFile",
@@ -6141,7 +6149,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / Only bytes equal to the build commit's tracked tree are labelled committed",
-          "line": 314,
+          "line": 315,
           "definitions": [
             "sourceStatus",
             "groupStatus",
@@ -6153,7 +6161,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The server renders only template files whose bytes match the index digest",
-          "line": 342,
+          "line": 343,
           "definitions": [
             "ServedTemplateFile",
             "maxTemplateFileBytes",
@@ -6164,7 +6172,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Each global skill, its discovery copy, its index entry and llms.txt carry the same digest",
-          "line": 370,
+          "line": 371,
           "definitions": [
             "GlobalRole",
             "GlobalSource",
@@ -6193,7 +6201,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / llms.txt and skill-manifest.json state the build commit and its committed or working-tree status",
-          "line": 452,
+          "line": 453,
           "definitions": [
             "manifestStatus",
             "lawGlobalStatusIsExact",
@@ -6202,7 +6210,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / The bootstrap's renderer contract names files that exist byte-identical at the build commit",
-          "line": 477,
+          "line": 478,
           "definitions": [
             "guideRendererPaths",
             "globalSetPublishable",
@@ -6214,7 +6222,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Protocol documents are generated from their one maintained source and historical protocol links stay immutable",
-          "line": 507,
+          "line": 508,
           "definitions": [
             "ProtocolDocument",
             "DocumentSource",
@@ -6229,7 +6237,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Simulation samples cover listed, paused, restricted and unverified projects and committed and working-tree builds",
-          "line": 545,
+          "line": 551,
           "definitions": [
             "servedFacts",
             "knownValues",
@@ -6261,7 +6269,7 @@
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index / The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route",
-          "line": 606,
+          "line": 612,
           "definitions": [
             "SitemapProject",
             "PublishedCycle",
@@ -6303,39 +6311,39 @@
         },
         {
           "target": "../backend/backlogRule.md",
-          "line": 128
+          "line": 129
         },
         {
           "target": "./skillAuthority.md",
-          "line": 137
+          "line": 138
         },
         {
           "target": "../frontend/poolListing.md",
-          "line": 165
+          "line": 166
         },
         {
           "target": "../backend/mergeActivity.md",
-          "line": 171
-        },
-        {
-          "target": "../backend/intakeCap.md",
           "line": 172
         },
         {
+          "target": "../backend/intakeCap.md",
+          "line": 173
+        },
+        {
           "target": "../backend/backlogRule.md",
-          "line": 175
+          "line": 176
         },
         {
           "target": "./skillAuthority.md",
-          "line": 322
+          "line": 323
         },
         {
           "target": "../app/index.md",
-          "line": 614
+          "line": 620
         },
         {
           "target": "../frontend/routes.md",
-          "line": 615
+          "line": 621
         }
       ]
     },
@@ -6579,6 +6587,39 @@
           "line": 25
         }
       ]
+    },
+    {
+      "path": "spec/contributor/sessionCleaner.md",
+      "sha256": "433699804aaf2a80a67fc9d1a02459898b246b472f4ce5d697ccca963dfa6eb0",
+      "module": "contributor__sessionCleaner",
+      "stories": [
+        {
+          "heading": "Story: Keep only openly licensed in-repo content and redact everything else",
+          "line": 12
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Keep only openly licensed in-repo content and redact everything else / Only an openly licensed in-repo tracked read or name-only listing is kept",
+          "line": 19,
+          "definitions": [
+            "CleanOutcome",
+            "Cleaner",
+            "initial",
+            "keeps",
+            "canClassify",
+            "classify",
+            "alwaysKeptRequiresOpenInRepoContent",
+            "alwaysClassifiedIsKeptOrRedacted",
+            "lawOutsideOrUnlicensedRedacted",
+            "sometimesKeptTracked",
+            "sometimesKeptNameOnly",
+            "sometimesRedacted"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
     },
     {
       "path": "spec/contributor/sessionExchange.md",
@@ -7095,6 +7136,94 @@
           "line": 9
         }
       ]
+    },
+    {
+      "path": "spec/contributor/traceLicensing.md",
+      "sha256": "560c69aa87f82da38ec141a08ded88d3abaabebd46aa889aca7a56c1947c2d2b",
+      "module": "contributor__traceLicensing",
+      "stories": [
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions / Upload licences follow the active setting, ban status and confirmed terms version",
+          "line": 24,
+          "definitions": [
+            "TermsVersion",
+            "ConfirmedVersion",
+            "LicenceState",
+            "LicenceEventKind",
+            "LicenceBasis",
+            "TraceRecord",
+            "Licensing",
+            "emptyTrace",
+            "initial",
+            "traceAt",
+            "withTrace",
+            "licensedCount",
+            "eligible",
+            "eligibleCount",
+            "withdrawTrace",
+            "canFinalize",
+            "finalize",
+            "alwaysLicenceBacked",
+            "alwaysGrantBacked",
+            "alwaysUploadBasisIsV2OrV3",
+            "sometimesUploadLicensed"
+          ]
+        },
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions / Enabling, v3 re-confirmation, disabling, closure and bans enforce consent boundaries",
+          "line": 76,
+          "definitions": [
+            "canEnable",
+            "enable",
+            "canEnableUnderV2",
+            "enableUnderV2",
+            "canReconfirm",
+            "reconfirm",
+            "canNoopToggle",
+            "noopToggle",
+            "canDisable",
+            "disable",
+            "canClose",
+            "close",
+            "canReopen",
+            "reopen",
+            "canBan",
+            "ban",
+            "alwaysLicensedNeedsConsent",
+            "alwaysV3UploadNeedsV3Confirmation",
+            "alwaysV3LicenceNeedsV3Confirmation",
+            "alwaysClosedHoldsNothing",
+            "sometimesWithdrawnOnDisable",
+            "sometimesReconfirmedV3",
+            "sometimesClosedAndReopened"
+          ]
+        },
+        {
+          "heading": "Story: Record account licensing consent and trace licences across contract versions / Explicit opt-in requires active licensing, matching bulk count and v3 confirmation for v3 traces",
+          "line": 126,
+          "definitions": [
+            "canOptIn",
+            "optIn",
+            "canOptInAll",
+            "optInAll",
+            "canOptInRefused",
+            "optInRefused",
+            "canOptInNeedsConfirm",
+            "optInNeedsConfirm",
+            "sometimesOptedIn",
+            "slotValues",
+            "expectedValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
     },
     {
       "path": "spec/contributor/traceServer.md",
@@ -9146,7 +9275,7 @@
     },
     {
       "path": "spec/fees/index.md",
-      "sha256": "cce4b6b59491bd024f6fe91e07e438fa366a57bea9ee33c3accffcadf3d3835e",
+      "sha256": "43573bba88c5ee223857b0e960c01e0b515ccf61ff968f4280680beb786a8448",
       "module": "fees",
       "stories": [],
       "rules": [],
@@ -9213,8 +9342,12 @@
           "line": 19
         },
         {
-          "target": "../settlement/",
+          "target": "./submissionFeeStandingDeposits.md",
           "line": 20
+        },
+        {
+          "target": "../settlement/",
+          "line": 21
         }
       ]
     },
@@ -9812,12 +9945,16 @@
     },
     {
       "path": "spec/fees/submissionFeeSends.md",
-      "sha256": "0109bfa630d68c851a489869bb6f06a706871601c8ef7fe6344be57cecafc9d9",
+      "sha256": "5dca9d32c6146216e65cb5c557008e501f755bb9b55f06b20d4b8d92e5176bcb",
       "module": "fees__submissionFeeSends",
       "stories": [
         {
           "heading": "Story: Send only what is due, once, inside the native ceilings",
           "line": 33
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors",
+          "line": 283
         }
       ],
       "rules": [
@@ -9948,6 +10085,42 @@
             "refusedValues",
             "brokenValues"
           ]
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last",
+          "line": 290,
+          "definitions": [
+            "solanaMaxBatch",
+            "solanaExpiredReason",
+            "solanaLandedFailedReason",
+            "solanaCountsTowardDailyBudget",
+            "solanaMayJoinBatch",
+            "solanaCourtesyAllowed",
+            "solanaParkOnSingleFailure",
+            "lawSolanaExpiredPaysNoBudget",
+            "lawSolanaLandedFailedCountsBudget",
+            "lawSolanaTaintedNeverBatchesWithAnother",
+            "lawSolanaSingleFailureParksOnlySingleLandedFail",
+            "modeValues",
+            "sendRowValues",
+            "reasonValues",
+            "batchSizeValues",
+            "depositCountValues"
+          ]
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers",
+          "line": 335,
+          "definitions": [
+            "WorkerLedgerResult",
+            "WorkerOutcomes",
+            "workerRunOutcomes",
+            "lawSolanaConfigErrorLeavesEvmRunning",
+            "lawSolanaOffIsInert",
+            "evmOnValues",
+            "solanaModeValues",
+            "solanaConfigOkValues"
+          ]
         }
       ],
       "imports": [
@@ -9971,6 +10144,133 @@
           "line": 21
         }
       ]
+    },
+    {
+      "path": "spec/fees/submissionFeeStandingDeposits.md",
+      "sha256": "c2538ab4247529c7223fc1193dfd75fded87b2f01cd97ce20ed86894b76f51c4",
+      "module": "fees__submissionFeeStandingDeposits",
+      "stories": [
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger",
+          "line": 22
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / A standing deposit pays its row only as burned SLOP on the standing ledger",
+          "line": 28,
+          "definitions": [
+            "StandingRefusal",
+            "StandingDepositFacts",
+            "StandingResolveFacts",
+            "standingDepositNetwork",
+            "standingDepositLedger",
+            "standingDepositContract",
+            "standingDepositStartBlock",
+            "standingDepositUsdMinor",
+            "standingDepositCap",
+            "standingDepositReclaimDays",
+            "standingDepositExpiryDays",
+            "standingDepositWindowDays",
+            "standingDepositGraceHours",
+            "standingDepositVerdict",
+            "standingResolveAction",
+            "lawStandingPaidOnlyByBurnedSlop",
+            "lawStandingKeptOnlyAsBurnedSlop",
+            "depositFactsValues",
+            "standingResolveFactsValues"
+          ]
+        },
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes",
+          "line": 101,
+          "definitions": [
+            "StandingRowState",
+            "StandingOutcome",
+            "CoverKind",
+            "Slot",
+            "CoverSlot",
+            "StandingState",
+            "emptySlot",
+            "initial",
+            "slotOf",
+            "withSlot",
+            "openCoveredCount",
+            "coverEnded",
+            "coveringNow",
+            "mayCover",
+            "strikeHappened",
+            "allCoveredClear",
+            "coverStateOf",
+            "checkedSlot",
+            "dueOutcomeOf",
+            "canPostRow",
+            "postRow",
+            "canCancelRow",
+            "cancelRow",
+            "canPayRow",
+            "payRow",
+            "canRequestWithdraw",
+            "requestWithdraw",
+            "canExpireDeposit",
+            "expireDeposit",
+            "canPassWait",
+            "passWait",
+            "canOwnerRefuseStanding",
+            "ownerRefuseStanding",
+            "canRecordFirstMerge",
+            "recordFirstMerge",
+            "canOpenSlot",
+            "openSlot",
+            "canCoverSlot",
+            "coverSlot",
+            "canAskSlot",
+            "askSlot",
+            "canMergeSlot",
+            "mergeSlot",
+            "canCloseSlot",
+            "closeSlot",
+            "canReopenSlot",
+            "reopenSlot",
+            "canLabelSlot",
+            "labelSlot",
+            "canUnlabelSlot",
+            "unlabelSlot",
+            "canEndWindow",
+            "endWindow",
+            "canEndGrace",
+            "endGrace",
+            "canCheckCover",
+            "checkCover",
+            "canDecideOutcome",
+            "decideOutcome",
+            "canSendOutcome",
+            "sendOutcome",
+            "slotConsistent",
+            "alwaysOneOutcomeAtMostOnce",
+            "alwaysKeptOnlyAfterStrike",
+            "alwaysRefundOnlyAfterWait",
+            "alwaysUnpaidCoversNothing",
+            "alwaysStrikeIsFinal",
+            "sometimesCoveredAndRefunded",
+            "sometimesStrikeKeepsDeposit",
+            "sometimesCapAsksSecondPull",
+            "sometimesExpiryRefunds",
+            "sometimesCancelledCoversNothing",
+            "eval_witness_sometimesCoveredAndRefunded",
+            "eval_witness_sometimesStrikeKeepsDeposit",
+            "eval_witness_sometimesCapAsksSecondPull",
+            "eval_witness_sometimesExpiryRefunds",
+            "eval_witness_sometimesCancelledCoversNothing",
+            "slotValues"
+          ]
+        }
+      ],
+      "imports": [
+        "fees__submissionFeeDeposits",
+        "backend__submissionFeeTerms"
+      ],
+      "references": []
     },
     {
       "path": "spec/frontend/batchedDeposit.md",
@@ -11701,7 +12001,7 @@
     },
     {
       "path": "spec/frontend/presentation.md",
-      "sha256": "64d444d2b05a947c9b64e7885f2b5bb2ed48ded803eb27547dd6213454b3b70c",
+      "sha256": "4783fbd3db46f4b14712f1c458875d4560d8b33e491c7bc1153cc0433ae91bcf",
       "module": "frontend__presentation",
       "stories": [
         {
@@ -11738,7 +12038,7 @@
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home",
-          "line": 511
+          "line": 524
         }
       ],
       "rules": [
@@ -11930,6 +12230,7 @@
           "line": 470,
           "definitions": [
             "AgentTarget",
+            "AgentPayload",
             "AgentShortcut",
             "agentShortcuts",
             "siteSkillPath",
@@ -11939,14 +12240,14 @@
             "genericPromptAvailable",
             "lawOpeningAnyShortcutCopies",
             "lawShortcutsNeverReplaceGenericSetup",
-            "lawOnlyWebChatsOpenNewTabs",
+            "lawOnlyDesktopHandoffsOpenNewTabs",
             "shortcutValues",
             "shortcutsValues"
           ]
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home / Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together",
-          "line": 516,
+          "line": 529,
           "definitions": [
             "HomeAudience",
             "CopyFeedback",
@@ -14962,7 +15263,7 @@
     },
     {
       "path": "spec/operations/index.md",
-      "sha256": "a8200db6189799804ed572ee683d0812fdb587039f2ceca87365ca93c44e4d9b",
+      "sha256": "cbc14d7c23d0f33a30dd3b71d669ea003e73b4ced1b9ca47412cd37e5c0a3353",
       "module": "operations",
       "stories": [],
       "rules": [],
@@ -14997,68 +15298,72 @@
           "line": 12
         },
         {
-          "target": "./stagingOrder.md",
+          "target": "./recordPublication.md",
           "line": 13
         },
         {
-          "target": "./rpcRotationRun.md",
+          "target": "./stagingOrder.md",
           "line": 14
         },
         {
-          "target": "./robinhoodRpcRotation.md",
+          "target": "./rpcRotationRun.md",
           "line": 15
         },
         {
-          "target": "./identityApp.md",
+          "target": "./robinhoodRpcRotation.md",
           "line": 16
         },
         {
-          "target": "./slopbotRuntime.md",
+          "target": "./identityApp.md",
           "line": 17
         },
         {
-          "target": "./slopbotQuotaWitness.md",
+          "target": "./slopbotRuntime.md",
           "line": 18
         },
         {
-          "target": "./publicationLock.md",
+          "target": "./slopbotQuotaWitness.md",
           "line": 19
         },
         {
-          "target": "./intakeHealth.md",
+          "target": "./publicationLock.md",
           "line": 20
         },
         {
-          "target": "./escrowQualification.md",
+          "target": "./intakeHealth.md",
           "line": 21
         },
         {
-          "target": "./releaseCoverage.md",
+          "target": "./escrowQualification.md",
           "line": 22
         },
         {
-          "target": "./dailyCollection.md",
+          "target": "./releaseCoverage.md",
           "line": 23
         },
         {
-          "target": "./paymentJobs.md",
+          "target": "./dailyCollection.md",
           "line": 24
         },
         {
-          "target": "./paymentRun.md",
+          "target": "./paymentJobs.md",
           "line": 25
         },
         {
-          "target": "./extendedQualification.md",
+          "target": "./paymentRun.md",
           "line": 26
         },
         {
-          "target": "./upgradeVerification.md",
+          "target": "./extendedQualification.md",
           "line": 27
         },
         {
+          "target": "./upgradeVerification.md",
+          "line": 28
+        },
+        {
           "target": "../slopbot/assessmentInbox.md",
-          "line": 34
+          "line": 35
         }
       ]
     },
@@ -15514,7 +15819,7 @@
     },
     {
       "path": "spec/operations/notifications.md",
-      "sha256": "2dea17a03933971ea6b85b210767dce76bda85dbe5188f550e4d46773b154f65",
+      "sha256": "604fc3a6bde07ce8ab8d1d1281407d41ba5efe4ac12d789450a027e12e2dea1d",
       "module": "operations__notifications",
       "stories": [
         {
@@ -16066,8 +16371,52 @@
       ]
     },
     {
+      "path": "spec/operations/recordPublication.md",
+      "sha256": "7abcfeebb63a6a19c7aab60f3406f7f9425a1399783635d1dec1d859ed0c4051",
+      "module": "operations__recordPublication",
+      "stories": [
+        {
+          "heading": "Story: Rebuild /data/record.json on every release while preserving prior records and receipts",
+          "line": 10
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Rebuild /data/record.json on every release while preserving prior records and receipts / Every release rebuilds /data/record.json without failing the release and never drops a published receipt",
+          "line": 17,
+          "definitions": [
+            "RecordPhase",
+            "WrittenFile",
+            "RecordRun",
+            "initial",
+            "canConfigure",
+            "configure",
+            "canSkip",
+            "skip",
+            "canBuild",
+            "build",
+            "canFailBuild",
+            "failBuild",
+            "alwaysNeverFailsRelease",
+            "alwaysNothingWrittenWhenSkippedOrNone",
+            "alwaysFailureWritesPreviousOnly",
+            "alwaysPublishedReceiptsNeverDisappear",
+            "sometimesBuiltWithNewReceipts",
+            "sometimesBuiltKeptReceiptsOnReadError",
+            "sometimesFailedWrotePrevious",
+            "sometimesFailedWithoutPrevious",
+            "sometimesSkipped",
+            "prevReceiptsValues",
+            "addedValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/operations/release.md",
-      "sha256": "83ba20fac3c7a6ff55ae227d7cfcdf7e1cb90bbe844e30836fe5d6604185c448",
+      "sha256": "b8628c237ccdd0200d8debc95df7e8bd86c3004bcc522e101535e00c5ee9f771",
       "module": "operations__release",
       "stories": [
         {
@@ -16282,7 +16631,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / A production fee-converter release keeps the RPC rotation of every active version",
-          "line": 540,
+          "line": 549,
           "definitions": [
             "FeeVersion",
             "FeeVersions",
@@ -16297,7 +16646,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The static site publishes last and a lost response is reconciled from the provider",
-          "line": 582,
+          "line": 591,
           "definitions": [
             "ListedDeployment",
             "DeploymentListing",
@@ -16317,7 +16666,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Served bytes are verified against the deployment's own source",
-          "line": 617,
+          "line": 626,
           "definitions": [
             "ServedObservation",
             "canVerifyServed",
@@ -16332,7 +16681,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Simulation samples exercise admitted and refused runs and conflicting evidence",
-          "line": 645,
+          "line": 654,
           "definitions": [
             "goodRef",
             "refValues",
@@ -16400,7 +16749,7 @@
         },
         {
           "target": "./escrowQualification.md",
-          "line": 642
+          "line": 651
         }
       ]
     },
@@ -23598,7 +23947,7 @@
     },
     {
       "path": "spec/security/reportDeposit.md",
-      "sha256": "63c7661999583c881ccdce53d1d891f41f8991fc5f0a31f328573ec3544c2ab7",
+      "sha256": "6fa8749476b03fce76d945a3bf137250c6966afa38a0c5641fd5c1a3f7b95d5c",
       "module": "security__reportDeposit",
       "stories": [
         {
@@ -23682,12 +24031,19 @@
             "release",
             "stepReleaseOnlyWhenTurnedOff",
             "sometimesReleased",
-            "sometimesReleasedAndScreened"
+            "sometimesReleasedAndScreened",
+            "ClaimTry",
+            "ClaimNotice",
+            "noClaimTry",
+            "claimNoticeAfter",
+            "lawFailedClaimTryIsNotRecorded",
+            "lawEndedClaimTryIsRecorded",
+            "lawRecordedClaimTryIsFinal"
           ]
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / A paid deposit is sent back on a first response and kept only after a keeping close stood seven days",
-          "line": 211,
+          "line": 240,
           "definitions": [
             "DepositFacts",
             "Due",
@@ -23723,7 +24079,7 @@
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / Simulation samples",
-          "line": 312,
+          "line": 341,
           "definitions": [
             "byValues",
             "exemptValues",
@@ -23739,6 +24095,8 @@
             "baseFacts",
             "factsValues",
             "nowMsValues",
+            "noticeValues",
+            "resultValues",
             "weight_pay",
             "weight_advance",
             "weight_decideOutcome",
@@ -23780,7 +24138,7 @@
     },
     {
       "path": "spec/security/reportNotices.md",
-      "sha256": "b4c1970195ec854c006ccb942bc6423ec62d89e8b08058ad05ac770f86222921",
+      "sha256": "be3ce022767179e235bae1091c17e10c1c4641490040e6cdbe1a2c3a4601c6aa",
       "module": "security__reportNotices",
       "stories": [
         {
@@ -23789,15 +24147,15 @@
         },
         {
           "heading": "Story: Keep the report text private",
-          "line": 138
+          "line": 139
         },
         {
           "heading": "Story: Exclusions inform advice without deciding",
-          "line": 179
+          "line": 180
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt",
-          "line": 225
+          "line": 226
         }
       ],
       "rules": [
@@ -23845,7 +24203,7 @@
         },
         {
           "heading": "Story: Receive the report with its Inbox receipt and route it to the owners / An intake outage keeps every received case and its receipt notice",
-          "line": 116,
+          "line": 117,
           "definitions": [
             "canObserveAvailability",
             "observeAvailability",
@@ -23856,7 +24214,7 @@
         },
         {
           "heading": "Story: Keep the report text private / Report bodies stay out of every record and never reach a public issue",
-          "line": 140,
+          "line": 141,
           "definitions": [
             "digestOf",
             "lawDigestNamesStoredBytes",
@@ -23874,7 +24232,7 @@
         },
         {
           "heading": "Story: Exclusions inform advice without deciding / The receipt-time exclusion context reaches screening, assessment and appeal triage",
-          "line": 181,
+          "line": 182,
           "definitions": [
             "canClaimScreening",
             "claimScreening",
@@ -23901,7 +24259,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Created and reconciled copies bind the earliest canonical GHSA",
-          "line": 227,
+          "line": 228,
           "definitions": [
             "canClaimSend",
             "claimSend",
@@ -23929,7 +24287,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A verified GitHub receipt links only the retained case",
-          "line": 274,
+          "line": 275,
           "definitions": [
             "canReadReceipt",
             "readReceipt",
@@ -23947,7 +24305,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / A legacy direct report is received only from a checked GitHub receipt",
-          "line": 308,
+          "line": 309,
           "definitions": [
             "directTerms",
             "canReceiveDirect",
@@ -23959,7 +24317,7 @@
         },
         {
           "heading": "Story: Forward to GitHub and bind one verified receipt / Simulation samples",
-          "line": 347,
+          "line": 348,
           "definitions": [
             "bodyValues",
             "digestOfValues",
@@ -24032,27 +24390,27 @@
         },
         {
           "target": "./screening.md",
-          "line": 183
-        },
-        {
-          "target": "./assessment.md",
-          "line": 183
-        },
-        {
-          "target": "./cases.md",
           "line": 184
         },
         {
-          "target": "./journey.md",
+          "target": "./assessment.md",
+          "line": 184
+        },
+        {
+          "target": "./cases.md",
           "line": 185
         },
         {
-          "target": "./terms.md",
+          "target": "./journey.md",
           "line": 186
         },
         {
+          "target": "./terms.md",
+          "line": 187
+        },
+        {
           "target": "./forwarding.md",
-          "line": 230
+          "line": 231
         }
       ]
     },
@@ -24880,7 +25238,7 @@
     },
     {
       "path": "spec/settlement/asiNovemberCloseout.md",
-      "sha256": "ee2b8550119b216fb152bee274b2bd2809cf6258626d035341d7a274e8ab874d",
+      "sha256": "b89b3fe79db3251f9628fd8df5e9e5c73809bb6d8ca8e65160483870d3563aa6",
       "module": "settlement__asiNovemberCloseout",
       "stories": [
         {
@@ -28900,18 +29258,18 @@
     },
     {
       "path": "spec/settlement/octoberImport.md",
-      "sha256": "37c98c7a803393e9996f909988fe2a73fbb61c7573355bc378d94effdc5e42c9",
+      "sha256": "8e5ac3991abb4d435e895a7923a689daf0a32aa0bf2d405c52460f90e839f663",
       "module": "settlement__octoberImport",
       "stories": [
         {
           "heading": "Story: Write each reviewed October proposal once",
-          "line": 14
+          "line": 15
         }
       ],
       "rules": [
         {
           "heading": "Story: Write each reviewed October proposal once / Planning computes the packet and writes nothing",
-          "line": 16,
+          "line": 17,
           "definitions": [
             "PacketWeight",
             "PacketEntry",
@@ -28934,7 +29292,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / An apply run writes only under the reviewed digest, current main and the production lock",
-          "line": 52,
+          "line": 53,
           "definitions": [
             "entryFor",
             "eligibleNow",
@@ -28952,7 +29310,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / A proposal already written is never added to or replaced",
-          "line": 89,
+          "line": 90,
           "definitions": [
             "canMonthlyPropose",
             "monthlyPropose",
@@ -28967,7 +29325,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / Imports, kept workflow proposals, withheld recipients and replays are reachable",
-          "line": 118,
+          "line": 119,
           "definitions": [
             "sometimesImported",
             "sometimesWorkflowProposalKept",
@@ -28996,7 +29354,7 @@
         },
         {
           "target": "./payoutExclusions.md",
-          "line": 58
+          "line": 59
         }
       ]
     },
@@ -33721,18 +34079,18 @@
     },
     {
       "path": "spec/slopbot/historyReadAhead.md",
-      "sha256": "97610afc8d3820c7f1403f8bd5ec101ba58a84dbfe6a4c9734a71fb918c8d4ad",
+      "sha256": "f71fe23c54297820d96a3b9d0a97c649fc25a993d4740d980401493344cadccd",
       "module": "slopbot__historyReadAhead",
       "stories": [
         {
           "heading": "Story: Save waiting on the first history pages without changing a decision",
-          "line": 23
+          "line": 25
         }
       ],
       "rules": [
         {
-          "heading": "Story: Save waiting on the first history pages without changing a decision / First history pages may be read ahead, a bounded number at once, and decide nothing",
-          "line": 30,
+          "heading": "Story: Save waiting on the first history pages without changing a decision / First history pages may be read ahead beside the loop within a bounded window and decide nothing",
+          "line": 33,
           "definitions": [
             "ReadAheadPhase",
             "ReadAhead",
@@ -33740,23 +34098,21 @@
             "initial",
             "validConcurrency",
             "readsAhead",
+            "readAheadWindow",
+            "started",
             "canBegin",
             "begin",
-            "workerFree",
             "canStartRead",
             "startRead",
-            "canSkipRead",
-            "skipRead",
             "canFinishRead",
             "finishRead",
             "canDropRead",
             "dropRead",
-            "canEndReadAhead",
-            "endReadAhead",
             "alwaysConcurrencyInRange",
             "alwaysReadsWithinConcurrency",
-            "alwaysReadsOnlyWhileWarming",
-            "alwaysStartedInOrder",
+            "alwaysReadsWithinWindow",
+            "alwaysNoReadsWhenFinished",
+            "alwaysSetsDisjoint",
             "alwaysNoReadAheadWithoutConcurrency",
             "stepNoReadStartsAfterADrop",
             "lawInvalidConcurrencyReadsNothing",
@@ -33765,11 +34121,13 @@
           ]
         },
         {
-          "heading": "Story: Save waiting on the first history pages without changing a decision / The in-order reader takes each warmed page once and reads every other page itself",
-          "line": 96,
+          "heading": "Story: Save waiting on the first history pages without changing a decision / The in-order reader takes each empty warmed page once and reads every other page itself",
+          "line": 99,
           "definitions": [
             "decidedOutcomes",
-            "inOrder",
+            "canAdvance",
+            "advance",
+            "currentUndecided",
             "canTakeWarmed",
             "takeWarmed",
             "canReadLive",
@@ -33778,7 +34136,6 @@
             "failRead",
             "canFinishAll",
             "finishAll",
-            "alwaysWarmingDecidesNothing",
             "alwaysDecidedInOrder",
             "alwaysEachPageReadOnce",
             "alwaysOnlyTheLoopReportsAFailure",
@@ -33787,21 +34144,24 @@
             "sometimesSequentialOnly",
             "sometimesEveryPageTaken",
             "sometimesDroppedPageReadAgain",
-            "sometimesFailureAfterWarmedPage",
-            "sometimesWarmedOutcomeFailsLater"
+            "sometimesNonEmptyReadAgain",
+            "sometimesFailureAfterWarmedPage"
           ]
         },
         {
-          "heading": "Story: Save waiting on the first history pages without changing a decision / Simulation samples cover no read-ahead, a full read-ahead and a dropped one",
-          "line": 147,
+          "heading": "Story: Save waiting on the first history pages without changing a decision / Simulation samples cover no read-ahead, a bounded window, a non-empty page and a dropped one",
+          "line": 155,
           "definitions": [
             "concurrencyValues",
             "outcomeCountValues",
             "positionValues",
+            "isEmptyValues",
+            "eval_witness_sometimesReadAheadFull",
+            "eval_witness_sometimesReadAheadDropped",
             "eval_witness_sometimesDroppedPageReadAgain",
+            "eval_witness_sometimesNonEmptyReadAgain",
             "eval_witness_sometimesFailureAfterWarmedPage",
             "eval_witness_sometimesEveryPageTaken",
-            "eval_witness_sometimesWarmedOutcomeFailsLater",
             "eval_witness_sometimesSequentialOnly"
           ]
         }
@@ -33810,7 +34170,7 @@
       "references": [
         {
           "target": "./valueHistory.md",
-          "line": 14
+          "line": 15
         }
       ]
     },
@@ -34533,12 +34893,16 @@
     },
     {
       "path": "spec/slopbot/readyLabel.md",
-      "sha256": "84eaeb7fb6856ee025c81c0bd795322a13c8a58267ef51d0180102eaff9ff062",
+      "sha256": "fd9217427c343e9ea833a7971175e138dbc0beaba38d5c3cb5346c7764722e05",
       "module": "slopbot__readyLabel",
       "stories": [
         {
           "heading": "Story: Label a pull request ready only while every condition holds at its head",
           "line": 22
+        },
+        {
+          "heading": "Story: Merge verified ready pull requests through this repository's workflow",
+          "line": 428
         }
       ],
       "rules": [
@@ -34700,6 +35064,38 @@
             "observedValues",
             "secondsValues",
             "weight_refresh"
+          ]
+        },
+        {
+          "heading": "Story: Merge verified ready pull requests through this repository's workflow / The pilot workflow merges only on Slop's own repository when switched on, into the registered integration branch, and never touches `.github/`",
+          "line": 435,
+          "definitions": [
+            "pilotRepository",
+            "pilotRepositoryId",
+            "slopbotBotId",
+            "slopbotBotLogin",
+            "maxAutoMergesPerRun",
+            "autoMergeListPageLimit",
+            "autoMergeEventPageLimit",
+            "autoMergeReviewPageLimit",
+            "autoMergeFilePageLimit",
+            "AutoMergeLabelSource",
+            "AutoMergeReason",
+            "AutoMergeCandidate",
+            "autoMergeSwitchActive",
+            "autoMergePermittedBase",
+            "autoMergePullOk",
+            "autoMergeReason",
+            "autoMergeAllowed",
+            "autoMergeWillWrite",
+            "lawAutoMergeSwitchOffNeverWrites",
+            "lawAutoMergeNeverTargetsMainOrDefault",
+            "lawAutoMergeRequiresSlopbotFreshLabel",
+            "lawAutoMergeRequiresWriteApprovalAndNoChangeRequest",
+            "lawAutoMergeRequiresCleanAndNoGithubPaths",
+            "lawAutoMergeRecheckPinsHeadBaseAndRunCap",
+            "validAutoMergeCandidate",
+            "candidateValues"
           ]
         }
       ],

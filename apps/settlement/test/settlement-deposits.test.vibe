@@ -1,7 +1,7 @@
 // spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once"; spec/settlement/solanaVaultDeposits.md, "Story: Record every finalized deposit of an ordinary Solana vault once"
 import { assert, layer } from "@effect/vitest"
 import { type Address, type Blockhash, base58Encode, base64Encode } from "@repo/platform/chain/solana"
-import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { type D1, d1, rows, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { serve } from "@repo/platform/testing/chains"

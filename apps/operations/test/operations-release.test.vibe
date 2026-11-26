@@ -79,6 +79,25 @@ module stagedGitHub {
   export function hangNext(fake: GitHubFake, match: string): void {
     fake.alterNext(match, () => new Promise<Response>(() => undefined))
   }
+
+  /** @throws {never} */
+  export function recordFetch(
+    answers: ReadonlyMap<string, () => { readonly status?: number; readonly body: unknown }>,
+    mode: "offline" | "hang" = "offline",
+  ): { readonly fetchImpl: typeof globalThis.fetch; readonly seen: string[] } {
+    const seen: string[] = []
+    const fetchImpl: typeof globalThis.fetch = (input) => {
+      const url = input instanceof Request ? input.url : String(input)
+      seen.push(url)
+      const answer = answers.get(url)
+      if (answer !== undefined) {
+        const { status = 200, body } = answer()
+        return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }))
+      }
+      return mode === "hang" ? new Promise<Response>(() => undefined) : Promise.reject(new Error("offline"))
+    }
+    return { fetchImpl, seen }
+  }
 }
 module actionsSimulation {
   import { Clock, Duration, Effect } from "effect"
@@ -547,7 +566,7 @@ mkdir -p "$BUNDLE/github"
 }
 import { collectionWorkflows, reviewedWorkflow } from workflowShape
 import { type ActionRun, type Outcome, type Shape, type World, type WorldOptions, actionJobs, actionRun, actionsRepository, actionsWorld, checkpoint } from actionsSimulation
-import { type StagedProducer, type StagedRecord, advanceBranch, emptyRegistry, hangNext, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
+import { type StagedProducer, type StagedRecord, advanceBranch, emptyRegistry, hangNext, recordFetch, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
@@ -566,6 +585,9 @@ import { type Service, reviewedSubmissionFee } from "../gen/operations__release.
 import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
 import { runFacts } from "../src/release/run/facts.vibe"
 import { ReleaseRefused } from "../src/release/run/run.vibe"
+import { aggregateLeaderboard, aggregateModels } from "../src/release/record/agg.ts"
+import { describeRecordBuild, isRecord, keepPublished, previousRecords, recordFile, runRecordBuild } from "../src/release/record/build.vibe"
+import { amount, feeOn, payment, receiptsFrom } from "../src/release/record/receipts.ts"
 
 const repository = "SlopDotCash/slopdotcash"
 const workflowRef = `${repository}/.github/workflows/deploy.yml@refs/heads/main`
@@ -1265,4 +1287,152 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       },
     })
   })
+
+  it.effect('Rebuild /data/record.json on release without failing the release and preserving prior records and receipts (spec/operations/recordPublication.md, "Story: Rebuild /data/record.json on every release while preserving prior records and receipts"; spec/operations/recordPublication.md, "Every release rebuilds /data/record.json without failing the release and never drops a published receipt")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const previous = {
+      builtAt: "2026-11-23T08:12:00.000Z",
+      sources: { projects: ["feed"], disclosures: [], cycles: [] },
+      money: { pools: [], settlements: [] },
+      months: [],
+      projects: [],
+      receipts: {
+        builtAt: "2026-11-23T08:12:00.000Z",
+        items: [
+          {
+            anchor: "feed-2026-10",
+            url: "https://old.example/#feed-2026-10",
+            projectId: "feed",
+            project: "Feed",
+            month: "2026-10",
+            network: "base-mainnet",
+            networkName: "Base",
+            asset: "USDC",
+            assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            stable: true,
+            contributors: 1,
+            total: "100",
+            fee: "2.05",
+            feeExact: true,
+            recipients: [],
+            own: null,
+            privateRecords: false,
+            reserved: null,
+            firstSentAt: "2026-11-02T00:00:00.000Z",
+            lastSentAt: "2026-11-02T00:00:00.000Z",
+            publishedAt: "2026-11-02T01:00:00.000Z",
+            merges: null,
+          },
+        ],
+        confirmed: [],
+      },
+    }
+    const [firstPrev = "", secondPrev = ""] = previousRecords
+    const readJson = (path: string) => effect {
+      const text = try fs.readFileString(path)
+      return try Effect.try(() => JSON.parse(text) as unknown)
+    }
+    const runWithFetch = (fetchImpl: typeof fetch, options: Parameters<typeof runRecordBuild>[0]) => effect {
+      provide Layer.succeed(FetchHttpClient.Fetch, fetchImpl) {
+        return try runRecordBuild(options)
+      }
+    }
+    const skippedDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-skip-" })
+    const skippedNet = recordFetch(new Map())
+    const skipped = try runWithFetch(skippedNet.fetchImpl, { siteDir: skippedDir, enabled: false })
+    const skippedExists = try fs.exists(files.join(skippedDir, recordFile))
+
+    const prevDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-prev-" })
+    const prevNet = recordFetch(new Map([[firstPrev, () => ({ body: previous })]]))
+    const prevResult = try runWithFetch(prevNet.fetchImpl, { siteDir: prevDir, enabled: true })
+    const prevWritten = try readJson(files.join(prevDir, recordFile))
+
+    const retiredDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-retired-" })
+    const retiredNet = recordFetch(new Map<string, () => { readonly status?: number; readonly body: unknown }>([
+      [firstPrev, () => ({ status: 404, body: { error: "not found" } })],
+      [secondPrev, () => ({ body: previous })],
+    ]))
+    const retiredResult = try runWithFetch(retiredNet.fetchImpl, { siteDir: retiredDir, enabled: true })
+    const retiredWritten = try readJson(files.join(retiredDir, recordFile))
+
+    const noneDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-none-" })
+    const noneNet = recordFetch(new Map())
+    const noneResult = try runWithFetch(noneNet.fetchImpl, { siteDir: noneDir, enabled: true })
+    const noneExists = try fs.exists(files.join(noneDir, recordFile))
+
+    const deadlineDir = try fs.makeTempDirectoryScoped({ prefix: "slop-record-deadline-" })
+    const deadlineNet = recordFetch(new Map([[firstPrev, () => ({ body: previous })]]), "hang")
+    const deadlineResult = try runWithFetch(deadlineNet.fetchImpl, { siteDir: deadlineDir, enabled: true, deadlineMs: 50 })
+    const deadlineWritten = try readJson(files.join(deadlineDir, recordFile))
+
+    const keptReceipts = keepPublished(
+      [
+        previous.receipts.items[0],
+        { ...previous.receipts.items[0], anchor: "gone-2026-10", url: "https://old.example/#gone-2026-10" },
+      ],
+      [{ ...previous.receipts.items[0], total: "107.56", url: "x" }],
+      "https://slop.cash/receipts",
+    )
+    const txHash = `0x${"ab".repeat(32)}`
+    const parsedPayment = try Effect.try(() => payment({
+      id: "pay-1",
+      projectId: "feed",
+      network: "base-mainnet",
+      contributionMonth: "2026-10",
+      assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      assetDecimals: 6,
+      netBase: "100000000",
+      transactionId: txHash,
+      indexedAt: "2026-11-02T00:00:00.000Z",
+    }))
+    const fee = try Effect.try(() => feeOn(100000000n))
+    const computedReceipts = parsedPayment === null ? [] : try Effect.try(() => receiptsFrom({
+      payments: [parsedPayment],
+      recipients: new Map([["pay-1", { actor: "55555", login: "alice" }]]),
+      projects: new Map([["feed", { id: "feed", name: "Feed", steward: { github: { type: "User", actorId: "99999" } } }]]),
+      totals: new Map([["feed|base-mainnet|0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", { paid: 100000000n, fees: fee, reserved: 0n }]]),
+      confirmed: new Set([`base-mainnet:${txHash}`]),
+      now: new Date("2026-11-02T01:00:00.000Z"),
+    }))
+    const lbSample = {
+      generatedAt: "2026-11-23T00:00:00.000Z",
+      ruleVersion: "v2",
+      window: { days: 35 },
+      repositories: [{ id: "o/r", displayName: "r", githubUrl: "https://github.com/o/r", projectId: "feed" }],
+      leaders: [{ actorId: "1" }],
+      ledger: [{ category: "merged-pull-request", source: { id: "pr-1" }, actor: { id: "1" } }],
+      attributions: [{ provider: "anthropic", model: "claude-sonnet-4-5", sourceId: "pr-1", artifactId: "pr-1", actor: { id: "1" }, run: { client: "claude-code" } }],
+    }
+    const models = try Effect.try(() => aggregateModels(lbSample))
+    const leaderboard = try Effect.try(() => aggregateLeaderboard(lbSample))
+    const amountFormatting = try Effect.try(() => [amount(245000000n, 6), amount(382440000n, 6), amount(500000n, 6)])
+
+    assert.deepStrictEqual({
+      skipped: [skipped.outcome, skippedNet.seen.length, skippedExists, describeRecordBuild(skipped)],
+      prev: [prevResult.outcome, prevWritten],
+      retired: [retiredResult.outcome, retiredWritten],
+      none: [noneResult.outcome, noneExists],
+      deadline: [deadlineResult.outcome, deadlineResult.outcome === "previous" && deadlineResult.reason.includes("deadline"), deadlineWritten],
+      kept: keptReceipts.map((item) => [item.anchor, item.total, item.url]),
+      isRecordChecks: [isRecord(previous), isRecord({ builtAt: "x" }), isRecord(null), isRecord([])],
+      receipts: computedReceipts.map((r) => [r.anchor, r.total, r.fee, r.feeExact, r.contributors, r.url]),
+      amountFormatting,
+      leaderboardCounts: [leaderboard.contributors, leaderboard.mergedPullRequests, models.totals.mergedPullRequestsWithModel, models.top[0]?.key],
+    }, {
+      skipped: ["skipped", 0, false, "record: skipped (SLOP_RECORD_BUILD is not 1)"],
+      prev: ["previous", previous],
+      retired: ["previous", previous],
+      none: ["none", false],
+      deadline: ["previous", true, previous],
+      kept: [
+        ["feed-2026-10", "107.56", "https://slop.cash/receipts#feed-2026-10"],
+        ["gone-2026-10", "100", "https://slop.cash/receipts#gone-2026-10"],
+      ],
+      isRecordChecks: [true, false, false, false],
+      receipts: [["feed-2026-10", "100", "2.04", true, 1, "https://slop.cash/receipts#feed-2026-10"]],
+      amountFormatting: ["245", "382.44", "0.50"],
+      leaderboardCounts: [1, 1, 1, "anthropic/claude-sonnet-4.5"],
+    })
+  }))
 })

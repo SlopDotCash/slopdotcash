@@ -1,28 +1,87 @@
-// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
+// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
 import { jsonRpc } from "@repo/platform/chain/rpc"
 import { base58Encode, base64Decode, base64Encode } from "@repo/platform/chain/solana"
 import { isoAt, isoNow } from "@repo/platform/clock"
-import { D1 } from "@repo/platform/d1"
+import { randomId } from "@repo/platform/crypto"
+import { D1, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { ReportDeposits } from "@repo/ports/security"
 import { SubmissionFeeItems } from "@repo/ports/slopbot"
-import { solanaGenesis } from "../runtime/pins.ts"
-import { decimal } from "../evm/abi.ts"
-import { SubmissionFeeSigners } from "./chain.vibe"
-import { SubmissionFeeConfigInvalid, type Mode } from "./config.vibe"
+import { unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { judgedPerRun } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
 import {
+  type Actor,
+  type SendConfig,
+  canRebroadcast,
+  canRecordFailed,
+  canRecordFinalized,
+  canRecordList,
+  canReleaseParked,
+  initial,
+  parkedChecksPerRun,
+  parkedRecheckMs,
+  recordList,
+  solanaCourtesyAllowed,
+  solanaExpiredReason,
+  solanaLandedFailedReason,
+  solanaMaxBatch,
+  solanaMayJoinBatch,
+  solanaParkOnSingleFailure,
+} from "../../gen/fees__submissionFeeSends.effect.vibe"
+import { decimal, wholeBig } from "../evm/abi.ts"
+import { solanaGenesis } from "../runtime/pins.ts"
+import { GasBudget, PayoutFailed, type ProbeResult, type SendEntry, SendReverted, SubmissionFeeRefused, SubmissionFeeSigners } from "./chain.vibe"
+import { type Mode, SubmissionFeeConfigInvalid } from "./config.vibe"
+import { type ParkReason, park, sendConfigOf } from "./parked.vibe"
+import {
+  CLASSIC_TOKEN_PROGRAM,
   DEPOSIT_DISCRIMINATOR,
   DEPOSIT_OFFSETS,
+  SOLANA_RECORDS_PER_READ,
+  SOLANA_SIGNATURE_PAGE,
+  SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES,
   SOLANA_SUBMISSION_FEE_KEPT_TO,
   SOLANA_SUBMISSION_FEE_MINT,
   SOLANA_SUBMISSION_FEE_NETWORK,
   SOLANA_SUBMISSION_FEE_PROGRAM_ID,
+  SOLANA_SUBMISSION_FEE_START_SLOT,
+  SOLANA_TRANSACTION_BYTES,
+  type SubmissionDeposit,
   associatedUsdcAccount,
+  buildSignedTransaction,
   buildSolanaMessage,
+  buildUnsignedTransaction,
+  decodeDepositIdSlice,
   decodeSubmissionConfig,
   decodeSubmissionDeposit,
+  firstTransactionSignature,
+  isSolanaAddress,
   resolveInstruction,
   submissionConfigAddress,
+  submissionCreation,
+  submissionDepositAddress,
+  submissionSettlement,
+  tokenAccountDeliverable,
 } from "./solanaProgram.ts"
-import { advanceCursor, cursor, recordResolution, resolvable, setJudgement, setJudgementIfItemPaid, unjudged, upsertDeposit } from "./store.vibe"
+import { failureReason, message } from "./steps.vibe"
+import { advanceCursor, cursor, parked, recordResolution, resolvable, setDue, setJudgement, setJudgementIfItemPaid, storedDeposit, unjudged, upsertDeposit } from "./store.vibe"
+
+export const SOLANA_EXPIRED = solanaExpiredReason
+export const SOLANA_LANDED_FAILED = solanaLandedFailedReason
+export const SOLANA_REQUESTS_PER_RUN = 300
+export const SOLANA_TRACKED_PER_RUN = 5000
+export const SOLANA_RECORDED_PER_RUN = SOLANA_RECORDS_PER_READ
+export const SOLANA_CREATIONS_PER_RUN = 25
+export const SOLANA_OWN_SETTLEMENTS_PER_RUN = 20
+export const SOLANA_SEARCHES_OPENED_PER_RUN = 50
+export const SOLANA_SEARCHES_PER_RUN = 10
+export const SOLANA_SEARCH_PAGES_PER_RUN = 6
+export const SOLANA_SEARCH_READS_PER_RUN = 20
+export const SOLANA_VETTED_PER_RUN = solanaMaxBatch * 3
+export const SOLANA_OPEN_ALERT = 1000
+export const SOLANA_NEVER_RESOLVED = ["token_not_accepted", "wrong_kept_to", "amount_below_due", "item_fee_invalid"] as const
+
+export error SolanaFeeBudgetError { issue: string }
+error SolanaSendConflict { network: string }
 
 export interface SolanaSubmissionFeeEnv {
   readonly SUBMISSION_FEE_SOLANA_MODE?: string
@@ -32,34 +91,162 @@ export interface SolanaSubmissionFeeEnv {
   readonly SUBMISSION_FEE_SOLANA_RESOLVER_SEED?: string
 }
 
+export interface SolanaDeploymentInput {
+  readonly network?: string
+  readonly programId?: string | null
+  readonly startSlot?: number | null
+  readonly mint?: string
+  readonly feeWallet?: string
+  readonly genesisHash?: string
+  readonly requestsLimit?: number
+}
+
 export interface SolanaLedgerConfig {
   readonly mode: Mode
   readonly network: string
   readonly programId: string
+  readonly startSlot: number
   readonly mint: string
   readonly feeWallet: string
+  readonly genesisHash: string
   readonly rpcUrl: Redacted.Redacted<string>
   readonly maxLamportsPerTx: bigint
   readonly maxLamportsPerDay: bigint
   readonly resolverSeed: Redacted.Redacted<string> | undefined
+  readonly requestsLimit: number
 }
+
+export interface SolanaFeeConfig {
+  readonly mode: Mode
+  readonly ledger: SolanaLedgerConfig | null
+}
+
+export type SolanaSendOutcome =
+  | "none"
+  | "in_flight"
+  | "sent"
+  | "recorded"
+  | "unchanged"
+  | "gas_budget"
+  | "no_resolver_key"
+  | "parked"
+  | "reverted"
+  | "resolver_differs"
 
 export interface SolanaRunResult {
   readonly network: string
   readonly status: "off" | "unset" | "chain_mismatch" | "ran"
+  readonly finalizedThrough: number | null
   readonly recorded: number
+  readonly resolved: number
   readonly judged: number
   readonly paid: number
-  readonly resolved: number
+  readonly send: SolanaSendOutcome
+  readonly parked: number
+  readonly released: number
+  readonly open: number | null
+  readonly skipped: number
+  readonly searching: number
+  readonly requests: number
+  readonly steps?: Readonly<Record<string, string>>
+  readonly error?: string
 }
 
-schema ProgramAccountRow {
-  readonly pubkey: string
-  readonly account: { readonly data: ReadonlyArray<string> }
+schema SendState = "recorded" | "submitted" | "unknown" | "finalized" | "failed"
+schema SendMode = "dry_run" | "live"
+
+interface SolanaSendRow {
+  readonly id: string
+  readonly network: string
+  readonly mode: SendMode
+  readonly program: string
+  readonly deposits: ReadonlyArray<SendEntry>
+  readonly resolver: string | null
+  readonly txId: string | null
+  readonly rawTx: string | null
+  readonly lastValidBlockHeight: number | null
+  readonly maximumLamports: string | null
+  readonly state: SendState
+  readonly reason: string | null
+  readonly slot: number | null
+  readonly createdAt: string
 }
 
-schema AccountInfoReply {
-  readonly value: { readonly data: ReadonlyArray<string> } | null
+interface TrackedSolanaDeposit {
+  readonly depositId: number
+  readonly account: string
+  readonly payer: string
+  readonly token: string
+  readonly amount: string
+  readonly keptTo: string
+  readonly blockNumber: number
+}
+
+interface SolanaSearchRow extends TrackedSolanaDeposit {
+  readonly afterSlot: number
+  readonly untilSlot: number
+  readonly before: string | null
+  readonly candidate: string | null
+  readonly checks: number
+}
+
+interface SolanaListing {
+  readonly slot: number
+  readonly depositCount: number
+  readonly depositsPaused: boolean
+  readonly resolver: string
+  readonly open: ReadonlyMap<string, number>
+  readonly openSlot: number
+}
+
+interface SolanaSettlement {
+  readonly state: "refunded" | "kept" | "reclaimed"
+  readonly txHash: string
+  readonly at: string
+}
+
+type SolanaSearchStep =
+  | { readonly done: true; readonly settlement: SolanaSettlement | null }
+  | { readonly done: false; readonly before: string | null; readonly candidate: string | null }
+
+interface SolanaSearchBudget {
+  pages: number
+  reads: number
+}
+
+type SolanaSendStatus =
+  | { readonly kind: "pending" }
+  | { readonly kind: "finalized"; readonly slot: number }
+  | { readonly kind: "failed"; readonly reason: string }
+  | { readonly kind: "rebroadcast" }
+
+interface PreparedSolanaSend {
+  readonly txId: string
+  readonly rawTx: string
+  readonly lastValidBlockHeight: number
+  readonly maximumLamports: string
+}
+
+type SolanaAttempt =
+  | { readonly kind: "signed"; readonly prepared: PreparedSolanaSend }
+  | { readonly kind: "conflict" }
+  | { readonly kind: "gas_budget" }
+  | { readonly kind: "payout_failed"; readonly depositId: number }
+  | { readonly kind: "reverted" }
+
+schema AccountInfoWithContextReply {
+  readonly context: { readonly slot: number }
+  readonly value: { readonly owner: string; readonly data: ReadonlyArray<string> } | null
+}
+
+schema MultipleAccountsWithContextReply {
+  readonly context: { readonly slot: number }
+  readonly value: ReadonlyArray<{ readonly owner: string; readonly data: ReadonlyArray<string> } | null>
+}
+
+schema ProgramAccountsWithContextReply {
+  readonly context: { readonly slot: number }
+  readonly value: ReadonlyArray<{ readonly pubkey: string; readonly account: { readonly owner: string; readonly data: ReadonlyArray<string> } }>
 }
 
 schema BlockhashReply {
@@ -70,63 +257,928 @@ schema FeeReply {
   readonly value: number | null
 }
 
+schema SimulateReply {
+  readonly value: { readonly err: Schema.Unknown }
+}
+
+schema EpochInfoReply {
+  readonly absoluteSlot: number
+  readonly blockHeight: number
+}
+
+schema SignatureStatusEntry {
+  readonly slot?: number
+  readonly confirmationStatus: string | null
+  readonly err: Schema.Unknown
+}
+
+schema SignatureStatusesReply {
+  readonly context: { readonly slot: number }
+  readonly value: ReadonlyArray<SignatureStatusEntry | null>
+}
+
+schema SignatureForAddressRow {
+  readonly signature: string
+  readonly slot: number
+  readonly err: Schema.Unknown
+  readonly blockTime: number | null
+}
+
+schema SolanaSendRecord {
+  readonly id: string
+  readonly network: string
+  readonly mode: SendMode
+  readonly program: string
+  readonly deposits: string
+  readonly resolver: string | null
+  readonly tx_id: string | null
+  readonly raw_tx: string | null
+  readonly last_valid_block_height: number | null
+  readonly maximum_lamports: string | null
+  readonly state: SendState
+  readonly reason: string | null
+  readonly slot: number | null
+  readonly created_at: string
+}
+
+schema TrackedRecord {
+  readonly deposit_id: number
+  readonly deposit_account: string
+  readonly payer: string
+  readonly token: string
+  readonly amount: string
+  readonly kept_to: string
+  readonly block_number: number
+}
+
+schema OwnSettlementRecord {
+  readonly deposit_id: number
+  readonly deposit_account: string
+  readonly payer: string
+  readonly token: string
+  readonly amount: string
+  readonly kept_to: string
+  readonly block_number: number
+  readonly tx_id: string
+}
+
+schema SearchDbRecord {
+  readonly deposit_id: number
+  readonly deposit_account: string
+  readonly payer: string
+  readonly token: string
+  readonly amount: string
+  readonly kept_to: string
+  readonly block_number: number
+  readonly after_slot: number
+  readonly until_slot: number
+  readonly before_tx: string | null
+  readonly candidate_tx: string | null
+  readonly checks: number
+}
+
+schema AccountLookupRow { readonly deposit_account: string | null }
+schema DepositIdRow { readonly deposit_id: number }
+schema FailedOnChainRow { readonly deposit_id: number; readonly alone: number }
+schema SpentRow { readonly spent: number }
+schema ComparedSlotRow { readonly compared_slot: number }
+schema ParkedEntry { readonly deposit_id: number; readonly refund: number }
+
 const SEED_PATTERN = /^[0-9a-fA-F]{64}$/u
+const ALLOWED_RPC_PATTERN = /^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)[:/])/u
+const worker: Actor = "Worker"
+const sendColumns = { text: "id, network, mode, program, deposits, resolver, tx_id, raw_tx, last_valid_block_height, maximum_lamports, state, reason, slot, created_at", params: [] }
+const trackedColumns = { text: "d.deposit_id, d.deposit_account, d.payer, d.token, d.amount, d.kept_to, d.block_number", params: [] }
+
+function refused(issue: string) {
+  return new SubmissionFeeRefused({ issue })
+}
+
+function utcDay(iso: string) {
+  return `${iso.slice(0, 10)}T00:00:00.000Z`
+}
+
+function isEntries(value: unknown): value is ReadonlyArray<SendEntry> {
+  return Array.isArray(value) && value.every((entry: unknown) => typeof entry === "object" && entry !== null && "id" in entry && "refund" in entry
+    && Number.isSafeInteger(entry.id) && typeof entry.id === "number" && entry.id > 0 && typeof entry.refund === "boolean" && Object.keys(entry).length === 2)
+}
+
+function sameEntries(left: ReadonlyArray<SendEntry>, right: ReadonlyArray<SendEntry>) {
+  return left.length === right.length && left.every((entry, index) => entry.id === right[index].id && entry.refund === right[index].refund)
+}
+
+function neverResolvedReason(reason: string | null): boolean {
+  return reason !== null && (SOLANA_NEVER_RESOLVED as ReadonlyArray<string>).includes(reason)
+}
+
+function setAsideReason(error: unknown): string {
+  const tag = typeof error === "object" && error !== null && "_tag" in error ? String((error as { readonly _tag: unknown })._tag) : ""
+  if (tag === "SolanaFeeBudgetError") return "request_limit"
+  if (tag === "RpcUnavailable" || tag === "RpcRefused" || tag === "RpcMalformed") return "read_failed"
+  return "proof_failed"
+}
+
+function trackedOf(row: typeof TrackedRecord.Type): TrackedSolanaDeposit {
+  return {
+    depositId: row.deposit_id,
+    account: row.deposit_account,
+    payer: row.payer,
+    token: row.token,
+    amount: row.amount,
+    keptTo: row.kept_to,
+    blockNumber: row.block_number,
+  }
+}
 
 effect function parseLamports(value: string | undefined, name: string) {
   const text = (value ?? "").trim()
-  const parsed = /^[1-9][0-9]{0,18}$/u.test(text) ? decimal(text) : undefined
-  if (parsed === undefined || parsed > 9007199254740991n) throw new SubmissionFeeConfigInvalid({ issue: `${name} must be a positive whole number of lamports` })
+  const parsed = /^[1-9][0-9]{0,15}$/u.test(text) ? decimal(text) : undefined
+  if (parsed === undefined || parsed > 9007199254740991n)
+    throw new SubmissionFeeConfigInvalid({ issue: `${name} must be a positive whole number of lamports` })
   return parsed
 }
 
-export effect function parseSolanaSubmissionFeeConfig(env: SolanaSubmissionFeeEnv, programId: string | null = SOLANA_SUBMISSION_FEE_PROGRAM_ID) {
+export effect function parseSolanaMode(env: SolanaSubmissionFeeEnv) {
   const mode = (env.SUBMISSION_FEE_SOLANA_MODE ?? "off").trim()
   if (mode !== "off" && mode !== "dry_run" && mode !== "live")
     throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_SOLANA_MODE must be off, dry_run or live" })
-  if (mode === "off" || programId === null) return null
+  return mode satisfies Mode
+}
+
+export effect function parseSolanaSubmissionFeeConfig(env: SolanaSubmissionFeeEnv, deployment: SolanaDeploymentInput = {}) {
+  const mode = try parseSolanaMode(env)
+  if (mode === "off") return { mode, ledger: null } satisfies SolanaFeeConfig
+  const network = deployment.network ?? SOLANA_SUBMISSION_FEE_NETWORK
+  const programId = deployment.programId === undefined ? SOLANA_SUBMISSION_FEE_PROGRAM_ID : deployment.programId
+  const startSlot = deployment.startSlot === undefined ? SOLANA_SUBMISSION_FEE_START_SLOT : deployment.startSlot
+  if (programId === null && startSlot === null) return { mode, ledger: null } satisfies SolanaFeeConfig
+  const mint = deployment.mint ?? SOLANA_SUBMISSION_FEE_MINT
+  const feeWallet = deployment.feeWallet ?? SOLANA_SUBMISSION_FEE_KEPT_TO
+  const genesisHash = deployment.genesisHash ?? solanaGenesis
+  if (programId === null || !isSolanaAddress(programId) || startSlot === null || !Number.isSafeInteger(startSlot) || startSlot < 0
+    || !isSolanaAddress(mint) || !isSolanaAddress(feeWallet) || !isSolanaAddress(genesisHash))
+    throw new SubmissionFeeConfigInvalid({ issue: `${network} needs a program id, a start slot, a mint and a fee wallet` })
   const rpc = (env.RPC_URL_SUBMISSION_FEE_SOLANA ?? "").trim()
-  if (!/^https:\/\//u.test(rpc)) throw new SubmissionFeeConfigInvalid({ issue: "RPC_URL_SUBMISSION_FEE_SOLANA must be an https URL" })
+  if (!ALLOWED_RPC_PATTERN.test(rpc))
+    throw new SubmissionFeeConfigInvalid({ issue: "RPC_URL_SUBMISSION_FEE_SOLANA must be an https URL" })
   const maxLamportsPerTx = try parseLamports(env.SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX, "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_TX")
   const maxLamportsPerDay = try parseLamports(env.SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY, "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY")
-  if (maxLamportsPerDay < maxLamportsPerTx) throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY must cover one transaction limit" })
+  if (maxLamportsPerDay < maxLamportsPerTx)
+    throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_SOLANA_MAX_LAMPORTS_PER_DAY must cover one transaction limit" })
   const seed = (env.SUBMISSION_FEE_SOLANA_RESOLVER_SEED ?? "").trim()
-  if (mode === "live" && !SEED_PATTERN.test(seed)) throw new SubmissionFeeConfigInvalid({ issue: "live Solana mode needs a 64-hex-digit SUBMISSION_FEE_SOLANA_RESOLVER_SEED" })
+  if (mode === "live" && !SEED_PATTERN.test(seed))
+    throw new SubmissionFeeConfigInvalid({ issue: "live mode needs SUBMISSION_FEE_SOLANA_RESOLVER_SEED" })
   return {
     mode,
-    network: SOLANA_SUBMISSION_FEE_NETWORK,
-    programId,
-    mint: SOLANA_SUBMISSION_FEE_MINT,
-    feeWallet: SOLANA_SUBMISSION_FEE_KEPT_TO,
-    rpcUrl: Redacted.make(rpc),
-    maxLamportsPerTx,
-    maxLamportsPerDay,
-    resolverSeed: seed === "" ? undefined : Redacted.make(seed),
-  } satisfies SolanaLedgerConfig
+    ledger: {
+      mode,
+      network,
+      programId,
+      startSlot,
+      mint,
+      feeWallet,
+      genesisHash,
+      rpcUrl: Redacted.make(rpc),
+      maxLamportsPerTx,
+      maxLamportsPerDay,
+      resolverSeed: mode === "live" && seed !== "" ? Redacted.make(seed) : undefined,
+      requestsLimit: deployment.requestsLimit ?? SOLANA_REQUESTS_PER_RUN,
+    },
+  } satisfies SolanaFeeConfig
+}
+
+function solanaSpentSince(network: string, day: string) {
+  return sql`(SELECT COALESCE(SUM(CAST(maximum_lamports AS INTEGER)), 0)
+    FROM submission_fee_solana_sends
+    WHERE network = ${network} AND mode = 'live' AND created_at >= ${day}
+      AND NOT (state = 'failed' AND reason = ${SOLANA_EXPIRED}))`
+}
+
+effect function solanaSendOf(record: typeof SolanaSendRecord.Type) {
+  const parsed: unknown = try Effect.try({ try: () => JSON.parse(record.deposits), catch: () => refused("A recorded Solana send has an invalid deposit list") })
+  if (!isEntries(parsed)) throw refused("A recorded Solana send has an invalid deposit list")
+  return {
+    id: record.id,
+    network: record.network,
+    mode: record.mode,
+    program: record.program,
+    deposits: parsed,
+    resolver: record.resolver,
+    txId: record.tx_id,
+    rawTx: record.raw_tx,
+    lastValidBlockHeight: record.last_valid_block_height,
+    maximumLamports: record.maximum_lamports,
+    state: record.state,
+    reason: record.reason,
+    slot: record.slot,
+    createdAt: record.created_at,
+  } satisfies SolanaSendRow
+}
+
+effect function openSolanaSend(network: string) {
+  const found = try first(SolanaSendRecord, sql`SELECT ${sendColumns} FROM submission_fee_solana_sends WHERE network = ${network} AND state IN ('submitted', 'unknown')`)
+  return found === undefined ? null : try solanaSendOf(found)
+}
+
+effect function latestSolanaDryRun(network: string) {
+  const found = try first(SolanaSendRecord, sql`SELECT ${sendColumns} FROM submission_fee_solana_sends WHERE network = ${network} AND mode = 'dry_run' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+  return found === undefined ? null : try solanaSendOf(found)
+}
+
+effect function solanaSpentToday(network: string) {
+  const day = utcDay(try isoNow())
+  const found = try first(SpentRow, sql`SELECT ${solanaSpentSince(network, day)} AS spent`)
+  return found?.spent ?? 0
+}
+
+effect function insertSolanaSend(row: SolanaSendRow, maxPerTx: bigint, maxPerDay: bigint) {
+  const insert = sql`INSERT INTO submission_fee_solana_sends
+      (id, network, mode, program, deposits, resolver, tx_id, raw_tx, last_valid_block_height, maximum_lamports, state, reason, slot, created_at, updated_at, finalized_at)
+    SELECT ${row.id}, ${row.network}, ${row.mode}, ${row.program}, ${JSON.stringify(row.deposits)}, ${row.resolver}, ${row.txId}, ${row.rawTx},
+           ${row.lastValidBlockHeight}, ${row.maximumLamports}, ${row.state}, NULL, NULL, ${row.createdAt}, ${row.createdAt}, NULL`
+  const reserve = row.maximumLamports ?? ""
+  const reserveBig = /^[1-9][0-9]*$/u.test(reserve) ? decimal(reserve) : undefined
+  if (row.mode === "live" && (reserveBig === undefined || reserveBig > maxPerTx))
+    throw new GasBudget({ issue: "The transaction exceeds the network fee limit; nothing was signed" })
+  const statement = row.mode === "dry_run"
+    ? insert
+    : sql`${insert} WHERE ${solanaSpentSince(row.network, utcDay(row.createdAt))} + ${Number(reserve)} <= ${Number(maxPerDay)}`
+  const changes = (try D1).run(statement) catch effect (error) => {
+    if (error._tag === "ConstraintViolation") throw new SolanaSendConflict({ network: row.network })
+    throw error
+  }
+  if (changes !== 1) throw new GasBudget({ issue: "The day's network fee limit is reached; nothing was sent" })
+}
+
+effect function updateSolanaSend(id: string, state: SendState, fields: { readonly reason?: string; readonly slot?: number; readonly finalizedAt?: string }) {
+  const at = try isoNow()
+  const changed = try (try D1).run(sql`UPDATE submission_fee_solana_sends
+      SET state = ${state}, reason = ${fields.reason ?? null}, slot = ${fields.slot ?? null}, finalized_at = ${fields.finalizedAt ?? null}, updated_at = ${at}
+    WHERE id = ${id}`)
+  if (changed !== 1) throw refused("A recorded Solana send was not updated")
+}
+
+effect function solanaAccount(network: string, depositId: number) {
+  const found = try first(AccountLookupRow, sql`SELECT deposit_account FROM submission_fee_deposits WHERE network = ${network} AND deposit_id = ${depositId}`)
+  return found?.deposit_account ?? null
+}
+
+effect function trackedSolanaDeposits(network: string, limit: number) {
+  const found = try rows(TrackedRecord, sql`SELECT ${trackedColumns} FROM submission_fee_deposits d
+    WHERE d.network = ${network} AND d.finalized_at IS NOT NULL AND d.deposit_account IS NOT NULL
+      AND d.state IN ('open', 'refund_due', 'kept_due')
+      AND NOT (d.accepted IS 0 AND COALESCE(d.reject_reason, '') IN ('token_not_accepted', 'wrong_kept_to', 'amount_below_due', 'item_fee_invalid'))
+    ORDER BY (d.state <> 'open') DESC, d.deposit_id LIMIT ${limit}`)
+  return found.map(trackedOf)
+}
+
+effect function ownSolanaSettlements(network: string, limit: number) {
+  const found = try rows(OwnSettlementRecord, sql`SELECT ${trackedColumns}, s.tx_id
+    FROM submission_fee_solana_sends s, json_each(s.deposits) j
+    JOIN submission_fee_deposits d ON d.network = s.network AND d.deposit_id = json_extract(j.value, '$.id')
+    WHERE s.network = ${network} AND s.state = 'finalized' AND s.tx_id IS NOT NULL
+      AND d.deposit_account IS NOT NULL AND d.state IN ('open', 'refund_due', 'kept_due')
+    ORDER BY s.finalized_at, d.deposit_id LIMIT ${limit}`)
+  return found.map((row) => ({ ...trackedOf(row), txId: row.tx_id }))
+}
+
+effect function acceptedSolanaDue(network: string, limit: number) {
+  const found = try rows(DepositIdRow, sql`SELECT deposit_id FROM submission_fee_deposits
+    WHERE network = ${network} AND accepted = 1 AND state IN ('refund_due', 'kept_due')
+    ORDER BY deposit_id LIMIT ${limit}`)
+  return new Set(found.map((row) => row.deposit_id))
+}
+
+effect function solanaFailedOnChain(network: string) {
+  const found = try rows(FailedOnChainRow, sql`SELECT d.deposit_id, MAX(json_array_length(s.deposits) = 1) AS alone
+    FROM submission_fee_solana_sends s, json_each(s.deposits) j
+    JOIN submission_fee_deposits d ON d.network = s.network AND d.deposit_id = json_extract(j.value, '$.id')
+    WHERE s.network = ${network} AND s.mode = 'live' AND s.state = 'failed'
+      AND s.reason = ${SOLANA_LANDED_FAILED} AND d.state IN ('refund_due', 'kept_due')
+    GROUP BY d.deposit_id`)
+  return {
+    together: new Set(found.map((row) => row.deposit_id)),
+    alone: new Set(found.filter((row) => row.alone === 1).map((row) => row.deposit_id)),
+  }
+}
+
+effect function comparedSlot(network: string) {
+  const found = try first(ComparedSlotRow, sql`SELECT compared_slot FROM submission_fee_solana_scans WHERE network = ${network}`)
+  return found === undefined ? null : found.compared_slot
+}
+
+effect function setComparedSlot(network: string, slot: number, at: string) {
+  try (try D1).run(sql`INSERT INTO submission_fee_solana_scans (network, compared_slot, updated_at)
+    VALUES (${network}, ${slot}, ${at})
+    ON CONFLICT(network) DO UPDATE SET compared_slot = excluded.compared_slot, updated_at = excluded.updated_at
+    WHERE excluded.compared_slot > submission_fee_solana_scans.compared_slot`)
+}
+
+effect function openSolanaSearch(network: string, depositId: number, afterSlot: number, untilSlot: number, at: string) {
+  const boundedUntil = Math.max(afterSlot, untilSlot)
+  try (try D1).run(sql`INSERT INTO submission_fee_solana_settlements
+      (network, deposit_id, after_slot, until_slot, checks, first_at, checked_at)
+    VALUES (${network}, ${depositId}, ${afterSlot}, ${boundedUntil}, 0, ${at}, ${at})
+    ON CONFLICT(network, deposit_id) DO NOTHING`)
+}
+
+effect function searchedSolana(network: string) {
+  const found = try rows(DepositIdRow, sql`SELECT deposit_id FROM submission_fee_solana_settlements WHERE network = ${network} AND done_at IS NULL`)
+  return new Set(found.map((row) => row.deposit_id))
+}
+
+effect function solanaSearches(network: string, limit: number) {
+  const found = try rows(SearchDbRecord, sql`SELECT ${trackedColumns}, x.after_slot, x.until_slot, x.before_tx, x.candidate_tx, x.checks
+    FROM submission_fee_solana_settlements x
+    JOIN submission_fee_deposits d ON d.network = x.network AND d.deposit_id = x.deposit_id
+    WHERE x.network = ${network} AND x.done_at IS NULL
+      AND d.deposit_account IS NOT NULL AND d.state IN ('open', 'refund_due', 'kept_due')
+    ORDER BY x.checked_at, x.deposit_id LIMIT ${limit}`)
+  return found.map((row) => ({
+    ...trackedOf(row),
+    afterSlot: row.after_slot,
+    untilSlot: row.until_slot,
+    before: row.before_tx,
+    candidate: row.candidate_tx,
+    checks: row.checks,
+  } satisfies SolanaSearchRow))
+}
+
+effect function saveSolanaSearch(
+  network: string,
+  depositId: number,
+  state: { readonly before: string | null; readonly candidate: string | null; readonly reason: string | null; readonly done?: boolean },
+  at: string,
+) {
+  try (try D1).run(sql`UPDATE submission_fee_solana_settlements
+      SET before_tx = ${state.before}, candidate_tx = ${state.candidate}, reason = ${state.reason},
+          checks = checks + 1, checked_at = ${at}, done_at = ${state.done === true ? at : null}
+    WHERE network = ${network} AND deposit_id = ${depositId} AND done_at IS NULL`)
+}
+
+effect function settleSolanaDeposit(network: string, depositId: number, settlement: SolanaSettlement) {
+  const items = try SubmissionFeeItems
+  const outcome = settlement.state === "kept" ? "kept" : "refunded"
+  const at = try isoNow()
+  try (try D1).batch([
+    recordResolution(network, { depositId, state: settlement.state, txHash: settlement.txHash, at: settlement.at }),
+    try items.finalOutcome({ network, depositId }, outcome, settlement.at),
+    sql`UPDATE submission_fee_solana_settlements
+        SET before_tx = NULL, candidate_tx = NULL, reason = NULL, checks = checks + 1, checked_at = ${at}, done_at = ${at}
+      WHERE network = ${network} AND deposit_id = ${depositId} AND done_at IS NULL`,
+  ])
+}
+
+effect function makeSolanaTransport(config: SolanaLedgerConfig) {
+  const client = try jsonRpc({ urls: Redacted.make([Redacted.value(config.rpcUrl)]), timeoutMs: 15_000, maxBytes: 4 * 1024 * 1024 })
+  const tracked = new Map<number, string>()
+  let requestCount = 0
+
+  effect function rpc<A>(method: string, params: ReadonlyArray<unknown>, schema: Schema.Decoder<A, never>) {
+    if (requestCount >= config.requestsLimit) throw new SolanaFeeBudgetError({ issue: "The run's Solana request limit is reached" })
+    requestCount += 1
+    return try client.call(method, params, schema)
+  }
+
+  effect function accountInfo(address: string, minContextSlot?: number) {
+    return try rpc("getAccountInfo", [
+      address,
+      { commitment: "finalized", encoding: "base64", ...minContextSlot === undefined ? {} : { minContextSlot } },
+    ], AccountInfoWithContextReply)
+  }
+
+  effect function multipleAccounts(addresses: ReadonlyArray<string>, minContextSlot?: number, commitment: "finalized" | "confirmed" = "finalized") {
+    if (addresses.length === 0 || addresses.length > SOLANA_RECORDS_PER_READ) throw refused("Between 1 and 100 accounts are read together")
+    const reply = try rpc("getMultipleAccounts", [
+      addresses,
+      { commitment, encoding: "base64", ...minContextSlot === undefined ? {} : { minContextSlot } },
+    ], MultipleAccountsWithContextReply)
+    if (reply.value.length !== addresses.length) throw refused("Invalid Solana multiple accounts response")
+    return reply
+  }
+
+  function decodeRecordEntry(value: { readonly owner: string; readonly data: ReadonlyArray<string> } | null): SubmissionDeposit | null {
+    if (value === null || value.owner !== config.programId) return null
+    const bytes = base64Decode(value.data[0] ?? "")
+    if (bytes === undefined) return null
+    return decodeSubmissionDeposit(bytes) ?? null
+  }
+
+  effect function addressOf(depositId: number) {
+    const known = tracked.get(depositId)
+    if (known !== undefined) return known
+    const found = try solanaAccount(config.network, depositId)
+    if (found === null) throw refused("A Solana deposit's record is not known")
+    tracked.set(depositId, found)
+    return found
+  }
+
+  return {
+    config,
+    rpc,
+    accountInfo,
+    multipleAccounts,
+    decodeRecordEntry,
+    addressOf,
+    track: (depositId: number, address: string) => { tracked.set(depositId, address) },
+    requests: () => requestCount,
+  }
+}
+
+type SolanaTransport = Effect.Success<ReturnType<typeof makeSolanaTransport>>
+
+function makeSolanaReader(transport: SolanaTransport) {
+  const { config, rpc, accountInfo, multipleAccounts, decodeRecordEntry, addressOf } = transport
+  const txCache = new Map<string, unknown>()
+
+  effect function readDeposit(depositId: number) {
+    const addr = try addressOf(depositId)
+    const reply = try accountInfo(addr)
+    const decoded = decodeRecordEntry(reply.value)
+    if (decoded === null || Number(decoded.id) !== depositId) return { address: addr, deposit: null }
+    return { address: addr, deposit: decoded }
+  }
+
+  effect function readConfig() {
+    const configAddr = submissionConfigAddress(config.programId)
+    if (configAddr === undefined) throw refused("Invalid Solana program id")
+    const reply = try accountInfo(configAddr)
+    if (reply.value === null || reply.value.owner !== config.programId) throw refused("The deposit program has no Config")
+    const bytes = base64Decode(reply.value.data[0] ?? "")
+    const decoded = bytes === undefined ? undefined : decodeSubmissionConfig(bytes)
+    if (decoded === undefined) throw refused("Invalid Solana Config account")
+    const depositCount = Number(decoded.depositCount)
+    if (!Number.isSafeInteger(depositCount) || depositCount < 0) throw refused("Solana deposit count out of range")
+    return { slot: reply.context.slot, depositCount, depositsPaused: decoded.depositsPaused, resolver: decoded.resolver }
+  }
+
+  effect function listing() {
+    const cfg = try readConfig()
+    const reply = try rpc("getProgramAccounts", [
+      config.programId,
+      {
+        commitment: "finalized",
+        encoding: "base64",
+        withContext: true,
+        minContextSlot: cfg.slot,
+        dataSlice: { offset: DEPOSIT_OFFSETS.id, length: 8 },
+        filters: [
+          { dataSize: SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES },
+          { memcmp: { offset: 0, bytes: base58Encode(DEPOSIT_DISCRIMINATOR) } },
+          { memcmp: { offset: DEPOSIT_OFFSETS.mint, bytes: config.mint } },
+          { memcmp: { offset: DEPOSIT_OFFSETS.keptTo, bytes: config.feeWallet } },
+        ],
+      },
+    ], ProgramAccountsWithContextReply)
+    const openSlot = reply.context.slot
+    if (openSlot < cfg.slot) throw refused("The deposit accounts were read before the Config")
+    const open = new Map<string, number>()
+    const seenIds = new Set<number>()
+    for (const entry of reply.value) {
+      if (entry.account.owner !== config.programId) throw refused("Unexpected Solana program account owner")
+      const bytes = base64Decode(entry.account.data[0] ?? "")
+      const id = bytes === undefined ? undefined : decodeDepositIdSlice(bytes)
+      if (id === undefined) throw refused("Invalid Solana deposit id slice")
+      if (seenIds.has(id)) throw refused("Two open deposits carry one id")
+      seenIds.add(id)
+      open.set(entry.pubkey, id)
+    }
+    return { ...cfg, open, openSlot } satisfies SolanaListing
+  }
+
+  effect function records(addresses: ReadonlyArray<string>, minSlot: number) {
+    const reply = try multipleAccounts(addresses, minSlot, "finalized")
+    const found = new Map<string, SubmissionDeposit | null>()
+    for (let i = 0; i < addresses.length; i += 1) {
+      const addr = addresses[i] ?? ""
+      const decoded = decodeRecordEntry(reply.value[i] ?? null)
+      const valid = decoded !== null && addr === submissionDepositAddress(config.programId, decoded.payer, decoded.nonce)
+      found.set(addr, valid ? decoded : null)
+    }
+    return { slot: reply.context.slot, records: found }
+  }
+
+  effect function signatures(address: string, before: string | null) {
+    return try rpc("getSignaturesForAddress", [
+      address,
+      { commitment: "finalized", limit: SOLANA_SIGNATURE_PAGE, ...before === null ? {} : { before } },
+    ], Schema.Array(SignatureForAddressRow))
+  }
+
+  effect function getTransaction(signature: string) {
+    if (txCache.has(signature)) return txCache.get(signature) ?? null
+    const found = try rpc("getTransaction", [
+      signature,
+      { commitment: "finalized", encoding: "json", maxSupportedTransactionVersion: 0 },
+    ], Schema.Unknown)
+    if (found === null || found === undefined) return null
+    txCache.set(signature, found)
+    return found
+  }
+
+  effect function creation(account: string, record: SubmissionDeposit) {
+    const page = try signatures(account, null)
+    const candidates = page.filter((entry) => (entry.err === null || entry.err === undefined) && entry.blockTime === record.depositedAt)
+    for (const candidate of candidates.slice(0, 2)) {
+      const tx = try getTransaction(candidate.signature)
+      if (tx === null) continue
+      if (submissionCreation(tx, config.programId, account, record)) {
+        const slot = typeof tx === "object" && tx !== null && "slot" in tx && typeof (tx as { readonly slot: unknown }).slot === "number"
+          ? (tx as { readonly slot: number }).slot
+          : candidate.slot
+        return { signature: candidate.signature, slot }
+      }
+    }
+    return null
+  }
+
+  effect function proveSettlement(tx: unknown, signature: string, row: TrackedSolanaDeposit) {
+    const parsed = submissionSettlement(tx, config.programId, row.account)
+    if (!parsed.ok) throw refused(parsed.issue)
+    if (parsed.settlement === null) return null
+    const settled = parsed.settlement
+    const wallet = settled.kind === "kept" ? row.keptTo : row.payer
+    const expectedAta = associatedUsdcAccount(wallet, row.token)
+    const rose = decimal(settled.destinationRose)
+    const needed = decimal(row.amount)
+    if (settled.mint !== row.token || settled.amount !== row.amount || settled.destinationOwner !== wallet
+      || rose === undefined || needed === undefined || rose < needed
+      || (settled.kind !== "reclaimed" && settled.destination !== expectedAta))
+      throw refused("A settlement does not prove the deposit's transfer")
+    const blockTime = typeof tx === "object" && tx !== null && "blockTime" in tx ? (tx as { readonly blockTime: unknown }).blockTime : undefined
+    if (typeof blockTime !== "number" || !Number.isSafeInteger(blockTime) || blockTime <= 0)
+      throw refused("Invalid Solana settlement block time")
+    return { state: settled.kind, txHash: signature, at: try isoAt(blockTime * 1000) } satisfies SolanaSettlement
+  }
+
+  effect function settledBy(signature: string, row: TrackedSolanaDeposit) {
+    const tx = try getTransaction(signature)
+    if (tx === null) return null
+    const settled = try proveSettlement(tx, signature, row)
+    if (settled === null) throw refused("A finalized send does not settle its deposit")
+    return settled
+  }
+
+  effect function search(row: SolanaSearchRow, budget: SolanaSearchBudget) {
+    let before = row.before
+    let candidate = row.candidate
+    for (;;) {
+      if (budget.pages <= 0) return { done: false, before, candidate } satisfies SolanaSearchStep
+      budget.pages -= 1
+      const page = try signatures(row.account, before)
+      let reachedStart = false
+      for (const entry of page) {
+        if (entry.slot <= row.afterSlot) {
+          reachedStart = true
+          break
+        }
+        if (entry.slot <= row.untilSlot && (entry.err === null || entry.err === undefined)) {
+          if (budget.reads <= 0) return { done: false, before, candidate } satisfies SolanaSearchStep
+          budget.reads -= 1
+          const tx = try getTransaction(entry.signature)
+          if (tx === null) return { done: false, before, candidate } satisfies SolanaSearchStep
+          const checked = submissionSettlement(tx, config.programId, row.account)
+          if (!checked.ok) throw refused(checked.issue)
+          if (checked.settlement !== null) candidate = entry.signature
+        }
+        before = entry.signature
+      }
+      if (reachedStart || page.length < SOLANA_SIGNATURE_PAGE) break
+    }
+    if (candidate === null) return { done: true, settlement: null } satisfies SolanaSearchStep
+    if (!txCache.has(candidate)) {
+      if (budget.reads <= 0) return { done: false, before, candidate } satisfies SolanaSearchStep
+      budget.reads -= 1
+    }
+    const tx = try getTransaction(candidate)
+    if (tx === null) return { done: false, before, candidate } satisfies SolanaSearchStep
+    const settled = try proveSettlement(tx, candidate, row)
+    if (settled === null) throw refused("A settlement candidate settles nothing")
+    return { done: true, settlement: settled } satisfies SolanaSearchStep
+  }
+
+  return { config: readConfig, listing, records, creation, settledBy, search, deposit: readDeposit }
+}
+
+effect function makeSolanaSender(transport: SolanaTransport) {
+  const { config, rpc, multipleAccounts, decodeRecordEntry, addressOf } = transport
+  const signer = config.resolverSeed === undefined ? undefined : (try SubmissionFeeSigners).solana(config.resolverSeed)
+  const resolverAddress = signer?.address ?? null
+
+  effect function buildInstructions(entries: ReadonlyArray<SendEntry>) {
+    if (resolverAddress === null) throw refused("Signing is disabled without SUBMISSION_FEE_SOLANA_RESOLVER_SEED")
+    if (entries.length === 0 || entries.length > solanaMaxBatch) throw refused("A resolve transaction carries one to five deposits")
+    const addresses: string[] = []
+    for (const entry of entries) addresses.push(try addressOf(entry.id))
+    const read = try multipleAccounts(addresses, undefined, "finalized")
+    const open: SubmissionDeposit[] = []
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      const deposit = decodeRecordEntry(read.value[i] ?? null)
+      if (deposit === null || Number(deposit.id) !== entry.id) throw new SendReverted({ issue: "A deposit of the batch is settled" })
+      if (deposit.mint !== config.mint || (!entry.refund && deposit.keptTo !== config.feeWallet))
+        throw new PayoutFailed({ depositId: entry.id })
+      open.push(deposit)
+    }
+    const wallets = open.map((deposit, i) => (entries[i].refund ? deposit.payer : deposit.keptTo))
+    const atas: string[] = []
+    for (const wallet of wallets) {
+      const ata = associatedUsdcAccount(wallet, config.mint)
+      if (ata === undefined) throw refused("Invalid destination associated token account")
+      atas.push(ata)
+    }
+    const destinations = try multipleAccounts(atas, read.context.slot, "confirmed")
+    const built = []
+    for (let i = 0; i < open.length; i += 1) {
+      const destEntry = destinations.value[i]
+      const destBytes = destEntry !== null && destEntry !== undefined && destEntry.owner === CLASSIC_TOKEN_PROGRAM
+        ? (base64Decode(destEntry.data[0] ?? "") ?? null)
+        : null
+      if (!tokenAccountDeliverable(destBytes, config.mint, wallets[i] ?? ""))
+        throw new PayoutFailed({ depositId: entries[i].id })
+      const ix = resolveInstruction({
+        programId: config.programId,
+        resolver: resolverAddress,
+        deposit: addresses[i] ?? "",
+        mint: config.mint,
+        destination: atas[i] ?? "",
+        payer: open[i].payer,
+        refund: entries[i].refund,
+        expectedId: open[i].id,
+      })
+      if (ix === undefined) throw refused("Could not assemble Solana resolve instruction")
+      built.push(ix)
+    }
+    return built
+  }
+
+  effect function simulateConfirmed(body: Uint8Array) {
+    const unsigned = buildUnsignedTransaction(body, 1)
+    const sim = try rpc("simulateTransaction", [
+      base64Encode(unsigned),
+      { encoding: "base64", sigVerify: false, commitment: "confirmed" },
+    ], SimulateReply)
+    if (sim.value.err === null || sim.value.err === undefined) return
+    if (typeof sim.value.err === "object" && "InstructionError" in (sim.value.err as Readonly<Record<string, unknown>>))
+      throw new SendReverted({ issue: "The resolve simulation failed" })
+    throw refused("The resolve simulation could not run")
+  }
+
+  effect function probe(entry: SendEntry) {
+    const checked = effect {
+      const built = try buildInstructions([entry])
+      const bh = try rpc("getLatestBlockhash", [{ commitment: "finalized" }], BlockhashReply)
+      const body = buildSolanaMessage(resolverAddress ?? "", bh.value.blockhash, built)
+      if (body === undefined || body.length + 65 > SOLANA_TRANSACTION_BYTES) throw refused("The resolve transaction is too large")
+      try simulateConfirmed(body)
+      return "ok" as const
+    }
+    return checked catch effect (error) => {
+      if (error._tag === "PayoutFailed") return "payout_failed" as const
+      if (error._tag === "SendReverted") return "reverted" as const
+      throw error
+    }
+  }
+
+  effect function prepare<E, R>(entries: ReadonlyArray<SendEntry>, authorize: (maximumLamports: string) => void!E!R) {
+    if (signer === undefined || resolverAddress === null) throw refused("Signing is disabled without SUBMISSION_FEE_SOLANA_RESOLVER_SEED")
+    const built = try buildInstructions(entries)
+    const bh = try rpc("getLatestBlockhash", [{ commitment: "finalized" }], BlockhashReply)
+    const body = buildSolanaMessage(resolverAddress, bh.value.blockhash, built)
+    if (body === undefined || body.length + 65 > SOLANA_TRANSACTION_BYTES) throw refused("The resolve transaction is too large")
+    try simulateConfirmed(body)
+    const feeReply = try rpc("getFeeForMessage", [base64Encode(body), { commitment: "finalized" }], FeeReply)
+    const feeBig = feeReply.value === null ? undefined : wholeBig(feeReply.value)
+    if (feeBig === undefined || feeBig <= 0n)
+      throw refused("Invalid Solana transaction fee")
+    if (feeBig > config.maxLamportsPerTx)
+      throw new GasBudget({ issue: "The transaction exceeds the network fee limit; nothing was signed" })
+    try authorize(feeBig.toString())
+    const sig = signer.sign(body)
+    const wire = buildSignedTransaction(sig, body)
+    if (wire === undefined) throw refused("Could not assemble signed Solana transaction")
+    return {
+      txId: base58Encode(sig),
+      rawTx: base64Encode(wire),
+      lastValidBlockHeight: bh.value.lastValidBlockHeight,
+      maximumLamports: feeBig.toString(),
+    } satisfies PreparedSolanaSend
+  }
+
+  effect function broadcast(rawTx: string) {
+    const wire = base64Decode(rawTx)
+    const expectedSig = wire === undefined ? undefined : firstTransactionSignature(wire)
+    if (expectedSig === undefined) throw refused("The recorded transaction is malformed")
+    const sent = try rpc("sendTransaction", [rawTx, { encoding: "base64", skipPreflight: true, maxRetries: 0 }], Schema.String)
+    if (sent !== expectedSig) throw refused("Submission fee broadcast signature differs")
+  }
+
+  effect function sendStatus(send: SolanaSendRow) {
+    if (send.network !== config.network || send.program !== config.programId || send.txId === null || send.resolver === null || send.lastValidBlockHeight === null)
+      throw refused("Submission fee journal deployment differs")
+    const epoch = try rpc("getEpochInfo", [{ commitment: "finalized" }], EpochInfoReply)
+    const statuses = try rpc("getSignatureStatuses", [[send.txId], { searchTransactionHistory: true }], SignatureStatusesReply)
+    if (statuses.value.length !== 1) throw refused("Invalid Solana signature statuses response")
+    const found = statuses.value[0]
+    if (found === null || found === undefined) {
+      if (epoch.blockHeight <= send.lastValidBlockHeight) return { kind: "rebroadcast" } satisfies SolanaSendStatus
+      if (statuses.context.slot < epoch.absoluteSlot) return { kind: "pending" } satisfies SolanaSendStatus
+      return { kind: "failed", reason: SOLANA_EXPIRED } satisfies SolanaSendStatus
+    }
+    if (found.confirmationStatus !== "finalized") return { kind: "pending" } satisfies SolanaSendStatus
+    if (found.err !== null && found.err !== undefined) return { kind: "failed", reason: SOLANA_LANDED_FAILED } satisfies SolanaSendStatus
+    if (found.slot === undefined || !Number.isSafeInteger(found.slot) || found.slot < 0) throw refused("Invalid finalized slot")
+    return { kind: "finalized", slot: found.slot } satisfies SolanaSendStatus
+  }
+
+  return { address: () => resolverAddress, probe, prepare, broadcast, status: sendStatus }
+}
+
+effect function makeSolanaChain(config: SolanaLedgerConfig) {
+  const transport = try makeSolanaTransport(config)
+  const reader = makeSolanaReader(transport)
+  const sender = try makeSolanaSender(transport)
+  return {
+    genesisHash: () => transport.rpc("getGenesisHash", [], Schema.String),
+    ...reader,
+    ...sender,
+    track: transport.track,
+    requests: transport.requests,
+  }
+}
+
+type SolanaChain = Effect.Success<ReturnType<typeof makeSolanaChain>>
+
+effect function scanSolana(config: SolanaLedgerConfig, chain: SolanaChain, listing: SolanaListing) {
+  const startCursor = (try cursor(config.network)) ?? 1
+  const gone = (row: TrackedSolanaDeposit) => listing.open.get(row.account) !== row.depositId
+  let resolved = 0
+  const done = new Set<number>()
+  for (const row of try ownSolanaSettlements(config.network, SOLANA_OWN_SETTLEMENTS_PER_RUN)) {
+    if (!gone(row)) continue
+    const settled = chain.settledBy(row.txId, row) catch effect (error) => {
+      try Effect.logInfo("submission_fee_solana_set_aside", { network: config.network, depositId: row.depositId, step: "own_settlement", reason: setAsideReason(error) })
+      return undefined
+    }
+    if (settled === undefined || settled === null) continue
+    try settleSolanaDeposit(config.network, row.depositId, settled)
+    done.add(row.depositId)
+    resolved += 1
+  }
+  const tracked = try trackedSolanaDeposits(config.network, SOLANA_TRACKED_PER_RUN)
+  const compared = (try comparedSlot(config.network)) ?? 0
+  const searched = try searchedSolana(config.network)
+  let opened = 0
+  let unopened = false
+  for (const row of tracked) {
+    chain.track(row.depositId, row.account)
+    if (!gone(row) || done.has(row.depositId) || searched.has(row.depositId)) continue
+    if (opened === SOLANA_SEARCHES_OPENED_PER_RUN) {
+      unopened = true
+      continue
+    }
+    try openSolanaSearch(config.network, row.depositId, Math.max(row.blockNumber, compared), listing.openSlot, try isoNow())
+    opened += 1
+  }
+  if (tracked.length < SOLANA_TRACKED_PER_RUN && !unopened)
+    try setComparedSlot(config.network, listing.openSlot, try isoNow())
+  else
+    try Effect.logInfo("submission_fee_solana_comparison_partial", { network: config.network, tracked: tracked.length })
+  const budget: SolanaSearchBudget = { pages: SOLANA_SEARCH_PAGES_PER_RUN, reads: SOLANA_SEARCH_READS_PER_RUN }
+  let searching = 0
+  for (const row of try solanaSearches(config.network, SOLANA_SEARCHES_PER_RUN)) {
+    if (done.has(row.depositId)) continue
+    if (budget.pages <= 0) {
+      searching += 1
+      continue
+    }
+    const stepped = chain.search(row, budget) catch effect (error) => {
+      const reason = setAsideReason(error)
+      try Effect.logInfo("submission_fee_solana_set_aside", { network: config.network, depositId: row.depositId, step: "settlement", reason })
+      try saveSolanaSearch(config.network, row.depositId, { before: row.before, candidate: row.candidate, reason }, try isoNow())
+      return undefined
+    }
+    if (stepped === undefined) {
+      searching += 1
+      continue
+    }
+    if (stepped.done && stepped.settlement !== null) {
+      try settleSolanaDeposit(config.network, row.depositId, stepped.settlement)
+      resolved += 1
+      continue
+    }
+    searching += 1
+    if (stepped.done) {
+      try saveSolanaSearch(config.network, row.depositId, { before: null, candidate: null, reason: "not_found" }, try isoNow())
+      try Effect.logInfo("submission_fee_solana_set_aside", { network: config.network, depositId: row.depositId, step: "settlement", reason: "proof_failed" })
+    } else {
+      try saveSolanaSearch(config.network, row.depositId, { before: stepped.before, candidate: stepped.candidate, reason: null }, try isoNow())
+    }
+  }
+  const listed = [...listing.open.entries()]
+    .filter(([, id]) => id >= startCursor)
+    .sort((left, right) => left[1] - right[1])
+  const fresh = listed.slice(0, SOLANA_RECORDED_PER_RUN)
+  const through = fresh.length < listed.length
+    ? (fresh[fresh.length - 1]?.[1] ?? startCursor - 1)
+    : Math.max(listing.depositCount, ...fresh.map(([, id]) => id))
+  const items = try SubmissionFeeItems
+  const reports = try ReportDeposits
+  const statements: Statement[] = []
+  let recorded = 0
+  let skipped = 0
+  let lookups = 0
+  const finalizedAt = try isoNow()
+  if (fresh.length > 0) {
+    const read = try chain.records(fresh.map(([account]) => account), listing.openSlot)
+    for (const [account, id] of fresh) {
+      const record = read.records.get(account) ?? null
+      if (record === null || Number(record.id) !== id || record.mint !== config.mint || record.keptTo !== config.feeWallet) {
+        skipped += 1
+        continue
+      }
+      let created: { readonly signature: string; readonly slot: number } | null = null
+      if (lookups < SOLANA_CREATIONS_PER_RUN) {
+        const knownItem = (try items.byItem(record.item)) !== null || (try reports.askedByItem(record.item)) !== null
+        if (knownItem) {
+          lookups += 1
+          created = chain.creation(account, record) catch () => null
+        }
+      }
+      const txHash = created?.signature ?? account
+      const blockTime = try isoAt(record.depositedAt * 1000)
+      statements.push(
+        upsertDeposit({
+          network: config.network,
+          depositId: id,
+          item: record.item,
+          payer: record.payer,
+          token: record.mint,
+          amount: record.amount.toString(),
+          keptTo: record.keptTo,
+          txHash,
+          blockNumber: read.slot,
+          blockTime,
+        }, finalizedAt),
+        sql`UPDATE submission_fee_deposits SET deposit_account = ${account}
+          WHERE network = ${config.network} AND deposit_id = ${id} AND tx_hash = ${txHash} AND deposit_account IS NULL`,
+      )
+      chain.track(id, account)
+      recorded += 1
+    }
+  }
+  if (skipped > 0) try Effect.logInfo("submission_fee_solana_skipped", { network: config.network, count: skipped })
+  if (statements.length > 0 || through >= startCursor) {
+    statements.push(advanceCursor(config.network, through + 1))
+    try (try D1).batch(statements)
+  }
+  return { finalizedThrough: Math.max(through, startCursor - 1), recorded, resolved, skipped, searching }
 }
 
 effect function judgeSolanaDeposits(config: SolanaLedgerConfig) {
   const items = try SubmissionFeeItems
   let judged = 0
   let paid = 0
-  for (const deposit of try unjudged(config.network, 50)) {
+  for (const deposit of try unjudged(config.network, judgedPerRun)) {
+    const now = try Clock.currentTimeMillis
     const item = try items.byItem(deposit.item)
-    const tokenOk = deposit.token === config.mint
-    const keptToOk = deposit.keptTo === config.feeWallet
-    if (!tokenOk) {
+    if (deposit.token !== config.mint) {
       try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "token_not_accepted", repositoryId: item?.repositoryId ?? null, pullNumber: item?.pullNumber ?? null }))
       judged += 1
       continue
     }
-    if (!keptToOk) {
+    if (deposit.keptTo !== config.feeWallet) {
       try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "wrong_kept_to", repositoryId: item?.repositoryId ?? null, pullNumber: item?.pullNumber ?? null }))
       judged += 1
       continue
     }
-    if (item === null) continue
-    const due = try orDie(Effect.try(() => BigInt(item.stableMinor)))
-    const amount = try orDie(Effect.try(() => BigInt(deposit.amount)))
-    if (amount < due) {
+    if (item === null) {
+      if (deposit.finalizedAt !== null && now - Date.parse(deposit.finalizedAt) >= unknownItemGraceMs) {
+        try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "unknown_item", repositoryId: null, pullNumber: null }))
+        judged += 1
+      }
+      continue
+    }
+    const due = decimal(item.stableMinor)
+    const amount = decimal(deposit.amount)
+    if (due === undefined || due <= 0n) {
+      try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "item_fee_invalid", repositoryId: item.repositoryId, pullNumber: item.pullNumber }))
+      judged += 1
+      continue
+    }
+    if (amount === undefined || amount < due) {
       try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "amount_below_due", repositoryId: item.repositoryId, pullNumber: item.pullNumber }))
+      judged += 1
+      continue
+    }
+    const own = item.paidDepositId !== null && item.paidNetwork === deposit.network && item.paidDepositId === deposit.depositId
+    if (!own && item.paidDepositId !== null) {
+      try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "item_already_paid", repositoryId: item.repositoryId, pullNumber: item.pullNumber }))
+      judged += 1
+      continue
+    }
+    if (!own && item.outcome !== null) {
+      try (try D1).run(setJudgement(deposit, { accepted: 0, reason: "item_already_decided", repositoryId: item.repositoryId, pullNumber: item.pullNumber }))
       judged += 1
       continue
     }
@@ -142,108 +1194,382 @@ effect function judgeSolanaDeposits(config: SolanaLedgerConfig) {
   return { judged, paid }
 }
 
-export effect function runSolanaSubmissionFee(env: SolanaSubmissionFeeEnv, programId: string | null = SOLANA_SUBMISSION_FEE_PROGRAM_ID) {
-  const mode = (env.SUBMISSION_FEE_SOLANA_MODE ?? "off").trim()
-  if (mode === "off") return { network: SOLANA_SUBMISSION_FEE_NETWORK, status: "off", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
-  if (programId === null) return { network: SOLANA_SUBMISSION_FEE_NETWORK, status: "unset", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
-  const config = try parseSolanaSubmissionFeeConfig(env, programId)
-  if (config === null) return { network: SOLANA_SUBMISSION_FEE_NETWORK, status: "off", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
-  const client = try jsonRpc({ urls: Redacted.make([Redacted.value(config.rpcUrl)]), timeoutMs: 15_000, maxBytes: 4 * 1024 * 1024 })
-  const genesis = try client.call("getGenesisHash", [], Schema.String)
-  if (genesis !== solanaGenesis) return { network: config.network, status: "chain_mismatch", recorded: 0, judged: 0, paid: 0, resolved: 0 } satisfies SolanaRunResult
-  const openAccounts = try client.call("getProgramAccounts", [
-    config.programId,
-    {
-      commitment: "finalized",
-      encoding: "base64",
-      filters: [
-        { memcmp: { offset: 0, bytes: base58Encode(DEPOSIT_DISCRIMINATOR) } },
-        { memcmp: { offset: DEPOSIT_OFFSETS.mint, bytes: config.mint } },
-        { memcmp: { offset: DEPOSIT_OFFSETS.keptTo, bytes: config.feeWallet } },
-      ],
-    },
-  ], Schema.Array(ProgramAccountRow))
-  const startId = (try cursor(config.network)) ?? 1
-  let recorded = 0
-  let highestId = startId - 1
-  const openById = new Map<number, string>()
-  for (const entry of openAccounts) {
-    const bytes = base64Decode(entry.account.data[0] ?? "")
-    const decoded = bytes === undefined ? undefined : decodeSubmissionDeposit(bytes)
-    if (decoded === undefined) continue
-    const id = Number(decoded.id)
-    if (!Number.isSafeInteger(id) || id <= 0) continue
-    openById.set(id, entry.pubkey)
-    if (id < startId) continue
-    const at = try isoAt(decoded.depositedAt * 1000)
-    try (try D1).run(upsertDeposit({
-      network: config.network,
-      depositId: id,
-      item: decoded.item,
-      payer: decoded.payer,
-      token: decoded.mint,
-      amount: decoded.amount.toString(),
-      keptTo: decoded.keptTo,
-      txHash: `solana:${entry.pubkey}:${id}`,
-      blockNumber: decoded.depositedAt,
-      blockTime: at,
-    }, at))
-    recorded += 1
-    if (id > highestId) highestId = id
+effect function planSolanaResolutions(config: SolanaLedgerConfig) {
+  const items = try SubmissionFeeItems
+  const held = try parked(config.network)
+  const entries: SendEntry[] = []
+  for (const deposit of try resolvable(config.network)) {
+    if (deposit.accepted === 0 && neverResolvedReason(deposit.rejectReason)) continue
+    let action: "refund" | "keep" | null = null
+    if (deposit.accepted === 0) {
+      action = "refund"
+    } else if (deposit.accepted === 1 && deposit.repositoryId !== null && deposit.pullNumber !== null) {
+      const item = try items.byPull({ repositoryId: deposit.repositoryId, pullNumber: deposit.pullNumber })
+      const paidByThis = item !== null && item.paidNetwork === deposit.network && item.paidDepositId === deposit.depositId
+      if (paidByThis && item.outcome === "refund_due") action = "refund"
+      else if (paidByThis && item.outcome === "kept_due" && deposit.token === config.mint && deposit.keptTo === config.feeWallet) action = "keep"
+    }
+    if (action === null) continue
+    const nextState = action === "refund" ? "refund_due" : "kept_due"
+    if (deposit.state === "Open") try (try D1).run(setDue(config.network, deposit.depositId, nextState))
+    if (!held.has(deposit.depositId)) entries.push({ id: deposit.depositId, refund: action === "refund" })
   }
-  if (highestId >= startId) try (try D1).run(advanceCursor(config.network, highestId + 1))
-  const judgedResult = try judgeSolanaDeposits(config)
-  let resolved = 0
-  if (config.mode === "live" && config.resolverSeed !== undefined) {
-    const configAddr = submissionConfigAddress(config.programId)
-    const configReply = configAddr === undefined ? undefined : try client.call("getAccountInfo", [configAddr, { commitment: "finalized", encoding: "base64" }], AccountInfoReply)
-    const configBytes = configReply?.value === null || configReply?.value === undefined ? undefined : base64Decode(configReply.value.data[0] ?? "")
-    const onChainConfig = configBytes === undefined ? undefined : decodeSubmissionConfig(configBytes)
-    const key = (try SubmissionFeeSigners).solana(config.resolverSeed)
-    const resolverAddress = key?.address
-    if (key !== undefined && resolverAddress !== undefined && onChainConfig !== undefined && onChainConfig.resolver === resolverAddress) {
-      const items = try SubmissionFeeItems
-      let daySpent = 0n
-      for (const deposit of try resolvable(config.network)) {
-        const account = openById.get(deposit.depositId)
-        if (account === undefined) continue
-        const item = deposit.repositoryId !== null && deposit.pullNumber !== null
-          ? try items.byPull({ repositoryId: deposit.repositoryId, pullNumber: deposit.pullNumber })
-          : null
-        const refund = deposit.accepted === 0 || item?.outcome === "refund_due"
-        const keep = deposit.accepted === 1 && item?.outcome === "kept_due"
-        if (!refund && !keep) continue
-        const destination = associatedUsdcAccount(refund ? deposit.payer : config.feeWallet, config.mint)
-        if (destination === undefined) continue
-        const ix = resolveInstruction({
-          programId: config.programId,
-          resolver: resolverAddress,
-          deposit: account,
-          mint: config.mint,
-          destination,
-          payer: deposit.payer,
-          refund,
-          expectedId: try orDie(Effect.try(() => BigInt(deposit.depositId))),
-        })
-        if (ix === undefined) continue
-        const bh = try client.call("getLatestBlockhash", [{ commitment: "finalized" }], BlockhashReply)
-        const msg = buildSolanaMessage(resolverAddress, bh.value.blockhash, [ix])
-        if (msg === undefined) continue
-        const feeReply = try client.call("getFeeForMessage", [base64Encode(msg), { commitment: "finalized" }], FeeReply)
-        if (feeReply.value === null) continue
-        const feeLamports = try orDie(Effect.try(() => BigInt(feeReply.value ?? 0)))
-        if (feeLamports > config.maxLamportsPerTx || daySpent + feeLamports > config.maxLamportsPerDay) continue
-        const sig = key.sign(msg)
-        const tx = new Uint8Array(1 + 64 + msg.length)
-        tx[0] = 1
-        tx.set(sig, 1)
-        tx.set(msg, 65)
-        const txId = try client.call("sendTransaction", [base64Encode(tx), { encoding: "base64", skipPreflight: false, preflightCommitment: "finalized" }], Schema.String)
-        daySpent += feeLamports
-        try (try D1).run(recordResolution(config.network, { depositId: deposit.depositId, state: refund ? "refunded" : "kept", txHash: txId, at: try isoNow() }))
-        resolved += 1
+  return entries.sort((left, right) => left.id - right.id)
+}
+
+effect function recheckSolana(config: SolanaLedgerConfig, sendConfig: SendConfig, chain: SolanaChain) {
+  if (chain.address() === null) return 0
+  const before = new Date((try Clock.currentTimeMillis) - parkedRecheckMs).toISOString()
+  const waiting = try rows(ParkedEntry, sql`SELECT deposit_id, refund FROM submission_fee_parked
+    WHERE network = ${config.network} AND released_at IS NULL AND checked_at <= ${before}
+    ORDER BY checked_at, deposit_id LIMIT ${parkedChecksPerRun}`)
+  let released = 0
+  for (const row of waiting) {
+    const entry = { id: row.deposit_id, refund: row.refund === 1 } satisfies SendEntry
+    const open = (try chain.deposit(entry.id)).deposit !== null
+    const free = !open || (try chain.probe(entry)) === "ok"
+    const release = canReleaseParked({ ...initial, config: sendConfig, parked: true, parks: 1, stuck: !free, everStuck: true, records: { storedMatches: true, stillOpen: open } }, worker)
+    if (free && !release) throw refused("A parked deposit may be released only in a live run with the key")
+    const at = try isoNow()
+    try (try D1).run(sql`UPDATE submission_fee_parked
+        SET checked_at = ${at}, checks = checks + 1, released_at = CASE WHEN ${release ? 1 : 0} = 1 THEN ${at} ELSE NULL END
+      WHERE network = ${config.network} AND deposit_id = ${entry.id} AND released_at IS NULL`)
+    if (!release) continue
+    released += 1
+    try Effect.logInfo("submission_fee_unparked", { network: config.network, depositId: entry.id, reason: open ? "payout_would_succeed" : "no_longer_open" })
+  }
+  return released
+}
+
+effect function broadcastFailure(chain: SolanaChain, rawTx: string) {
+  const sent = effect {
+    try chain.broadcast(rawTx)
+    return null
+  }
+  return sent catch effect (error) => message(error)
+}
+
+effect function reconcileSolana(config: SolanaLedgerConfig, sendConfig: SendConfig, chain: SolanaChain) {
+  const open = try openSolanaSend(config.network)
+  if (open === null) return { inFlight: false, parked: 0 }
+  if (open.program !== config.programId) throw refused("The recorded Solana send names another program")
+  if (open.rawTx === null) throw refused("A recorded Solana send has no signed bytes")
+  const status = try chain.status(open)
+  const view = { ...initial, config: sendConfig, row: open.state === "unknown" ? "Unknown" as const : "Submitted" as const, signedBytes: 1, signatures: 1, journaled: [1], broadcasts: [1] }
+  let parkedCount = 0
+  switch (status.kind) {
+    case "pending":
+      return { inFlight: true, parked: 0 }
+    case "finalized": {
+      if (!canRecordFinalized({ ...view, mined: [1] }, worker)) throw refused("A finalized send is recorded only in a live run")
+      try updateSolanaSend(open.id, "finalized", { slot: status.slot, finalizedAt: try isoNow() })
+      try Effect.logInfo("submission_fee_send_finalized", { network: config.network, txId: open.txId })
+      return { inFlight: false, parked: 0 }
+    }
+    case "failed": {
+      if (!canRecordFailed(view, worker)) throw refused("A failed send is recorded only in a live run")
+      if (solanaParkOnSingleFailure(open.deposits.length, status.reason)) {
+        const entry = open.deposits[0]
+        if (entry !== undefined && (try park(config.network, sendConfig, entry, "reverted_alone", false))) parkedCount += 1
       }
+      try updateSolanaSend(open.id, "failed", { reason: status.reason })
+      try Effect.logInfo("submission_fee_send_failed", { network: config.network, txId: open.txId, reason: status.reason })
+      return { inFlight: false, parked: parkedCount }
+    }
+    case "rebroadcast": {
+      if (!canRebroadcast(view, true, worker)) throw refused("A send is broadcast again only in a live run")
+      const failure = try broadcastFailure(chain, open.rawTx)
+      if (failure === null) try updateSolanaSend(open.id, "submitted", {})
+      else try updateSolanaSend(open.id, "unknown", { reason: failure })
+      return { inFlight: true, parked: 0 }
     }
   }
-  return { network: config.network, status: "ran", recorded, judged: judgedResult.judged, paid: judgedResult.paid, resolved } satisfies SolanaRunResult
+}
+
+effect function vetSolana(config: SolanaLedgerConfig, sendConfig: SendConfig, chain: SolanaChain, planned: ReadonlyArray<SendEntry>) {
+  const accepted = try acceptedSolanaDue(config.network, SOLANA_VETTED_PER_RUN)
+  const spent = try solanaSpentToday(config.network)
+  const courtesy = solanaCourtesyAllowed(config.mode === "live", spent, Number(config.maxLamportsPerDay))
+  if (!courtesy && planned.some((entry) => !accepted.has(entry.id)))
+    try Effect.logInfo("submission_fee_solana_courtesy_refunds_wait", { network: config.network })
+  const failed = try solanaFailedOnChain(config.network)
+  if (!courtesy && planned.some((entry) => failed.alone.has(entry.id)))
+    try Effect.logInfo("submission_fee_solana_failed_alone_waits", { network: config.network })
+  const rest = planned.filter((entry) => !failed.alone.has(entry.id))
+  const ordered = [
+    ...rest.filter((entry) => accepted.has(entry.id)),
+    ...courtesy
+      ? [...rest.filter((entry) => !accepted.has(entry.id)), ...planned.filter((entry) => failed.alone.has(entry.id))]
+      : [],
+  ].slice(0, SOLANA_VETTED_PER_RUN)
+  const entries: SendEntry[] = []
+  let parkedCount = 0
+  for (const entry of ordered) {
+    if (entries.length >= solanaMaxBatch) break
+    const alone = failed.together.has(entry.id)
+    if (!solanaMayJoinBatch(entries.length, alone)) continue
+    const checked = effect {
+      const row = try storedDeposit(config.network, entry.id)
+      if (row === null) throw refused("A planned deposit has no row")
+      const onChain = (try chain.deposit(entry.id)).deposit
+      if (onChain === null) return "closed" as const
+      if (onChain.payer !== row.payer || onChain.mint !== row.token || onChain.amount.toString() !== row.amount
+        || onChain.keptTo !== row.keptTo || onChain.item.toLowerCase() !== row.item.toLowerCase()) {
+        if (config.mode === "live" && (try park(config.network, sendConfig, entry, "reverted_alone", false))) parkedCount += 1
+        try Effect.logInfo("submission_fee_solana_set_aside", { network: config.network, depositId: entry.id, step: "send", reason: "record_differs" })
+        return "differs" as const
+      }
+      return "ok" as const
+    }
+    const outcome = checked catch effect (error) => {
+      try Effect.logInfo("submission_fee_solana_set_aside", { network: config.network, depositId: entry.id, step: "send", reason: setAsideReason(error) })
+      return "aside" as const
+    }
+    if (outcome !== "ok") continue
+    entries.push(entry)
+    if (alone) break
+  }
+  return { entries, parked: parkedCount }
+}
+
+effect function probeSolanaAlone(config: SolanaLedgerConfig, sendConfig: SendConfig, chain: SolanaChain, batch: ReadonlyArray<SendEntry>) {
+  const alone: { readonly entry: SendEntry; readonly result: ProbeResult }[] = []
+  for (const entry of batch) {
+    if ((try chain.deposit(entry.id)).deposit === null) continue
+    alone.push({ entry, result: try chain.probe(entry) })
+  }
+  const through = alone.filter((probed) => probed.result === "ok").map((probed) => probed.entry)
+  let parkedCount = 0
+  for (const { entry, result } of alone) {
+    const reason: ParkReason | undefined = result === "payout_failed" ? "payout_failed" : result === "reverted" ? "reverted_alone" : undefined
+    if (reason === undefined) continue
+    if (try park(config.network, sendConfig, entry, reason, reason === "reverted_alone" && through.length === 0)) parkedCount += 1
+  }
+  return { through, parked: parkedCount }
+}
+
+effect function authorizeSolanaBudget(config: SolanaLedgerConfig, maximumLamports: string) {
+  const spent = wholeBig(try solanaSpentToday(config.network)) ?? 0n
+  const maximum = decimal(maximumLamports)
+  if (maximum === undefined || maximum <= 0n || maximum > config.maxLamportsPerTx || spent + maximum > config.maxLamportsPerDay)
+    throw new GasBudget({ issue: "The day's network fee limit is reached; nothing was signed" })
+}
+
+effect function attemptSolanaSend(config: SolanaLedgerConfig, chain: SolanaChain, row: SolanaSendRow, batch: ReadonlyArray<SendEntry>, resolver: string) {
+  const signed = effect {
+    const prepared = try chain.prepare(batch, (maximumLamports) => authorizeSolanaBudget(config, maximumLamports))
+    try insertSolanaSend({
+      ...row,
+      deposits: batch,
+      resolver,
+      txId: prepared.txId,
+      rawTx: prepared.rawTx,
+      lastValidBlockHeight: prepared.lastValidBlockHeight,
+      maximumLamports: prepared.maximumLamports,
+      state: "submitted",
+    }, config.maxLamportsPerTx, config.maxLamportsPerDay)
+    return { kind: "signed", prepared } satisfies SolanaAttempt
+  }
+  return signed catch effect (error) => {
+    if (error._tag === "SolanaSendConflict") return { kind: "conflict" } satisfies SolanaAttempt
+    if (error._tag === "GasBudget") return { kind: "gas_budget" } satisfies SolanaAttempt
+    if (error._tag === "PayoutFailed") return { kind: "payout_failed", depositId: error.depositId } satisfies SolanaAttempt
+    if (error._tag === "SendReverted") return { kind: "reverted" } satisfies SolanaAttempt
+    throw error
+  }
+}
+
+effect function sendSolana(config: SolanaLedgerConfig, sendConfig: SendConfig, chain: SolanaChain, entries: ReadonlyArray<SendEntry>) {
+  if (entries.length === 0) return { send: "none" as const, parked: 0 }
+  const at = try isoNow()
+  const row: SolanaSendRow = {
+    id: `sfs_${try randomId()}`,
+    network: config.network,
+    mode: config.mode === "live" ? "live" : "dry_run",
+    program: config.programId,
+    deposits: entries,
+    resolver: null,
+    txId: null,
+    rawTx: null,
+    lastValidBlockHeight: null,
+    maximumLamports: null,
+    state: "recorded",
+    reason: null,
+    slot: null,
+    createdAt: at,
+  }
+  if (row.mode === "dry_run") {
+    const last = try latestSolanaDryRun(config.network)
+    const view = { ...initial, config: sendConfig, listRecorded: last !== null && last.program === row.program && sameEntries(last.deposits, entries) }
+    if (!canRecordList(view, worker)) throw refused("A dry run records its list only while reading")
+    if (recordList(view, worker).result === "ListUnchanged") return { send: "unchanged" as const, parked: 0 }
+    try insertSolanaSend(row, config.maxLamportsPerTx, config.maxLamportsPerDay)
+    try Effect.logInfo("submission_fee_would_send", { network: config.network, deposits: entries })
+    return { send: "recorded" as const, parked: 0 }
+  }
+  const resolver = chain.address()
+  if (resolver === null) return { send: "no_resolver_key" as const, parked: 0 }
+  let batch: ReadonlyArray<SendEntry> = entries
+  let parkedCount = 0
+  let probed = false
+  for (;;) {
+    if (batch.length === 0) return { send: "parked" as const, parked: parkedCount }
+    const result = try attemptSolanaSend(config, chain, row, batch, resolver)
+    if (result.kind === "signed") {
+      const failure = try broadcastFailure(chain, result.prepared.rawTx)
+      const logged = { network: config.network, txId: result.prepared.txId, deposits: batch }
+      if (failure !== null) {
+        try updateSolanaSend(row.id, "unknown", { reason: failure })
+        try Effect.logInfo("submission_fee_send_unknown", logged)
+        return { send: "in_flight" as const, parked: parkedCount }
+      }
+      try Effect.logInfo("submission_fee_send_submitted", logged)
+      return { send: "sent" as const, parked: parkedCount }
+    }
+    if (result.kind === "conflict") return { send: "in_flight" as const, parked: parkedCount }
+    if (result.kind === "gas_budget") {
+      try Effect.logInfo("submission_fee_gas_budget", { network: config.network })
+      return { send: "gas_budget" as const, parked: parkedCount }
+    }
+    const named = result.kind === "payout_failed" ? batch.find((entry) => entry.id === result.depositId) : undefined
+    if (named !== undefined) {
+      if (try park(config.network, sendConfig, named, "payout_failed", false)) parkedCount += 1
+      batch = batch.filter((entry) => entry !== named)
+      continue
+    }
+    if (!probed) {
+      probed = true
+      const alone = try probeSolanaAlone(config, sendConfig, chain, batch)
+      parkedCount += alone.parked
+      if (alone.through.length > 0 || parkedCount > 0) {
+        batch = alone.through
+        continue
+      }
+    }
+    try Effect.logInfo("submission_fee_send_reverted", { network: config.network, deposits: batch })
+    return { send: "reverted" as const, parked: parkedCount }
+  }
+}
+
+function emptyResult(network: string, status: SolanaRunResult["status"]): SolanaRunResult {
+  return {
+    network,
+    status,
+    finalizedThrough: null,
+    recorded: 0,
+    resolved: 0,
+    judged: 0,
+    paid: 0,
+    send: "none",
+    parked: 0,
+    released: 0,
+    open: null,
+    skipped: 0,
+    searching: 0,
+    requests: 0,
+  }
+}
+
+export effect function runSolanaSubmissionFee(env: SolanaSubmissionFeeEnv, deployment: SolanaDeploymentInput = {}) {
+  const parsed = try parseSolanaSubmissionFeeConfig(env, deployment)
+  if (parsed.mode === "off") return emptyResult(deployment.network ?? SOLANA_SUBMISSION_FEE_NETWORK, "off")
+  if (parsed.ledger === null) return emptyResult(deployment.network ?? SOLANA_SUBMISSION_FEE_NETWORK, "unset")
+  const config = parsed.ledger
+  const chain = try makeSolanaChain(config)
+  const genesis = try chain.genesisHash()
+  if (genesis !== config.genesisHash) return { ...emptyResult(config.network, "chain_mismatch"), requests: chain.requests() } satisfies SolanaRunResult
+  const sendConfig = sendConfigOf(config.mode === "live" ? "live" : "dry_run", chain.address() !== null, {
+    perTransactionWei: config.maxLamportsPerTx,
+    perDayWei: config.maxLamportsPerDay,
+  })
+  const failedSteps: Record<string, string> = {}
+  effect function runStep<A, E, R>(name: string, work: A!E!R) {
+    return work catch effect (error) => {
+      const reason = failureReason(error)
+      failedSteps[name] = reason
+      try Effect.logInfo("submission_fee_solana_step_failed", { network: config.network, step: name, reason })
+      return null
+    }
+  }
+  let finalizedThrough: number | null = null
+  let recorded = 0
+  let resolved = 0
+  let judged = 0
+  let paid = 0
+  let sendOutcome: SolanaSendOutcome = "none"
+  let parkedCount = 0
+  let released = 0
+  let openCount: number | null = null
+  let skipped = 0
+  let searching = 0
+  const finish = (): SolanaRunResult => ({
+    network: config.network,
+    status: "ran",
+    finalizedThrough,
+    recorded,
+    resolved,
+    judged,
+    paid,
+    send: sendOutcome,
+    parked: parkedCount,
+    released,
+    open: openCount,
+    skipped,
+    searching,
+    requests: chain.requests(),
+    ...Object.keys(failedSteps).length > 0 ? { steps: failedSteps, error: "submission_fee_operation_failed" } : {},
+  })
+  const reconciled = config.mode === "live"
+    ? try runStep("reconcile", reconcileSolana(config, sendConfig, chain))
+    : { inFlight: false, parked: 0 }
+  const inFlight = reconciled === null || reconciled.inFlight
+  parkedCount = reconciled?.parked ?? 0
+  const listing = try runStep("list", chain.listing())
+  if (listing !== null) {
+    openCount = listing.open.size
+    if (listing.open.size >= SOLANA_OPEN_ALERT)
+      try Effect.logInfo("submission_fee_solana_open_high", { network: config.network, open: listing.open.size })
+    const scanned = try runStep("scan", scanSolana(config, chain, listing))
+    if (scanned !== null) {
+      finalizedThrough = scanned.finalizedThrough
+      recorded = scanned.recorded
+      resolved = scanned.resolved
+      skipped = scanned.skipped
+      searching = scanned.searching
+    }
+  }
+  const judgedResult = try runStep("judge", judgeSolanaDeposits(config))
+  if (judgedResult !== null) {
+    judged = judgedResult.judged
+    paid = judgedResult.paid
+  }
+  if (config.mode === "live")
+    released = (try runStep("recheck", recheckSolana(config, sendConfig, chain))) ?? 0
+  if (inFlight) {
+    sendOutcome = "in_flight"
+    return finish()
+  }
+  const planned = try runStep("plan", planSolanaResolutions(config))
+  if (planned === null || planned.length === 0) return finish()
+  const resolver = chain.address()
+  if (config.mode === "live" && resolver !== null) {
+    const onChainResolver = listing !== null
+      ? listing.resolver
+      : (try runStep("config", effect { return (try chain.config()).resolver }))
+    if (onChainResolver === null) return finish()
+    if (resolver !== onChainResolver) {
+      try Effect.logInfo("submission_fee_solana_resolver_differs", { network: config.network })
+      sendOutcome = "resolver_differs"
+      return finish()
+    }
+  }
+  const vetted = try runStep("vet", vetSolana(config, sendConfig, chain, planned))
+  if (vetted === null) return finish()
+  const sent = try runStep("send", sendSolana(config, sendConfig, chain, vetted.entries))
+  if (sent !== null) {
+    sendOutcome = sent.send
+    parkedCount += sent.parked
+  }
+  parkedCount += vetted.parked
+  return finish()
 }

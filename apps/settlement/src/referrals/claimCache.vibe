@@ -2,7 +2,7 @@
 import { isoAt } from "@repo/platform/clock"
 import { D1, first, sql } from "@repo/platform/d1"
 import { EvmRpc, type Log, decodeEvents, decodeResult, encodeCall } from "@repo/platform/chain/evm"
-import { Digest32, Instant, ReferralProgram as ClaimProgram } from "../client/referrals.vibe"
+import { Digest32, Instant, type ReferralProgram as ClaimProgramType, ReferralProgramSchema as ClaimProgram } from "../client/referrals.vibe"
 import { ReferralProgram } from "./config.vibe"
 import { activeEpochIndex } from "./claimsView.ts"
 import { type Deployment, DistributorMismatch, ReferralDeployment, distributorAbi, eventTopics, onDistributor, readDistributor, wide } from "./distributor.vibe"
@@ -12,7 +12,7 @@ import { scanPageBlocks } from "./reconcile.vibe"
 const Seconds = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8_640_000_000_000 }))
 const EpochIndex = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
 
-export const ClaimEpoch = Schema.Struct({
+const ClaimEpochSchema = Schema.Struct({
   epoch: EpochIndex,
   period: Schema.String,
   root: Digest32,
@@ -20,9 +20,9 @@ export const ClaimEpoch = Schema.Struct({
   claimableAt: Seconds,
   voided: Schema.Boolean,
 })
-export type ClaimEpoch = typeof ClaimEpoch.Type
+export type ClaimEpoch = typeof ClaimEpochSchema.Type
 
-export const ClaimSnapshot = Schema.Struct({
+const ClaimSnapshotSchema = Schema.Struct({
   program: ClaimProgram,
   deploymentBlock: Schema.String,
   block: Schema.Struct({ number: Schema.String, hash: Schema.String, timestamp: Seconds }),
@@ -31,11 +31,11 @@ export const ClaimSnapshot = Schema.Struct({
   pauseAt: Schema.NullOr(Seconds),
   latestPaused: Schema.Boolean,
   ended: Schema.Boolean,
-  epochs: Schema.Array(ClaimEpoch),
+  epochs: Schema.Array(ClaimEpochSchema),
   claimed: Schema.Record(Schema.String, Schema.String),
   claimedEpochs: Schema.optionalKey(Schema.Array(EpochIndex)),
 })
-export type ClaimSnapshot = typeof ClaimSnapshot.Type
+export type ClaimSnapshot = typeof ClaimSnapshotSchema.Type
 
 schema PriorRow {
   readonly body: string | null
@@ -47,9 +47,9 @@ schema JournalRow {
 
 export type CacheRefresh = { readonly status: "off" | "unconfigured" } | { readonly status: "refreshed"; readonly block: string; readonly epochs: number }
 
-export const decodeSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
-const admitSnapshot = Schema.decodeUnknownEffect(ClaimSnapshot)
-const encodeSnapshot = Schema.encodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
+export const decodeSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimSnapshotSchema))
+const admitSnapshot = Schema.decodeUnknownEffect(ClaimSnapshotSchema)
+const encodeSnapshot = Schema.encodeUnknownEffect(Schema.fromJsonString(ClaimSnapshotSchema))
 const noIndex = (1n << 256n) - 1n
 
 function differs(reason: string) {
@@ -155,7 +155,7 @@ effect function refreshed(deployment: Deployment, decimals: number, priorBody: s
   if (finalized.number < deployment.deploymentBlock) throw differs("referral finality unavailable")
   const chain = try readDistributor(deployment)
   if (chain.decimals !== decimals) throw differs("the referral token decimals differ")
-  const program = { network: deployment.networkKey, chainId: Number(deployment.chainId), distributor: deployment.distributor, token: deployment.token, decimals, codeHash: deployment.codeHash } satisfies ClaimProgram
+  const program = { network: deployment.networkKey, chainId: Number(deployment.chainId), distributor: deployment.distributor, token: deployment.token, decimals, codeHash: deployment.codeHash } satisfies ClaimProgramType
   const block = { number: finalized.number.toString(), hash: finalized.hash, timestamp: finalized.timestamp }
   const now = try isoAt(try Clock.currentTimeMillis)
   const stored = priorBody === null ? undefined : try decodeSnapshot(priorBody)

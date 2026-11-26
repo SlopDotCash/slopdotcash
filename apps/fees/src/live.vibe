@@ -5,4 +5,6 @@ import { feeReportRoutes } from "./report/routes.vibe"
 import { StandingDepositRoutes } from "./submissionFee/standingRoutes.vibe"
 import { SubmissionFeeRoutes } from "./submissionFee/routes.vibe"
 
+export { type SolanaFeeDeployment, type SolanaPayEnv, type SolanaPayOverrides, SolanaSubmissionFeeDeployment, resolveSolanaPayDeployment, solanaSubmissionFeeDeployment } from "./submissionFee/solanaPay.vibe"
+
 export const fees = area({ name: "fees", api, routes: Layer.mergeAll(feeReportRoutes, SubmissionFeeRoutes, StandingDepositRoutes), provides: Layer.empty })

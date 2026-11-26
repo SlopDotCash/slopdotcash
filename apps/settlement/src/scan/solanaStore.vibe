@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Event, NotAState, type Scan, apply, decodeEvent, decodeState } from "../../gen/settlement__solanaScan.effect.vibe"
+import { type Event, type NotAState, type Scan, apply, decodeEvent, decodeState } from "../../gen/settlement__solanaScan.effect.vibe"
 import type { ScanScope } from "./index.vibe"
 
 export interface Listed {

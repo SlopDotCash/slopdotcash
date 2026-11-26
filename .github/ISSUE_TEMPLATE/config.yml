@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a defect with a pull request
-    url: https://github.com/SlopDotCash/slopdotcash/blob/development/CONTRIBUTING.md#issues-owners-and-maintainers-only
+    url: https://github.com/SlopDotCash/slopdotcash/blob/develop/CONTRIBUTING.md
     about: Only owners and maintainers open issues. Fix the defect in a pull request and prove it with evidence.
   - name: Add an open-source project
     url: https://slop.cash/projects/new

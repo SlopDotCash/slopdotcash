@@ -6,7 +6,7 @@ import { nowSeconds } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
 import { Refused, handle } from "@repo/platform/http"
-import { Authority, type Json, type Network, type ProjectView, Registry, RegistryManifests, Restrictions, VaultRegistrationRefused, Wallets } from "@repo/ports/backend"
+import { Authority, type Json, type Network, type ProjectView, Registry, RegistryManifests, Restrictions, type VaultRegistrationRefused, Wallets } from "@repo/ports/backend"
 import { type ProgramFundsView, type ProgramTerms, SecurityProgramFunds } from "@repo/ports/security"
 import { type Creation, type Purpose, type RequestRow, canCloseRegisteredCreation, noIdentity, requestRow, savedFor } from "../../gen/settlement__vaultSnapshots.effect.vibe"
 import { type EvmAddress, decodeAddress, decodeUint, escrowGetter, evmAddress, factoryGetter, isZero } from "../chain/evm/abi.ts"
@@ -145,10 +145,17 @@ export effect function loadProject(projectId: string) {
 const deniedMessage = "Write, maintain or admin access is required. Ask a maintainer with that access to finish setup."
 const slopbotMessage = "Slopbot must be available to check current repository permission."
 
+function currentRepositoryPath(githubUrl: string | undefined): string | undefined {
+  if (githubUrl === undefined) return undefined
+  const path = URL.parse(githubUrl)?.pathname.replace(/^\/|\/$/gu, "")
+  return path === undefined || path === "" ? undefined : path
+}
+
 function adminMessage(project: VaultProject): string {
   const repositories = project.terms.manifest.repositories
   const repository = Array.isArray(repositories) ? fieldsOf(repositories[0]) : undefined
-  return `Only the project steward or an admin of ${textOf(repository?.id) ?? ""} can set up the project vault.`
+  const path = currentRepositoryPath(textOf(repository?.githubUrl)) ?? textOf(repository?.id) ?? project.view.repositories[0]?.fullName ?? ""
+  return `Only the project steward or an admin of ${path} can set up the project vault.`
 }
 
 effect function currentAuthority(project: VaultProject, actor: VaultActor) {

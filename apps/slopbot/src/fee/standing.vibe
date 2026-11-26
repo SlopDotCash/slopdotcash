@@ -11,11 +11,13 @@ import {
   standingCoverBatch,
   standingCoverReason,
   standingDepositBatch,
+  standingDepositCoverDays,
   standingDepositCoveredLabel,
   standingDepositCovers,
   standingDepositDue,
   standingDepositOpenCap,
   standingDepositsAccepted,
+  standingDepositWithdrawWaitDays,
   standingMergedCacheMs,
   standingRefundReason,
 } from "./standingRules.ts"
@@ -194,9 +196,28 @@ effect function readCovers(nowMillis: number, at: string) {
 }
 
 effect function decideDeposits(nowMillis: number, at: string) {
-  const deposits = try rows(DepositOutcomeRow, sql`SELECT id, paid_at, withdraw_requested_at, outcome FROM standing_deposits
-    WHERE paid_at IS NOT NULL AND outcome IS NULL AND cancelled_at IS NULL
-    ORDER BY paid_at LIMIT ${standingDepositBatch}`)
+  const withdrawCutoff = try isoAt(nowMillis - standingDepositWithdrawWaitDays * dayMs + 1_000)
+  const expiredCutoff = try isoAt(nowMillis - (standingDepositCoverDays + standingDepositWithdrawWaitDays) * dayMs + 1_000)
+  const deposits = try rows(DepositOutcomeRow, sql`SELECT d.id, d.paid_at, d.withdraw_requested_at, d.outcome
+    FROM standing_deposits d
+    WHERE d.paid_at IS NOT NULL AND d.outcome IS NULL AND d.cancelled_at IS NULL
+      AND (
+        EXISTS (
+          SELECT 1 FROM standing_deposit_covers c
+          WHERE c.deposit_id = d.id AND c.state = 'strike'
+        )
+        OR (
+          (
+            (d.withdraw_requested_at IS NOT NULL AND julianday(d.withdraw_requested_at) <= julianday(${withdrawCutoff}))
+            OR julianday(d.paid_at) <= julianday(${expiredCutoff})
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM standing_deposit_covers c
+            WHERE c.deposit_id = d.id AND c.state <> 'clear'
+          )
+        )
+      )
+    ORDER BY d.paid_at, d.id LIMIT ${standingDepositBatch}`)
   let decided = 0
   for (const deposit of deposits) {
     const covers = try rows(DepositCoverSummary, sql`SELECT repository_id, pull_number, state, strike_seen_at FROM standing_deposit_covers

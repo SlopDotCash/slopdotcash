@@ -1,6 +1,6 @@
 // spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"
 import { isoNow } from "@repo/platform/clock"
-import { D1, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { D1, type Statement, databaseTemporarilyUnavailable, first, rows, sql } from "@repo/platform/d1"
 import { type Refused, handleRaw, json, methodNotAllowed, refuse, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { type TraceLicenceState, type TraceLicensingSetting, traceLicencesRoute, traceLicensingRoute, tracesMeRoute } from "../client/traces.vibe"
 import { TraceTermsVersion } from "./codec.vibe"
@@ -11,7 +11,6 @@ const maxRunIds = 500
 const maxBodyBytes = 80 * 1024
 const runIdPattern = /^[A-Za-z0-9_.:-]{1,128}$/u
 const isTraceTermsVersion = Schema.is(TraceTermsVersion)
-const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
 
 schema SettingRow {
   readonly enabled: number
@@ -81,7 +80,7 @@ function eligibleRunsSql(githubId: string, runIdsJson: string | undefined): Stat
 
 effect function withBusyD1<A, E, R>(program: A!E!R) {
   return program catch effect (error) => {
-    if (typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)) {
+    if (databaseTemporarilyUnavailable(error)) {
       throw refuse(503, "temporarily_unavailable", "Temporarily unavailable. Try again.")
     }
     throw error

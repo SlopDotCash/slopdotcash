@@ -1,7 +1,7 @@
 // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"
 import { Spinner, Status } from "@repo/ui";
 import { installNotice, type ListingFacts, listedThisMonth, notListedInstallText, pausedInstallText } from "../../../gen/frontend__poolListing.ts";
-import { bootstrapPrompt } from "../home/agentLinks.ts";
+import { bootstrapPrompt, projectSkillPath } from "../home/agentLinks.ts";
 import { AgentPrompt } from "../home/AgentPrompt.tsx";
 import type { Shown } from "../home/listing.ts";
 import { type Clearance, clearanceFor } from "./history.ts";
@@ -76,7 +76,7 @@ export function InstallPanel({ project, clearance, listing, held, origin, onCopy
           <ClearanceState project={project} clearance={clearance} listing={listing} held={held} />
         </p>
       )}
-      <AgentPrompt openIn prompt={ready ? projectPrompt(project, origin) : bootstrapPrompt(origin)} origin={origin} onCopy={onCopy} />
+      <AgentPrompt openIn prompt={ready ? projectPrompt(project, origin) : bootstrapPrompt(origin)} origin={origin} onCopy={onCopy} skillPath={ready ? projectSkillPath(project.slug) : undefined} />
     </div>
   );
 }

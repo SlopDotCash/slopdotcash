@@ -84,4 +84,4 @@ export effect function fileClosedMonths() {
   return { status: "ran", filed } satisfies FilingRun
 }
 
-export const filingJob: Job = { name: "referral-accrual-filing", run: () => effect { try fileClosedMonths() } }
+export const filingJob = { name: "referral-accrual-filing", run: () => effect { try fileClosedMonths() } } satisfies Job

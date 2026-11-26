@@ -1,5 +1,5 @@
 // spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"
-import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { DatabaseFailure, RowMismatch, databaseTemporarilyUnavailable, rows, sql } from "@repo/platform/d1"
 import { answered, fixedHeaders, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
 import { medianWindowHours, waitingHours } from "../../../gen/backend__mergeActivity.effect.vibe"
@@ -32,11 +32,6 @@ interface Refusal {
 const hoursPerDay = 24
 const servedCache = { "cache-control": cacheControl(mergeActivity.cache) }
 const decodeWanted = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(WantedIssue)))
-const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
-
-function isBusyD1(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
-}
 
 function refused(row: Refusal) {
   return json(row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }, row.status, { "cache-control": row.headers["cache-control"] })
@@ -85,7 +80,7 @@ effect function answer() {
   const outcome = try exit(mergeActivityAnswer())
   if (Exit.isFailure(outcome)) {
     const failure = Cause.findErrorOption(outcome.cause)
-    if (Option.isSome(failure) && isBusyD1(failure.value)) {
+    if (Option.isSome(failure) && failure.value instanceof DatabaseFailure && databaseTemporarilyUnavailable(failure.value)) {
       return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "no-store" })
     }
     try Effect.logError("merge activity API failure", Option.isSome(failure) ? failure.value._tag : "defect")

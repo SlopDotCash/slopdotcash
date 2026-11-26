@@ -58,7 +58,7 @@ prose, Quint, proofs and validation results.
 
 ## Contributing
 
-Open every pull request against `vibestack`, Slop's default
+Open every pull request against `develop`, Slop's default
 branch. Follow [CONTRIBUTING.md](CONTRIBUTING.md) and
 [AGENTS.md](AGENTS.md), including the
 [TypeScript conventions](AGENTS.md#typescript-best-practices).

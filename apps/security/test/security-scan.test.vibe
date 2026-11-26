@@ -4,6 +4,7 @@ import { webCrypto } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { providers } from "@repo/platform/providers"
 import { policyVersion, pinnedProfiles } from "../src/programs/scan.vibe"
+import { surfacesOf } from "../src/scanner/inspect/surfaces.ts"
 import { maxReplyBytes } from "../src/scanner/providers/route.vibe"
 import { ScanSettings, runScanPass } from "../src/scanner/run/pass.vibe"
 import { ScanAcquisition } from "../src/scanner/run/queue.vibe"
@@ -134,4 +135,16 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto), { excludeTestSer
       },
     )
   }))
+
+  it.effect('Package-manager redirection configs, Cargo config, and Haskell Setup files classify as install surfaces (spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries")', () => effect {
+    const installFiles = ["pip.conf", "pip.ini", ".pypirc", ".cargo/config.toml", ".cargo/config", "Setup.hs", "Setup.lhs"]
+    const checked = installFiles.flatMap((file) => [file, `services/app/${file}`, file.toUpperCase()]).map((path) => ({ path, surfaces: surfacesOf(path) }))
+    try same(
+      {
+        allInstall: checked.every((entry) => entry.surfaces.includes("installScripts") && entry.surfaces.includes("source")),
+        outsideCargo: [surfacesOf("config.toml").includes("installScripts"), surfacesOf("docs/config").includes("installScripts")],
+      },
+      { allInstall: true, outsideCargo: [false, false] },
+    )
+  })
 })

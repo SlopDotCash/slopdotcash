@@ -47,7 +47,7 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
           <TextField label="Short description" name="headline" value={value.headline} error={shown("headline")} onChange={(entry) => onChange("headline", entry)} />
           <TextField label="Goal" name="goal" multiline value={value.goal} error={shown("goal")} onChange={(entry) => onChange("goal", entry)} />
           <div className="grid gap-4 sm:grid-cols-2">
-            <TextField label="Website (optional)" name="website" placeholder="https://example.com" value={value.website} error={shown("website")} onChange={(entry) => onChange("website", entry)} />
+            <TextField label="Website (optional)" name="website" type="url" placeholder="https://example.com" value={value.website} error={shown("website")} onChange={(entry) => onChange("website", entry)} />
             <TextField label="X account (optional)" name="x" placeholder="@handle" value={value.x} error={shown("x")} onChange={(entry) => onChange("x", entry)} />
           </div>
         </div>

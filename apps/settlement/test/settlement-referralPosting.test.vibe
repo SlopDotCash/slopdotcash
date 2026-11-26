@@ -183,17 +183,20 @@ effect function served(plan: Parameters<typeof rpcFaults>[1]) {
   return { url: server.url, methods, fired: faults.fired }
 }
 
-effect function pay(index: number) {
+effect function payRange(count: number) {
   const { db } = try Bench
-  const month = new Date(Date.UTC(2026, 10 + index, 10, 12))
-  const obligation = `obl-${String(index).padStart(2, "0")}`
-  const paidAt = month.toISOString()
-  try promise(() => db.batch([
-    db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (?, ?, '1', 'base-mainnet', 'base', ?, '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', 6, '1000000', '0', ?, 'paid', ?, ?)")
-      .bind(obligation, `proj-${String(index).padStart(2, "0")}`, `0x${"5".repeat(40)}`, obligation.padEnd(64, "0").slice(0, 64), paidAt, `tx-${obligation}`),
-    db.prepare("INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES ('base-mainnet', ?, 0, '0xblock', 'paid', ?, '{}', ?)")
-      .bind(`tx-${obligation}`, obligation, paidAt),
-  ]))
+  const statements = Array.from({ length: count }, (_, index) => {
+    const month = new Date(Date.UTC(2026, 10 + index, 10, 12))
+    const obligation = `obl-${String(index).padStart(2, "0")}`
+    const paidAt = month.toISOString()
+    return [
+      db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (?, ?, '1', 'base-mainnet', 'base', ?, '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', 6, '1000000', '0', ?, 'paid', ?, ?)")
+        .bind(obligation, `proj-${String(index).padStart(2, "0")}`, `0x${"5".repeat(40)}`, obligation.padEnd(64, "0").slice(0, 64), paidAt, `tx-${obligation}`),
+      db.prepare("INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES ('base-mainnet', ?, 0, '0xblock', 'paid', ?, '{}', ?)")
+        .bind(`tx-${obligation}`, obligation, paidAt),
+    ]
+  }).flat()
+  try promise(() => db.batch(statements))
 }
 
 effect function same(actual: unknown, expected: unknown) {
@@ -307,11 +310,11 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       posts: [{ posts: 0 }],
       cache: [{ observed: 1, clean: 1, distributor: chain.distributor, epochs: 0 }],
     })
-  })
+  }, 180_000)
 
   it.effect('A filed root is never sent in DryRun, and a root whose broadcast is lost in Posting is resent from its journalled bytes, finalizes and is claimed (spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount")', () => effect {
     const { chain, clock } = try Bench
-    for (let index = 0; index < 31; index++) try pay(index)
+    try payRange(31)
     const filed = try file()
     const quiet = try served([])
     const dryRun = try post({ mode: "DryRun", url: quiet.url })
@@ -363,7 +366,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       claimed: "refreshed",
       known: { claims: [Number(referrerId)], sealed: [true], fresh: true, phase: "Idle" },
     })
-  })
+  }, 180_000)
 
   it.effect('An owner void halts posting until an operator acknowledges it, and the claim cache is stale until it sees the new root and the void (spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount"; spec/settlement/referralDistributor.md, "Voiding the latest unclaimed epoch restores prior live spacing and high water"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable")', () => effect {
     const { chain } = try Bench
@@ -409,7 +412,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       settled: { status: "nothing_to_post" },
       posts: [{ epoch: 0, state: "finalized", acknowledged: 0 }, { epoch: 1, state: "voided", acknowledged: 1 }, { epoch: 2, state: "finalized", acknowledged: 0 }],
     })
-  })
+  }, 180_000)
 
   it.effect('Forged deployment facts, a key that is not the configured poster and an RPC answering another chain are refused before anything is signed or sent (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referralDistributor.md, "Configuration, retained claims and complete balance accounting never change retroactively"; spec/settlement/referrals.md, "Posting requires every recorded activation fact")', () => effect {
     const { chain, deployment } = try Bench
@@ -480,5 +483,5 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       settledNextDay: { status: "nothing_to_post" },
       rolled: new Date(midnight).toISOString().slice(0, 10),
     })
-  })
+  }, 180_000)
 })

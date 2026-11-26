@@ -1,7 +1,7 @@
 // spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
 import { sha256Hex } from "@repo/platform/crypto"
 import { manualRedirects } from "@repo/platform/github"
-import { type Artifact, type Event, type Machine, initial, carriesCredential, machineOver } from "../../gen/contributor__artifactTransport.effect.vibe"
+import { type Artifact, type Event, initial, carriesCredential, machineOver } from "../../gen/contributor__artifactTransport.effect.vibe"
 import { readLimit, transientHttpStatus } from "./limits.ts"
 import { type Expectation, type Received, incompleteDocumentDetail, judgeBody } from "./media.ts"
 import { carriesGitHubCredential, trustedDownloadUrl } from "./policy.ts"
@@ -34,7 +34,7 @@ interface Step {
 }
 
 export interface Run {
-  readonly machine: Machine.Shape
+  readonly machine: Effect.Success<ReturnType<typeof machineOver>>
   readonly target: Target
   readonly location: Ref.Ref<string>
   readonly note: Ref.Ref<Note | undefined>
