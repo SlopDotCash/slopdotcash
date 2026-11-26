@@ -1,5 +1,5 @@
 // spec/security/program.md, "Receipt terms come only from the open published revision"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"
-import { Alert, Button, DataState, ExternalLink, Metric, MetricGrid, PageHeader, Status, type StatusProps } from "@repo/ui";
+import { Alert, Button, cn, DataState, ExternalLink, Metric, MetricGrid, PageHeader, shell, Status, type StatusProps } from "@repo/ui";
 import { ExternalLink as ExternalLinkIcon, ShieldCheck } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { PageProps } from "../../../app/pages.ts";
@@ -43,7 +43,7 @@ export type SecurityProgramViewProps = {
 /** A revision published from this page, applied in place to the terms above it. */
 export type PublishedProgram = { readonly revision: number; readonly manifest: unknown };
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-12";
+const pageClass = cn(shell, "flex flex-1 flex-col gap-8 pt-9 pb-18");
 
 function Published({ revision }: { revision: number | undefined }) {
   return revision === undefined ? null : (
@@ -57,7 +57,7 @@ function Unpublished({ project, revision, intake, settings, nav }: Omit<Security
   return (
     <main className={pageClass}>
       <PageHeader
-        icon={<ShieldCheck className="size-6" />}
+        icon={<ShieldCheck />}
         title={
           <>
             <a href={`/projects/${project.slug}`} className="text-primary underline underline-offset-4 hover:decoration-2">
@@ -85,7 +85,7 @@ export function SecurityProgramView({ project, origin, revision, intake, setting
     <main className={pageClass}>
       <div className="flex flex-col gap-4">
         <PageHeader
-          icon={<ShieldCheck className="size-6" />}
+          icon={<ShieldCheck />}
           title={`${project.name} security`}
           actions={
             repository ? (
@@ -95,8 +95,8 @@ export function SecurityProgramView({ project, origin, revision, intake, setting
             ) : null
           }
         />
-        <div className="flex flex-wrap items-end gap-6">
-          <MetricGrid className="flex-1">
+        <div className="flex flex-col items-start gap-3.5">
+          <MetricGrid className="w-full max-w-136">
             <Metric label="Bounty" value={programShares(terms)?.gross ?? "—"} />
           </MetricGrid>
           <Status presentation={programStatus[terms.status]} />
@@ -104,8 +104,8 @@ export function SecurityProgramView({ project, origin, revision, intake, setting
       </div>
       {terms.rewardMode === "bounty-only" ? null : nav}
       <Published revision={revision} />
-      <section aria-labelledby="bounty-agent-setup" className="flex flex-col gap-3">
-        <h2 id="bounty-agent-setup" className="text-xl font-semibold text-foreground">
+      <section aria-labelledby="bounty-agent-setup" className="mt-19 flex flex-col gap-3.5 rounded-lg border border-border bg-card p-8 max-md:mt-15 max-md:p-5">
+        <h2 id="bounty-agent-setup" className="text-3xl leading-page font-extrabold tracking-tighter lg:text-4xl xl:text-5xl">
           Agent setup
         </h2>
         <AgentPrompt prompt={bountyPrompt(origin, terms.intake.repository)} origin={origin} onCopy={onCopy} />
@@ -122,7 +122,7 @@ export function SecurityProgramView({ project, origin, revision, intake, setting
 function ProgramFailed({ read, onRetry }: { read: Exclude<ProgramRead, { kind: "found" }>; onRetry: () => void }) {
   return (
     <main className={pageClass}>
-      <PageHeader icon={<ShieldCheck className="size-6" />} title="Security" />
+      <PageHeader icon={<ShieldCheck />} title="Security" />
       {read.kind === "missing" ? (
         <Alert variant="warn">{programMessages.missing}</Alert>
       ) : (

@@ -1,0 +1,43 @@
+import type { Hex } from "viem"
+import { SubmissionFeeRatesLive } from "@repo/backend/live"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { type D1, d1 } from "@repo/platform/d1"
+import type { Handler } from "@repo/platform/testing"
+import { serve } from "@repo/platform/testing/chains"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import type { SubmissionFeeRates } from "@repo/ports/backend"
+import type { ReportDeposits } from "@repo/ports/security"
+import type { SubmissionFeeItems } from "@repo/ports/slopbot"
+import { ReportDepositsLive } from "@repo/security/live"
+import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
+import { depositContract } from "../../gen/backend__submissionFeeTerms.ts"
+import { journalDatabase } from "./journal.ts"
+
+export const network = "robinhood-mainnet"
+export const contract = depositContract.toLowerCase() as Hex
+export const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as Hex
+export const payer = "0x00000000000000000000000000000000000000a1" as Hex
+
+export interface FeeWorld {
+  readonly db: D1Database
+  readonly clock: SettableClock
+  readonly fetch: typeof globalThis.fetch
+}
+
+export effect function startedFeeWorld(name: string, start: number, handlers: ReadonlyArray<Handler>) {
+  const { db } = try acquireRelease(promise(() => journalDatabase(name)), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+  const rpc: Record<string, Handler> = {}
+  for (const handler of handlers) rpc[(try acquireRelease(promise(() => serve(handler)), (server) => promise(() => server.close()))).url] = handler
+  return { db, clock: settableClock(start), fetch: asFetch(internet({ rpc }).handler), urls: Object.keys(rpc) }
+}
+
+export type FeePorts = D1 | HttpClient.HttpClient | SubmissionFeeItems | ReportDeposits | SubmissionFeeRates | Experimental.Crypto.Crypto
+
+export effect function withFeePorts<A, E>(world: FeeWorld, program: A!E!FeePorts) {
+  const storage = d1(world.db)
+  const services = Layer.mergeAll(storage, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), storage), world.clock.layer, FetchHttpClient.layer, webCrypto)
+  return try Effect.provideService(Effect.provide(program, services), FetchHttpClient.Fetch, world.fetch)
+}

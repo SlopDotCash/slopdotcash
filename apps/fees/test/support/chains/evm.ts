@@ -4,7 +4,7 @@ import { type Anvil, type ForgeOutput, artifact, forgeBuild, refuseMainnet } fro
 import { type QuotesFake, kyberNative, parsedJson } from "@repo/platform/testing/quotes";
 import { Response } from "miniflare";
 import { type Address, type Hex, decodeFunctionData, decodeFunctionResult, encodeFunctionData, erc20Abi, parseAbi } from "viem";
-import { kyberRouterAbi } from "../../../src/kyber/swap.ts";
+import { kyberRouterAbi } from "@repo/platform/chain/kyberswap";
 import { kyberswap } from "../../../src/runtime/pins.ts";
 
 export interface FeeTokens {

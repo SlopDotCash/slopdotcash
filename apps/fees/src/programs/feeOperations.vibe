@@ -3,6 +3,7 @@ import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { D1, type Statement } from "@repo/platform/d1"
 import { d1Http } from "@repo/platform/d1Http"
+import { privateFile } from "@repo/platform/program"
 import { Socket } from "effect/socket"
 import { type Diagnostic, type DiagnosticKind, type Event as DiagnosticEvent, type Pin as DiagnosticPin, type QueryName, initial as diagnosticStart, machineOver as diagnosticMachine, noPin } from "../../gen/fees__diagnostics.effect.vibe"
 import { jsonValue } from "../solana/bytes.ts"
@@ -327,12 +328,6 @@ export effect function pinnedVersion(root: string) {
     worker: (try reviewedWorker(root)).name,
     checkedSource: (try setting("GITHUB_SHA")) ?? "",
   })
-}
-
-export effect function privateFile(directory: string, name: string, text: string) {
-  const fs = try FileSystem.FileSystem
-  const path = try Path.Path
-  try fs.writeFileString(path.join(directory, name), text, { mode: 0o600 })
 }
 
 effect function diagnosed(args: ReadonlyArray<string>, runnerTemp: string, progress: Progress, run: DiagnosticSession) {

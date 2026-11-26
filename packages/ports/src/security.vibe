@@ -2,8 +2,8 @@
 import type { Statement } from "@repo/platform/d1"
 import type { Rows } from "@repo/platform/stored"
 import { type FileRecovery, type FileRequest, type MergeInput, MergeResolution } from "@repo/platform/git/evidence"
-import { type Json, Network, type ReadFailure } from "./backend.vibe"
-import { type FeeDeposit, FeeOutcome, type FinalOutcome, type GoneDeposits, type ObservedDeposit } from "./slopbot.vibe"
+import type { Json, Network, ReadFailure } from "./backend.vibe"
+import type { FeeDeposit, FeeOutcome, FinalOutcome, GoneDeposits, ObservedDeposit } from "./slopbot.vibe"
 
 export {
   AutomaticMergeResolution,
@@ -20,11 +20,12 @@ export {
   MergeProfile,
   MergePull,
   MergeRelocation,
-  MergeResolution,
   RecoveredBlob,
   RecoveredEntry,
   SnapshotEntry,
 } from "@repo/platform/git/evidence"
+
+export { MergeResolution }
 
 export schema Restriction = "Clear" | "FlagQuarantine" | "ModeratorQuarantine" | "ServiceBan" | "ModeratorBan"
 
@@ -53,7 +54,7 @@ export service Clearance {
 
 export schema AwardSplit = "StandardSplit" | "FullAward"
 
-export schema ApprovedAward {
+export interface ApprovedAward {
   readonly caseId: string
   readonly projectId: string
   readonly caseRevision: number
@@ -413,7 +414,7 @@ export schema GenerationTarget {
 
 export schema DepositOutcomeReason = "responded" | "silent" | "turned-off" | "spam" | "duplicate" | "out-of-scope"
 
-export schema ReportDeposit {
+export interface ReportDeposit {
   readonly caseId: string
   readonly item: string
   readonly slopAmount: string

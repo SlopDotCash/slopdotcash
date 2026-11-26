@@ -35,7 +35,7 @@ export interface SolanaOrderDraft {
   readonly estimatedTakeAmount: bigint
 }
 
-export type SolanaProposed = { readonly kind: "Proposed"; readonly draft: SolanaOrderDraft } | { readonly kind: "NoRoute"; readonly detail: string }
+type SolanaProposed = { readonly kind: "Proposed"; readonly draft: SolanaOrderDraft } | { readonly kind: "NoRoute"; readonly detail: string }
 
 const takeChainId = wholeBig(chainIds.robinhood) ?? 0n
 const encoder = new TextEncoder()

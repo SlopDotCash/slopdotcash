@@ -2,7 +2,7 @@
 import type { D1Database, R2Bucket } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
-import { handleRaw, json, refuse, serviceAuth } from "@repo/platform/http"
+import { handle, handleRaw, json, refuse, serviceAuth } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
@@ -13,6 +13,7 @@ import { EvidenceBucket, evidenceBucket, verifiedPart } from "../../../src/evide
 import { type BackupCopy, type RetirementReceipt, finish, freeze, pendingTargets, retireTarget } from "../../../src/evidence/retirement.vibe"
 import { evidenceRoutes } from "../../../src/evidence/routes.vibe"
 import { readReport, reportBucket } from "../../../src/privacy/reads.vibe"
+import { faults, faultyBucket } from "./faults.ts"
 
 interface Env {
   readonly SLOP_DB: D1Database
@@ -69,13 +70,22 @@ const fixtureProgram = { technical: ["701"], financial: ["702"], dispute: [], sp
 schema Retirement { outcome: "backed" | "changed" | "missing"; backupDay: string; backupRoot: string }
 schema ReportText { submissionId: string; version: number; text: string }
 schema Retired { frozen: string; retired: ReadonlyArray<string>; finished: string }
+schema HoldPlan { githubId: string; part: number }
+
+const plan = faults()
 
 const reportRoute = route({ method: "GET", path: "/api/v1/test/security-cases/:id/report", access: "session", limitKib: 1, request: undefined, answer: ReportText, rejected: "not_found", cache: "private" })
 const retireRoute = route({ method: "POST", path: "/api/v1/test/evidence-generations/:id/retire", access: "public", limitKib: 1, request: Retirement, answer: Retired, rejected: "rejected", cache: "no-store" })
 
+const holdRoute = route({ method: "POST", path: "/api/v1/test/evidence-faults", access: "public", limitKib: 1, request: HoldPlan, answer: HoldPlan, rejected: "rejected", cache: "no-store" })
+
 const notFound = getSecuritySubmissionsById.notFoundReportNotFound
 
 const testRoutes = Layer.mergeAll(
+  handle(holdRoute, (input) => effect {
+    plan.held = { githubId: input.body.githubId, part: input.body.part }
+    return input.body
+  }),
   handleRaw(reportRoute, (input) => effect {
     const program = input.query.get("program") === "fixture" ? fixtureProgram : undefined
     const read = readReport({ caseId: input.params.id ?? "", viewerGithubId: input.actor.githubId, program }) catch effect (error) => match (error) {
@@ -108,7 +118,7 @@ export default worker({
   services: (env: Env) => Layer.mergeAll(
     d1(env.SLOP_DB),
     webCrypto,
-    evidenceBucket(env.VETTING_EVIDENCE),
+    evidenceBucket(faultyBucket(env.VETTING_EVIDENCE, env.SLOP_DB, plan)),
     reportBucket(env.PRIVATE_TRACES),
     Layer.succeed(Backups, { binding: env.EVIDENCE_BACKUPS }),
     rolesFrom(env),

@@ -23,9 +23,9 @@ export type MetricGridProps = ComponentProps<"dl">;
  */
 export function Metric({ label, value, tone = "Neutral", icon, detail, className, ...props }: MetricProps) {
   return (
-    <div className={cn("flex min-w-0 flex-col gap-1", className)} {...props}>
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className="flex items-center gap-2 text-2xl font-semibold tabular-nums">
+    <div className={cn("flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-card p-4", className)} {...props}>
+      <dt className="text-xs leading-summary font-bold text-muted-foreground">{label}</dt>
+      <dd className="flex items-center gap-2 font-mono text-lg leading-snug font-bold wrap-anywhere tabular-nums lg:text-metric">
         {icon ? <span aria-hidden className={cn("[&_svg]:size-5", tones[tone].text)}>{icon}</span> : null}
         {value}
       </dd>
@@ -36,5 +36,5 @@ export function Metric({ label, value, tone = "Neutral", icon, detail, className
 
 /** A row of `Metric`s that wraps on a narrow screen. */
 export function MetricGrid({ className, ...props }: MetricGridProps) {
-  return <dl className={cn("grid grid-cols-2 gap-6 md:grid-cols-4", className)} {...props} />;
+  return <dl className={cn("grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-3", className)} {...props} />;
 }

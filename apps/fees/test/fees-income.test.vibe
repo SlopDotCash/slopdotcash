@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Request as WebRequest, Response as WebResponse } from "miniflare"
 import { CallerLive } from "@repo/backend/caller"
 import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
@@ -29,6 +29,10 @@ import { definitions } from "../src/runtime/networks.vibe"
 import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
 import { diagnosticLine, recoveryDiagnostic } from "../src/rpcProbe/probe.vibe"
 import { journalDatabase } from "./support/journal.ts"
+import { same } from "./support/checks.vibe"
+import { words } from "./support/bytecode.ts"
+import { type TailSeen, type TailSockets, tailSockets } from "@repo/platform/testing/cloudflare"
+import { signedUp } from "@repo/platform/testing/members"
 
 interface Env {
   readonly SLOP_DB: D1Database
@@ -56,17 +60,6 @@ const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("static a
 const counts = { bridgeRecords: 0, purchaseRecords: 1, burnRecords: 1, arrivals: 1, refunds: 0, inTransit: 0, errors: 0 }
 const liveRecovery = { robinhood: true, live: true, recovery: true }
 
-function push(value: number) {
-  const digits = value.toString(16)
-  const even = digits.length % 2 === 0 ? digits : `0${digits}`
-  return `${(0x5f + even.length / 2).toString(16)}${even}`
-}
-
-function words(count: number) {
-  const loads = Array.from({ length: count }, (_, index) => `600435${index === 0 ? "" : `${push(index)}01`}54${push(index * 32)}52`).join("")
-  return `${loads}${push(count * 32)}${push(0)}f3`
-}
-
 const Started = Layer.unwrap(effect {
   const started = try acquireRelease(promise(() => journalDatabase("fees-income")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
   const base = try acquireRelease(promise(() => anvil({ chainId: 8453, finalityDepth: 2, timestamp: cutover - 3600 })), (chain) => promise(() => chain.close()))
@@ -75,10 +68,6 @@ const Started = Layer.unwrap(effect {
   try promise(() => robinhood.mine(5))
   return Layer.mergeAll(d1(started.db), webCrypto, Layer.succeed(Fixture, { db: started.db, base, robinhood }))
 })
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
 
 interface Paid { readonly transaction: string; readonly height: number }
 
@@ -136,17 +125,6 @@ function tailEvent(version: string, lines: ReadonlyArray<unknown>) {
 
 function tokenOf(githubId: string) {
   return `fees-income-session-${githubId}`.padEnd(48, "x")
-}
-
-effect function signedUp(githubIds: ReadonlyArray<string>) {
-  const statements: Statement[] = []
-  for (const githubId of githubIds) {
-    statements.push(
-      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${`member-${githubId}`}, '2026-11-01T00:00:00.000Z', 1, 5)`,
-      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(tokenOf(githubId))}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
-    )
-  }
-  try (try D1).batch(statements)
 }
 
 interface Seeded {
@@ -316,33 +294,6 @@ function feeCloudflare(world: FeeWorld, db: D1Database) {
   return { traffic, fetch: asFetch(net.handler) }
 }
 
-interface TailSeen { readonly url: string; readonly protocols: unknown; readonly sent: Array<string> }
-
-type Sockets = (url: string, options?: Socket.WebSocketConstructorOptions) => Socket.WebSocketLike
-
-function tailSockets(frames: ReadonlyArray<string>, ending: number | "error", seen: Array<TailSeen>): Sockets {
-  return (url, protocols) => {
-    const record: TailSeen = { url, protocols, sent: [] }
-    seen.push(record)
-    const listeners = new Map<string, ReadonlyArray<(event: Socket.WebSocketEvent) => void>>()
-    const emit = (type: string, event: Socket.WebSocketEvent) => {
-      for (const listener of listeners.get(type) ?? []) listener(event)
-    }
-    return {
-      readyState: 1,
-      addEventListener: (type, listener) => { listeners.set(type, [...(listeners.get(type) ?? []), listener]) },
-      removeEventListener: (type, listener) => { listeners.set(type, (listeners.get(type) ?? []).filter((known) => known !== listener)) },
-      close: () => undefined,
-      send: (data) => {
-        record.sent.push(typeof data === "string" ? data : new TextDecoder().decode(data))
-        for (const frame of frames) emit("message", { type: "message", data: frame })
-        if (ending === "error") emit("error", { type: "error" })
-        else emit("close", { type: "close", code: ending })
-      },
-    }
-  }
-}
-
 interface Ran {
   readonly passed?: Readonly<Record<string, unknown>>
   readonly failed?: Readonly<Record<string, unknown>>
@@ -352,7 +303,7 @@ function diagnosticSettings(temp: string, candidate: string) {
   return ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REF: "refs/heads/main", CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: "private-token", GITHUB_SHA: checkedSource, RUNNER_TEMP: temp, SLOP_SOLANA_RPC_CANDIDATE: candidate }))
 }
 
-effect function operated(fetch: typeof globalThis.fetch, temp: string, sockets: Sockets) {
+effect function operated(fetch: typeof globalThis.fetch, temp: string, sockets: TailSockets) {
   const run = Effect.provide(inspectFeeOperations([repositoryRoot]), Layer.merge(FetchHttpClient.layer, diagnosticSettings(temp, helius)))
   const provided = Effect.provideService(Effect.provideService(run, Socket.WebSocketConstructor, sockets), FetchHttpClient.Fetch, fetch)
   return Effect.map(provided, (output): Ran => ({ passed: output })) catch (error): Ran => ({ failed: error instanceof FeeOperationsUnavailable ? error.failure : { tag: error._tag } })
@@ -475,7 +426,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
       { kind: "claim", id: "claim-dry-0003", network: "solana", mode: "dry_run", token: tokenTwo, target: tokenTwo, amountIn: "4", route: null, minimum: null, quote: "{}", tx: null, raw: null, expires: null, amountOut: null, state: "quoted", at: try at(0.25) },
     ]
     try (try D1).batch(rows.map(seeded))
-    try signedUp([admin, member])
+    try signedUp([admin, member], { joinedAt: "2026-11-01T00:00:00.000Z", tokenOf })
     const posted = try ask(feeConversionsPath, { method: "POST", as: admin })
     const anonymous = try ask(feeConversionsPath)
     const forbidden = try ask(feeConversionsPath, { as: member })

@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import { utf8 } from "@repo/platform/crypto"
-import { type Answer, type World, agedClosure, assessment, backUp, digest, endSession, finish, legacyObject, overwrite, owner, partialDownload, reader, reportCase, request, revokeTriager, rows, signed, started } from "./support/evidence/harness.ts"
+import { type Answer, type World, agedClosure, assessment, backUp, digest, endSession, holdPartUntilSessionEnds, finish, legacyObject, overwrite, owner, partialDownload, reader, reportCase, request, revokeTriager, rows, signed, started } from "./support/evidence/harness.ts"
 
 service Evidence { readonly world: World }
 
@@ -159,7 +159,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const fullSha = try promise(() => digest(full.body as Uint8Array))
     const reused = try download(fresh)
     const interrupted = try cookieGrant
-    const partial = try promise(() => partialDownload(world, operatorPath(id, sha, "download"), reader, interrupted.cookie, 1, () => endSession(world, reader)))
+    try promise(() => holdPartUntilSessionEnds(world, reader, 1))
+    const partial = try promise(() => partialDownload(world, operatorPath(id, sha, "download"), reader, interrupted.cookie, partBytes, () => endSession(world, reader)))
     try same({
       registered: registered.status,
       early: shown(early),

@@ -1,5 +1,5 @@
 // spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/ui/pagination.md, "The page stays within the pages that exist"; spec/frontend/requests.md, "Only the current request may publish its validated result"
-import { DataState, Leaderboard, type LeaderboardRow, Pagination } from "@repo/ui";
+import { cn, DataState, Leaderboard, type LeaderboardRow, Pagination, sectionTitle } from "@repo/ui";
 import type { Shown } from "../home/listing.ts";
 import { pageRows, usePages } from "./pages.ts";
 import { matching, type Period, type StandingHistory, type StandingRow, standingRows } from "./standings.ts";
@@ -53,10 +53,10 @@ function Rows({ history, period, query, page, onPage, compact, nowMs }: Required
 /** Contributors ranked by the Points of the period, equal totals sharing a rank; the read's loading, failure and staleness are shown, never an empty board. */
 export function ContributorStandings({ history, period, query, page, onPage, compact = false, title = "Contributor standings", fullView, nowMs }: ContributorStandingsProps) {
   return (
-    <section aria-label={title} className="flex flex-col gap-4">
+    <section aria-label={title} className={cn("flex flex-col gap-4", compact && "gap-6 rounded-xl border border-border p-8 max-md:p-5")}>
       {compact ? (
         <div className="flex flex-wrap items-baseline justify-between gap-4">
-          <h2 className="text-xl font-semibold text-foreground">{title}</h2>
+          <h2 className={sectionTitle}>{title}</h2>
           {fullView ? (
             <a href={fullView} className={linkClass}>
               View leaderboard

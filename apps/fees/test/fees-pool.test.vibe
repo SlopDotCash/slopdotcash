@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import { type Address, type Hex, decodeFunctionData, encodeFunctionData, keccak256, parseAbi, toHex } from "viem"
 import type { D1Database } from "@repo/platform/bindings"
@@ -22,13 +22,12 @@ import { type PoolResult, type PoolSettings, robinhoodPool } from "../src/buybac
 import { type Facts, poolOf, send } from "../src/buybackPool/store.vibe"
 import { decodedApproval } from "../src/evm/abi.ts"
 import { feeChain } from "../src/evm/client.vibe"
-import { runText } from "../src/journal/codec.vibe"
-import { journal, send as journalSend } from "../src/journal/store.vibe"
-import { kyberRouterAbi } from "../src/kyber/swap.ts"
+import { kyberRouterAbi } from "@repo/platform/chain/kyberswap"
 import type { BuybackLimits, NativeLimits } from "../src/runtime/config.vibe"
 import { burnAddress, circleUsdc, kyberswap, robinhoodUsdg, slopToken } from "../src/runtime/pins.ts"
 import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
 import { type GenerationNames, dayMs, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+import { recoveryLease, same } from "./support/checks.vibe"
 
 service Fixture {
   readonly db: D1Database
@@ -212,10 +211,7 @@ effect function tried(world: World, event: Event, facts: Facts = {}) {
 }
 
 effect function leased(world: World) {
-  const instance = journalOf(world)
-  const runId = (try Effect.provide(journal(instance, world.names), services(world))).state.nextRun
-  try Effect.provide(journalSend(instance, world.names, { type: "acquireLease", runId, trigger: "Recovery" }, "Worker"), services(world))
-  return runText(instance.scope, world.names.text("run", runId) ?? "", "Recovery")
+  return try Effect.provide(recoveryLease(journalOf(world), world.names), services(world))
 }
 
 effect function arrival(world: World, index: number, take: bigint, runId: string) {
@@ -297,10 +293,6 @@ schema AssetSendCheck { kind: string; token: string; state: string; amount_in: s
 
 function purchaseQuotes(quotes: QuotesFake) {
   return quotes.calls.filter((call) => call.service === "kyberswap" && new URL(call.url).searchParams.get("tokenIn") === usdg.toLowerCase()).map((call) => new URL(call.url).searchParams.get("amountIn"))
-}
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {

@@ -5,14 +5,9 @@ import { dln } from "../runtime/pins.ts"
 import { decimal } from "../evm/abi.ts"
 import { jsonValue } from "../solana/bytes.ts"
 
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-}
-import { errorText } from verified
+import { errorText } from "../kernels/verified.vibe"
 
-export error DlnUnavailable { detail: string }
+error DlnUnavailable { detail: string }
 export error DlnRefused { issue: string }
 
 const responseLimitBytes = 1_000_000
@@ -27,7 +22,7 @@ export interface DlnRequest {
   readonly receiver: string
 }
 
-export interface DlnProposal {
+interface DlnProposal {
   readonly to: string
   readonly data: Hex
   readonly value: bigint
@@ -35,7 +30,7 @@ export interface DlnProposal {
   readonly estimatedTakeAmount: bigint
 }
 
-export type Proposed = { readonly kind: "Proposal"; readonly proposal: DlnProposal } | { readonly kind: "NoRoute"; readonly detail: string }
+type Proposed = { readonly kind: "Proposal"; readonly proposal: DlnProposal } | { readonly kind: "NoRoute"; readonly detail: string }
 
 const Answer = Schema.Struct({
   errorId: Schema.optionalKey(Schema.Unknown),

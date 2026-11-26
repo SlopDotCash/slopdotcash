@@ -8,7 +8,7 @@ export error ApprovalRefused { issue: string }
 
 export type Spender = "Router" | "Bridge"
 
-export const unlimitedAmount = 2n ** 256n - 1n
+const unlimitedAmount = 2n ** 256n - 1n
 
 export function spenderAddress(spender: Spender): Address {
   return (spender === "Router" ? kyberswap.router : dln.source) as Address
@@ -42,7 +42,7 @@ export effect function allowanceCovers(token: Address, amount: bigint, spender: 
   return allowance
 }
 
-export interface ApprovalEvidence { readonly succeeded: boolean; readonly allowance: bigint }
+interface ApprovalEvidence { readonly succeeded: boolean; readonly allowance: bigint }
 
 export interface ExpectedApproval { readonly token: Address; readonly spender: Spender; readonly amount: bigint; readonly nonce: bigint }
 

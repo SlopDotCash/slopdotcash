@@ -31,13 +31,13 @@ export function VaultTotals({ snapshot }: VaultTotalsProps) {
           label="Free and reserved funds"
           legend={false}
           segments={[
-            { label: "Available", value: freeShare, tone: "Positive" },
+            { label: "Available", value: freeShare, tone: "Emphasis" },
             { label: "Reserved", value: Number(share) - freeShare, tone: "Notice" },
           ]}
         />
       )}
       <MetricGrid>
-        <Metric label="Available" value={amount(snapshot.freeBalance)} tone="Positive" />
+        <Metric label="Available" value={amount(snapshot.freeBalance)} tone="Emphasis" />
         <Metric label="Paid out" value={amount(snapshot.totalPaid)} detail={`+ ${amount(snapshot.totalPayoutFees)} fees`} />
       </MetricGrid>
     </div>

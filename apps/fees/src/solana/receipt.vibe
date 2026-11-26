@@ -55,7 +55,7 @@ effect function signedSend(send: SolanaSend) {
   const signature = firstSignature(raw, parsed)
   const key = publicKey(send.wallet)
   if (key === undefined || base58Encode(signature) !== send.txId || !(try verifyMessageSignature(key, messageOf(raw, parsed), signature))) return try refuse("Solana native journal signature mismatch")
-  if (send.accountProof === undefined && !parsed.legacy) return try refuse("Versioned Solana recovery lacks retained account evidence")
+  if (send.accountProof === undefined && !parsed.unversioned) return try refuse("Versioned Solana recovery lacks retained account evidence")
   const proof = send.accountProof === undefined ? undefined : try retainedProof(send.accountProof)
   const keys = proof === undefined ? parsed.staticKeys : try verifyAccountProof(raw, parsed, proof)
   return { raw, parsed, proof, keys } satisfies Signed
@@ -154,7 +154,7 @@ effect function routeReviewed(send: RouteSend) {
   if (send.accountProof !== undefined && (try retainedProof(send.accountProof)).route !== undefined) return true
   const raw = base64Decode(send.rawTx)
   if (raw === undefined) return try refuse("Solana native journal lacks its reviewed signed bytes")
-  if (!(try parsedTransaction(raw)).legacy) return try refuse("Versioned swap receipt lacks its retained route review")
+  if (!(try parsedTransaction(raw)).unversioned) return try refuse("Versioned swap receipt lacks its retained route review")
   return false
 }
 
@@ -205,7 +205,7 @@ export effect function retainedSendReview(rawTx: string, accountProof: string | 
   if (raw === undefined) return try refuse("Native reservation lacks its signed intent")
   const parsed = try parsedTransaction(raw)
   const routed = parsed.programs.includes(jupiter.program)
-  if (parsed.legacy && !routed && accountProof === undefined) return
+  if (parsed.unversioned && !routed && accountProof === undefined) return
   if (accountProof === undefined) return try refuse("Versioned Solana signing lacks retained account evidence")
   const proof = try retainedProof(accountProof)
   try verifyAccountProof(raw, parsed, proof)

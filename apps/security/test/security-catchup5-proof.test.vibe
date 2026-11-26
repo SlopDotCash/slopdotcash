@@ -214,6 +214,19 @@ effect function created(world: World, as: string, key: string, report: unknown) 
   return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
 }
 
+async function receiptScreened(world: World, id: string): Promise<number> {
+  for (let polls = 0; polls < 200; polls += 1) {
+    const [found] = await rows(world, "SELECT screening_state AS state, revision FROM security_submission_intake WHERE submission_id=?", id)
+    if (found !== undefined && !["queued", "running"].includes(String(found.state))) return Number(found.revision)
+  }
+  throw new Error(`the receipt's screening of ${id} did not settle`)
+}
+
+effect function screenedAgain(proofs: Proofs.Shape, as: string, id: string) {
+  const revision = try promise(() => receiptScreened(proofs.world, id))
+  return try call(proofs, `/api/v1/security-submissions/${id}/screen`, as, [], { expectedRevision: revision })
+}
+
 function said(call: ProviderCall | undefined) {
   return call?.messages[0]?.content ?? ""
 }
@@ -280,14 +293,14 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const screened = try created(world, "41101", "proof-journey-0002", screenedReport)
     provider.reply(callOf(screeningPrompt, screenedReport.summary), decided("legitimate", "The test file reproduces the drain against the named vault."))
     provider.reply(callOf(analysisPrompt, screenedReport.summary), assessed("A stale oracle read lets callers over-withdraw."))
-    const screen = try call(proofs, `/api/v1/security-submissions/${screened.id}/screen`, "41101", [], { expectedRevision: 1 })
+    const screen = try screenedAgain(proofs, "41101", screened.id)
     const screeningCall = provider.calls.find(callOf(screeningPrompt, screenedReport.summary))
     const analysisCall = provider.calls.find(callOf(analysisPrompt, screenedReport.summary))
     const plain = { summary: "Oracle staleness without a proof file", description, severity: "high" }
     const unproven = try created(world, "41102", "proof-journey-0003", plain)
     provider.reply(callOf(screeningPrompt, plain.summary), decided("legitimate", "The report names the vault and the stale read."))
     provider.reply(callOf(analysisPrompt, plain.summary), assessed("A stale oracle read lets callers over-withdraw."))
-    try call(proofs, `/api/v1/security-submissions/${unproven.id}/screen`, "41102", [], { expectedRevision: 1 })
+    try screenedAgain(proofs, "41102", unproven.id)
     const plainCall = provider.calls.find(callOf(screeningPrompt, plain.summary))
 
     const forwardedReport = reportOf("Vault drain forwarded with its proof")

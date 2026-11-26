@@ -494,7 +494,9 @@
       ]
     },
     "@repo/contracts#typecheck": {
-      "dependsOn": [],
+      "dependsOn": [
+        "//#gen"
+      ],
       "outputs": []
     },
     "@repo/contracts#test": {

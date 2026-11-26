@@ -25,8 +25,8 @@ export function MergeActivity({ project, merge, nowMs }: MergeActivityProps) {
   const backlogNotice = projectBacklogNotice(project, merge, nowMs);
   return (
     <>
-      {backlogNotice ? <p className="text-lg font-medium text-foreground">{backlogNotice}</p> : projectHeld(project, merge, nowMs) ? <p className="text-lg font-medium text-foreground">{pausedNotice}</p> :null}
-      {line ? <p className="text-sm text-muted-foreground">{line}</p> : null}
+      {backlogNotice ? <p className="text-lg font-medium text-foreground">{backlogNotice}</p> : projectHeld(project, merge, nowMs) ? <p className="text-lg font-medium text-foreground">{pausedNotice}</p> : null}
+      {line ? <p className="text-foreground">{line}</p> : null}
     </>
   );
 }

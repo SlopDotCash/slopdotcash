@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Response as WebResponse } from "miniflare"
 import { type Address, type Hex, encodeAbiParameters, encodeEventTopics, encodeFunctionData, erc20Abi, parseAbi } from "viem"
 import type { D1Database } from "@repo/platform/bindings"
@@ -20,8 +20,6 @@ import { type Facts, ledgerOf, send } from "../src/buyback/store.vibe"
 import { decodedApproval } from "../src/evm/abi.ts"
 import { feeChain } from "../src/evm/client.vibe"
 import { sanitizeFeeTail } from "../src/programs/feeTail.ts"
-import { runText } from "../src/journal/codec.vibe"
-import { journal, send as journalSend } from "../src/journal/store.vibe"
 import type { BuybackLimits, NativeLimits } from "../src/runtime/config.vibe"
 import { circleUsdc, dln, kyberswap, robinhoodUsdg } from "../src/runtime/pins.ts"
 import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
@@ -29,6 +27,8 @@ import { feeSolana } from "../src/solana/client.vibe"
 import { TOKEN_PROGRAM } from "../src/solana/wire.vibe"
 import { fromAmount } from "@repo/settlement/kernels/amounts"
 import { type GenerationNames, dayMs, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+import { recoveryLease, same } from "./support/checks.vibe"
+import { words } from "./support/bytecode.ts"
 
 interface SolanaFailure { readonly method: string; readonly status: number }
 
@@ -75,17 +75,6 @@ const solanaUrl = "https://solana.invalid"
 const solanaGenesis = "11111111111111111111111111111111"
 const unretained = "fixture-body-must-not-be-retained"
 const feeWorker = "slop-fee-converter"
-
-function push(value: number) {
-  const digits = value.toString(16)
-  const even = digits.length % 2 === 0 ? digits : `0${digits}`
-  return `${(0x5f + even.length / 2).toString(16)}${even}`
-}
-
-function words(count: number) {
-  const loads = Array.from({ length: count }, (_, index) => `600435${index === 0 ? "" : `${push(index)}01`}54${push(index * 32)}52`).join("")
-  return `${loads}${push(count * 32)}${push(0)}f3`
-}
 
 function word(value: bigint) {
   return `0x${value.toString(16).padStart(64, "0")}`
@@ -221,10 +210,7 @@ effect function tried(world: World, event: Event, by: Sender = "Worker", facts: 
 }
 
 effect function leased(world: World, network: Network) {
-  const instance = { ...generationInstance(world.generation, network), held: world.leg.held }
-  const runId = (try Effect.provide(journal(instance, world.names), services(world))).state.nextRun
-  try Effect.provide(journalSend(instance, world.names, { type: "acquireLease", runId, trigger: "Recovery" }, "Worker"), services(world))
-  return runText(instance.scope, world.names.text("run", runId) ?? "", "Recovery")
+  return try Effect.provide(recoveryLease({ ...generationInstance(world.generation, network), held: world.leg.held }, world.names), services(world))
 }
 
 function placedOf(index: bigint, give: bigint, take: bigint): Placed {
@@ -344,10 +330,6 @@ effect function deposited(world: World, id: number, fields: KeptRow = {}) {
   try Effect.provide(effect {
     try (try D1).run(sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state, resolve_tx, resolved_at) VALUES (${fields.network ?? "base-mainnet"}, ${id}, ${`0x${"1".repeat(64)}`}, ${`0x${"a".repeat(40)}`}, ${fields.token ?? usdc}, ${fields.amount ?? "2000000"}, ${fields.keptTo ?? wallet(world).toLowerCase()}, ${`0x${id.toString(16).padStart(64, "0")}`}, ${100 + id}, ${at}, ${finalizedAt}, ${fields.accepted ?? 1}, ${fields.state ?? "kept"}, ${resolveTx}, ${resolvedAt})`)
   }, d1(world.db))
-}
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {

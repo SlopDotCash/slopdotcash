@@ -43,17 +43,12 @@ import type { FeeSecrets, FeeVars } from "../runtime/networks.vibe"
 import { circleUsdc, robinhoodUsdg, slopToken, solanaGenesis } from "../runtime/pins.ts"
 import { type ReviewedFacts, type TokenFact, decodeReviewed, reviewedFacts } from "../runtime/reviewed.vibe"
 import { evmFeeWallet } from "../signer/feeWallet.vibe"
-import type { EvmNetwork } from "../signer/intents.ts"
+import type { EvmNetwork } from "../evm/abi.ts"
 import { solanaFeeWallet } from "../signer/solana.vibe"
 import { feeSolana } from "../solana/client.vibe"
 import { type KeptSubmissionFee, keptFees } from "../submissionFee/income.vibe"
 
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-}
-import { errorText } from verified
+import { errorText } from "../kernels/verified.vibe"
 
 export interface Env extends FeeVars, FeeSecrets {
   readonly FEE_DB: D1Database

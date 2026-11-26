@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
@@ -29,6 +29,7 @@ import { solanaFeeWallet } from "../src/signer/solana.vibe"
 import { feeSolana } from "../src/solana/client.vibe"
 import { wrappedSol } from "../src/solana/wire.vibe"
 import { factsFor, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+import { logged, same } from "./support/checks.vibe"
 
 service Fixture { readonly db: D1Database }
 
@@ -171,10 +172,6 @@ effect function settledGas(world: World) {
   return (try Effect.provide(rows(GasRow, sql`SELECT actual_wei FROM fee_native_gas WHERE substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1(world.db))).map((row) => row.actual_wei)
 }
 
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
-
 const sensitive = "fixture-provider-body-must-not-appear"
 const solanaRpcUrl = "https://solana-rpc.invalid/"
 const jupiterSettings: JupiterSettings = { apiUrl: jupiterApi.api, apiKey: undefined, usdc: circleUsdc.solana, feeMicro: 1000n }
@@ -208,17 +205,6 @@ effect function kyberAnswer(fetch: typeof globalThis.fetch) {
     detail: error._tag === "KyberUnavailable" ? error.detail : undefined,
     failure: providerFailureOf(error, "evm-rpc"),
   })
-}
-
-effect function logged<A, E, R>(program: A!E!R) {
-  const events: Array<Readonly<Record<string, unknown>>> = []
-  const capture = Logger.layer([Logger.make((options) => {
-    const message: unknown = options.message
-    const [event, fields] = Array.isArray(message) ? message : [message, undefined]
-    if (typeof event === "string") events.push({ event, ...(typeof fields === "object" && fields !== null ? fields : {}) })
-  })], { mergeWithExisting: true })
-  const value = try Effect.provide(program, capture)
-  return { value, events }
 }
 
 effect function solanaRun(world: World, fetch: typeof globalThis.fetch) {

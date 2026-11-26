@@ -266,8 +266,11 @@ async function answer(route: Route, into: Session, worker: (request: Request) =>
   const headers = Object.fromEntries(Object.entries(await asked.allHeaders()).filter(([name]) => !name.startsWith(":")));
   const body = asked.postDataBuffer();
   if (url.origin === site) into.sent.push({ method: asked.method(), path: url.pathname, actor: headers["x-slop-expected-github-id"] ?? null });
-  const response = await worker(new Request(url.toString(), { method: asked.method(), headers, redirect: "manual", ...(body === null ? {} : { body: new Uint8Array(body) }) }));
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const answered = await worker(new Request(url.toString(), { method: asked.method(), headers, redirect: "manual", ...(body === null ? {} : { body: new Uint8Array(body) }) }))
+    .then(async (response) => ({ response, bytes: Buffer.from(await response.arrayBuffer()) }))
+    .catch(() => undefined);
+  if (answered === undefined) return route.abort("failed").catch(() => undefined);
+  const { response, bytes } = answered;
   const held = url.origin === site ? into.holds.get(holdKey(asked.method(), url.pathname)) : undefined;
   if (held !== undefined) await held.released;
   const shown: Record<string, string> = {};

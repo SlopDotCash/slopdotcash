@@ -21,7 +21,8 @@ import { allowanceCovers, approvalAllowance, boundedApproval, isNative } from ".
 import { freeNonce, nonceAtLeast, readWord, simulated, tokenBalance } from "../evm/client.vibe"
 import { type BuybackSigning, type KyberSettings, builtSwap, nativeValue, swapMatches } from "../kyber/route.vibe"
 import { decodedSwap, returnAmountOf } from "../kyber/swap.ts"
-import type { EvmIntent, EvmNetwork, EvmReplacement, FirstEvmIntent, PreparationAttempt } from "./intents.ts"
+import type { EvmNetwork } from "../evm/abi.ts"
+import type { EvmIntent, EvmReplacement, FirstEvmIntent, PreparationAttempt } from "./intents.ts"
 
 module verified {
   import { bridgeFeeWithin as within } from "../kernels/buybackShares.ts"

@@ -62,6 +62,7 @@ const projects: ReadonlyMap<string, ProjectView> = new Map([
   ["intake-restricted", fixture("intake-restricted", true)],
 ])
 
+schema RevisionRow { revision: number }
 schema StatusRow { enabled: number | null; verified_at: string | null; attempted_at: string; repository_id: string | null; repository_node_id: string | null; failure: string | null }
 
 const registered = { revision: 1, repositoryKey: "slop-test/intake", repositoryId: "1001", repositoryNodeId: "R_intake" }
@@ -82,15 +83,23 @@ function ports(env: Env) {
   const banned = new Set(env.BANNED_GITHUB_IDS.split(",").map((id) => id.trim()).filter((id) => id !== ""))
   const isBanned = (id: string) => banned.has(id) || bans.has(id)
   return Layer.mergeAll(
-    Layer.succeed(Registry, {
-      project: (projectId) => succeed(projects.get(projectId)),
-      byRepository: () => succeed(undefined),
-      byPath: () => succeed(undefined),
-      active: () => succeed([...projects.values()]),
-      pausedProjects: () => succeed([...projects.values()].filter((project) => project.rowStatus === "Paused")),
-      fence: () => succeed(sql`1`),
-      appendVaultRegistration: () => fail(new VaultRegistrationRefused({ code: "github_unavailable" })),
-    } satisfies Registry.Shape),
+    Layer.effect(Registry, effect {
+      const db = try D1
+      return {
+        project: (projectId) => provideService(effect {
+          const view = projects.get(projectId)
+          if (view === undefined) return undefined
+          const row = try first(RevisionRow, sql`SELECT revision FROM projects WHERE id=${projectId}`)
+          return row === undefined ? view : { ...view, revision: row.revision }
+        }, D1, db),
+        byRepository: () => succeed(undefined),
+        byPath: () => succeed(undefined),
+        active: () => succeed([...projects.values()]),
+        pausedProjects: () => succeed([...projects.values()].filter((project) => project.rowStatus === "Paused")),
+        fence: () => succeed(sql`1`),
+        appendVaultRegistration: () => fail(new VaultRegistrationRefused({ code: "github_unavailable" })),
+      } satisfies Registry.Shape
+    }),
     Layer.succeed(Authority, {
       repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
     } satisfies Authority.Shape),

@@ -1,22 +1,10 @@
 import { assert, layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import { type Hex, concat, encodeAbiParameters, encodeEventTopics, erc20Abi, toHex } from "viem"
-import { SubmissionFeeRatesLive } from "@repo/backend/live"
-import type { D1Database } from "@repo/platform/bindings"
-import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
-import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
-import { type Served, serve } from "@repo/platform/testing/chains"
-import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
-import { internet } from "@repo/platform/testing/internet"
-import { migrationsDir } from "@repo/platform/testing/paths"
-import { asFetch } from "@repo/platform/testing/quotes"
-import type { SubmissionFeeRates } from "@repo/ports/backend"
-import type { ReportDeposits } from "@repo/ports/security"
-import type { SubmissionFeeItems } from "@repo/ports/slopbot"
-import { ReportDepositsLive } from "@repo/security/live"
-import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
+import { D1, type Statement, rows, sql } from "@repo/platform/d1"
+import type { Handler } from "@repo/platform/testing"
 import { askItem, dueOutcome } from "@repo/slopbot/fee/items"
-import { burnAddress, depositContract, feeWallet } from "../gen/backend__submissionFeeTerms.ts"
+import { burnAddress, feeWallet } from "../gen/backend__submissionFeeTerms.ts"
 import { submissionDepositsAbi } from "../src/submissionFee/abi.ts"
 import { submissionFeeChain } from "../src/submissionFee/chain.vibe"
 import type { NetworkConfig } from "../src/submissionFee/config.vibe"
@@ -24,13 +12,10 @@ import { keptFees, keptSubmissionFees } from "../src/submissionFee/income.vibe"
 import { judgeDeposits } from "../src/submissionFee/judge.vibe"
 import { planResolutions } from "../src/submissionFee/plan.vibe"
 import { scan } from "../src/submissionFee/scan.vibe"
+import { type FeePorts, type FeeWorld, contract, network, payer, startedFeeWorld, usdg, withFeePorts } from "./support/submissionFee.vibe"
 
-const network = "robinhood-mainnet"
-const contract = depositContract.toLowerCase() as Hex
-const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as Hex
 const slop = "0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae" as Hex
 const foreign = "0x000000000000000000000000000000000000beef" as Hex
-const payer = "0x00000000000000000000000000000000000000a1" as Hex
 const wallet = feeWallet.toLowerCase() as Hex
 const burn = burnAddress.toLowerCase() as Hex
 const start = Date.parse("2026-11-22T00:00:00.000Z")
@@ -67,13 +52,12 @@ interface Wire {
   readonly logs: ReadonlyArray<{ readonly address: Hex; readonly topics: ReadonlyArray<Hex>; readonly data: Hex }>
 }
 
-service World {
-  readonly db: D1Database
-  readonly clock: SettableClock
+interface DepositsWorld extends FeeWorld {
   readonly ledger: Ledger
-  readonly fetch: typeof globalThis.fetch
   readonly network: NetworkConfig
 }
+
+service World: DepositsWorld {}
 
 function item(n: number) {
   return toHex(n, { size: 32 })
@@ -149,23 +133,14 @@ function chainRpc(ledger: Ledger): Handler {
 }
 
 const Started = Layer.effect(World, effect {
-  const mf = try acquireRelease(sync(() => startWorker({ d1: { FEE_DB: "fees-submission-fee" } })), (started) => promise(() => started.dispose()))
-  const failed = (try promise(() => migrate(mf, "FEE_DB", migrationsDir))).find((applied) => applied.error !== undefined)
-  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
-  const db = try promise(() => database(mf, "FEE_DB"))
   const ledger: Ledger = { latest: 0, finalized: 0, deposits: [], resolutions: [] }
-  const handler = chainRpc(ledger)
-  const served: Served = try acquireRelease(promise(() => serve(handler)), (server) => promise(() => server.close()))
-  const net = internet({ rpc: { [served.url]: handler } })
-  const config: NetworkConfig = { network, chainId: 4663, contract, startBlock: 1, rpcUrl: Redacted.make(served.url), confirmations: 2, scanPageBlocks: 8, gas: { perTransactionWei: 1n, perDayWei: 1n } }
-  return { db, clock: settableClock(start), ledger, fetch: asFetch(net.handler), network: config }
+  const { urls: [rpcUrl = ""], ...base } = try startedFeeWorld("fees-submission-fee", start, [chainRpc(ledger)])
+  const config: NetworkConfig = { network, chainId: 4663, contract, startBlock: 1, rpcUrl: Redacted.make(rpcUrl), confirmations: 2, scanPageBlocks: 8, gas: { perTransactionWei: 1n, perDayWei: 1n } }
+  return { ...base, ledger, network: config }
 })
 
-effect function provided<A, E>(program: A!E!(D1 | HttpClient.HttpClient | SubmissionFeeItems | ReportDeposits | SubmissionFeeRates)) {
-  const world = try World
-  const storage = d1(world.db)
-  const services = Layer.mergeAll(storage, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), storage), world.clock.layer, FetchHttpClient.layer)
-  return try Effect.provideService(Effect.provide(program, services), FetchHttpClient.Fetch, world.fetch)
+effect function provided<A, E>(program: A!E!FeePorts) {
+  return try withFeePorts(try World, program)
 }
 
 effect function runOnce() {

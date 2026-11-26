@@ -1,5 +1,5 @@
 // spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/frontend/requests.md, "Only the current request may publish its validated result"
-import { DataState, Disclosure, PageHeader, Status } from "@repo/ui";
+import { cn, DataState, Disclosure, PageHeader, shell, Status } from "@repo/ui";
 import type { Effect } from "effect";
 import { BookOpen, Download, Users } from "lucide-react";
 import type { PageProps } from "../../app/pages.ts";
@@ -8,13 +8,13 @@ import { useShownRead } from "../projects/hooks.ts";
 import { projectRuntime } from "../projects/reads.vibe";
 import { ContributionPointTiers } from "../public/index.ts";
 import { type Settled, useOnce } from "../security/program/hooks.ts";
-import { People, type PeopleMembers } from "./People.tsx";
+import { People, type PeopleMembers, panelClass } from "./People.tsx";
 import { stewardsOf } from "./peopleRows.ts";
 import { useQuery } from "./query.ts";
 import { type ContributorRuntime, contributorReads, contributorRuntime, origin, registryBoot } from "./reads.vibe";
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-8 px-4 py-12";
-const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
+const pageClass = cn(shell, "flex flex-1 flex-col gap-8 pt-10 pb-16");
+const linkClass = "inline-flex items-center gap-1 font-bold text-foreground underline decoration-foreground/22 underline-offset-5";
 
 const reviewTiers: ReadonlyArray<readonly [string, number]> = [
   ["Triage", 10],
@@ -25,7 +25,7 @@ const reviewTiers: ReadonlyArray<readonly [string, number]> = [
 
 function Rules() {
   return (
-    <Disclosure id="rules" summary="Rules">
+    <Disclosure id="rules" summary="Rules" className={panelClass}>
       <div className="flex flex-col gap-4">
         <ContributionPointTiers />
         <p className="flex flex-wrap gap-2">
@@ -33,13 +33,13 @@ function Rules() {
             <Status key={tier} title={`${tier} review: ${points} points`} presentation={{ tone: "Neutral", icon: "Eye", label: `${tier} ${points}` }} />
           ))}
         </p>
-        <p className="flex flex-wrap items-center gap-2">
+        <p className="flex flex-wrap items-center gap-2 text-base text-foreground">
           <a href="/protocol/points-v1.md" className={linkClass}>
-            <BookOpen aria-hidden className="inline size-4" /> Rules
+            <BookOpen aria-hidden className="size-3.75" /> Rules
           </a>
           ·
           <a href="/data/points.json" download className={linkClass}>
-            <Download aria-hidden className="inline size-4" /> JSON
+            <Download aria-hidden className="size-3.75" /> JSON
           </a>
         </p>
       </div>

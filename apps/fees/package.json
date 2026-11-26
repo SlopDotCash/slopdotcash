@@ -30,7 +30,6 @@
   },
   "devDependencies": {
     "@effect/vitest": "4.1.1",
-    "@repo/contracts": "workspace:*",
     "@types/node": "catalog:",
     "miniflare": "5.20261113.0-beta",
     "typescript": "catalog:",

@@ -37,7 +37,12 @@ module node {
   import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
   import { tmpdir } from "node:os"
   import { dirname, join } from "node:path"
+  import { fileURLToPath } from "node:url"
   export interface Run { readonly status: number | null; readonly stdout: string; readonly stderr: string }
+  /** @throws {never} */
+  export function urlPath(url: URL): string {
+    return fileURLToPath(url)
+  }
   function listed(root: string, prefix: string): string[] {
     return readdirSync(join(root, prefix)).flatMap((name) => {
       const path = prefix === "" ? name : `${prefix}/${name}`
@@ -60,10 +65,10 @@ module node {
   }
   /** @throws {Error} */
   export function python(program: string, input: unknown): unknown {
-    const run = spawnSync("python3", ["-I", "-B", "-c", program], {
+    const run = spawnSync("python3", ["-I", "-B", "-X", "utf8", "-c", program], {
       input: JSON.stringify(input),
       encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "" },
+      env: { PATH: process.env.PATH ?? "", PYTHONUTF8: "1" },
       maxBuffer: 256 * 1024 * 1024,
     })
     if (run.error !== undefined) throw run.error
@@ -90,7 +95,7 @@ module node {
     rmSync(directory, { recursive: true, force: true })
   }
 }
-import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles } from node
+import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles, urlPath } from node
 
 const frozenTemplateSha256 = "c332043b6d4a25583221f9718a7fcab8efe2098c2c60ce3162176840c9ee6258"
 const pinnedCommit = "8660a61214a6427a4e66c540c7dc73d50cc7790b"
@@ -933,7 +938,7 @@ const SiteBuilt = Layer.effect(SiteProgram, effect {
   const fs = try FileSystem.FileSystem
   const path = try Path.Path
   const scratch = try fs.makeTempDirectoryScoped({ prefix: "slop-site-" })
-  const packageRoot = new URL("..", import.meta.url).pathname
+  const packageRoot = urlPath(new URL("..", import.meta.url))
   const build = workerBuild({ programs: { main: "src/programs/main.vibe" }, outDir: path.join(scratch, "dist") })
   try promise(() => createBuilder({ root: packageRoot, configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
   const repository = path.join(scratch, "repository")

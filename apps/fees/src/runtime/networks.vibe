@@ -45,7 +45,7 @@ export type FeeVars = { readonly [K in VarName]?: string }
 
 export const keySecrets = ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ETHEREUM", "FEE_WALLET_KEY_ROBINHOOD", "FEE_WALLET_KEY_SOLANA"] as const
 export const rpcSecrets = ["RPC_URL_BASE", "RPC_URL_ETHEREUM", "RPC_URL_ROBINHOOD", "RPC_URL_SOLANA"] as const
-export const serviceSecrets = ["JUPITER_API_KEY", "SOLANA_RECOVERY_RPC_URL"] as const
+const serviceSecrets = ["JUPITER_API_KEY", "SOLANA_RECOVERY_RPC_URL"] as const
 export const secretNames = [...keySecrets, ...rpcSecrets, ...serviceSecrets] as const
 
 export type SecretName = typeof secretNames[number]

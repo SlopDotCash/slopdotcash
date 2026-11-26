@@ -1,7 +1,7 @@
 // spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"
 import type { CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
-import { Button, ExternalLink, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
+import { Button, ExternalLink, sectionTitle, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
 import { ExternalLink as ExternalLinkIcon, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
@@ -58,7 +58,7 @@ export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistor
   const heading = externalPrize ? "Cycle history" : "Payment history";
   return (
     <section aria-label={heading} className="flex flex-col gap-4">
-      <h2 className="text-xl font-semibold text-foreground">{heading}</h2>
+      <h2 className={sectionTitle}>{heading}</h2>
       {cyclesFailed || directFailed ? (
         <Unavailable
           onRetry={() => {
@@ -69,9 +69,9 @@ export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistor
       ) : null}
       {directLoading ? <Status role="status" presentation={{ tone: "Neutral", icon: "Spinner", label: "Loading direct payments…" }} /> : null}
       {(showHistory ? months : months.slice(0, historyShown)).map((month) => (
-        <p key={month.month} className="flex flex-col gap-1">
-          <strong className="font-mono font-medium tabular-nums">{formatRewardMinor(month.amountMicro)}</strong>
-          <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+        <p key={month.month} className="flex flex-wrap gap-x-7 gap-y-3 text-sm">
+          <strong className="text-2xl font-bold tracking-tighter tabular-nums">{formatRewardMinor(month.amountMicro)}</strong>
+          <span className="inline-flex items-center gap-1 self-center text-muted-foreground">
             {formatMonth(month.month)} · {month.count} transfers ·{" "}
             <ExternalLink href={`/api/v1/payments/projects/${encodeURIComponent(project.id)}/direct-transfers`} label="Disclosure" title="Disclosure" className={linkClass}>
               <ExternalLinkIcon aria-hidden className="size-4" />

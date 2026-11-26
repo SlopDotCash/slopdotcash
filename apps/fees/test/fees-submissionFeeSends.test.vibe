@@ -2,31 +2,15 @@ import { assert, layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import { type Hex, concat, decodeFunctionData, encodeErrorResult, encodeFunctionResult, keccak256, parseTransaction, toHex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
-import { SubmissionFeeRatesLive } from "@repo/backend/live"
-import type { D1Database } from "@repo/platform/bindings"
 import { isoNow } from "@repo/platform/clock"
-import { webCrypto } from "@repo/platform/crypto"
-import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
-import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
-import { type Served, serve } from "@repo/platform/testing/chains"
-import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
-import { internet } from "@repo/platform/testing/internet"
-import { migrationsDir } from "@repo/platform/testing/paths"
-import { asFetch } from "@repo/platform/testing/quotes"
-import type { SubmissionFeeRates } from "@repo/ports/backend"
-import type { ReportDeposits } from "@repo/ports/security"
-import type { SubmissionFeeItems } from "@repo/ports/slopbot"
-import { ReportDepositsLive } from "@repo/security/live"
-import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
+import { D1, type Statement, rows, sql } from "@repo/platform/d1"
+import type { Handler } from "@repo/platform/testing"
 import { askItem, dueOutcome } from "@repo/slopbot/fee/items"
-import { depositContract, feeNetworks, feeWallet } from "../gen/backend__submissionFeeTerms.ts"
+import { feeNetworks, feeWallet } from "../gen/backend__submissionFeeTerms.ts"
 import { submissionDepositsAbi } from "../src/submissionFee/abi.ts"
 import { type DepositRun, type NetworkFailure, type NetworkResult, type SubmissionFeeWorkerEnv, depositPass } from "../src/submissionFee/run.vibe"
+import { type FeePorts, type FeeWorld, contract, network, payer, startedFeeWorld, usdg, withFeePorts } from "./support/submissionFee.vibe"
 
-const network = "robinhood-mainnet"
-const contract = depositContract.toLowerCase() as Hex
-const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as Hex
-const payer = "0x00000000000000000000000000000000000000a1" as Hex
 const wallet = feeWallet.toLowerCase() as Hex
 const resolverKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 const resolver = privateKeyToAccount(resolverKey).address.toLowerCase() as Hex
@@ -57,14 +41,13 @@ interface Contract {
   readonly mined: Map<Hex, { readonly block: number; readonly ok: boolean }>
 }
 
-service World {
-  readonly db: D1Database
-  readonly clock: SettableClock
+interface SendsWorld extends FeeWorld {
   readonly chain: Contract
-  readonly fetch: typeof globalThis.fetch
   readonly robinhoodUrl: string
   readonly baseUrl: string
 }
+
+service World: SendsWorld {}
 
 const none: Record = { payer: "0x0000000000000000000000000000000000000000", token: "0x0000000000000000000000000000000000000000", amount: 0n, keptTo: "0x0000000000000000000000000000000000000000", item: toHex(0n, { size: 32 }), depositedAt: 0n, state: 0 }
 
@@ -130,23 +113,13 @@ function contractRpc(chain: Contract): Handler {
 const down: Handler = async () => new Response("down", { status: 500 })
 
 const Started = Layer.effect(World, effect {
-  const mf = try acquireRelease(sync(() => startWorker({ d1: { FEE_DB: "fees-submission-fee-sends" } })), (started) => promise(() => started.dispose()))
-  const failed = (try promise(() => migrate(mf, "FEE_DB", migrationsDir))).find((applied) => applied.error !== undefined)
-  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
-  const db = try promise(() => database(mf, "FEE_DB"))
   const chain: Contract = { latest: firstBlock, nonce: 0, estimate: 100_000n, broken: false, sendFails: false, refuses: new Set(), silent: new Set(), deposits: new Map(), sent: [], mined: new Map() }
-  const handler = contractRpc(chain)
-  const robinhood: Served = try acquireRelease(promise(() => serve(handler)), (server) => promise(() => server.close()))
-  const base: Served = try acquireRelease(promise(() => serve(down)), (server) => promise(() => server.close()))
-  const net = internet({ rpc: { [robinhood.url]: handler, [base.url]: down } })
-  return { db, clock: settableClock(start), chain, fetch: asFetch(net.handler), robinhoodUrl: robinhood.url, baseUrl: base.url }
+  const { urls: [robinhoodUrl = "", baseUrl = ""], ...base } = try startedFeeWorld("fees-submission-fee-sends", start, [contractRpc(chain), down])
+  return { ...base, chain, robinhoodUrl, baseUrl }
 })
 
-effect function provided<A, E>(program: A!E!(D1 | HttpClient.HttpClient | SubmissionFeeItems | ReportDeposits | SubmissionFeeRates | Experimental.Crypto.Crypto)) {
-  const world = try World
-  const storage = d1(world.db)
-  const services = Layer.mergeAll(storage, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), storage), world.clock.layer, FetchHttpClient.layer, webCrypto)
-  return try Effect.provideService(Effect.provide(program, services), FetchHttpClient.Fetch, world.fetch)
+effect function provided<A, E>(program: A!E!FeePorts) {
+  return try withFeePorts(try World, program)
 }
 
 effect function environment(mode: string, keyed = true) {

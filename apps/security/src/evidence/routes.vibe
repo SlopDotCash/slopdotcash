@@ -72,6 +72,7 @@ effect function sameOperator(githubId: string, changed: Row) {
 }
 
 effect function reasonOf(max: number) {
+  if (!(try sameOriginWrite())) throw refuse(admission.origin.status, admission.origin.code, admission.origin.message)
   const body = try jsonBody(64)
   if (!isRecord(body)) throw refuse(admission.invalidJson.status, admission.invalidJson.code, admission.invalidJson.message)
   try exact(body, ["reason"])

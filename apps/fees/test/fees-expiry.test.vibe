@@ -1,17 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { FormData, Request as ApiRequest, Response } from "miniflare"
 import { cloudflare, pinActive, pinnedWrangler } from "@repo/operations/rpc"
 import type { D1Database } from "@repo/platform/bindings"
 import { base64Decode } from "@repo/platform/chain/solana"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
-import { gitBytes, systemGit } from "@repo/platform/git"
+import { d1, rows, sql } from "@repo/platform/d1"
+import { systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import type { Handler } from "@repo/platform/testing"
 import { type Served, serve } from "@repo/platform/testing/chains"
-import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
-import { type CloudflareApi, cloudflareApi } from "@repo/platform/testing/cloudflare"
+import { type SettableClock, type SteppedClock, settableClock, steppedClock } from "@repo/platform/testing/clock"
+import { type CloudflareApi, cloudflareApi, tailSockets } from "@repo/platform/testing/cloudflare"
 import { internet } from "@repo/platform/testing/internet"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { type Event, type Quote, type SignedSend, maximumSafeValue } from "../gen/fees__conversion.ts"
@@ -33,6 +33,8 @@ import { solanaGenesis } from "../src/runtime/pins.ts"
 import { jsonValue } from "../src/solana/bytes.ts"
 import { blockhashOf, parsedTransaction } from "../src/solana/wire.vibe"
 import { type GenerationNames, factsFor, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+import { direct, same } from "./support/checks.vibe"
+import { commitAll, testGit } from "@repo/platform/testing/git"
 
 type Variant = "clean" | "pruned" | "disagreeing" | "failing"
 
@@ -74,20 +76,37 @@ function answered(result: unknown) {
   return Response.json({ jsonrpc: "2.0", id: 1, result })
 }
 
+interface RpcCall { readonly method: string; readonly params: ReadonlyArray<unknown> }
+
+interface UnlandedChain {
+  readonly genesis: string
+  readonly firstAvailable: number
+  readonly tipSlot: number
+  block(slot: number): unknown
+}
+
+function unlandedAnswer(chain: UnlandedChain, { method, params }: RpcCall) {
+  switch (method) {
+    case "getGenesisHash": return answered(chain.genesis)
+    case "getFirstAvailableBlock": return answered(chain.firstAvailable)
+    case "getBlock": return answered(chain.block(Number(params[0])))
+    case "isBlockhashValid": return answered({ context: { slot: chain.tipSlot }, value: false })
+    case "getSignatureStatuses": return answered({ context: { slot: chain.tipSlot }, value: [null] })
+    case "getTransaction": return answered(null)
+    default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+  }
+}
+
+function signaturesOnly(options: unknown) {
+  return typeof options === "object" && options !== null && "transactionDetails" in options && options.transactionDetails === "signatures"
+}
+
 function chainRpc(chain: Chain, variant: Variant, blocks: Array<number>): Handler {
   return async (request) => {
-    const { method, params } = JSON.parse(await request.text()) as { method: string; params: ReadonlyArray<any> }
-    if (method === "getBlock" && params[1]?.transactionDetails === "signatures") blocks.push(Number(params[0]))
-    if (variant === "failing" && method === "getBlock") return new Response("upstream failure", { status: 500, headers: { "content-type": "text/plain" } })
-    switch (method) {
-      case "getGenesisHash": return answered(genesis)
-      case "getFirstAvailableBlock": return answered(variant === "pruned" ? anchorSlot + 1 : 0)
-      case "getBlock": return answered(blockAt(chain, variant, Number(params[0])))
-      case "isBlockhashValid": return answered({ context: { slot: tipSlot }, value: false })
-      case "getSignatureStatuses": return answered({ context: { slot: tipSlot }, value: [null] })
-      case "getTransaction": return answered(null)
-      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
-    }
+    const call = JSON.parse(await request.text()) as RpcCall
+    if (call.method === "getBlock" && signaturesOnly(call.params[1])) blocks.push(Number(call.params[0]))
+    if (variant === "failing" && call.method === "getBlock") return new Response("upstream failure", { status: 500, headers: { "content-type": "text/plain" } })
+    return unlandedAnswer({ genesis, firstAvailable: variant === "pruned" ? anchorSlot + 1 : 0, tipSlot, block: (slot) => blockAt(chain, variant, slot) }, call)
   }
 }
 
@@ -198,14 +217,6 @@ effect function labelled() {
   labels = new Map(Object.entries(endpoints).map(([name, endpoint]) => [recoveryOperator(endpoint.url, genesis) ?? "", name] as const))
 }
 
-effect function direct(world: World, statement: Statement) {
-  return Effect.as(Effect.provide(effect { return try (try D1).run(statement) }, d1(world.db)), "changed") catch (error) => error._tag
-}
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
-
 const held = ["unknown", "broadcast: journal broadcastFail answer withheld from <url>"]
 
 const spoofedOperators = ["http://public.rpc.solanavibestation.com", "https://solanavibestation.com", "https://other.rpc.solanavibestation.com", "https://public.rpc.solanavibestation.com.evil.example"]
@@ -216,30 +227,9 @@ effect function operatorsOf(primary: string, recovery: string, chainGenesis: str
   return try Effect.provide(effect { return (try ExpiryOperators).providers.map((provider) => label(provider.operator)) }, configured)
 }
 
-interface PacedClock {
-  readonly layer: Layer.Layer<never>
-  now(): number
-}
-
-function pacedClock(start: bigint): PacedClock {
-  let nanos = start
-  const now = () => Number(nanos / 1_000_000n)
-  const live = Clock.Clock.defaultValue()
-  const clock: Clock.Clock = {
-    currentTimeMillisUnsafe: now,
-    currentTimeMillis: Effect.sync(now),
-    currentTimeNanosUnsafe: () => nanos,
-    currentTimeNanos: Effect.sync(() => nanos),
-    monotonicTimeNanosUnsafe: () => nanos,
-    monotonicTimeNanos: Effect.sync(() => nanos),
-    sleep: (duration) => Duration.toMillis(duration) >= expiryTimeoutMs ? live.sleep(duration) : Effect.sync(() => { nanos += Option.getOrElse(Duration.toNanos(duration), () => 0n) }),
-  }
-  return { layer: Layer.succeed(Clock.Clock, clock), now }
-}
-
 interface PublicPair {
   readonly fetch: typeof globalThis.fetch
-  readonly clock: PacedClock
+  readonly clock: SteppedClock
   readonly requests: Array<number>
 }
 
@@ -253,20 +243,11 @@ function pairBlock(slot: number) {
 }
 
 function publicPair(): PublicPair {
-  const clock = pacedClock(1_794_873_600_000_000_000n)
+  const clock = steppedClock(1_794_873_600_000_000_000n, (duration) => Effect.succeed(Duration.toMillis(duration) < expiryTimeoutMs))
   const requests: Array<number> = []
   const rpc: Handler = async (request) => {
     requests.push(clock.now())
-    const { method, params } = JSON.parse(await request.text()) as { method: string; params: ReadonlyArray<any> }
-    switch (method) {
-      case "getGenesisHash": return answered(solanaGenesis)
-      case "getFirstAvailableBlock": return answered(0)
-      case "getBlock": return answered(pairBlock(Number(params[0])))
-      case "isBlockhashValid": return answered({ context: { slot: witness.tipSlot }, value: false })
-      case "getSignatureStatuses": return answered({ context: { slot: witness.tipSlot }, value: [null] })
-      case "getTransaction": return answered(null)
-      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
-    }
+    return unlandedAnswer({ genesis: solanaGenesis, firstAvailable: 0, tipSlot: witness.tipSlot, block: pairBlock }, JSON.parse(await request.text()) as RpcCall)
   }
   const hosts = Object.fromEntries(solanaPublicPair.map((endpoint) => [new URL(endpoint).host, rpc] as const))
   return { fetch: asFetch(internet({ hosts }).handler), clock, requests }
@@ -309,11 +290,6 @@ const reviewedRuntime = `${JSON.stringify({
   },
 }, null, 2)}\n`
 
-effect function git(directory: string, args: ReadonlyArray<string>) {
-  const bytes = try Effect.provide(gitBytes({ args: ["-C", directory, "-c", "user.name=Slop fees", "-c", "user.email=fees@slop.invalid", "-c", "commit.gpgsign=false", ...args], limit: 1024 * 1024, seconds: 60 }, `git ${args[0]} failed`), systemGit)
-  return new TextDecoder().decode(bytes).trim()
-}
-
 effect function committed(repository: string, files: Readonly<Record<string, string>>, message: string) {
   const fs = try FileSystem.FileSystem
   const path = try Path.Path
@@ -321,9 +297,7 @@ effect function committed(repository: string, files: Readonly<Record<string, str
     try fs.makeDirectory(path.dirname(path.join(repository, name)), { recursive: true })
     try fs.writeFileString(path.join(repository, name), text)
   }
-  try git(repository, ["add", "-A"])
-  try git(repository, ["commit", "-q", "-m", message])
-  return try git(repository, ["rev-parse", "HEAD"])
+  return try commitAll(repository, message)
 }
 
 const publishWorker = async (api: CloudflareApi, tag: string, database: string) => {
@@ -351,17 +325,6 @@ const publishWorker = async (api: CloudflareApi, tag: string, database: string) 
 
 effect function activeWorker(api: CloudflareApi, tag: string, database: string) {
   return try promise(() => publishWorker(api, tag, database))
-}
-
-const closingTail: (url: string, options?: Socket.WebSocketConstructorOptions) => Socket.WebSocketLike = () => {
-  const listeners = new Map<string, ReadonlyArray<(event: Socket.WebSocketEvent) => void>>()
-  return {
-    readyState: 1,
-    addEventListener: (type, listener) => { listeners.set(type, [...(listeners.get(type) ?? []), listener]) },
-    removeEventListener: (type, listener) => { listeners.set(type, (listeners.get(type) ?? []).filter((known) => known !== listener)) },
-    close: () => undefined,
-    send: () => { for (const listener of listeners.get("close") ?? []) listener({ type: "close", code: 1000 }) },
-  }
 }
 
 interface DiagnosticTraffic {
@@ -394,7 +357,7 @@ function diagnosticCloudflare(api: CloudflareApi, db: D1Database, changeAfterTai
 effect function inspectionOutcome(fetch: typeof globalThis.fetch, root: string, runnerTemp: string, checkout: string) {
   const settings = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REF: "refs/heads/main", CLOUDFLARE_ACCOUNT_ID: rotationAccount, CLOUDFLARE_API_TOKEN: "journey-token", GITHUB_SHA: checkout, RUNNER_TEMP: runnerTemp }))
   const run = Effect.provide(inspectFeeOperations([root]), Layer.merge(FetchHttpClient.layer, settings))
-  const provided = Effect.provideService(Effect.provideService(run, Socket.WebSocketConstructor, closingTail), FetchHttpClient.Fetch, fetch)
+  const provided = Effect.provideService(Effect.provideService(run, Socket.WebSocketConstructor, tailSockets([], 1000, [])), FetchHttpClient.Fetch, fetch)
   return Effect.as(provided, "completed") catch (error) => (error instanceof FeeOperationsUnavailable ? error.failure : error._tag)
 }
 
@@ -592,7 +555,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     const api = cloudflareApi({ accountId: rotationAccount })
     const served: Served = try acquireRelease(promise(() => serve(api.handler)), (opened) => promise(() => opened.close()))
     const checkout = try fs.makeTempDirectoryScoped({ prefix: "slop-solana-checkout-" })
-    try git(checkout, ["init", "-q", "-b", "main"])
+    try testGit(checkout, ["init", "-q", "-b", "main"])
     const reviewed = try committed(checkout, {
       "package.json": "{}\n",
       "apps/fees/package.json": `${JSON.stringify({ name: "@repo/fees", dependencies: {} })}\n`,

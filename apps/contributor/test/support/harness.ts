@@ -1,4 +1,5 @@
 // spec/contributor/sessionExchange.md, "Assertion consumption survives signing errors and a lost session reply"; spec/contributor/traceServer.md, "The clock, private-intake observation and ban state come from their owning services"
+import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { Request, type Response } from "miniflare";
 import { type StartedWorker, type WorkerOptions, bundle, database, migrate, startWorker, storage, workerOptions } from "@repo/platform/testing";
@@ -11,8 +12,8 @@ export const author = { githubId: "7101", login: "trace-author" } as const;
 export const other = { githubId: "7102", login: "trace-other" } as const;
 
 const identityOrigin = "http://localhost:8790";
-const root = new URL("../..", import.meta.url).pathname;
-const backendRoot = new URL("../../../backend", import.meta.url).pathname;
+const root = fileURLToPath(new URL("../..", import.meta.url));
+const backendRoot = fileURLToPath(new URL("../../../backend", import.meta.url));
 
 export interface Answer {
   readonly status: number;

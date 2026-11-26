@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["es2024"],
+    "allowArbitraryExtensions": true,
     "types": ["node"],
     "rootDir": ".",
     "rootDirs": [".", ".vibe/declarations"]

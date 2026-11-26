@@ -12,6 +12,7 @@ not force.
 - **Meaning.** `primary` is the one accent: the main action, links and the focus `ring`. The main action
   turns `primary-hover` under the pointer and `primary-pressed` while pressed. `ok`, `warn`,
   `destructive` and `info` are states, never decoration, and always travel with an icon or a word.
+  `gold` is development's #ffcb79: a project's monthly reward line and the label over its agent prompt.
 - **Boundaries.** `input` outlines a field and `ring` shows focus; both meet 3:1 against the page and a card
   (WCAG 1.4.11). `border` divides content and is decorative.
 - **Type.** Bricolage Grotesque for every word, with optical sizing; JetBrains Mono for amounts, addresses,
@@ -25,10 +26,12 @@ not force.
   development's size at 390, 1024 and 1440px: `hero` (56px), `hero-lg` (92px) and `hero-xl` (130px) the campaign
   heading at `leading-hero` (0.86), its action from `title` to `action-xl` (94px), and `title` (44px), `title-lg` (61px)
   and `title-xl` (86px) a section title at `leading-title` (0.88); `lead` (22px) is the hero's line under the
-  heading. `leading-summary` (1.45) is a card's description. `leading-page` (1.2) is the page's own line height, as
+  heading. A page's own title is `heading` (28px) on a phone, `4xl` from `lg` and `5xl` from `xl`, at
+  `leading-heading` (1.06), development's route title. `metric` (1.6rem) is a metric card's value from `lg`, `lg` below it. `leading-prose` (1.65) is an answer or explanation on a guide
+  page. `leading-summary` (1.45) is a card's description. `leading-page` (1.2) is the page's own line height, as
   development's `normal`, and `leading-data` (1.32) the same for JetBrains Mono; `tracking-amount` (-0.03em) is a
   card's amount. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
-  the large headings, `label` for small capitals. Development's headings are 800 (12 rules), `font-extrabold`;
+  the large headings, `label` for small capitals and `caps` (0.12em) for a table's caption. Development's headings are 800 (12 rules), `font-extrabold`;
   `font-strong` (650) and `font-heavy` (750) sit between Tailwind's weights.
 - **Shape.** One `radius` of 8px; `rounded-sm` (4px), `-md` (6px), `-lg` (8px) and `-xl` (12px) derive from
   it, and `rounded-full` is the pill and the avatar. `rounded-chip` (0.6rem) is a chip or tag and
@@ -129,6 +132,7 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `ok` | oklch(0.482 0.113 153.7) | oklch(0.793 0.18 154) |
 | `warn` | oklch(0.508 0.108 73.3) | oklch(0.813 0.165 75) |
 | `info` | oklch(0.485 0.133 254.6) | oklch(0.824 0.09 253.4) |
+| `gold` | oklch(0.52 0.11 75) | oklch(0.871 0.116 77.7) |
 
 | Token | Value |
 | --- | --- |
@@ -209,6 +213,10 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `text.hero-lg.leading` | 0.86 |
 | `text.hero-xl.size` | 130px |
 | `text.hero-xl.leading` | 0.86 |
+| `text.heading.size` | 28px |
+| `text.heading.leading` | 1.06 |
+| `text.metric.size` | 1.6rem |
+| `text.metric.leading` | 1.3 |
 | `weight.medium` | 500 |
 | `weight.semibold` | 600 |
 | `weight.strong` | 650 |
@@ -219,6 +227,8 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `leading.hero` | 0.86 |
 | `leading.title` | 0.88 |
 | `leading.page` | 1.2 |
+| `leading.heading` | 1.06 |
+| `leading.prose` | 1.65 |
 | `leading.data` | 1.32 |
 | `leading.none` | 1 |
 | `leading.tight` | 1.15 |
@@ -230,6 +240,7 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `tracking.amount` | -0.03em |
 | `tracking.tight` | -0.02em |
 | `tracking.label` | 0.08em |
+| `tracking.caps` | 0.12em |
 | `z.raised` | 1 |
 | `z.header` | 20 |
 | `z.modal` | 50 |

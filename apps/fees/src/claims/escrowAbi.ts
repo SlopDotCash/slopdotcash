@@ -1,5 +1,5 @@
 // spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"
-import { type Address, decodeEventLog, encodeFunctionData, erc20Abi, type Hex, parseAbi } from "viem";
+import { decodeEventLog, encodeFunctionData, erc20Abi, type Hex, parseAbi } from "viem";
 
 const escrowAbi = parseAbi([
   "event FeesClaimed(address indexed feeRecipient, uint128 amount)",
@@ -46,7 +46,7 @@ export function feesClaimedLogs(logs: readonly EscrowLog[], vault: string): read
     if (lower(log.address) !== lower(vault)) continue;
     try {
       const decoded = decodeEventLog({ abi: escrowAbi, topics: log.topics as [Hex, ...Hex[]], data: log.data, strict: true });
-      found.push({ recipient: lower(decoded.args.feeRecipient as Address), amount: decoded.args.amount });
+      found.push({ recipient: lower(decoded.args.feeRecipient), amount: decoded.args.amount });
     } catch {
       continue;
     }

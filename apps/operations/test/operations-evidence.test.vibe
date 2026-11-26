@@ -1,7 +1,7 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { gitBytes, systemGit } from "@repo/platform/git"
+import { systemGit } from "@repo/platform/git"
 import type { Handler } from "@repo/platform/testing"
 import { GitHubWorld } from "@repo/platform/testing/github"
 import { type Served, serve } from "@repo/platform/testing/chains"
@@ -19,6 +19,7 @@ import { type ContractProbe, RotationRefused } from "../src/release/rpc/qualify.
 import { stagingBackend, stagingIdentity, stagingSite } from "../src/release/staging/probes.vibe"
 import { StagingRefused } from "../src/release/staging/request.vibe"
 import { cloudflare } from "../src/release/wrangler/cloudflare.vibe"
+import { commitAll, testGit } from "@repo/platform/testing/git"
 
 const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
 const otherSha = "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a291807"
@@ -77,17 +78,10 @@ effect function written(path: string, text: string) {
   try fs.writeFileString(path, text)
 }
 
-effect function git(directory: string, args: ReadonlyArray<string>) {
-  const bytes = try gitBytes({ args: ["-C", directory, "-c", "user.name=Slop release", "-c", "user.email=release@slop.invalid", "-c", "commit.gpgsign=false", ...args], limit: 1024 * 1024, seconds: 60 }, `git ${args[0]} failed`)
-  return new TextDecoder().decode(bytes).trim()
-}
-
 effect function committed(repository: string, path: string, text: string, message: string) {
   const files = try Path.Path
   try written(files.join(repository, path), text)
-  try git(repository, ["add", "-A"])
-  try git(repository, ["commit", "-q", "-m", message])
-  return try git(repository, ["rev-parse", "HEAD"])
+  return try commitAll(repository, message)
 }
 
 function buildManifest(revision: string) {
@@ -452,7 +446,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-agent-clients-" })
     const repository = files.join(directory, "repository")
     try fs.makeDirectory(repository, { recursive: true })
-    try git(repository, ["init", "-q", "-b", "main"])
+    try testGit(repository, ["init", "-q", "-b", "main"])
     const released = try committed(repository, "README.md", "slop.cash\n", "Released source")
     const head = try committed(repository, "skills/slop/SKILL.md", "# Slop\nUse the reviewed workflow.\n", "Change the Slop skill")
     const unrelated = try committed(repository, "README.md", "slop.cash, the release\n", "Change only the readme")
@@ -511,7 +505,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const evmWallet = `0x${"e".repeat(40)}`
     const checkout = files.join(directory, "checkout")
     try fs.makeDirectory(checkout, { recursive: true })
-    try git(checkout, ["init", "-q", "-b", "main"])
+    try testGit(checkout, ["init", "-q", "-b", "main"])
     try written(files.join(checkout, "apps/fees/wrangler/feeConverter.production.jsonc"), `${JSON.stringify({
       name: "slop-fee-converter",
       main: "../dist/feeConverter.js",
@@ -529,7 +523,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       },
     }, null, 2)}\n`)
     const head = try committed(checkout, "README.md", "slop.cash\n", "Reviewed fee converter")
-    try git(checkout, ["config", `url.${checkout}.insteadOf`, "https://github.com/SlopDotCash/slopdotcash.git"])
+    try testGit(checkout, ["config", `url.${checkout}.insteadOf`, "https://github.com/SlopDotCash/slopdotcash.git"])
     try fs.makeDirectory(files.join(checkout, "apps/operations"), { recursive: true })
     try fs.symlink(files.join(repoRoot, "apps/operations/node_modules"), files.join(checkout, "apps/operations/node_modules"))
     const release = `slop.cash release ${head}`

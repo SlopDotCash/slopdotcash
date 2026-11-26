@@ -15,6 +15,7 @@ import { publishSubmissionFee } from "../src/release/publish/submissionFee.vibe"
 import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
 import { identityApp } from "../src/release/verify/probes.vibe"
 import { ToolFailed, cloudflare, pinnedWrangler } from "../src/release/wrangler/cloudflare.vibe"
+import { steppedClock } from "@repo/platform/testing/clock"
 
 const accountId = "0123456789abcdef0123456789abcdef"
 const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
@@ -160,22 +161,12 @@ const productionEdges = (identity: IdentityLookups): Handler => (request) => {
 const scannerJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" })
 
 function retryClock(lookupFiber: number) {
-  let nanos = 0n
   const waits: Array<number> = []
-  const millis = () => Number(nanos / 1_000_000n)
-  const live = Clock.Clock.defaultValue()
-  const clock: Clock.Clock = {
-    currentTimeMillisUnsafe: millis,
-    currentTimeMillis: Effect.sync(millis),
-    currentTimeNanosUnsafe: () => nanos,
-    currentTimeNanos: Effect.sync(() => nanos),
-    monotonicTimeNanosUnsafe: () => nanos,
-    monotonicTimeNanos: Effect.sync(() => nanos),
-    sleep: (duration) => Effect.flatMap(Effect.fiberId, (fiber) => fiber !== lookupFiber ? live.sleep(duration) : Effect.sync(() => {
-      waits.push(Duration.toMillis(duration))
-      nanos += Option.getOrElse(Duration.toNanos(duration), () => 0n)
-    })),
-  }
+  const { clock } = steppedClock(0n, (duration) => Effect.map(Effect.fiberId, (fiber) => {
+    if (fiber !== lookupFiber) return false
+    waits.push(Duration.toMillis(duration))
+    return true
+  }))
   return { clock, waits }
 }
 

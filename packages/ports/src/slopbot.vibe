@@ -77,20 +77,20 @@ export const penaltyHistoryVersion = "slop-penalty-history:v1"
 
 export const maximumPageRecords = 100
 
-const pageFields = {
-  schemaVersion: Schema.String,
-  repository: Schema.optionalKey(Schema.String),
-  repositoryNodeId: Schema.optionalKey(Schema.String),
-  pullRequestNumber: Schema.Number,
-  records: Schema.Array(Schema.Unknown),
-  nextAfter: Schema.NullOr(Schema.Number),
+const OpaqueRecord = Schema.Unknown
+
+export schema ValueHistoryPage {
+  readonly schemaVersion: string
+  readonly repository?: string
+  readonly repositoryNodeId?: string
+  readonly pullRequestNumber: number
+  readonly records: ReadonlyArray<OpaqueRecord>
+  readonly nextAfter: number | null
 }
 
-export const ValueHistoryPage = Schema.Struct(pageFields)
-export type ValueHistoryPage = typeof ValueHistoryPage.Type
+const WorkUnitHistoryFields = Schema.Struct({ ...ValueHistoryPage.fields, throughSequence: Schema.Number, totalRecords: Schema.Number })
 
-export const WorkUnitHistoryPage = Schema.Struct({ ...pageFields, throughSequence: Schema.Number, totalRecords: Schema.Number })
-export type WorkUnitHistoryPage = typeof WorkUnitHistoryPage.Type
+export schema WorkUnitHistoryPage = WorkUnitHistoryFields
 
 export schema WorkUnitHistoryRow {
   readonly sequence: number
@@ -112,8 +112,12 @@ export schema PenaltyRow {
   readonly reversal?: string | null
 }
 
-export const PenaltyPage = Schema.Struct({ schemaVersion: Schema.String, project: Schema.String, records: Schema.Array(Schema.Unknown), nextAfter: Schema.NullOr(Schema.String) })
-export type PenaltyPage = typeof PenaltyPage.Type
+export schema PenaltyPage {
+  readonly schemaVersion: string
+  readonly project: string
+  readonly records: ReadonlyArray<OpaqueRecord>
+  readonly nextAfter: string | null
+}
 
 export schema FeeOutcome = "refund_due" | "kept_due" | "refunded" | "kept"
 

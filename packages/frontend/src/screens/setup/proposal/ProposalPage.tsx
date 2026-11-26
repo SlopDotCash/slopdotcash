@@ -1,6 +1,6 @@
 // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"
 import type { SetupStatus } from "@repo/backend/client";
-import { Alert, Button, PageHeader, StatusIcon } from "@repo/ui";
+import { Alert, Button, cn, PageHeader, shell, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
@@ -60,7 +60,8 @@ export type ProposalPageProps = PageProps & {
 
 type Submission = { readonly status: "idle" | "submitting" } | { readonly status: "failed"; readonly message: string; readonly installSlopbot: boolean } | ({ readonly status: "created" } & CreatedProject);
 
-const page = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8";
+const page = cn(shell, "flex max-w-240 flex-1 flex-col pt-6 pb-12");
+const header = "mb-5 [&_h1]:text-3xl lg:[&_h1]:text-5xl";
 const signInReturn = "/projects/new";
 const fundingFields = { mode: "fundingMode", network: "settlementChain", assetKind: "rewardKind", tokenAddress: "rewardAssetAddress", tokenSymbol: "rewardAssetSymbol", monthlyAmount: "monthlyPool" } as const satisfies Record<FundingField, ProposalField>;
 const lastStep: StepIndex = 2;
@@ -84,7 +85,7 @@ export function ProposalPage({ runtime, pendingApplications, setupStatus }: Prop
   if (store === undefined || view === undefined || shown === undefined)
     return (
       <main className={page}>
-        <PageHeader title="Add a project" />
+        <PageHeader title="Add a project" className={header} />
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <StatusIcon icon="Spinner" />
           Loading saved draft…
@@ -209,15 +210,15 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
 
   return (
     <main className={page}>
-      <nav aria-label="Breadcrumb" className="text-sm">
-        <a href="/" className="text-muted-foreground hover:text-foreground">
+      <nav aria-label="Breadcrumb" className="mb-3 text-ui leading-page font-semibold">
+        <a href="/" className="text-muted-foreground underline underline-offset-4 hover:text-foreground">
           Projects
         </a>
       </nav>
-      <PageHeader title="Add a project" />
+      <PageHeader title="Add a project" className={header} />
       {pendingApplications}
       <SetupSteps current={step} onChoose={goTo} />
-      <form noValidate className="flex flex-col gap-6" onSubmit={(event) => event.preventDefault()}>
+      <form noValidate className="flex flex-col gap-4" onSubmit={(event) => event.preventDefault()}>
         <h2 id="proposal-step-heading" tabIndex={-1} className="sr-only">
           {setupSteps[step]}
         </h2>
@@ -279,7 +280,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
             Saving draft…
           </p>
         ) : null}
-        <div className="flex flex-wrap gap-4">
+        <div className="flex flex-wrap justify-end gap-4">
           {step > 0 ? (
             <Button variant="outline" onClick={() => goTo(step === 2 ? 1 : 0)}>
               <ArrowLeft aria-hidden className="size-4" />

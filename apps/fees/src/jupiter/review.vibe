@@ -7,8 +7,8 @@ import { addressed, admittedHolding, mintOf } from "../solana/client.vibe"
 import { type ParsedTransaction, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, refuse } from "../solana/wire.vibe"
 import { boundRoute } from "./route.vibe"
 
-export const maximumAccountBytes = 1024 * 1024
-export const maximumRouteBytes = 4 * 1024 * 1024
+const maximumAccountBytes = 1024 * 1024
+const maximumRouteBytes = 4 * 1024 * 1024
 const accountBatch = 100
 
 export interface Holding {

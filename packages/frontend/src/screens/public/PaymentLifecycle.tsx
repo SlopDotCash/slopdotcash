@@ -1,9 +1,7 @@
 // spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"
-import { Stepper } from "@repo/ui";
-
 export interface Milestone {
   readonly name: string;
-  readonly detail: string;
+  readonly detail?: string;
 }
 
 export type MilestonesProps = {
@@ -13,20 +11,19 @@ export type MilestonesProps = {
   milestones: ReadonlyArray<Milestone>;
 };
 
-/** Ordered milestones, each with the one fact a reader needs about it. */
+const marker = "before:absolute before:size-3.75 before:rounded-full before:bg-primary max-lg:before:top-0.5 max-lg:before:-left-2.25 lg:before:-top-2.25 lg:before:left-0";
+
+/** Ordered milestones on a line, each with the one fact a reader needs about it. */
 export function Milestones({ label, milestones }: MilestonesProps) {
   return (
-    <div className="flex flex-col gap-4">
-      <Stepper aria-label={label} steps={milestones.map((milestone) => milestone.name)} />
-      <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-        {milestones.map((milestone) => (
-          <div key={milestone.name} className="flex flex-col gap-1">
-            <dt className="font-medium text-foreground">{milestone.name}</dt>
-            <dd className="text-muted-foreground">{milestone.detail}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
+    <ol aria-label={label} className="mt-6 grid grid-cols-4 text-muted-foreground max-md:grid-cols-2 max-md:gap-y-5">
+      {milestones.map((milestone) => (
+        <li key={milestone.name} className={`relative grid content-start gap-1.5 leading-prose ${marker} max-lg:border-l-3 max-lg:border-foreground/22 max-lg:pt-4.5 max-lg:pb-5.5 max-lg:pl-7 lg:border-t-3 lg:border-foreground/22 lg:pt-4.5 lg:pr-4`}>
+          <strong className="font-bold">{milestone.name}</strong>
+          {milestone.detail ? <span className="text-sm leading-summary">{milestone.detail}</span> : null}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -37,7 +34,9 @@ export const payoutTimeline: ReadonlyArray<Milestone> = [
   { name: "Paid", detail: "On chain · 2% fee" },
 ];
 
+const awardMilestones: ReadonlyArray<Milestone> = [{ name: "Projected" }, { name: "Under review" }, { name: "Approved" }, { name: "Paid" }];
+
 /** An ordinary award's milestones, from projection to finalized payment. */
 export function PaymentLifecycle() {
-  return <Stepper aria-label="Ordinary award and payment milestones" steps={["Projected", "Under review", "Approved", "Paid"]} />;
+  return <Milestones label="Ordinary award and payment milestones" milestones={awardMilestones} />;
 }

@@ -12,12 +12,12 @@ import { createdOrderMatches, giveOrderOf, giveOrdersCalldata, giveStatus, takeO
 import { dlnGiveOrderWallet } from "./solanaOrder.vibe"
 import { tokenAmountOf } from "./solanaArgs.ts"
 
-export interface FinalizedBlock {
+interface FinalizedBlock {
   readonly height: bigint
   readonly blockHash: string
 }
 
-export interface Arrived extends FinalizedBlock {
+interface Arrived extends FinalizedBlock {
   readonly kind: "Arrived"
   readonly orderId: Hex
   readonly amount: bigint
@@ -29,16 +29,16 @@ export interface Cancelling extends FinalizedBlock {
   readonly orderId: Hex
 }
 
-export type Fill = Arrived | Cancelling | { readonly kind: "Open" }
+type Fill = Arrived | Cancelling | { readonly kind: "Open" }
 
-export interface Refunded extends FinalizedBlock {
+interface Refunded extends FinalizedBlock {
   readonly kind: "Refunded"
   readonly orderId: Hex
   readonly amount: bigint
   readonly beneficiary: string
 }
 
-export type Refund = Refunded | { readonly kind: "NotRefunded" }
+type Refund = Refunded | { readonly kind: "NotRefunded" }
 
 export interface SourceOrder {
   readonly orderId: Hex

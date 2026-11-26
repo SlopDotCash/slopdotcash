@@ -17161,7 +17161,7 @@
     },
     {
       "path": "spec/points/authorship.md",
-      "sha256": "2903916e774988cd4ded103b7616fad7669597d0dea2a1ba6f7adb1baf0746ea",
+      "sha256": "a60e9a28975368306f84d499ab68b09f209c827e6776ab531437a687a64c6d67",
       "module": "points__authorship",
       "stories": [
         {
@@ -17170,7 +17170,7 @@
         },
         {
           "heading": "Story: Hold fresh implementation credit the census cannot prove",
-          "line": 355
+          "line": 360
         }
       ],
       "rules": [
@@ -17327,7 +17327,7 @@
         },
         {
           "heading": "Story: Credit the implementation author without rewarding a carrier PR / Simulation samples exercise linked, unlinked, conflicting and ineligible evidence",
-          "line": 329,
+          "line": 334,
           "definitions": [
             "actorValues",
             "kindValues",
@@ -17344,7 +17344,7 @@
         },
         {
           "heading": "Story: Hold fresh implementation credit the census cannot prove / A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census",
-          "line": 362,
+          "line": 367,
           "definitions": [
             "CreditSelection",
             "freshCreditHeld",
@@ -17357,7 +17357,7 @@
         },
         {
           "heading": "Story: Hold fresh implementation credit the census cannot prove / Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review",
-          "line": 403,
+          "line": 408,
           "definitions": [
             "ownsAcceptedOrdinaryCommit",
             "usesEarlierOwners",
@@ -17401,6 +17401,10 @@
         {
           "target": "./referenceDiscussion.md",
           "line": 70
+        },
+        {
+          "target": "./allocation.md",
+          "line": 297
         }
       ]
     },

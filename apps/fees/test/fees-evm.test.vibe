@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import { type Address, type Hex, decodeFunctionData, encodeFunctionData, maxUint256, parseAbi } from "viem"
 import type { EvmRpc } from "@repo/platform/chain/evm"
@@ -10,14 +10,17 @@ import { type Fee, type Row, initial, lockMs, maximumSafeValue, noRow } from "..
 import type { Runtime } from "../gen/fees__runtime.effect.vibe"
 import { approveCalldata, decodedApproval, parsedType2, unsignedType2 } from "../src/evm/abi.ts"
 import { approvalSettled } from "../src/evm/approval.vibe"
-import { FeeChain, attemptStatus, broadcast, credited, dataOperatorFee, feeChain } from "../src/evm/client.vibe"
-import { decodedSwap, kyberRouterAbi } from "../src/kyber/swap.ts"
+import { type FeeChain, attemptStatus, broadcast, credited, dataOperatorFee, feeChain } from "../src/evm/client.vibe"
+import { kyberRouterAbi } from "@repo/platform/chain/kyberswap"
+import { decodedSwap } from "../src/kyber/swap.ts"
 import { replaceSend, replacementPlan } from "../src/replacement/step.vibe"
 import { FeeWallet, type Prepared, evmFeeWallet, modelSend } from "../src/signer/feeWallet.vibe"
 import { evmKey } from "../src/signer/evmKey.ts"
-import type { EvmNetwork, FeeIntent } from "../src/signer/intents.ts"
+import type { EvmNetwork } from "../src/evm/abi.ts"
+import type { FeeIntent } from "../src/signer/intents.ts"
 import { circleUsdc, kyberswap } from "../src/runtime/pins.ts"
 import type { NativeLimits } from "../src/runtime/config.vibe"
+import { same } from "./support/checks.vibe"
 
 type Tamper = "none" | "receiver" | "router" | "feeReceiver"
 
@@ -120,10 +123,6 @@ const Started = Layer.effect(Chains, effect {
     tamper: (next) => sync(() => { mode = next }),
   }
 })
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
 
 interface Signer { readonly network: EvmNetwork; readonly keyIndex?: number; readonly keyless?: boolean; readonly runtime?: Runtime; readonly buyback?: boolean }
 

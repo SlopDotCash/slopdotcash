@@ -21,6 +21,8 @@ export type PeopleProps = {
   query: string;
 };
 
+export const panelClass = "flex flex-col gap-4 rounded-xl border border-border p-4 md:p-6 lg:p-7.5 xl:p-8";
+
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 
 /** The public X profile a member connected, opened by its numeric id. */
@@ -35,11 +37,11 @@ export function XAccountLink({ account }: { account: XProfile }) {
 function PersonRow({ person, stewards }: { person: ListedPerson } & Pick<PeopleProps, "stewards">) {
   const maintains = stewards.get(person.id) ?? [];
   return (
-    <li className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3">
-      <a href={`/contributors/${encodeURIComponent(person.login)}`} className={linkClass}>
+    <li className="grid gap-2 rounded-md border border-border p-4 wrap-anywhere">
+      <a href={`/contributors/${encodeURIComponent(person.login)}`} className="justify-self-start underline decoration-foreground/22 underline-offset-4 hover:decoration-foreground">
         {person.login}
       </a>
-      <span className="inline-flex items-center gap-1 text-sm text-muted-foreground" title={person.merged === null ? "PR count unavailable" : "Merged PRs"}>
+      <span className="inline-flex items-center gap-1.5" title={person.merged === null ? "PR count unavailable" : "Merged PRs"}>
         <GitMerge aria-hidden className="size-3.5" />
         {person.merged === null ? "—" : person.merged.toLocaleString("en-US")}
         <span className="sr-only">{person.merged === null ? " PR count unavailable" : " merged PRs"}</span>
@@ -61,7 +63,7 @@ function List({ people, stewards }: { people: ReadonlyArray<ListedPerson> } & Pi
   return (
     <>
       <p>{people.length.toLocaleString("en-US")} people</p>
-      <ul className="flex flex-col divide-y divide-border">
+      <ul className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-4">
         {pageRows(people, pages, peoplePageSize).map((person) => (
           <PersonRow key={person.id} person={person} stewards={stewards} />
         ))}
@@ -78,8 +80,8 @@ export function People({ census, members, stewards, query }: PeopleProps) {
   const people = listedPeople(census.value, read?.value);
   const shown = census.value !== undefined || read?.value !== undefined;
   return (
-    <section id="people" aria-labelledby="people-heading" className="flex flex-col gap-4">
-      <h2 id="people-heading" className="text-xl font-semibold text-foreground">
+    <section id="people" aria-labelledby="people-heading" className={panelClass}>
+      <h2 id="people-heading" className="mb-1 text-2xl leading-page font-extrabold tracking-amount uppercase">
         People
       </h2>
       <DataState status={census.status} onRetry={census.onRetry} retryLabel="Retry contributors" />

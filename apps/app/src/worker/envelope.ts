@@ -1,4 +1,3 @@
-/// <reference path="../../../../packages/platform/src/cloudflare.d.ts" />
 // spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"
 import { EmailMessage } from "cloudflare:email";
 import type { EmailMessage as Envelope } from "@repo/platform/bindings";

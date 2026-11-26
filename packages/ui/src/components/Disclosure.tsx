@@ -17,7 +17,7 @@ export type DisclosureProps = Omit<ComponentProps<typeof Collapsible.Root>, "asC
 export function Disclosure({ summary, className, children, ...props }: DisclosureProps) {
   return (
     <Collapsible.Root className={cn("flex flex-col gap-2", className)} {...props}>
-      <Collapsible.Trigger className={cn(focusRing, target, "group inline-flex items-center gap-1 self-start rounded-sm text-sm font-medium text-foreground hover:text-primary")}>
+      <Collapsible.Trigger className={cn(focusRing, target, "group inline-flex items-center gap-1 self-start rounded-sm text-base font-semibold text-foreground hover:text-primary")}>
         <ChevronDown aria-hidden className="size-4 -rotate-90 group-data-[state=open]:rotate-0 motion-safe:transition-transform motion-safe:duration-fast" />
         {summary}
       </Collapsible.Trigger>

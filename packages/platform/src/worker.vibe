@@ -56,13 +56,20 @@ export interface Area<P, R> {
   readonly name: string
   readonly api: ReadonlyArray<AnyRoute>
   readonly routes: Layer.Layer<never, never, R>
-  readonly provides: Layer.Layer<P, never, any>
+  readonly provides: Layer.Layer<P, never, unknown>
   readonly jobs?: CronJobs
 }
 
 export function area<P, R>(a: Area<P, R>) {
   return a
 }
+
+export const unmatchedApi = area({
+  name: "unmatchedApi",
+  api: [],
+  routes: HttpRouter.add("*", "/api/v1/*", Effect.succeed(json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }))),
+  provides: Layer.empty,
+})
 
 type Handler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
 
@@ -143,15 +150,15 @@ effect function routable<E, R>(app: HttpServerResponse.HttpServerResponse!E!R) {
 }
 
 export interface Site<Env extends object, S, LE, K extends string> {
-  readonly areas: ReadonlyArray<Area<never, any>>
+  readonly areas: ReadonlyArray<Area<never, unknown>>
   readonly services: (env: Env) => Layer.Layer<S, LE>
   readonly assets: K
 }
 
 export function pages<Env extends Readonly<Record<K, Fetcher>>, S, LE, K extends string>(site: Site<Env, S, LE, K>) {
   const running = isolate((env: Env) => {
-    const provided = site.areas.reduce((layer: Layer.Layer<any, any>, part) => Layer.provideMerge(part.provides, layer), site.services(env))
-    const areaRoutes = site.areas.reduce((layer: Layer.Layer<never, never, any>, part) => Layer.merge(layer, part.routes), Layer.empty)
+    const provided = site.areas.reduce((layer: Layer.Layer<S, LE>, part) => Layer.provideMerge(part.provides, layer) as Layer.Layer<S, LE>, site.services(env))
+    const areaRoutes = site.areas.reduce((layer: Layer.Layer<never, never, unknown>, part) => Layer.merge(layer, part.routes), Layer.empty)
     const routes = Layer.mergeAll(areaRoutes, preflight(site.areas.flatMap((part) => part.api)), HttpRouter.add("*", "*", forward(env[site.assets])), HttpRouter.middleware(routable, { global: true }))
     const runtime = ManagedRuntime.make(provided)
     return HttpRouter.toWebHandler(Layer.provideMerge(routes as Layer.Layer<never, never, HttpRouter.HttpRouter>, provided), { memoMap: runtime.memoMap, disableLogger: true }).handler as Handler

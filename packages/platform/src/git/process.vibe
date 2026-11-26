@@ -48,21 +48,21 @@ error OutputLimit
 effect function collected<E>(stream: Stream.Stream<Uint8Array, E>, limit: number) {
   const chunks: Uint8Array[] = []
   let size = 0
-  for try (const chunk of stream) {
+  try Stream.runForEach(stream, (chunk) => effect {
     size += chunk.length
     if (size > limit) throw new OutputLimit()
     chunks.push(chunk)
-  }
+  })
   return concatBytes(chunks)
 }
 
 effect function bounded<E>(stream: Stream.Stream<Uint8Array, E>, limit: number) {
   const chunks: Uint8Array[] = []
   let size = 0
-  for try (const chunk of stream) {
+  try Stream.runForEach(stream, (chunk) => effect {
     if (size < limit) chunks.push(chunk.subarray(0, limit - size))
     size += chunk.length
-  }
+  })
   return concatBytes(chunks)
 }
 

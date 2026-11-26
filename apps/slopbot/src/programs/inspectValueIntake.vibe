@@ -2,6 +2,7 @@
 import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
+import { privateFile } from "@repo/platform/program"
 import { Socket } from "effect/socket"
 import { type HistoricalIntakeFailure, historicalIntakeErrorNames, projectHistoricalIntakeFailure } from "../import/diagnostics.vibe"
 import { type PagesIntakeMilestone, isIntakeCorrelation, projectPagesIntakeMilestone } from "../import/observation.vibe"
@@ -342,12 +343,6 @@ effect function inspectTarget(api: CloudflareAccount, target: Target, seconds: n
     complete: failure === undefined,
     ...(failure === undefined ? {} : { failure: failureOf(failure) }),
   }
-}
-
-export effect function privateFile(directory: string, name: string, text: string) {
-  const fs = try FileSystem.FileSystem
-  const path = try Path.Path
-  try fs.writeFileString(path.join(directory, name), text, { mode: 0o600 })
 }
 
 export effect function inspectValueIntake(seconds: number) {

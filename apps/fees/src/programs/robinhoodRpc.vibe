@@ -4,15 +4,13 @@ import { type FinalizedBlock, type FinalizedRpcEvidence, type HeightWitness, typ
 import { amountOf } from "../buyback/codec.vibe"
 import { definitions } from "../runtime/networks.vibe"
 import { FinalizedRpcWire, blockOf, diagnosticEvent, probeTimeoutMs } from "../rpcProbe/probe.vibe"
+import { parsedJson } from "../kernels/verified.vibe"
 
 module verified {
-  import { jsonValue } from "../solana/bytes.ts"
-  /** @throws {never} */
-  export function parsedJson(text: string): unknown { return jsonValue(text) }
   /** @throws {never} */
   export function wholeHeight(decimal: string): bigint { return /^(?:0|[1-9][0-9]*)$/u.test(decimal) ? BigInt(decimal) : 0n }
 }
-import { parsedJson, wholeHeight } from verified
+import { wholeHeight } from verified
 
 export error RpcUnqualified { message: string }
 

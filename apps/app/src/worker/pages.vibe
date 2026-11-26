@@ -10,9 +10,9 @@ import { edgeCache } from "@repo/platform/cache"
 import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { json, outbound } from "@repo/platform/http"
+import { outbound } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
-import { type Area, type Execution, area, later, pages } from "@repo/platform/worker"
+import { type Area, type Execution, area, later, pages, unmatchedApi } from "@repo/platform/worker"
 import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, protectedMonthsAccess } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
@@ -101,16 +101,9 @@ function services(env: Served) {
 
 type Provided = Layer.Success<ReturnType<typeof services>> | Execution
 
-function closed<A extends Area<never, any>>(areas: ReadonlyArray<A>, unmet: [Exclude<Needs<A>, Gives<A> | Provided>] extends [never] ? "closed" : Exclude<Needs<A>, Gives<A> | Provided>) {
+function closed<A extends Area<never, unknown>>(areas: ReadonlyArray<A>, unmet: [Exclude<Needs<A>, Gives<A> | Provided>] extends [never] ? "closed" : Exclude<Needs<A>, Gives<A> | Provided>) {
   return { areas, unmet }
 }
-
-const unmatchedApi = area({
-  name: "unmatchedApi",
-  api: [],
-  routes: HttpRouter.add("*", "/api/v1/*", Effect.succeed(json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }))),
-  provides: Layer.empty,
-})
 
 const projectSections = new Set(["project-vaults", "project-github", "project-revisions", "project-session", "project-setup", "project-applications", "project-appeals"])
 

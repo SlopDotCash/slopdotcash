@@ -198,7 +198,7 @@ effect function pay(index: number) {
 }
 
 effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+  try sync(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function big(value: unknown) {

@@ -31,14 +31,3 @@ export function withinReservation(gas: bigint, feePerGas: bigint, maximum: bigin
   //@ ensures \result <==> gas * feePerGas <= maximum
   return gas * feePerGas <= maximum;
 }
-
-//@ pure
-export function sumOf(values: readonly bigint[], count: number): bigint {
-  //@ requires 0 <= count && count <= values.length
-  //@ requires forall(i, 0 <= i && i < values.length ==> values[i] >= 0)
-  //@ ensures \result >= 0
-  //@ ensures count > 0 ==> \result >= values[count - 1]
-  //@ decreases count
-  if (count === 0) return 0n;
-  return sumOf(values, count - 1) + values[count - 1];
-}

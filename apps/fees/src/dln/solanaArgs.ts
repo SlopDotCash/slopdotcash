@@ -34,8 +34,10 @@ export interface BudgetInstruction {
 
 export type BudgetCheck = { readonly kind: "Within" } | { readonly kind: "Refused"; readonly issue: string };
 
-class Unreadable {
-  constructor(readonly issue: string) {}
+class Unreadable extends Error {
+  constructor(readonly issue: string) {
+    super(issue);
+  }
 }
 
 const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
