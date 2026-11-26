@@ -49,7 +49,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "887e6eeac08c40a915c007eafe737c113ab3e75c2142ae19d750925240f9df22",
+      "sha256": "fe580091c558de8e15e070f766e192cf4a174f136967f7e5d14c2242be590572",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -157,7 +157,7 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "6b30f8c8c03db2613f40b5507321c1f78923259dbf810c013427e1d643afb131",
+      "sha256": "f9687d56212adfda9d69a26b45a18028257939997cdf4e16726a6f41eac8ff4d",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
@@ -5744,7 +5744,7 @@
     },
     {
       "path": "scripts/test-payout-browser.mjs",
-      "sha256": "70edbd360af4c1aad03876e9672181f146638889f1de92dbecba2ec82f5bb4b5",
+      "sha256": "62b6a7fd26db3aee54a68a518beeeb4dd761ae94b6a623ed7ce5ed71e612a3c9",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
         3, 37, 78, 88, 95, 101, 140, 149, 161, 166, 180, 183, 220, 222, 261
@@ -8899,7 +8899,7 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "0b2b80f5ecde3943eafead39a7120f456da9799b72ce8082171b629fe903b2c3",
+      "sha256": "84454546fae596fdf404160b4393942a3ec526e0bfdb1ed1c9ae655969a43af0",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
@@ -8911,13 +8911,13 @@
         "formal/models/payments/signed_send.qnt"
       ],
       "candidateLines": [
-        323, 390, 400, 405, 408, 409, 411, 412, 716, 909, 948, 982, 985, 986,
-        987, 988, 989, 1074, 1205, 1210, 1213, 1214, 1217, 1257, 1295, 1321,
-        1325, 1326, 1328, 1329, 1342, 1356, 1357, 1378, 1394, 1400, 1406, 1422,
-        1426, 1432, 1438, 1445, 1449, 1455, 1458, 1469, 1478, 1648, 1649, 1651,
-        1653, 1654, 1677, 1692, 1694, 1696, 1698, 1699, 1703, 1705, 1707, 1895,
-        1902, 1924, 1925, 1931, 1933, 1934, 1950, 1952, 1959, 1970, 1978, 1979,
-        1982, 1985, 1986, 1987
+        330, 331, 335, 336, 361, 428, 438, 443, 446, 447, 449, 450, 754, 947,
+        986, 1020, 1023, 1024, 1025, 1026, 1027, 1112, 1243, 1248, 1251, 1252,
+        1255, 1295, 1333, 1359, 1363, 1364, 1366, 1367, 1380, 1394, 1395, 1416,
+        1432, 1438, 1444, 1460, 1464, 1470, 1476, 1483, 1487, 1493, 1496, 1507,
+        1516, 1686, 1687, 1689, 1691, 1692, 1715, 1730, 1732, 1734, 1736, 1737,
+        1741, 1743, 1745, 1933, 1940, 1962, 1963, 1969, 1971, 1972, 1988, 1990,
+        1997, 2008, 2016, 2017, 2020, 2023, 2024, 2025
       ],
       "review": "mapped-abstraction"
     },
