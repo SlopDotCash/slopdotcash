@@ -60,7 +60,7 @@ export function repositoriesOf(view: ProjectView): ReadonlyArray<GroupRepository
     integrationBranch: repository.integrationBranch,
     expectedNodeId: repository.nodeId === "" ? null : repository.nodeId,
     aliases: repository.aliases,
-    current: repository.currentPath ?? repository.fullName,
+    current: repository.fullName,
   }))
 }
 

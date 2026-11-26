@@ -93,7 +93,6 @@ export type VaultPaymentHistoryProps = {
   payments: Shown<ReadonlyArray<PublicVaultPayment>>;
   /** The listed name of a project, when the registry lists it. */
   nameOf: (projectId: string) => string | undefined;
-  /** The section's own spacing on the page that shows it. */
   className?: string;
 };
 

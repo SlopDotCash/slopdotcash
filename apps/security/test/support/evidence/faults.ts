@@ -1,5 +1,6 @@
 // spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
 import type { D1Database, R2Bucket } from "@repo/platform/bindings";
+import { Duration, Effect } from "effect";
 
 export interface HeldPart {
   readonly githubId: string;
@@ -32,7 +33,7 @@ async function sessionEnded(db: D1Database, githubId: string): Promise<boolean> 
 
 async function untilSessionEnds(db: D1Database, githubId: string): Promise<void> {
   const deadline = Date.now() + holdMillis;
-  while (!(await sessionEnded(db, githubId)) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, pollMillis));
+  while (!(await sessionEnded(db, githubId)) && Date.now() < deadline) await Effect.runPromise(Effect.sleep(Duration.millis(pollMillis)));
 }
 
 /** @throws {never} */

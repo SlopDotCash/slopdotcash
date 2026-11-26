@@ -33,6 +33,15 @@ import { type Period, formatPeriod, parsePeriod, periodContaining, periodEndSeco
 import { ordinaryFeeBase } from "../src/kernels/fees.ts"
 import { NETWORKS } from "../src/kernels/networks.ts"
 import { fingerprintOf } from "../src/keeper/attempts.vibe"
+
+module node {
+  import { fileURLToPath } from "node:url"
+  /** @throws {never} */
+  export function urlPath(url: URL): string {
+    return fileURLToPath(url)
+  }
+}
+import { urlPath } from node
 import { journalRegistry, keeperConfig, modelConfiguration } from "../src/keeper/config.vibe"
 import { configuredStart, keeperCore } from "../src/keeper/lifecycle.vibe"
 import { type KeeperRun, keeperTick } from "../src/keeper/run.vibe"
@@ -145,7 +154,7 @@ const Started = Layer.effect(Bench, effect {
   })), (server) => promise(() => server.close()))
   const scratch = try acquireRelease(Effect.try(() => frozenCopy([])), (copy) => orDie(Effect.try(() => copy.dispose())))
   const program = try keeperProgram(scratch.root)
-  const keeperScript = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "keeper" }))
+  const keeperScript = try promise(() => bundle(urlPath(new URL("..", import.meta.url)), { entry: "keeper" }))
   chain.setFinalized(try promise(() => escrow.head()))
   return { escrow, vault, reserveVault, legacyVault, published, operator, registry: new URL(served.url).origin, registryBody: body, scratch: scratch.root, journalPath: `${scratch.root}/keeper.sqlite`, clock: settableClock(Date.UTC(2026, 10, 17, 12)), program, keeperScript }
 })
@@ -372,7 +381,7 @@ effect function objectTick(mf: StartedWorker, name: string, method: string, path
 effect function keeperProgram(scratch: string) {
   const outDir = `${scratch}/dist`
   const build = workerBuild({ programs: { main: "src/programs/main.vibe" }, outDir })
-  try promise(() => createBuilder({ root: new URL("..", import.meta.url).pathname, configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
+  try promise(() => createBuilder({ root: urlPath(new URL("..", import.meta.url)), configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
   return `${outDir}/programs/main.js`
 }
 

@@ -156,7 +156,7 @@ const Started = Layer.effect(World, effect {
   const appended: Appended[] = []
   const clock = settableClock(windowOpen * 1000)
   const urls = Redacted.make([chain.url] as ReadonlyArray<string>)
-  const owner = escrow.roles.owner.address
+  const owner = try address(escrow.roles.owner.address)
   const services = Layer.mergeAll(
     ports(projects, access, appended),
     Layer.succeed(Wallets, {

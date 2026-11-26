@@ -66,7 +66,6 @@ function operationOf(body: string): string {
 }
 
 const quietTurns = 20;
-const eventLoopTurn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
 const ioRequest = /(REQ|REQUEST|REQWRAP|JOB)$/u;
 const pendingIo = new Set<number>();
 const ioWatch = createHook({
@@ -110,7 +109,7 @@ export function fastClock(begin: number, traffic: () => Traffic = () => ({ inFli
       const quiet = (seen: number, turns: number): Effect.Effect<boolean> => {
         const current = traffic();
         if (current.inFlight !== 0 || current.changes !== seen || pendingIo.size > 0) return Effect.succeed(false);
-        return turns === 0 ? Effect.succeed(true) : Effect.flatMap(eventLoopTurn, () => quiet(seen, turns - 1));
+        return turns === 0 ? Effect.succeed(true) : Effect.flatMap(live.sleep(Duration.zero), () => quiet(seen, turns - 1));
       };
       const settled = (seen: number): Effect.Effect<void> => Effect.flatMap(live.sleep(Duration.millis(millis / 1000)), () => Effect.flatMap(quiet(seen, quietTurns), (idle) => (idle ? Effect.void : settled(traffic().changes))));
       const watched = Effect.acquireUseRelease(watching, () => settled(traffic().changes), () => unwatching);

@@ -4,17 +4,17 @@ import { Schema } from "effect";
 
 const pattern = (expression: RegExp) => Schema.String.check(Schema.isPattern(expression));
 
-const quantity = /^(0x[0-9a-f]+|0|[1-9][0-9]*)$/iu;
+const quantity = /^(0[xX][0-9a-fA-F]+|0|[1-9][0-9]*)$/u;
 
 export const Quantity = pattern(quantity);
 
 export const Nonce = Quantity.check(Schema.makeFilter((text: string) => quantity.test(text) && BigInt(text) <= BigInt(Number.MAX_SAFE_INTEGER), { expected: "a nonce no larger than a safe integer" }));
 
-export const EvmHash = pattern(/^0x[a-f0-9]{64}$/iu);
+export const EvmHash = pattern(/^0[xX][a-fA-F0-9]{64}$/u);
 
-export const RequestId = pattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu);
+export const RequestId = pattern(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/u);
 
-export const AttemptId = pattern(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
+export const AttemptId = pattern(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/u);
 
 export const SolanaSignature = pattern(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/u).check(Schema.makeFilter((text: string) => isSignature(text), { expected: "a base58 64-byte signature" }));
 
