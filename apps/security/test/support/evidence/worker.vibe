@@ -69,14 +69,15 @@ const fixtureProgram = { technical: ["701"], financial: ["702"], dispute: [], sp
 schema Retirement { outcome: "backed" | "changed" | "missing"; backupDay: string; backupRoot: string }
 schema ReportText { submissionId: string; version: number; text: string }
 schema Retired { frozen: string; retired: ReadonlyArray<string>; finished: string }
-schema ExpirePlan { githubId: string; reads: number }
+schema PausePlan { reads: number }
 schema Armed { armed: boolean }
 
-let expirePlan: { readonly githubId: string; remaining: number } | undefined = undefined
+let pausePlan: { remaining: number; paused: boolean } | undefined = undefined
 
 const reportRoute = route({ method: "GET", path: "/api/v1/test/security-cases/:id/report", access: "session", limitKib: 1, request: undefined, answer: ReportText, rejected: "not_found", cache: "private" })
 const retireRoute = route({ method: "POST", path: "/api/v1/test/evidence-generations/:id/retire", access: "public", limitKib: 1, request: Retirement, answer: Retired, rejected: "rejected", cache: "no-store" })
-const expireRoute = route({ method: "POST", path: "/api/v1/test/expire-session-after", access: "public", limitKib: 1, request: ExpirePlan, answer: Armed, rejected: "rejected", cache: "no-store" })
+const pauseRoute = route({ method: "POST", path: "/api/v1/test/pause-session-after", access: "public", limitKib: 1, request: PausePlan, answer: Armed, rejected: "rejected", cache: "no-store" })
+const resumeRoute = route({ method: "POST", path: "/api/v1/test/resume-session", access: "public", limitKib: 1, request: undefined, answer: Armed, rejected: "rejected", cache: "no-store" })
 
 const notFound = getSecuritySubmissionsById.notFoundReportNotFound
 
@@ -107,26 +108,30 @@ const testRoutes = Layer.mergeAll(
     }
     return json({ frozen, retired, finished: try finish(generation) })
   }),
-  handleRaw(expireRoute, () => effect {
-    const body = try Schema.decodeUnknownEffect(ExpirePlan)(try (try HttpServerRequest.HttpServerRequest).json)
-    expirePlan = { githubId: body.githubId, remaining: body.reads }
+  handleRaw(pauseRoute, () => effect {
+    const body = try Schema.decodeUnknownEffect(PausePlan)(try (try HttpServerRequest.HttpServerRequest).json)
+    pausePlan = { remaining: body.reads, paused: true }
     return json({ armed: true })
+  }),
+  handleRaw(resumeRoute, () => effect {
+    if (pausePlan !== undefined) pausePlan.paused = false
+    pausePlan = undefined
+    return json({ armed: false })
   }),
 )
 
-function callerWithExpire(db: D1Database) {
+function callerWithPause(db: D1Database) {
   return Layer.provide(Layer.effect(Caller, effect {
     const inner = try Caller
     return {
       current: (route) => effect {
-        if (expirePlan !== undefined) {
-          if (expirePlan.remaining <= 0) {
-            const target = expirePlan.githubId
-            expirePlan = undefined
-            const expired = new Date(Date.now() - 1000).toISOString()
-            try promise(() => db.prepare("UPDATE points_sessions SET expires_at=? WHERE actor_id=?").bind(expired, `actor-${target}`).run())
+        if (pausePlan !== undefined) {
+          if (pausePlan.remaining <= 0) {
+            const plan = pausePlan
+            for (let step = 0; step < 500 && plan.paused; step += 1) try sleep("10 millis")
+            pausePlan = undefined
           } else {
-            expirePlan.remaining -= 1
+            pausePlan.remaining -= 1
           }
         }
         return try inner.current(route)
@@ -144,7 +149,7 @@ export default worker({
     Layer.succeed(Backups, { binding: env.EVIDENCE_BACKUPS }),
     rolesFrom(env),
     Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
-    callerWithExpire(env.SLOP_DB),
+    callerWithPause(env.SLOP_DB),
     ports(env),
   ),
   routes: Layer.mergeAll(evidenceRoutes, testRoutes),

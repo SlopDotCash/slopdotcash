@@ -1,7 +1,9 @@
 import { assert, layer } from "@effect/vitest"
 import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { noEdgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
-import { d1, sql } from "@repo/platform/d1"
+import { D1, d1, first, sql } from "@repo/platform/d1"
+import { unconfiguredGitHubApp } from "@repo/platform/github/app"
 import { outboundVia } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import type { Handler } from "@repo/platform/testing"
@@ -9,17 +11,24 @@ import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
 import { type ProviderAnswer, type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
 import { Execution } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { noticePorts } from "@repo/operations/live"
 import { Request as WorkerRequest } from "miniflare"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ReportingReadiness } from "@repo/ports/slopbot"
 import { analysisPrompt, jsonValue, screeningPrompt } from "../src/analysis/prompts.ts"
-import { privateModel, privateProvider, privateRoute } from "../src/analysis/route.vibe"
+import { privateModel, privateProvider, PrivateRoute, privateRoute } from "../src/analysis/route.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
+import { intakeApp } from "../src/forwarding/grant.vibe"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { intakeRoutes } from "../src/intake/routes.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
 import { screeningRoutes } from "../src/screening/routes.vibe"
 import { screeningAt } from "../src/screening/store.vibe"
-import { type World, digest, maintainer, origin, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { type World, digest, maintainer, origin, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { receiptNotices } from "./support/intake/notices.vibe"
 
 type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
 
@@ -36,6 +45,7 @@ service Screened {
   readonly clock: SettableClock
   readonly beforeReply: Array<() => Promise<unknown>>
   readonly pending: Array<Promise<unknown>>
+  readonly intake: WebHandler
   readonly keyed: WebHandler
   readonly keyless: WebHandler
   readonly retired: WebHandler
@@ -110,6 +120,66 @@ effect function webHandler(world: World, fake: ProviderFake, clock: SettableCloc
   return web.handler as WebHandler
 }
 
+module disabledRoute {
+  export function refuseBackground(): never {
+    throw new Error("background screening disabled in screening test")
+  }
+}
+import { refuseBackground } from disabledRoute
+
+schema RevisionRow { revision: number }
+
+effect function intakeHandler(world: World, clock: SettableClock) {
+  const registry = Layer.effect(Registry, effect {
+    const db = try D1
+    return {
+      project: (projectId) => provideService(effect {
+        if (projectId !== project) return undefined
+        const now = new Date(try Clock.currentTimeMillis).toISOString()
+        const row = try first(RevisionRow, sql`SELECT revision FROM project_revisions WHERE project_id=${projectId} AND created_at<=${now} ORDER BY revision DESC LIMIT 1`)
+        return row === undefined ? fixture : { ...fixture, revision: row.revision }
+      }, D1, db),
+      byRepository: () => succeed(undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([fixture]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape
+  })
+  const readiness = Layer.succeed(ReportingReadiness, {
+    current: () => succeed(undefined),
+  } satisfies ReportingReadiness.Shape)
+  const base = Layer.mergeAll(
+    d1(world.db),
+    webCrypto,
+    clock.layer,
+    noEdgeCache,
+    unconfiguredGitHubApp,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: "801", PROJECT_MODERATOR_GITHUB_IDS: "801" }),
+    intakeSettings({ mode: "on", automatic: false }),
+    intakeApp({}),
+    reportDepositSettings("off"),
+    Layer.succeed(PrivateRoute, { get provider(): never { return refuseBackground() } }),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: () => succeed({ banned: false }),
+      project: () => succeed({ restricted: false }),
+      fence: () => succeed(sql`SELECT 1`),
+      unbanned: () => succeed(sql`1`),
+    } satisfies Restrictions.Shape),
+    readiness,
+    receiptNotices,
+  )
+  const withRegistry = Layer.provideMerge(registry, base)
+  const services = Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, ProjectParticipationLive, SubmissionFeeRatesLive, CallerLive), withRegistry)
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(intakeRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>, services), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return web.handler as WebHandler
+}
+
 const Started = Layer.effect(Screened, effect {
   const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
   const fake = providerFake({ holdMs: 10 })
@@ -121,6 +191,7 @@ const Started = Layer.effect(Screened, effect {
     clock,
     beforeReply,
     pending: [],
+    intake: try intakeHandler(world, clock),
     keyed: try webHandler(world, fake, clock, beforeReply, surplusKey),
     keyless: try webHandler(world, fake, clock, beforeReply, undefined),
     retired: try webHandler(world, fake, clock, beforeReply, surplusKey, retiredFixture),
@@ -198,8 +269,19 @@ function reportOf(summary: string, description: string): Report {
   return { summary, description, severity: "high" }
 }
 
-effect function submit(world: World, as: string, key: string, report: Report) {
-  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+async function postedQuiet(screened: Screened.Shape, handler: WebHandler, path: string, as: string, body: unknown): Promise<Answer> {
+  const cookie = await sessionCookie(screened.world, as)
+  const settled: Array<Promise<unknown>> = []
+  const execution: ExecutionContext = { waitUntil: (work) => { settled.push(work) } }
+  const headers = { cookie, "x-slop-expected-github-id": as, "content-type": "application/json", origin }
+  const response = await handler(new WorkerRequest(`${origin}${path}`, { method: "POST", headers, body: JSON.stringify(body) }) as unknown as globalThis.Request, Context.make(Execution, { context: execution }))
+  await Promise.all(settled)
+  return { status: response.status, cache: response.headers.get("cache-control"), robots: response.headers.get("x-robots-tag"), body: await response.json() as unknown }
+}
+
+effect function submit(_world: World, as: string, key: string, report: Report) {
+  const screened = try Screened
+  const answer = try promise(() => postedQuiet(screened, screened.intake, "/api/v1/security-submissions", as, { projectId: project, idempotencyKey: key, origin: "slop", report }))
   if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
   return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
 }
@@ -362,7 +444,7 @@ effect function lateResults(screened: Screened.Shape) {
   const duringCall: Array<number> = []
   screened.beforeReply.push(async () => {
     const asked = await posted(screened, screened.keyed, `/api/v1/security-submissions/${l.id}/review`, maintainer, { expectedRevision: 2, decision: "request-information", reason: "Attach the failing test." })
-    const revised = await request(world, `/api/v1/security-submissions/${l.id}/report`, { as: "42002", json: { expectedRevision: 3, report: revisedL } })
+    const revised = await postedQuiet(screened, screened.intake, `/api/v1/security-submissions/${l.id}/report`, "42002", { expectedRevision: 3, report: revisedL })
     duringCall.push(asked.status, revised.status)
   })
   fake.reply(screeningOf(reportL.summary), decided("legitimate", "Late legitimate result."))
@@ -493,7 +575,9 @@ effect function scopedRevision(world: World, revision: number, status: string, l
 }
 
 effect function storedExclusions(world: World, id: string) {
-  return (try Effect.provide(screeningAt(id), d1(world.db))).screening.exclusions
+  provide d1(world.db) {
+    return (try screeningAt(id)).screening.exclusions
+  }
 }
 
 effect function exclusionsSent(screened: Screened.Shape) {
@@ -528,7 +612,7 @@ effect function exclusionsSent(screened: Screened.Shape) {
     analysis: scopeFor(ownerLine),
     paused: scopeFor(pausedLine),
     stored: [{ defaults: 0, owner: [] }, { defaults: 10, owner: [ownerLine.length] }, { defaults: 10, owner: [pausedLine.length] }],
-    x: intake(1, "legitimate", "The report names the withdrawal queue and gives a safe reproduction.", 4, { routed: 1 }),
+    x: intake(1, "legitimate", "Concrete security evidence merits private human review.", 4, { routed: 1 }),
   })
 }
 

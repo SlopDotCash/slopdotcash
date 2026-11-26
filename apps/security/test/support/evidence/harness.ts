@@ -194,10 +194,13 @@ export async function overwrite(world: World, key: string, bytes: Uint8Array, sh
 }
 
 export async function partialDownload(world: World, path: string, as: string, cookie: string, stopAfter: number, interrupt: () => Promise<void>): Promise<{ readonly status: number; readonly received: number; readonly failed: boolean }> {
-  await request(world, "/api/v1/test/expire-session-after", { method: "POST", body: JSON.stringify({ githubId: as, reads: 3 }), json: true });
+  await request(world, "/api/v1/test/pause-session-after", { method: "POST", body: JSON.stringify({ reads: 3 }), json: true });
   const response = await respond(world, path, { as, headers: { cookie, "sec-fetch-site": "same-origin" } });
   const stream = response.body;
-  if (stream === null) return { status: response.status, received: 0, failed: false };
+  if (stream === null) {
+    await request(world, "/api/v1/test/resume-session", { method: "POST", body: "{}", json: true });
+    return { status: response.status, received: 0, failed: false };
+  }
   const readerOf = stream.getReader();
   let received = 0;
   let interrupted = false;
@@ -209,10 +212,14 @@ export async function partialDownload(world: World, path: string, as: string, co
       if (!interrupted && received >= stopAfter) {
         interrupted = true;
         await interrupt();
+        await request(world, "/api/v1/test/resume-session", { method: "POST", body: "{}", json: true });
       }
     }
   } catch {
-    if (!interrupted) await interrupt();
+    if (!interrupted) {
+      await interrupt();
+      await request(world, "/api/v1/test/resume-session", { method: "POST", body: "{}", json: true });
+    }
     return { status: response.status, received, failed: true };
   }
 }
