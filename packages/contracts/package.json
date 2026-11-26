@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "cd evm && forge build && cd ../solana && cargo check --locked --target-dir .cache/target",
-    "test": "cd evm && forge test && FOUNDRY_PROFILE=smt forge build --force --deny warnings src/EscrowMath.sol src/MonthlyCalendar.sol src/ReferralClaims.sol test/smt/CalendarLemmas.sol && FOUNDRY_PROFILE=smt_chc forge build --force --deny warnings test/smt/EscrowLemmas.sol test/smt/ReferralLemmas.sol && cd ../solana && cargo test --locked --target-dir .cache/target",
+    "test": "cd evm && forge test && FOUNDRY_PROFILE=smt forge build --force --deny warnings src/EscrowMath.sol src/MonthlyCalendar.sol src/ReferralClaims.sol && FOUNDRY_PROFILE=smt_chc forge build --force --deny warnings test/smt/EscrowLemmas.sol test/smt/ReferralLemmas.sol && cd ../solana && cargo test --locked --target-dir .cache/target",
     "typecheck": "tsc -p ."
   },
   "devDependencies": {
