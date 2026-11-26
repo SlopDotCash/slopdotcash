@@ -74,7 +74,7 @@ export effect function automaticScan(ask: ScanAsk) {
   return created.length === 0 ? "already_queued" as const : "queued" as const
 }
 
-type ScanNeeds = Effect.Services<ReturnType<typeof automaticScan>>
+type ScanNeeds = Effect.Services<ReturnType<typeof automaticScan> | ReturnType<typeof incompleteScan>>
 
 export const ScanRequestsLive = Layer.effect(ScanRequests, effect {
   const services = try Effect.context<ScanNeeds>()

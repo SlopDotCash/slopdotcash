@@ -121,20 +121,30 @@ export function summarize(assessment: AssessmentFacts): Summary {
   };
 }
 
+const unfinished = "The last scan could not finish, so it did not clear the project.";
+const finished = "The last scan finished, but it did not establish clearance.";
+
+const findingLocations: Readonly<Record<FindingsLocation, string>> = {
+  template: "in Slop's skill template",
+  repository: "in the project repository",
+  both: "in both the repository and skill template",
+  unknown: "",
+};
+
 /** @throws {never} */
 export function quarantinedScanMessage(completedAt: string | null, result: RecordedResult | undefined): string {
-  if (completedAt === null || result === undefined) return "The last scan could not finish, so it did not clear the project.";
+  if (completedAt === null || result === undefined) return unfinished;
   const location = findingsLocationOf(result);
-  if (location === "template") return "Findings in Slop's skill template block clearance.";
-  if (location === "repository") return "Findings in the project repository block clearance.";
-  if (location === "both") return "Findings in both the repository and skill template block clearance.";
-  if (location === "unknown") return "Findings block clearance.";
-  if (isScanResult(result) && result.primaryReview.status === "completed"
-    && (result.specialistReview?.status === "completed" || (result.specialistReview === null && !specialistRequired(result)))
-    && scanThreats.every((threat) => result.checks[threat] !== "not-run")
-    && scanSurfaces.every((surface) => result.coverage[surface].state === "complete")
-    && result.visibilityGaps.every(advisoryReviewGap)) {
-    return "The last scan finished, but it did not establish clearance.";
-  }
-  return "The last scan could not finish, so it did not clear the project.";
+  const completed = isScanResult(result)
+    ? result.primaryReview.status === "completed"
+      && (result.specialistReview?.status === "completed" || (result.specialistReview === null && !specialistRequired(result)))
+      && scanThreats.every((threat) => result.checks[threat] !== "not-run")
+      && scanSurfaces.every((surface) => result.coverage[surface].state === "complete")
+    : result.modelReviews.length > 0 && result.modelReviews.every((review) => review.status === "completed");
+  if (location === undefined) return completed ? finished : unfinished;
+  const findings = location === "unknown" ? "Findings" : `Findings ${findingLocations[location]}`;
+  const separateCoverageGap = isScanResult(result) && result.visibilityGaps.some((gap) => !advisoryReviewGap(gap));
+  const locatesBlock = !isScanResult(result) || result.findings.every((finding) => finding.severity === "high" || finding.severity === "critical");
+  if (!completed || separateCoverageGap || !locatesBlock) return `${completed ? finished : unfinished} ${findings} were recorded.`;
+  return `${findings} block clearance.`;
 }

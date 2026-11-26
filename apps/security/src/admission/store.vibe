@@ -1,8 +1,11 @@
 // spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/security/enforcement.md, "A recorded result updates its repository once and confirmed malice bans at once"
+import { sha256Hex } from "@repo/platform/crypto"
 import { type Statement, first, rows, sql } from "@repo/platform/d1"
 import { Notices } from "@repo/ports/operations"
-import type { IncompleteScanRead } from "@repo/ports/security"
+import type { IncompleteScanPin, IncompleteScanRead } from "@repo/ports/security"
 import { scanClearanceView } from "../client/enforcement.vibe"
+import { ManifestFacts, listedOf } from "../enforcement/replay.vibe"
+import { jsonOf } from "../enforcement/rows.vibe"
 import { owners } from "../enforcement/statements.vibe"
 import { type RecordedResult, advisoryReviewGap, storedResult } from "./result.ts"
 import { type AssessmentFacts, type Summary, quarantinedScanMessage, summarize } from "./summary.ts"
@@ -81,19 +84,32 @@ export effect function assessment(id: string) {
   return found === undefined ? undefined : assessmentOf(found)
 }
 
-export effect function incompleteScan(read: { readonly projectId: string; readonly assessment: number }) {
-  const row = try first(AssessmentRow, sql`SELECT ${columns} FROM vetting_assessments a WHERE a.project_id = ${read.projectId} AND a.rowid = ${read.assessment} AND a.state = 'incomplete'`)
-  if (row === undefined) return undefined
+const IncompleteScanRow = Schema.Struct({ ...AssessmentRow.fields, manifest: Schema.String })
+
+export function sameScannedRepository(result: RecordedResult, found: Assessment): boolean {
+  return result.assessed.repository.toLowerCase() === found.repositoryId.toLowerCase()
+}
+
+export effect function incompleteScan(read: IncompleteScanPin) {
+  const row = try first(IncompleteScanRow, sql`SELECT ${columns}, r.manifest FROM vetting_assessments a
+    JOIN project_revisions r ON r.project_id = a.project_id AND r.revision = a.revision AND r.manifest_sha256 = a.manifest_sha256
+    WHERE a.project_id = ${read.projectId} AND a.rowid = ${read.assessment} AND a.state = 'incomplete'`)
+  if (row === undefined || row.result === null || row.result_sha256 === null || (try sha256Hex(row.result)) !== row.result_sha256) return undefined
   const found = assessmentOf(row)
+  const listed = listedOf(try jsonOf(ManifestFacts, row.manifest, "assessment revision manifest"))
+  if (!listed.some((repo) => repo.githubId === read.repository && repo.path === found.repositoryId)) return undefined
   const result = found.result
   if (result === undefined || found.completedAt === null || result.disposition !== "incomplete" || result.assessmentId !== found.id
     || result.projectId !== found.projectId || result.revision !== found.revision || result.manifestSha256 !== found.manifestSha256
-    || result.assessed.commitSha !== found.commitSha || result.assessed.templateSha256 !== found.templateSha256) return undefined
+    || result.assessed.commitSha !== found.commitSha || result.assessed.templateSha256 !== found.templateSha256
+    || !sameScannedRepository(result, found)) return undefined
   const summary = summarize(found)
   const facts = summary.scan
   const visibilityGaps = facts?.visibilityGaps.some((gap) => !advisoryReviewGap(gap)) ? ["Additional coverage gaps were recorded."] : []
+  const guidance = summary.findingsLocation === "template" && visibilityGaps.length === 0 ? "Check for an updated skill template first." : undefined
   return {
-    message: quarantinedScanMessage(found.completedAt, found.result),
+    message: quarantinedScanMessage(found.completedAt, result),
+    ...(guidance === undefined ? {} : { guidance }),
     clearance: facts === undefined ? null : scanClearanceView({ ...summary, scan: { ...facts, visibilityGaps } }),
   } satisfies IncompleteScanRead
 }

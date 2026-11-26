@@ -151,11 +151,16 @@ effect function scanCheck(projectId: string, state: Registry, manifest: Json, qu
   const incomplete = scan.incomplete
   const primary = idOf(primaryOf(manifest).githubId)
   if (incomplete === undefined || state.security.restriction !== "Clear" || !canReadScan(incomplete.repository, primary, reads, actor)) return scan
-  const detail = (try ScanRequests).incomplete({ projectId, assessment: incomplete.assessment }) catch () => undefined
+  const detail = (try ScanRequests).incomplete({ projectId, ...incomplete }) catch () => undefined
   if (detail === undefined) return scan
   const repository = incomplete.repository
   const message = repository === primary ? detail.message : `${repositoryPaths(manifest).get(repository) ?? String(repository)}: ${detail.message}`
-  return { ...scan, message, ...(detail.clearance === null ? {} : { clearance: detail.clearance }) } satisfies Scan
+  return {
+    ...scan,
+    message,
+    ...(detail.guidance === undefined ? {} : { guidance: detail.guidance }),
+    ...(detail.clearance === null ? {} : { clearance: detail.clearance }),
+  } satisfies Scan
 }
 
 effect function queuedScan(refresh: Refresh, state: Registry, manifest: Json, setup: SetupState, authority: Checked["authority"]) {

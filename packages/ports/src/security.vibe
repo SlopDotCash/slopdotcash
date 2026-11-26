@@ -267,14 +267,21 @@ export schema ScanClearanceView {
   readonly review: ReadonlyArray<ScanClearanceBadge>
 }
 
+export interface IncompleteScanPin {
+  readonly projectId: string
+  readonly assessment: number
+  readonly repository: number
+}
+
 export interface IncompleteScanRead {
   readonly message: string
+  readonly guidance?: string
   readonly clearance: ScanClearanceView | null
 }
 
 export service ScanRequests {
   queue(ask: ScanAsk): ScanQueued!ReadFailure
-  incomplete(read: { readonly projectId: string; readonly assessment: number }): (IncompleteScanRead | undefined)!ReadFailure
+  incomplete(read: IncompleteScanPin): (IncompleteScanRead | undefined)!ReadFailure
 }
 
 export service VettingBans {
