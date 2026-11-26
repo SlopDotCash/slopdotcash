@@ -1,6 +1,6 @@
 // spec/frontend/presentation.md, "Project tokens have one dollar prefix while native and approved stablecoin tickers have none"; spec/frontend/presentation.md, "Amounts display exactly in their asset's decimals with grouped whole digits and no trailing fraction zeros"
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
-import { type Chain, isNetworkKey, type Network, NETWORKS, type ReferenceAsset } from "@repo/settlement/kernels/networks";
+import { EVM_NATIVE_ASSET, type Chain, isNetworkKey, type Network,  NETWORKS, type ReferenceAsset, SOLANA_NATIVE_ASSET } from "@repo/settlement/kernels/networks";
 import { type DecodedTicker, displayTicker, type TickerKind, type TickerView } from "../../gen/frontend__presentation.ts";
 
 export type AssetKind = "native" | "stablecoin" | "token";
@@ -105,6 +105,8 @@ export function knownAssetSymbol({ network, assetAddress, assetDecimals }: Payme
   const policy: Network = NETWORKS[network];
   const assets: readonly ReferenceAsset[] = policy.assets;
   const same = (address: string) => (policy.family === "evm" ? address.toLowerCase() === assetAddress.toLowerCase() : address === assetAddress);
+    const native = policy.family === "solana" ? { address: SOLANA_NATIVE_ASSET, symbol: "SOL" } : { address: EVM_NATIVE_ASSET, symbol: "ETH" };
+  if (same(native.address)) return native.symbol;
   return assets.find((asset) => asset.decimals === assetDecimals && same(asset.address))?.symbol;
 }
 
