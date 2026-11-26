@@ -1,0 +1,116 @@
+// spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
+import { ConfigInvalid } from "@repo/platform/config"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import type { Stack } from "../../gen/settlement__signer.effect.vibe"
+
+export schema PinnedReview {
+  readonly authority: string
+  readonly vaultImplementation: string
+  readonly vaultImplementationCodeSha256: string
+  readonly factoryImplementation: string
+  readonly factoryImplementationCodeSha256: string
+}
+
+export schema PinnedSupersededReview {
+  readonly authority: string
+  readonly vaultImplementation: string
+  readonly vaultImplementationCodeSha256: string
+  readonly factoryImplementation: string
+  readonly factoryImplementationCodeSha256: string
+  readonly supersededAtBlock: string
+}
+
+export schema PinnedUpgrade {
+  readonly authority: string
+  readonly vaultImplementation: string
+  readonly vaultImplementationCodeSha256: string
+  readonly factoryImplementation: string
+  readonly factoryImplementationCodeSha256: string
+  readonly history?: ReadonlyArray<PinnedSupersededReview>
+}
+
+export schema PinnedDeployment {
+  readonly network: string
+  readonly chain: string
+  readonly chainId: string
+  readonly projectId: string
+  readonly vault: string
+  readonly asset: string
+  readonly owner: string
+  readonly identityAuthority: string
+  readonly feeRecipient: string
+  readonly deploymentTransaction: string
+  readonly sourceCommit: string
+  readonly codeSha256: string
+  readonly factory: string | null
+  readonly factoryCodeSha256: string | null
+  readonly registrar: string | null
+  readonly gasCeiling: string
+  readonly bindingDelaySeconds: string
+  readonly evmUpgrade?: PinnedUpgrade
+  readonly maxNativeCostWei?: string
+  readonly bindingConsentNonceLimit?: number
+  readonly payoutPolicy?: "ordinary" | "security-bounty"
+}
+
+export schema SolanaPin {
+  readonly network: string
+  readonly chain: "solana"
+  readonly projectId: string
+  readonly vault: string
+  readonly asset: string
+  readonly owner: string
+  readonly identityAuthority: string
+  readonly feeRecipient: string
+  readonly programId: string
+  readonly projectPda: string
+  readonly networkDomain: string
+  readonly upgradeAuthority: string | null
+  readonly rotationAuthority: string
+  readonly rotationDelaySeconds: string
+  readonly bindingDelaySeconds: string
+  readonly deploymentTransaction: string
+  readonly sourceCommit: string
+  readonly codeSha256: string
+  readonly genesisHash: string
+  readonly payoutPolicy?: "ordinary" | "security-bounty"
+}
+
+export interface StackSecrets {
+  readonly evmSecret: "TEST_SIGNER_PRIVATE_KEY" | "SIGNER_PRIVATE_KEY"
+  readonly solanaSecret: "TEST_SOLANA_SIGNER_SEED" | "SOLANA_SIGNER_SEED"
+  readonly journal: "dedicated-test-signer-v1" | "production-signer-v1"
+}
+
+export const SIGNER_STACKS = Object.freeze({
+  TestStack: Object.freeze({ evmSecret: "TEST_SIGNER_PRIVATE_KEY", solanaSecret: "TEST_SOLANA_SIGNER_SEED", journal: "dedicated-test-signer-v1" }),
+  ProductionStack: Object.freeze({ evmSecret: "SIGNER_PRIVATE_KEY", solanaSecret: "SOLANA_SIGNER_SEED", journal: "production-signer-v1" }),
+} as const satisfies Record<Stack, StackSecrets>)
+
+const pinBytes = 5_000
+const pinFrame = /^pins:v1:([1-9][0-9]*):([1-9][0-9]*):([a-f0-9]{64})$/u
+
+function framingInvalid(name: string) {
+  return new ConfigInvalid({ name, issue: "invalid deployment pin frame" })
+}
+
+export effect function pinsOf(env: object, name: "PAYMENT_DEPLOYMENTS" | "SECURITY_PAYMENT_DEPLOYMENTS") {
+  const vars = env as Readonly<Record<string, unknown>>
+  const value = vars[name]
+  const prefix = `${name}_PART_`
+  const partNames = Object.keys(vars).filter((key) => key.startsWith(prefix))
+  if (value !== undefined && typeof value !== "string") throw framingInvalid(name)
+  if (!(typeof value === "string" && value.startsWith("pins:")) && partNames.length === 0) return value
+  const frame = pinFrame.exec(typeof value === "string" ? value : "")
+  if (frame === null || partNames.length < 2 || Number(frame[1]) !== partNames.length) throw framingInvalid(name)
+  const parts: string[] = []
+  for (let index = 1; index <= partNames.length; index += 1) {
+    const part = vars[`${prefix}${index}`]
+    if (typeof part !== "string" || part.length === 0 || utf8(part).byteLength > pinBytes) throw framingInvalid(name)
+    parts.push(part)
+  }
+  const joined = parts.join("")
+  const bytes = utf8(joined).byteLength
+  if (bytes <= pinBytes || bytes !== Number(frame[2]) || (try sha256Hex(joined)) !== frame[3]) throw framingInvalid(name)
+  return joined
+}

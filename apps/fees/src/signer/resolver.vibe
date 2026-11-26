@@ -1,19 +1,14 @@
 // spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"; spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"
+import { hexToBytes } from "@noble/hashes/utils.js"
 import { networkTerms } from "../../gen/backend__submissionFeeTerms.effect.vibe"
 import { resolverMaySign } from "../../gen/fees__submissionFeeSends.effect.vibe"
-import { type ResolveTransaction, type ResolverSigner, ResolverSignRefused } from "../submissionFee/chain.vibe"
+import { type ResolveTransaction, type ResolverEnv, type ResolverSigner, ResolverSignRefused, SubmissionFeeSigners, resolverSecret } from "../submissionFee/chain.vibe"
 import { SubmissionFeeConfigInvalid } from "../submissionFee/config.vibe"
 import { STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_LEDGER, STANDING_DEPOSIT_NETWORK } from "../submissionFee/standingTerms.ts"
 import { type ResolverKey, resolveManyOf, resolverKey } from "./resolverKey.ts"
+import { solanaSeedKey } from "./solanaKey.ts"
 
-export interface ResolverEnv {
-  readonly SUBMISSION_FEE_RESOLVER_KEY?: string
-}
-
-export function resolverSecret(env: ResolverEnv) {
-  const text = env.SUBMISSION_FEE_RESOLVER_KEY?.trim() ?? ""
-  return text === "" ? undefined : Redacted.make(text)
-}
+export { type ResolverEnv, resolverSecret }
 
 effect function signWith(network: string, key: ResolverKey, transaction: ResolveTransaction) {
   const intent = resolveManyOf(network, transaction)
@@ -32,3 +27,11 @@ export effect function resolverSigner(network: string, secret: Redacted.Redacted
   if (key === undefined) throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_RESOLVER_KEY is malformed" })
   return { address: key.address, sign: (transaction: ResolveTransaction) => signWith(network, key, transaction) } satisfies ResolverSigner
 }
+
+export const SubmissionFeeSignersLive = Layer.succeed(SubmissionFeeSigners, {
+  evm: (network, secret) => resolverSigner(network, secret),
+  solana: (seedHex) => {
+    const text = Redacted.value(seedHex)
+    return /^[0-9a-fA-F]{64}$/u.test(text) ? solanaSeedKey(hexToBytes(text)) : undefined
+  },
+})

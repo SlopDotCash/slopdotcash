@@ -3,7 +3,7 @@ import { type Address, type Commitment, type FetchedTransaction, type Message, t
 import { conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import { jupiterQuote } from "../jupiter/quote.vibe"
 import type { VaultFact } from "../runtime/reviewed.vibe"
-import type { SolanaReviewed, SolanaWalletOptions } from "../signer/solana.vibe"
+import type { SolanaReviewed, SolanaWalletOptions } from "../wallet/service.vibe"
 import { digest58, u64At, wideOf } from "../solana/bytes.ts"
 import { FeeSolana, addressed, admittedMint, blockhashAnchor, lamportDeltas, networkFee, signatureOfText } from "../solana/client.vibe"
 import { wrappedSol } from "../solana/wire.vibe"

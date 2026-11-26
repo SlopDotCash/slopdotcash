@@ -9,6 +9,7 @@ import { ReportDepositsLive } from "@repo/security/live"
 import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
 import { submissionFeeAnyAny } from "../client/refusals.vibe"
 import { feeNetworks } from "../../gen/backend__submissionFeeTerms.ts"
+import { SubmissionFeeSignersLive } from "../signer/resolver.vibe"
 import { type DepositRun, type SubmissionFeeWorkerEnv, depositPass, ratePassOf } from "../submissionFee/run.vibe"
 import { message } from "../submissionFee/steps.vibe"
 
@@ -16,13 +17,13 @@ export interface Env extends SubmissionFeeWorkerEnv {
   readonly SUBMISSION_FEE_DB: D1Database
 }
 
-export const depositCron = "*/5 * * * *"
-export const rateCron = "7 * * * *"
+const depositCron = "*/5 * * * *"
+const rateCron = "7 * * * *"
 
-export service SubmissionFeeWorkerEnvironment { readonly env: SubmissionFeeWorkerEnv }
+service SubmissionFeeWorkerEnvironment { readonly env: SubmissionFeeWorkerEnv }
 
-export error SubmissionFeeScheduleUnknown { cron: string; message: string }
-export error SubmissionFeeRunFailed { cron: string; message: string }
+error SubmissionFeeScheduleUnknown { cron: string; message: string }
+error SubmissionFeeRunFailed { cron: string; message: string }
 
 function failedNetworks(result: DepositRun) {
   return result.status === "ran" && result.networks.some((network) => "error" in network)
@@ -54,7 +55,7 @@ effect function scheduled(controller: ScheduledController) {
 }
 
 function services(env: Env) {
-  const base = Layer.mergeAll(d1(env.SUBMISSION_FEE_DB), webCrypto, outbound, Layer.succeed(SubmissionFeeWorkerEnvironment, { env }))
+  const base = Layer.mergeAll(d1(env.SUBMISSION_FEE_DB), webCrypto, outbound, SubmissionFeeSignersLive, Layer.succeed(SubmissionFeeWorkerEnvironment, { env }))
   return Layer.mergeAll(base, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), base))
 }
 

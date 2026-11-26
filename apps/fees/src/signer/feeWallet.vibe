@@ -1,20 +1,21 @@
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
-import type { EvmRpc, Hex } from "@repo/platform/chain/evm"
+import type { EvmRpc } from "@repo/platform/chain/evm"
 import type { RpcFailure } from "@repo/platform/chain/rpc"
 import { type SignedSend, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
-import { type Network, type Runtime, buybackSigns, conversionSigns, replacementSigns } from "../../gen/fees__runtime.effect.vibe"
-import { type Type2, exactNumber, parsedType2, sameFields, signerOf, transactionId, unsignedType2, type Unsigned } from "../evm/abi.ts"
+import { type Runtime, buybackSigns, conversionSigns, replacementSigns } from "../../gen/fees__runtime.effect.vibe"
+import { type Type2, exactNumber, parsedType2, sameFields, signerOf, transactionId, unsignedType2 } from "../evm/abi.ts"
+import { tokenScale } from "../conversion/chain.vibe"
 import { type ApprovalRefused, boundedApproval } from "../evm/approval.vibe"
 import { type ChainRefused, FeeChain, chainPreflight, dataOperatorFee, feesPerGas, gasLimit, nativeBalance } from "../evm/client.vibe"
-import type { Facts } from "../journal/store.vibe"
 import { type KyberRefused, type KyberSettings, type KyberUnavailable, type RouteMismatch, nativeValue } from "../kyber/route.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
-import { type EvmCall, SignRefused, bridgeCostWithin, bridgeTermsOf, derivedCall, pinnedRouter, replacementTransaction } from "./evm.vibe"
+import { type EvmCall, bridgeCostWithin, bridgeTermsOf, derivedCall, pinnedRouter, replacementTransaction } from "./evm.vibe"
 import { type EvmKey, evmKey, feeWalletEvmMarker } from "./evmKey.ts"
 import type { EvmNetwork } from "../evm/abi.ts"
-import type { EvmIntent, FeeIntent, SolanaIntent } from "./intents.ts"
+import type { EvmIntent, FeeIntent } from "../wallet/intents.ts"
+import { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, SignRefused, type Signed, type SolanaPrepared, type SolanaSigned, reservationFacts, signedFacts } from "../wallet/service.vibe"
 
-export { SignRefused } from "./evm.vibe"
+export { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, SignRefused, type Signed, type SolanaPrepared, type SolanaSigned, reservationFacts, signedFacts }
 
 module verified {
   import { errorText as sanitized } from "../kernels/errorText.ts"
@@ -27,48 +28,6 @@ module verified {
 import { errorText, gweiCeiling } from verified
 
 export error KeyMismatch { network: string }
-
-export interface EvmPrepared {
-  readonly family: "evm"
-  readonly intent: EvmIntent
-  readonly unsigned: Unsigned
-  readonly nonce: number
-  readonly gasLimit: number
-  readonly feeUnits: { readonly maxFee: number; readonly priority: number }
-  readonly maximumUnits: number
-  readonly maximumWei: bigint
-  readonly deadline: number
-  readonly expiresAt: number | undefined
-  readonly minimumOutput: bigint
-  readonly toPinnedRouter: boolean
-  readonly approvedAmount: bigint
-  readonly allowance: bigint
-  readonly pricedFeeMicro: bigint
-}
-
-export interface SolanaPrepared {
-  readonly family: "solana"
-  readonly intent: SolanaIntent
-  readonly intentHash: string
-  readonly maximumUnits: number
-  readonly blockhashSlot: number
-  readonly accountProof: string | undefined
-  readonly expiresAt: number
-  readonly minimumOutput: bigint
-  readonly pricedFeeMicro: bigint
-}
-
-export type Prepared = EvmPrepared | SolanaPrepared
-
-export interface EvmSigned { readonly family: "evm"; readonly prepared: EvmPrepared; readonly rawTx: Hex; readonly txId: Hex }
-export interface SolanaSigned { readonly family: "solana"; readonly prepared: SolanaPrepared; readonly rawTx: string; readonly txId: string }
-export type Signed = EvmSigned | SolanaSigned
-
-export service FeeWallet {
-  readonly network: Network
-  readonly address: string
-  sign<E, R>(intent: FeeIntent, reserve: (prepared: Prepared) => void!E!R): Signed!(SignRefused | E)!R
-}
 
 export interface EvmWalletOptions {
   readonly network: EvmNetwork
@@ -231,9 +190,10 @@ export function evmFeeWallet(options: EvmWalletOptions) {
 export function modelSend(signed: EvmSigned, tx: number): SignedSend | undefined {
   const { prepared: ready } = signed
   const kind = ready.intent.kind === "KyberApprove" ? "Approval" : ready.intent.kind === "KyberSwap" ? "Conversion" : undefined
+  const scale = tokenScale(ready.approvedAmount > ready.allowance ? ready.approvedAmount : ready.allowance)
   const minimumOutput = exactNumber(ready.minimumOutput)
-  const approvedAmount = exactNumber(ready.approvedAmount)
-  const allowance = exactNumber(ready.allowance)
+  const approvedAmount = exactNumber(ready.approvedAmount / scale)
+  const allowance = exactNumber(ready.allowance / scale)
   const pricedFeeMicro = exactNumber(ready.pricedFeeMicro)
   if (kind === undefined || minimumOutput === undefined || approvedAmount === undefined || allowance === undefined || pricedFeeMicro === undefined) return undefined
   return {
@@ -252,12 +212,4 @@ export function modelSend(signed: EvmSigned, tx: number): SignedSend | undefined
     allowance,
     pricedFeeMicro,
   }
-}
-
-export function signedFacts(signed: EvmSigned): Facts {
-  return { txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.prepared.unsigned.intentHash, ...signed.prepared.expiresAt === undefined ? {} : { expiresAt: signed.prepared.expiresAt } }
-}
-
-export function reservationFacts(ready: EvmPrepared): Facts {
-  return { intentHash: ready.unsigned.intentHash }
 }

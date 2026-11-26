@@ -6,8 +6,9 @@ import { RpcRefused, WrongChain } from "@repo/platform/chain/rpc"
 import { ReferralAttributions } from "@repo/ports/backend"
 import type { Event } from "../../gen/settlement__referralPublication.ts"
 import { Rejected, nextFiling, priorFinalizedTotal } from "../../gen/settlement__referralPublication.effect.vibe"
+import type { Referral } from "../../gen/settlement__referrals.ts"
 import { fromAmount } from "../kernels/amounts.ts"
-import { PosterRefused, posterMarker, signPostRoot } from "../signer/rootPoster.vibe"
+import { PosterRefused, RootPoster, posterMarker } from "./poster.vibe"
 import { ReferralProgram } from "./config.vibe"
 import { openBook, programSetup } from "./accrual.vibe"
 import { DistributorMismatch, ReferralDeployment, onDistributor, postRootCalldata, readDistributor } from "./distributor.vibe"
@@ -36,7 +37,7 @@ effect function nextAttempt() {
   return (found?.highest ?? 0) + 1
 }
 
-effect function signAndSend(session: Session, control: Parameters<typeof signPostRoot>[0]) {
+effect function signAndSend(session: Session, control: Referral) {
   const { deployment, accrual } = session.ledger
   const chain = try readDistributor(deployment)
   if (chain.paused) return result("paused")
@@ -84,7 +85,7 @@ effect function signAndSend(session: Session, control: Parameters<typeof signPos
     try Effect.logWarning("referral_post_gas_budget", { reservedWei: reserved.toString() })
     return result("gas_budget", "referral native fee budget reached; unknown sends stay reserved")
   }
-  const signed = signPostRoot(control, journaled.state, deployment, { kind: "PostRoot", nonce: Number(nonce), gas, maxFeePerGas, maxPriorityFeePerGas: priority, previousTotal: fromAmount(priorFinalizedTotal(session.state)), tokenUnit: chain.tokenUnit }) catch effect (error) => match (error) {
+  const signed = (try RootPoster).sign(control, journaled.state, deployment, { kind: "PostRoot", nonce: Number(nonce), gas, maxFeePerGas, maxPriorityFeePerGas: priority, previousTotal: fromAmount(priorFinalizedTotal(session.state)), tokenUnit: chain.tokenUnit }) catch effect (error) => match (error) {
     when PosterRefused: error.reason;
     default: throw error;
   }

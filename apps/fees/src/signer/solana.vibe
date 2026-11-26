@@ -1,41 +1,28 @@
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"
 import type { RpcFailure } from "@repo/platform/chain/rpc"
 import { SolanaRpc, base58Encode, base64Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
-import { type Runtime, buybackSigns, conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import { buybackSigns, conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import type { DlnRefused } from "../dln/api.vibe"
 import { checkedSolanaOrder } from "../dln/solanaOrder.vibe"
 import { wholeBig } from "../evm/abi.ts"
-import type { Facts } from "../journal/store.vibe"
-import { type JupiterRefused, type JupiterSettings, type JupiterUnavailable, inputMintOf, jupiterQuote, signedMinimum, swapTransaction } from "../jupiter/quote.vibe"
+import { type JupiterRefused, type JupiterUnavailable, inputMintOf, jupiterQuote, signedMinimum, swapTransaction } from "../jupiter/quote.vibe"
 import { checkRouteSimulation, reviewRouteAccounts } from "../jupiter/review.vibe"
 import type { ClaimRefused } from "../claims/evm.vibe"
 import { solanaClaimPrepared } from "../claims/solana.vibe"
 import { wrapNativeRoute } from "../jupiter/nativeWrap.vibe"
-import type { NativeLimits } from "../runtime/config.vibe"
 import { chainIds, circleUsdc, jupiter, robinhoodUsdg } from "../runtime/pins.ts"
 import { type AccountProof, type RouteExpectation, associatedCreations, expectationJson, resolveAccounts, retainedExpectation, verifyAccountProof } from "../solana/accounts.vibe"
 import { digest58, jsonText, wideOf, withBytes } from "../solana/bytes.ts"
 import { FeeSolana, addressed, admittedMint, blockhashAnchor, networkFee, walletLamports } from "../solana/client.vibe"
 import { ASSOCIATED_TOKEN_PROGRAM, type ParsedTransaction, type SolanaRefused, TOKEN_2022_PROGRAM, blockhashOf, computeBudgetProgram, messageOf, parsedTransaction, solanaNativeAsset, wrappedSol } from "../solana/wire.vibe"
-import { FeeWallet, KeyMismatch, type Prepared, SignRefused, type SolanaPrepared, type SolanaSigned } from "./feeWallet.vibe"
-import type { FeeIntent, JupiterSwap, SolanaDlnOrder, SolanaIntent } from "./intents.ts"
+import type { FeeIntent, JupiterSwap, SolanaDlnOrder, SolanaIntent } from "../wallet/intents.ts"
+import { FeeWallet, type Prepared, SignRefused, type SolanaReviewed, type SolanaSigned, type SolanaWalletOptions, solanaReservationFacts, solanaSignedFacts } from "../wallet/service.vibe"
+import { KeyMismatch } from "./feeWallet.vibe"
 import { type SolanaKey, controlsWallet, feeWalletSolanaMarker, solanaKey } from "./solanaKey.ts"
 
+export { type SolanaReviewed, type SolanaWalletOptions, solanaReservationFacts, solanaSignedFacts }
+
 import { errorText } from "../kernels/verified.vibe"
-
-export interface SolanaWalletOptions {
-  readonly key: Redacted.Redacted<string> | undefined
-  readonly runtime: Runtime
-  readonly limits: NativeLimits
-  readonly gasMultiple: bigint
-  readonly maxSlippageBps: number
-  readonly jupiter: JupiterSettings
-}
-
-export interface SolanaReviewed extends SolanaPrepared {
-  readonly unsigned: Uint8Array
-  readonly messageOffset: number
-}
 
 interface SolanaSent extends SolanaSigned {
   readonly prepared: SolanaReviewed
@@ -227,13 +214,4 @@ export function solanaFeeWallet(options: SolanaWalletOptions) {
     }
     return shape
   })
-}
-
-export function solanaReservationFacts(ready: SolanaPrepared): Facts {
-  return { intentHash: ready.intentHash, blockhashSlot: ready.blockhashSlot, ...ready.accountProof === undefined ? {} : { accountProof: ready.accountProof } }
-}
-
-export function solanaSignedFacts(signed: SolanaSigned): Facts {
-  const ready = signed.prepared
-  return { ...solanaReservationFacts(ready), txId: signed.txId, rawTx: signed.rawTx, expiresAt: ready.expiresAt }
 }

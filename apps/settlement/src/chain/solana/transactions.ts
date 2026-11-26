@@ -164,7 +164,7 @@ export function missingSigners(wire: Uint8Array): ReadonlyArray<Address> | undef
   const decoded = decodeTransaction(wire);
   if (decoded.kind === "malformed") return undefined;
   const signers = requiredSigners(decoded.value.message);
-  return signers.filter((_, at) => unsigned(decoded.value.signatures[at] as Uint8Array));
+  return signers.filter((_, at) => unsigned(decoded.value.signatures[at]));
 }
 
 /** @throws {never} */
@@ -188,9 +188,9 @@ export function completesPrepared(prepared: Uint8Array, signed: Uint8Array, sign
   const slot = signers.indexOf(signer);
   return slot >= 0
     && sameBytes(message, after.value.messageBytes)
-    && unsigned(before.value.signatures[slot] as Uint8Array)
-    && before.value.signatures.every((signature, at) => at === slot || unsigned(signature) || signedBy(message, signature, signers[at] as Address))
-    && after.value.signatures.every((signature, at) => at === slot ? signedBy(message, signature, signer) : sameBytes(signature, before.value.signatures[at] as Uint8Array));
+    && unsigned(before.value.signatures[slot])
+    && before.value.signatures.every((signature, at) => at === slot || unsigned(signature) || signedBy(message, signature, signers[at]))
+    && after.value.signatures.every((signature, at) => at === slot ? signedBy(message, signature, signer) : sameBytes(signature, before.value.signatures[at]));
 }
 
 /** @throws {never} */
@@ -216,5 +216,5 @@ export function resolveInstruction(instruction: CompiledInstruction, keys: Reado
   const program = keys[instruction.programIndex];
   const accounts = instruction.accounts.map((at) => keys[at]);
   if (program === undefined || accounts.some((key) => key === undefined)) return undefined;
-  return { program, accounts: accounts as Address[], data: instruction.data };
+  return { program, accounts, data: instruction.data };
 }

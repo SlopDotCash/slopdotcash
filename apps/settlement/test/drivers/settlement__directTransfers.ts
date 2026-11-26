@@ -1,5 +1,5 @@
 // spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
 import { outcome } from "@repo/platform/testing/area";

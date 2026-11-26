@@ -11,8 +11,11 @@ import { MAX_FEE_PER_GAS, gasWithMargin, sendFees } from "../kernels/attesterLim
 import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import type { Entries } from "../journal/journal.vibe"
 import { DeploymentMismatch, verifyEvmDeployment } from "../vault/evmTotals.vibe"
+import { PinnedDeployment, PinnedReview, PinnedSupersededReview, PinnedUpgrade, SIGNER_STACKS, type StackSecrets } from "../vault/pins.vibe"
 import type { EvmDeployment, EvmUpgrade, SupersededReview } from "../vault/policy.vibe"
 import { type IntentKind, intentOperation } from "./intents.ts"
+
+export { PinnedDeployment, PinnedReview, PinnedSupersededReview, PinnedUpgrade, SIGNER_STACKS, type StackSecrets }
 
 export const signerMarker = "slop-signer:identity-attester"
 
@@ -22,69 +25,8 @@ export error LimitRefused { reason: string }
 export error AttemptHeld { reason: string }
 export error SignerUnavailable { reason: string }
 
-export schema PinnedReview {
-  readonly authority: string
-  readonly vaultImplementation: string
-  readonly vaultImplementationCodeSha256: string
-  readonly factoryImplementation: string
-  readonly factoryImplementationCodeSha256: string
-}
-
-export schema PinnedSupersededReview {
-  readonly authority: string
-  readonly vaultImplementation: string
-  readonly vaultImplementationCodeSha256: string
-  readonly factoryImplementation: string
-  readonly factoryImplementationCodeSha256: string
-  readonly supersededAtBlock: string
-}
-
-export schema PinnedUpgrade {
-  readonly authority: string
-  readonly vaultImplementation: string
-  readonly vaultImplementationCodeSha256: string
-  readonly factoryImplementation: string
-  readonly factoryImplementationCodeSha256: string
-  readonly history?: ReadonlyArray<PinnedSupersededReview>
-}
-
-export schema PinnedDeployment {
-  readonly network: string
-  readonly chain: string
-  readonly chainId: string
-  readonly projectId: string
-  readonly vault: string
-  readonly asset: string
-  readonly owner: string
-  readonly identityAuthority: string
-  readonly feeRecipient: string
-  readonly deploymentTransaction: string
-  readonly sourceCommit: string
-  readonly codeSha256: string
-  readonly factory: string | null
-  readonly factoryCodeSha256: string | null
-  readonly registrar: string | null
-  readonly gasCeiling: string
-  readonly bindingDelaySeconds: string
-  readonly evmUpgrade?: PinnedUpgrade
-  readonly maxNativeCostWei?: string
-  readonly bindingConsentNonceLimit?: number
-  readonly payoutPolicy?: "ordinary" | "security-bounty"
-}
-
 const Pins = Schema.Array(PinnedDeployment)
 const RpcUrls = Schema.Record(Schema.String, Schema.String)
-
-export interface StackSecrets {
-  readonly evmSecret: "TEST_SIGNER_PRIVATE_KEY" | "SIGNER_PRIVATE_KEY"
-  readonly solanaSecret: "TEST_SOLANA_SIGNER_SEED" | "SOLANA_SIGNER_SEED"
-  readonly journal: "dedicated-test-signer-v1" | "production-signer-v1"
-}
-
-export const SIGNER_STACKS = Object.freeze({
-  TestStack: Object.freeze({ evmSecret: "TEST_SIGNER_PRIVATE_KEY", solanaSecret: "TEST_SOLANA_SIGNER_SEED", journal: "dedicated-test-signer-v1" }),
-  ProductionStack: Object.freeze({ evmSecret: "SIGNER_PRIVATE_KEY", solanaSecret: "SOLANA_SIGNER_SEED", journal: "production-signer-v1" }),
-} as const satisfies Record<Stack, StackSecrets>)
 
 export function signerStack(value: string | undefined): Stack | undefined {
   if (value === undefined || value === "test") return "TestStack"

@@ -14,6 +14,8 @@ import type { SubmissionFeeItems } from "@repo/ports/slopbot"
 import { ReportDepositsLive } from "@repo/security/live"
 import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
 import { depositContract } from "../../gen/backend__submissionFeeTerms.ts"
+import { SubmissionFeeSignersLive } from "../../src/signer/resolver.vibe"
+import type { SubmissionFeeSigners } from "../../src/submissionFee/chain.vibe"
 import { journalDatabase } from "./journal.ts"
 
 export const network = "robinhood-mainnet"
@@ -34,10 +36,10 @@ export effect function startedFeeWorld(name: string, start: number, handlers: Re
   return { db, clock: settableClock(start), fetch: asFetch(internet({ rpc }).handler), urls: Object.keys(rpc) }
 }
 
-export type FeePorts = D1 | HttpClient.HttpClient | SubmissionFeeItems | ReportDeposits | SubmissionFeeRates | Experimental.Crypto.Crypto
+export type FeePorts = D1 | HttpClient.HttpClient | SubmissionFeeItems | ReportDeposits | SubmissionFeeRates | SubmissionFeeSigners | Experimental.Crypto.Crypto
 
 export effect function withFeePorts<A, E>(world: FeeWorld, program: A!E!FeePorts) {
   const storage = d1(world.db)
-  const services = Layer.mergeAll(storage, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), storage), world.clock.layer, FetchHttpClient.layer, webCrypto)
+  const services = Layer.mergeAll(storage, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), storage), SubmissionFeeSignersLive, world.clock.layer, FetchHttpClient.layer, webCrypto)
   return try Effect.provideService(Effect.provide(program, services), FetchHttpClient.Fetch, world.fetch)
 }

@@ -16,7 +16,7 @@ import { type Instruction, compileLegacy, transactionId, unsignedTransaction, wi
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { networkPays } from "../kernels/poolFacts.ts"
 import { DeploymentUnverified, type VerifiedDeployment, verifiedDeployment } from "../owner/solanaDeployment.vibe"
-import { broadcastSolana, finalizedAccount, finalizedProject, statusOf } from "../signer/solana.vibe"
+import { broadcastSolana, finalizedAccount, finalizedProject, statusOf } from "../chain/solana/reads.vibe"
 import type { SolanaDeployment } from "../vault/policy.vibe"
 import { AttemptRefused } from "./attempts.vibe"
 import { reserveSolanaSend, solanaMaximum, solanaReservationId } from "./budget.vibe"

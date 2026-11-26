@@ -3,7 +3,7 @@ import { type Address, EvmRpc, type Hex, evmRpc } from "@repo/platform/chain/evm
 import { RpcMalformed, type RpcFailure, type RpcRefused } from "@repo/platform/chain/rpc"
 import { decimal, exactNumber, wholeBig } from "../evm/abi.ts"
 import { type ChainDeposit, type ResolveTransaction, type SendEntry, blockIso, decodeDeposit, decodeFeeLog, depositId, depositsCalldata, payoutFailedId, provesTransfer, resolveCalldata, transactionId } from "./abi.ts"
-import type { NetworkConfig } from "./config.vibe"
+import type { NetworkConfig, SubmissionFeeConfigInvalid } from "./config.vibe"
 
 export type { ChainDeposit, ResolveTransaction, SendEntry } from "./abi.ts"
 
@@ -79,9 +79,28 @@ export interface SendIdentity {
   readonly evmNonce: number | null
 }
 
+export interface ResolverEnv {
+  readonly SUBMISSION_FEE_RESOLVER_KEY?: string
+}
+
+export function resolverSecret(env: ResolverEnv) {
+  const text = env.SUBMISSION_FEE_RESOLVER_KEY?.trim() ?? ""
+  return text === "" ? undefined : Redacted.make(text)
+}
+
 export interface ResolverSigner {
   readonly address: Address
   sign(transaction: ResolveTransaction): Hex!ResolverSignRefused
+}
+
+export interface SolanaResolverSigner {
+  readonly address: string
+  sign(message: Uint8Array): Uint8Array
+}
+
+export service SubmissionFeeSigners {
+  evm(network: string, secret: Redacted.Redacted<string>): ResolverSigner!SubmissionFeeConfigInvalid
+  solana(seedHex: Redacted.Redacted<string>): SolanaResolverSigner | undefined
 }
 
 export interface SubmissionFeeChain {

@@ -1,5 +1,5 @@
 // spec/settlement/referralPublication.md, "The next immutable filed tree supplies every root entry"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount"
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted } from "effect";
+import { Cause, type Effect, Exit, Layer, ManagedRuntime, Redacted } from "effect";
 import type { D1Database } from "@repo/platform/bindings";
 import type { Hex } from "@repo/platform/chain/evm";
 import { webCrypto } from "@repo/platform/crypto";
@@ -26,7 +26,7 @@ const runtimeOver = (db: D1Database) => ManagedRuntime.make(Layer.mergeAll(d1(db
 type Runtime = ReturnType<typeof runtimeOver>;
 type Shell<A> = Effect.Effect<A, unknown, ManagedRuntime.ManagedRuntime.Services<Runtime>>;
 
-const hexOf = (index: number, width: number) => `0x${index.toString(16).padStart(width, "0")}` as Hex;
+const hexOf = (index: number, width: number): Hex => `0x${index.toString(16).padStart(width, "0")}`;
 const tokenAddress = hexOf(0xc0ffee, 40);
 const deployments: Readonly<Record<PostingNetwork, Deployment>> = {
   RobinhoodTestnet: { networkKey: "robinhood-testnet", network: "RobinhoodTestnet", chainId: 46630n, distributor: hexOf(0xd1, 40), token: tokenAddress, poster: hexOf(0xb0, 40), deploymentBlock: 0n, codeHash: hexOf(1, 64), urls: Redacted.make(["http://127.0.0.1:9"]) },

@@ -1,8 +1,7 @@
 // spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"
 import type { FeeNetwork } from "../../gen/backend__submissionFeeTerms.ts"
 import type { SendConfig } from "../../gen/fees__submissionFeeSends.effect.vibe"
-import { type ResolverEnv, resolverSecret, resolverSigner } from "../signer/resolver.vibe"
-import { type ResolverSigner, submissionFeeChain } from "./chain.vibe"
+import { type ResolverEnv, type ResolverSigner, SubmissionFeeSigners, resolverSecret, submissionFeeChain } from "./chain.vibe"
 import { type NetworkConfig, type SubmissionFeeEnv, SubmissionFeeConfigInvalid, parseConfig, parseMode } from "./config.vibe"
 import { judgeDeposits } from "./judge.vibe"
 import { recheck, sendConfigOf } from "./parked.vibe"
@@ -74,10 +73,11 @@ export effect function depositPass(env: SubmissionFeeWorkerEnv, terms: ReadonlyA
   const secret = mode === "live" ? resolverSecret(env) : undefined
   if (mode === "live" && config.networks.length > 0 && secret === undefined)
     throw new SubmissionFeeConfigInvalid({ issue: "live mode needs SUBMISSION_FEE_RESOLVER_KEY" })
+  const signers = try SubmissionFeeSigners
   const networks: (NetworkResult | NetworkFailure)[] = []
   for (const network of config.networks) {
     const ran = effect {
-      const signer = secret === undefined ? null : try resolverSigner(network.network, secret)
+      const signer = secret === undefined ? null : try signers.evm(network.network, secret)
       return try runNetwork(network, sendConfigOf(mode, signer !== null, network.gas), signer)
     }
     const result = ran catch effect (error) => {

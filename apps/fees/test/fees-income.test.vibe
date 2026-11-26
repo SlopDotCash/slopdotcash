@@ -64,6 +64,7 @@ const Started = Layer.unwrap(effect {
   const started = try acquireRelease(promise(() => journalDatabase("fees-income")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
   const base = try acquireRelease(promise(() => anvil({ chainId: 8453, finalityDepth: 2, timestamp: cutover - 3600 })), (chain) => promise(() => chain.close()))
   const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
+  try promise(() => base.mine(1))
   try promise(() => robinhood.rpc("anvil_setCode", [dln.destination, `0x${words(4)}`]))
   try promise(() => robinhood.mine(5))
   return Layer.mergeAll(d1(started.db), webCrypto, Layer.succeed(Fixture, { db: started.db, base, robinhood }))

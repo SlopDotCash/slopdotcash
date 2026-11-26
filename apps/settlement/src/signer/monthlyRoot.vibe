@@ -281,7 +281,7 @@ effect function finalizedMonth(deployment: Deployment, period: Period, allocatio
   return { view, reservation: reserved.reservation, remaining: reserved.remaining } satisfies EvmMonth
 }
 
-effect function attestationKey(deployment: Deployment) {
+effect function attestationKey() {
   const configured = (try AttesterConfig).evmKey
   if (configured === undefined) throw new SignerUnavailable({ reason: "Signer unavailable" })
   const text = Redacted.value(configured)
@@ -290,7 +290,7 @@ effect function attestationKey(deployment: Deployment) {
 }
 
 export effect function signEscrowDigest(deployment: Deployment, digest: Bytes32) {
-  const key = try attestationKey(deployment)
+  const key = try attestationKey()
   const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(digest.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => new SignerUnavailable({ reason: "Signing failed" }) })
   const recovery = signature[0]
   if (recovery !== 0 && recovery !== 1) throw new SignerUnavailable({ reason: "Signing failed" })

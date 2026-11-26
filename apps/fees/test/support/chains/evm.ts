@@ -5,7 +5,7 @@ import { type QuotesFake, kyberNative, parsedJson } from "@repo/platform/testing
 import { Response } from "miniflare";
 import { type Address, type Hex, decodeFunctionData, decodeFunctionResult, encodeFunctionData, erc20Abi, parseAbi } from "viem";
 import { kyberRouterAbi } from "@repo/platform/chain/kyberswap";
-import { kyberswap } from "../../../src/runtime/pins.ts";
+import { baseGasPriceOracle, kyberswap } from "../../../src/runtime/pins.ts";
 
 export interface FeeTokens {
   readonly chain: Anvil;
@@ -61,6 +61,7 @@ export async function feeTokens(chain: Anvil, out: string, usdcAt: Address): Pro
   const dustToken = await created("FeeConverterToken");
   await chain.rpc("anvil_setCode", [usdcAt, await chain.rpc("eth_getCode", [await created("FeeConverterUSDC"), "latest"])]);
   await chain.rpc("anvil_setCode", [router, await chain.rpc("eth_getCode", [await created("FeeConverterRouter"), "latest"])]);
+  await chain.rpc("anvil_setCode", [baseGasPriceOracle.address, await chain.rpc("eth_getCode", [await created("FeeConverterL1Oracle"), "latest"])]);
   await mint(chain, usdcAt, router, routerFunding);
   return { chain, feeToken: lower(feeToken), dustToken: lower(dustToken), usdc: lower(usdcAt) };
 }
@@ -91,7 +92,7 @@ export async function landed(chain: Anvil, txId: string): Promise<boolean> {
 }
 
 export async function finalize(chain: Anvil): Promise<void> {
-  await chain.mine(65);
+  await chain.mine(2);
 }
 
 export async function zeroFeeSource(chain: Anvil, source: Address): Promise<void> {
@@ -103,7 +104,7 @@ export function kyberRoutes(quotes: QuotesFake, tokens: FeeTokens): void {
   const chain = "base";
   quotes.kyberswap.route({ chain, tokenIn: tokens.feeToken, tokenOut: tokens.usdc, amountOut: (amountIn) => amountIn / 2_000_000_000_000n, routerAddress: router, amountInUsd: "1000", amountOutUsd: "1000", gasUsd: "0.5", l1FeeUsd: "0" });
   quotes.kyberswap.route({ chain, tokenIn: tokens.dustToken, tokenOut: tokens.usdc, amountOut: (amountIn) => amountIn / 1_000_000_000n, routerAddress: router, amountInUsd: "6", amountOutUsd: "6", gasUsd: "0.01", l1FeeUsd: "0" });
-  quotes.kyberswap.route({ chain, tokenIn: kyberNative, tokenOut: tokens.usdc, amountOut: (wei) => (wei * 3n) / 1_000_000_000n, routerAddress: router, gasUsd: "0", l1FeeUsd: "0" });
+  quotes.kyberswap.route({ chain, tokenIn: kyberNative, tokenOut: tokens.usdc, amountOut: (wei) => wei / 1_000_000_000n, routerAddress: router, gasUsd: "0", l1FeeUsd: "0" });
 }
 
 /** @throws {never} */

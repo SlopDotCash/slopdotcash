@@ -299,13 +299,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Robinhood Chain buys SLOP from the pooled arrivals and fee share within its caps and its finalized USDG balance, credits only the finalized swap output, burns exactly half of everything acquired once, returns a failed purchase\'s input, journals a refused purchase signature as a failed preparation, and holds a burn while SLOP is paused (spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "A purchase never spends more than the Robinhood fee wallet\'s finalized USDG balance"; spec/fees/buybackPool.md, "Acquired SLOP is credited only from the finalized swap receipt"; spec/fees/buybackPool.md, "Half of all acquired SLOP is burned, and a failed burn retries the same share"; spec/fees/buybackPool.md, "One run cap, one rolling cap and one burn share bound the whole pool"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network\'s fee journal and shares its lease, nonce floor and native reservation"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg")', () => effect {
     const { db, robinhood } = try Fixture
     const world = try opened(generation)
+    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+    try step(world, { type: "publishWorker", config: dryRun }, "ReleaseWorkflow")
+    try step(world, { type: "verifyReadiness" }, "Owner")
     const runId = try leased(world)
     try arrival(world, 1, 495_000_000n, runId)
     const directUsdg = [{ receipt: `g${generation}-direct-usdg-1`, amount: 100_000_000n, chainTime: start + hour }]
     try instanceOf(world, directUsdg, [])
-    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
-    try step(world, { type: "publishWorker", config: dryRun }, "ReleaseWorkflow")
-    try step(world, { type: "verifyReadiness" }, "Owner")
     const forged = try tried(world, { type: "creditArrival", arrival: { network: "Ethereum", order: 77, takeAmount: 495_000_000, height: 9 } })
     const loaded = (try Effect.provide(poolOf(world.instance), services(world))).state
     const dry = [recorded(try ran(world, runId)), recorded(try ran(world, runId))]
@@ -429,16 +429,17 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('A purchase input below the minimum waits once before any SLOP route, and a larger pool is quoted once for the input bounded by the remaining cap (spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "A purchase never spends more than the Robinhood fee wallet\'s finalized USDG balance")', () => effect {
     const { db, quotes } = try Fixture
     const world = try opened(thresholdGeneration)
-    const runId = try leased(world)
-    try arrival(world, 11, 20_000_000n, runId)
-    try instanceOf(world, [], [])
     try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
     try step(world, { type: "publishWorker", config: dryRun }, "ReleaseWorkflow")
     try step(world, { type: "verifyReadiness" }, "Owner")
+    const runId = try leased(world)
+    try arrival(world, 11, 20_000_000n, runId)
+    try instanceOf(world, [], [])
     const before = purchaseQuotes(quotes).length
     const waiting = [recorded(try ran(world, runId)), recorded(try ran(world, runId))]
     const unquoted = purchaseQuotes(quotes).slice(before)
-    try arrival(world, 12, 1_200_000_000n, runId)
+    try arrival(world, 12, 600_000_000n, runId)
+    try arrival(world, 13, 600_000_000n, runId)
     try instanceOf(world, [], [])
     const quoting = try ran(world, runId)
     const quoted = purchaseQuotes(quotes).slice(before)
@@ -465,6 +466,9 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('A Robinhood fee asset other than USDG is valued in USDG before any SLOP route: valued below 25 USDG it waits, valued above it is quoted and then bought after the valuation with its own input and its USDG value, and a failed valuation is no route (spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "One run cap, one rolling cap and one burn share bound the whole pool")', () => effect {
     const { db, robinhood, quotes } = try Fixture
     const world = try opened(assetGeneration)
+    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+    try step(world, { type: "publishWorker", config: dryRun }, "ReleaseWorkflow")
+    try step(world, { type: "verifyReadiness" }, "Owner")
     const runId = try leased(world)
     try promise(() => robinhood.rpc("anvil_setBalance", [walletOf(assetGeneration), word(10n ** 19n)]))
     try stored(robinhood, router, word(0n), 0n)
@@ -473,9 +477,6 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const fee = (receipt: string, amount: bigint) => ({ receipt: `g${assetGeneration}-${receipt}`, amount, chainTime: start + hour })
     const unvaluedFees: PoolAsset = { token: unvalued, booked: [fee("unvalued-1", 200_000_000n)] }
     try instanceOf(world, [], [], [{ token: other, booked: [fee("other-1", 40_000_000n)] }, unvaluedFees])
-    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
-    try step(world, { type: "publishWorker", config: dryRun }, "ReleaseWorkflow")
-    try step(world, { type: "verifyReadiness" }, "Owner")
     const waiting = try ran(world, runId)
     const waitingCalls = { valued: routeCalls(quotes, other, usdg), routed: routeCalls(quotes, other, slop), unvalued: routeCalls(quotes, unvalued, slop) }
     try instanceOf(world, [], [], [{ token: other, booked: [fee("other-1", 40_000_000n), fee("other-2", 400_000_000n)] }, unvaluedFees])

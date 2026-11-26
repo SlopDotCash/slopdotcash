@@ -1,13 +1,12 @@
 // spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
-import { hexToBytes } from "@noble/hashes/utils.js"
 import { jsonRpc } from "@repo/platform/chain/rpc"
 import { base58Encode, base64Decode, base64Encode } from "@repo/platform/chain/solana"
 import { isoAt, isoNow } from "@repo/platform/clock"
 import { D1 } from "@repo/platform/d1"
 import { SubmissionFeeItems } from "@repo/ports/slopbot"
 import { solanaGenesis } from "../runtime/pins.ts"
-import { solanaSeedKey } from "../signer/solanaKey.ts"
 import { decimal } from "../evm/abi.ts"
+import { SubmissionFeeSigners } from "./chain.vibe"
 import { SubmissionFeeConfigInvalid, type Mode } from "./config.vibe"
 import {
   DEPOSIT_DISCRIMINATOR,
@@ -196,16 +195,15 @@ export effect function runSolanaSubmissionFee(env: SolanaSubmissionFeeEnv, progr
   const judgedResult = try judgeSolanaDeposits(config)
   let resolved = 0
   if (config.mode === "live" && config.resolverSeed !== undefined) {
-    const seedHex = Redacted.value(config.resolverSeed)
     const configAddr = submissionConfigAddress(config.programId)
     const configReply = configAddr === undefined ? undefined : try client.call("getAccountInfo", [configAddr, { commitment: "finalized", encoding: "base64" }], AccountInfoReply)
     const configBytes = configReply?.value === null || configReply?.value === undefined ? undefined : base64Decode(configReply.value.data[0] ?? "")
     const onChainConfig = configBytes === undefined ? undefined : decodeSubmissionConfig(configBytes)
-    const seedBytes = try Effect.try(() => hexToBytes(seedHex))
-    const key = solanaSeedKey(seedBytes)
+    const key = (try SubmissionFeeSigners).solana(config.resolverSeed)
     const resolverAddress = key?.address
     if (key !== undefined && resolverAddress !== undefined && onChainConfig !== undefined && onChainConfig.resolver === resolverAddress) {
       const items = try SubmissionFeeItems
+      let daySpent = 0n
       for (const deposit of try resolvable(config.network)) {
         const account = openById.get(deposit.depositId)
         if (account === undefined) continue
@@ -234,13 +232,14 @@ export effect function runSolanaSubmissionFee(env: SolanaSubmissionFeeEnv, progr
         const feeReply = try client.call("getFeeForMessage", [base64Encode(msg), { commitment: "finalized" }], FeeReply)
         if (feeReply.value === null) continue
         const feeLamports = try orDie(Effect.try(() => BigInt(feeReply.value ?? 0)))
-        if (feeLamports > config.maxLamportsPerTx) continue
+        if (feeLamports > config.maxLamportsPerTx || daySpent + feeLamports > config.maxLamportsPerDay) continue
         const sig = key.sign(msg)
         const tx = new Uint8Array(1 + 64 + msg.length)
         tx[0] = 1
         tx.set(sig, 1)
         tx.set(msg, 65)
         const txId = try client.call("sendTransaction", [base64Encode(tx), { encoding: "base64", skipPreflight: false, preflightCommitment: "finalized" }], Schema.String)
+        daySpent += feeLamports
         try (try D1).run(recordResolution(config.network, { depositId: deposit.depositId, state: refund ? "refunded" : "kept", txHash: txId, at: try isoNow() }))
         resolved += 1
       }

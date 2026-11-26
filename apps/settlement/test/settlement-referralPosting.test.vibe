@@ -29,7 +29,6 @@ import { type ReferralChain, bundleText, referralChain } from "./support/referra
 error SetupFailed { message: string }
 
 const startedAt = Date.UTC(2029, 5, 10, 12)
-const dayMillis = 86_400_000
 const referrerId = "401"
 const ownerRoles = { ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "" }
 const perDayReason = "referral native fee budget reached; unknown sends stay reserved"

@@ -1,0 +1,23 @@
+// spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/settlement/paymentDispatch.md, "Story: Recover uncertainty without opening a competing transfer"
+import { paymentDeploymentOf } from "../scan/index.vibe"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+import type { ServedVault } from "./dispatch.vibe"
+import { vaultAsset } from "./ledger.vibe"
+import { failureTag } from "./terms.vibe"
+
+export effect function servedVaults(deployments: ReadonlyArray<RegisteredDeployment>, failures: string[]) {
+  const rpc = try PaymentRpc
+  const served: ServedVault[] = []
+  for (const registered of deployments) {
+    const deployment = paymentDeploymentOf(registered, rpc)
+    if (deployment === undefined) {
+      failures.push(`${registered.network} ${registered.vault}: RPC configuration unavailable`)
+      continue
+    }
+    const asset = vaultAsset(deployment) catch (error) => failureTag(error)
+    if (typeof asset === "string") failures.push(`${registered.network} ${registered.vault}: ${asset}`)
+    else served.push({ deployment, asset })
+  }
+  return served
+}

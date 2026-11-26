@@ -7,7 +7,7 @@ import { type Digest, type U64, concat, digestBytes, digestOf, u32le, u64le, utf
 export const UPGRADEABLE_LOADER = "BPFLoaderUpgradeab1e11111111111111111111111" as Address;
 
 export type Purpose = "Ordinary" | "Bounty";
-export type TokenProgram = typeof TOKEN_PROGRAM | typeof TOKEN_2022_PROGRAM;
+export type TokenProgram = typeof TOKEN_PROGRAM;
 
 export const PURPOSE_BYTE: Readonly<Record<Purpose, number>> = { Ordinary: 0, Bounty: 1 };
 

@@ -19,12 +19,12 @@ const instructions = Arbitrary.schema(
     data: Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 255 }))).check(Schema.isMaxLength(24)),
   })).check(Schema.isMinLength(1), Schema.isMaxLength(4)),
 ).pipe(Arbitrary.map((drawn): ReadonlyArray<Instruction> => drawn.map((instruction) => ({
-  program: pool[instruction.program] as Address,
-  accounts: instruction.accounts.filter((meta) => meta.key !== instruction.program).map((meta) => ({ key: pool[meta.key] as Address, signer: meta.signer, writable: meta.writable })),
+  program: pool[instruction.program],
+  accounts: instruction.accounts.filter((meta) => meta.key !== instruction.program).map((meta) => ({ key: pool[meta.key], signer: meta.signer, writable: meta.writable })),
   data: Uint8Array.from(instruction.data),
 }))));
 
-const payer = pool[0] as Address;
+const payer = pool[0];
 
 const compile = (drawn: ReadonlyArray<Instruction>) => compileLegacy({ payer, blockhash, instructions: drawn });
 
@@ -39,7 +39,7 @@ const roundTrips = (drawn: ReadonlyArray<Instruction>, compiled: Compiled) => {
   const decoded = decodeMessage(bytes);
   if (decoded.kind === "malformed" || message.accountKeys[0] !== payer || message.accountKeys.length !== new Set(message.accountKeys).size) return false;
   return drawn.every((instruction, at) => {
-    const resolved = resolveInstruction(decoded.value.instructions[at] as Message["instructions"][number], decoded.value.accountKeys);
+    const resolved = resolveInstruction(decoded.value.instructions[at], decoded.value.accountKeys);
     return resolved !== undefined && resolved.program === instruction.program && sameBytes(resolved.data, instruction.data)
       && instruction.accounts.every((meta, index) => {
         const position = message.accountKeys.indexOf(meta.key);
@@ -55,13 +55,13 @@ const signsSlotBySlot = (_: ReadonlyArray<Instruction>, compiled: Compiled) => {
   const signers = requiredSigners(compiled.message);
   const empty = unsignedTransaction(compiled.message);
   if (empty === undefined) return false;
-  const seedOf = (signer: Address) => seeds[pool.indexOf(signer)] as Uint8Array;
+  const seedOf = (signer: Address) => seeds[pool.indexOf(signer)];
   const signatures = signers.map((signer) => ed25519.sign(compiled.bytes, seedOf(signer)));
   let wire = empty;
   for (const [at, signer] of signers.entries()) {
-    const wrongKey = signers.length > 1 ? [signatures[(at + 1) % signers.length] as Uint8Array] : [];
+    const wrongKey = signers.length > 1 ? [signatures[(at + 1) % signers.length]] : [];
     const forgeries = at === 0 ? [ed25519.sign(sha256(compiled.bytes), seedOf(signer)), ...wrongKey] : wrongKey;
-    const next = withSignature(wire, signer, signatures[at] as Uint8Array);
+    const next = withSignature(wire, signer, signatures[at]);
     if (forgeries.some((forgery) => {
       const forged = withSignature(empty, signer, forgery);
       return forged === undefined || completesPrepared(empty, forged, signer);

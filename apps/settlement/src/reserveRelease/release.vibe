@@ -6,7 +6,7 @@ import { type DeploymentPin, type Event, type RetainedAllocation, type ReserveRe
 import { type Bytes32, type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
 import { decodeMonthlyReserve, monthlyReleaseDigest, monthlyReserveCall, releaseMonthlyReserveCalldata } from "../chain/evm/monthlyRoot.ts"
 import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
-import { type Period, parsePeriod } from "../kernels/calendar.ts"
+import { parsePeriod } from "../kernels/calendar.ts"
 import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
 import type { EvmDeployment, SolanaDeployment } from "../vault/policy.vibe"
 import { type Capture, type FinalizedMonth, type ReleaseRequest, type Retained, EvidenceUnreadable, captureOf, finalizedMonth, matchesMonth, retainedAllocation, retainedAllocations } from "./evidence.vibe"

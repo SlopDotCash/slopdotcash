@@ -44,9 +44,10 @@ const discriminators = {
   MonthPledge: accountDiscriminator("MonthPledge"),
 };
 
-class Refused {
+class Refused extends Error {
   readonly issue: AccountIssue;
   constructor(issue: AccountIssue) {
+    super(issue);
     this.issue = issue;
   }
 }
@@ -99,7 +100,7 @@ export interface EscrowConfig {
 export function decodeConfig(account: Account | undefined, program: Address): Decoded<EscrowConfig, AccountIssue> {
   return decodedBy(() => {
     const data = anchored(account, program, CONFIG_SIZE, "Config");
-    return { identityAuthority: key(data, 8), feeRecipient: key(data, 40), rotationAuthority: key(data, 72), bump: data[104] as number };
+    return { identityAuthority: key(data, 8), feeRecipient: key(data, 40), rotationAuthority: key(data, 72), bump: data[104] };
   });
 }
 
@@ -155,7 +156,7 @@ export function decodeProject(account: Account | undefined, program: Address): D
       payoutFees: readU64(data, 224),
       withdrawnGross: readU64(data, 232),
       withdrawalFees: readU64(data, 240),
-      bump: data[248] as number,
+      bump: data[248],
       bindingDelay: readI64(data, 249),
       pendingIdentityAuthority: pending === SYSTEM_PROGRAM ? undefined : pending,
       rotationEffectiveAt: readI64(data, 289),
@@ -226,7 +227,7 @@ export function decodeBinding(account: Account | undefined, program: Address): D
       version: readU64(data, 144),
       boundAt: readI64(data, 152),
       paidVersion: readU64(data, 160),
-      vetoCount: data[168] as number,
+      vetoCount: data[168],
     };
   });
 }
@@ -293,7 +294,7 @@ export interface MonthPledgeAccount {
 export function decodeMonthPledge(account: Account | undefined, program: Address): Decoded<MonthPledgeAccount, AccountIssue> {
   return decodedBy(() => {
     const data = anchored(account, program, MONTH_PLEDGE_SIZE, "MonthPledge");
-    return { project: key(data, 8), period: readU32(data, 40), amount: readU64(data, 44), open: flag(data, 52), bump: data[53] as number };
+    return { project: key(data, 8), period: readU32(data, 40), amount: readU64(data, 44), open: flag(data, 52), bump: data[53] };
   });
 }
 

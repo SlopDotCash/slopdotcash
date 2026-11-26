@@ -20,7 +20,7 @@ import { publicRoutes } from "./public/routes.vibe"
 import { referralRoutes } from "./referrals/routes.vibe"
 import { ReleaseHeld, ReleaseUnavailable, ReserveReleases, reserveReleaseRoutes } from "./reserveRelease/routes.vibe"
 import { SecurityProgramFundsLive } from "./securityScope/programFunds.vibe"
-import { ReconcileBindingRoutes } from "./signer/operatorReconcile.vibe"
+import { ReconcileBindingRoutes } from "./operator/reconcileBinding.vibe"
 import { VaultTotalsLive } from "./vault/totals.vibe"
 
 const MonthlyFactsLive = Layer.unwrap(effect {
@@ -60,7 +60,7 @@ export { solanaDirectRails } from "./direct/solana.vibe"
 export { type ReservedAwardFeedVars, reservedAwardFeedAccess } from "./operator/reservedAwards.vibe"
 export { type PaymentNetworkVars, paymentNetworks } from "./owner/networks.vibe"
 export { sweepSavedVaultCreations } from "./owner/savedCreations.vibe"
-export { type RecoveryBindings, bindingRecovery } from "./signer/recoveryBinding.vibe"
+export { type RecoveryBindings, bindingRecovery } from "./operator/reconcileBinding.vibe"
 export { paymentRpc, reviewedGenesis } from "./vault/rpc.vibe"
 
 export const settlement = area({

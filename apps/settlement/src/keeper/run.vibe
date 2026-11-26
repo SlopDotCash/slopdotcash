@@ -35,22 +35,26 @@ export interface KeeperRun {
   readonly results: ReadonlyArray<KeeperResult>
 }
 
-const RegistryProject = Schema.Struct({
-  id: Schema.String,
-  status: Schema.optionalKey(Schema.String),
-  escrow: Schema.optionalKey(Schema.Unknown),
-  securityBounty: Schema.optionalKey(Schema.Struct({ settlement: Schema.optionalKey(Schema.Unknown) })),
-})
+schema SecurityBountyConfig {
+  readonly settlement?: Schema.Unknown
+}
 
-type RegistryProject = typeof RegistryProject.Type
+schema RegistryProject {
+  readonly id: string
+  readonly status?: string
+  readonly escrow?: Schema.Unknown
+  readonly securityBounty?: SecurityBountyConfig
+}
 
-const RegistryBody = Schema.Struct({
-  schemaVersion: Schema.String,
-  projects: Schema.Array(RegistryProject),
-  restrictions: Schema.Array(Schema.Struct({ projectId: Schema.String })),
-})
+schema RegistryRestriction {
+  readonly projectId: string
+}
 
-type RegistryBody = typeof RegistryBody.Type
+schema RegistryBody {
+  readonly schemaVersion: string
+  readonly projects: ReadonlyArray<RegistryProject>
+  readonly restrictions: ReadonlyArray<RegistryRestriction>
+}
 
 const RUN_FAILED = "Operator keeper run failed; durable attempts are retained"
 

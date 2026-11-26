@@ -51,7 +51,7 @@ const observed = async (): Promise<Settings> => {
 };
 
 export const driver: Driver & AsyncDisposable = {
-  reset: async () => {
+  reset: () => {
     generation++;
     project = `settings-g${generation}`;
     facts.revision = 1;

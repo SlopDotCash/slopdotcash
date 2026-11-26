@@ -4,7 +4,7 @@ import { type Abi, type Block, EvmRpc, type Hex, decodeResult, encodeCall, evmRp
 import type { Distributor, Epoch } from "../../gen/settlement__referralDistributor.ts"
 import type { PostingNetwork } from "../../gen/settlement__referrals.ts"
 import { toAmount } from "../kernels/amounts.ts"
-import { chainAllowed } from "../signer/rootPosterLimits.ts"
+import { chainAllowed } from "./posterLimits.ts"
 
 export type NetworkKey = "robinhood-testnet" | "robinhood-mainnet"
 

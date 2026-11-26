@@ -69,8 +69,8 @@ export function initializeVault(creation: SolanaCreation): PlannedCreation {
   const vault = vaultAddress(program, project);
   const config = configAddress(program);
   const accounts = asset.kind === "Native"
-    ? [meta(owner, true, true), meta(project, true), meta(vault, true), meta(SYSTEM_PROGRAM as Address, false), meta(config, false)]
-    : [meta(owner, true, true), meta(project, true), meta(asset.mint, false), meta(vault, true), meta(asset.tokenProgram, false), meta(SYSTEM_PROGRAM as Address, false), meta(config, false)];
+    ? [meta(owner, true, true), meta(project, true), meta(vault, true), meta(SYSTEM_PROGRAM, false), meta(config, false)]
+    : [meta(owner, true, true), meta(project, true), meta(asset.mint, false), meta(vault, true), meta(asset.tokenProgram, false), meta(SYSTEM_PROGRAM, false), meta(config, false)];
   const initialize: Instruction = {
     program,
     accounts,

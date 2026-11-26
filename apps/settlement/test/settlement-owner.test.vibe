@@ -166,10 +166,10 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
     const strangerReview = try refusalOf(reviewFunding(verified, withdrawal, capture, { ...ownerFacts, steward: false }))
     const restrictedReview = try refusalOf(reviewFunding(verified, withdrawal, capture, { ...ownerFacts, restricted: true }))
     const withdrawalPlan = try reviewFunding(verified, withdrawal, capture, ownerFacts)
-    const tooMuch = try refusalOf(reviewFunding(verified, intentOf("withdraw", owner, try amount(600_000n)), capture, ownerFacts))
     const withdrawalSent = try sentPlan(owner, withdrawalPlan.transaction)
     const strangerCheck = try refusalOf(checkFunding(verified, withdrawal, withdrawalPlan.blockhash, withdrawalSent, capture, { ...ownerFacts, steward: false }))
     const withdrawn = try checkFunding(verified, withdrawal, withdrawalPlan.blockhash, withdrawalSent, capture, ownerFacts)
+    const tooMuch = try refusalOf(reviewFunding(verified, intentOf("withdraw", owner, try amount(600_000n)), capture, ownerFacts))
     const funds = try finalizedFunds(verified)
     const { deployment } = try Escrow
     const pledged = try amount(300_000n)
@@ -238,7 +238,7 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
         withdrawals: [true, false],
       },
     })
-  }))
+  }), 300_000)
 
   it.effect('A finalized transaction with other signed bytes or an unreviewed instruction before the plan is refused, and only a compute-budget prefix is accepted (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
     const { verified, owner } = try opened("owner-funding-refusals")
@@ -261,7 +261,7 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
       prefixedCheck: mismatch,
       malformedId: "WalletActionRefused: Enter a Solana transaction signature from your wallet.",
     })
-  }))
+  }), 300_000)
 })
 
 const context: ExecutionContext = { waitUntil: () => undefined }

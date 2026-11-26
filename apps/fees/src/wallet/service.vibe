@@ -1,0 +1,83 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import type { Hex } from "@repo/platform/chain/evm"
+import type { Network, Runtime } from "../../gen/fees__runtime.effect.vibe"
+import type { Unsigned } from "../evm/abi.ts"
+import type { Facts } from "../journal/store.vibe"
+import type { JupiterSettings } from "../jupiter/quote.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+import type { EvmIntent, FeeIntent, SolanaIntent } from "./intents.ts"
+
+export error SignRefused { step: string; issue: string }
+
+export interface EvmPrepared {
+  readonly family: "evm"
+  readonly intent: EvmIntent
+  readonly unsigned: Unsigned
+  readonly nonce: number
+  readonly gasLimit: number
+  readonly feeUnits: { readonly maxFee: number; readonly priority: number }
+  readonly maximumUnits: number
+  readonly maximumWei: bigint
+  readonly deadline: number
+  readonly expiresAt: number | undefined
+  readonly minimumOutput: bigint
+  readonly toPinnedRouter: boolean
+  readonly approvedAmount: bigint
+  readonly allowance: bigint
+  readonly pricedFeeMicro: bigint
+}
+
+export interface SolanaPrepared {
+  readonly family: "solana"
+  readonly intent: SolanaIntent
+  readonly intentHash: string
+  readonly maximumUnits: number
+  readonly blockhashSlot: number
+  readonly accountProof: string | undefined
+  readonly expiresAt: number
+  readonly minimumOutput: bigint
+  readonly pricedFeeMicro: bigint
+}
+
+export interface SolanaWalletOptions {
+  readonly key: Redacted.Redacted<string> | undefined
+  readonly runtime: Runtime
+  readonly limits: NativeLimits
+  readonly gasMultiple: bigint
+  readonly maxSlippageBps: number
+  readonly jupiter: JupiterSettings
+}
+
+export interface SolanaReviewed extends SolanaPrepared {
+  readonly unsigned: Uint8Array
+  readonly messageOffset: number
+}
+
+export type Prepared = EvmPrepared | SolanaPrepared
+
+export interface EvmSigned { readonly family: "evm"; readonly prepared: EvmPrepared; readonly rawTx: Hex; readonly txId: Hex }
+export interface SolanaSigned { readonly family: "solana"; readonly prepared: SolanaPrepared; readonly rawTx: string; readonly txId: string }
+export type Signed = EvmSigned | SolanaSigned
+
+export service FeeWallet {
+  readonly network: Network
+  readonly address: string
+  sign<E, R>(intent: FeeIntent, reserve: (prepared: Prepared) => void!E!R): Signed!(SignRefused | E)!R
+}
+
+export function signedFacts(signed: EvmSigned): Facts {
+  return { txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.prepared.unsigned.intentHash, ...signed.prepared.expiresAt === undefined ? {} : { expiresAt: signed.prepared.expiresAt } }
+}
+
+export function reservationFacts(ready: EvmPrepared): Facts {
+  return { intentHash: ready.unsigned.intentHash }
+}
+
+export function solanaReservationFacts(ready: SolanaPrepared): Facts {
+  return { intentHash: ready.intentHash, blockhashSlot: ready.blockhashSlot, ...ready.accountProof === undefined ? {} : { accountProof: ready.accountProof } }
+}
+
+export function solanaSignedFacts(signed: SolanaSigned): Facts {
+  const ready = signed.prepared
+  return { ...solanaReservationFacts(ready), txId: signed.txId, rawTx: signed.rawTx, expiresAt: ready.expiresAt }
+}

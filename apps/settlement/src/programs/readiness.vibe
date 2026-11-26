@@ -2,7 +2,7 @@
 import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
 import { SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
 import { reviewedActivation } from "../../gen/settlement__signer.effect.vibe"
-import { pinsOf } from "../jobs/attester.vibe"
+import { pinsOf } from "../vault/pins.vibe"
 import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import { paymentDeployments } from "./deployments.vibe"
 
