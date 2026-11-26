@@ -24176,18 +24176,22 @@
     },
     {
       "path": "spec/security/scanController.md",
-      "sha256": "be8b5f149a1fa58cdff4ade86aced7a0b52f309a31198eaa9cf1a727af5a9875",
+      "sha256": "ec5d5e8d73a12a7821c1596dbe6097f611d1045b20e71ea982d78b3341941096",
       "module": "security__scanController",
       "stories": [
         {
           "heading": "Story: Dispatch a scan only for the deployed release of the branch head",
-          "line": 10
+          "line": 12
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since",
+          "line": 91
         }
       ],
       "rules": [
         {
           "heading": "Story: Dispatch a scan only for the deployed release of the branch head / Each protected branch tracks its head, its released head and its active scans",
-          "line": 12,
+          "line": 14,
           "definitions": [
             "Ref",
             "Branch",
@@ -24205,10 +24209,12 @@
         },
         {
           "heading": "Story: Dispatch a scan only for the deployed release of the branch head / A run dispatches only when every gate holds and otherwise skips",
-          "line": 30,
+          "line": 46,
           "definitions": [
             "Gate",
             "gateValues",
+            "unchangedScanner",
+            "scansUnchangedRunner",
             "mayDispatch",
             "dispatch",
             "canFinishRun",
@@ -24219,6 +24225,35 @@
             "lawDispatchScansReleasedHead",
             "sometimesDispatched",
             "sometimesAdvancedHeadSkipped"
+          ]
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since / A deployed release serves the scanner input list of its own commit",
+          "line": 102,
+          "definitions": [
+            "alwaysServedInputsMatchRelease",
+            "alwaysReleasedHeadIsUnchanged"
+          ]
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since / A later head dispatches only when it descends from the release and no scanner input changed",
+          "line": 117,
+          "definitions": [
+            "lawDispatchRunsUnchangedScanner",
+            "sometimesScannedBehindRelease",
+            "sometimesScannerChangeWaits",
+            "eval_witness_sometimesScannedBehindRelease",
+            "eval_witness_sometimesScannerChangeWaits"
+          ]
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since / The controller runs a pass only on the same commit or an unchanged earlier commit of its branch",
+          "line": 143,
+          "definitions": [
+            "RunnerCompare",
+            "compareValues",
+            "runnerMayScan",
+            "lawRunnerScansOnlyAnUnchangedScanner"
           ]
         }
       ],

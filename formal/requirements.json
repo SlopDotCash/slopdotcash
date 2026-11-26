@@ -2347,13 +2347,16 @@
         {
           "spec": "spec/security/scanController.md",
           "rules": [
-            "Story: Dispatch a scan only for the deployed release of the branch head"
+            "Story: Dispatch a scan only for the deployed release of the branch head",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since / A deployed release serves the scanner input list of its own commit",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since / A later head dispatches only when it descends from the release and no scanner input changed",
+            "Story: Scan on an earlier release of the branch when no scanner input changed since / The controller runs a pass only on the same commit or an unchanged earlier commit of its branch"
           ]
         }
       ],
       "status": "source-preserved-domain-mapped",
-      "implementationEvidence": "pending-implementation",
-      "gap": "The scan-pass runner rule of 23 November 2026 (a pass may run on the deployed runner at an earlier commit of the same branch when no scanner input changed since, with the input list published at /scanner-inputs.json) is not yet modelled: spec/security/scanController.md still dispatches only for the deployed release of the branch head."
+      "implementationEvidence": "pending-implementation"
     },
     {
       "section": 8,
