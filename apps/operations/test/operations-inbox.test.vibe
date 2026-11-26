@@ -213,19 +213,19 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     const besideLegacy = try read(["project-revision:inbox:delivered"])
 
     try same({
-      signedOut: [signedOut.status, signedOut.body],
+      signedOut: [signedOut.status, signedOut.body, signedOut.cache],
       cache: listedAnswer.cache,
       private: [digest, providerReference, version, "member@slop.test", "attempts"].filter((secret) => listedAnswer.text.includes(secret)),
       listed: { ...listed, notifications: withoutCreatedAt(listed.notifications) },
       paging: [firstPage.notifications.length, secondPage.notifications.length, secondPage.nextCursor, firstPage.unread, new Set([...firstPage.notifications, ...secondPage.notifications].map((item) => item.eventKey)).size],
-      invalidCursor: [invalidCursor.status, invalidCursor.body],
+      invalidCursor: [invalidCursor.status, invalidCursor.body, invalidCursor.cache],
       marks: [firstMark.body, replayMark.body, hiddenMark.body, caseRead.body],
       readAt: [(try readAt("project-revision:inbox:sent", member)) !== null, try readAt("wallet-claim:inbox-other", other), try readAt("wallet-claim:inbox-1", other)],
       refusals,
       readIsNotAcknowledgment: [afterReading?.readAt !== null, afterReading?.acknowledgedAt],
       besideLegacy: [besideLegacy.status, besideLegacy.body],
     }, {
-      signedOut: [401, { error: "not_signed_in" }],
+      signedOut: [401, { error: "not_signed_in" }, "private, no-store"],
       cache: "private, no-store",
       private: [],
       listed: {
@@ -249,7 +249,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
         ],
       },
       paging: [100, 13, null, 113, 113],
-      invalidCursor: [400, { error: "invalid_cursor" }],
+      invalidCursor: [400, { error: "invalid_cursor" }, "private, no-store"],
       marks: [{ marked: 1 }, { marked: 0 }, { marked: 0 }, { marked: 1 }],
       readAt: [true, null, null],
       refusals: [
