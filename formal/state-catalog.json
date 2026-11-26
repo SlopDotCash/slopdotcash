@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "d7860113d3ed50b3c5d41dc0e473092875b79eb015bdb23d3153e196d4afdb97",
+  "inventorySha256": "b0e45eb41b22d736db157bbcdc97cd7c0259187ba55414311513ef2abc0278f6",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -151,7 +151,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2927,
+      "line": 2933,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -189,7 +189,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 3131,
+      "line": 3137,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -3183,7 +3183,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 255,
+      "line": 256,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -3202,7 +3202,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 574,
+      "line": 575,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -3221,7 +3221,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1455,
+      "line": 1466,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -5165,7 +5165,7 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "line": 48,
+      "line": 49,
       "name": "state",
       "kind": "string-union",
       "values": ["clear", "pending", "strike", "watch"],
@@ -5175,7 +5175,7 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "line": 265,
+      "line": 297,
       "name": "reason",
       "kind": "string-union",
       "values": ["expired", "strike", "withdrawn"],

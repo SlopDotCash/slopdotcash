@@ -45,6 +45,9 @@ describe("apiErrorResponse", () => {
       "D1_ERROR: Cannot resolve D1 DB due to transient issue on remote node.",
       "D1_RESET_DO: the database is being reset",
       "D1_ERROR: Currently processing a long-running import.",
+      // The error D1 throws when SQLite is busy. The same text is what local
+      // D1 retries already treat as contention, not a bad statement.
+      "D1_ERROR: database is locked: SQLITE_BUSY",
     ]) {
       const { status, body, logged } = await answer(new Error(message));
       expect(status).toBe(503);
@@ -64,6 +67,8 @@ describe("apiErrorResponse", () => {
       ),
       new Error("D1_ERROR: no such column: secret_value_123"),
       new TypeError("x is undefined"),
+      // The same words without a D1 code are not this database failure.
+      new Error("database is locked: SQLITE_BUSY"),
       "plain",
     ]) {
       const { status, body, logged } = await answer(caught);
