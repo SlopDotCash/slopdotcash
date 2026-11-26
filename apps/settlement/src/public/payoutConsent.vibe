@@ -54,11 +54,12 @@ effect function statusOf(row: PayoutConsentRow, actor: bigint, rows: ReadonlyArr
   const binding = timeout(readBinding(row, actor), "5 seconds") catch () => undefined
   const claimBound = binding !== undefined && binding.read.version > 0n && !binding.read.cancelled
     && binding.read.destination === row.claimAddress.toLowerCase() && binding.read.claimDigest === `0x${row.claimDigest}`
-    && binding.read.activatesAt <= BigInt(binding.timestamp)
+    && binding.read.activatesAt <= binding.timestamp
   const retained: RetainedPayoutConsent[] = []
   for (const consent of rows) {
-    const expiresAt = parseBaseUnits(consent.expiresAt, BigInt(Number.MAX_SAFE_INTEGER))
-    if (consent.chainId === row.chainId && expiresAt !== undefined) retained.push({ version: consent.version, expiresAt: Number(expiresAt) })
+    const expiresAt = parseBaseUnits(consent.expiresAt, U64_MAX)
+    if (consent.chainId === row.chainId && expiresAt !== undefined && expiresAt <= Number.MAX_SAFE_INTEGER)
+      retained.push({ version: consent.version, expiresAt: Number(expiresAt) })
   }
   const projected = payoutBindingStatus(binding !== undefined, claimBound, binding?.read.version.toString() ?? "", now, retained)
   return match (projected) {
