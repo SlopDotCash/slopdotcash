@@ -1,6 +1,7 @@
 // spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import { CallerLive } from "@repo/backend/caller"
 import { type BackendVars, backend, backendServices } from "@repo/backend/live"
+import { AccountSettings, pointsOrigin } from "@repo/backend/points"
 import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
 import { contributor, githubReadToken, siteAssets, traceObjects, traceServices } from "@repo/contributor/live"
 import { fees } from "@repo/fees/live"
@@ -10,15 +11,16 @@ import { edgeCache } from "@repo/platform/cache"
 import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { outbound } from "@repo/platform/http"
+import { admission, json, outbound, refusalBody, sameOriginWrite } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
-import { type Area, type Execution, area, later, pages, unmatchedApi } from "@repo/platform/worker"
+import { type Area, type Execution, area, later, pages, unmatchedApiWith } from "@repo/platform/worker"
 import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, protectedMonthsAccess } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
 import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"
 import { DirectPaymentsLive, DirectRoutesLive, type MonthlyReleaseBindings, type PaymentNetworkVars, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, evmDirectRails, monthlyReleases, paymentNetworks, paymentRpc, reservedAwardFeedAccess, reviewedGenesis, settlement, solanaDirectRails, sweepSavedVaultCreations } from "@repo/settlement/live"
 import { type HistoricalValueBinding, ReportingReadinessLive, historicalValueImport, repositoryAccessReader, slopbot } from "@repo/slopbot/live"
+import { FindMyWay } from "effect/http"
 import { documents } from "./document.vibe"
 import { workerCaches } from "./edgeCaches.ts"
 
@@ -114,8 +116,7 @@ function closed<A extends Area<never, unknown>>(areas: ReadonlyArray<A>, unmet: 
 
 const projectSections = new Set(["project-vaults", "project-github", "project-revisions", "project-session", "project-setup", "project-applications", "project-appeals"])
 
-function projectRoute(url: string) {
-  const path = URL.parse(url)?.pathname ?? ""
+function projectRoute(path: string) {
   if (!path.startsWith("/api/v1/")) return false
   const parts = path.slice("/api/v1/".length).split("/").filter((part) => part !== "")
   const [first = "", second] = parts
@@ -129,7 +130,8 @@ const savedCreations = area({
   name: "savedCreations",
   api: [],
   routes: HttpRouter.middleware((app) => effect {
-    if (projectRoute((try HttpServerRequest.HttpServerRequest).originalUrl)) try later(sweepSavedVaultCreations())
+    const path = URL.parse((try HttpServerRequest.HttpServerRequest).originalUrl)?.pathname ?? ""
+    if (projectRoute(path)) try later(sweepSavedVaultCreations())
     return try app
   }, { global: true }),
   provides: Layer.empty,
@@ -142,7 +144,41 @@ const payments = area({
   provides: Layer.mergeAll(DirectRoutesLive, DirectPaymentsLive),
 })
 
-const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, payments, savedCreations, fees, unmatchedApi], "closed")
+const apiAreas = [backend, operations, slopbot, security, contributor, points, settlement, payments, savedCreations, fees]
+
+type BrowserReadPolicy = "registry" | "points" | "payments" | "privateSecurity"
+
+function browserReadPolicy(path: string): BrowserReadPolicy | undefined {
+  const [, , , family, section] = path.split("/")
+  if (family === "points" || family === "payments") return family
+  if (projectRoute(path) || family === "project-flags" || (family === "admin" && section === "vetting")) return "registry"
+  if (family === "security-cases" || family === "security-programs" || family === "security-submissions"
+    || (family === "operator" && section === "vetting-evidence")) return "privateSecurity"
+  return undefined
+}
+
+const browserReads = FindMyWay.make<BrowserReadPolicy>()
+for (const path of new Set(apiAreas.flatMap(({ api }) => api
+  .filter(({ method, access }) => method === "GET" && (access === "public" || access === "session"))
+  .map(({ path }) => path)))) {
+  const policy = browserReadPolicy(path)
+  if (policy !== undefined) browserReads.on("GET", path, policy)
+}
+
+effect function unmatchedBrowserWrite() {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") return undefined
+  const url = URL.parse(request.originalUrl)
+  if (url === null || !(try AccountSettings).browserOrigins.has(url.origin)) return undefined
+  const policy = browserReads.find("GET", url.pathname)?.handler
+  if (policy === undefined) return undefined
+  if (policy === "points") return try pointsOrigin()
+  if ((policy !== "payments" || request.method === "POST") && (try sameOriginWrite())) return undefined
+  const refusal = policy === "payments" ? { error: admission.origin.code } : refusalBody(admission.origin)
+  return json(refusal, admission.origin.status, policy === "registry" ? {} : { "cache-control": "private, no-store" })
+}
+
+const composition = closed([...apiAreas, unmatchedApiWith(unmatchedBrowserWrite())], "closed")
 
 const site = pages({ areas: composition.areas, services, assets: "DOCUMENTS" })
 
