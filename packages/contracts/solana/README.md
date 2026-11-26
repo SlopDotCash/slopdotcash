@@ -677,12 +677,19 @@ The owner approved zero mandatory award and identity-rotation delays and retaine
 submission deposits, the Solana counterpart of
 [`contracts/evm/src/SubmissionDeposits.sol`](../evm/README.md#submission-deposits)
 (operator decision, 18 November 2026: Solana is the second step of the platform
-submission fee, USDC only, with the same outcomes). **It is not deployed on any
-cluster.** No Slop service reads it, the pay page does not offer it, and
-`src/lib/submission-fee.mjs` names no Solana network. The program id in the
-source, `HgkeEAe63g7pDbvKsXXh8rSStM8Nw5z4eiYapVMKCt9t`, is a local placeholder
-whose key was discarded; the owner generates the real address before the
-verifiable build ([runbook](../../docs/submission-deposits-solana-deploy-runbook.md)).
+submission fee, USDC only, with the same outcomes). **It was deployed on Solana
+mainnet on 26 November 2026** at `4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7`
+by the steps of the
+[runbook](../../docs/submission-deposits-solana-deploy-runbook.md), and its
+upgrade authority was removed the same day, so the program cannot be changed or
+closed. The deployed program's SHA-256 is
+`389b857fb05f9be1d24bdc41ad52d48801c5272bdf5ee8a7e69758674eba2444`. The
+transactions, accounts and read-back are in
+[`../DEPLOY-MAINNET.md`](../DEPLOY-MAINNET.md) ("Submission fee deposit program
+on Solana"). **The fee is still switched off on Solana:**
+`apps/fees/src/submissionFee/solanaProgram.ts` publishes the program id, but
+`SUBMISSION_FEE_SOLANA_MODE` is `off` and `SOLANA_SUBMISSION_FEE_SWITCHED_ON` is
+false, so no Slop service reads the program and the pay page does not offer it.
 It shares nothing with `slop-escrow`: its own id, its own accounts, no call
 between the two. It uses the escrow's two crates at the same versions and adds
 none, and the escrow's program bytes are unchanged by its presence in the

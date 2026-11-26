@@ -5,7 +5,7 @@ import { circleUsdc } from "../runtime/pins.ts";
 export const SOLANA_SUBMISSION_FEE_NETWORK = "solana-mainnet";
 export const SOLANA_SUBMISSION_FEE_MINT = circleUsdc.solana;
 export const SOLANA_SUBMISSION_FEE_KEPT_TO = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY";
-export const SOLANA_SUBMISSION_FEE_PROGRAM_ID: string | null = null;
+export const SOLANA_SUBMISSION_FEE_PROGRAM_ID: string | null = "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7";
 export const SOLANA_SUBMISSION_FEE_SWITCHED_ON = false;
 export const SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES = 169;
 export const SOLANA_SUBMISSION_FEE_RENT_LAMPORTS = String((SOLANA_SUBMISSION_FEE_DEPOSIT_BYTES + 128) * 6960);
