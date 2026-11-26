@@ -176,7 +176,7 @@ export function TopBar({ onPublish }: { onPublish: () => void }) {
           )}
         </div>
         <span aria-hidden className="h-5 w-px bg-border" />
-        <div role="tablist" aria-label="Workspace mode" className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+        <div role="tablist" aria-label="Workspace mode" className="flex flex-none items-center gap-0.5 rounded-md bg-muted p-0.5">
           {MODES.map((m) => {
             const disabled = !!m.needsComponents && !hasComponents;
             const active = S.view === m.id;
@@ -196,7 +196,7 @@ export function TopBar({ onPublish }: { onPublish: () => void }) {
 
       {steps.length > 0 && (
         <button type="button" aria-label="Session pipeline" aria-expanded={S.drawer} onClick={() => setDrawer(!S.drawer)}
-          className={cn(focusRing, "hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-accent xl:flex")}>
+          className={cn(focusRing, "hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-accent 2xl:flex")}>
           {steps.map((st, i) => (
             <span key={st.name} className="flex items-center gap-1.5">
               {i > 0 && <span aria-hidden className="text-muted-foreground">·</span>}

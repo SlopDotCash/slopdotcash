@@ -840,6 +840,7 @@ const COMMANDS = [
   ["stories", "gen [--watch] [--check]", "generate component stories"],
   ["tokens", "build|check|apply", "build, check or change design tokens"],
   ["tasks", "[<task>…]", "run the workspace's tasks through Turborepo and its cache"],
+  ["ci", "precompute-simulations [--shard <n> --shards <m> --weights <file> --list]", "assign and precompute LPT-balanced simulation shards for CI"],
 ];
 const USAGE = `usage: spec <command>\n\n${COMMANDS.map(([name, args, does]) => `  ${`${name} ${args}`.padEnd(36)}${does}`).join("\n")}`;
 
@@ -888,13 +889,18 @@ async function watch(root: string) {
   const inode = (dir: string) => { try { return fs.statSync(path.join(root, dir)).ino; } catch { return undefined; } };
   const read = (dir: string) => { try { return fs.readdirSync(path.join(root, dir || "."), { withFileTypes: true }); } catch { return []; } };
   const containers = ["apps", "packages"];
+  const dependencies = (dir: string) => { try { return workspacePackages(path.join(root, dir)); } catch { return []; } };
   const attach = () => {
     const areas = read("spec").filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-    const packages = [...containers, ...areas.flatMap((area) => specOwnerPaths(root, area))];
+    let packages: string[];
+    let owners: string[];
+    try {
+      packages = [...containers, ...areas.flatMap((area) => specOwnerPaths(root, area))];
+      owners = codeDirs(root);
+    } catch { return; }
     const own = (dir: string) => read(dir).filter((e) => e.isDirectory() && !UNREAD.test(e.name) && e.name !== "gen" && !(dir === "" && containers.includes(e.name))
       && !fs.existsSync(path.join(root, dir, e.name, "package.json"))).map((e): [string, boolean] => [`${dir}${e.name}`, true]);
-    const owners = codeDirs(root);
-    const depended = owners.flatMap((dir) => workspacePackages(path.join(root, dir)).map(({ directory }) => path.relative(root, directory)))
+    const depended = owners.flatMap((dir) => dependencies(dir).map(({ directory }) => path.relative(root, directory)))
       .filter((dir) => dir && !dir.startsWith("..") && !path.isAbsolute(dir) && !owners.includes(`${dir}/`)).map((dir): [string, boolean] => [dir, true]);
     const dirs = new Map([...packages.map((dir): [string, boolean] => [dir, false]), ...owners.flatMap((dir): [string, boolean][] => [[dir || ".", false], ...own(dir)]), ...depended]);
     for (const dir of new Set([...dirs.keys(), ...watched.keys()])) {
@@ -918,6 +924,88 @@ async function watch(root: string) {
   };
   attach();
   await once();
+}
+
+function readFlag(args: string[], flag: string): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === flag) return args[i + 1];
+    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
+function parseShardWeights(file: string): Record<string, number> {
+  const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${file}: shard weights must be a JSON object mapping spec names or paths to positive numbers`);
+  }
+  const weights: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      throw new Error(`${file}: weight for "${key}" must be a positive finite number`);
+    }
+    weights[key] = value;
+  }
+  return weights;
+}
+
+function specShardWeight(spec: Spec, weights?: Readonly<Record<string, number>>): number {
+  const configured = weights?.[spec.name] ?? weights?.[spec.file];
+  if (configured !== undefined) return configured;
+  return Math.max(1, spec.rules.length * 2 + spec.imports.length + Math.ceil(spec.qnt.split("\n").length / 40));
+}
+
+function assignSimulationShard(
+  specs: readonly Spec[],
+  shard: number,
+  shards: number,
+  weights?: Readonly<Record<string, number>>,
+): { readonly modules: string[]; readonly estimatedWeight: number } {
+  const bins = Array.from({ length: shards }, () => ({ weight: 0, specs: [] as Spec[] }));
+  const ordered = [...specs].sort(
+    (a, b) => specShardWeight(b, weights) - specShardWeight(a, weights)
+      || a.file.localeCompare(b.file, "en")
+      || a.name.localeCompare(b.name, "en"),
+  );
+  for (const spec of ordered) {
+    let target = bins[0]!;
+    for (let i = 1; i < bins.length; i++) {
+      if (bins[i]!.weight < target.weight) target = bins[i]!;
+    }
+    target.weight += specShardWeight(spec, weights);
+    target.specs.push(spec);
+  }
+  const chosen = bins[shard - 1]!;
+  return {
+    modules: chosen.specs.map(({ name }) => name),
+    estimatedWeight: Number(chosen.weight.toFixed(2)),
+  };
+}
+
+async function runCiPrecomputeSimulations(root: string, args: string[]): Promise<number> {
+  const shard = Number(readFlag(args, "--shard") ?? process.env.SHARD ?? "1");
+  const shards = Number(readFlag(args, "--shards") ?? process.env.SHARDS ?? "1");
+  if (!Number.isInteger(shard) || !Number.isInteger(shards) || shard < 1 || shards < 1 || shard > shards) {
+    throw new Error(`invalid shard parameters: shard=${shard}, shards=${shards}`);
+  }
+  const weightsArg = readFlag(args, "--weights");
+  const weights = weightsArg ? parseShardWeights(path.resolve(root, weightsArg)) : undefined;
+  const listOnly = args.includes("--list");
+  const specs = readSpecs(root);
+  const assignment = assignSimulationShard(specs, shard, shards, weights);
+  if (listOnly) {
+    console.log(JSON.stringify({ shard, shards, totalSpecs: specs.length, estimatedWeight: assignment.estimatedWeight, modules: assignment.modules }));
+    return 0;
+  }
+  const outParent = path.resolve(root, readFlag(args, "--out") ?? process.env.RUNNER_TEMP ?? os.tmpdir());
+  const githubOutput = readFlag(args, "--github-output") ?? process.env.GITHUB_OUTPUT;
+  fs.mkdirSync(outParent, { recursive: true });
+  const { results, seedDirectory, partialDirectory } = await prepareSimulationReceipts(root, specs, assignment.modules, outParent);
+  const checkpoint = seedDirectory ?? partialDirectory;
+  if (githubOutput && checkpoint) fs.appendFileSync(githubOutput, `checkpoint=${checkpoint}\n`);
+  for (const result of results) console.log(show(result));
+  return results.every((r) => r.ok) ? 0 : 1;
 }
 
 async function generateFiles(root: string, output = root, ownerName?: string) {
@@ -1253,6 +1341,8 @@ export async function main(argv = process.argv.slice(2)) {
       await (await import("./testing/generate.ts")).main(args[0]);
     } else if (command === "new" && takes([], ["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}; run \`pnpm check\``);
+    } else if (command === "ci" && args[0] === "precompute-simulations") {
+      process.exitCode = await runCiPrecomputeSimulations(root, args.slice(1));
     } else {
       console.error(USAGE);
       process.exitCode = 2;
