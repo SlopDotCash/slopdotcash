@@ -19,7 +19,8 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   });
   let role = "maintainer";
   let unavailable = false;
-  let failNextNotificationRead = false;
+  // A failed read is asked once more, so an outage fails both attempts.
+  let failingNotificationReads = 0;
   let holdQueue = false;
   let swapOnNextQueue = false;
   let notificationReads = 0;
@@ -93,8 +94,8 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     const path = new URL(request.url()).pathname;
     if (path === "/api/v1/notifications") {
       notificationReads++;
-      if (failNextNotificationRead) {
-        failNextNotificationRead = false;
+      if (failingNotificationReads > 0) {
+        failingNotificationReads--;
         return route.fulfill({ status: 503 });
       }
     }
@@ -196,7 +197,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     );
     role = "maintainer";
     const readsBeforeRefresh = notificationReads;
-    failNextNotificationRead = true;
+    failingNotificationReads = 2;
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.waitForFunction(() => {
       const value = (
@@ -216,7 +217,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
         }),
     );
-    expect(notificationReads).toBe(readsBeforeRefresh + 1);
+    expect(notificationReads).toBe(readsBeforeRefresh + 2);
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(privateNotice).toBeVisible();
     await expect(queue.getByRole("link")).toHaveCount(25);

@@ -508,7 +508,11 @@ deposit buys a faster or better review.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report
-reads require current case authority and an audit record. Contributor trace
+reads require current case authority and an audit record. A member may create
+one personal read-only key in Settings; sent as a bearer token it is read as
+that member on GET requests for the list or one record of `security-cases` and
+`security-submissions` only, and it can change nothing (operator decision,
+25 November 2026; PRD section 8). Contributor trace
 bodies remain unreadable, except operator export of a licensed trace under
 contract version 2. See PRD sections 8–10.
 
@@ -825,7 +829,12 @@ To publish new data without a commit, run the release workflow by hand
 `daily-collection.yml` workflow does this every day at 07:17 UTC unless a
 collection is already running, publishes a superseded collection through a
 `data_from_run` release, and resumes a failed collection once (operator
-decision, 19 November 2026). Every production release requires current main equivalence. Every
+decision, 19 November 2026). Saved commit attributions in the collection memo survive
+code changes; a change that could make a saved answer come out differently
+must raise `ATTRIBUTION_RULES_VERSION` in `scripts/collection-memo.ts`, and a
+test pins the rule sources (PRD section 11, operator decision, 24 November
+2026). The accepted implementation memo follows the same rule with
+`IMPLEMENTATION_MEMO_RULES_VERSION` (operator decision, 25 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting

@@ -18,6 +18,48 @@ export function fetchWithDeadline(
   });
 }
 
+/** How long a failed read waits before it is asked once more. */
+export const READ_RETRY_DELAY_MS = 800;
+
+/**
+ * A read the server answered with 500, 502 or 503 is asked once more after a
+ * short wait, because such an answer is usually a moment of trouble that has
+ * passed. Only a GET is repeated, and only once: a write, a refusal, a
+ * timeout, a network failure and a cancelled request are returned as they are.
+ */
+export async function fetchReadWithRetry(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 15_000,
+  retryDelayMs = READ_RETRY_DELAY_MS,
+): Promise<Response> {
+  const first = await fetchWithDeadline(url, init, timeoutMs);
+  if (
+    (init.method !== undefined && init.method.toUpperCase() !== "GET") ||
+    ![500, 502, 503].includes(first.status)
+  )
+    return first;
+  try {
+    await first.body?.cancel();
+  } catch {
+    // The failed answer is discarded either way.
+  }
+  await new Promise<void>((resolve, reject) => {
+    const signal = init.signal ?? undefined;
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", stop);
+      resolve();
+    }, retryDelayMs);
+    const stop = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    if (signal?.aborted) stop();
+    else signal?.addEventListener("abort", stop, { once: true });
+  });
+  return fetchWithDeadline(url, init, timeoutMs);
+}
+
 /** Headers and a stream are shared by HTTP requests and responses. */
 type HttpBody = Pick<Response, "headers" | "body">;
 

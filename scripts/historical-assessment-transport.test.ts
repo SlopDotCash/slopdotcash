@@ -266,6 +266,7 @@ test("matches the deployed per-source SQL and retains both predecessor roots", a
   for (const file of [
     "0038_slopbot_value_journal.sql",
     "0046_slopbot_work_unit_journal.sql",
+    "0152_work_unit_source_numbers.sql",
   ]) {
     database.exec(
       readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"),

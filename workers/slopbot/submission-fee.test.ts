@@ -41,7 +41,10 @@ import {
   monthlyReviewOpen,
   reviewMonth,
 } from "./review-cap";
-import { checkStandingDeposits } from "./standing-deposit";
+import {
+  checkStandingDeposits,
+  STANDING_DEPOSIT_BATCH,
+} from "./standing-deposit";
 import {
   dispatchFeeChecks,
   FEE_MARKER,
@@ -2241,6 +2244,73 @@ test("standing deposit: a payment the Worker withdraws covers nothing new and de
     w.github.labels = [];
     expect(await w.review()).toBe(FEE_NEEDED_REASON);
     expect(w.cover()).toBeNull();
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: active deposits beyond one batch never starve a due withdrawal or strike", async () => {
+  const w = world();
+  try {
+    // Fill a full batch with earlier, healthy active deposits that are neither
+    // withdrawn, expired nor struck.
+    for (let i = 1; i <= STANDING_DEPOSIT_BATCH; i += 1) {
+      const githubId = 1000 + i;
+      w.sqlite.run(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at,
+           paid_at, paid_network, paid_deposit_id)
+         VALUES (?, ?, 1, ?, '755000000000000000000', '75.4717', '2026-11-01T00:00:00.000Z',
+           '2026-11-01T00:00:00.000Z', 'robinhood-standing', ?)`,
+        [
+          `sd_active_${String(i).padStart(4, "0")}`,
+          githubId,
+          standingDepositItem(githubId, 1),
+          i,
+        ],
+      );
+    }
+    // Deposit #201: later paid_at, withdrawn with 21-day wait complete (no covers).
+    const withdrawnId = "sd_due_withdrawn";
+    w.sqlite.run(
+      `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at,
+         paid_at, paid_network, paid_deposit_id, withdraw_requested_at)
+       VALUES (?, 9001, 1, ?, '755000000000000000000', '75.4717', '2026-11-05T00:00:00.000Z',
+         '2026-11-05T00:00:00.000Z', 'robinhood-standing', 9001, '2026-11-06T00:00:00.000Z')`,
+      [withdrawnId, standingDepositItem(9001, 1)],
+    );
+    // Deposit #202: later paid_at, with a confirmed strike cover.
+    const struckId = "sd_due_struck";
+    w.sqlite.run(
+      `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at,
+         paid_at, paid_network, paid_deposit_id)
+       VALUES (?, 9002, 1, ?, '755000000000000000000', '75.4717', '2026-11-05T00:00:00.000Z',
+         '2026-11-05T00:00:00.000Z', 'robinhood-standing', 9002)`,
+      [struckId, standingDepositItem(9002, 1)],
+    );
+    const repoId = 1332593244;
+    w.sqlite.run(
+      `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id,
+         installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, strike_seen_at,
+         next_check_at, updated_at)
+       VALUES (?, 99, ?, 9002, 'asi', 77, 'SlopDotCash', 'asi', '2026-11-06T00:00:00.000Z',
+         '2026-11-06T00:00:00.000Z', '2026-11-06T00:00:00.000Z', 'strike', 0, '2026-11-08T00:00:00.000Z',
+         NULL, '2026-11-10T00:00:00.000Z')`,
+      [repoId, struckId],
+    );
+    const now = new Date("2026-11-27T00:00:00.000Z");
+    expect(await w.standing(now)).toEqual({ read: 0, decided: 2 });
+    expect(w.deposit(withdrawnId)).toEqual({
+      outcome: "refund_due",
+      outcome_reason: "withdrawn",
+      strike_repository_id: null,
+      strike_pull_number: null,
+    });
+    expect(w.deposit(struckId)).toEqual({
+      outcome: "kept_due",
+      outcome_reason: "strike",
+      strike_repository_id: repoId,
+      strike_pull_number: 99,
+    });
   } finally {
     w.close();
   }

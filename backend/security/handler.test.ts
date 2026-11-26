@@ -41,6 +41,7 @@ const SECRET_DETAIL = "Synthetic exploit narrative that must stay private.";
 type Account = typeof MAINTAINER;
 type CaseReply = {
   id: string;
+  advisory: { ghsa: string; githubState: string | null };
   revision: number;
   submissionState: string;
   receivedAt: string | null;
@@ -523,6 +524,26 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
 }
 
 describe("automatic private intake", () => {
+  test("a case carries GitHub's last listed advisory state, in single and list reads", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      const single = await env.call(MAINTAINER, "GET", `security-cases/${id}`);
+      expect(single.body.case.advisory.githubState).toBe("triage");
+      const listed = await env.call(MAINTAINER, "GET", "security-cases");
+      expect(
+        listed.body.cases?.find((entry) => entry.id === id)?.advisory
+          .githubState,
+      ).toBe("triage");
+      // Slop has no state for an advisory GitHub never listed to it.
+      env.sqlite.run("DELETE FROM security_advisory_states");
+      const unread = await env.call(REPORTER, "GET", `security-cases/${id}`);
+      expect(unread.body.case.advisory.githubState).toBeNull();
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
   test("private case reads and actions follow the current reporter, maintainer and finance roles", async () => {
     const env = open();
     try {
