@@ -77,8 +77,8 @@ export effect function sendBacklogNotices(projects: ReadonlyArray<{ readonly pro
         ) WHERE recipient IS NOT NULL
       ) audience
       WHERE p.id = ${notice.projectId}
-      AND substr(${notice.eventKey}, 1, length(${prefix})) = ${prefix}
-      AND length(recipient) BETWEEN 1 AND 20 AND recipient GLOB '[1-9]*' AND recipient NOT GLOB '*[^0-9]*'
+        AND substr(${notice.eventKey}, 1, length(${prefix})) = ${prefix}
+        AND length(recipient) BETWEEN 1 AND 20 AND recipient GLOB '[1-9]*' AND recipient NOT GLOB '*[^0-9]*'
       ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
     const outcome = try exit(write)
     if (Exit.isFailure(outcome)) failed += 1
