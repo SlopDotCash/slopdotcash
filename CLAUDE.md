@@ -129,6 +129,16 @@ alias only.
     the same key resolves the deposit on a private security report (PRD
     section 8, "Report deposit") with the same two outcomes, a refund to the
     payer or "kept" to the burn address, for the row the security API marked.
+    Operator decision of 25 November 2026: a separate Solana resolver key
+    (`SUBMISSION_FEE_SOLANA_RESOLVER_SEED`) may call only `resolve` on the
+    `slop-submission-deposits` program, with the same two outcomes, a refund
+    to the payer's associated token account or "kept" to the fee wallet's;
+    it holds no tokens, pays only its transactions' network fee, and is
+    never the program's owner. `SUBMISSION_FEE_SOLANA_MODE` is `off`, the
+    program is not deployed and no such key exists yet.
+    Operator decision of 23 November 2026: it also resolves standing deposits
+    in a second deployment of the same contract on Robinhood Chain (PRD
+    section 6, FEE-08), with the same two outcomes, for the row Slopbot marked.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
@@ -344,7 +354,16 @@ makes the deposit due back; a pull request closed without a merge for 7 days
 keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned), except
 one that closes an issue labelled `slop-wanted` before it was opened, which is
 sent back unless a maintainer adds `slop-keep-fee` (operator decision,
-22 November 2026). Slopbot
+22 November 2026). A contributor
+may instead post one standing deposit of SLOP worth 10 US dollars from
+`/deposit` (`src/lib/standing-deposit.mjs`; operator decision, 23 November
+2026; PRD section 5, "Standing deposit"). While it stands, Slopbot covers that
+contributor's pull requests on a project that accepts it and has merged one of
+theirs, at most 10 open at once, without asking the fee. It is kept, and
+burned, only when a maintainer closes a covered pull request within 21 days
+and adds `slop-keep-fee`, and both stand 48 hours; an ordinary close costs
+nothing. A withdrawal stops new cover at once and the deposit is sent back 21
+days later. Slopbot
 moves no money, never closes a pull request for an unpaid fee, and never
 blocks a maintainer's own review or merge; scoring does not read the fee.
 The comment links the pay page
@@ -380,6 +399,16 @@ and counterexamples, not a fixed 14-day and 50-item threshold. Keep independent
 confirmation, caps, appeals, reopen protection, the seven-day uncertain
 label-only rule and explicit production activation. Fixtures prove controls,
 not actual model qualification (owner decision, 25 October 2026).
+
+Slopbot never merges. A project owner may turn on the `slopbot:ready` label
+(PRD section 5); a person merges a labelled pull request. Pilot on Slop's own
+repository only (operator decision, 25 November 2026): while the repository
+variable `SLOPBOT_AUTO_MERGE` equals `on`, the repository's own
+`ready-auto-merge.yml` workflow, started by hand on `main`, merges a labelled
+pull request into the registered integration branch after re-checking the
+label's origin, the approvals at the exact head commit, the merge state and
+that nothing under `.github/` changed. Never give Slopbot Contents write, never
+add another trigger to that workflow, and never have it run pull request code.
 
 ## Installer and attribution
 
@@ -496,7 +525,11 @@ deposit buys a faster or better review.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report
-reads require current case authority and an audit record. Contributor trace
+reads require current case authority and an audit record. A member may create
+one personal read-only key in Settings; sent as a bearer token it is read as
+that member on GET requests for the list or one record of `security-cases` and
+`security-submissions` only, and it can change nothing (operator decision,
+25 November 2026; PRD section 8). Contributor trace
 bodies remain unreadable, except operator export of a licensed trace under
 contract version 2. See PRD sections 8–10.
 
@@ -518,7 +551,11 @@ Version 1 keeps governing traces uploaded under it. Operator decision,
 provider-terms confirmation. A contributor's earlier or unlicensed traces are
 licensed only by an explicit opt-in, one by one or all listed at once; turning
 the setting off or closing the account withdraws every unsold licence. No trace
-has been sold or exported.
+has been sold or exported. Operator decision, 23 November 2026: contract
+version 3 (`backend/trace/README.md#private-trace-privacy-contract-v3`) keeps
+the contents of files in the project's own repository when GitHub reports an
+OSI-approved licence for it, and licenses a version 3 upload at upload only
+when the setting is on and was last confirmed under version 3.
 
 Trace bodies are permanent private R2 objects. D1 stores only safe metadata and
 digests. No website or API route returns a trace body, including to
@@ -809,7 +846,12 @@ To publish new data without a commit, run the release workflow by hand
 `daily-collection.yml` workflow does this every day at 07:17 UTC unless a
 collection is already running, publishes a superseded collection through a
 `data_from_run` release, and resumes a failed collection once (operator
-decision, 19 November 2026). GitHub fires scheduled and after-release jobs
+decision, 19 November 2026). Saved commit attributions in the collection memo survive
+code changes; a change that could make a saved answer come out differently
+must raise `ATTRIBUTION_RULES_VERSION` in `scripts/collection-memo.ts`, and a
+test pins the rule sources (PRD section 11, operator decision, 24 November
+2026). The accepted implementation memo follows the same rule with
+`IMPLEMENTATION_MEMO_RULES_VERSION` (operator decision, 25 November 2026). GitHub fires scheduled and after-release jobs
 only from the default branch, so while the default branch is not main an
 outside scheduler starts main's scheduled workflows by hand with a token that
 can only start workflows here (operator decision, 21 November 2026). A source GitHub cannot resolve still forces one

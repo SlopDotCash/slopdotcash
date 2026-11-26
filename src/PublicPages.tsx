@@ -45,11 +45,19 @@ import {
 } from "./lib/security-report-deposit.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import {
+  STANDING_DEPOSIT_OPEN_CAP,
+  STANDING_DEPOSIT_STRIKE_WINDOW_DAYS,
+  STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS,
+} from "./lib/standing-deposit.mjs";
+import {
   SUBMISSION_FEE_DEFAULT_MINOR,
   SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
   SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
 } from "./lib/submission-fee.mjs";
-import { reportDepositSetup } from "./lib/submission-fee-setup";
+import {
+  reportDepositSetup,
+  standingDepositSetup,
+} from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
@@ -73,6 +81,8 @@ import {
 export function HowItWorksPage() {
   // Whether Slop asks reporters for the refundable deposit (PRD section 8).
   const [{ switchedOn: reportDeposit }] = useState(reportDepositSetup);
+  // Whether the standing deposit contract is recorded (PRD section 5).
+  const [{ deployed: standingDeposit }] = useState(standingDepositSetup);
   const depositSize = `a refundable deposit of about ${REPORT_DEPOSIT_USD_TEXT} US dollars of SLOP on Robinhood Chain`;
   return (
     <main className="shell evidence-page how-it-works route-guide">
@@ -300,6 +310,31 @@ export function HowItWorksPage() {
                 unpaid pull request is never closed for that reason, the fee
                 does not buy a merge and scoring does not read it. Pay only
                 through the page linked in Slopbot&apos;s own comment.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Can I skip the fee on every pull request?</h3>
+            <div>
+              <p>
+                {standingDeposit
+                  ? "Yes, with a standing deposit: one refundable deposit of SLOP on Robinhood Chain worth 10 US dollars at Slop's SLOP rate."
+                  : "Not yet. Slop has not opened standing deposits. Once they are open, one refundable deposit of SLOP on Robinhood Chain worth 10 US dollars at Slop's SLOP rate will stand in for the fee."}{" "}
+                While it stands, Slopbot does not ask you the fee on a project
+                that accepts standing deposits, once you have had a pull request
+                merged there, for up to {STANDING_DEPOSIT_OPEN_CAP} covered pull
+                requests open at once. It is kept, and burned, only if a
+                maintainer closes a covered pull request without a merge within{" "}
+                {STANDING_DEPOSIT_STRIKE_WINDOW_DAYS} days and adds
+                slop-keep-fee; an ordinary close costs nothing. You can withdraw
+                it at any time, and it is sent back{" "}
+                {STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS} days later. It does not
+                buy a review, a merge or Points.{" "}
+                {standingDeposit ? (
+                  <>
+                    <Link href="/deposit">Post or manage yours</Link>.
+                  </>
+                ) : null}
               </p>
             </div>
           </article>

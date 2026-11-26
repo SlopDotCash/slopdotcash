@@ -21,9 +21,9 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
       diagnostics.allow(
         /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/leaderboard\/[^ ?]+\.part$/u,
       );
-    // The refused snapshot fails the page before its archive index settles;
-    // the page then cancels that background read.
-    if (broken)
+    // A failed snapshot attempt cancels its parallel archive index read
+    // if that request is still pending.
+    if (broken || stalled)
       diagnostics.allow(
         /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/cycles\/index\.json\?[^ ]*$/u,
       );

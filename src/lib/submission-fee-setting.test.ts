@@ -6,6 +6,7 @@ import { expect, test } from "bun:test";
 import { classifyRevisionChanges } from "./project-revision-changes";
 import { assertProjectDefinition } from "./project-schema.mjs";
 import { findProject } from "./projects.mjs";
+import { standingDepositsAccepted } from "./standing-deposit.mjs";
 import {
   SUBMISSION_FEE_DEFAULT_MINOR,
   SUBMISSION_FEE_KEPT_TO,
@@ -111,6 +112,46 @@ test("an owner changes the setting through self-service; nothing else moves", ()
   ).toBeNull();
 });
 
+test("standing deposits: absent accepts, only false refuses, and the record keeps it", () => {
+  // Operator decision, 23 November 2026 (PRD section 5, "Standing deposit").
+  expect(standingDepositsAccepted(project({ enabled: true }))).toBe(true);
+  expect(standingDepositsAccepted(project())).toBe(true);
+  for (const setting of [
+    { enabled: true, standingDeposits: false },
+    { enabled: false, standingDeposits: false },
+    { enabled: true, amountMinor: "3000000", standingDeposits: false },
+  ] as const) {
+    const refused = project(setting);
+    expect(refused.slopbot?.submissionFee).toEqual(setting);
+    expect(standingDepositsAccepted(refused)).toBe(false);
+  }
+  // The fee itself reads the same with or without the refusal.
+  expect(
+    submissionFeeSetting(
+      project({
+        enabled: true,
+        amountMinor: "3000000",
+        standingDeposits: false,
+      }),
+    ),
+  ).toEqual({ amountMinor: "3000000" });
+  for (const setting of [
+    { enabled: true, standingDeposits: true },
+    { enabled: true, standingDeposits: "false" },
+    { enabled: true, standingDeposits: null },
+    { standingDeposits: false },
+  ])
+    expect(() => project(setting)).toThrow(/project\.slopbot\.submissionFee/u);
+  // The owner changes it through self-service, like the amount.
+  const changes = classifyRevisionChanges(
+    project({ enabled: true }),
+    project({ enabled: true, standingDeposits: false }),
+  );
+  expect(changes.presentation).toEqual(["slopbot"]);
+  expect(changes.financial).toEqual([]);
+  expect(changes.restricted).toEqual([]);
+});
+
 test("a typed amount becomes base units; anything else is refused with the range", () => {
   expect(submissionFeeAmountDraft("2")).toEqual({
     amountMinor: "2000000",
@@ -176,6 +217,10 @@ test("the item of a pull request is the contract's hash", () => {
   for (const bad of [0, -1, 1.5, "x", 2n ** 64n])
     expect(() => submissionFeeItem(bad as never, 1)).toThrow(TypeError);
   expect(new Set(Object.values(SUBMISSION_FEE_KEPT_TO))).toEqual(
-    new Set(["0x8f77C37D8650776bFe73c9b12B15209eE15D9b86"]),
+    // The EVM fee wallet and Slop's Solana fee wallet.
+    new Set([
+      "0x8f77C37D8650776bFe73c9b12B15209eE15D9b86",
+      "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
+    ]),
   );
 });

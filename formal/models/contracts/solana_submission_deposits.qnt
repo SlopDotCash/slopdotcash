@@ -3,8 +3,8 @@
 // @evidence contracts/solana/integration/submission-deposits.e2e.mjs
 // @evidence contracts/solana/integration/submission-deposits-invariant.e2e.mjs
 // @evidence contracts/solana/integration/submission-deposits-rehearsal.e2e.mjs
-// The Solana counterpart of submission_deposits. Two deposit ids of one unit each,
-// three callers (1 first owner, 2 first resolver, 3 a payer; roles may move among
+// The Solana counterpart of submission_deposits. Two deposit ids of one unit each, two
+// payer-chosen nonces, three callers (1 first owner, 2 first resolver, 3 a payer; roles may move among
 // them), the upgrade authority as its own actor, one valid kept wallet (4), ticks
 // 0..3 and a reclaim delay of 2 ticks. Deposits are made at ticks 0..1 so the delay
 // can run out. An instruction is one atomic step: a transfer the token program
@@ -16,19 +16,24 @@
 // refund and a kept payout go to the wallet's associated token account, which the
 // wallet or the token's issuer can make unusable (closed, frozen, handed to another
 // owner: one "blocked" state); a reclaim may also go to another token account the
-// payer owns; and the next id is part of the record's address, so a deposit built
-// for any other id is refused.
+// payer owns; and a record's address is that of (payer, nonce), where the payer
+// signs and picks the nonce. The program numbers deposits in landing order and
+// stores the id; no address depends on the count, so a deposit built at one count
+// still lands at any later one. A (payer, nonce) whose record is open is refused;
+// once that record is closed the address is free again and a new deposit there
+// gets a new id. For that reason a resolve names the record's address and the id it
+// means to settle, and is refused when the address holds another id.
 // Not modeled: several mints and their ledgers, amounts other than one, tokens sent
 // to a vault without a deposit, and the Token program's own rules.
 module solana_submission_deposits {
-  type D = { state: str, payer: int, to: int, at: int, dest: str, rentTo: int }
+  type D = { state: str, payer: int, nonce: int, to: int, at: int, dest: str, rentTo: int }
   type S = { authority: bool, config: bool, owner: int, pending: int, resolver: int,
     paused: bool, tick: int, held: int, count: int, payerAccount: str, keptAccount: str,
     d: int -> D }
   var s: S
   pure val Kept = 4
   pure val Delay = 2
-  pure val empty: D = { state: "none", payer: 0, to: 0, at: 0, dest: "", rentTo: 0 }
+  pure val empty: D = { state: "none", payer: 0, nonce: 0, to: 0, at: 0, dest: "", rentTo: 0 }
   action init = s' = { authority: true, config: false, owner: 0, pending: 0, resolver: 0,
     paused: false, tick: 0, held: 0, count: 0, payerAccount: "ok", keptAccount: "ok",
     d: Map(1 -> empty, 2 -> empty) }
@@ -42,21 +47,45 @@ module solana_submission_deposits {
   action removeAuthority(byAuthority: bool): bool = all { s.authority, byAuthority,
     s' = s.with("authority", false) }
 
-  // deposit(item, amount, kept_to) for the record at address `id`.
-  action deposit(caller: int, keptTo: int, id: int): bool = all {
-    s.config, not(s.paused), keptTo == Kept, s.count < 2, id == s.count + 1, s.tick <= 1,
-    s' = s.with("count", id).with("held", s.held + 1)
-      .with("d", s.d.set(id, { state: "open", payer: caller, to: keptTo, at: s.tick, dest: "", rentTo: 0 })) }
+  // An address is occupied exactly while a record of that payer and nonce is open.
+  def occupied(payer: int, nonce: int): bool = Set(1, 2).exists(id =>
+    s.d.get(id).state == "open" and s.d.get(id).payer == payer and s.d.get(id).nonce == nonce)
+  // deposit(item, amount, kept_to, nonce), signed by `caller`, naming the record address
+  // derived from (atPayer, atNonce). The program derives the address from the signer and
+  // the nonce argument, so any other address is refused, and so is an occupied one. The
+  // id is the program's: the count plus one, whatever the count is when it lands.
+  action depositAt(caller: int, keptTo: int, nonce: int, atPayer: int, atNonce: int): bool = all {
+    s.config, not(s.paused), keptTo == Kept, s.count < 2, s.tick <= 1,
+    atPayer == caller, atNonce == nonce, not(occupied(caller, nonce)),
+    s' = s.with("count", s.count + 1).with("held", s.held + 1)
+      .with("d", s.d.set(s.count + 1, { state: "open", payer: caller, nonce: nonce, to: keptTo, at: s.tick,
+        dest: "", rentTo: 0 })) }
+  action deposit(caller: int, keptTo: int, nonce: int): bool = depositAt(caller, keptTo, nonce, caller, nonce)
 
-  // resolve(refund) with the destination the transaction names. Only the associated
-  // account of the right wallet is accepted, and only while it is usable.
-  action resolve(caller: int, id: int, refund: bool, destination: str): bool = all {
-    s.config, caller == s.resolver, s.d.get(id).state == "open",
-    destination == (if (refund) "payer-associated" else "kept-associated"),
-    (if (refund) s.payerAccount else s.keptAccount) == "ok",
-    s' = s.with("held", s.held - 1)
-      .with("d", s.d.set(id, s.d.get(id).with("state", if (refund) "refunded" else "kept")
-        .with("dest", destination).with("rentTo", s.d.get(id).payer))) }
+  // The id of the open record at the address of (payer, nonce), or 0 when it is free.
+  def at(payer: int, nonce: int): int =
+    if (s.d.get(1).state == "open" and s.d.get(1).payer == payer and s.d.get(1).nonce == nonce) 1
+    else if (s.d.get(2).state == "open" and s.d.get(2).payer == payer and s.d.get(2).nonce == nonce) 2
+    else 0
+  // resolve(refund, expected_id) on the record at the address of (atPayer, atNonce), with
+  // the destination the transaction names. The record there must be open and must be the
+  // one the resolver named. Only the associated account of the right wallet is accepted,
+  // and only while it is usable.
+  action resolveAt(caller: int, atPayer: int, atNonce: int, expectedId: int, refund: bool,
+      destination: str): bool = {
+    val id = at(atPayer, atNonce)
+    all {
+      s.config, caller == s.resolver, id > 0, id == expectedId,
+      destination == (if (refund) "payer-associated" else "kept-associated"),
+      (if (refund) s.payerAccount else s.keptAccount) == "ok",
+      s' = s.with("held", s.held - 1)
+        .with("d", s.d.set(id, s.d.get(id).with("state", if (refund) "refunded" else "kept")
+          .with("dest", destination).with("rentTo", s.d.get(id).payer))) }
+  }
+  // A resolve built for deposit `id`: it names that deposit's address and its id, whatever
+  // the address holds by the time it lands.
+  action resolve(caller: int, id: int, refund: bool, destination: str): bool =
+    resolveAt(caller, s.d.get(id).payer, s.d.get(id).nonce, id, refund, destination)
 
   // reclaim(): the payer, after the delay, to any token account the payer owns.
   action reclaim(caller: int, id: int, destination: str): bool = all {
@@ -86,6 +115,7 @@ module solana_submission_deposits {
   pure val Callers = Set(1, 2, 3)
   pure val Candidates = Set(0, 1, 2, 3)
   pure val Ids = Set(1, 2)
+  pure val Nonces = Set(1, 2)
   pure val Flags = Set(true, false)
   pure val Destinations = Set("payer-associated", "payer-other", "kept-associated", "resolver-own")
   action stepInitialize = {
@@ -99,15 +129,19 @@ module solana_submission_deposits {
   action stepDeposit = {
     nondet caller = oneOf(Callers)
     nondet keptTo = oneOf(Set(0, 4))
-    nondet id = oneOf(Ids)
-    deposit(caller, keptTo, id)
+    nondet nonce = oneOf(Nonces)
+    nondet atPayer = oneOf(Callers)
+    nondet atNonce = oneOf(Nonces)
+    depositAt(caller, keptTo, nonce, atPayer, atNonce)
   }
   action stepResolve = {
     nondet caller = oneOf(Callers)
-    nondet id = oneOf(Ids)
+    nondet atPayer = oneOf(Callers)
+    nondet atNonce = oneOf(Nonces)
+    nondet expectedId = oneOf(Ids)
     nondet refund = oneOf(Flags)
     nondet destination = oneOf(Destinations)
-    resolve(caller, id, refund, destination)
+    resolveAt(caller, atPayer, atNonce, expectedId, refund, destination)
   }
   action stepReclaim = {
     nondet caller = oneOf(Callers)
@@ -140,7 +174,7 @@ module solana_submission_deposits {
       r.state == "kept" implies (r.dest == "kept-associated" and r.rentTo == r.payer),
       r.state == "refunded" implies (r.dest == "payer-associated" and r.rentTo == r.payer),
       r.state == "reclaimed" implies (Set("payer-associated", "payer-other").contains(r.dest) and r.rentTo == r.payer),
-      recorded(id) implies (r.to == Kept and r.payer > 0),
+      recorded(id) implies (r.to == Kept and r.payer > 0 and r.nonce > 0),
       r.state == "reclaimed" implies s.tick >= r.at + Delay }
   }
   def holds(id: int): int = if (open(id)) 1 else 0
@@ -151,8 +185,12 @@ module solana_submission_deposits {
     paidRight(1), paidRight(2),
     // The vault holds exactly the open deposits, whose records are the only ones that exist.
     s.held == holds(1) + holds(2),
-    // Ids count up from 1 with no gap.
-    recorded(2) implies recorded(1), s.count == (if (recorded(2)) 2 else if (recorded(1)) 1 else 0) }
+    // Ids count up from 1 with no gap, in landing order.
+    recorded(2) implies recorded(1), s.count == (if (recorded(2)) 2 else if (recorded(1)) 1 else 0),
+    recorded(2) implies s.d.get(2).at >= s.d.get(1).at,
+    // Two open records never share an address.
+    (open(1) and open(2)) implies
+      (s.d.get(1).payer != s.d.get(2).payer or s.d.get(1).nonce != s.d.get(2).nonce) }
 
   run ready = init.then(initialize(true, 1, 2, true))
   run oneOpen = ready.then(deposit(3, 4, 1))
@@ -180,8 +218,41 @@ module solana_submission_deposits {
     .then(resolve(2, 1, false, "kept-associated").fail())
   run ownerCannotSettleTest = oneOpen.then(resolve(1, 1, true, "payer-associated").fail())
   run payerCannotSettleTest = oneOpen.then(resolve(3, 1, true, "payer-associated").fail())
-  run skippedIdRefusedTest = ready.then(deposit(3, 4, 2).fail())
-  run usedIdRefusedTest = oneOpen.then(deposit(1, 4, 1).fail())
+  // The id is the program's, not the payer's: the first deposit is 1 whatever its nonce.
+  run idIsAssignedInLandingOrderTest = ready.then(deposit(3, 4, 2))
+    .expect(s.d.get(1).state == "open" and s.d.get(1).nonce == 2 and s.count == 1 and invariant)
+  // Two payers build against the same state; both land, in either order.
+  run twoPayersBuiltOnOneStateBothLandTest = ready.then(deposit(3, 4, 1)).then(deposit(1, 4, 1))
+    .expect(s.d.get(1).payer == 3 and s.d.get(2).payer == 1 and s.held == 2 and invariant)
+  run twoPayersBuiltOnOneStateBothLandReversedTest = ready.then(deposit(1, 4, 1)).then(deposit(3, 4, 1))
+    .expect(s.d.get(1).payer == 1 and s.d.get(2).payer == 3 and s.held == 2 and invariant)
+  // A deposit that lands first does not invalidate a signed one: the same call, built
+  // before, is still accepted after, and only its id differs.
+  run depositInBetweenDoesNotInvalidateTest = ready.then(deposit(2, 4, 2)).then(deposit(3, 4, 1))
+    .expect(s.d.get(2).payer == 3 and s.d.get(2).nonce == 1 and invariant)
+  run reusedNonceRefusedWhileOpenTest = oneOpen.then(deposit(3, 4, 1).fail())
+  run sameNonceOfAnotherPayerIsFreeTest = oneOpen.then(deposit(1, 4, 1))
+    .expect(s.d.get(2).payer == 1 and s.d.get(2).nonce == 1 and invariant)
+  run nonceIsFreeAgainOnceSettledTest = oneOpen.then(resolve(2, 1, true, "payer-associated")).then(deposit(3, 4, 1))
+    .expect(s.d.get(1).state == "refunded" and s.d.get(2).state == "open" and s.d.get(2).nonce == 1 and invariant)
+  // A resolve built for deposit 1 never settles a later deposit at the same address,
+  // whichever way it points. Here deposit 1 ended by a refund; the bounds (deposits at
+  // ticks 0..1, reclaim from tick 2) do not reach a reuse after a reclaim, which the
+  // lifecycle suite covers on the real program.
+  run reused = oneOpen.then(resolve(2, 1, true, "payer-associated")).then(deposit(3, 4, 1))
+  run staleKeptResolveIsRefusedTest = reused.then(resolve(2, 1, false, "kept-associated").fail())
+  run staleRefundResolveIsRefusedTest = reused.then(resolve(2, 1, true, "payer-associated").fail())
+  run staleResolveByAddressIsRefusedTest = reused.then(resolveAt(2, 3, 1, 1, false, "kept-associated").fail())
+  run newerDepositSettlesUnderItsOwnIdTest = reused.then(resolveAt(2, 3, 1, 2, false, "kept-associated"))
+    .expect(s.d.get(1).state == "refunded" and s.d.get(2).state == "kept" and s.held == 0 and invariant)
+  run wrongIdAtAnOpenAddressIsRefusedTest = oneOpen.then(deposit(1, 4, 1))
+    .then(resolveAt(2, 3, 1, 2, true, "payer-associated").fail())
+  run freeAddressCannotBeResolvedTest = ready.then(resolveAt(2, 3, 1, 1, true, "payer-associated").fail())
+  // Nobody creates a record at an address derived from another payer's key or nonce.
+  run anotherPayersAddressRefusedTest = ready.then(depositAt(1, 4, 1, 3, 1).fail())
+  run anotherNoncesAddressRefusedTest = ready.then(depositAt(3, 4, 1, 3, 2).fail())
+  run squatterCannotBlockAPayerTest = ready.then(deposit(1, 4, 1)).then(deposit(3, 4, 1))
+    .expect(s.d.get(2).payer == 3 and invariant)
   run blockedPayerAccountBlocksTheRefundTest = oneOpen.then(payerAccountBecomes("blocked"))
     .then(resolve(2, 1, true, "payer-associated").fail())
   run blockedPayerAccountStillAllowsKeptTest = oneOpen.then(payerAccountBecomes("blocked"))

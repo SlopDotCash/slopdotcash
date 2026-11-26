@@ -29,22 +29,26 @@ import {
   chainTime,
   context,
   deposit,
+  depositAt,
   depositCall,
   events,
   exists,
   fixtureKey,
+  freshNonce,
   fund,
   idl,
   initialize,
   lamports,
+  landed,
   newMint,
-  nextId,
+  openDeposits,
   openVault,
   pauseDeposits,
   readConfig,
   readDeposit,
   readLedger,
   reclaim,
+  reclaimCall,
   refuses,
   resolve,
   resolveCall,
@@ -54,6 +58,7 @@ import {
   TOKEN_PROGRAM_ID,
   tokens,
   transferOwnership,
+  u64,
   waitForChainTime,
 } from "./submission-deposits.mjs";
 
@@ -205,16 +210,27 @@ test("a deposit records every field, moves exactly the amount and emits", async 
   );
   const sol = await lamports(alice.publicKey);
   const before = await chainTime();
-  const { id, signature } = await deposit({
+  const nonce = 0xfeed_0000_0000_0001n;
+  const { id, signature, address } = await deposit({
     from: alice,
     mint,
     amount: FEE,
     keptTo: kept,
     item,
+    nonce,
   });
   assert.equal(id, 1n);
+  // The record sits at the address of (payer, nonce), whatever the count was.
+  assert.equal(
+    address.toBase58(),
+    PublicKey.findProgramAddressSync(
+      [Buffer.from("deposit"), alice.publicKey.toBuffer(), u64(nonce)],
+      context.program.programId,
+    )[0].toBase58(),
+  );
   const record = await readDeposit(id);
   assert.equal(record.id.toString(), "1");
+  assert.equal(record.nonce.toString(), nonce.toString());
   assert.equal(record.payer.toBase58(), alice.publicKey.toBase58());
   assert.equal(record.mint.toBase58(), mint.toBase58());
   assert.equal(record.keptTo.toBase58(), kept.toBase58());
@@ -226,23 +242,28 @@ test("a deposit records every field, moves exactly the amount and emits", async 
   assert.equal((await readLedger(mint)).openTotal.toString(), FEE.toString());
   assert.equal(await balance(addresses.vault(mint)), FEE);
   assert.equal(await balance(source), 9n * FEE);
-  // The payer paid the rent of the 161-byte record and nothing else.
-  const info = await connection.getAccountInfo(addresses.deposit(id));
-  assert.equal(info.data.length, 161);
+  // The payer paid the rent of the 169-byte record and nothing else.
+  const info = await connection.getAccountInfo(depositAt(id));
+  assert.equal(info.data.length, 169);
   assert.equal(info.owner.toBase58(), context.program.programId.toBase58());
   assert.equal(
     info.lamports,
-    await connection.getMinimumBalanceForRentExemption(161),
+    await connection.getMinimumBalanceForRentExemption(169),
   );
   assert.equal(sol - (await lamports(alice.publicKey)), info.lamports);
   const [deposited] = await events(signature);
   assert.equal(deposited.name, "deposited");
   assert.equal(deposited.data.id.toString(), "1");
+  assert.equal(deposited.data.nonce.toString(), nonce.toString());
   assert.equal(deposited.data.amount.toString(), FEE.toString());
   assert.equal(deposited.data.keptTo.toBase58(), kept.toBase58());
   assert.deepEqual(Buffer.from(deposited.data.item), item);
-  // An id never used has no account.
+  // An id never used has no account, and a reader's scan finds exactly this deposit.
   assert.equal(await readDeposit(2n), null);
+  const scanned = await openDeposits();
+  assert.equal(scanned.length, 1);
+  assert.equal(scanned[0].address.toBase58(), address.toBase58());
+  assert.equal(scanned[0].record.id.toString(), "1");
 });
 
 test("a deposit refuses a zero amount and an unusable kept wallet", async () => {
@@ -259,7 +280,7 @@ test("a deposit refuses a zero amount and an unusable kept wallet", async () => 
   assert.equal(await snapshot(mint, [ata(alice.publicKey, mint)]), before);
 });
 
-test("a deposit refuses a wrong source, mint, vault or id, and a balance that is short", async () => {
+test("a deposit refuses a wrong source, mint, vault or record address, and a balance that is short", async () => {
   const good = { from: alice, mint, amount: FEE, keptTo: kept };
   const before = await snapshot(mint, [ata(alice.publicKey, mint)]);
   // More than the payer holds: the token program refuses, nothing is recorded.
@@ -294,10 +315,32 @@ test("a deposit refuses a wrong source, mint, vault or id, and a balance that is
     deposit({ ...good, accounts: { vault: ata(alice.publicKey, mint) } }),
     /ConstraintSeeds/,
   );
-  // An id that is not the next one: already used, or skipped ahead.
-  const next = await nextId();
-  await refuses(deposit({ ...good, id: next - 1n }), /ConstraintSeeds/);
-  await refuses(deposit({ ...good, id: next + 1n }), /ConstraintSeeds/);
+  // A record address that is not the one of (signing payer, nonce argument): derived from
+  // somebody else's key, from another nonce, or from the count as the first design did.
+  const nonce = freshNonce();
+  for (const wrong of [
+    addresses.deposit(bob.publicKey, nonce),
+    addresses.deposit(alice.publicKey, nonce + 1n),
+    PublicKey.findProgramAddressSync(
+      [Buffer.from("deposit"), u64(2n)],
+      context.program.programId,
+    )[0],
+  ])
+    await refuses(
+      deposit({ ...good, nonce, accounts: { deposit: wrong } }),
+      /ConstraintSeeds/,
+    );
+  // Bob cannot take alice's address either: he signs, so the program derives his own.
+  await refuses(
+    deposit({
+      ...good,
+      from: bob,
+      nonce,
+      accounts: { deposit: addresses.deposit(alice.publicKey, nonce) },
+    }),
+    /ConstraintSeeds/,
+  );
+  assert.equal(await exists(addresses.deposit(alice.publicKey, nonce)), false);
   // A mint whose vault nobody opened.
   const unopened = await newMint(6);
   await tokens(unopened, alice.publicKey, FEE);
@@ -329,7 +372,7 @@ test("a deposit refuses a wrong source, mint, vault or id, and a balance that is
   assert.equal(await snapshot(mint, [ata(alice.publicKey, mint)]), before);
 });
 
-test("ids count up without a gap, an item may be paid more than once, and a race has one winner", async () => {
+test("ids count up in landing order and an item may be paid more than once", async () => {
   const good = { from: alice, mint, amount: FEE, keptTo: kept };
   const second = await deposit(good);
   const third = await deposit(good);
@@ -339,25 +382,305 @@ test("ids count up without a gap, an item may be paid more than once, and a race
     Buffer.from((await readDeposit(2n)).item),
     Buffer.from((await readDeposit(3n)).item),
   );
-  await tokens(mint, bob.publicKey, 4n * FEE);
-  await tokens(mint, stranger.publicKey, 4n * FEE);
-  // Two payers build against the same count. Exactly one deposit takes id 4.
-  const id = await nextId();
-  const results = await Promise.allSettled([
-    (await depositCall({ ...good, from: stranger, id })).rpc(),
-    (await depositCall({ ...good, from: bob, id })).rpc(),
-  ]);
-  leftOpen.push(3n, id);
-  assert.equal(
-    results.filter((entry) => entry.status === "fulfilled").length,
-    1,
+  leftOpen.push(3n);
+  assert.equal((await readConfig()).depositCount.toString(), "3");
+});
+
+test("two payers who build against the same state both land", async () => {
+  await tokens(mint, bob.publicKey, 6n * FEE);
+  await tokens(mint, stranger.publicKey, 6n * FEE);
+  const good = { mint, amount: FEE, keptTo: kept };
+  const count = BigInt((await readConfig()).depositCount.toString());
+  const open = BigInt((await readLedger(mint)).openTotal.toString());
+  // Both transactions are built and signed before either is sent.
+  const { blockhash } = await connection.getLatestBlockhash();
+  const built = [];
+  for (const from of [stranger, bob]) {
+    const nonce = freshNonce();
+    const transaction = await (
+      await depositCall({ ...good, from, nonce })
+    ).transaction();
+    transaction.feePayer = from.publicKey;
+    transaction.recentBlockhash = blockhash;
+    transaction.sign(from);
+    built.push({ from, nonce, raw: transaction.serialize() });
+  }
+  const signatures = await Promise.all(
+    built.map(({ raw }) => connection.sendRawTransaction(raw)),
   );
-  assert.equal((await readConfig()).depositCount.toString(), id.toString());
+  const latest = await connection.getLatestBlockhash();
+  const ids = [];
+  for (const [index, signature] of signatures.entries()) {
+    const result = await connection.confirmTransaction(
+      { signature, ...latest },
+      "confirmed",
+    );
+    assert.equal(result.value.err, null);
+    ids.push((await landed({ ...built[index], signature })).id);
+  }
+  // Each took the next number in the order it landed; neither failed.
+  assert.deepEqual(
+    ids.toSorted((left, right) => Number(left - right)),
+    [count + 1n, count + 2n],
+  );
+  assert.equal(
+    (await readConfig()).depositCount.toString(),
+    (count + 2n).toString(),
+  );
   assert.equal(
     (await readLedger(mint)).openTotal.toString(),
-    (4n * FEE).toString(),
+    (open + 2n * FEE).toString(),
   );
-  assert.equal(await balance(addresses.vault(mint)), 4n * FEE);
+  for (const [index, id] of ids.entries()) {
+    const record = await readDeposit(id);
+    assert.equal(
+      record.payer.toBase58(),
+      built[index].from.publicKey.toBase58(),
+    );
+    assert.equal(record.nonce.toString(), built[index].nonce.toString());
+  }
+  leftOpen.push(...ids);
+});
+
+test("deposits that land in between do not invalidate a signed deposit", async () => {
+  const good = { mint, amount: FEE, keptTo: kept };
+  // Alice signs now.
+  const nonce = freshNonce();
+  const transaction = await (
+    await depositCall({ ...good, from: alice, nonce })
+  ).transaction();
+  transaction.feePayer = alice.publicKey;
+  transaction.recentBlockhash = (
+    await connection.getLatestBlockhash()
+  ).blockhash;
+  transaction.sign(alice);
+  const before = BigInt((await readConfig()).depositCount.toString());
+  // A third party lands deposits first, some of a throwaway mint, as a griefer would.
+  const throwaway = await newMint(0);
+  await openVault(throwaway);
+  await tokens(throwaway, stranger.publicKey, 3n);
+  const between = [
+    await deposit({ ...good, from: stranger }),
+    await deposit({ ...good, from: stranger, mint: throwaway, amount: 1n }),
+    await deposit({ ...good, from: stranger, mint: throwaway, amount: 1n }),
+  ];
+  assert.deepEqual(
+    between.map(({ id }) => id),
+    [before + 1n, before + 2n, before + 3n],
+  );
+  // Alice's transaction, signed against the earlier count, still lands.
+  const signature = await connection.sendRawTransaction(
+    transaction.serialize(),
+  );
+  const latest = await connection.getLatestBlockhash();
+  const result = await connection.confirmTransaction(
+    { signature, ...latest },
+    "confirmed",
+  );
+  assert.equal(result.value.err, null);
+  const mine = await landed({ from: alice, nonce, signature });
+  assert.equal(mine.id, before + 4n);
+  assert.equal(
+    (await readDeposit(mine.id)).payer.toBase58(),
+    alice.publicKey.toBase58(),
+  );
+  for (const { id } of between.slice(1))
+    await resolve({ resolver, id, refund: true });
+  leftOpen.push(between[0].id, mine.id);
+});
+
+test("a nonce is refused while its deposit is open, and nobody can occupy another payer's address", async () => {
+  const good = { from: bob, mint, amount: FEE, keptTo: kept };
+  const nonce = freshNonce();
+  const address = addresses.deposit(bob.publicKey, nonce);
+  // A stranger sends lamports to the address bob is about to use. It stays a system
+  // account nobody but the program can assign, and bob's deposit lands all the same.
+  await fund({ publicKey: address }, 3_000_000);
+  const first = await deposit({ ...good, nonce });
+  assert.equal(first.address.toBase58(), address.toBase58());
+  const record = await readDeposit(first.id);
+  assert.equal(record.payer.toBase58(), bob.publicKey.toBase58());
+  // The same payer and nonce again: the record exists, so nothing is taken or counted.
+  const before = await snapshot(mint, [ata(bob.publicKey, mint)]);
+  await refuses(deposit({ ...good, nonce }), /already in use/);
+  await refuses(
+    deposit({ ...good, nonce, amount: 2n * FEE, item: Buffer.alloc(32, 1) }),
+    /already in use/,
+  );
+  assert.equal(await snapshot(mint, [ata(bob.publicKey, mint)]), before);
+  // The same nonce under another payer is another address, and is free.
+  const other = await deposit({ ...good, from: stranger, nonce });
+  assert.notEqual(other.address.toBase58(), address.toBase58());
+  // Once settled the record is gone and its rent, with the stranger's lamports, is bob's.
+  const sol = await lamports(bob.publicKey);
+  const held = await lamports(address);
+  assert.ok(held >= 3_000_000);
+  await resolve({ resolver, id: first.id, refund: true });
+  assert.equal(await lamports(bob.publicKey), sol + held);
+  assert.equal(await exists(address), false);
+  // The address is free again. A later deposit there is a new deposit with a new id, and
+  // the old id stays settled: a reader goes by the stored id, never by the address alone.
+  const again = await deposit({ ...good, nonce });
+  assert.equal(again.address.toBase58(), address.toBase58());
+  assert.ok(again.id > other.id);
+  assert.equal(await readDeposit(first.id), null);
+  assert.equal(
+    (await openDeposits({ id: again.id }))[0].address.toBase58(),
+    address.toBase58(),
+  );
+  assert.deepEqual(await openDeposits({ id: first.id }), []);
+  leftOpen.push(other.id, again.id);
+});
+
+test("a nonce used twice in one transaction is refused whole", async () => {
+  const good = { from: bob, mint, amount: FEE, keptTo: kept };
+  const nonce = freshNonce();
+  const before = await snapshot(mint, [ata(bob.publicKey, mint)]);
+  const twice = new Transaction();
+  for (const item of [Buffer.alloc(32, 4), Buffer.alloc(32, 5)])
+    twice.add(
+      await (await depositCall({ ...good, nonce, item })).instruction(),
+    );
+  await refuses(provider.sendAndConfirm(twice, [bob]), /already in use/);
+  assert.equal(await snapshot(mint, [ata(bob.publicKey, mint)]), before);
+  assert.equal(await exists(addresses.deposit(bob.publicKey, nonce)), false);
+  // Two nonces in one transaction are two deposits.
+  const other = freshNonce();
+  const both = new Transaction();
+  for (const each of [nonce, other])
+    both.add(await (await depositCall({ ...good, nonce: each })).instruction());
+  const signature = await provider.sendAndConfirm(both, [bob]);
+  const made = (await events(signature)).filter(
+    (entry) => entry.name === "deposited",
+  );
+  assert.equal(made.length, 2);
+  assert.equal(
+    BigInt(made[1].data.id.toString()),
+    BigInt(made[0].data.id.toString()) + 1n,
+  );
+  for (const [index, each] of [nonce, other].entries()) {
+    const [found] = await openDeposits({ id: made[index].data.id.toString() });
+    assert.equal(
+      found.address.toBase58(),
+      addresses.deposit(bob.publicKey, each).toBase58(),
+    );
+    await context.program.methods
+      .resolve(true, made[index].data.id)
+      .accountsStrict({
+        resolver: resolver.publicKey,
+        config: addresses.config(),
+        deposit: found.address,
+        ledger: addresses.ledger(mint),
+        mint,
+        vault: addresses.vault(mint),
+        destination: ata(bob.publicKey, mint),
+        payer: bob.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([resolver])
+      .rpc();
+  }
+  // Both are settled; only the count moved, by the two deposits that landed.
+  const start = JSON.parse(before);
+  assert.equal(
+    await snapshot(mint, [ata(bob.publicKey, mint)]),
+    JSON.stringify({ ...start, count: (BigInt(start.count) + 2n).toString() }),
+  );
+});
+
+test("a resolve names its deposit: reclaim and a new deposit at the same address in one transaction, and the old resolve is refused", async () => {
+  const lena = await fund(Keypair.generate());
+  const lenaAccount = await tokens(mint, lena.publicKey, 5n * FEE);
+  const good = { from: lena, mint, amount: FEE, keptTo: kept };
+  const nonce = freshNonce();
+  const first = await deposit({ ...good, nonce });
+  const second = await deposit(good);
+  const record = await readDeposit(first.id);
+  // The resolver builds and signs a kept resolve for the first deposit now.
+  const resolveAt = (address, id, refund) =>
+    context.program.methods
+      .resolve(refund, new BN(id.toString()))
+      .accountsStrict({
+        resolver: resolver.publicKey,
+        config: addresses.config(),
+        deposit: address,
+        ledger: addresses.ledger(mint),
+        mint,
+        vault: addresses.vault(mint),
+        destination: refund ? lenaAccount : keptAccount,
+        payer: lena.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([resolver]);
+  const stale = await resolveAt(first.address, first.id, false).transaction();
+  // A resolve that names another id than the one stored at the address is refused.
+  const before = await snapshot(mint, [lenaAccount, keptAccount]);
+  for (const refund of [true, false]) {
+    await refuses(
+      resolveAt(first.address, second.id, refund).rpc(),
+      /WrongDeposit/,
+    );
+    await refuses(
+      resolveAt(second.address, first.id, refund).rpc(),
+      /WrongDeposit/,
+    );
+    await refuses(resolveAt(first.address, 0n, refund).rpc(), /WrongDeposit/);
+  }
+  assert.equal(await snapshot(mint, [lenaAccount, keptAccount]), before);
+
+  // After the delay the payer reclaims the first deposit and, in the same transaction,
+  // makes a new one at the same payer and nonce.
+  await waitForChainTime(record.depositedAt.toNumber() + SHORT_DELAY);
+  const count = BigInt((await readConfig()).depositCount.toString());
+  const sol = await lamports(lena.publicKey);
+  const swap = new Transaction()
+    .add(await (await reclaimCall({ from: lena, id: first.id })).instruction())
+    .add(
+      await (
+        await depositCall({ ...good, nonce, item: Buffer.alloc(32, 6) })
+      ).instruction(),
+    );
+  swap.feePayer = payer.publicKey;
+  const signature = await provider.sendAndConfirm(swap, [lena]);
+  const again = await landed({ from: lena, nonce, signature });
+  // A new id at the old address; the old id is settled; nothing was paid twice.
+  assert.equal(again.id, count + 1n);
+  assert.equal(again.address.toBase58(), first.address.toBase58());
+  assert.deepEqual(
+    (await events(signature)).map((entry) => entry.name),
+    ["reclaimed", "deposited"],
+  );
+  assert.deepEqual(await openDeposits({ id: first.id }), []);
+  const replaced = await readDeposit(again.id);
+  assert.equal(replaced.nonce.toString(), nonce.toString());
+  assert.deepEqual(Buffer.from(replaced.item), Buffer.alloc(32, 6));
+  assert.ok(replaced.depositedAt.toNumber() > record.depositedAt.toNumber());
+  // Tokens: one unit came back and one went in. Rent: the old record's returned and the
+  // new record's was paid, the same amount.
+  assert.equal(
+    await snapshot(mint, [lenaAccount, keptAccount]),
+    JSON.stringify({ ...JSON.parse(before), count: again.id.toString() }),
+  );
+  assert.equal(await balance(lenaAccount), 3n * FEE);
+  assert.equal(await lamports(lena.publicKey), sol);
+
+  // The resolve signed for the first deposit now meets the newer one at its address. It is
+  // refused and moves nothing: the new deposit is neither kept nor refunded by it.
+  const held = await snapshot(mint, [lenaAccount, keptAccount]);
+  stale.feePayer = payer.publicKey;
+  await refuses(provider.sendAndConfirm(stale, [resolver]), /WrongDeposit/);
+  await refuses(resolveAt(first.address, first.id, true).rpc(), /WrongDeposit/);
+  assert.equal(await snapshot(mint, [lenaAccount, keptAccount]), held);
+  assert.equal(
+    (await readDeposit(again.id)).id.toString(),
+    again.id.toString(),
+  );
+  // The newer deposit has not reached its own delay, and settles under its own id.
+  await refuses(reclaim({ from: lena, id: again.id }), /ReclaimTooEarly/);
+  await resolveAt(first.address, again.id, true).rpc();
+  await resolve({ resolver, id: second.id, refund: true });
+  assert.equal(await balance(lenaAccount), 5n * FEE);
+  assert.deepEqual(await openDeposits({ id: again.id }), []);
 });
 
 test("only the resolver resolves", async () => {
@@ -430,19 +753,21 @@ test("a refund goes only to the payer's associated token account", async () => {
   );
   assert.equal(await snapshot(mint, [aliceAccount, keptAccount]), before);
 
-  const rent = await lamports(addresses.deposit(id));
+  const rent = await lamports(depositAt(id));
   const sol = await lamports(alice.publicKey);
   const resolverSol = await lamports(resolver.publicKey);
+  const held = await balance(aliceAccount);
+  const vaulted = await balance(addresses.vault(mint));
   const signature = await resolve(good);
   assert.equal(await readDeposit(id), null);
-  assert.equal(await exists(addresses.deposit(id)), false);
-  assert.equal(await balance(aliceAccount), 8n * FEE);
+  assert.equal(await exists(depositAt(id)), false);
+  assert.equal(await balance(aliceAccount), held + FEE);
   assert.equal(await balance(keptAccount), 0n);
   assert.equal(await balance(resolverAccount), 0n);
-  assert.equal(await balance(addresses.vault(mint)), 3n * FEE);
+  assert.equal(await balance(addresses.vault(mint)), vaulted - FEE);
   assert.equal(
     (await readLedger(mint)).openTotal.toString(),
-    (3n * FEE).toString(),
+    (vaulted - FEE).toString(),
   );
   // The record's rent returned to the payer, not to the resolver.
   assert.equal((await lamports(alice.publicKey)) - sol, rent);
@@ -487,17 +812,19 @@ test("a kept deposit goes only to the kept wallet's associated token account", a
   );
   assert.equal(await snapshot(mint, [aliceAccount, keptAccount]), before);
 
-  const rent = await lamports(addresses.deposit(id));
+  const rent = await lamports(depositAt(id));
   const sol = await lamports(alice.publicKey);
   const keptSol = await lamports(kept);
+  const held = await balance(aliceAccount);
+  const vaulted = await balance(addresses.vault(mint));
   const signature = await resolve(good);
   assert.equal(await readDeposit(id), null);
   assert.equal(await balance(keptAccount), FEE);
-  assert.equal(await balance(aliceAccount), 8n * FEE);
-  assert.equal(await balance(addresses.vault(mint)), 2n * FEE);
+  assert.equal(await balance(aliceAccount), held);
+  assert.equal(await balance(addresses.vault(mint)), vaulted - FEE);
   assert.equal(
     (await readLedger(mint)).openTotal.toString(),
-    (2n * FEE).toString(),
+    (vaulted - FEE).toString(),
   );
   // Even when the fee is kept, the rent of the record goes back to the payer.
   assert.equal((await lamports(alice.publicKey)) - sol, rent);
@@ -516,11 +843,11 @@ test("a deposit settles once", async () => {
     for (const refund of [true, false])
       await refuses(
         context.program.methods
-          .resolve(refund)
+          .resolve(refund, new BN(id.toString()))
           .accountsStrict({
             resolver: resolver.publicKey,
             config: addresses.config(),
-            deposit: addresses.deposit(id),
+            deposit: depositAt(id),
             ledger: addresses.ledger(mint),
             mint,
             vault: addresses.vault(mint),
@@ -538,7 +865,7 @@ test("a deposit settles once", async () => {
         .accountsStrict({
           payer: alice.publicKey,
           config: addresses.config(),
-          deposit: addresses.deposit(id),
+          deposit: depositAt(id),
           ledger: addresses.ledger(mint),
           mint,
           vault: addresses.vault(mint),
@@ -551,14 +878,14 @@ test("a deposit settles once", async () => {
     );
   }
   // Lamports sent to a closed record's address do not bring the deposit back.
-  await fund({ publicKey: addresses.deposit(1n) }, 5_000_000);
+  await fund({ publicKey: depositAt(1n) }, 5_000_000);
   await refuses(
     context.program.methods
-      .resolve(true)
+      .resolve(true, new BN(1))
       .accountsStrict({
         resolver: resolver.publicKey,
         config: addresses.config(),
-        deposit: addresses.deposit(1n),
+        deposit: depositAt(1n),
         ledger: addresses.ledger(mint),
         mint,
         vault: addresses.vault(mint),
@@ -765,7 +1092,7 @@ test("reclaim: only the payer, only after the delay, only while open, only to th
     keptTo: kept,
   });
   await refuses(reclaim({ from: frank, id: second.id }), /ReclaimTooEarly/);
-  const rent = await lamports(addresses.deposit(first.id));
+  const rent = await lamports(depositAt(first.id));
   const sol = await lamports(frank.publicKey);
   const signature = await reclaim({ from: frank, id: first.id });
   assert.equal(await readDeposit(first.id), null);
@@ -781,7 +1108,7 @@ test("reclaim: only the payer, only after the delay, only while open, only to th
       .accountsStrict({
         payer: frank.publicKey,
         config: addresses.config(),
-        deposit: addresses.deposit(first.id),
+        deposit: depositAt(first.id),
         ledger: addresses.ledger(mint),
         mint,
         vault: addresses.vault(mint),
@@ -1055,7 +1382,7 @@ test("the delay, the count and every settled deposit are as the suite left them"
   // Every deposit of this suite is settled, so the vault holds only the stray tokens.
   assert.equal((await readLedger(mint)).openTotal.toNumber(), 0);
   assert.equal(await balance(addresses.vault(mint)), FEE);
-  const count = BigInt(config.depositCount.toString());
-  for (let id = 1n; id <= count; id++)
-    assert.equal(await readDeposit(id), null);
+  // No Deposit account of any payer is left, whatever its address.
+  assert.deepEqual(await openDeposits(), []);
+  assert.ok(BigInt(config.depositCount.toString()) >= BigInt(leftOpen.length));
 });

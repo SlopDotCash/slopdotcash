@@ -29,6 +29,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -85,6 +86,15 @@ const AUTHORIZATION_RECEIPT = ".slop-authorization.json";
 const TRACE_AUTHORITY = "https://api.slop.cash";
 const IDENTITY_AUTHORITY = "https://identity.slop.cash";
 const TRACE_PRIVACY_CONTRACT = "https://slop.cash/protocol/private-trace-v1.md";
+const TRACE_TERMS_V1 = "private-trace-v1";
+const TRACE_TERMS_V3 = "private-trace-v3";
+// The skill uploads under v1 (trace) or v3 (session); each has its own copy.
+const TRACE_TERMS_VERSIONS = new Set([TRACE_TERMS_V1, TRACE_TERMS_V3]);
+const SESSION_PRIVACY_CONTRACT =
+  "https://slop.cash/protocol/private-trace-v3.md";
+const SESSION_SETTINGS_FILE = "session-upload.json";
+const LICENSING_LINE =
+  "Sessions you upload can be licensed for pay, half of each sale to you. It is off until you turn it on: https://slop.cash/account#trace-licensing";
 const PRIVATE_REQUEST_INTAKE_STATUS = `${TRACE_AUTHORITY}/api/v1/private-request-intake`;
 // The Slop repository is the one trust root for the generic skill template
 // (PRD section 4, SKL-04). elizaOS/army and elizaOS/slopdotcash are earlier
@@ -142,6 +152,11 @@ Commands:
   trace    Permanently upload this run's private trace and finalize it
   opened   After the pull request exists, sign in with GitHub and record its
            pull_request_opened event; uploads no trace, usage, or source
+  session  After the pull request exists, clean this run's agent session on
+           this machine, show it, sign in once with GitHub, upload it under
+           private-trace-v3 and record pull_request_opened on the same run
+  trace-off Stop session uploads on this machine
+  trace-on  Allow session uploads on this machine again
   finish   Close a measured run and print its device-signed GitHub footer
 
 Common options:
@@ -157,6 +172,12 @@ Common options:
 Opened requires --pull-request <url>, --pull-request-node-id <id> (from
 gh pr view <url> --json id --jq .id), --client-version, and the same
 --provider, --model, and --client as the footer.
+
+Session requires --run, --pull-request, --pull-request-node-id,
+--client-version, --provider, --model and --client. --log <path> names a log
+the agent wrote itself, used when no client session file holds the run.
+--skip uploads nothing and makes no network request. Any failure prints one
+line; the pull request stands either way.
 
 Start and finish also require --lane <public-lane>. Finish requires --run
 <run-id>. Optional evidence uses --trajectory <path>, --trace-server-run <id>,
@@ -1561,7 +1582,37 @@ function privateTraceFile(path) {
   };
 }
 
+function redactionCounts(counts) {
+  const parts = Object.entries(counts ?? {})
+    .filter(([, n]) => Number.isSafeInteger(n) && n > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, n]) => `${n} ${kind.toLowerCase().replaceAll("_", " ")}`);
+  return parts.length === 0 ? "nothing replaced" : parts.join(", ");
+}
+
 export function disclosePrivateTrace(trace) {
+  if (trace.termsVersion === TRACE_TERMS_V3) {
+    process.stderr.write(
+      `${[
+        "Session pre-upload disclosure (authorization has not started):",
+        `This session will be uploaded under ${TRACE_TERMS_V3}: ${SESSION_PRIVACY_CONTRACT}`,
+        ...(trace.alreadyUploaded === true
+          ? [
+              "This file was already uploaded for this run; this rerun sends no new bytes and only records the pull request and finalizes.",
+            ]
+          : []),
+        `Inspect exact final bytes: ${trace.absolutePath}`,
+        `Size: ${trace.sizeBytes} bytes`,
+        `Content-Type: ${trace.contentType}`,
+        `SHA-256: ${trace.sha256}`,
+        `Cleaned on this machine by ${trace.cleaner}: ${redactionCounts(trace.counts)}. Cleaning is pattern-based and may miss a secret; read the file.`,
+        ...(typeof trace.projectCode === "string" ? [trace.projectCode] : []),
+        `To skip this run: rerun with --skip. To stop on this machine: node ${skillDirectory}/scripts/run-receipt.mjs trace-off`,
+        "Do not authorize unless you accept the disclosed bytes and permanent-retention contract.",
+      ].join("\n")}\n`,
+    );
+    return;
+  }
   process.stderr.write(
     `${[
       "Private trace pre-upload disclosure (authorization has not started):",
@@ -1654,7 +1705,7 @@ async function authenticatedServerRun(
   ) {
     fail("trace run creation returned mismatched identity");
   }
-  return { authorization, jsonHeaders, created };
+  return { authorization, jsonHeaders, created, token: auth.token };
 }
 
 export async function uploadPrivateTrace(
@@ -1665,12 +1716,33 @@ export async function uploadPrivateTrace(
     fetchImpl = globalThis.fetch,
     assertionProvider = slopIdentityAssertion,
     disclosure = disclosePrivateTrace,
+    termsVersion = TRACE_TERMS_V1,
+    beforeFinalize,
+    afterIntent,
+    attached,
+    confirmAttached = false,
   } = {},
 ) {
   declaredIdentifier(clientVersion, "--client-version", 128);
+  if (!TRACE_TERMS_VERSIONS.has(termsVersion))
+    fail("private trace terms version is invalid");
+  for (const hook of [beforeFinalize, afterIntent])
+    if (hook !== undefined && typeof hook !== "function")
+      fail("private trace upload hook is invalid");
   if (typeof fetchImpl !== "function")
     fail("private trace transport is unavailable");
-  const trace = privateTraceFile(trajectoryPath);
+  // attached describes an object an earlier attempt already sent whose local
+  // file is gone: it can be confirmed and finalized, never uploaded.
+  const trace =
+    trajectoryPath === null && attached !== undefined
+      ? {
+          absolutePath: attached.absolutePath,
+          sha256: attached.sha256,
+          sizeBytes: attached.sizeBytes,
+          contentType: attached.contentType,
+          contents: null,
+        }
+      : privateTraceFile(trajectoryPath);
   if (typeof disclosure !== "function")
     fail("private trace disclosure is unavailable");
   disclosure({
@@ -1678,8 +1750,13 @@ export async function uploadPrivateTrace(
     sha256: trace.sha256,
     sizeBytes: trace.sizeBytes,
     contentType: trace.contentType,
-    privacyContract: TRACE_PRIVACY_CONTRACT,
-    automaticRedaction: "none",
+    termsVersion,
+    privacyContract:
+      termsVersion === TRACE_TERMS_V3
+        ? SESSION_PRIVACY_CONTRACT
+        : TRACE_PRIVACY_CONTRACT,
+    automaticRedaction:
+      termsVersion === TRACE_TERMS_V3 ? "local-cleaner" : "none",
     retention: "permanent",
   });
   const intake = await authoritativePrivateIntake(fetchImpl);
@@ -1688,19 +1765,16 @@ export async function uploadPrivateTrace(
       "private request intake is unavailable; private trace upload is blocked",
     );
   }
-  const { authorization, jsonHeaders, created } = await authenticatedServerRun(
-    state,
-    clientVersion,
-    { fetchImpl, assertionProvider },
-  );
+  const { authorization, jsonHeaders, created, token } =
+    await authenticatedServerRun(state, clientVersion, {
+      fetchImpl,
+      assertionProvider,
+    });
   const serverPath = encodeURIComponent(created.serverRunId);
-  if (created.state === "awaiting_trace") {
-    const intentBody = {
-      sha256: trace.sha256,
-      sizeBytes: trace.sizeBytes,
-      contentType: trace.contentType,
-    };
-    const intent = await jsonRequest(
+  // The same intent, under the same key, also asks the server to confirm it
+  // holds this digest: it refuses a run whose object differs.
+  const postIntent = () =>
+    jsonRequest(
       fetchImpl,
       `${TRACE_AUTHORITY}/api/v1/runs/${serverPath}/trace-intents`,
       {
@@ -1711,7 +1785,12 @@ export async function uploadPrivateTrace(
             `intent:${created.serverRunId}:${trace.sha256}`,
           ),
         },
-        body: JSON.stringify(intentBody),
+        body: JSON.stringify({
+          sha256: trace.sha256,
+          sizeBytes: trace.sizeBytes,
+          contentType: trace.contentType,
+          termsVersion,
+        }),
       },
       [
         "contentType",
@@ -1723,6 +1802,7 @@ export async function uploadPrivateTrace(
       ],
       "trace upload intent",
     );
+  const checkIntent = (intent) => {
     let uploadUrl;
     try {
       uploadUrl = new URL(intent.uploadUrl);
@@ -1741,6 +1821,15 @@ export async function uploadPrivateTrace(
     ) {
       fail("trace upload intent returned mismatched fields");
     }
+    return uploadUrl;
+  };
+  if (created.state === "awaiting_trace") {
+    if (trace.contents === null)
+      fail(
+        "the session file this run showed is missing and Slop does not hold it; nothing was finalized",
+      );
+    const uploadUrl = checkIntent(await postIntent());
+    if (afterIntent !== undefined) afterIntent(trace);
     const uploaded = await jsonRequest(
       fetchImpl,
       uploadUrl.href,
@@ -1774,6 +1863,12 @@ export async function uploadPrivateTrace(
       fail("trace upload returned mismatched evidence");
     }
   }
+  if (created.state === "trace_uploaded" && confirmAttached)
+    checkIntent(await postIntent());
+  // Events are refused once a run is finalized, so anything recorded on this
+  // run happens here, after the object is attached.
+  if (beforeFinalize !== undefined && created.state !== "finalized")
+    await beforeFinalize(created.serverRunId, token);
   const finalized = await jsonRequest(
     fetchImpl,
     `${TRACE_AUTHORITY}/api/v1/runs/${serverPath}/finalize`,
@@ -1857,12 +1952,8 @@ export async function recordPullRequestOpened(
 ) {
   if (typeof fetchImpl !== "function")
     fail("Slop run event transport is unavailable");
-  const githubUrl = projectPullRequestUrl(pullRequest);
-  if (!PULL_REQUEST_NODE_ID_PATTERN.test(pullRequestNodeId ?? "")) {
-    fail(
-      "--pull-request-node-id must be the pull request node ID from gh pr view --json id",
-    );
-  }
+  projectPullRequestUrl(pullRequest);
+  pullRequestNodeIdOf(pullRequestNodeId);
   const state = {
     // One deterministic server run per pull request keeps a retry idempotent.
     runId: `pr_opened_${pullRequestNodeId}`,
@@ -1873,13 +1964,54 @@ export async function recordPullRequestOpened(
     model,
     client,
   };
-  const { jsonHeaders, created } = await authenticatedServerRun(
+  const { created, token } = await authenticatedServerRun(
     state,
     clientVersion,
     { fetchImpl, assertionProvider },
   );
   if (created.state === "finalized") {
     fail("the Slop run for this pull request is finalized and takes no events");
+  }
+  return appendPullRequestOpened(
+    created.serverRunId,
+    token,
+    { pullRequest, pullRequestNodeId, provider, model, client, clientVersion },
+    { fetchImpl, provenance, now },
+  );
+}
+
+function pullRequestNodeIdOf(value) {
+  if (!PULL_REQUEST_NODE_ID_PATTERN.test(value ?? "")) {
+    fail(
+      "--pull-request-node-id must be the pull request node ID from gh pr view --json id",
+    );
+  }
+  return value;
+}
+
+/**
+ * Posts the pull_request_opened event on a server run the caller already
+ * authenticated: the event half of recordPullRequestOpened. The session
+ * command uses it on the measured run before that run is finalized.
+ */
+export async function appendPullRequestOpened(
+  serverRunId,
+  token,
+  { pullRequest, pullRequestNodeId },
+  { fetchImpl = globalThis.fetch, now = canonicalIso } = {},
+) {
+  if (typeof fetchImpl !== "function")
+    fail("Slop run event transport is unavailable");
+  const githubUrl = projectPullRequestUrl(pullRequest);
+  pullRequestNodeIdOf(pullRequestNodeId);
+  if (
+    typeof serverRunId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(serverRunId) ||
+    typeof token !== "string" ||
+    token.length < 20 ||
+    token.length > 4096
+  ) {
+    fail("pull request event needs an authenticated Slop run");
   }
   const eventBody = {
     kind: "pull_request_opened",
@@ -1890,13 +2022,14 @@ export async function recordPullRequestOpened(
   };
   const event = await jsonRequest(
     fetchImpl,
-    `${TRACE_AUTHORITY}/api/v1/runs/${encodeURIComponent(created.serverRunId)}/events`,
+    `${TRACE_AUTHORITY}/api/v1/runs/${encodeURIComponent(serverRunId)}/events`,
     {
       method: "POST",
       headers: {
-        ...jsonHeaders,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
         "Idempotency-Key": sha256(
-          `event:${created.serverRunId}:${JSON.stringify(eventBody)}`,
+          `event:${serverRunId}:${JSON.stringify(eventBody)}`,
         ),
       },
       body: JSON.stringify(eventBody),
@@ -1905,7 +2038,7 @@ export async function recordPullRequestOpened(
     "pull request event",
   );
   if (
-    event.runId !== created.serverRunId ||
+    event.runId !== serverRunId ||
     event.kind !== "pull_request_opened" ||
     typeof event.eventId !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(event.eventId)
@@ -1913,7 +2046,7 @@ export async function recordPullRequestOpened(
     fail("pull request event returned mismatched evidence");
   }
   return {
-    serverRunId: created.serverRunId,
+    serverRunId,
     eventId: event.eventId,
     pullRequest: githubUrl,
     pullRequestNodeId,
@@ -2287,12 +2420,14 @@ function parseArguments(args) {
     clientVersion: null,
     json: false,
     lane: null,
+    log: null,
     model: null,
     provider: null,
     pullRequest: null,
     pullRequestNodeId: null,
     repoRoot: process.cwd(),
     runId: null,
+    skip: false,
     traceObjectId: null,
     traceServerRun: null,
     trajectory: null,
@@ -2305,6 +2440,7 @@ function parseArguments(args) {
     provided.add(argument);
     if (argument === "--verify-policy") options.verifyPolicy = true;
     else if (argument === "--json") options.json = true;
+    else if (argument === "--skip") options.skip = true;
     else if (argument === "--allow-package-execution") {
       options.allowPackageExecution = true;
     } else if (argument === "--usage-unavailable") {
@@ -2316,6 +2452,7 @@ function parseArguments(args) {
         "--client",
         "--client-version",
         "--lane",
+        "--log",
         "--model",
         "--provider",
         "--pull-request",
@@ -2333,6 +2470,7 @@ function parseArguments(args) {
       if (argument === "--client") options.client = value;
       if (argument === "--client-version") options.clientVersion = value;
       if (argument === "--lane") options.lane = value;
+      if (argument === "--log") options.log = value;
       if (argument === "--model") options.model = value;
       if (argument === "--provider") options.provider = value;
       if (argument === "--pull-request") options.pullRequest = value;
@@ -2354,13 +2492,16 @@ function parseArguments(args) {
       "help",
       "opened",
       "preview",
+      "session",
       "start",
       "status",
       "trace",
+      "trace-off",
+      "trace-on",
     ].includes(options.action)
   ) {
     fail(
-      "command must be authorize, disclose, opened, preview, doctor, status, start, trace, or finish",
+      "command must be authorize, disclose, opened, preview, doctor, status, start, trace, session, trace-off, trace-on, or finish",
     );
   }
   const allowedArguments = {
@@ -2406,6 +2547,19 @@ function parseArguments(args) {
       "--pull-request-node-id",
     ]),
     preview: new Set(["--client", "--json", "--repo-root"]),
+    session: new Set([
+      "--client",
+      "--client-version",
+      "--json",
+      "--log",
+      "--model",
+      "--provider",
+      "--pull-request",
+      "--pull-request-node-id",
+      "--repo-root",
+      "--run",
+      "--skip",
+    ]),
     start: new Set([
       "--verify-policy",
       "--allow-local-usage",
@@ -2426,6 +2580,8 @@ function parseArguments(args) {
       "--run",
       "--trajectory",
     ]),
+    "trace-off": new Set(["--json"]),
+    "trace-on": new Set(["--json"]),
   }[options.action];
   const inapplicable = [...provided].filter(
     (argument) => !allowedArguments.has(argument),
@@ -2439,13 +2595,16 @@ function parseArguments(args) {
     "finish",
     "opened",
     "preview",
+    "session",
     "start",
   ].includes(options.action);
   if (needsClient) {
     declaredIdentity(options.client, "--client", "client", 64);
   }
   if (
-    ["disclose", "doctor", "finish", "opened", "start"].includes(options.action)
+    ["disclose", "doctor", "finish", "opened", "session", "start"].includes(
+      options.action,
+    )
   ) {
     declaredIdentity(options.provider, "--provider", "provider", 64);
     if (options.action === "disclose") {
@@ -2474,14 +2633,22 @@ function parseArguments(args) {
   ) {
     fail("trace requires --run and --trajectory");
   }
-  if (options.action === "trace" || options.action === "opened") {
+  if (["opened", "session", "trace"].includes(options.action)) {
     declaredIdentity(options.clientVersion, "--client-version", "version", 128);
   }
   if (
-    options.action === "opened" &&
+    ["opened", "session"].includes(options.action) &&
     (options.pullRequest === null || options.pullRequestNodeId === null)
   ) {
-    fail("opened requires --pull-request and --pull-request-node-id");
+    fail(
+      `${options.action} requires --pull-request and --pull-request-node-id`,
+    );
+  }
+  if (
+    options.action === "session" &&
+    !RUN_ID_PATTERN.test(options.runId ?? "")
+  ) {
+    fail("session requires --run with the id returned by start");
   }
   if (
     options.action === "finish" &&
@@ -2755,7 +2922,8 @@ function startRun(options, testOptions) {
   renderResult(
     {
       runId,
-      message: `Project run started. Keep this id: ${runId}`,
+      marker: runMarker(runId),
+      message: `Project run started. Keep this id: ${runId}\n${runMarker(runId)}`,
       usageStatus: options.usageUnavailable
         ? "unavailable"
         : usageAdapter === null
@@ -2768,10 +2936,15 @@ function startRun(options, testOptions) {
   );
 }
 
-async function traceRun(options) {
+// The line start prints so an agent's own session file records where the run
+// began; session-export.mjs looks for it in the start command's output.
+function runMarker(runId) {
+  return `slop-run:${runId}`;
+}
+
+function activeRunState(runId, repositoryRoot) {
   const provenance = resolveSkillProvenance();
-  const repositoryRoot = requireRepository(options.repoRoot);
-  const activePath = join(runDirectories().active, `${options.runId}.json`);
+  const activePath = join(runDirectories().active, `${runId}.json`);
   if (!existsSync(activePath)) fail("active run state was not found");
   const state = validateActiveRecord(readStateFile(activePath));
   if (
@@ -2782,6 +2955,12 @@ async function traceRun(options) {
   ) {
     fail("run state does not match this repository or skill revision");
   }
+  return state;
+}
+
+async function traceRun(options) {
+  const repositoryRoot = requireRepository(options.repoRoot);
+  const state = activeRunState(options.runId, repositoryRoot);
   const evidence = await uploadPrivateTrace(
     state,
     options.trajectory,
@@ -2960,6 +3139,351 @@ function finishRun(options) {
   walletNudge();
 }
 
+// Machine-wide session upload setting. An unreadable file reads as off, so a
+// damaged setting never uploads; trace-on rewrites it.
+function sessionSettingsPath() {
+  return join(configurationRoot(), SESSION_SETTINGS_FILE);
+}
+
+function readSessionSettings() {
+  const path = sessionSettingsPath();
+  const damaged = { upload: false, licensingLinkShown: false, damaged: true };
+  if (!existsSync(path))
+    return { upload: true, licensingLinkShown: false, damaged: false };
+  try {
+    const stats = lstatSync(path);
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 4096)
+      return damaged;
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return damaged;
+    return {
+      upload: value.upload !== false,
+      licensingLinkShown: value.licensingLinkShown === true,
+      damaged: false,
+    };
+  } catch {
+    // error-policy:J3 a damaged setting fails closed to no upload.
+    return damaged;
+  }
+}
+
+function writeSessionSettings(change) {
+  const root = configurationRoot();
+  ensureDirectory(root);
+  const path = sessionSettingsPath();
+  if (existsSync(path)) {
+    const stats = lstatSync(path);
+    if (!stats.isFile() || stats.isSymbolicLink())
+      fail("refusing a non-regular or symlinked session setting");
+  }
+  const next = { ...readSessionSettings(), ...change };
+  writePrivateJson(path, {
+    upload: next.upload,
+    licensingLinkShown: next.licensingLinkShown,
+  });
+}
+
+function writePrivateJson(path, value) {
+  const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  renameSync(temporary, path);
+}
+
+// The object an earlier session attempt attached to this run, recorded when
+// its intent was accepted. A rerun shows and finalizes exactly this object.
+function readAttachedRecord(path, runId) {
+  if (!existsSync(path)) return null;
+  const stats = lstatSync(path);
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 64 * 1024)
+    fail("the local record of this run's uploaded session is unreadable");
+  let value;
+  try {
+    value = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    // error-policy:J3 a damaged record stops before any finalize.
+    fail("the local record of this run's uploaded session is unreadable");
+  }
+  if (
+    !value ||
+    typeof value !== "object" ||
+    value.schemaVersion !== "1" ||
+    value.runId !== runId ||
+    !SHA_PATTERN.test(value.sha256 ?? "") ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    value.sizeBytes < 1 ||
+    value.sizeBytes > MAX_TRAJECTORY_BYTES ||
+    value.contentType !== "application/x-ndjson" ||
+    typeof value.path !== "string" ||
+    typeof value.cleaner !== "string" ||
+    !value.counts ||
+    typeof value.counts !== "object"
+  )
+    fail("the local record of this run's uploaded session is unreadable");
+  return value;
+}
+
+// The disclosure line on project code, read from the header of the exact
+// file that is shown, so a rerun reports what the uploaded bytes hold.
+function projectCodeLine(path) {
+  let header;
+  try {
+    const text = readFileSync(path, "utf8");
+    const end = text.indexOf("\n");
+    header = JSON.parse(end < 0 ? text : text.slice(0, end));
+  } catch {
+    // error-policy:J3 an unreadable header leaves the line out.
+    return null;
+  }
+  if (!header || typeof header !== "object") return null;
+  const licence =
+    typeof header.licence === "string" && header.licence !== ""
+      ? header.licence
+      : null;
+  if (header.repoFilesKept === true && licence !== null)
+    return `Project code: kept (licence ${licence})`;
+  return licence === null
+    ? "Project code: removed (no licence reported by GitHub)"
+    : `Project code: removed (licence ${licence} is not on the OSI-approved list)`;
+}
+
+function headCommit(repositoryRoot) {
+  try {
+    return git(repositoryRoot, ["rev-parse", "HEAD"]);
+  } catch {
+    // error-policy:J3 a repository without a commit records no end commit.
+    return null;
+  }
+}
+
+/**
+ * Exports this run's agent session, cleans it on this machine, shows it, then
+ * signs in once and uploads it under private-trace-v3. The pull_request_opened
+ * event goes on the same server run before it is finalized, so the session can
+ * be joined to its pull request. Nothing here can block the contribution: a
+ * skip or the machine setting makes no request, and every failure is one line.
+ */
+async function sessionRun(options, deps = {}) {
+  const settings = readSessionSettings();
+  if (options.skip || !settings.upload) {
+    renderResult(
+      {
+        status: "skipped",
+        message:
+          !options.skip && settings.damaged
+            ? "Session upload skipped (settings file unreadable; run trace-on to reset)."
+            : "Session upload skipped.",
+      },
+      options.json,
+    );
+    return;
+  }
+  let markLicensingShown = false;
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+  try {
+    const pullRequest = projectPullRequestUrl(options.pullRequest);
+    const pullRequestNodeId = pullRequestNodeIdOf(options.pullRequestNodeId);
+    const repositoryRoot = requireRepository(options.repoRoot);
+    const state = activeRunState(options.runId, repositoryRoot);
+    if (
+      state.client !== options.client ||
+      state.provider !== options.provider ||
+      state.model !== options.model
+    ) {
+      fail("--client, --provider and --model must match the run start used");
+    }
+    const sessions = join(configurationRoot(), "sessions");
+    ensureDirectory(sessions);
+    const recordPath = join(sessions, `${state.runId}.attached.json`);
+    const recorded = readAttachedRecord(recordPath, state.runId);
+    const { CLEANER_VERSION, exportAgentLog, exportSession } = await import(
+      "./session-export.mjs"
+    );
+    let shown;
+    if (recorded !== null) {
+      // A rerun never exports again: the server may already hold the bytes
+      // shown last time, and only those may be finalized.
+      let present = false;
+      try {
+        present = privateTraceFile(recorded.path).sha256 === recorded.sha256;
+      } catch {
+        // error-policy:J3 a missing file is confirmed against the server.
+      }
+      if (!present)
+        process.stderr.write(
+          `The session file uploaded for this run is missing on this machine or no longer matches: ${recorded.path}. Slop finalizes it only if it already holds digest ${recorded.sha256}.\n`,
+        );
+      shown = {
+        path: recorded.path,
+        present,
+        counts: recorded.counts,
+        cleaner: recorded.cleaner,
+        source: "recorded",
+        alreadyUploaded: true,
+      };
+    } else {
+      const exportOptions = {
+        outPath: join(sessions, `${state.runId}.partial.ndjson`),
+        marker: runMarker(state.runId),
+        homeDir: deps.homeDir ?? homedir(),
+        env: deps.env ?? process.env,
+        repo: PROJECT.repositoryId,
+        repoRoot: repositoryRoot,
+        fetchImpl,
+        client: state.client,
+        clientVersion: options.clientVersion,
+        provider: state.provider,
+        model: state.model,
+        startedAt: state.startedAt,
+        startCommit: null,
+        endCommit: headCommit(repositoryRoot),
+      };
+      let exported = await exportSession(exportOptions);
+      if (exported.source !== "client-file" && options.log !== null)
+        exported = await exportAgentLog({
+          ...exportOptions,
+          logPath: options.log,
+        });
+      if (!["client-file", "agent-written"].includes(exported.source)) {
+        renderResult(
+          {
+            status: "none",
+            message: "No session record; the pull request stands.",
+          },
+          options.json,
+        );
+        return;
+      }
+      // Each export keeps its own digest-named file, so a later export can
+      // never overwrite bytes that were shown or uploaded.
+      const digest = privateTraceFile(exported.path).sha256;
+      const path = join(
+        sessions,
+        `${state.runId}-${digest.slice(0, 16)}.ndjson`,
+      );
+      renameSync(exported.path, path);
+      shown = {
+        path,
+        present: true,
+        counts: exported.counts,
+        cleaner: CLEANER_VERSION,
+        source: exported.source,
+        alreadyUploaded: false,
+      };
+    }
+    const disclose = deps.disclosure ?? disclosePrivateTrace;
+    let event = null;
+    const evidence = await uploadPrivateTrace(
+      state,
+      shown.present ? shown.path : null,
+      options.clientVersion,
+      {
+        fetchImpl,
+        assertionProvider: deps.assertionProvider ?? slopIdentityAssertion,
+        termsVersion: TRACE_TERMS_V3,
+        attached:
+          recorded === null
+            ? undefined
+            : {
+                absolutePath: recorded.path,
+                sha256: recorded.sha256,
+                sizeBytes: recorded.sizeBytes,
+                contentType: recorded.contentType,
+              },
+        confirmAttached: true,
+        disclosure: (trace) =>
+          disclose({
+            ...trace,
+            cleaner: shown.cleaner,
+            counts: shown.counts,
+            alreadyUploaded: shown.alreadyUploaded,
+            projectCode: shown.present ? projectCodeLine(shown.path) : null,
+          }),
+        afterIntent: (trace) =>
+          writePrivateJson(recordPath, {
+            schemaVersion: "1",
+            runId: state.runId,
+            sha256: trace.sha256,
+            sizeBytes: trace.sizeBytes,
+            contentType: trace.contentType,
+            path: trace.absolutePath,
+            cleaner: shown.cleaner,
+            counts: shown.counts,
+          }),
+        beforeFinalize: async (serverRunId, token) => {
+          event = await appendPullRequestOpened(
+            serverRunId,
+            token,
+            { pullRequest, pullRequestNodeId },
+            { fetchImpl },
+          );
+        },
+      },
+    );
+    const lines = [
+      `Session uploaded under ${TRACE_TERMS_V3} and finalized.`,
+      event === null
+        ? "This Slop run was already finalized; record the pull request with opened."
+        : `Recorded pull_request_opened for ${event.pullRequest} in Slop run ${event.serverRunId}.`,
+      `--trajectory ${shown.path}`,
+      `--trace-server-run ${evidence.serverRunId}`,
+      `--trace-object-id ${evidence.objectId}`,
+    ];
+    const showLicensing = !settings.licensingLinkShown;
+    if (showLicensing) lines.push(LICENSING_LINE);
+    renderResult(
+      {
+        status: "uploaded",
+        termsVersion: TRACE_TERMS_V3,
+        source: shown.source,
+        trajectory: shown.path,
+        ...evidence,
+        pullRequestEvent: event,
+        ...(showLicensing ? { licensing: LICENSING_LINE } : {}),
+        message: lines.join("\n"),
+      },
+      options.json,
+    );
+    markLicensingShown = showLicensing;
+  } catch (error) {
+    const reason = (error instanceof Error ? error.message : String(error))
+      .replace(/\s+/gu, " ")
+      .trim();
+    renderResult(
+      {
+        status: "failed",
+        message: `Session upload failed: ${reason}; the pull request stands.`,
+      },
+      options.json,
+    );
+  }
+  // Outside the upload's try: failing to remember the shown line must never
+  // report a finished upload as failed.
+  if (markLicensingShown) {
+    try {
+      writeSessionSettings({ licensingLinkShown: true });
+    } catch {
+      // error-policy:J3 the licensing line shows again next time.
+    }
+  }
+}
+
+function sessionSetting(options, upload) {
+  writeSessionSettings({ upload });
+  renderResult(
+    {
+      upload,
+      message: upload
+        ? "Session uploads are allowed on this machine again."
+        : `Session uploads are off on this machine. To allow them again: node ${skillDirectory}/scripts/run-receipt.mjs trace-on`,
+    },
+    options.json,
+  );
+}
+
 export async function main(args = process.argv.slice(2), testOptions) {
   const options = parseArguments(args);
   if (options.action === "help") process.stdout.write(HELP);
@@ -2995,6 +3519,9 @@ export async function main(args = process.argv.slice(2), testOptions) {
     );
   } else if (options.action === "start") startRun(options, testOptions);
   else if (options.action === "trace") await traceRun(options);
+  else if (options.action === "session") await sessionRun(options, testOptions);
+  else if (options.action === "trace-off") sessionSetting(options, false);
+  else if (options.action === "trace-on") sessionSetting(options, true);
   else if (options.action === "opened") {
     const result = await recordPullRequestOpened(options);
     renderResult(

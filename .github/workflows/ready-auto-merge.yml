@@ -1,0 +1,37 @@
+name: Ready auto-merge
+# Pilot on this repository only (PRD section 5; operator decision, 25 November
+# 2026). The repository's own workflow merges a pull request that carries the
+# slopbot:ready label after re-checking it; Slopbot never merges. Manual
+# dispatch only: the outside scheduler starts it on main. The repository
+# variable SLOPBOT_AUTO_MERGE must equal "on"; absent means off. The job never
+# checks out or runs pull request code.
+on:
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: slop-ready-auto-merge
+  cancel-in-progress: false
+jobs:
+  merge:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'SlopDotCash/slopdotcash' &&
+      vars.SLOPBOT_AUTO_MERGE == 'on'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Merge ready pull requests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SLOPBOT_AUTO_MERGE: ${{ vars.SLOPBOT_AUTO_MERGE }}
+        run: bun --no-env-file scripts/ready-auto-merge.ts

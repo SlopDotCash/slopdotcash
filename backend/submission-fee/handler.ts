@@ -5,11 +5,13 @@
  *   GET /api/v1/submission-fee/rate
  *   GET /api/v1/submission-fee/items/<repositoryId>/<pullNumber>
  *   GET /api/v1/submission-fee/reports/<caseId>
+ *   POST /api/v1/submission-fee/solana (`solana-pay.ts`; 404 while Solana
+ *     is not offered)
  *
- * All serve stored D1 rows only: the SLOP rate the rate job wrote, the pull
+ * The reads serve stored D1 rows only: the SLOP rate the rate job wrote, the pull
  * request's row Slopbot wrote, the report deposit row the security API wrote
  * (PRD section 8, "Report deposit"), and the payment the submission-fee
- * Worker recorded. None reads a chain or GitHub, and none changes anything.
+ * Worker recorded. No read touches a chain or GitHub, and none changes anything.
  * The report read names no project, reporter, title or report text.
  */
 
@@ -26,6 +28,7 @@ import {
 } from "../../src/lib/submission-fee.mjs";
 import type { D1Database, D1QueryStatement } from "../d1";
 import { apiErrorResponse, json } from "../http";
+import { handleSolanaFeePay, type SolanaFeeDeployment } from "./solana-pay";
 
 type Database = D1Database<D1QueryStatement>;
 
@@ -34,7 +37,8 @@ const CACHE_CONTROL = "public, max-age=60";
 const ID = /^[1-9][0-9]{0,15}$/u;
 const CASE_ID = /^sc_[A-Za-z0-9_-]{8,72}$/u;
 
-async function rates(db: Database) {
+/** Every published SLOP rate, as the rate job wrote them; also read by the standing deposit API. */
+export async function publishedSlopRates(db: Database) {
   const { results } = await db
     .prepare(
       "SELECT effective_at, slop_per_usd FROM submission_fee_rates ORDER BY effective_at",
@@ -141,7 +145,17 @@ async function reportDeposit(db: Database, caseId: string) {
 
 export async function handleSubmissionFeeApi(
   request: Request,
-  deps: { db: Database; now?: () => Date },
+  deps: {
+    db: Database;
+    now?: () => Date;
+    /**
+     * The published Solana deployment with a private endpoint, or null while
+     * Solana is not offered. Absent means not offered.
+     */
+    solana?: () => SolanaFeeDeployment | null;
+    /** Keys the Solana pay action's request counters. */
+    rateLimitSecret?: string;
+  },
 ): Promise<Response | null> {
   const { pathname } = new URL(request.url);
   if (
@@ -151,6 +165,23 @@ export async function handleSubmissionFeeApi(
     return null;
   const respond = (status: number, body: unknown) =>
     json(status, body, { cacheControl: CACHE_CONTROL });
+  // Only a POST is the Solana pay action. Any other method on this path is
+  // answered as it was before the action existed.
+  if (
+    request.method === "POST" &&
+    pathname.replace(/\/$/u, "") === `${SUBMISSION_FEE_PATH}/solana`
+  ) {
+    try {
+      return await handleSolanaFeePay(request, {
+        db: deps.db,
+        now: deps.now ?? (() => new Date()),
+        deployment: deps.solana ?? (() => null),
+        rateLimitSecret: deps.rateLimitSecret,
+      });
+    } catch (caught) {
+      return apiErrorResponse(caught, { label: "submission fee API failure" });
+    }
+  }
   if (request.method !== "GET" && request.method !== "HEAD")
     return respond(405, { error: "method_not_allowed" });
   const at = (deps.now?.() ?? new Date()).toISOString();
@@ -161,7 +192,10 @@ export async function handleSubmissionFeeApi(
     .slice(1);
   try {
     if (parts.length === 1 && parts[0] === "rate") {
-      const { current, previous } = slopRatesAt(await rates(deps.db), at);
+      const { current, previous } = slopRatesAt(
+        await publishedSlopRates(deps.db),
+        at,
+      );
       return respond(200, {
         schema: "slop-submission-fee-rate-v1",
         // The SLOP fee is this share of the stablecoin fee, at the rate.
@@ -226,7 +260,11 @@ export async function handleSubmissionFeeApi(
         // fee goes. Nothing more is due once the pull request is paid.
         due: paid
           ? []
-          : submissionFeeOptions(row.stable_minor, await rates(deps.db), at),
+          : submissionFeeOptions(
+              row.stable_minor,
+              await publishedSlopRates(deps.db),
+              at,
+            ),
         paid: paid
           ? {
               at: row.paid_at,

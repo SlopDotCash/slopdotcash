@@ -310,19 +310,21 @@ export async function workUnitHistory(
         throughSequence < afterSequence))
   )
     throw new Error("Joint history requires a stable sequence boundary");
+  // The source number index (migration 0152) holds each record's sources as
+  // stored, so the lookup reads only the records that name this pull request
+  // instead of parsing every record in the journal.
   const identity =
-    repositoryNodeId === undefined ? "repository" : "repositoryNodeId";
+    repositoryNodeId === undefined ? "repository" : "repository_node_id";
   const row = await db
     .prepare(
       `WITH RECURSIVE
     bounds AS (SELECT COALESCE(MAX(sequence), 0) AS maximum,
       COALESCE(?, MAX(sequence), 0) AS through_sequence FROM slopbot_work_unit_journal),
     lineage(record_digest) AS (
-      SELECT j.record_digest FROM slopbot_work_unit_journal j, bounds b
-      WHERE j.sequence <= b.through_sequence AND EXISTS (
-        SELECT 1 FROM json_each(j.record_json, '$.sources') s
-        WHERE json_extract(s.value, '$.${identity}') = ?
-          AND json_extract(s.value, '$.pullRequestNumber') = ?)
+      SELECT j.record_digest FROM slopbot_work_unit_source_numbers n
+      JOIN slopbot_work_unit_journal j ON j.record_digest = n.record_digest, bounds b
+      WHERE n.${identity} = ? AND n.pull_request_number = ?
+        AND j.sequence <= b.through_sequence
       UNION
       SELECT p.predecessor_digest FROM slopbot_work_unit_predecessors p
       JOIN lineage l ON p.record_digest = l.record_digest

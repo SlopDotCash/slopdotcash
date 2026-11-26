@@ -25,7 +25,11 @@ import {
 import { InboxEmailAction } from "./InboxEmail";
 
 import "./private-report-design.css";
-import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import {
+  fetchReadWithRetry,
+  fetchWithDeadline,
+  readBoundedJson,
+} from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { clearAllDrafts } from "./lib/intake-drafts";
 import {
@@ -76,7 +80,7 @@ async function loadInbox(
   const session = await currentProjectSession().catch(() => undefined);
   signal.throwIfAborted();
   if (session === null) return { status: "signed-out" };
-  const response = await fetchWithDeadline(
+  const response = await fetchReadWithRetry(
     `/api/v1/notifications${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`,
     {
       credentials: "same-origin",

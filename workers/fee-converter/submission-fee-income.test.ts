@@ -104,3 +104,27 @@ test("a stored amount that is not a whole number refuses the total", async () =>
     "Kept submission fee has an invalid amount",
   );
 });
+
+test("a kept Solana USDC fee is income of the Solana fee wallet, by exact address", async () => {
+  const { deposit, store } = harness();
+  const mint = NETWORK_DEFINITIONS.solana.usdc as string;
+  const wallet = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY";
+  const row = {
+    network: "solana-mainnet",
+    token: mint,
+    kept_to: wallet,
+    payer: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    tx_hash: "5".repeat(88),
+    resolve_tx: "6".repeat(88),
+  };
+  deposit(row);
+  deposit({ ...row, state: "refunded" });
+  // Base58 is case-sensitive: another spelling is another address.
+  deposit({ ...row, kept_to: wallet.toLowerCase() });
+  deposit({ ...row, token: mint.toLowerCase() });
+  expect(await store.feeIncome("solana", mint, wallet, SINCE)).toBe(2_000_000n);
+  expect(
+    await store.feeIncome("solana", mint.toLowerCase(), wallet, SINCE),
+  ).toBe(2_000_000n);
+  expect(await store.feeIncome("base", USDC, WALLET, SINCE)).toBe(0n);
+});

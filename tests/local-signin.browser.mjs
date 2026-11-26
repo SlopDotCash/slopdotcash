@@ -199,6 +199,7 @@ try {
               enabled: false,
               since: null,
               providerTermsConfirmed: false,
+              confirmedTermsVersion: null,
             },
             totals: { traces: 0, licensed: 0, eligible: 0 },
             traces: [],

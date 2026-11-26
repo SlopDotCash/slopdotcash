@@ -17,6 +17,11 @@
 //! `Deposit` account exists exactly while its deposit is open: it is closed in the instruction
 //! that pays the deposit out, and its rent returns to the payer.
 //!
+//! A deposit's address is derived from its payer and a number the payer chooses, never from
+//! the program's counter, so no other deposit can invalidate a signed one and only the payer
+//! can occupy one of their own addresses. The program still numbers deposits in the order
+//! they land and stores that id in the record.
+//!
 //! This is the Solana counterpart of `contracts/evm/src/SubmissionDeposits.sol`. It is a
 //! separate program from `slop-escrow` and shares no state with it.
 use anchor_lang::prelude::*;
@@ -82,14 +87,18 @@ pub mod slop_submission_deposits {
     }
 
     /// Moves exactly `amount` from the payer's token account into the vault and records it
-    /// against `item` as deposit number `deposit_count + 1`. The payer and `kept_to` are fixed
-    /// here and never change. Refused while deposits are paused, for a zero amount, and for a
-    /// zero `kept_to` or one of this program's own accounts as `kept_to`.
+    /// against `item` as deposit number `deposit_count + 1`. The record lives at the address
+    /// of (payer, `nonce`): the payer picks any `nonce` they have not used for a deposit that
+    /// is still open, and a reused one is refused because its account already exists. The
+    /// payer and `kept_to` are fixed here and never change. Refused while deposits are paused,
+    /// for a zero amount, and for a zero `kept_to` or one of this program's own accounts as
+    /// `kept_to`.
     pub fn deposit(
         ctx: Context<MakeDeposit>,
         item: [u8; 32],
         amount: u64,
         kept_to: Pubkey,
+        nonce: u64,
     ) -> Result<()> {
         require!(
             !ctx.accounts.config.deposits_paused,
@@ -133,6 +142,7 @@ pub mod slop_submission_deposits {
         let deposit = &mut ctx.accounts.deposit;
         deposit.id = id;
         deposit.payer = ctx.accounts.payer.key();
+        deposit.nonce = nonce;
         deposit.mint = ctx.accounts.mint.key();
         deposit.kept_to = kept_to;
         deposit.item = item;
@@ -143,6 +153,7 @@ pub mod slop_submission_deposits {
             id,
             item,
             payer: deposit.payer,
+            nonce,
             mint: deposit.mint,
             amount,
             kept_to
@@ -154,8 +165,13 @@ pub mod slop_submission_deposits {
     /// token account, otherwise to the associated token account of its `kept_to`. The resolver
     /// has no other choice of destination. The Deposit account is closed and its rent returns
     /// to the payer. Works while deposits are paused.
-    pub fn resolve(ctx: Context<Resolve>, refund: bool) -> Result<()> {
+    ///
+    /// `expected_id` is the id of the deposit the resolver means to settle. An address is
+    /// free again once its record is closed, so the same payer and nonce can later hold a
+    /// newer deposit; a resolve built for the earlier one is refused instead of settling it.
+    pub fn resolve(ctx: Context<Resolve>, refund: bool, expected_id: u64) -> Result<()> {
         let deposit = &ctx.accounts.deposit;
+        require!(deposit.id == expected_id, DepositsError::WrongDeposit);
         let wallet = if refund {
             deposit.payer
         } else {
@@ -363,6 +379,7 @@ pub struct OpenVault<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(item: [u8; 32], amount: u64, kept_to: Pubkey, nonce: u64)]
 pub struct MakeDeposit<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -376,8 +393,9 @@ pub struct MakeDeposit<'info> {
     pub source: Box<Account<'info, TokenAccount>>,
     #[account(mut,seeds=[b"vault",mint.key().as_ref()],bump=ledger.vault_bump,token::mint=mint,token::authority=ledger)]
     pub vault: Box<Account<'info, TokenAccount>>,
-    /// The next id is part of the address, so an id is used once and ids have no gap.
-    #[account(init,payer=payer,space=8+Deposit::INIT_SPACE,seeds=[b"deposit".as_ref(),config.deposit_count.wrapping_add(1).to_le_bytes().as_ref()],bump)]
+    /// The address depends on the signing payer and their nonce only, never on the count, so
+    /// deposits landing first cannot move it and nobody else can create it.
+    #[account(init,payer=payer,space=8+Deposit::INIT_SPACE,seeds=[b"deposit".as_ref(),payer.key().as_ref(),nonce.to_le_bytes().as_ref()],bump)]
     pub deposit: Box<Account<'info, Deposit>>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -388,7 +406,7 @@ pub struct Resolve<'info> {
     pub resolver: Signer<'info>,
     #[account(seeds=[b"config"],bump=config.bump,has_one=resolver @ DepositsError::NotResolver)]
     pub config: Box<Account<'info, Config>>,
-    #[account(mut,close=payer,has_one=mint,has_one=payer,seeds=[b"deposit".as_ref(),deposit.id.to_le_bytes().as_ref()],bump=deposit.bump)]
+    #[account(mut,close=payer,has_one=mint,has_one=payer,seeds=[b"deposit".as_ref(),deposit.payer.as_ref(),deposit.nonce.to_le_bytes().as_ref()],bump=deposit.bump)]
     pub deposit: Box<Account<'info, Deposit>>,
     #[account(mut,has_one=mint,seeds=[b"ledger",mint.key().as_ref()],bump=ledger.bump)]
     pub ledger: Box<Account<'info, Ledger>>,
@@ -412,7 +430,7 @@ pub struct Reclaim<'info> {
     pub payer: Signer<'info>,
     #[account(seeds=[b"config"],bump=config.bump)]
     pub config: Box<Account<'info, Config>>,
-    #[account(mut,close=payer,has_one=mint,has_one=payer @ DepositsError::NotPayer,seeds=[b"deposit".as_ref(),deposit.id.to_le_bytes().as_ref()],bump=deposit.bump)]
+    #[account(mut,close=payer,has_one=mint,has_one=payer @ DepositsError::NotPayer,seeds=[b"deposit".as_ref(),deposit.payer.as_ref(),deposit.nonce.to_le_bytes().as_ref()],bump=deposit.bump)]
     pub deposit: Box<Account<'info, Deposit>>,
     #[account(mut,has_one=mint,seeds=[b"ledger",mint.key().as_ref()],bump=ledger.bump)]
     pub ledger: Box<Account<'info, Ledger>>,
@@ -448,7 +466,8 @@ pub struct Config {
     pub resolver: Pubkey,
     /// Seconds a payer waits before reclaiming an unresolved deposit. Set once.
     pub reclaim_delay: i64,
-    /// Deposits ever made. Ids count up from 1, so this is also the latest id.
+    /// Deposits ever made. Ids count up from 1 in landing order, so this is also the latest
+    /// id. No address depends on it.
     pub deposit_count: u64,
     pub deposits_paused: bool,
     pub bump: u8,
@@ -469,9 +488,12 @@ pub struct Ledger {
 #[account]
 #[derive(InitSpace)]
 pub struct Deposit {
+    /// The program's own number for this deposit, assigned when it landed.
     pub id: u64,
     /// The wallet that paid. Refunds and reclaims go to token accounts it owns.
     pub payer: Pubkey,
+    /// The payer's number for this deposit. With the payer it fixes the account's address.
+    pub nonce: u64,
     pub mint: Pubkey,
     /// The wallet whose associated token account receives a kept deposit.
     pub kept_to: Pubkey,
@@ -497,6 +519,7 @@ pub struct Deposited {
     pub id: u64,
     pub item: [u8; 32],
     pub payer: Pubkey,
+    pub nonce: u64,
     pub mint: Pubkey,
     pub amount: u64,
     pub kept_to: Pubkey,
@@ -556,6 +579,8 @@ pub enum DepositsError {
     VaultShort,
     #[msg("Arithmetic overflow")]
     Arithmetic,
+    #[msg("The account holds a different deposit than the one named")]
+    WrongDeposit,
 }
 
 #[cfg(test)]
@@ -593,6 +618,6 @@ mod tests {
     fn account_sizes_match_the_published_layout() {
         assert_eq!(8 + Config::INIT_SPACE, 122);
         assert_eq!(8 + Ledger::INIT_SPACE, 50);
-        assert_eq!(8 + Deposit::INIT_SPACE, 161);
+        assert_eq!(8 + Deposit::INIT_SPACE, 169);
     }
 }

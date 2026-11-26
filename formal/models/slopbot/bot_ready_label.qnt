@@ -9,7 +9,8 @@
 // enough approvals at that head from write-access accounts, under the size
 // cap, no protected path. Every other action is an event that can make the
 // last check stale; a push resets every per-head fact. The owner setting is
-// off at the start. Only a human merges; Slopbot has no merge action.
+// off at the start. Slopbot has no merge action: a person merges, or on Slop's
+// own repository the repository's workflow does (bot_ready_auto_merge).
 // REQUIRED abstracts the owner's approval count (default 1).
 // A pull request whose submission fee Slopbot asked and nobody paid is never
 // labelled, whatever else holds (operator decision, 18 November 2026; the fee
