@@ -2690,6 +2690,30 @@ test("a spam close debits 3 thirds once; an accepted uphold draft reopens the it
   });
 });
 
+test("an appeal of Slopbot's close puts a kept submission fee back until the Worker has sent it", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    const repositoryId = Number(findProject("asi")?.authority.repositoryId);
+    const outcome = () =>
+      run.sql(
+        `SELECT outcome FROM submission_fee_items WHERE repository_id = ${repositoryId} AND pull_number = 5`,
+      );
+    run.sql(
+      `INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at, paid_at, paid_network, paid_deposit_id, outcome, outcome_at)
+       VALUES (${repositoryId}, 5, 'asi', '0x${"1".repeat(64)}', '2000000', '2026-11-01T00:00:00.000Z', '2026-11-02T00:00:00.000Z', 'base-mainnet', 12, 'kept_due', '2026-11-10T00:00:00.000Z')`,
+    );
+    run.sql(
+      `INSERT INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, updated_at)
+       VALUES (${repositoryId}, 5, 1, 'SlopDotCash', 'asi', 'paid', 'kept_due: closed', '2026-11-10T00:00:00.000Z')`,
+    );
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    expect(outcome()).toEqual([{ outcome: null }]);
+  });
+});
+
 test("an upheld appeal reopens only Slopbot's own close, never a later maintainer close", async () => {
   await closedItem(async (run) => {
     expect(await run.review()).toBe("closed (spam)");

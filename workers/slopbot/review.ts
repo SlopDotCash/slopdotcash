@@ -114,6 +114,7 @@ import { missingSubmissionEvidence } from "./submission-evidence";
 import {
   gateSubmissionFee,
   releaseExemptFee,
+  reopenKeptFee,
   SubmissionFeeGateError,
 } from "./submission-fee";
 import {
@@ -2670,6 +2671,7 @@ export async function recordHumanSignal(
     const appeal = await appealByKey(db, `appeal:${issue.node_id}:${decided}`);
     if (appeal !== null) {
       await resolveAppeal(db, appeal.appeal_key, "upheld", "maintainer");
+      await reopenKeptFee(db, appeal.appeal_key);
       const current = await appealByKey(db, appeal.appeal_key);
       if (
         current?.resolution === "upheld" &&
@@ -2690,6 +2692,7 @@ export async function recordHumanSignal(
       itemNodeId: issue.node_id,
       appellantId: issue.user.id,
     });
+    await reopenKeptFee(db, appeal.appeal_key);
     if (appeal.resolved_at !== null) return "appeal already resolved";
     await escalateAppeal(
       db,
@@ -2725,6 +2728,7 @@ export async function recordHumanSignal(
     itemNodeId: issue.node_id,
     appellantId: issue.user.id,
   });
+  await reopenKeptFee(db, appeal.appeal_key);
   if (appeal.resolved_at !== null) return "appeal already resolved";
   return triageAppeal(env, job, session, appeal, finding);
 }
@@ -3366,6 +3370,8 @@ async function finishAppeal(
   );
   const current = await appealByKey(db, appeal.appeal_key);
   if (current === null) throw new Error("Appeal is missing");
+  if (current.resolution === "upheld")
+    await reopenKeptFee(db, current.appeal_key);
   if (current.resolved_at === null) {
     if (await hasParticipationBan(db, current.appellant_github_id)) {
       await escalateAppeal(

@@ -1,16 +1,22 @@
 // @source src/App.tsx
 // @evidence tests/e2e/home-audience.spec.ts
 // @evidence tests/e2e/clipboard-feedback.spec.ts
+// @evidence tests/e2e/home-cache.spec.ts
 // Two audiences, three URL values, and at most three browser history entries.
 // URL parsing is abstracted to absent, maintainer, or invalid. The DOM, native
 // history and launch URL encoding are checked through the browser scenarios.
 // Async clipboard ownership is refined by ui_clipboard_requests; this model
 // records only current visible feedback and its reset on an audience change.
+// Registry availability is the settled boot outcome, not project clearance,
+// restrictions or authority. Only the project-dependent discovery section
+// depends on it; generic prompts are selected from the URL alone.
 module ui_home_audience {
   type View = { history: List[str], cursor: int, audience: str,
-    prompt: str, launcher: str, feedback: str }
+    prompt: str, launcher: str, feedback: str, registry: str }
   var s: View
   val queries = Set("", "maintainer", "invalid")
+  val registries = Set("current", "published", "unavailable")
+  val projectDiscoveryAvailable = s.registry != "unavailable"
   pure def audience(query: str): str =
     if (query == "maintainer") "maintainer" else "contributor"
   pure def changed(view: View, query: str): View = {
@@ -19,7 +25,7 @@ module ui_home_audience {
       .with("feedback", if (view.audience == selectedAudience) view.feedback else "idle")
   }
   action init = s' = {history: List(""), cursor: 0, audience: "contributor",
-    prompt: "contributor", launcher: "contributor", feedback: "idle"}
+    prompt: "contributor", launcher: "contributor", feedback: "idle", registry: "current"}
   action open(query: str): bool = all {
     queries.contains(query),
     s' = changed(s, query).with("history", List(query)).with("cursor", 0)
@@ -40,17 +46,20 @@ module ui_home_audience {
   action reload = s' = changed(s, s.history.nth(s.cursor)).with("feedback", "idle")
   action copy(result: str): bool = all {Set("copied", "failed").contains(result),
     s' = s.with("feedback", result)}
+  action readRegistry(outcome: str): bool = all {registries.contains(outcome),
+    s' = s.with("registry", outcome)}
   action step = any {
     {nondet query = queries.oneOf(); open(query)},
     {nondet selectedAudience = Set("contributor", "maintainer").oneOf(); chooseAudience(selectedAudience)},
     back, forward, reload,
     {nondet result = Set("copied", "failed").oneOf(); copy(result)},
+    {nondet outcome = registries.oneOf(); readRegistry(outcome)},
     s' = s
   }
   val invariant = all {
     s.cursor >= 0, s.cursor < s.history.length(), s.history.length() <= 3,
     s.audience == audience(s.history.nth(s.cursor)),
-    s.prompt == s.audience, s.launcher == s.audience
+    registries.contains(s.registry), s.prompt == s.audience, s.launcher == s.audience
   }
   run defaultContributorTest = init.expect(s.audience == "contributor")
   run directMaintainerTest = init.then(open("maintainer"))
@@ -67,6 +76,14 @@ module ui_home_audience {
     .then(chooseAudience("maintainer")).expect(s.feedback == "idle")
   run roleChangeClearsFailureTest = init.then(copy("failed"))
     .then(chooseAudience("maintainer")).expect(s.feedback == "idle")
+  run unavailableRegistryKeepsGenericJourneysTest = init.then(readRegistry("unavailable"))
+    .expect(not(projectDiscoveryAvailable) and s.prompt == "contributor")
+    .then(chooseAudience("maintainer"))
+    .expect(not(projectDiscoveryAvailable) and s.prompt == "maintainer" and s.launcher == "maintainer")
+    .then(reload).then(readRegistry("current"))
+    .expect(projectDiscoveryAvailable and s.prompt == "maintainer")
+  run publishedFallbackStillOffersDiscoveryTest = init.then(readRegistry("published"))
+    .expect(projectDiscoveryAvailable and s.prompt == "contributor")
   run newSelectionDiscardsForwardHistoryTest = init.then(chooseAudience("maintainer"))
     .then(back).then(chooseAudience("maintainer"))
     .expect(s.history.length() == 2 and s.cursor == 1)

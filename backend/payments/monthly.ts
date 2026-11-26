@@ -137,7 +137,7 @@ export async function verifyProjectAuthority(
       "Only the current project steward can manage this project's awards.",
     );
   const checked = await readRepositoryAccess(repositoryAccess, project, actor);
-  const authority = setupAuthority(checked, actor, project.repositories[0].id);
+  const authority = setupAuthority(checked, actor, project.repositories[0]);
   if (authority.state === "retry")
     throw new MonthlyPaymentError(
       503,
