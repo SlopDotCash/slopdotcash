@@ -354,6 +354,7 @@ module workflowShape {
     return {
       github: {
         ref: `refs/heads/${run.ref ?? "main"}`,
+        sha: "a".repeat(40),
         event_name: run.event ?? "push",
         run_attempt: 2,
         event: { repository: { id: 100 }, workflow_run: { head_repository: {}, ...run.workflowRun } },
@@ -466,11 +467,14 @@ mkdir -p "$BUNDLE/github"
     const start = jobOf(daily, "start")
     const followUp = jobOf(daily, "follow-up")
     const followUpStep = stepOf(followUp, "Publish a superseded collection or resume a failed one")
+    const checkout = (job: Job, run: Run) => evaluated(String(job.steps[0]?.with?.ref ?? ""), contextOf(run))
     const dispatch = (run: Run) => {
       const context = contextOf(run)
       return { start: runs(start.if, context), followUp: runs(followUp.if, context) }
     }
-    const completedRelease: Run = { event: "workflow_run", workflowRun: { id: 900, head_branch: "main", head_repository: { id: 100 }, event: "push" } }
+    const completedRelease: Run = { ref: "develop", event: "workflow_run", workflowRun: { id: 900, head_branch: "main", head_repository: { id: 100 }, event: "push" } }
+    const scheduled: Run = { ref: "develop", event: "schedule" }
+    const manualStart: Run = { event: "workflow_dispatch", inputs: { release_run_id: "" } }
     const manualFollowUp: Run = { event: "workflow_dispatch", inputs: { release_run_id: "900" } }
     const followUpCommand = (run: Run) => recorded(followUpStep, { RELEASE_RUN_ID: evaluated(followUpStep.env?.RELEASE_RUN_ID, contextOf(run)) })
     const deadlines: Readonly<Record<string, DeadlineScenario>> = {
@@ -492,13 +496,16 @@ mkdir -p "$BUNDLE/github"
       },
       deadlines: Object.fromEntries(Object.entries(deadlines).map(([name, scenario]) => [name, deadline(prepare, scenario)])),
       daily: {
-        schedule: dispatch({ event: "schedule" }),
-        manualStart: dispatch({ event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        schedule: dispatch(scheduled),
+        scheduleOnMain: dispatch({ event: "schedule" }),
+        manualStart: dispatch(manualStart),
         manualFollowUp: dispatch(manualFollowUp),
         completedRelease: dispatch(completedRelease),
         forkRelease: dispatch({ event: "workflow_run", workflowRun: { id: 901, head_branch: "main", head_repository: { id: 7 }, event: "push" } }),
         pullRequestRelease: dispatch({ event: "workflow_run", workflowRun: { id: 902, head_branch: "main", head_repository: { id: 100 }, event: "pull_request" } }),
+        manualOnDevelop: dispatch({ ref: "develop", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
         development: dispatch({ ref: "development", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        checkouts: { schedule: checkout(start, scheduled), manualStart: checkout(start, manualStart), followUp: checkout(followUp, completedRelease), manualFollowUp: checkout(followUp, manualFollowUp) },
         startCommand: recorded(stepOf(start, "Dispatch a fresh collection unless one is running"), {}),
         followUpCommands: [followUpCommand(completedRelease), followUpCommand(manualFollowUp)],
       },
@@ -1224,12 +1231,15 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
         },
         daily: {
           schedule: { start: true, followUp: false },
+          scheduleOnMain: { start: true, followUp: false },
           manualStart: { start: true, followUp: false },
           manualFollowUp: { start: false, followUp: true },
           completedRelease: { start: false, followUp: true },
           forkRelease: { start: false, followUp: false },
           pullRequestRelease: { start: false, followUp: false },
+          manualOnDevelop: { start: false, followUp: false },
           development: { start: false, followUp: false },
+          checkouts: { schedule: "refs/heads/main", manualStart: "a".repeat(40), followUp: "refs/heads/main", manualFollowUp: "a".repeat(40) },
           startCommand: ["apps/operations/dist/programs/main.js release daily start"],
           followUpCommands: [["apps/operations/dist/programs/main.js release daily follow-up 900"], ["apps/operations/dist/programs/main.js release daily follow-up 900"]],
         },
