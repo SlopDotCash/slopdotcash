@@ -616,6 +616,7 @@
         ".cache/test-result-*.json"
       ],
       "env": [
+        "SLOP_PYTHON",
         "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
