@@ -4,6 +4,7 @@ import { isChain } from "@repo/settlement/kernels/networks";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { CHAIN_NAMES } from "../../../kernels/assetText.ts";
 import { NetworkName } from "../../funding/vault/index.ts";
+import { ScanClearance } from "./ScanClearance.tsx";
 import type { SetupView } from "./check.vibe";
 import { authorityReadiness, checksAgain, fundingAmount, installationReadiness, scanExemption, scanReadiness, setupStates } from "./checks.ts";
 import { type SetupFunding, setupFundingOf } from "./funding.schema.ts";
@@ -98,6 +99,7 @@ export function SetupSummary({ projectId, view: { setup, busy, error }, onCheck,
               { id: "scan", label: "Security scan", status: scanReadiness(setup.checks.scan), value: scanExemption(setup.checks.scan) },
             ]}
           />
+          <ScanClearance view={setup.checks.scan.clearance ?? null} />
           <dl className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
             <dt className="font-medium text-foreground">{funding?.mode === "bounty" ? "Private bounty" : "Funding"}</dt>
             <dd className="flex flex-wrap items-center gap-x-4 gap-y-2">
