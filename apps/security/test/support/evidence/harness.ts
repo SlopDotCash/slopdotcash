@@ -194,6 +194,7 @@ export async function overwrite(world: World, key: string, bytes: Uint8Array, sh
 }
 
 export async function partialDownload(world: World, path: string, as: string, cookie: string, stopAfter: number, interrupt: () => Promise<void>): Promise<{ readonly status: number; readonly received: number; readonly failed: boolean }> {
+  await request(world, "/api/v1/test/expire-session-after", { method: "POST", body: JSON.stringify({ githubId: as, reads: 3 }), json: true });
   const response = await respond(world, path, { as, headers: { cookie, "sec-fetch-site": "same-origin" } });
   const stream = response.body;
   if (stream === null) return { status: response.status, received: 0, failed: false };
@@ -211,6 +212,7 @@ export async function partialDownload(world: World, path: string, as: string, co
       }
     }
   } catch {
+    if (!interrupted) await interrupt();
     return { status: response.status, received, failed: true };
   }
 }

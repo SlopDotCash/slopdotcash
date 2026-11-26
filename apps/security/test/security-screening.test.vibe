@@ -354,6 +354,7 @@ effect function lateResults(screened: Screened.Shape) {
   fake.reply(analysisOf(reportK.summary), assessed("The fallback feed returns zero on revert."))
   fake.reply(screeningOf(reportK.summary), decided("spam", "Late answer to the lost claim."))
   const lost = try screen(screened, "42001", k.id, 1)
+  const callsK = fake.calls.length - callsBeforeK
 
   const reportL = reportOf("Withdrawal queue skips the pause flag", "Queued withdrawals still settle while the protocol is paused by the guardian.")
   const revisedL = reportOf("Withdrawal queue skips the pause flag, revised", "Queued withdrawals still settle while paused; the attached test drains 10 percent of the pool.")
@@ -378,7 +379,7 @@ effect function lateResults(screened: Screened.Shape) {
     whileLost,
     k: try intakeOf(world, k.id),
     eventsK: try eventsOf(world, k.id),
-    callsK: fake.calls.length - callsBeforeK,
+    callsK,
     duringCall,
     afterLate,
     eventsAfterLate,

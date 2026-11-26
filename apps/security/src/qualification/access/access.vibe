@@ -4,7 +4,7 @@ import { D1, first, rows, sql } from "@repo/platform/d1"
 import { retentionBucket } from "@repo/platform/r2"
 import { evidencePolicy } from "../../client/evidence.vibe"
 import { partBytes } from "../../evidence/layout.ts"
-import { location } from "../../evidence/objects.vibe"
+import { location, partKey } from "../../evidence/objects.vibe"
 import { type Ask, FixtureRefused, type Session, ask, endSessions, isoNow, now, promised, respond, session, signedAsk, status, verify } from "../flags/requests.vibe"
 import { type FixtureEnv, fixtureSite, publicReadToken } from "../flags/site.vibe"
 import { type SiteResponse, fixtureKeys, githubFixture } from "../flags/transport.ts"
@@ -96,11 +96,11 @@ export effect function qualifyAccess(env: FixtureEnv) {
   effect function objectOf(id: string) {
     const row = try first(ObjectRow, sql`SELECT object_key,sha256,size_bytes,storage,storage_generation FROM vetting_evidence_objects WHERE assessment_id=${id}`)
     if (row === undefined) throw new FixtureRefused({ issue: "Fixture object row is missing" })
-    return location(row)
+    return (try partKey(row)) ?? location(row)
   }
 
   effect function auditOf(id: string) {
-    return try rows(AuditRow, sql`SELECT actor,action,reason FROM vetting_evidence_audit WHERE assessment_id=${id}`)
+    return try rows(AuditRow, sql`SELECT actor,action,reason FROM vetting_evidence_audit WHERE assessment_id=${id} AND actor NOT LIKE 'service:%'`)
   }
 
   effect function streamed(response: SiteResponse, limit?: number) {
@@ -245,7 +245,7 @@ export effect function qualifyAccess(env: FixtureEnv) {
   const singleKey = try objectOf(single.id)
   try objects.remove(singleKey)
   try verify((try request(`${single.path}/grant`, owner, { body: { reason: "Missing source must refuse" } })).status === 404, "Missing object granted")
-  try objects.put(singleKey, new Uint8Array(single.data.length), { sha256: single.sha, contentType: "application/octet-stream" })
+  try promised("Corrupt fixture put failed", () => env.EVIDENCE_SOURCE.put(singleKey, new Uint8Array(single.data.length), { customMetadata: { sha256: single.sha }, httpMetadata: { contentType: "application/octet-stream" } }))
   try verify((try request(`${single.path}/grant`, owner, { body: { reason: "Changed source must refuse" } })).status === 409, "Changed object granted")
   try objects.remove(singleKey)
   try objects.put(singleKey, single.data, { sha256: single.sha, contentType: "application/octet-stream" })

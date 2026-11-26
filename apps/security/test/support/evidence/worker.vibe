@@ -2,7 +2,7 @@
 import type { D1Database, R2Bucket } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
-import { handleRaw, json, refuse, serviceAuth } from "@repo/platform/http"
+import { Caller, handleRaw, json, refuse, serviceAuth } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
@@ -69,9 +69,14 @@ const fixtureProgram = { technical: ["701"], financial: ["702"], dispute: [], sp
 schema Retirement { outcome: "backed" | "changed" | "missing"; backupDay: string; backupRoot: string }
 schema ReportText { submissionId: string; version: number; text: string }
 schema Retired { frozen: string; retired: ReadonlyArray<string>; finished: string }
+schema ExpirePlan { githubId: string; reads: number }
+schema Armed { armed: boolean }
+
+let expirePlan: { readonly githubId: string; remaining: number } | undefined = undefined
 
 const reportRoute = route({ method: "GET", path: "/api/v1/test/security-cases/:id/report", access: "session", limitKib: 1, request: undefined, answer: ReportText, rejected: "not_found", cache: "private" })
 const retireRoute = route({ method: "POST", path: "/api/v1/test/evidence-generations/:id/retire", access: "public", limitKib: 1, request: Retirement, answer: Retired, rejected: "rejected", cache: "no-store" })
+const expireRoute = route({ method: "POST", path: "/api/v1/test/expire-session-after", access: "public", limitKib: 1, request: ExpirePlan, answer: Armed, rejected: "rejected", cache: "no-store" })
 
 const notFound = getSecuritySubmissionsById.notFoundReportNotFound
 
@@ -102,7 +107,34 @@ const testRoutes = Layer.mergeAll(
     }
     return json({ frozen, retired, finished: try finish(generation) })
   }),
+  handleRaw(expireRoute, () => effect {
+    const body = try Schema.decodeUnknownEffect(ExpirePlan)(try (try HttpServerRequest.HttpServerRequest).json)
+    expirePlan = { githubId: body.githubId, remaining: body.reads }
+    return json({ armed: true })
+  }),
 )
+
+function callerWithExpire(db: D1Database) {
+  return Layer.provide(Layer.effect(Caller, effect {
+    const inner = try Caller
+    return {
+      current: () => effect {
+        if (expirePlan !== undefined) {
+          if (expirePlan.remaining <= 0) {
+            const target = expirePlan.githubId
+            expirePlan = undefined
+            const expired = new Date(Date.now() - 1000).toISOString()
+            try promise(() => db.prepare("UPDATE points_sessions SET expires_at=? WHERE actor_id=?").bind(expired, `actor-${target}`).run())
+          } else {
+            expirePlan.remaining -= 1
+          }
+        }
+        return try inner.current()
+      },
+      optional: () => inner.optional(),
+    } satisfies Caller.Shape
+  }), Layer.provide(CallerLive, Layer.merge(d1(db), webCrypto)))
+}
 
 export default worker({
   services: (env: Env) => Layer.mergeAll(
@@ -113,7 +145,7 @@ export default worker({
     Layer.succeed(Backups, { binding: env.EVIDENCE_BACKUPS }),
     rolesFrom(env),
     Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
-    Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
+    callerWithExpire(env.SLOP_DB),
     ports(env),
   ),
   routes: Layer.mergeAll(evidenceRoutes, testRoutes),

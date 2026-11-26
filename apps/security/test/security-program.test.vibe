@@ -175,7 +175,7 @@ function fullTerms() {
 }
 
 const bountyOnly = { kind: "monthly-pool", monthlyCapMinor: "0", committedMinor: "0", paymentMode: "disabled" }
-const draftVault = { deployments: [{ network: "base-mainnet", vault: `0x${"ab".repeat(20)}`, asset: usdcBase }] }
+const draftVault = { chain: "base", deployments: [{ network: "base-mainnet", vault: `0x${"ab".repeat(20)}`, asset: usdcBase }] }
 
 interface Published {
   readonly securityBounty: unknown
