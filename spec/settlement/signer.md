@@ -385,6 +385,12 @@ payouts as the qualification evidence for Solana and Robinhood Chain. Change
 activation for that network. The signing laws below apply to every
 configuration, and a configuration naming a test network cannot activate it.
 
+Staging Pages uses the reviewed Solana devnet test attester for ordinary
+binding preparation and completion. The binding entrypoint refuses private
+binding paths on the test stack. Production Pages uses the mainnet attester
+for ordinary and private binding, subject to the corresponding deployment
+pins.
+
 ```quint
 type Stack = TestStack | ProductionStack
 type ServiceNetwork = BaseMainnet | EthereumMainnet | RobinhoodMainnet | SolanaMainnet | BaseSepolia | RobinhoodTestnet | EthereumSepolia | SolanaDevnet | SolanaTestnet

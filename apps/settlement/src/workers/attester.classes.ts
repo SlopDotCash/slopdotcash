@@ -97,7 +97,12 @@ const SOLANA_BINDING_PATHS: ReadonlySet<string> = new Set(["/v1/pay", "/v1/compl
 
 export class SolanaBinding extends WorkerEntrypoint<AttesterWorkerEnv> {
   async fetch(request: Request): Promise<Response> {
-    const admitted = request.method === "POST" && SOLANA_BINDING_PATHS.has(new URL(request.url).pathname) && this.env.SIGNER_STACK === "production" && familyOf(this.env) === "solana";
+    const path = new URL(request.url).pathname;
+    const ordinary = path === "/v1/pay" || path === "/v1/complete-bind";
+    const production = this.env.SIGNER_STACK === "production" && this.env.PAYMENT_NETWORK === "solana-mainnet";
+    const staging = this.env.SIGNER_STACK === "test" && this.env.SLOP_ENVIRONMENT === "staging" && this.env.PAYMENT_NETWORK === "solana-devnet";
+    const allowedPath = (production && SOLANA_BINDING_PATHS.has(path)) || (staging && ordinary);
+    const admitted = request.method === "POST" && allowedPath;
     return forwarded(this.env, request, admitted);
   }
 }

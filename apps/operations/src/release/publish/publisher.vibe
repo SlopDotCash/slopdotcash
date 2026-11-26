@@ -124,7 +124,7 @@ const attesterBindings: { readonly [E in Environment]: { readonly [network: stri
     "base-sepolia": [["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
     "ethereum-sepolia": [["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
     "robinhood-testnet": [["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
-    "solana-devnet": [["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
+    "solana-devnet": [["SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
   },
 }
 
