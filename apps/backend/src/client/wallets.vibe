@@ -1,5 +1,5 @@
 // spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/wallets.md, "Story: Recover a wallet through the operator without giving the operator authority"
-import { type AnyRoute, route } from "@repo/platform/route"
+import { type AnyRoute, type TierOrigins, route } from "@repo/platform/route"
 import { deploymentOrigins } from "@repo/platform/config"
 
 export schema WalletClaimView {
@@ -94,12 +94,11 @@ export schema OperatorClaimFields {
   readonly issueNumber?: AnyField
 }
 
-const traceBrowserOrigins = {
+const traceCors: TierOrigins = {
   production: [...deploymentOrigins("production").traceBrowserOrigins],
   staging: [...deploymentOrigins("staging").traceBrowserOrigins],
-} satisfies Readonly<Record<"production" | "staging", ReadonlyArray<string>>>
-
-const traceCors = [...new Set(Object.values(traceBrowserOrigins).flat())]
+  local: ["https://slop.test"],
+}
 
 const publicRead = { browserSeconds: 60, mustRevalidate: true } as const
 const privateNoStore = { "cache-control": "private, no-store" } as const

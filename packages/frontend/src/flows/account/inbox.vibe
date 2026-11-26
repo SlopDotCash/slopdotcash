@@ -120,7 +120,7 @@ export const inboxLayer = Layer.effect(Inbox, effect {
 
   effect function readPage(key: string) {
     const { actor, cursor: at } = partsOf(key)
-    const page = try call(listNotices, { query: at === null ? {} : { cursor: at } }, { limitBytes: inboxLimitBytes, ...actor === "" ? {} : { expectedActor: actor } })
+    const page = try call(listNotices, { query: at === null ? {} : { cursor: at } }, { limitBytes: inboxLimitBytes, retryOnServerError: true, ...actor === "" ? {} : { expectedActor: actor } })
     if (!validInboxPage(page)) throw new Unreadable({ message: inboxMessages.invalid })
     const current = try session.current()
     if (current === null || page.recipientGithubId !== current.githubId || (actor !== "" && actor !== current.githubId)) throw new ActorChanged({ expected: actor, message: inboxMessages.accountChanged })

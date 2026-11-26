@@ -16,6 +16,7 @@ export interface RequestOptions {
   readonly limitBytes?: number
   readonly deadlineMs?: number
   readonly headers?: Readonly<Record<string, string>>
+  readonly retryOnServerError?: boolean
 }
 
 export type Outcome =
@@ -132,7 +133,7 @@ export effect function request<B, A>(route: Route<B, A, Access>, input: RequestI
       { duration: deadline, orElse: () => Effect.fail(new DeadlineExceeded()) },
     )
   const first = try attempt()
-  const outcome = route.method === "GET" && first.kind !== "unreachable" && isRetryableStatus(first.status)
+  const outcome = options.retryOnServerError === true && route.method === "GET" && first.kind !== "unreachable" && isRetryableStatus(first.status)
     ? try effect {
         try sleep(readRetryDelayMs)
         return try attempt()
