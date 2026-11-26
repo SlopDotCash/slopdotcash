@@ -313,10 +313,22 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       try rows("INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, 'base-mainnet', ?, '2026-09', '5', 1, '1', '2026-09-30T00:00:00.000Z')", pledging, pledgeVault)
       const pledgeData = try Effect.try(() => pledgeMonthsCalldata(202612, 3, 10_000_000n))
       try promise(() => world.escrow.send(owner, pledgeVault, pledgeData))
-      world.escrow.chain.setFinalized(try promise(() => world.escrow.head()))
+      const finalized = try promise(() => world.escrow.head())
+      world.escrow.chain.setFinalized(finalized)
       world.clock.advance(60_000)
-      try refreshVaultSnapshots([pledged])
-      const firstBlock = String(try promise(() => world.escrow.head()))
+      const blockParameters = new Map([["eth_getCode", 1], ["eth_getStorageAt", 2], ["eth_call", 1], ["eth_getBalance", 1]])
+      const observedBlocks: unknown[] = []
+      const observingRpc = try world.serve(async (request) => {
+        const call = await request.clone().json() as { readonly method: string; readonly params: ReadonlyArray<unknown> }
+        const position = blockParameters.get(call.method)
+        if (position !== undefined) observedBlocks.push(call.params[position])
+        return forward(world.escrow.chain.url)(request)
+      })
+      provide try evmShell(observingRpc) {
+        try refreshVaultSnapshots([pledged])
+      }
+      const firstBlock = String(finalized)
+      try same([...new Set(observedBlocks)], [`0x${finalized.toString(16)}`])
       const pledgeRows = effect { return try rows("SELECT period, amount, open, block_number FROM vault_month_pledges WHERE project_id = ? AND (amount <> '0' OR period = '2026-09') ORDER BY period", pledging) }
       const pledgeTotal = effect { return try rows("SELECT total_deposited, open_pledged_gross FROM vault_snapshots WHERE project_id = ?", pledging) }
       const pledgeStored = { rows: try pledgeRows, months: (try rows("SELECT count(*) AS months FROM vault_month_pledges WHERE project_id = ?", pledging))[0], total: try pledgeTotal }
