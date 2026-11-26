@@ -26,7 +26,7 @@ storybook-static/
 build/
 # A failed exploration's trace, replayed by the next check (SPEC.md, "Exploring the page").
 **/test/__traces__/bombadil/
-test/__traces__/
+**/test/__traces__/
 .DS_Store
 .claude/worktrees/
 # Cloudflare local state and secrets: never committed.

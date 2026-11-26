@@ -6,7 +6,7 @@ import path from "node:path";
 import { gunzipSync, zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { sha, tokenize } from "./util.ts";
 import { evaluatorIdentity, executableDigest, InstallationChanged, LASTING, lasting, packageLocation, packageRoots } from "./installed.ts";
-import { NEEDS_DAFNY, findBin, formatStamp, exec, onPath, stamp, writeWhole } from "./run.ts";
+import { NEEDS_DAFNY, findBin, formatStamp, exec, makeTempDir, onPath, removeTempDir, stamp, untrackTempDir, writeWhole } from "./run.ts";
 
 export { executableDigest };
 
@@ -494,7 +494,7 @@ function packageGraph(exe: string, name: string) {
     const dependencies = graph.map((node, index): [string, number | null][] => node.dependencies.some(([name]) => name === node.name) ? node.dependencies : [...node.dependencies, [node.name, index]]);
     fs.mkdirSync(directory, { recursive: true });
     if (!fs.existsSync(view)) {
-      const staged = fs.mkdtempSync(path.join(directory, ".building-"));
+      const staged = makeTempDir(".building-", directory);
       try {
         for (const [index, { dir }] of graph.entries()) {
           const target = path.join(staged, "packages", String(index));
@@ -522,8 +522,8 @@ function packageGraph(exe: string, name: string) {
         fs.symlinkSync(path.relative(path.dirname(link), path.join(staged, "packages", String(loaded))), link, "dir");
         fs.copyFileSync(script, path.join(staged, path.basename(script)));
         if (!sameFiles(observations, links)) throw new InstallationChanged();
-        try { fs.renameSync(staged, view); } catch (error) { if (!fs.existsSync(view)) throw error; }
-      } finally { fs.rmSync(staged, { recursive: true, force: true }); }
+        try { fs.renameSync(staged, view); untrackTempDir(staged); } catch (error) { if (!fs.existsSync(view)) throw error; }
+      } finally { removeTempDir(staged); }
     }
     const modulesMatch = (directory: string, names: string[]) => {
       observeLocation(directory);

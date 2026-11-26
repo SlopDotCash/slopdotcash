@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type * as TS from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
@@ -11,6 +10,7 @@ import { modules, originalColumn, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { act } from "./action.ts";
 import type { Memory } from "./cache.ts";
+import { makeTempDir, removeTempDir } from "./run.ts";
 import { plainText } from "./scan.ts";
 import { codeDirOf, codeDirs, filesUnder, manifest, owner, readSrc, SIMULATIONS, tsApi, writeWhole, type SrcFile } from "./util.ts";
 import { effectAdapter } from "./gen/vibe.ts";
@@ -59,7 +59,7 @@ export function publishGen(root: string, staged: ReadonlyMap<string, string>) {
       if (previous === text) continue;
       let saved: string | undefined;
       if (previous !== undefined) {
-        undo ??= fs.mkdtempSync(path.join(dir, ".undo-"));
+        undo ??= makeTempDir(".undo-", dir);
         saved = path.join(undo, path.basename(file));
         try { fs.linkSync(file, saved); } catch { fs.renameSync(file, saved); }
       }
@@ -73,10 +73,10 @@ export function publishGen(root: string, staged: ReadonlyMap<string, string>) {
       else fs.rmSync(file, { force: true });
     }
     if (!existed) fs.rmSync(dir, { recursive: true, force: true });
-    if (undo) fs.rmSync(undo, { recursive: true, force: true });
+    if (undo) removeTempDir(undo);
     throw error;
   }
-  if (undo) fs.rmSync(undo, { recursive: true, force: true });
+  if (undo) removeTempDir(undo);
   generations.set(root, new Set(staged.keys()));
 }
 
@@ -223,10 +223,8 @@ export function typecheckAll(memory: Memory, specs: Spec[], output = memory.root
         decoded = { modules: [module], types: Object.fromEntries(types) };
         return { ...value, files: { ...value.files, "ir.json": JSON.stringify(decoded) } };
       };
-      const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "vibestack-typecheck-"));
       const actionProjection = { version: "model-module-v1", encode };
-      const typed = await act({ ...memory, actionProjection }, "quint", ["typecheck", "--out", "ir.json", `${spec.name}.qnt`], scratch, modules(spec, specs))
-        .finally(() => fs.rmSync(scratch, { recursive: true, force: true }));
+      const typed = await act({ ...memory, actionProjection }, "quint", ["typecheck", "--out", "ir.json", `${spec.name}.qnt`], { temp: "vibestack-typecheck-" }, modules(spec, specs));
       const ir = decoded ?? readIr(typed.files["ir.json"]);
       if (!typed.ok || !ir || ir.errors?.length) throw typeErrors(spec, ir, typed.out, specs);
       return { modules: ir.modules, types: ir.types };

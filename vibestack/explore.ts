@@ -2,13 +2,12 @@
 // serves it, and checks the properties of test/bombadil.ts, or Bombadil's defaults, on every state it reaches.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { installedPackages } from "./cache.ts";
 import { toolScripts, toolsCode } from "./cache.ts";
 import { chromiumForExplore } from "./chromium.ts";
-import { bin, exec, startGroup } from "./run.ts";
+import { bin, exec, makeTempDir, removeTempDir, startGroup } from "./run.ts";
 import { profile, type TestProfile } from "./testing/profile.ts";
 import { appScript, COLOUR, COUNTEREXAMPLES, DRIVERS, filesUnder, indent, isTestFile, manifest, packageFiles, packageManager, servedAt, TRACES, type Remember, type Reported } from "./util.ts";
 
@@ -233,7 +232,7 @@ export async function explore(directory: string, remember: Remember, mode: TestP
     for (const dir of [path.dirname(saved), path.dirname(path.dirname(saved))]) if (fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
   };
   const resolved = fs.realpathSync(path.resolve(checking));
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "spec-explore-"));
+  const scratch = makeTempDir("spec-explore-");
   try {
     const results: Reported<"explore">[] = [];
     if (fs.existsSync(saved)) {
@@ -255,6 +254,6 @@ export async function explore(directory: string, remember: Remember, mode: TestP
     }, ([ok]) => ok));
     return results;
   } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    removeTempDir(scratch);
   }
 }

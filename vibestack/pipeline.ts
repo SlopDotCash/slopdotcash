@@ -14,7 +14,7 @@ import type { Model } from "./gen.ts";
 import { conformance, type Machine } from "./conform.ts";
 import { explore } from "./explore.ts";
 import { abandonedProof, ensuresOf, LIB_FILE, libraryFor, proofPaths, prove, type Offered, type Proof } from "./prove.ts";
-import { bin, exec, run, startAttached } from "./run.ts";
+import { bin, exec, makeTempDir, removeTempDir, run, startAttached } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, isStd, located, type Spec } from "./parse.ts";
 import { contracts, citationLookup, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, moved, showPending, ledgerFile, readReviewLock, writeLedger, type Pending, type Accepted, type ReviewLock } from "./review.ts";
 import { cacheCredentials, dafnyVersion, entry, recall, remembered, steady, store, certifyInstallation, collectGarbage, evaluatorForCheck, isActionEntry, toolchainFingerprint, type Memory } from "./cache.ts";
@@ -193,7 +193,7 @@ async function precomputedSimulations(root: string, specs: Spec[], targets: read
       const simulators: Memory = receipts ? { ...memory, captureReceipt: ({ name, bytes }) => {
         if (name.startsWith("simulate-")) receipts.simulations.set(name, bytes);
       } } : memory;
-      const loaded = fs.mkdtempSync(path.join(root, ".spec-cache", "precompute-"));
+      const loaded = makeTempDir("precompute-", path.join(root, ".spec-cache"));
       const started = new Map<string, Promise<Simulation>>();
       const { seed } = profile("normal");
       try {
@@ -216,7 +216,7 @@ async function precomputedSimulations(root: string, specs: Spec[], targets: read
         return { results, captured: { complete, receipts: new Map([...receipts.typechecks, ...receipts.simulations]) } };
       } finally {
         await Promise.allSettled(started.values());
-        fs.rmSync(loaded, { recursive: true, force: true });
+        removeTempDir(loaded);
       }
     });
   } finally {
@@ -944,12 +944,12 @@ async function generateOwner(root: string, name: string) {
   if (!ownerDir) throw new Error(`${name}: no package owns spec/${name}/`);
   const release = lockProject(root);
   try {
-    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "vibestack-owner-gen-"));
+    const scratch = makeTempDir("vibestack-owner-gen-");
     try {
       const specs = await generateFiles(root, scratch, name);
       mirrorGen(root, specs, { scratch, ownerDir: `${ownerDir}/` });
     } finally {
-      fs.rmSync(scratch, { recursive: true, force: true });
+      removeTempDir(scratch);
     }
   } finally {
     release();
@@ -1125,7 +1125,7 @@ async function legacyGenerationConfig(root: string, args: string[], env: NodeJS.
   const input = `.cache/gen-legacy-${digest(layout)}.json`;
   const position = inputs.getStart(source) + 1;
   const overlay = text.slice(0, position) + `${JSON.stringify(input)},` + text.slice(position);
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "vibestack-turbo-"));
+  const directory = makeTempDir("vibestack-turbo-");
   const config = path.join(directory, path.basename(file));
   try {
     const marker = path.join(root, input);
@@ -1133,7 +1133,7 @@ async function legacyGenerationConfig(root: string, args: string[], env: NodeJS.
     fs.writeFileSync(config, overlay, { mode: 0o600 });
     return { args: args.toSpliced(explicit?.index ?? 0, explicit?.count ?? 0, `--root-turbo-json=${config}`), directory };
   } catch (error) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTempDir(directory);
     throw error;
   }
 }
@@ -1161,7 +1161,7 @@ async function runTasks(root: string, args: string[]): Promise<number | null> {
       child.once("exit", resolve);
     });
   } finally {
-    if (legacy) fs.rmSync(legacy.directory, { recursive: true, force: true });
+    if (legacy) removeTempDir(legacy.directory);
   }
 }
 
