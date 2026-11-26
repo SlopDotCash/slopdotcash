@@ -39,9 +39,12 @@ interface Shown {
   readonly id: string
   readonly state: string
   readonly revision: number
+  readonly attempt: number
+  readonly failureCode: string | null
   readonly retryAllowed: boolean
   readonly caseId: string | null
   readonly advisory: { readonly ghsa: string } | null
+  readonly intake: { readonly canAuthorize: boolean; readonly canForward: boolean } | null
 }
 
 service Forwarding {
@@ -269,6 +272,68 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       credentials: [`user:${login}`, "unknown"],
     })
     try same(duplicate.ghsaId === landed?.ghsaId, false)
+  })
+
+  it.effect('A retained attempt-three refusal can be retried by its reporter with fresh consent (spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case")', () => effect {
+    const forwarding = try Forwarding
+    const id = try submitted(forwarding, "forward-retained-0001", "Retained report forwarding fixture")
+    const path = `/api/v1/security-submissions/${id}`
+    const originalRead = try promise(() => request(forwarding.world, `${path}?view=receipt`, { as: reporter }))
+    if (originalRead.status !== 200) return try die(new Error(`The saved receipt read returned ${originalRead.status}`))
+    const { submission: original } = originalRead.body as { readonly submission: Shown }
+    const caseId = original.caseId
+    if (caseId === null) return try die(new Error("The saved report has no Slop receipt"))
+    const receiptQuery = "SELECT id, received_at, received_at_source, receipt_evidence_digest FROM security_cases WHERE id=?"
+    const originalReceipt = try promise(() => rows(forwarding.world, receiptQuery, caseId))
+    const at = try Effect.try(() => new Date(forwarding.clock.now()).toISOString())
+    const { db } = forwarding.world
+    try promise(() => db.batch([1, 2, 3].flatMap((attempt) => {
+      const revision = original.revision + (attempt - 1) * 2
+      return [
+        db.prepare("UPDATE security_submissions SET state='submitting', attempt=?, attempt_started_at=?, failure_code=NULL, revision=revision+1, updated_at=? WHERE id=? AND revision=?").bind(attempt, at, at, id, revision),
+        db.prepare("INSERT INTO security_submission_events (submission_id, revision, kind, detail, actor_github_id, at) VALUES (?, ?, 'send', ?, ?, ?)").bind(id, revision + 1, JSON.stringify({ attempt }), reporter, at),
+        db.prepare("UPDATE security_submissions SET state='failed', failure_code='forbidden', revision=revision+1, updated_at=? WHERE id=? AND revision=?").bind(at, id, revision + 1),
+        db.prepare("INSERT INTO security_submission_events (submission_id, revision, kind, detail, at) VALUES (?, ?, 'rejected', ?, ?)").bind(id, revision + 2, JSON.stringify({ code: "forbidden" }), at),
+      ]
+    })))
+    const retainedRead = try promise(() => request(forwarding.world, `${path}?view=receipt`, { as: reporter }))
+    if (retainedRead.status !== 200) return try die(new Error(`The retained receipt read returned ${retainedRead.status}`))
+    const { submission: retained } = retainedRead.body as { readonly submission: Shown }
+    const body = { expectedRevision: retained.revision }
+    const firstRequest = forwarding.fake.requests.length
+    const firstAdvisory = try Effect.try(() => forwarding.fake.world.repo("slop-test/intake").advisories.length)
+    const sends = () => forwarding.fake.requests.slice(firstRequest).filter((sent) => sent.method === "POST" && sent.url.includes("/security-advisories/reports")).map((sent) => sent.credential)
+    const withoutGrant = try call(forwarding, `${path}/send`, [], body)
+    const otherAuthorize = try promise(() => called(forwarding, `${path}/authorize`, "31338", [], {}))
+    const grant = try consented(forwarding, id)
+    const otherSend = try promise(() => called(forwarding, `${path}/send`, "31338", [grant], body))
+    const beforeSend = sends()
+    const retried = try call(forwarding, `${path}/send`, [grant], body)
+    const replay = try call(forwarding, `${path}/send`, [], body)
+    const advisory = try Effect.try(() => forwarding.fake.world.repo("slop-test/intake").advisories.slice(firstAdvisory).map((copy) => copy.ghsaId))
+    const receipt = try promise(() => rows(forwarding.world, receiptQuery, caseId))
+    const events = try promise(() => rows(forwarding.world, "SELECT kind FROM security_submission_events WHERE submission_id=? ORDER BY revision", id))
+    try same({
+      retained: [retained.state, retained.failureCode, retained.attempt, retained.revision, retained.caseId, retained.retryAllowed, retained.intake?.canAuthorize, retained.intake?.canForward],
+      refused: [refusal(withoutGrant), refusal(otherAuthorize), refusal(otherSend)],
+      beforeSend,
+      linked: [...brief(retried), shown(retried).attempt, shown(retried).caseId, shown(retried).advisory?.ghsa, retried.cookie?.includes("Max-Age=0") === true],
+      replayed: [replay.status, replay.body.replayed, shown(replay).advisory?.ghsa],
+      credentials: sends(),
+      advisoryCount: advisory.length,
+      receipt,
+      kinds: events.map((entry) => entry.kind),
+    }, {
+      retained: ["failed", "forbidden", 3, 7, caseId, false, true, true],
+      refused: [[409, "grant_required"], [404, "not_found"], [404, "not_found"]],
+      beforeSend: [],
+      linked: [200, "receipt-verified", 10, 4, caseId, advisory[0], true],
+      replayed: [200, true, advisory[0]],
+      credentials: [`user:${login}`],
+      advisoryCount: 1,
+      receipt: originalReceipt,
+      kinds: ["create", "send", "rejected", "send", "rejected", "send", "rejected", "send", "created", "github-linked"],
+    })
   })
 
   it.effect('An empty listing keeps a lost send uncertain until the quiet window (spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant")', () => effect {
