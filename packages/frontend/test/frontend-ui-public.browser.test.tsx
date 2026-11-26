@@ -202,8 +202,10 @@ describe('Open every product route at its existing address (spec/frontend/naviga
 
   it('an old address opens the page that replaced it and keeps its query and fragment (spec/app/index.md, "An old address opens the page that replaced it"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication")', async () => {
     await site.allow("^404 GET /api/v1/projects/nobody$", "^404 GET /api/v1/projects/nobody/");
-    await opened("/wallet", "Settings");
-    await shown(named("link", "Sign in with GitHub")).toMatchObject({ href: loginPath("/wallet") });
+    expect((await site.open("/wallet")).status).toBe(200);
+    await at("/account#wallets");
+    await shown(heading("Settings")).toMatchObject({ visible: true });
+    await shown(named("link", "Sign in with GitHub")).toMatchObject({ href: loginPath("/account#wallets") });
 
     await site.open("/verification");
     await at("/how-it-works");
