@@ -729,7 +729,7 @@
     },
     {
       "path": "spec/backend/backlogRule.md",
-      "sha256": "e7da499fc8283c3cf695bcec1969b4bc53c24cce4ef1873d4cde9ba6d8b1d939",
+      "sha256": "5c3b5f0b91609fdd63d6a4400a61a5f3ef7fafabd1f9f89cf66d1c60b1d37eb4",
       "module": "backend__backlogRule",
       "stories": [
         {
@@ -863,8 +863,11 @@
             "backlogRuleKeyPrefix",
             "canSendNotice",
             "sendNotice",
+            "noticeDue",
             "lawNoticeSentOnce",
             "lawPreviewBeforeStart",
+            "lawNoticeBeforeStartOnlyPreview",
+            "lawCatchUpSuppressesNotice",
             "sometimesNoticeSent",
             "readsValues",
             "rValues",

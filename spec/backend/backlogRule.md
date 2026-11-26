@@ -245,44 +245,38 @@ when the steward is an Organization, under the Inbox kind
 `project_revision`, with event keys under `backlog-rule:`:
 `backlog-rule:<project>:preview` once, before 1 December 2026, when the
 project would leave on the current figures;
-`backlog-rule:<project>:warn:<last merge ISO instant or none>` once
-when dormancy is four days away; and one notice each time the project
-leaves rotation, keyed as `backlog-rule:<project>:out:<backlog |
-dormant>:<last merge ISO instant or none>`.
+`backlog-rule:<project>:warn:<last merge ISO instant or none>` once when
+dormancy is four days away and no catch-up pause is running; and one notice
+each time the project leaves rotation, keyed as
+`backlog-rule:<project>:out:<backlog | dormant>:<last merge ISO instant or none>`.
 The scheduled Slopbot run sends them right after it refreshes merge
 activity; a failure to send never fails that read. No notice names a
 contributor or an amount.
 
-At most one notice is due for a project in a run: the preview before
-the rule starts when the project would leave, the out notice when it
-has left rotation, otherwise the warning when dormancy is four days
-away. The preview says the project would leave on 1 December 2026 and
-that the owner can mark a catch-up; the warning says how many days have
-passed since the last merge; the out notice says why the project left
-and how it returns.
+At most one notice is due for a project in a run: before 1 December 2026,
+only the preview when the project would leave; from 1 December 2026 onward,
+the out notice when it has left rotation, otherwise the warning when
+dormancy is four days away and no catch-up pause is running.
 
 ```quint
 pure val inboxKind = "project_revision"
 pure val backlogRuleKeyPrefix = "backlog-rule:"
 pure def canSendNotice(s: Backlog, key: str, by: str): bool = by == schedule and not(s.sentKeys.contains(key))
 pure def sendNotice(s: Backlog, key: str, by: str): Backlog = { ...s, sentKeys: s.sentKeys.union(Set(key)) }
+pure def noticeDue(s: Backlog): str =
+  if (s.now < startsAtHours) (if (wouldLeave(s)) "preview" else "none")
+  else if (outOfRotation(s)) "out"
+  else if (s.active and not(s.exempt) and not(catchUpRunning(s)) and dormantWarningDue(s.reads, s.now)) "warn"
+  else "none"
 pure def lawNoticeSentOnce(s: Backlog, key: str): bool =
   s.sentKeys.contains(key) implies not(canSendNotice(s, key, schedule))
 pure def lawPreviewBeforeStart(s: Backlog, key: str): bool =
   (s.now < startsAtHours and wouldLeave(s) and not(s.sentKeys.contains(key))) implies canSendNotice(s, key, schedule)
+pure def lawNoticeBeforeStartOnlyPreview(s: Backlog): bool =
+  s.now < startsAtHours implies (noticeDue(s) == "none" or noticeDue(s) == "preview")
+pure def lawCatchUpSuppressesNotice(s: Backlog): bool =
+  catchUpRunning(s) implies noticeDue(s) == "none"
 pure def sometimesNoticeSent(s: Backlog): bool = s.sentKeys.size() > 0
-pure def noticeDue(s: Backlog): str =
-  if (s.now < startsAtHours and wouldLeave(s)) "preview"
-  else if (outOfRotation(s)) "out"
-  else if (not(catchUpRunning(s)) and dormantWarningDue(s.reads, s.now)) "warn"
-  else "none"
-pure def noticeReason(s: Backlog, waiting: str): str =
-  if (overLimitHeld(s.reads, s.now)) waiting + " outside pull requests have waited a week or more for a maintainer"
-  else if (dormantHeld(s.reads, s.now)) "no pull request has been merged in 14 days while outside pull requests wait"
-  else "the backlog rule"
-pure def previewDetail(reason: str): str =  "From 1 December 2026, a project with 50 or more outside pull requests waiting a week for a maintainer, or no merge in 14 days while outside pull requests wait, leaves the home page, /sponsors and agent discovery until that is fixed. Your project would leave today: " + reason + ". You can mark it as catching up on reviews for up to 14 days from its settings."
-pure def warningDetail(daysSinceMerge: str): str =  "No pull request has been merged in " + daysSinceMerge + " days while outside pull requests wait. After 14 days the project leaves the home page, /sponsors and agent discovery until a maintainer merges. You can mark it as catching up on reviews for up to 14 days from its settings."
-pure def outDetail(reason: str, returns: str): str =  "Your project left the home page, /sponsors and agent discovery: " + reason + ". It returns by itself once " + returns + ". You can mark it as catching up on reviews for up to 14 days from its settings. Accepted work still records points."
 pure val readsValues = Set(List(unreadRead, unreadRead),
   List({ read: true, waiting: 50, lastMergedAt: 498800, observedAt: 498911 }, unreadRead),
   List({ read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }, { read: true, waiting: 25, lastMergedAt: 498800, observedAt: 498911 }),
