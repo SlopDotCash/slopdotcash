@@ -1,3 +1,4 @@
+// spec/frontend/projectLinks.md, "The project page names each vault network once, with its asset only when every vault on it agrees, and shows the website and X account only when present"
 import { slopFeeBase, submissionFeeItem } from "@repo/backend/client";
 import { sha256Hex, webCrypto } from "@repo/platform/crypto";
 import { reportDepositItem } from "@repo/security/client";
@@ -704,6 +705,9 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
 
     await opened("/sponsors", "Fund a project");
     await shown({ text: "$50 monthly · in the vault" }).toMatchObject({ visible: true });
+
+    expect((await site.open(`/projects/${funded.id}`)).status).toBe(200);
+    await shown({ text: "Chain: Base", exact: false }).toMatchObject({ visible: true });
   });
 });
 

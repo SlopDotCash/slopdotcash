@@ -42,7 +42,7 @@ export type TextFieldProps = {
   multiline?: boolean;
   inputMode?: "decimal" | "numeric";
   placeholder?: string;
-  type?: "text" | "datetime-local";
+  type?: "text" | "url" | "datetime-local";
 };
 
 /** A text field whose control, error and hint keep the ids `field-<name>`, `field-<name>-error` and `field-<name>-hint`. */
