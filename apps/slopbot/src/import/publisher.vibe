@@ -7,7 +7,7 @@ import type { ImportMode, ImportRequest, ImportSource, Imports, Producer } from 
 import { acceptedBeforeStart, apply, decodeState, initial, machineOver, sourceIds } from "../../gen/slopbot__historicalImport.effect.vibe"
 import type { Installation } from "../../gen/slopbot__installation.ts"
 import { active } from "../../gen/slopbot__installation.effect.vibe"
-import { ImportReceipt } from "../client/import.vibe"
+import { type ImportReceipt } from "../client/import.vibe"
 import { InstallationRow, installationOf } from "../installation/store.vibe"
 import { observe, unregistered } from "../scope/facts.vibe"
 import { type ContextSelection, validContextSelections } from "../value/evidence/context.vibe"

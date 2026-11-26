@@ -4,7 +4,7 @@ import type { Handler } from "@repo/platform/testing"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
-import { Request, Response } from "miniflare"
+import { type Request, Response } from "miniflare"
 import { type EvidenceObject, type QueuedRow, answeringAfter, declaredRun, evidenceObject, scanResult, serviceKeys, signingKeySha256, skillTemplates, vettingRequest } from "./support/backendRoutes/world.ts"
 
 const stewardId = 41

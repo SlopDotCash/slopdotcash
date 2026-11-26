@@ -18,7 +18,7 @@ import { internet, type Internet } from "@repo/platform/testing/internet"
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
 import { ClosedMonth, type ProjectMonth, type ValueCensus, ValueFeedUnavailable, ValueInputs } from "@repo/ports/points"
 import type { PublicVaultPayment } from "@repo/ports/settlement"
-import { Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
+import { type Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
 import { decide } from "../gen/points__census.effect.vibe"
 import { retirementZeroDigest, retirementZeroRule } from "../gen/points__evaluations.effect.vibe"
 import { periodOf as periodOfPointsperiodsEffect } from "../gen/points__periods.effect.vibe"
@@ -190,7 +190,7 @@ module availability {
 import { stillUnavailable } from availability
 
 module fakes {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
   import type { Handler } from "@repo/platform/testing"
 

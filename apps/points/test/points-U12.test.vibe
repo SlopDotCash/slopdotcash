@@ -6,7 +6,7 @@ import type { RevisionBody } from "../src/kernels/records/canonical.ts"
 import { pointRevisionId } from "../src/kernels/records/ids.vibe"
 
 module fakes {
-  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Request as WebRequest, Response as WebResponse } from "miniflare"
   import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
   import type { Handler } from "@repo/platform/testing"
 

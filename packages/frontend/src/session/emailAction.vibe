@@ -1,5 +1,5 @@
 // spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"
-import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import type * as KeyValueStore from "effect/persistence/KeyValueStore"
 import { emailUnsubscribe, emailVerify } from "@repo/backend/client"
 import { type EmailAction, type EmailKind, Machine, decodeState, initial, machine, mayApply, restorable } from "../../gen/frontend__emailAction.effect.vibe"
 import { type CallFailure, call } from "../platform/api.vibe"

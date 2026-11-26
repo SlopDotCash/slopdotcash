@@ -1,6 +1,6 @@
 // spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
 import type { Statement } from "@repo/platform/d1"
-import { GitHub } from "@repo/platform/github"
+import { type GitHub } from "@repo/platform/github"
 import type { CommitPages } from "../../import/commitPages.vibe"
 import type { AcceptanceFailure } from "../evidence/acceptance.vibe"
 import { type Evidence, type RegisteredRepository, findRepository } from "../evidence/types.vibe"

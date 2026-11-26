@@ -1,5 +1,5 @@
 // spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable"
-import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import type * as KeyValueStore from "effect/persistence/KeyValueStore"
 import { type Pointer, type SetupStore, initial, newestRevision, openingValue, sourceFor } from "../../../gen/frontend__projectDrafts.effect.vibe"
 import { Locks } from "../../platform/locks.vibe"
 import { LocalStore, SessionStore, storageKeys } from "../../platform/storage.vibe"

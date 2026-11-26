@@ -1,7 +1,7 @@
 // spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/security/bounty.md, "The earliest human-confirmed eligible report of a root cause qualifies first"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/bounty.md, "One root cause holds at most one proposal or award obligation"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"
 import { millisOf } from "@repo/platform/clock"
 import { type D1, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
-import { Roles } from "@repo/platform/roles"
+import { type Roles } from "@repo/platform/roles"
 import { Restrictions } from "@repo/ports/backend"
 import type { Bounty, FundsSnapshot, Hold, RouteObservation } from "../../gen/security__bounty.ts"
 import { clearanceFor, confirmedEligible, fundsFresh, initial as noBounty, noFunds } from "../../gen/security__bounty.effect.vibe"

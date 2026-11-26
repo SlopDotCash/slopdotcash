@@ -7,11 +7,11 @@ import { route } from "@repo/platform/route"
 import { settableClock } from "@repo/platform/testing/clock"
 import { byCron, worker } from "@repo/platform/worker"
 import { budgetJobs, recordBudgetBlock } from "../../src/budget/store.vibe"
-import { type Job, JobQueue, ReviewJob, decodeJob, jobQueue } from "../../src/jobs/job.vibe"
+import { type Job, type JobQueue, ReviewJob, decodeJob, jobQueue } from "../../src/jobs/job.vibe"
 import { recordCalls } from "../../src/route/calls.vibe"
 import { type CallRecord, routeProviders, runRoute } from "../../src/route/route.vibe"
 import { dispatchFailureAlert, spendJobs } from "../../src/spend/jobs.vibe"
-import { SpendNotify, spendNotify } from "../../src/spend/notify.vibe"
+import { type SpendNotify, spendNotify } from "../../src/spend/notify.vibe"
 import { testPrompt } from "./spendPrompt.vibe"
 
 export interface Env {

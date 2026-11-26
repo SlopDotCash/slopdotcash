@@ -1,6 +1,6 @@
 // spec/points/participation.md, "Membership keeps its join instant and its stored welcome value"; spec/points/participation.md, "An X account is claimed once, forever, by its first actor"; spec/points/participation.md, "Stored awards include rows recorded on the cutoff day, which never count"
 import { randomBytes } from "node:crypto";
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import { Cause, type Effect, Exit, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
