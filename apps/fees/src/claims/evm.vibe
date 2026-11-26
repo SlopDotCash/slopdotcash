@@ -34,6 +34,7 @@ export const roleRefusal = "The fee wallet holds or is proposed for a vault role
 export function failureText(error: unknown) {
   if (error instanceof ClaimRefused) return error.issue
   if (error instanceof DeploymentRefused) return error.message
+  if (typeof error === "object" && error !== null && "_tag" in error && error._tag === "RpcRefused") return "RpcRefused"
   if (typeof error === "object" && error !== null && "issue" in error && typeof error.issue === "string") return error.issue
   if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") return error.message
   return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"

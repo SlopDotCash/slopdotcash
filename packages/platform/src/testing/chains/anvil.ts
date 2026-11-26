@@ -134,7 +134,7 @@ export async function anvil(options: AnvilOptions): Promise<Anvil> {
   const port = await freePort();
   const upstreamUrl = `http://127.0.0.1:${port}`;
   const args = [
-    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--hardfork", "cancun", "--prune-history", "64", "--config-out", configOut,
+    "--host", "127.0.0.1", "--port", String(port), "--chain-id", String(chainId), "--silent", "--hardfork", "cancun", "--prune-history", "256", "--config-out", configOut,
     ...(blockTime === undefined ? [] : ["--block-time", String(blockTime)]),
     ...(timestamp === undefined ? [] : ["--timestamp", String(timestamp)]),
   ];

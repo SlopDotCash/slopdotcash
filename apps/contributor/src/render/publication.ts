@@ -130,9 +130,14 @@ function publishRole(input: PublicationInput, role: Role, binding: Binding): Rol
   const artifactOrigin = `${publicSiteOrigin}/projects/${binding.projectId}`;
   const guides = guidesFor({ artifactOrigin, skillName: name, skillRepositoryPath: sourcePath });
   if (guides.kind === "refused") return unavailable({ reason: "guide", role, message: guides.message });
+  const guideBytes: Readonly<Record<InstallClient, Uint8Array>> = {
+    codex: encoder.encode(guides.texts.codex),
+    "claude-code": encoder.encode(guides.texts["claude-code"]),
+    manual: encoder.encode(guides.texts.manual),
+  };
   const guideRecord = (client: InstallClient, file: string) => ({
     publicUrl: `${artifactOrigin}/${prefix}${file}`,
-    sha256: sha256Hex(encoder.encode(guides.texts[client])),
+    sha256: sha256Hex(guideBytes[client]),
     renderer: {
       entrypoint: guideEntrypoint,
       repository: sourceRepository,
@@ -182,10 +187,10 @@ function publishRole(input: PublicationInput, role: Role, binding: Binding): Rol
     files: [
       { path: `${prefix}skill.md`, bytes: skill.bytes },
       { path: `${prefix}mission.md`, bytes: markdown(`${skillText.text}\n\n---\n\n${references.join("\n\n---\n\n")}`) },
-      { path: `${prefix}codex.md`, bytes: markdown(guides.texts.codex) },
-      { path: `${prefix}claude.md`, bytes: markdown(guides.texts["claude-code"]) },
-      { path: `${prefix}claude-code.md`, bytes: markdown(guides.texts["claude-code"]) },
-      { path: `${prefix}manual.md`, bytes: markdown(guides.texts.manual) },
+      { path: `${prefix}codex.md`, bytes: guideBytes.codex },
+      { path: `${prefix}claude.md`, bytes: guideBytes["claude-code"] },
+      { path: `${prefix}claude-code.md`, bytes: guideBytes["claude-code"] },
+      { path: `${prefix}manual.md`, bytes: guideBytes.manual },
       { path: `${prefix}skill-manifest.json`, bytes: json(manifest) },
       { path: `downloads/${name}.skill`, bytes: archive },
       { path: `downloads/${name}.skill.sha256`, bytes: markdown(`${archiveDigest}  ${name}.skill\n`) },

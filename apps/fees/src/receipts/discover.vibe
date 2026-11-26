@@ -84,6 +84,7 @@ export effect function observeBalance(session: Session, token: number, address: 
   const previousScale = session.instance.tokens[token - 1]?.scale ?? 1n
   const needed = tokenScale(read)
   const scale = needed > previousScale ? needed : previousScale
+  if (read % scale !== 0n) throw new BalanceUnrepresentable({ token: address })
   const balance = safeNumber(read / scale)
   if (balance === undefined) throw new BalanceUnrepresentable({ token: address })
   session.instance = {

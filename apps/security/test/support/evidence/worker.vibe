@@ -118,7 +118,7 @@ function callerWithExpire(db: D1Database) {
   return Layer.provide(Layer.effect(Caller, effect {
     const inner = try Caller
     return {
-      current: () => effect {
+      current: (route) => effect {
         if (expirePlan !== undefined) {
           if (expirePlan.remaining <= 0) {
             const target = expirePlan.githubId
@@ -129,9 +129,8 @@ function callerWithExpire(db: D1Database) {
             expirePlan.remaining -= 1
           }
         }
-        return try inner.current()
+        return try inner.current(route)
       },
-      optional: () => inner.optional(),
     } satisfies Caller.Shape
   }), Layer.provide(CallerLive, Layer.merge(d1(db), webCrypto)))
 }

@@ -329,7 +329,7 @@ function routeKey(method: string, path: string): string {
 export function undeclared(declared: ReadonlyArray<Declared>): ReadonlyArray<string> {
   const keys = new Set(declared.map((route) => routeKey(route.method, route.path)));
   return rows
-    .filter((row) => row.entry === "pages" && row.method !== "*" && row.path.startsWith("/api/v1/") && excuseOf(row) === undefined && !keys.has(routeKey(row.method, row.path)))
+    .filter((row) => row.entry === "pages" && row.method !== "*" && row.path.startsWith("/api/v1/") && row.success.length > 0 && excuseOf(row) === undefined && !keys.has(routeKey(row.method, row.path)))
     .map((row) => row.id);
 }
 
