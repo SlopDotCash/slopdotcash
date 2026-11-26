@@ -8405,7 +8405,7 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "dfc496b16ed82e531dc02d4f56f3b628235bc7856f21a98294006298ae2f6241",
+      "sha256": "5ccefcb9d7abdc30e8ab43964b8e130e741e29a84daaac1299226e6775e410a3",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
@@ -8413,7 +8413,7 @@
         "formal/models/fees/submission_fee_solana_deposit.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "candidateLines": [67, 126, 148, 429, 440],
+      "candidateLines": [70, 129, 151, 432, 443],
       "review": "mapped-abstraction"
     },
     {
@@ -10817,14 +10817,14 @@
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "sha256": "967cacdf5a93ed70246b3525250218676eaad61c56e71361ff03a0464a4fdd9c",
+      "sha256": "db0f8a9e6bd871f02f9c26ec9f6477c60d292806830e56d99518877811f44821",
       "models": [
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt",
         "formal/models/fees/submission_fee_solana_deposit.qnt",
         "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
-      "candidateLines": [85, 86, 88, 119, 144, 157, 264, 328],
+      "candidateLines": [86, 87, 89, 120, 145, 158, 265, 329],
       "review": "mapped-abstraction"
     },
     {
@@ -10898,7 +10898,7 @@
     },
     {
       "path": "workers/submission-fee/wrangler.toml",
-      "sha256": "b66e594a23e10c877000f128c0561c4025058d0fa8f166076945ed322453327e",
+      "sha256": "896e0453ea877d455160edecd8d67a67cc9f84f7840d256d07808077b5bd4cae",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"

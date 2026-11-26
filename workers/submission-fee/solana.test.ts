@@ -187,10 +187,20 @@ function setup(
 }
 
 describe("the Solana switch", () => {
-  test("ships off, with no program published and nothing offered", () => {
-    expect(SUBMISSION_FEE_CONTRACTS[NETWORK]).toBeNull();
-    expect(SUBMISSION_FEE_START_BLOCKS[NETWORK]).toBeNull();
+  test("ships off, with the program published and nothing offered", () => {
+    // The deployed program and the slot of its `initialize` transaction.
+    expect(SUBMISSION_FEE_CONTRACTS[NETWORK]).toBe(
+      "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+    );
+    expect(SUBMISSION_FEE_START_BLOCKS[NETWORK]).toBe(474211652);
     expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(false);
+    // The published tables themselves: off builds no ledger, so nothing is
+    // read or sent, whatever the program id says.
+    expect(parseSolanaConfig({ SUBMISSION_FEE_SOLANA_MODE: "off" })).toEqual({
+      mode: "off",
+      ledger: null,
+    });
+    expect(parseSolanaConfig({})).toEqual({ mode: "off", ledger: null });
     for (const file of ["wrangler.toml"]) {
       const text = require("node:fs").readFileSync(
         `${import.meta.dir}/${file}`,
@@ -213,7 +223,14 @@ describe("the Solana switch", () => {
 
   test("a switched-on ledger with no published program reads nothing", async () => {
     const t = setup();
+    // Its own empty tables: the published ones now name the program.
     const result = await runDeposits(t.env, undefined, {
+      solanaConfig: () =>
+        parseSolanaConfig(t.env, {
+          network: NETWORK,
+          programId: null,
+          startSlot: null,
+        }),
       log: (event) => t.logs.push(event),
     });
     expect(result).toEqual({

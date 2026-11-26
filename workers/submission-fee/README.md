@@ -362,9 +362,15 @@ is refundable and worth about one dollar.
 Operator decision, 25 November 2026 (PRD section 6, "Submission fee
 deposits", "Solana, off chain"). The fee can also be paid in USDC on Solana,
 into the `slop-submission-deposits` program
-(`contracts/solana/README.md`, "Submission deposits"). The program is not
-deployed: its id and start slot in `src/lib/submission-fee.mjs` are null,
-and while they are null nothing here reads or signs on Solana in any mode.
+(`contracts/solana/README.md`, "Submission deposits"). The program was
+deployed on Solana mainnet on 26 November 2026 and its upgrade authority
+removed (`contracts/DEPLOY-MAINNET.md`, "Submission fee deposit program on
+Solana"). Its id, `4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7`, and the slot of its
+`initialize` transaction, 474211652, are in `src/lib/submission-fee.mjs`.
+Publishing them switches nothing on: the fee is still off on Solana. The
+mode below is `off`, so nothing here reads or signs on Solana, and neither
+the endpoint secret `RPC_URL_SUBMISSION_FEE_SOLANA` nor the resolver secret
+`SUBMISSION_FEE_SOLANA_RESOLVER_SEED` is set on the Worker yet.
 
 The Solana ledger's own configuration is read apart from the EVM ledgers'
 (operator decision, 26 November 2026): when its mode is `dry_run` or `live`
@@ -518,12 +524,14 @@ this Worker: the wallet's open deposits for the pull request are found on
 chain by payer and item.
 
 Switching Solana on, each step the operator's and each its own reviewed
-change: deploy and initialize the program and open its USDC vault
-(`docs/submission-deposits-solana-deploy-runbook.md`); put the program id
-and the slot of `initialize` in the tables; install the endpoint secret and
-set the mode to `dry_run`; create the resolver key, fund it with a little
-SOL, name it with `set_resolver` and install its seed; then set the mode to
-`live` together with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`.
+change. Done on 26 November 2026: the program is deployed and initialized
+with its resolver `CuAMc2TYgLdzXRHEWSikzvdQQhWLyUBRbnGizQE2Xsxv`, its USDC
+vault is open, its upgrade authority is removed
+(`docs/submission-deposits-solana-deploy-runbook.md`), and the program id
+and the slot of `initialize` are in the tables. Not done: install the
+endpoint secret and set the mode to `dry_run`; install the resolver's seed
+and keep a little SOL on its address; then set the mode to `live` together
+with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`.
 
 ## Modes
 

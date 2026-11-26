@@ -47,9 +47,12 @@ export const SUBMISSION_FEE_TOKENS = {
 export const SUBMISSION_FEE_CONTRACTS = {
   "base-mainnet": "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
   "robinhood-mainnet": "0xDe40B32A4156ABC2A05987367966d994BcFbf8D8",
-  // The `slop-submission-deposits` program id. Null until the program is
-  // deployed: while it is null nothing offers, reads or sends on Solana.
-  "solana-mainnet": null,
+  // The `slop-submission-deposits` program id, deployed 26 November 2026 and
+  // not upgradeable (`contracts/DEPLOY-MAINNET.md`, "Submission fee deposit
+  // program on Solana"). Publishing it switches nothing on: nothing offers,
+  // reads or sends on Solana while `SUBMISSION_FEE_SOLANA_SWITCHED_ON` is
+  // false and `SUBMISSION_FEE_SOLANA_MODE` is `off`.
+  "solana-mainnet": "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
 };
 /**
  * True only while a Solana deposit is recorded and settled, which is while
@@ -114,7 +117,7 @@ export const SUBMISSION_FEE_START_BLOCKS = {
   "base-mainnet": 59572869,
   "robinhood-mainnet": 118349901,
   // The slot of the program's `initialize` transaction, set with its id.
-  "solana-mainnet": null,
+  "solana-mainnet": 474211652,
 };
 export const SUBMISSION_FEE_CHAIN_IDS = {
   "base-mainnet": 8453,

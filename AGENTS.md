@@ -134,8 +134,11 @@ alias only.
     `slop-submission-deposits` program, with the same two outcomes, a refund
     to the payer's associated token account or "kept" to the fee wallet's;
     it holds no tokens, pays only its transactions' network fee, and is
-    never the program's owner. `SUBMISSION_FEE_SOLANA_MODE` is `off`, the
-    program is not deployed and no such key exists yet.
+    never the program's owner. The program was deployed on Solana mainnet
+    on 26 November 2026 and its upgrade authority removed (operator
+    decision; `contracts/DEPLOY-MAINNET.md`). `SUBMISSION_FEE_SOLANA_MODE`
+    is `off`, the fee is not offered on Solana, and the Worker holds no
+    Solana endpoint or resolver secret yet.
     Operator decision of 23 November 2026: it also resolves standing deposits
     in a second deployment of the same contract on Robinhood Chain (PRD
     section 6, FEE-08), with the same two outcomes, for the row Slopbot marked.
