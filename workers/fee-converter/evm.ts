@@ -11,6 +11,7 @@ import {
   BaseError,
   type Chain,
   createPublicClient,
+  createTransport,
   decodeFunctionData,
   decodeFunctionResult,
   defineChain,
@@ -18,6 +19,7 @@ import {
   erc20Abi,
   FeeCapTooLowError,
   type Hex,
+  type HttpTransport,
   http,
   keccak256,
   type PublicClient,
@@ -314,6 +316,42 @@ interface KyberRoute {
   routerAddress: string;
 }
 
+function observedRpcTransport(
+  url: string,
+  fetchFn: typeof fetch,
+): HttpTransport {
+  const ordinaryTransport = http(url, { fetchFn, retryCount: 1 });
+  return (options) => {
+    const { config, value } = ordinaryTransport(options);
+    const request = ((
+      ...[args, requestOptions]: Parameters<typeof config.request>
+    ) => {
+      let httpStatus: number | undefined;
+      // Viem keeps a JSON-RPC error but can drop its HTTP status. Scope the
+      // response hook to one attempt, inside viem's existing retry layer.
+      const attempt = http(url, {
+        fetchFn,
+        onFetchResponse(response) {
+          if (response.status === 401 || response.status === 403)
+            httpStatus = response.status;
+        },
+      })(options);
+      return attempt.config
+        .request(args, requestOptions)
+        .catch((error: unknown) => {
+          if (httpStatus === undefined) throw error;
+          throw noteProviderFailure(error, {
+            provider: "evm-rpc",
+            stage: "rpc-response",
+            method: args.method,
+            httpStatus,
+          });
+        });
+    }) as typeof config.request;
+    return createTransport({ ...config, request }, value);
+  };
+}
+
 export function createEvmClient(options: EvmClientOptions): ChainClient {
   const { config, limits } = options;
   const definition = config.definition;
@@ -346,7 +384,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
   });
   const client = createPublicClient({
     chain,
-    transport: http(config.rpcUrl, { fetchFn: doFetch, retryCount: 1 }),
+    transport: observedRpcTransport(config.rpcUrl, doFetch),
   }) as PublicClient;
   if (options.privateKey && (!options.nativeGas || !config.nativeBudget))
     throw new Error(

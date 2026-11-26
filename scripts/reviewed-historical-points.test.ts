@@ -3790,6 +3790,26 @@ test("historical publication installs the canonical merge runtime before verific
     ),
     workflow.indexOf("name: Preserve the assessment audit receipt"),
   );
+  const collector = workflow.slice(
+    workflow.indexOf("name: Mint the read-only collector token"),
+    workflow.indexOf(
+      "name: Read and verify the complete historical assessment catalog",
+    ),
+  );
+  expect(collector).toContain(
+    "(inputs.operation == 'audit-assessments' || inputs.operation == 'replay-assessments') && vars.COLLECTOR_APP_CLIENT_ID != ''",
+  );
+  expect(collector).toContain(
+    `repositories: \${{ github.event.repository.name }}`,
+  );
+  expect(collector.match(/permission-[^:\n]+: [^\n]+/gu)).toEqual([
+    "permission-contents: read",
+    "permission-issues: read",
+    "permission-pull-requests: read",
+  ]);
+  expect(reading).toContain(
+    `GITHUB_TOKEN: \${{ steps.collector-token.outputs.token || github.token }}`,
+  );
   expect(reading).toContain('"--$OPERATION"');
   expect(reading).toContain(
     `PRIVATE_PACKET_ENCRYPTION_KEY: \${{ inputs.operation == 'replay-assessments' && inputs.stage_review_handoff && secrets.PRIVATE_PACKET_ENCRYPTION_KEY || '' }}`,
