@@ -292,8 +292,43 @@ export const SIMULATIONS = "gen/traces";
 
 /** A token of a script, and how many brackets it sits in. */
 interface Token { text: string; pos: number; start: number; depth: number; fresh: boolean }
+const JSX_FILE = /\.[cm]?[jt]sx$/i;
+
+function tokenizeJsx(text: string): Token[] | undefined {
+  const ts = tsApi();
+  const K = ts.SyntaxKind;
+  const source = ts.createSourceFile("file.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const out: Token[] = [];
+  const open: boolean[] = [];
+  let balanced = true;
+  const walk = (node: TS.Node) => {
+    if (!balanced) return;
+    const children = node.getChildren(source);
+    if (children.length) {
+      for (const child of children) walk(child);
+      return;
+    }
+    const kind = node.kind;
+    if (kind === K.EndOfFileToken || kind === K.JsxTextAllWhiteSpaces) return;
+    const tokenText = node.getText(source);
+    if (!tokenText) return;
+    if (kind === K.CloseParenToken || kind === K.CloseBracketToken || kind === K.CloseBraceToken || kind === K.TemplateTail) {
+      if (!open.length) { balanced = false; return; }
+      open.pop();
+    }
+    const pos = node.getFullStart();
+    const start = node.getStart(source);
+    const trivia = text.slice(pos, start);
+    out.push({ text: tokenText, pos, start, depth: open.length, fresh: trivia.includes("\n") || trivia.includes("\r") });
+    if (kind === K.OpenParenToken || kind === K.OpenBracketToken || kind === K.OpenBraceToken || kind === K.TemplateHead) open.push(kind === K.TemplateHead);
+  };
+  walk(source);
+  return balanced && !open.length ? out : undefined;
+}
+
 /** A script's tokens, or nothing if its brackets do not balance; TypeScript's scanner reads VibeLang's too. */
-export function tokenize(text: string): Token[] | undefined {
+export function tokenize(text: string, file?: string): Token[] | undefined {
+  if (file !== undefined && JSX_FILE.test(file)) return tokenizeJsx(text);
   const K = tsApi().SyntaxKind;
   const scanner = tsApi().createScanner(tsApi().ScriptTarget.Latest, true, tsApi().LanguageVariant.Standard, text);
   const out: Token[] = [];

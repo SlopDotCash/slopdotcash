@@ -1,5 +1,7 @@
 import { existsSync, globSync, readFileSync, realpathSync } from "node:fs"
-import { dirname, join, matchesGlob, posix, resolve, sep } from "node:path"
+import { dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path"
+import { designSystem } from "./design/eslint.ts"
+import { parseTokens } from "./design/tokens.ts"
 
 interface SourcePos {
   readonly line: number
@@ -31,11 +33,13 @@ export interface FlatConfig {
   files?: (string | string[])[] | undefined
   ignores?: string[] | undefined
   language?: string | undefined
+  linterOptions?: object | undefined
   languageOptions?: {
     parser?: object | undefined
     parserOptions?: object | undefined
   } | undefined
   plugins?: object | undefined
+  settings?: object | undefined
   rules?: object | undefined
 }
 
@@ -1095,4 +1099,297 @@ export function withWorkspaceBarrels<T extends FlatConfig = FlatConfig>(
   }
 
   return transformed
+}
+
+export interface VibestackEslintPlugins {
+  js?: unknown
+  tseslint?: unknown
+  vibelang?: unknown
+  react?: unknown
+  reactHooks?: unknown
+  boundaries?: unknown
+  tailwind?: unknown
+}
+
+export interface VibestackConfigOptions {
+  root: string
+  plugins: VibestackEslintPlugins
+  design?: string
+  tsx?: string[]
+  own?: string[]
+  untyped?: string[]
+  ignores?: string[]
+  uiPackage?: string
+  commented?: Record<string, number>
+  scheduled?: Record<string, number>
+  allowExports?: Record<string, readonly string[]>
+  allowImports?: Record<string, readonly string[]>
+  extra?: readonly FlatConfig[]
+}
+
+const DEFAULT_IGNORES = [
+  "**/gen/",
+  "**/.vibe/",
+  "**/dist/",
+  "**/.cache/",
+  "**/.spec-cache/",
+  "**/generated/",
+  "**/storybook-static/",
+  "**/test/fixtures/",
+  ".claude/",
+  ".lemmascript/",
+  ".studio/",
+  ".turbo/",
+  "_apalache-out/",
+]
+
+const STACK_REF = 'AGENTS.md, "The stack"'
+const WRITING_REF = 'AGENTS.md, "Writing code"'
+const BANNED_PACKAGES = ["redux", "react-redux", "zustand", "mobx", "jotai", "recoil", "valtio", "xstate", "vue", "svelte", "jest"]
+const BANNED_SCOPES = ["reduxjs", "angular", "xstate", "vue", "sveltejs", "jest"]
+const STACK_IMPORT_PATTERNS = [
+  { regex: `^(?:@(?:${BANNED_SCOPES.join("|")})/|(?:${BANNED_PACKAGES.join("|")})(?:[/-]|$))`, message: `Not part of the stack: ${STACK_REF}.` },
+]
+
+const CITATION_RE = String.raw`spec\/\S+\.md, "[^"]+"`
+const SUPPRESSIBLE_RE = String.raw`(?!code\/|barrel\/|no-console\b)[\w@/-]+`
+const CITED_RE = new RegExp(String.raw`^\s*${CITATION_RE}(?:; ${CITATION_RE})*\s*$`)
+const SUPPRESSION_RE = new RegExp(String.raw`^ eslint-disable(?:-next-line|-line)? ${SUPPRESSIBLE_RE}(?:, ${SUPPRESSIBLE_RE})* -- \S`)
+const ALLOWED_INLINE_CONFIGS = [SUPPRESSION_RE, /^ eslint-enable\b/]
+const THROWS_TYPE_RE = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*`
+const THROWS_DIRECTIVE_RE = new RegExp(String.raw`^\*(?:[\s*]*@throws \{[ \t]*${THROWS_TYPE_RE}(?:[ \t]*\|[ \t]*${THROWS_TYPE_RE})*[ \t]*\})+[\s*]*$`)
+const CODE_DIRECTIVES: Record<string, RegExp[]> = {
+  Line: [CITED_RE, SUPPRESSION_RE, /^@ (?:backend|requires|ensures|invariant|decreases|assert|pure|type|ghost)(?: |$)/, /^\/ <reference /, /^ @vitest-environment [\w-]+$/],
+  Block: [CITED_RE, ...ALLOWED_INLINE_CONFIGS, /^\*(?:[\s*]*@(?:model|design) \S+)+[\s*]*$/, THROWS_DIRECTIVE_RE],
+  Shebang: [/^/],
+}
+const ANY_INLINE_CONFIG_RE = /^\s*(?:eslint(?:-[a-z]+)*|exported|globals?)(?:\s|$)/
+
+function createGuardedParser(parser: EslintParser): EslintParser {
+  return {
+    meta: { name: `${parser.meta?.name ?? "parser"} with code/inline`, version: parser.meta?.version ?? "1.0.0" },
+    parseForESLint(text: string, options?: unknown) {
+      const parsed = parser.parseForESLint(text, options)
+      const loose = (parsed.ast.comments ?? []).find((comment) =>
+        ANY_INLINE_CONFIG_RE.test(comment.value) && !ALLOWED_INLINE_CONFIGS.some((form) => form.test(comment.value)))
+      if (loose) {
+        throw Object.assign(
+          new SyntaxError(`Inline config here is only "eslint-disable[-next-line|-line] <rule>, … -- <reason>", never for code/*, barrel/* or no-console, and "eslint-enable" (${WRITING_REF}).`),
+          { lineNumber: loose.loc.start.line, column: loose.loc.start.column + 1 },
+        )
+      }
+      return parsed
+    },
+  }
+}
+
+function createCodePlugin(root: string) {
+  const withinFunction = (node: AstNode | undefined): boolean =>
+    Boolean(node) && (/Function/.test(String(node?.type ?? "")) || withinFunction(node?.parent as AstNode | undefined))
+  const isDocComment = (context: any, comment: any) =>
+    Boolean(context.options[0]?.jsdoc) && comment.type === "Block" && String(comment.value).startsWith("*")
+    && !withinFunction(context.sourceCode.getNodeByRangeIndex(comment.range[0]))
+  const leftSchema = { type: "object", additionalProperties: { type: "integer", minimum: 1 } }
+  const reportIfExcess = (context: any, node: AstNode, found: any[], kind: "commented" | "scheduled") => {
+    const rel = relative(root, context.filename).split(sep).join("/")
+    const limits = context.options[0]?.left as Record<string, number> | undefined
+    const allowed = limits && Object.hasOwn(limits, rel) ? limits[rel] : 0
+    if (found.length > allowed) {
+      for (const problem of found) context.report(problem)
+    } else if (allowed > 0 && found.length < allowed) {
+      context.report({
+        node,
+        message: found.length === 0
+          ? `Stale ${kind} ratchet (${allowed}) for "${rel}": 0 remain; remove it so the ratchet tightens.`
+          : `Stale ${kind} ratchet (${allowed}) for "${rel}": ${found.length} remain; lower it to ${found.length} so the ratchet tightens.`,
+      })
+    }
+  }
+  const commentsRule = {
+    meta: { type: "problem" as const, schema: [{ type: "object", properties: { jsdoc: { type: "boolean" }, left: leftSchema }, additionalProperties: false }] },
+    create(context: any) {
+      return {
+        Program(node: AstNode) {
+          const invalid = context.sourceCode.getAllComments()
+            .filter((comment: any) => !(CODE_DIRECTIVES[comment.type] ?? []).some((directive) => directive.test(comment.value)) && !isDocComment(context, comment))
+            .map((comment: any) => ({ loc: comment.loc, message: `No code comments: only spec citations and tool directives (${WRITING_REF}).` }))
+          reportIfExcess(context, node, invalid, "commented")
+        },
+      }
+    },
+  }
+  const usesIdentifier = (names: RegExp) =>
+    `:matches(Identifier[name=${names}]:not(ImportSpecifier[imported.name=${names}] > Identifier.local):not(ObjectExpression > Property[computed=false][shorthand=false] > Identifier.key), MemberExpression[computed=true] > Literal.property[value=${names}])`
+  const schedulingSelectors: Record<string, string> = {
+    [usesIdentifier(/^use(?:Layout|Insertion)?Effect$/)]: `No effect hooks: shared state lives in the spec-backed Machine (${WRITING_REF}).`,
+    [usesIdentifier(/^(?:setTimeout|setInterval|setImmediate|queueMicrotask|requestAnimationFrame|requestIdleCallback)$/)]: `No timers: wait with Effect in VibeLang, or let the Machine say when (${WRITING_REF}).`,
+  }
+  const effectsRule = {
+    meta: { type: "problem" as const, schema: [{ type: "object", properties: { left: leftSchema }, additionalProperties: false }] },
+    create(context: any) {
+      const found: any[] = []
+      return {
+        ...Object.fromEntries(Object.entries(schedulingSelectors).map(([selector, message]) => [selector, (node: unknown) => found.push({ node, message })])),
+        "Program:exit": (node: AstNode) => reportIfExcess(context, node, found, "scheduled"),
+      }
+    },
+  }
+  return { rules: { comments: commentsRule, effects: effectsRule } }
+}
+
+function asConfigArray(value: unknown): FlatConfig[] {
+  if (!value) return []
+  return Array.isArray(value) ? value as FlatConfig[] : [value as FlatConfig]
+}
+
+function mergeSettings(
+  base: Record<string, unknown> | undefined,
+  extra: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!extra) return base
+  if (!base) return extra
+  const merged: Record<string, unknown> = { ...base }
+  for (const [key, value] of Object.entries(extra)) {
+    const existing = merged[key]
+    if (existing && typeof existing === "object" && !Array.isArray(existing) && value && typeof value === "object" && !Array.isArray(value)) {
+      merged[key] = { ...(existing as Record<string, unknown>), ...(value as Record<string, unknown>) }
+    } else {
+      merged[key] = value
+    }
+  }
+  return merged
+}
+
+function scopeEntries(entries: readonly FlatConfig[], files: string[], extra: Partial<FlatConfig> = {}): FlatConfig[] {
+  return entries.map((entry) => {
+    const mergedSettings = mergeSettings(
+      entry.settings as Record<string, unknown> | undefined,
+      extra.settings as Record<string, unknown> | undefined,
+    )
+    return {
+      ...entry,
+      ...extra,
+      files,
+      rules: { ...((entry.rules as Record<string, unknown> | undefined) ?? {}), ...((extra.rules as Record<string, unknown> | undefined) ?? {}) },
+      ...(mergedSettings ? { settings: mergedSettings } : {}),
+    }
+  })
+}
+
+function createReactEntries(react: any, reactHooks: any): FlatConfig[] {
+  const reactConfigs = asConfigArray(react?.configs?.["recommended-type-checked"])
+  const hooksConfigs = asConfigArray(reactHooks?.configs?.flat?.recommended)
+  const combined = [...reactConfigs, ...hooksConfigs]
+  const hookRuleNames = Object.keys(reactHooks?.rules ?? {})
+  const reactRulesObj = reactConfigs.reduce<Record<string, unknown>>((acc, c) => ({ ...acc, ...(c.rules ?? {}) }), {})
+  const deduped = Object.fromEntries(hookRuleNames.filter((rule) => `@eslint-react/${rule}` in reactRulesObj).map((rule) => [`@eslint-react/${rule}`, "off"]))
+  return scopeEntries(combined, ["**/*.tsx"], { rules: deduped })
+}
+
+/**
+ * Reusable ESLint flat-config preset for Vibestack repositories. Consumers pass the ESLint plugins
+ * installed in their own project, keeping `eslint.config.js` concise while enforcing stack rules,
+ * workspace boundaries, design-system tokens, code discipline, and barrel-only exports.
+ */
+export function vibestackConfig(options: VibestackConfigOptions): FlatConfig[] {
+  const { root, plugins, design, extra = [] } = options
+  const tsx = options.tsx ?? ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}"]
+  const own = options.own ?? ["apps/**", "packages/**"]
+  const uiPackage = options.uiPackage ?? "packages/ui"
+  const untyped = options.untyped ?? ["*.{js,ts}", "**/.storybook/**", ...(design ? [`${design}/**`] : [])]
+  const commented = options.commented ?? {}
+  const scheduled = options.scheduled ?? {}
+  const jsPlugin = plugins.js as any
+  const tsPlugin = plugins.tseslint as any
+  const vibeParser = plugins.vibelang as EslintParser | undefined
+  const entries: FlatConfig[] = [
+    { ignores: [...DEFAULT_IGNORES, ...(options.ignores ?? [])] },
+    { linterOptions: { reportUnusedDisableDirectives: "error", reportUnusedInlineConfigs: "error" } },
+    ...asConfigArray(jsPlugin?.configs?.recommended),
+    ...asConfigArray(tsPlugin?.configs?.recommendedTypeChecked),
+  ]
+
+  const baseRules: Record<string, unknown> = {
+    "no-restricted-imports": ["error", { patterns: STACK_IMPORT_PATTERNS }],
+    "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
+    "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" }],
+    "@typescript-eslint/no-unused-expressions": ["error", { allowShortCircuit: true, allowTernary: true }],
+    "@typescript-eslint/no-floating-promises": ["error", { allowForKnownSafeCalls: [{ from: "package", package: "node:test", name: ["test", "describe", "it"] }] }],
+    "@typescript-eslint/no-misused-promises": ["error", { checksVoidReturn: { arguments: false } }],
+    "no-regex-spaces": "off",
+    "no-warning-comments": ["error", { terms: ["todo", "fixme", "legacy", "deprecated"], location: "anywhere" }],
+  }
+  const baseEntry: FlatConfig = {
+    languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: root } },
+    rules: baseRules,
+  }
+  if (plugins.boundaries) {
+    baseEntry.plugins = { boundaries: plugins.boundaries }
+    baseEntry.settings = { "boundaries/elements": [{ type: "package", pattern: ["packages/*", "apps/*"], capture: ["name"] }] }
+    baseRules["boundaries/dependencies"] = ["error", {
+      default: "disallow",
+      policies: [{ from: { element: { type: "package" } }, allow: { to: { element: { type: "package", captured: { name: "{{ from.element.captured.name }}" } } } } }],
+    }]
+    baseRules["boundaries/no-unknown-dependencies"] = "error"
+  }
+  entries.push(baseEntry)
+
+  if (tsPlugin?.configs?.disableTypeChecked && untyped.length) {
+    entries.push(...scopeEntries(asConfigArray(tsPlugin.configs.disableTypeChecked), untyped))
+  }
+  entries.push({ ignores: ["**/test/**"], rules: { "max-lines-per-function": ["error", { max: 250, skipBlankLines: true, skipComments: true }] } })
+
+  if (vibeParser) {
+    const disableTyped = asConfigArray(tsPlugin?.configs?.disableTypeChecked)
+    entries.push(...scopeEntries(disableTyped.length ? disableTyped : [{}], ["**/*.{vibe,vibex}"], {
+      languageOptions: { parser: vibeParser, parserOptions: { projectService: false } },
+      rules: { "no-undef": "off" },
+    }))
+  }
+
+  entries.push({
+    files: ["**/*.{schema,contract}.ts", "**/test/drivers/**", "**/*.vibe"],
+    rules: { "no-restricted-imports": ["error", { patterns: [...STACK_IMPORT_PATTERNS, { regex: "^react(?:-dom)?(?:/|$)", message: "Domain, contract, driver and shell code does not import React." }] }] },
+  })
+
+  if (plugins.react && plugins.reactHooks) {
+    entries.push(...createReactEntries(plugins.react, plugins.reactHooks))
+  }
+
+  if (design && plugins.tailwind) {
+    const tokensFile = join(root, design, "tokens.json")
+    if (existsSync(tokensFile)) {
+      const tokens = parseTokens(JSON.parse(readFileSync(tokensFile, "utf8")))
+      const dsConfigs = designSystem({ tailwind: plugins.tailwind, tokens, entryPoint: join(root, design, "generated/theme.css") })
+      entries.push(...scopeEntries(dsConfigs as unknown as FlatConfig[], tsx, { settings: { "better-tailwindcss": { cwd: join(root, design) } } }))
+    }
+  }
+
+  if (uiPackage && tsx.length) {
+    entries.push({
+      files: tsx,
+      ignores: [`${uiPackage}/**`],
+      rules: {
+        "no-restricted-globals": ["error", ...["alert", "confirm", "prompt"].map((name) => ({ name, message: "Use Dialog or Alert from @repo/ui." }))],
+        "no-restricted-syntax": ["error", { selector: "JSXOpeningElement[name.name=/^(input|textarea)$/]", message: "Use Input, Textarea or Checkbox from @repo/ui." }],
+      },
+    })
+  }
+
+  if (own.length) {
+    const codePlugin = createCodePlugin(root)
+    if (tsPlugin?.parser && isEslintParser(tsPlugin.parser)) {
+      entries.push({ files: own, ignores: ["**/*.{vibe,vibex}"], languageOptions: { parser: createGuardedParser(tsPlugin.parser) } })
+    }
+    if (vibeParser) {
+      entries.push({ files: own.map((pattern) => pattern.replace(/\/\*\*$/, "/**/*.{vibe,vibex}")), languageOptions: { parser: createGuardedParser(vibeParser) } })
+    }
+    entries.push({ files: own, plugins: { code: codePlugin }, rules: { "no-console": "error", "code/comments": ["error", { left: commented }], "code/effects": ["error", { left: scheduled }] } })
+    if (uiPackage) {
+      entries.push({ files: [`${uiPackage}/src/components/**`], ignores: ["**/*.meta.tsx"], rules: { "code/comments": ["error", { jsdoc: true, left: commented }] } })
+    }
+  }
+
+  entries.push(...extra)
+  return withWorkspaceBarrels(entries, { root, allowExports: options.allowExports, allowImports: options.allowImports })
 }
