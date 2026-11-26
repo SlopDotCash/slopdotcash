@@ -1,9 +1,8 @@
 /** Recover complete PR file metadata when GitHub cannot render a large diff.
  * Only immutable public Git objects are read; no source is checked out or run.
  */
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PullRequestFile } from "../src/lib/leaderboard";
@@ -33,38 +32,46 @@ async function streamGit(
   homeDirectory = directory,
 ): Promise<void> {
   const command = publicGitProcess(directory, args);
-  const child = spawn(command.file, command.args, {
-    ...command.options,
-    env: {
-      ...command.options.env,
-      HOME: homeDirectory,
-      XDG_CONFIG_HOME: homeDirectory,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const completed = new Promise<void>((resolve, reject) => {
-    child.once("error", () =>
-      reject(new Error("Native Git object read failed")),
-    );
-    child.once("close", (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error("Native Git object read failed")),
-    );
-  });
-  // Git diagnostics may include repository content. Drain without publishing it.
-  child.stderr.resume();
+  const spool = await mkdtemp(join(tmpdir(), "slop-git-object-output-"));
   try {
-    await Promise.all([
-      completed,
-      (async () => {
-        for await (const chunk of child.stdout) read(Buffer.from(chunk));
-      })(),
-    ]);
-  } catch (error) {
-    child.kill("SIGKILL");
-    await completed.catch(() => {});
-    throw error;
+    const output = await open(join(spool, "stdout"), "wx+", 0o600);
+    try {
+      // Capture stdout in a regular file so Node pipe closure cannot race a
+      // short-lived Git process. Never interpret the output of a failed read.
+      let exited: number;
+      try {
+        exited = await Bun.spawn([command.file, ...command.args], {
+          env: {
+            ...command.options.env,
+            HOME: homeDirectory,
+            XDG_CONFIG_HOME: homeDirectory,
+          },
+          timeout: command.options.timeout,
+          stdin: "ignore",
+          stdout: output.fd,
+          // Git diagnostics may include repository content.
+          stderr: "ignore",
+        }).exited;
+      } catch {
+        throw new Error("Native Git object read failed");
+      }
+      if (exited !== 0) throw new Error("Native Git object read failed");
+
+      const size = (await output.stat()).size;
+      let offset = 0;
+      while (offset < size) {
+        const chunk = Buffer.allocUnsafe(Math.min(size - offset, 64 * 1024));
+        // The child and this handle share the kernel file offset.
+        const { bytesRead } = await output.read(chunk, 0, chunk.length, offset);
+        if (bytesRead === 0) throw new Error("Native Git object read failed");
+        offset += bytesRead;
+        read(chunk.subarray(0, bytesRead));
+      }
+    } finally {
+      await output.close();
+    }
+  } finally {
+    await rm(spool, { recursive: true, force: true });
   }
 }
 
@@ -83,10 +90,10 @@ async function textGit(
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 
-function checkInput(input: PullRequestGitFilesInput) {
+function checkInput(input: PullRequestGitFilesInput, parentCount: 1 | 2 = 2) {
   if (
-    input.merge.parents.length !== 2 ||
-    input.merge.parents[1].sha !== input.head ||
+    input.merge.parents.length !== parentCount ||
+    (parentCount === 2 && input.merge.parents[1].sha !== input.head) ||
     input.merge.parents[0].sha === input.head ||
     ![
       input.head,
@@ -95,17 +102,35 @@ function checkInput(input: PullRequestGitFilesInput) {
     ].every((sha) => /^[a-f0-9]{40}$/u.test(sha))
   )
     throw new Error(
-      "File recovery requires an exact two-parent accepted merge",
+      parentCount === 2
+        ? "File recovery requires an exact two-parent accepted merge"
+        : "Reviewed squash requires an exact one-parent accepted commit",
     );
 }
 
 const DIFF = ["diff", "--no-ext-diff", "--no-textconv", "--no-color"];
 
-async function changeDigest(directory: string, base: string, head: string) {
+export async function changeDigest(
+  directory: string,
+  base: string,
+  head: string,
+  paths: readonly string[] = [],
+) {
   const hash = createHash("sha256");
   await streamGit(
     directory,
-    [...DIFF, "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--"],
+    [
+      "--literal-pathspecs",
+      ...DIFF,
+      "--raw",
+      "--no-abbrev",
+      "--no-renames",
+      "-z",
+      base,
+      head,
+      "--",
+      ...paths,
+    ],
     (chunk) => {
       hash.update(chunk);
     },
@@ -117,7 +142,6 @@ async function readGitFiles(
   directory: string,
   input: PullRequestGitFilesInput,
 ): Promise<PullRequestGitFiles> {
-  checkInput(input);
   if (
     (await textGit(directory, ["cat-file", "-t", input.merge.sha])) !== "commit"
   )
@@ -230,15 +254,11 @@ async function readGitFiles(
   return { files, additions, deletions, changedFiles: files.length };
 }
 
-/** Explicit local-object reader for fixtures and independently acquired objects.
- * A new bare reader excludes the source checkout's config, index and attributes.
- * The production entry below always acquires its own verified public objects.
- */
-export async function readPullRequestGitFiles(
+/** A new bare reader excludes the source checkout's config, index and attributes. */
+async function readLocalGitFiles(
   repository: string,
   input: PullRequestGitFilesInput,
 ): Promise<PullRequestGitFiles> {
-  checkInput(input);
   const directory = await mkdtemp(join(tmpdir(), "slop-pr-git-files-"));
   try {
     const objects = await textGit(
@@ -252,6 +272,24 @@ export async function readPullRequestGitFiles(
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+/** Read an exact two-parent accepted merge from independently acquired objects. */
+export async function readPullRequestGitFiles(
+  repository: string,
+  input: PullRequestGitFilesInput,
+): Promise<PullRequestGitFiles> {
+  checkInput(input);
+  return readLocalGitFiles(repository, input);
+}
+
+/** Only the reviewed duplicate verifier may supply a GitHub-bound squash. */
+export async function readReviewedSquashGitFiles(
+  repository: string,
+  input: PullRequestGitFilesInput,
+): Promise<PullRequestGitFiles> {
+  checkInput(input, 1);
+  return readLocalGitFiles(repository, input);
 }
 
 export async function recoverPullRequestGitFiles(

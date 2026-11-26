@@ -1,5 +1,6 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { applyCatchUpChange } from "../../src/lib/backlog-rule.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { prospectiveMaintainerShare } from "../../src/lib/maintainer-share.mjs";
 import {
@@ -25,7 +26,10 @@ import {
   type RepositoryIdentity,
   validRepositoryPath,
 } from "../../src/lib/project-contracts";
-import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import {
+  assertProjectPolicyTransition,
+  type VerifiedBranchChange,
+} from "../../src/lib/project-policy.mjs";
 import { appendedRepositories } from "../../src/lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
@@ -34,6 +38,7 @@ import {
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
+  validIntegrationBranch,
 } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
@@ -107,10 +112,12 @@ import {
   listOwnedRepositories,
   lookupGitHubActor,
   lookupGitHubRepository,
+  readIntegrationBranchAuthority,
   validGithubLogin,
 } from "./github-lookup";
 import {
   type AccessCheck,
+  manifestMatchesRepository,
   projectSetupStatus,
   type RepositoryAccessReader,
   readListedRepositoryAccess,
@@ -291,6 +298,21 @@ function assertNewProjectManifest(
             reviewBudget.committedMinor === "0" &&
             reviewBudget.fundingState === "pledged")),
       "A new project may only pledge a monthly amount with payments disabled; a separate review budget is not offered",
+    ],
+    [
+      // Only the server writes the history, when a later revision changes
+      // the share. A submitted history would fix the share of every month it
+      // names, and no owner revision can change it afterwards.
+      reward.maintainerShareHistory === undefined,
+      "A new project has no maintainer share history; set only the maintainer share",
+    ],
+    [
+      // Catching up on reviews is a pause of the backlog rule for a listed
+      // project; only an owner revision starts it, and only the server
+      // writes its history.
+      manifest.slopbot?.catchUpUntil === undefined &&
+        manifest.slopbot?.catchUpHistory === undefined,
+      "A new project is not catching up on reviews; start it from the project's settings once it is listed",
     ],
     [
       (manifest.funding.addresses ?? []).length === 0 &&
@@ -648,6 +670,35 @@ function prospectiveFinancialChange(
 }
 
 /**
+ * The catch-up pause of the backlog rule (operator decision, 23 November
+ * 2026; PRD section 5). The owner sets or clears `slopbot.catchUpUntil`; the
+ * server checks the end and the once-per-month start, and alone appends the
+ * start to `slopbot.catchUpHistory`.
+ */
+function withCatchUpChange(
+  previous: ProjectDefinition,
+  next: ProjectDefinition,
+  now: Date,
+): ProjectDefinition {
+  if (
+    sameValue(previous.slopbot?.catchUpUntil, next.slopbot?.catchUpUntil) &&
+    sameValue(previous.slopbot?.catchUpHistory, next.slopbot?.catchUpHistory)
+  )
+    return next;
+  let slopbot: ProjectDefinition["slopbot"];
+  try {
+    slopbot = applyCatchUpChange(previous.slopbot, next.slopbot, now);
+  } catch (error) {
+    fail(
+      422,
+      "catch_up_refused",
+      error instanceof Error ? error.message : "Catching up was refused",
+    );
+  }
+  return slopbot === next.slopbot ? next : { ...next, slopbot };
+}
+
+/**
  * Replaces a submitted reward asset with its verified form. An unchanged
  * asset keeps its stored decimals; a new or changed one is read from chain
  * once. The paid symbol and network of the pool follow the asset.
@@ -881,6 +932,46 @@ function assertReviewBudgetTransition(
       "A review budget cannot affect an open or past cycle",
     );
   }
+}
+
+/**
+ * A new project whose repository or id is already listed would only fail the
+ * registry check with an internal message. Say which listing holds it (by
+ * repository name or alias, the registry's own rule), so an
+ * owner who already created the project continues its setup instead.
+ */
+function assertNotAlreadyListed(
+  projects: ProjectRecord[],
+  candidate: ProjectDefinition,
+  origin: string,
+): void {
+  const names = new Set(
+    candidate.repositories.flatMap((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].map((name) =>
+        name.toLowerCase(),
+      ),
+    ),
+  );
+  const repositoryName = candidate.repositories[0]?.id ?? "This repository";
+  for (const project of projects) {
+    const listsRepository = project.manifest.repositories.some((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].some((name) =>
+        names.has(name.toLowerCase()),
+      ),
+    );
+    if (listsRepository)
+      fail(
+        409,
+        "registry_conflict",
+        `${repositoryName} is already listed on Slop as ${project.id}. Open ${origin}/projects/${project.id}/manage to continue its setup instead of creating it again.`,
+      );
+  }
+  if (projects.some((project) => project.id === candidate.id))
+    fail(
+      409,
+      "registry_conflict",
+      `The project id ${candidate.id} is already used by another project. Choose a different project id.`,
+    );
 }
 
 /**
@@ -1298,6 +1389,7 @@ async function createProject(
   assertRepositoryUnrestricted(manifest, enforcements);
   const referrer = await resolveReferrer(body.referrer, manifest, actor, deps);
   const listed = await deps.persistence.listProjects();
+  assertNotAlreadyListed(listed, manifest, new URL(request.url).origin);
   assertRegistryWith(listed, manifest, { replaces: false });
   assertNewRepositoryIdentityUnlisted(listed, manifest);
   const checked = await currentAuthority(deps, manifest, actor);
@@ -1461,6 +1553,9 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
+  // A removed project stays off: no vault review or registration revision.
+  if (current.manifest.listingTier === "retired")
+    fail(409, "project_restricted", "A removed project cannot be changed.");
   const body = saved?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,
@@ -1813,11 +1908,18 @@ async function publishOwnerRevision(
   const actor = stored?.actor ?? actorOf(await requireSession(request, deps));
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
   const body = stored?.body ?? (await readStrictJsonObject(request));
-  exactKeys(
-    body,
-    ["manifest", "expectedRevision"],
-    ["reason", "monthlyAmount", "bountyAmount"],
-  );
+  if (body.integrationBranch === undefined)
+    exactKeys(
+      body,
+      ["manifest", "expectedRevision"],
+      ["reason", "monthlyAmount", "bountyAmount"],
+    );
+  else
+    exactKeys(
+      body,
+      ["integrationBranch", "expectedRevision"],
+      ["reason", "contribution"],
+    );
   const expectedRevision = positiveInteger(
     body.expectedRevision,
     "expectedRevision",
@@ -1827,9 +1929,10 @@ async function publishOwnerRevision(
       ? null
       : boundedText(body.reason, "reason", 1, 500);
   if (
-    typeof body.manifest !== "object" ||
-    body.manifest === null ||
-    Array.isArray(body.manifest)
+    body.integrationBranch === undefined &&
+    (typeof body.manifest !== "object" ||
+      body.manifest === null ||
+      Array.isArray(body.manifest))
   )
     fail(422, "invalid_manifest", "Project manifest is invalid");
   const current = await deps.persistence.getProject(projectId);
@@ -1855,6 +1958,15 @@ async function publishOwnerRevision(
   // never authorize private funding reads or a revision of another project.
   const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
+  if (body.integrationBranch !== undefined)
+    return publishIntegrationBranch(request, deps, current, actor, checked, {
+      selection: body.integrationBranch,
+      contribution: body.contribution,
+      note,
+    });
+  // A removed project stays off: no edit, appended repository or new scan.
+  if (current.manifest.listingTier === "retired")
+    fail(409, "project_restricted", "A removed project cannot be changed.");
   // An appended repository's permanent GitHub id must be new to the registry.
   const submittedRepositories = (body.manifest as Record<string, unknown>)
     .repositories;
@@ -1960,10 +2072,13 @@ async function publishOwnerRevision(
   const added = appendedRepositories(current.manifest, submitted) ?? [];
   if (added.length > 0)
     await verifyAppendedRepositories(deps, actor, added, deps.now());
-  let manifest =
+  let manifest = withCatchUpChange(
+    current.manifest,
     changes.financial.length > 0
       ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
-      : submitted;
+      : submitted,
+    deps.now(),
+  );
   const clearance =
     changes.executable.length > 0
       ? await deps.vettingClearance(projectId, manifest, current.revision)
@@ -2017,6 +2132,146 @@ async function publishOwnerRevision(
       presentation: changes.presentation,
       executable: changes.executable,
       financial: changes.financial,
+    },
+    setup,
+  });
+}
+
+function branchDeclarationMatches(
+  value: unknown,
+  current: ProjectDefinition,
+  repository: string,
+  branch: string,
+): boolean {
+  if (!value || typeof value !== "object") return false;
+  const declaration = value as Record<string, unknown>;
+  const target = declaration.repository;
+  const steward = declaration.steward;
+  if (
+    !target ||
+    typeof target !== "object" ||
+    !steward ||
+    typeof steward !== "object"
+  )
+    return false;
+  const targetFields = target as Record<string, unknown>;
+  const stewardFields = steward as Record<string, unknown>;
+  return (
+    declaration.kind === "slop-project-authority" &&
+    declaration.schemaVersion === "1" &&
+    declaration.projectId === current.id &&
+    declaration.policyRevision === current.terms.revision &&
+    targetFields.fullName === repository &&
+    targetFields.id === current.authority.repositoryId &&
+    targetFields.integrationBranch === branch &&
+    stewardFields.actorId === current.steward.github.actorId &&
+    stewardFields.nodeId === current.steward.github.nodeId
+  );
+}
+
+async function publishIntegrationBranch(
+  request: Request,
+  deps: ProjectApiDependencies,
+  current: ProjectRecord,
+  actor: GithubActor,
+  checked: Awaited<ReturnType<typeof currentAuthority>>,
+  input: { selection: unknown; contribution: unknown; note: string | null },
+): Promise<Response> {
+  const { access } = checked;
+  const project = current.manifest;
+  const [primary, ...additional] = project.repositories;
+  if (
+    access.state !== "read" ||
+    access.access.installation !== "installed" ||
+    access.access.permission !== "admin" ||
+    !access.access.repository ||
+    !manifestMatchesRepository(project, access.access.repository)
+  )
+    fail(
+      403,
+      "authority_required",
+      "The integration branch requires current GitHub repository admin permission.",
+    );
+  const facts = access.access.repository;
+  const repository = facts.full_name;
+  if (
+    !input.selection ||
+    typeof input.selection !== "object" ||
+    Array.isArray(input.selection)
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Expected an integration branch and its GitHub commit.",
+    );
+  const selection = input.selection as Record<string, unknown>;
+  exactKeys(selection, ["name", "commitSha"]);
+  const { name, commitSha } = selection;
+  if (
+    typeof name !== "string" ||
+    !validIntegrationBranch(name) ||
+    typeof commitSha !== "string" ||
+    !/^[0-9a-f]{40}$/u.test(commitSha)
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Expected an integration branch and its GitHub commit.",
+    );
+  if (primary.integrationBranch === name)
+    fail(422, "no_change", "The integration branch is unchanged.");
+  if (project.listingTier === "retired")
+    fail(
+      409,
+      "project_restricted",
+      "A retired project cannot change integration branches.",
+    );
+  const { manifest } = canonicalManifest({
+    ...project,
+    repositories: [{ ...primary, integrationBranch: name }, ...additional],
+    ...(input.contribution === undefined
+      ? {}
+      : { contribution: input.contribution }),
+  });
+  const proof = await readIntegrationBranchAuthority(
+    deps.github,
+    { numericId: facts.id, nodeId: facts.node_id },
+    name,
+    commitSha,
+  );
+  if (!branchDeclarationMatches(proof, project, repository, name))
+    fail(
+      422,
+      "branch_proof_required",
+      "The selected commit must contain a matching .github/slop-project.json declaration.",
+    );
+  const updated = await appendRevision(request, deps, {
+    current,
+    manifest,
+    actor,
+    ownerParticipation: true,
+    verifiedBranchChange: {
+      repositoryId: primary.id,
+      from: primary.integrationBranch,
+      to: name,
+    },
+    reason: `Owner integration branch change by @${actor.githubLogin}: ${primary.integrationBranch} to ${name} at ${commitSha}.${input.note ? ` ${input.note}` : ""}`,
+  });
+  const setup = await runSetupCheck(request, deps, updated, actor, {
+    authority: checked,
+    allowActivation: false,
+  });
+  return json(200, {
+    project: adminProject(updated),
+    changes: {
+      presentation: [],
+      executable: [
+        "repositories",
+        ...(!sameValue(project.contribution, manifest.contribution)
+          ? ["contribution"]
+          : []),
+      ],
+      financial: [],
     },
     setup,
   });
@@ -2373,6 +2628,7 @@ async function appendRevision(
     applicationId?: string;
     /** Recheck owner eligibility within the guarded enforcement snapshot. */
     ownerParticipation?: true;
+    verifiedBranchChange?: VerifiedBranchChange;
     /** Recheck a maintainer removal within the same snapshot. */
     removal?: true;
   },
@@ -2410,7 +2666,11 @@ async function appendRevision(
       enforcements.filter((record) => record.projectId !== projectId),
     );
   try {
-    assertProjectPolicyTransition(current.manifest, manifest);
+    assertProjectPolicyTransition(
+      current.manifest,
+      manifest,
+      input.verifiedBranchChange,
+    );
     assertPayoutExclusionTransition(current.manifest, manifest, deps.now());
   } catch (error) {
     invalidManifest(error);

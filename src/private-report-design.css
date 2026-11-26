@@ -69,3 +69,30 @@ details[open] > .private-report-summary::before {
   outline: 3px solid var(--orange);
   outline-offset: 3px;
 }
+
+.report-proof-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.report-proof-field > legend {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.report-proof-field > p,
+.report-proof-view > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.report-proof-view {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}

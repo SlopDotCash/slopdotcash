@@ -302,7 +302,11 @@ function pull(number: number, fields: PullNode): PullNode {
     authorAssociation: "CONTRIBUTOR",
     author: { __typename: "User", login: "outside-author" },
     mergedBy: null,
+    isCrossRepository: true,
+    headRepository: { id: "R_fork" },
+    headRepositoryOwner: { login: "outside-author" },
     timelineItems: { nodes: [] },
+    refDeletions: { nodes: [] },
     ...fields,
   };
 }
@@ -426,6 +430,63 @@ test("the read counts only outside pull requests merged or closed in the month b
       throw new Error("GitHub maintainer decision read failed: HTTP 502");
     }),
   ).rejects.toThrow("HTTP 502");
+});
+
+test("a close caused by deleting the head branch or fork is not a maintainer decision", async () => {
+  const project = sharedProject(2000);
+  const at = "2026-09-10T12:00:00Z";
+  const deletion = (login: string, when = at) => ({
+    refDeletions: { nodes: [{ createdAt: when, actor: { login } }] },
+  });
+  const nodes: PullNode[] = [
+    // Another account owns the fork and deletes the branch: GitHub records
+    // that account as the closer.
+    pull(30, {
+      headRepositoryOwner: { login: "Fork-Owner" },
+      ...closedBy(user(44, "fork-owner"), at),
+    }),
+    // The deleting account is a member of the organization that owns the
+    // fork, so only the branch deletion beside the close identifies it.
+    pull(31, {
+      headRepositoryOwner: { login: "some-org" },
+      ...closedBy(user(45, "org-member"), at),
+      ...deletion("org-member", "2026-09-10T12:00:01Z"),
+    }),
+    // The fork is gone, so nothing shows who could close it.
+    pull(32, {
+      headRepository: null,
+      headRepositoryOwner: null,
+      ...closedBy(user(46, "gone-fork"), at),
+    }),
+    // A maintainer's close still counts, also when the contributor deletes
+    // the branch later.
+    pull(33, {
+      ...closedBy(user(22, "ben"), at),
+      ...deletion("outside-author", "2026-09-12T09:00:00Z"),
+    }),
+    // A merge is decided by an account with write access.
+    pull(34, {
+      headRepository: null,
+      headRepositoryOwner: null,
+      ...mergedBy(user(11, "ana")),
+    }),
+  ];
+  const collected = await collectMaintainerDecisions(
+    project,
+    SEPTEMBER,
+    async () => ({
+      repository: {
+        id: project.authority.repositoryNodeId,
+        pullRequests: { pageInfo: { hasNextPage: false }, nodes },
+      },
+    }),
+  );
+  expect(
+    collected.decisions.map((entry) => [entry.number, entry.login]),
+  ).toEqual([
+    [33, "ben"],
+    [34, "ana"],
+  ]);
 });
 
 test("the GitHub reader retries a refused answer and never returns a GraphQL error as data", async () => {

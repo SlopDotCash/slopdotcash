@@ -53,6 +53,11 @@ import {
 const { AnchorProvider, Program, BN, EventParser, BorshCoder } = anchor;
 const provider = AnchorProvider.env();
 const connection = provider.connection;
+// Anchor otherwise fetches a processed blockhash for confirmed preflight.
+const confirmedRpc = {
+  commitment: "confirmed",
+  preflightCommitment: "confirmed",
+};
 const payer = provider.wallet.payer;
 const idl = JSON.parse(readFileSync("target/idl/slop_escrow.json"));
 const program = new Program(idl, provider);
@@ -109,7 +114,7 @@ const pledge = (project, period, amount, owner = payer) =>
       systemProgram: SystemProgram.programId,
     })
     .signers(owner === payer ? [] : [owner])
-    .rpc({ commitment: "confirmed" });
+    .rpc(confirmedRpc);
 const expire = (project, period) =>
   program.methods
     .expirePledge(period)
@@ -118,7 +123,7 @@ const expire = (project, period) =>
       monthPledge: pledgeAt(project, period),
       month: monthAt(project, period),
     })
-    .rpc({ commitment: "confirmed" });
+    .rpc(confirmedRpc);
 const closePledge = (project, period, owner = payer) =>
   program.methods
     .closeMonthPledge(period)
@@ -128,12 +133,12 @@ const closePledge = (project, period, owner = payer) =>
       monthPledge: pledgeAt(project, period),
     })
     .signers(owner === payer ? [] : [owner])
-    .rpc({ commitment: "confirmed" });
+    .rpc(confirmedRpc);
 const setMonthly = (project, cap, enabled) =>
   program.methods
     .setMonthlyCommitment(bn(cap), enabled)
     .accountsStrict({ owner: payer.publicKey, project })
-    .rpc({ commitment: "confirmed" });
+    .rpc(confirmedRpc);
 let ownerTokens;
 async function ownerTokenAccount() {
   ownerTokens ??= await createAccount(
@@ -156,7 +161,7 @@ const withdraw = async (project, gross) =>
       destination: await ownerTokenAccount(),
       tokenProgram: TOKEN_PROGRAM_ID,
     })
-    .rpc({ commitment: "confirmed" });
+    .rpc(confirmedRpc);
 function handCommit(project, name, gross) {
   const source = sha(`pledge-hand:${name}`);
   const award = Buffer.from(
@@ -173,7 +178,7 @@ function handCommit(project, name, gross) {
       obligation: pda(Buffer.from("award"), project.toBuffer(), award),
       systemProgram: SystemProgram.programId,
     })
-    .rpc({ commitment: "confirmed" });
+    .rpc(confirmedRpc);
 }
 /**
  * The signed commit_monthly for `period` with one leaf of `total`. `pledge` is the pledge
@@ -469,7 +474,7 @@ test("a bounty project cannot pledge", async () => {
       systemProgram: SystemProgram.programId,
       config: configAddress(program.programId),
     })
-    .rpc({ commitment: "confirmed" });
+    .rpc(confirmedRpc);
   await assert.rejects(
     pledge(project, await currentPeriod(), 1),
     /WrongPurpose/,
@@ -550,7 +555,7 @@ test("migrate_project grows a 332-byte Project, which then pledges through the a
         project,
         systemProgram: SystemProgram.programId,
       })
-      .rpc({ commitment: "confirmed" }),
+      .rpc(confirmedRpc),
     /NotLegacyProject/,
   );
   assert.deepEqual(await reader(), {

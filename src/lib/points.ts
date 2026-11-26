@@ -31,6 +31,8 @@ export const OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION =
   "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved.";
 export const OCTOBER_DUPLICATE_RETIREMENT_DECISION =
   "Owner-reviewed duplicate accepted work already rewarded by earlier sources.";
+export const VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION =
+  "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved.";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
@@ -763,6 +765,7 @@ export function applyPointsSnapshot(
   snapshot: LeaderboardSnapshot,
   digest: string,
   recordedAt: string,
+  options: { preserveHeldImplementation?: boolean } = {},
 ): PointsJournal {
   // A snapshot ledger only carries a downstream copy of a retained award
   // (re-derived work unit, possibly dropped as a repeat work unit), so it
@@ -818,7 +821,7 @@ export function applyPointsSnapshot(
     rows.push(prior);
     priorMergesBySource.set(key, rows);
   }
-  const heldUnassessedSources = new Set(
+  const protectedOctoberSources = new Set(
     [...previousPoints.values()]
       .filter(
         ({ award, decision }) =>
@@ -829,15 +832,111 @@ export function applyPointsSnapshot(
       )
       .map(({ award }) => `${award.projectId}\0${award.sourceId}`),
   );
+  const heldUnassessedSources = new Set(protectedOctoberSources);
+  const reviewedUnits = snapshot.reviewedImplementationUnits ?? [];
+  const protectedReviewedGroups = new Set<string>();
+  const protectedSourcesWithMembership = new Set<string>();
+  for (const row of reviewedUnits) {
+    const projectId = findHistoricalRepository(row.repository)?.projectId;
+    if (!projectId) continue;
+    const sourceKey = `${projectId}\0${row.pullRequestId}`;
+    if (!protectedOctoberSources.has(sourceKey)) continue;
+    for (const unit of row.units) {
+      protectedReviewedGroups.add(`${projectId}\0${unit.groupId}`);
+      protectedSourcesWithMembership.add(`${sourceKey}\0${unit.recordDigest}`);
+    }
+  }
+  const knownReviewedUnitKeys = new Set<string>();
+  const heldReviewedUnitKeys = new Set<string>();
+  const heldReviewedSources = new Set<string>();
+  for (const row of reviewedUnits) {
+    const projectId = findHistoricalRepository(row.repository)?.projectId;
+    if (!projectId) continue;
+    for (const unit of row.units) {
+      const unitKey = `${projectId}\0value:${unit.recordDigest}\0${unit.workUnitId}`;
+      knownReviewedUnitKeys.add(unitKey);
+      if (protectedReviewedGroups.has(`${projectId}\0${unit.groupId}`)) {
+        heldReviewedUnitKeys.add(unitKey);
+        heldReviewedSources.add(`${projectId}\0${row.pullRequestId}`);
+      }
+    }
+  }
+  // Older snapshots bind the assessed record but do not have exact unit
+  // membership. Hold every associated implementation source in that record.
+  const assessedSourcesByRecord = new Map<string, string[]>();
+  const heldAssessmentRecords = new Set<string>();
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    if (row.status !== "assessed" || !row.recordDigest) continue;
+    const projectId = findHistoricalRepository(row.repository)?.projectId;
+    if (!projectId) continue;
+    const recordKey = `${projectId}\0value:${row.recordDigest}`;
+    const sourceKey = `${projectId}\0${row.pullRequestId}`;
+    const members = assessedSourcesByRecord.get(recordKey) ?? [];
+    members.push(sourceKey);
+    assessedSourcesByRecord.set(recordKey, members);
+    if (
+      protectedOctoberSources.has(sourceKey) &&
+      !protectedSourcesWithMembership.has(`${sourceKey}\0${row.recordDigest}`)
+    )
+      heldAssessmentRecords.add(recordKey);
+  }
+  for (const recordKey of heldAssessmentRecords)
+    for (const source of assessedSourcesByRecord.get(recordKey) ?? [])
+      heldUnassessedSources.add(source);
+  for (const event of snapshot.ledger) {
+    if (
+      event.category !== "merged-pull-request" ||
+      !event.scoreDecisionSourceId
+    )
+      continue;
+    const projectId = findHistoricalRepository(event.repository)?.projectId;
+    if (!projectId) continue;
+    const recordKey = `${projectId}\0${event.scoreDecisionSourceId}`;
+    const sourceKey = `${projectId}\0${event.source.id}`;
+    if (heldAssessmentRecords.has(recordKey))
+      heldUnassessedSources.add(sourceKey);
+    if (heldReviewedUnitKeys.has(`${recordKey}\0${event.workUnitId}`))
+      heldReviewedSources.add(sourceKey);
+  }
+  function holdsImplementation(award: PointAward, decisionSourceId?: string) {
+    if (award.category !== "merged-pull-request") return false;
+    const sourceKey = `${award.projectId}\0${award.sourceId}`;
+    const unitKey = `${award.projectId}\0${decisionSourceId}\0${award.workUnitId}`;
+    if (
+      heldUnassessedSources.has(sourceKey) ||
+      heldReviewedUnitKeys.has(unitKey)
+    )
+      return true;
+    if (!heldReviewedSources.has(sourceKey)) return false;
+    // An independent reviewed unit can still score when its completion has
+    // no ordinary prior pool that might already cover it.
+    return (
+      !knownReviewedUnitKeys.has(unitKey) ||
+      (priorMergesBySource.get(sourceKey) ?? []).some(
+        ({ award: prior }) =>
+          prior.amount > 0 &&
+          prior.key ===
+            pointKey(
+              prior.projectId,
+              prior.actor.id,
+              prior.category,
+              prior.sourceId,
+            ),
+      )
+    );
+  }
   const allocationAwards: PointAward[] = [];
   const allocationDecisions = new Map<string, PointDecision>();
   const snapshotAwards = snapshot.ledger
     .filter(
       (event) => event.actor.kind === "User" && repositoryWorkCounts(event),
     )
-    .map(awardForScore);
+    .map((event) => ({
+      award: awardForScore(event),
+      decisionSourceId: event.scoreDecisionSourceId,
+    }));
   const currentMergesBySource = new Map<string, PointAward[]>();
-  for (const award of snapshotAwards) {
+  for (const { award } of snapshotAwards) {
     if (award.category !== "merged-pull-request") continue;
     const key = `${award.projectId}\0${award.sourceId}`;
     const rows = currentMergesBySource.get(key) ?? [];
@@ -853,12 +952,29 @@ export function applyPointsSnapshot(
     const projectId = findHistoricalRepository(row.repository)?.projectId;
     if (!projectId) continue;
     const sourceKey = `${projectId}\0${row.pullRequestId}`;
-    if (heldUnassessedSources.has(sourceKey)) continue;
+    if (
+      heldUnassessedSources.has(sourceKey) ||
+      heldReviewedSources.has(sourceKey)
+    )
+      continue;
     const prior = priorMergesBySource.get(sourceKey);
     if (!prior?.length) continue;
     // A missing value assessment cannot replace a recorded PR pool with the
     // fallback minimum, or add a second pool under a different recipient.
     heldUnassessedSources.add(sourceKey);
+    // The historical packet applies allocation-only changes through its
+    // separately reviewed implementation manifest.
+    if (options.preserveHeldImplementation) continue;
+    // The rolling window can omit an earlier acceptance verified by the
+    // complete historical census. Retain that allocation without an assessment.
+    if (
+      prior.some(
+        ({ decision }) =>
+          decision?.reason ===
+          VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+      )
+    )
+      continue;
     const allocation = row.implementationAllocation;
     const current = currentMergesBySource.get(sourceKey) ?? [];
     const actorIds =
@@ -956,12 +1072,12 @@ export function applyPointsSnapshot(
     }
   }
   const awards = snapshotAwards
-    .filter((a) => !batchOwned.has(a.key))
     .filter(
-      (a) =>
-        a.category !== "merged-pull-request" ||
-        !heldUnassessedSources.has(`${a.projectId}\0${a.sourceId}`),
+      ({ award, decisionSourceId }) =>
+        !batchOwned.has(award.key) &&
+        !holdsImplementation(award, decisionSourceId),
     )
+    .map(({ award }) => award)
     // Unavailable source is not evidence against a recorded award. A newly
     // verified merge can earn its minimum, but cannot add another award on
     // top of a retained joint decision or prior per-source award, including
@@ -1038,17 +1154,98 @@ export function applyPointsSnapshot(
     if (omitted) omittedReviews.set(key, exclusion.reason);
     else excludedReviews.add(key);
   }
+  // A credited review submitted before the scoring window has no ledger
+  // event in this snapshot; the builder publishes its allocated share as
+  // an omitted review credit instead. Materialize the award the ledger
+  // event would have produced, so a first generation that is already
+  // late still records the share the allocation guarantees. The
+  // materialization is only for a share the journal has never recorded:
+  // when an earlier run already recorded the award, the journal's award
+  // stands exactly as recorded — a later reassessment that changes the
+  // allocated share does not reissue it at the new amount — and the
+  // omission handling below keeps it.
+  for (const credit of snapshot.omittedReviewCredits ?? []) {
+    const project = findHistoricalRepository(credit.repository);
+    if (!project || credit.reviewer.kind !== "User")
+      throw new Error("Points require a registered project and user");
+    const award: PointAward = {
+      key: pointKey(
+        project.projectId,
+        credit.reviewer.id,
+        "substantive-review",
+        credit.reviewId,
+      ),
+      actor: { id: credit.reviewer.id, login: credit.reviewer.login },
+      projectId: project.projectId,
+      category: "substantive-review",
+      amount: credit.scoreThirds * POINTS_PER_THIRD,
+      occurredAt: new Date(credit.submittedAt).toISOString(),
+      sourceId: credit.reviewId,
+      sourceUrl: credit.url,
+      workUnitId: `wu_value_review_${credit.reviewId.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
+      provisional: true,
+    };
+    if (
+      batchOwned.has(award.key) ||
+      keys.has(award.key) ||
+      previousPoints.has(award.key) ||
+      excludedReviews.has(`${award.projectId}\0${award.sourceId}`)
+    )
+      continue;
+    awards.push(award);
+    keys.add(award.key);
+    if (credit.scoreDecisionAt) {
+      decisions.set(award.key, {
+        sourceId: credit.scoreDecisionSourceId,
+        effectiveAt: new Date(credit.scoreDecisionAt).toISOString(),
+        reason: credit.reason,
+      });
+    }
+  }
+  // Explicit supersession is the one relation that retires a recorded
+  // award without its source in the current census or its occurrence in
+  // the current window: an assessed joint record names the solo or
+  // earlier joint assessments it replaces, and the snapshot carries that
+  // relation here. The retiring decision is the successor's own decision
+  // as published in this snapshot's ledger; a supersession whose
+  // successor published no implementation decision retires nothing, so
+  // stale, incomplete or unresolved groups keep their recorded credit.
+  const successorDecisions = new Map<string, PointDecision | null>();
+  const successorDecision = (digest: string): PointDecision | null => {
+    const cached = successorDecisions.get(digest);
+    if (cached !== undefined) return cached;
+    const candidates = snapshot.ledger
+      .filter(
+        (event) =>
+          event.category === "merged-pull-request" &&
+          event.actor.kind === "User" &&
+          event.scoreDecisionSourceId === `value:${digest}` &&
+          event.scoreDecisionAt,
+      )
+      .sort((left, right) => left.id.localeCompare(right.id, "en"));
+    const event = candidates[0];
+    const decision = event
+      ? {
+          sourceId: event.scoreDecisionSourceId as string,
+          effectiveAt: new Date(event.scoreDecisionAt as string).toISOString(),
+          reason: event.reason,
+        }
+      : null;
+    successorDecisions.set(digest, decision);
+    return decision;
+  };
+  const supersededBy = new Map<string, PointDecision>();
+  for (const row of snapshot.valueAssessmentSupersessions ?? []) {
+    const decision = successorDecision(row.successorDigest);
+    if (decision) supersededBy.set(row.predecessorDigest, decision);
+  }
   // A complete newer census can correct a formerly accepted source. Never infer
   // deletion from missing pages or a shortened rolling window.
   for (const previous of previousPoints.values()) {
     const a = previous.award;
     // Held PR pools have either explicit allocation replacements above or no
     // replacement at all. Absence from the new ledger never deletes the latter.
-    if (
-      a.category === "merged-pull-request" &&
-      heldUnassessedSources.has(`${a.projectId}\0${a.sourceId}`)
-    )
-      continue;
+    if (holdsImplementation(a, previous.decision?.sourceId)) continue;
     const omission =
       a.category === "substantive-review"
         ? omittedReviews.get(`${a.projectId}\0${a.sourceId}`)
@@ -1078,6 +1275,35 @@ export function applyPointsSnapshot(
       sourceUrl.origin === "https://github.com"
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
+    // A recorded implementation award whose deciding assessment is the
+    // named predecessor of a successor published in this snapshot is
+    // retired by that successor, wherever its source and occurrence now
+    // sit. The correction is an ordinary predecessor-linked revision:
+    // it keeps the award's key, source and occurrence, records the
+    // successor decision, and reapplying the same snapshot adds nothing
+    // because the latest revision already carries amount zero.
+    const supersedingDecision =
+      a.category === "merged-pull-request" &&
+      previous.decision?.sourceId.startsWith("value:")
+        ? supersededBy.get(previous.decision.sourceId.slice("value:".length))
+        : undefined;
+    if (
+      supersedingDecision &&
+      supersedingDecision.sourceId !== previous.decision?.sourceId &&
+      a.amount &&
+      !batchOwned.has(a.key) &&
+      !keys.has(a.key) &&
+      (project === null ||
+        project === undefined ||
+        projectActivityCollected(snapshot, project, a.occurredAt.slice(0, 7)))
+    ) {
+      awards.push({ ...a, amount: 0 });
+      decisions.set(a.key, {
+        ...supersedingDecision,
+        reason: `Prior credit was superseded by the current source-bound scoring decision. ${supersedingDecision.reason}`,
+      });
+      continue;
+    }
     let invalidatedJointDecision: PointDecision | undefined;
     let absorbedJointDecision: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
@@ -1087,11 +1313,29 @@ export function applyPointsSnapshot(
       const coverage = coverageByPullRequest.get(
         `${repository?.id}\0${Number(match[3])}`,
       );
+      const valueCovered =
+        coverage &&
+        (["assessed", "human-ratified", "legacy-policy"].includes(
+          coverage.status,
+        ) ||
+          (a.category === "substantive-review" &&
+            coverage.reviewAssessmentDigest !== undefined));
+      // Reviewed historical replay preserves the earlier pool when this exact
+      // source still lacks a complete value assessment. A standalone minimum
+      // on the same completion does not retire its previous joint pool.
+      if (
+        options.preserveHeldImplementation &&
+        a.category === "merged-pull-request" &&
+        coverage?.pullRequestId === a.sourceId &&
+        !valueCovered
+      )
+        continue;
       // A joint unit can finish in another PR. Its assessed source coverage
-      // still binds removal of this source's superseded ordinary award.
+      // still binds removal of this source's superseded award, whether that
+      // is the ordinary award or the award of a joint unit it completed
+      // earlier.
       if (
         a.category === "merged-pull-request" &&
-        a.key === pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
         coverage?.pullRequestId === a.sourceId &&
         coverage.status === "assessed" &&
         coverage.recordDigest
@@ -1119,10 +1363,7 @@ export function applyPointsSnapshot(
       // A joint unit award still gives way once the same merge is scored by
       // its own record, so the merge is not credited twice.
       if (
-        (!coverage ||
-          !["assessed", "human-ratified", "legacy-policy"].includes(
-            coverage.status,
-          )) &&
+        !valueCovered &&
         !invalidatedJointDecision &&
         !(
           a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&

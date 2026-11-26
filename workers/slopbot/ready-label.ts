@@ -17,6 +17,7 @@ import type { Job } from "./contracts";
 import { findReviewComment, GitHubClient, GitHubError } from "./github";
 import * as store from "./persistence";
 import { registeredProject, requireScope } from "./registry";
+import { feeMode, feeUnpaid } from "./submission-fee";
 
 export const READY_LABEL = "slopbot:ready";
 export const READY_LINE_MARKER = "<!-- slopbot:ready -->";
@@ -38,6 +39,8 @@ export type ReadyEnv = {
   SLOPBOT_APP_ID: string;
   SLOPBOT_APP_PRIVATE_KEY: string;
   SLOPBOT_APP_USER_ID: string;
+  /** The submission fee switch (PRD section 5). Absent means off. */
+  SUBMISSION_FEE_MODE?: string;
 };
 type Queue = { send(body: Job): Promise<void> };
 type RepositoryRef = Pick<Job, "owner" | "repo" | "repositoryId">;
@@ -350,6 +353,8 @@ export type ReadyFacts = {
   files: readonly ChangedFile[] | null;
   approvals: number;
   changesRequested: boolean;
+  /** Slopbot asked a submission fee for this pull request and none is paid. */
+  feeUnpaid?: boolean;
 };
 
 export type ReadyDecision = {
@@ -372,6 +377,9 @@ export function readyDecision(
   });
   if (!facts.open) return no("the pull request is not open");
   if (facts.draft) return no("the pull request is a draft");
+  // An unpaid pull request is never ready, whatever else holds (PRD section 5).
+  if (facts.feeUnpaid === true)
+    return no("its submission fee has not been paid");
   if (facts.verdict === "running")
     return no("Slopbot is still reviewing this commit", true);
   if (facts.verdict === "missing")
@@ -877,7 +885,12 @@ export async function refreshReadyLabel(
     );
     return "pull request is not open";
   }
-  const facts = await readyFacts(db, github, job, pull, settings);
+  const facts = {
+    ...(await readyFacts(db, github, job, pull, settings)),
+    feeUnpaid:
+      feeMode(env.SUBMISSION_FEE_MODE) === "live" &&
+      (await feeUnpaid(db, job.repositoryId, job.number)),
+  };
   let decision = readyDecision(facts, settings);
   const comment =
     facts.verdict === "none" || labelled

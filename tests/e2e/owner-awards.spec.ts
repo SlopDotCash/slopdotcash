@@ -523,8 +523,19 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
 });
 
 test("owner reserve repair keeps healthy and unknown states held and restores a submitted transaction after reload", async ({
+  baseURL,
+  diagnostics,
   page,
 }, info) => {
+  // Leaving the project intentionally cancels its in-flight standings reads.
+  if (!baseURL) throw new Error("Browser fixture has no base URL");
+  const origin = escapeRegExp(new URL(baseURL).origin);
+  diagnostics.allow(
+    new RegExp(
+      `^net::ERR_ABORTED GET ${origin}/data/(?:leaderboard\\.json\\?[^ ]+|points/[0-9a-f]\\.json)$`,
+      "u",
+    ),
+  );
   const project = projectWithVault();
   await page.clock.setFixedTime(new Date("2026-10-02T12:00:00Z"));
   await page.route(
@@ -649,7 +660,8 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect.poll(() => checkStarted).toBe(true);
-  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await page.getByRole("link", { name: "How it works", exact: true }).click();
+  await expect(page).toHaveURL(/\/how-it-works$/u);
   await expect(details).toHaveCount(0);
   await page.goBack();
   await details.locator("summary").click();
@@ -694,6 +706,118 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+});
+
+test("ASI's reviewed closeout can finalize in November from monthly awards", async ({
+  page,
+}, info) => {
+  const cutoff = "2026-11-19T00:00:00.000Z";
+  const now = "2026-11-19T12:00:00.000Z";
+  const project = stagingPaymentProject("robinhood-mainnet", "asi");
+  await page.clock.setFixedTime(new Date(now));
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "123", githubLogin: "owner", admin: false },
+      },
+    }),
+  );
+  await page.route("**/api/v1/points/session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const view = {
+    projectId: "asi",
+    period: "2026-11",
+    manifestSha256: "a".repeat(64),
+    automatic: false,
+    canManage: true,
+    cutoffAt: "2026-12-04T00:00:00.000Z",
+    deployment: null,
+    asset: {
+      network: "robinhood-mainnet",
+      assetAddress: `0x${"1".repeat(40)}`,
+      assetDecimals: 6,
+      symbol: "USDG",
+    },
+    proposal: {
+      earlyCloseAt: cutoff,
+      capBase: "150000000",
+      allocationSequence: 0,
+      allocations: [
+        {
+          githubUserId: "1",
+          login: "fixture-contributor",
+          grossBase: "150000000",
+          proposedGrossBase: "150000000",
+          sourceDigest: "c".repeat(64),
+        },
+      ],
+    },
+  };
+  const monthly = "**/api/v1/payments/projects/asi/monthly/2026-11";
+  await page.route(monthly, (route) =>
+    route.fulfill({ json: { ...view, run: null } }),
+  );
+  await page.route(`${monthly}/finalize`, (route) => {
+    expect(route.request().postDataJSON()).toEqual({ expectedSequence: 0 });
+    return route.fulfill({
+      json: {
+        ...view,
+        run: {
+          trigger: "owner",
+          frozenAt: now,
+          snapshotSha256: "d".repeat(64),
+          totalGrossBase: "150000000",
+          network: "robinhood-mainnet",
+          vault: `0x${"2".repeat(40)}`,
+          funded: false,
+          awards: [
+            {
+              githubUserId: "1",
+              login: "fixture-contributor",
+              grossBase: "150000000",
+              feeBase: "3000000",
+              netBase: "147000000",
+              state: "underfunded",
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page.goto("/projects/asi/funding");
+  const awards = page.getByRole("region", { name: "Monthly awards" });
+  await awards.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(
+    awards.getByRole("navigation", { name: "Contribution month" }),
+  ).toContainText("November 2026");
+  await expect(
+    awards.getByRole("button", { name: "Next award month" }),
+  ).toBeDisabled();
+  await expect(awards.locator(`time[datetime="${cutoff}"]`)).toBeVisible();
+  await expect(awards).toContainText("150 USDG");
+  await expect(awards.getByLabel("Award for fixture-contributor")).toHaveCount(
+    0,
+  );
+  const finalize = awards.getByRole("button", { name: "Finalize awards" });
+  await finalize.focus();
+  await page.keyboard.press("Enter");
+  await expect(awards).toContainText("Final · you · Nov 19, 2026");
+  await expect(awards).toContainText("147 USDG");
+  await expectAccessible(page);
+  await page.screenshot({ path: info.outputPath("asi-closeout.png") });
 });
 
 /** Routes for the December 2026 review window: a private November proposal. */

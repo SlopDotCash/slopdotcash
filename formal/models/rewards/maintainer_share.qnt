@@ -2,7 +2,7 @@
 // @source src/lib/payments/maintainer-share.ts
 // @source scripts/maintainer-decisions.ts
 // @source migrations/0137_monthly_maintainer_shares.sql
-// @source migrations/0139_monthly_maintainer_share_parts.sql
+// @source migrations/0156_monthly_maintainer_share_parts.sql
 // Maintainer share of a project month (PRD section 6, operator decision of
 // 18 November 2026).
 //

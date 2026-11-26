@@ -216,6 +216,63 @@ for (const scenario of [
   });
 }
 
+test("a refused Points projection waits for its outstanding shard retry", async () => {
+  const { shards, index } = projection();
+  const pendingShardStarted = Promise.withResolvers<void>();
+  const releasePendingShard = Promise.withResolvers<void>();
+  const pendingShardRetried = Promise.withResolvers<void>();
+  const events: string[] = [];
+  let pendingShardAttempts = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input));
+    if (url.origin !== "https://staging.slop.cash")
+      throw new Error("Unexpected external request");
+    if (url.pathname === "/api/v1/points/journal")
+      return Response.json({ error: "points_not_published" }, { status: 503 });
+    if (url.pathname === "/data/points.json") return Response.json(index);
+    if (url.pathname === "/data/points/0.json")
+      return new Response(null, { status: 404 });
+    if (url.pathname === "/data/points/1.json") {
+      pendingShardAttempts++;
+      if (pendingShardAttempts === 1) {
+        pendingShardStarted.resolve();
+        await releasePendingShard.promise;
+        throw Object.assign(new Error("socket connection closed"), {
+          code: "ECONNRESET",
+        });
+      }
+      events.push("outstanding shard retried");
+      pendingShardRetried.resolve();
+    }
+    const shard = shards.find((part) => part.path === url.pathname);
+    return shard
+      ? new Response(shard.text)
+      : new Response(null, { status: 404 });
+  }) as typeof fetch;
+  try {
+    const result = loadPublishedPoints(
+      false,
+      async () => {},
+      "https://staging.slop.cash",
+    ).catch((error: unknown) => {
+      events.push("read refused");
+      return error;
+    });
+    await pendingShardStarted.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releasePendingShard.resolve();
+    await pendingShardRetried.promise;
+    expect(await result).toEqual(
+      new Error("Published points history unavailable"),
+    );
+    expect(events).toEqual(["outstanding shard retried", "read refused"]);
+  } finally {
+    releasePendingShard.resolve();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 for (const failure of ["transient", "persistent", "different-error"] as const) {
   test(`published Points history ${failure} refusal preserves history`, async () => {
     const { journal, shards, index } = projection();
@@ -294,15 +351,21 @@ for (const scenario of [
   "missing-index",
   "bootstrap",
   "unavailable",
+  "bootstrap-unavailable",
+  "bootstrap-pages-only",
   "production-unpublished",
+  "production-bootstrap",
 ] as const) {
   test(`environment-local Points history: ${scenario}`, async () => {
     const { journal, shards, index } = projection();
     const requested: URL[] = [];
-    const origin =
-      scenario === "production-unpublished"
-        ? "https://slop.cash"
-        : "https://staging.slop.cash";
+    const origin = scenario.startsWith("production-")
+      ? "https://slop.cash"
+      : "https://staging.slop.cash";
+    const empty = scenario.endsWith("bootstrap");
+    const unavailable = scenario.endsWith("unavailable");
+    const bootstrap =
+      scenario.includes("bootstrap") || scenario === "production-unpublished";
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -318,16 +381,15 @@ for (const scenario of [
             });
           return Response.json(
             {
-              error:
-                scenario === "unavailable"
-                  ? "points_unavailable"
-                  : "points_not_published",
+              error: unavailable
+                ? "points_unavailable"
+                : "points_not_published",
             },
             { status: 503 },
           );
         }
         if (url.pathname === "/data/points.json") {
-          if (scenario === "bootstrap" || scenario === "missing-index")
+          if (empty || scenario === "missing-index")
             return new Response(null, { status: 404 });
           return Response.json(index);
         }
@@ -351,24 +413,24 @@ for (const scenario of [
       );
     }) as typeof fetch;
     try {
-      const result = loadPublishedPoints(
-        scenario === "bootstrap" || scenario === "production-unpublished",
-        async () => {},
-        origin,
-      );
-      if (scenario === "pages-only" || scenario === "checkpoint")
+      const result = loadPublishedPoints(bootstrap, async () => {}, origin);
+      if (scenario.endsWith("pages-only") || scenario === "checkpoint")
         expect(await result).toEqual(journal);
-      else if (scenario === "bootstrap") expect(await result).toBeNull();
+      else if (empty) expect(await result).toBeNull();
       else await expect(result).rejects.toThrow();
       expect(requested.every((url) => url.origin === origin)).toBe(true);
-      if (scenario === "unavailable") {
+      if (unavailable) {
         expect(requested).toHaveLength(3);
         expect(
           requested.every((url) => url.pathname === "/api/v1/points/journal"),
         ).toBe(true);
       }
-      if (scenario === "production-unpublished")
-        expect(requested).toHaveLength(2);
+      if (empty || scenario === "production-unpublished") {
+        expect(requested.map((url) => url.pathname)).toEqual([
+          "/api/v1/points/journal",
+          "/data/points.json",
+        ]);
+      }
     } finally {
       globalThis.fetch = originalFetch;
       server.stop(true);

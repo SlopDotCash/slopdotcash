@@ -319,12 +319,13 @@ async function reviewEmptyPull(
     } catch (error) {
       outcome = String(error);
     }
-    const review = sqlite
+    const reviews = sqlite
       .query(
-        "SELECT status, action FROM slopbot_reviews WHERE item_node_id = 'PR_local'",
+        "SELECT status, action FROM slopbot_reviews WHERE item_node_id = 'PR_local' ORDER BY rowid",
       )
-      .get();
-    return { outcome, writes, review, prompts, reads, comments };
+      .all();
+    const review = reviews[0] ?? null;
+    return { outcome, writes, review, reviews, prompts, reads, comments };
   } finally {
     globalThis.fetch = nativeFetch;
     server.stop(true);
@@ -435,7 +436,10 @@ test("signed webhook and queue complete a large review once across two deliverie
 test("queue retries source movement and handles the current source on redelivery", async () => {
   const result = await reviewEmptyPull("active", "moved", true);
   expect(result.outcome).toBe("acknowledged=1, retried=1");
-  expect(result.review).toEqual({ status: "completed", action: "hold" });
+  expect(result.reviews).toEqual([
+    { status: "failed", action: "none" },
+    { status: "completed", action: "hold" },
+  ]);
   expect(result.prompts).toHaveLength(2);
   expect(result.comments).toHaveLength(1);
 });

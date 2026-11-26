@@ -64,7 +64,6 @@ async function servedTerms(): Promise<Record<string, unknown>> {
     listEnforcements: async () => [],
     loadTemplate: unused,
     vettingClearance: unused,
-    poolFunding: async () => null,
   };
   const response = await handleProjectArtifactRequest(
     new Request(`https://slop.cash/projects/${PROJECT_ID}/terms.json`),

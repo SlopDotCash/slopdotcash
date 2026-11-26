@@ -2,6 +2,7 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import {
+  EMPTY_TRACE_LISTING,
   expect,
   expectAccessibleReflow,
   projectSuffix,
@@ -95,6 +96,7 @@ test("a member names their referral link, sees refusals, and copies the saved li
     submissions: [],
   });
   await json("referrals/me", { enabled: false });
+  await json("traces/me", EMPTY_TRACE_LISTING);
   await page.route(`${site}/api/v1/referrals/code`, async (route) => {
     const request = route.request();
     const body = request.postDataJSON() as { code: unknown };

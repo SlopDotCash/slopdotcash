@@ -11,16 +11,19 @@
 // last check stale; a push resets every per-head fact. The owner setting is
 // off at the start. Only a human merges; Slopbot has no merge action.
 // REQUIRED abstracts the owner's approval count (default 1).
+// A pull request whose submission fee Slopbot asked and nobody paid is never
+// labelled, whatever else holds (operator decision, 18 November 2026; the fee
+// itself is modelled in bot_submission_fee).
 module bot_ready_label {
   pure val REQUIRED = 1
   pure val MAX_HEAD = 2
   var s: { on: bool, head: int, checks: bool, reviewNone: bool,
-    approvals: int, protectedPath: bool, overCap: bool,
+    approvals: int, protectedPath: bool, overCap: bool, feeUnpaid: bool,
     label: bool, fresh: bool, merged: bool }
   action init = s' = { on: false, head: 0, checks: false, reviewNone: false,
-    approvals: 0, protectedPath: false, overCap: false,
+    approvals: 0, protectedPath: false, overCap: false, feeUnpaid: false,
     label: false, fresh: true, merged: false }
-  val conditions = all { s.on, s.checks, s.reviewNone,
+  val conditions = all { s.on, s.checks, s.reviewNone, not(s.feeUnpaid),
     s.approvals >= REQUIRED, not(s.protectedPath), not(s.overCap) }
   // Any event marks the last decision stale until the next check.
   def event(after) = after.with("fresh", false)
@@ -43,6 +46,10 @@ module bot_ready_label {
   action readOnlyApproves = all { not(s.merged), s' = event(s) }
   action changesRequested = all { not(s.merged), s' = event(s.with("approvals", 0)) }
   action ownerToggles = all { s' = event(s.with("on", not(s.on))) }
+  // Slopbot asks a submission fee for the pull request; a deposit or a
+  // release ends the wait.
+  action feeAsked = all { not(s.merged), s' = event(s.with("feeUnpaid", true)) }
+  action feeSettled = all { not(s.merged), s' = event(s.with("feeUnpaid", false)) }
   // The ready check: label exactly when every condition holds. A closed or
   // merged pull request keeps its last label.
   action check = all { not(s.merged),
@@ -50,7 +57,7 @@ module bot_ready_label {
   action humanMerges = all { not(s.merged), s' = s.with("merged", true) }
   action step = any { push, checksPass, checksFail, reviewNoFinding,
     reviewFinding, maintainerApproves, readOnlyApproves, changesRequested,
-    ownerToggles, check, humanMerges, s' = s }
+    ownerToggles, feeAsked, feeSettled, check, humanMerges, s' = s }
   val invariant = all {
     (s.fresh and not(s.merged)) implies (s.label == conditions),
     s.approvals <= 2,
@@ -76,6 +83,13 @@ module bot_ready_label {
     .then(checksPass).then(maintainerApproves).then(check)
     .then(ownerToggles).then(check)
     .expect(not(s.label))
+  run unpaidFeeIsNeverLabelledTest = init.then(ownerToggles).then(reviewNoFinding)
+    .then(checksPass).then(maintainerApproves).then(feeAsked).then(check)
+    .expect(not(s.label))
+  run paidFeeIsLabelledTest = init.then(ownerToggles).then(reviewNoFinding)
+    .then(checksPass).then(maintainerApproves).then(feeAsked).then(check)
+    .then(feeSettled).then(check)
+    .expect(s.label)
   run mergedPullRequestKeepsLabelTest = init.then(ownerToggles).then(reviewNoFinding)
     .then(checksPass).then(maintainerApproves).then(check).then(humanMerges)
     .expect(s.label and s.merged)

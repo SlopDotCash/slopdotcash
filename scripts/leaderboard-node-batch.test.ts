@@ -255,6 +255,86 @@ test("an HTTP 200 answer whose JSON body is empty on every attempt is an upstrea
   expect((failure as Error).message).toContain("malformed JSON");
 });
 
+test("a batch GitHub never answers in time on any attempt is an upstream error, so the batch splits around it", async () => {
+  const requested: number[] = [];
+  // More than six ids take longer than the request deadline; fewer answer.
+  const slow = (_input: RequestInfo | URL, init?: RequestInit) => {
+    const { variables } = JSON.parse(String(init?.body)) as {
+      variables: { ids: string[] };
+    };
+    requested.push(variables.ids.length);
+    if (variables.ids.length > 6)
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("The operation was aborted.", "AbortError")),
+        );
+      });
+    return Promise.resolve(
+      Response.json({
+        data: {
+          nodes: variables.ids.map((id) => ({ id })),
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-11-25T09:00:00Z",
+          },
+        },
+      }),
+    );
+  };
+  const client = new GitHubGraphqlClient("fixture-token", slow, {
+    retryBaseDelayMs: 0,
+    requestTimeoutMs: 5,
+  });
+  const ids = Array.from({ length: 13 }, (_, index) => `PR_${index}`);
+  const data = await executeNodeBatch(client, QUERY, ids);
+  expect((data.nodes as { id: string }[]).map((node) => node.id)).toEqual(ids);
+  // 13 and 7 each time out on every bounded attempt before splitting; 4, 3
+  // and 6 answer on the first attempt.
+  expect(requested).toEqual([
+    ...Array.from({ length: MAX_GRAPHQL_REQUEST_ATTEMPTS }, () => 13),
+    ...Array.from({ length: MAX_GRAPHQL_REQUEST_ATTEMPTS }, () => 7),
+    4,
+    3,
+    6,
+  ]);
+
+  // A single id that never answers in time fails closed, naming the timeout.
+  const never = (_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () =>
+        reject(new DOMException("The operation was aborted.", "AbortError")),
+      );
+    });
+  const strict = new GitHubGraphqlClient("fixture-token", never, {
+    retryBaseDelayMs: 0,
+    requestTimeoutMs: 5,
+  });
+  const failure = await executeNodeBatch(strict, QUERY, ["PR_1"]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(failure).toBeInstanceOf(GraphqlUpstreamError);
+  expect((failure as GraphqlUpstreamError).status).toBe(504);
+  expect((failure as Error).message).toContain(
+    `timed out after 5ms (${MAX_GRAPHQL_REQUEST_ATTEMPTS}/${MAX_GRAPHQL_REQUEST_ATTEMPTS})`,
+  );
+
+  // A network failure that is not a timeout is never an upstream error.
+  const offline = async () => {
+    throw new TypeError("fetch failed");
+  };
+  const broken = new GitHubGraphqlClient("fixture-token", offline, {
+    retryBaseDelayMs: 0,
+  });
+  const other = await executeNodeBatch(broken, QUERY, ["PR_1", "PR_2"]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(other).not.toBeInstanceOf(GraphqlUpstreamError);
+});
+
 /** A GraphQL transport whose rate-limit answers follow `answers` in order. */
 function rateLimitedTransport(
   answers: { remaining: number; resetAt: string }[],

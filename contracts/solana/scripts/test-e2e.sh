@@ -81,7 +81,7 @@ start_validator() {
 # keep building their program as before. IDL extraction does not replace it.
 if [[ -n "${SLOP_SOLANA_TEST_ARTIFACT:-}" ]]; then
   mkdir -p target/idl
-  anchor idl build --out target/idl/slop_escrow.json
+  anchor idl build -p slop_escrow --out target/idl/slop_escrow.json
   node scripts/prepare-test-program.mjs "$SLOP_SOLANA_TEST_ARTIFACT"
 else
   bash scripts/build-local.sh

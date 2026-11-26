@@ -66,7 +66,6 @@ async function discovered(
         assessment: null,
         grandfathered: true,
       }),
-      poolFunding: async () => null,
       ...(intakeCounts ? { intakeCounts } : {}),
       now: () => NOW,
     },
@@ -101,4 +100,88 @@ test("discovery lists every project when the count cannot be read", async () => 
   expect(
     await discovered(async () => counts(45, "2026-11-14T11:59:59.000Z")),
   ).toEqual(all);
+});
+
+// The backlog rule (operator decision, 23 November 2026): from 1 December an
+// active monthly-pool project with 50 outside pull requests waiting a week,
+// or with work waiting and no merge in 14 days, leaves discovery.
+const DECEMBER = new Date("2026-12-10T12:00:00Z");
+const RECENT = "2026-12-10T11:17:00.000Z";
+const backlogged = record("backlog-project", {
+  securityBounty: { status: "open" },
+});
+
+async function discoveredWithBacklog(
+  rows: IntakeCount[],
+  now = DECEMBER,
+  project = backlogged,
+): Promise<string[]> {
+  const response = await handleProjectArtifactRequest(
+    new Request("https://slop.cash/.well-known/slop/projects.json"),
+    {
+      getProject: async () => null,
+      listProjects: async () => [project, open],
+      listEnforcements: async () => [],
+      loadTemplate: async () => ({
+        index: { templateSha256: "a".repeat(64) } as never,
+        readFile: async () => new Uint8Array(),
+      }),
+      vettingClearance: async () => ({
+        state: "cleared",
+        assessment: null,
+        grandfathered: true,
+      }),
+      intakeCounts: async () => new Map([[project.id, rows]]),
+      now: () => now,
+    },
+  );
+  const body = (await response?.json()) as {
+    projects: { project_id: string }[];
+  };
+  return body.projects.map((entry) => entry.project_id);
+}
+
+test("discovery leaves out a project the backlog rule takes out of rotation", async () => {
+  const both = ["backlog-project", "open-project"];
+  const row = (waitingOutside: number, lastMergedAt: string | null) => ({
+    observedAt: RECENT,
+    waitingOutside,
+    lastMergedAt,
+  });
+  expect(await discoveredWithBacklog([row(49, RECENT)])).toEqual(both);
+  expect(await discoveredWithBacklog([row(50, RECENT)])).toEqual([
+    "open-project",
+  ]);
+  // Dormant: work waits and no merge in 14 days.
+  expect(
+    await discoveredWithBacklog([row(1, "2026-11-26T12:00:00.000Z")]),
+  ).toEqual(["open-project"]);
+  expect(
+    await discoveredWithBacklog([row(1, "2026-11-27T12:00:00.000Z")]),
+  ).toEqual(both);
+  // Before 1 December nothing leaves.
+  expect(
+    await discoveredWithBacklog(
+      [{ ...row(80, null), observedAt: OBSERVED }],
+      NOW,
+    ),
+  ).toEqual(both);
+  // A stale row decides nothing.
+  expect(
+    await discoveredWithBacklog([
+      { ...row(80, null), observedAt: "2026-12-07T11:59:59.000Z" },
+    ]),
+  ).toEqual(both);
+  // A running catch-up pause keeps the project listed.
+  const catchingUp = record("backlog-project", {
+    securityBounty: { status: "open" },
+    slopbot: {
+      automaticClosure: false,
+      catchUpUntil: "2026-12-20T00:00:00.000Z",
+      catchUpHistory: [{ startedAt: "2026-12-06T00:00:00.000Z" }],
+    },
+  });
+  expect(
+    await discoveredWithBacklog([row(80, null)], DECEMBER, catchingUp),
+  ).toEqual(both);
 });

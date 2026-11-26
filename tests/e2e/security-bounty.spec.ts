@@ -4580,6 +4580,12 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       await expect(
         page.locator(`[aria-labelledby="case-${caseId}"]`),
       ).toBeVisible();
+      // The case renders below every report, so opening it scrolls to it.
+      const backToReports = page.getByRole("button", {
+        name: "Back to reports",
+      });
+      await expect(backToReports).toBeFocused();
+      await expect(backToReports).toBeInViewport();
       await expectAccessible(page);
       await page.screenshot({
         path: test.info().outputPath("report-only-receipt.png"),
@@ -5289,6 +5295,8 @@ test("an accepted private report rechecks identity before navigation and preserv
           severity: "",
           cvss: "",
           cwe: "",
+          proofName: "",
+          proofText: "",
         },
       });
       sessionStorage.setItem(key, next);
@@ -5480,6 +5488,8 @@ test("a departed private receipt check cannot clear a newer draft or navigate it
           severity: "",
           cvss: "",
           cwe: "",
+          proofName: "",
+          proofText: "",
         },
       });
       sessionStorage.setItem(key, next);
@@ -5783,6 +5793,8 @@ for (const replaceStored of [false, true]) {
                 severity: "",
                 cvss: "",
                 cwe: "",
+                proofName: "",
+                proofText: "",
               },
             });
             sessionStorage.setItem(key, next);

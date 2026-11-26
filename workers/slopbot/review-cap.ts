@@ -55,3 +55,34 @@ export async function admitMonthlyReview(
     .first();
   return row !== null;
 }
+
+/** Whether `admitMonthlyReview` would admit this item now. Reserves nothing:
+ * the submission fee step uses it so that nobody is asked to pay for a review
+ * the month's cap would then refuse.
+ */
+export async function monthlyReviewOpen(
+  db: D1Database,
+  repositoryId: number,
+  itemKind: "issue" | "pull_request",
+  itemNumber: number,
+  at: Date = new Date(),
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT (
+         EXISTS (SELECT 1 FROM slopbot_review_month_starts
+                 WHERE repository_id = ?1 AND month = ?2 AND item_kind = ?3 AND item_number = ?4)
+         OR (SELECT COUNT(*) FROM slopbot_review_month_starts
+             WHERE repository_id = ?1 AND month = ?2) < ?5
+       ) AS open`,
+    )
+    .bind(
+      repositoryId,
+      reviewMonth(at),
+      itemKind,
+      itemNumber,
+      FREE_REVIEWS_PER_REPO_PER_MONTH,
+    )
+    .first<{ open: number }>();
+  return row?.open === 1;
+}

@@ -249,7 +249,8 @@ test("security reports recover a failed list with account-bound private reads", 
       path: "security-submissions",
       expectedActor: route.request().headers()["x-slop-expected-github-id"],
     });
-    return lists === 2
+    // A failed list read is asked once more, so the outage fails both.
+    return lists === 2 || lists === 3
       ? route.fulfill({
           status: 503,
           json: {
@@ -298,7 +299,7 @@ test("security reports recover a failed list with account-bound private reads", 
   ).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
-  expect(lists).toBe(3);
+  expect(lists).toBe(4);
   expect(privateRequests).toEqual(
     expect.arrayContaining([
       { path: "security-cases", expectedActor: "4242" },
@@ -644,6 +645,11 @@ test("community pagination keeps every project reachable and bounds discovery de
       slug: id,
       name: `Community fixture ${number}`,
       listingTier: "community",
+      reward: {
+        ...communityProject.reward,
+        monthlyCapMinor: "10000000",
+        monthlyCapDisplay: "$10",
+      },
       description: number === 11 ? description : communityProject.description,
       authority: {
         ...communityProject.authority,
@@ -686,7 +692,7 @@ test("community pagination keeps every project reachable and bounds discovery de
         },
       }),
   );
-  // These fixtures have no vaults; an unreadable funding read lists them all.
+  // The configured pools remain visible when their funding read fails.
   await failPoolFundingRead(page, diagnostics);
   await page.goto("/", { waitUntil: "networkidle" });
   const projects = page.locator("#projects");
@@ -1654,12 +1660,23 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(200);
   }
+  // The public record pages are Pages rewrites to the application.
+  for (const path of [
+    "/record",
+    "/receipts",
+    "/receipts/",
+    "/referrals",
+    "/buyback",
+    "/october-allocation",
+    "/sponsored-pools",
+    "/privacy",
+  ]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(200);
+  }
   for (const path of [
     "/models",
     "/models/",
-    "/receipts",
-    "/receipts/",
-    "/receipts?q=old-run",
     "/operator/traces",
     "/operator/traces/",
   ]) {
@@ -1669,7 +1686,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
 
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.status()).toBe(200);
-  expect(await sitemap.text()).not.toContain("/receipts");
+  expect(await sitemap.text()).toContain("https://slop.cash/receipts");
 
   const [
     bootstrapResponse,
@@ -1677,6 +1694,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    privateTraceContractV2Response,
+    privateTraceContractV3Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1687,6 +1706,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/.well-known/agent-skills/slop/SKILL.md"),
     request.get("/protocol/identity-v1.json"),
     request.get("/protocol/private-trace-v1.md"),
+    request.get("/protocol/private-trace-v2.md"),
+    request.get("/protocol/private-trace-v3.md"),
     request.get("/protocol/points-v1.md"),
     request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
@@ -1698,6 +1719,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    privateTraceContractV2Response,
+    privateTraceContractV3Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1736,6 +1759,56 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(privateTraceContract).toContain("Retention is permanent");
   expect(privateTraceContract).toContain("No website or API");
   expect(privateTraceContract).not.toContain("## Cloudflare provisioning");
+  expect(privateTraceContract).not.toContain("50% of what the buyer pays");
+  expect(privateTraceContractV2Response.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  const privateTraceContractV2 = await privateTraceContractV2Response.text();
+  expect(privateTraceContractV2).toContain(
+    "# Private trace privacy contract v2",
+  );
+  // Phrases are matched across line wraps, so a rewrap of the README holds.
+  const privateTraceContractV2Text = privateTraceContractV2.replace(
+    /\s+/gu,
+    " ",
+  );
+  expect(privateTraceContractV2Text).toContain(
+    "Licensing is available from your account settings",
+  );
+  expect(privateTraceContractV2Text).toContain("every listed trace at once");
+  expect(privateTraceContractV2Text).toContain(
+    "Closing the account withdraws every unsold licence",
+  );
+  expect(privateTraceContractV2Text).not.toContain(
+    "Licensing is not available",
+  );
+  expect(privateTraceContractV2Text).toContain("50% of what the buyer pays");
+  expect(privateTraceContractV2Text).toContain("while the setting is on");
+  expect(privateTraceContractV2Text).not.toContain("once consent records ship");
+  expect(privateTraceContractV2).toContain("Retention is permanent");
+  expect(privateTraceContractV2).toContain("[REDACTED:CREDENTIAL]");
+  expect(privateTraceContractV2).not.toContain("## Cloudflare provisioning");
+  expect(privateTraceContractV2).not.toContain("[REDACTED:OUTSIDE_REPO]");
+  expect(privateTraceContractV3Response.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  const privateTraceContractV3 = await privateTraceContractV3Response.text();
+  expect(privateTraceContractV3).toContain(
+    "# Private trace privacy contract v3",
+  );
+  expect(privateTraceContractV3).toContain("private-trace-v3");
+  const privateTraceContractV3Text = privateTraceContractV3.replace(
+    /\s+/gu,
+    " ",
+  );
+  expect(privateTraceContractV3Text).toContain("OSI-approved licence");
+  expect(privateTraceContractV3Text).toContain(
+    "does not cover a version 3 trace",
+  );
+  expect(privateTraceContractV3).toContain("[REDACTED:OUTSIDE_REPO]");
+  expect(privateTraceContractV3).toContain("Retention is permanent");
+  expect(privateTraceContractV3).not.toContain("## Storage contract");
+  expect(privateTraceContractV2).not.toContain("## Storage contract");
   for (const response of [pointsRulesResponse, scoringRulesResponse]) {
     const rules = await response.text();
     expect(rules).toContain("Every accepted merge receives at least 10 Points");
@@ -1967,7 +2040,8 @@ for (const route of [
       path = `/cycles/${cycle.projectId}/${cycle.cycleId}`;
     }
     await page.goto(path, { waitUntil: "networkidle" });
-    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
+    // Only the footer links the payout receipts page (/record and /receipts).
+    await expect(page.locator('main a[href^="/receipts"]')).toHaveCount(0);
     const project = PROJECTS.find(
       (candidate) => path === `/projects/${candidate.id}`,
     );
@@ -2039,6 +2113,18 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   diagnostics,
 }, testInfo) => {
   await servePublicProjectReads(page);
+  const navigateWithFunding = async (navigate: () => Promise<unknown>) => {
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/v1/pool-funding" &&
+          response.request().method() === "GET",
+      ),
+      navigate(),
+    ]);
+    expect(response.ok()).toBe(true);
+    expect(await response.finished()).toBeNull();
+  };
   // Returning from the home page cancels any background Points shards.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
@@ -2090,28 +2176,18 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  // Finish the remounted Sponsors page's funding read before leaving for Home.
-  const [fundingResponse] = await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/v1/pool-funding" &&
-        response.request().method() === "GET",
-    ),
-    page.goBack({ waitUntil: "networkidle" }),
-  ]);
-  expect(fundingResponse.ok()).toBe(true);
-  expect(await fundingResponse.finished()).toBeNull();
+  await navigateWithFunding(() => page.goBack({ waitUntil: "networkidle" }));
   await expect(page).toHaveURL(/\/sponsors$/u);
 
   await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
-  await page.keyboard.press("Enter");
+  await navigateWithFunding(() => page.keyboard.press("Enter"));
   await expect(page).toHaveURL(/\/$/);
   // Let the home records finish loading so going back aborts no request.
   await expect(page.locator("#projects")).toBeVisible({ timeout: 60_000 });
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  await navigateWithFunding(() => page.goBack({ waitUntil: "networkidle" }));
   await expect(page).toHaveURL(/\/sponsors$/u);
 });
 
@@ -2221,6 +2297,27 @@ test("how it works answers the maintainer pay question", async ({ page }) => {
   );
 });
 
+test("how it works answers the submission fee question", async ({ page }) => {
+  await page.goto("/how-it-works#faq");
+  const answer = page.locator("#faq").locator("article", {
+    has: page.getByRole("heading", {
+      name: "Is there a fee to open a pull request?",
+    }),
+  });
+  await expect(answer).toContainText(
+    "Only on a project whose owner turned on the refundable submission fee",
+  );
+  await expect(answer).toContainText(
+    "2 USDC on Base or 2 USDG on Robinhood Chain",
+  );
+  await expect(answer).toContainText("in SLOP on Robinhood Chain at half");
+  await expect(answer).toContainText(
+    "a merge sends it back, and so do 14 days without a maintainer decision",
+  );
+  await expect(answer).toContainText("closed without a merge for 7 days");
+  await expect(answer).toContainText("never closed for that reason");
+});
+
 test("how it works answers the referral and buyback questions", async ({
   page,
 }) => {
@@ -2233,7 +2330,7 @@ test("how it works answers the referral and buyback questions", async ({
   await expect(referral).toContainText("paid its contributors");
   await expect(
     referral.getByRole("link", { name: "Referral terms" }),
-  ).toHaveAttribute("href", "https://record.slop.cash/referrals");
+  ).toHaveAttribute("href", "/referrals");
   const buyback = faq.locator("article", {
     has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
   });
@@ -2246,21 +2343,13 @@ test("how it works answers the referral and buyback questions", async ({
   await expect(buyback).not.toContainText("starts with the first fee");
   await expect(
     buyback.getByRole("link", { name: "How the buyback works" }),
-  ).toHaveAttribute("href", "https://record.slop.cash/buyback");
+  ).toHaveAttribute("href", "/buyback");
 });
 
 test("refuses retired and unknown paths and recovers to projects", async ({
   page,
 }) => {
-  for (const path of [
-    "/models",
-    "/models/",
-    "/receipts",
-    "/receipts/",
-    "/receipts?q=old-run",
-    "/constructor",
-    "/__proto__",
-  ]) {
+  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
@@ -2271,7 +2360,6 @@ test("refuses retired and unknown paths and recovers to projects", async ({
       "noindex",
     );
     await expect(page.locator(".receipt-record")).toHaveCount(0);
-    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     await page
       .getByRole("link", { name: "See open projects", exact: true })
       .click();

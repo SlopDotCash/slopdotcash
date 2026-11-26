@@ -87,6 +87,17 @@ jobs:
               --tools-version v1.52 -- --locked
           cp contracts/solana/docker-target/deploy/slop_escrow.so \
             "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
+          # The submission deposit program: a separate program, built the same way after
+          # the escrow's bytes are already copied out.
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/contracts/solana,target=/workdir" \
+            --workdir /workdir \
+            --env CARGO_TARGET_DIR=/workdir/docker-target \
+            "$SLOP_SOLANA_BUILD_IMAGE" \
+            cargo build-sbf --manifest-path programs/slop-submission-deposits/Cargo.toml \
+              --tools-version v1.52 -- --locked
+          cp contracts/solana/docker-target/deploy/slop_submission_deposits.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_submission_deposits.so"
       - name: Bind the program artifact to its source and build
         id: manifest
         run: |
@@ -123,8 +134,26 @@ jobs:
               "workflowAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
           }
           (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-          (output / "SHA256SUMS").write_text(f"{digest}  slop_escrow.so\n")
           print(json.dumps(manifest, indent=2))
+          # The submission deposit program has its own manifest of the same shape.
+          deposits = (output / "slop_submission_deposits.so").read_bytes()
+          if not deposits.startswith(b"\x7fELF"):
+              raise SystemExit("The submission deposit build did not produce an ELF artifact")
+          deposits_digest = hashlib.sha256(deposits).hexdigest()
+          deposits_manifest = {
+              **manifest,
+              "command": "cargo build-sbf --manifest-path programs/slop-submission-deposits/Cargo.toml --tools-version v1.52 -- --locked",
+              "file": "slop_submission_deposits.so",
+              "sha256": deposits_digest,
+              "sizeBytes": len(deposits),
+          }
+          (output / "slop-submission-deposits.manifest.json").write_text(
+              json.dumps(deposits_manifest, indent=2) + "\n"
+          )
+          (output / "SHA256SUMS").write_text(
+              f"{digest}  slop_escrow.so\n{deposits_digest}  slop_submission_deposits.so\n"
+          )
+          print(json.dumps(deposits_manifest, indent=2))
           PY
           echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -189,6 +218,8 @@ jobs:
         if: github.event_name != 'pull_request'
       - run: bun run test:referral-accrual:anvil
         if: github.event_name != 'pull_request'
+      - run: bun run test:submission-fee:anvil
+        if: github.event_name != 'pull_request'
       - name: Exercise fee conversion and claim recovery on an isolated local chain
         env:
           SLOP_TEST_CLAIM_FAULTS: before,lease,finalized-role
@@ -199,13 +230,16 @@ jobs:
         if: github.event_name != 'pull_request'
       - name: Load deployed public ledger for browser checks
         if: github.event_name != 'pull_request'
+        env:
+          SLOP_API_ORIGIN: https://slop.cash
         run: |
           set -euo pipefail
+          bun run projects:sync
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
           trap 'rm -f "$ledger_file"' EXIT
           bun scripts/download-leaderboard.ts \
-            https://slop.cash/data/leaderboard.json "$ledger_file"
+            "$SLOP_API_ORIGIN/data/leaderboard.json" "$ledger_file"
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
@@ -220,7 +254,7 @@ jobs:
           SLOP_E2E_VAULT_ACTIONS: '1'
           SLOP_E2E_VIDEO: '1'
           SLOP_E2E_LANE: preview
-        run: bun run test:e2e tests/e2e/vault-actions.spec.ts --workers=1
+        run: bun run test:e2e tests/e2e/vault-actions.spec.ts tests/e2e/submission-fee-pay-chain.spec.ts --workers=1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -305,12 +339,19 @@ jobs:
         run: |
           SLOP_FEE_TEST_TOKEN=jup bun run test:fee-converter:solana
           SLOP_FEE_TEST_TOKEN=sol bun run test:fee-converter:solana
+      - name: Verify the submission deposit program on local validators
+        run: bun run test:contracts:solana:submission-deposits
+        env:
+          SLOP_SOLANA_TEST_ARTIFACT: ${{ runner.temp }}/solana-verifiable
+          SLOP_SOLANA_ARTIFACT_ATTEMPT: ${{ needs.solana-verifiable.outputs.build-attempt }}
       - name: Verify the lifecycle-tested program matches the retained artifact
         run: |
           set -euo pipefail
           (cd "$RUNNER_TEMP/solana-verifiable" && sha256sum --check SHA256SUMS)
           cmp contracts/solana/target/deploy/slop_escrow.so \
             "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
+          cmp contracts/solana/target/deploy/slop_submission_deposits.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_submission_deposits.so"
       - name: Retain safe validator failure evidence
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -319,17 +360,21 @@ jobs:
           path: |
             contracts/solana/.local/failure-evidence/*.json
             contracts/solana/.local/test-program.json
+            contracts/solana/.local/slop-submission-deposits.test-program.json
           if-no-files-found: ignore
           retention-days: 30
       - run: bunx playwright install --with-deps chromium
       - name: Load deployed public ledger for browser checks
+        env:
+          SLOP_API_ORIGIN: https://slop.cash
         run: |
           set -euo pipefail
+          bun run projects:sync
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
           trap 'rm -f "$ledger_file"' EXIT
           bun scripts/download-leaderboard.ts \
-            https://slop.cash/data/leaderboard.json "$ledger_file"
+            "$SLOP_API_ORIGIN/data/leaderboard.json" "$ledger_file"
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json

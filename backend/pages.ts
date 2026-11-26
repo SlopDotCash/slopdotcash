@@ -52,6 +52,11 @@ export type PagesEnv = {
    * service (PRD section 9). Unset keeps that route closed.
    */
   OPERATOR_FEED_TOKEN?: string;
+  /**
+   * Bearer token of the private protected-point-months route read by the
+   * release's points generator (PRD section 7). Unset keeps that route closed.
+   */
+  POINTS_PROTECTION_TOKEN?: string;
   /** GitHub numeric actor IDs allowed to handle project exceptions. */
   ADMIN_GITHUB_IDS?: string;
   /** One current admin eligible for the seven-day owner site session. */
@@ -106,6 +111,13 @@ export type PagesEnv = {
    * `wrangler.staging.toml` sets staging.
    */
   SECURITY_ROUTINE_DECISIONS?: string;
+  /**
+   * The refundable SLOP deposit on a private report (PRD section 8, "Report
+   * deposit"; operator decision of 21 November 2026): exactly `dry_run` or
+   * `live`; anything else, including unset, is off. `wrangler.toml` sets
+   * production and `wrangler.staging.toml` sets staging.
+   */
+  SECURITY_REPORT_DEPOSIT?: string;
   /** Notification Worker; absent where no notifier is deployed. */
   SLOP_NOTIFY?: { fetch(request: Request): Promise<Response> };
   /**

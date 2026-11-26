@@ -2,6 +2,7 @@ import {
   type DiscussionCacheOptions,
   githubDiscussionCache,
 } from "./github-discussion-cache";
+import type { LocalGitObjects } from "./local-git-objects";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const IMMUTABLE_CACHE_BYTES = 16 * 1024 * 1024;
@@ -144,6 +145,8 @@ export class GitHubIngestionCheckpointError extends Error {
 interface IngestionReadOptions {
   discussionCache?: DiscussionCacheOptions;
   quotaDeadlineMs?: number;
+  /** Answers exact Git object reads from local clones; a miss reads GitHub. */
+  localGitObjects?: LocalGitObjects;
 }
 
 export type IngestionReadTransport = typeof fetch & {
@@ -203,29 +206,57 @@ export function githubIngestionReadTransport(
         /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)(\/.*)$/u.exec(
           url.pathname,
         )?.[1] ?? "";
-      const pullFiles = /^\/pulls\/[1-9]\d*\/files$/u.test(repositoryPath);
+      // GitHub answers a transient HTTP 500 on these per-item list pages; the
+      // same page retried a second later normally succeeds (19 Nov: one 500 on
+      // a pull request's reviews ended a five-hour collection).
+      const pullFiles =
+        /^\/(?:pulls\/[1-9]\d*\/(?:files|reviews|comments|commits)|issues\/[1-9]\d*\/(?:comments|events|timeline))$/u.test(
+          repositoryPath,
+        );
       const commitFilePage =
         /^\/commits\/[a-f0-9]{40}$/u.test(repositoryPath) &&
         /^\?per_page=100&page=[1-9]\d*$/u.test(url.search);
-      const commitFileGatewayRetry =
-        commitFilePage && !url.username && !url.password && !url.hash;
+      // A gateway error (502, 503, 504) is never GitHub's answer for the
+      // page, so any exact GET retries it twice (19 Nov: one 502 on a pull
+      // request's commit list ended a five-hour collection).
+      const gatewayRetry = !url.username && !url.password && !url.hash;
       const commitPulls =
         !url.username &&
         !url.password &&
         !url.hash &&
         /^\/commits\/[a-f0-9]{40}\/pulls$/u.test(repositoryPath) &&
         /^\?per_page=100(?:&page=[1-9]\d*)?$/u.test(url.search);
-      const readRetry =
-        pullFiles || commitPulls
-          ? { status: 500, limit: 2 }
-          : commitFilePage
-            ? { status: 422, limit: 1 }
-            : null;
+      // A single pull request read can also answer a transient 422 or 500
+      // (23 Nov: one 422 on elizaOS/eliza#37149 ended a three-hour
+      // collection; the same read answered 200 afterwards).
+      const pullRead =
+        gatewayRetry &&
+        /^\/pulls\/[1-9]\d*$/u.test(repositoryPath) &&
+        url.search === "";
+      const serverErrorRetry =
+        pullFiles ||
+        commitPulls ||
+        ((commitFilePage || pullRead) && gatewayRetry);
+      const validationRetryLimit = pullRead ? 2 : commitFilePage ? 1 : 0;
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
       checkDeadline();
       const headers = new Headers(init?.headers ?? request?.headers);
+      const accept = headers.get("accept");
+      if (
+        options.localGitObjects &&
+        (accept === null || accept === "application/vnd.github+json") &&
+        !headers.has("range") &&
+        ![...headers.keys()].some((name) => name.startsWith("if-"))
+      ) {
+        const local = await options.localGitObjects.read(url);
+        if (local)
+          return new Response(local, {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          });
+      }
       const verifiesRepresentation =
         !(init?.integrity ?? request?.integrity) &&
         (init?.cache ?? request?.cache ?? "default") === "default";
@@ -258,7 +289,8 @@ export function githubIngestionReadTransport(
         cache.set(key, cached);
         return replay(cached);
       }
-      let readRetries = 0;
+      let serverRetries = 0;
+      let validationRetries = 0;
       let gatewayRetries = 0;
       for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
@@ -298,15 +330,21 @@ export function githubIngestionReadTransport(
         // GitHub can fail to serve a known evidence page temporarily. Retry that
         // exact page without resetting the quota budget or changing pagination.
         const retryGateway =
-          commitFileGatewayRetry &&
-          response.status === 502 &&
+          gatewayRetry &&
+          (response.status === 502 ||
+            response.status === 503 ||
+            response.status === 504) &&
           gatewayRetries < 2;
-        const retryRead =
-          readRetry &&
-          response.status === readRetry.status &&
-          readRetries < readRetry.limit;
-        if (retryGateway || retryRead) {
-          const retry = retryGateway ? ++gatewayRetries : ++readRetries;
+        const retryServer =
+          serverErrorRetry && response.status === 500 && serverRetries < 2;
+        const retryValidation =
+          response.status === 422 && validationRetries < validationRetryLimit;
+        if (retryGateway || retryServer || retryValidation) {
+          const retry = retryGateway
+            ? ++gatewayRetries
+            : retryServer
+              ? ++serverRetries
+              : ++validationRetries;
           const delay = retry * 1_000;
           await response.body?.cancel();
           checkDeadline(delay);
