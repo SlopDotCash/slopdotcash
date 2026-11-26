@@ -1,7 +1,10 @@
 // The release check of the submission-fee Worker, on the checked-in file.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { SUBMISSION_FEE_SWITCHED_ON } from "../src/lib/submission-fee.mjs";
+import {
+  SUBMISSION_FEE_SOLANA_SWITCHED_ON,
+  SUBMISSION_FEE_SWITCHED_ON,
+} from "../src/lib/submission-fee.mjs";
 import {
   assertSubmissionFeeRelease,
   endpointSecrets,
@@ -26,6 +29,13 @@ const unpublished = {
   contracts: { "base-mainnet": null, "robinhood-mainnet": null },
   startBlocks: { "base-mainnet": null, "robinhood-mainnet": null },
 };
+// The checked-in file with the Solana ledger off, for the checks that concern
+// Base and Robinhood Chain alone. The Solana checks below use the file as is.
+const solanaOff = () => {
+  const config = checkedIn();
+  config.vars.SUBMISSION_FEE_SOLANA_MODE = "off";
+  return config;
+};
 const never = () => {
   throw new Error("the secret inventory must not be read");
 };
@@ -38,37 +48,52 @@ test("the checked-in Worker is live on the private production database with the 
       "SUBMISSION_FEE_RESOLVER_KEY",
       "RPC_URL_SUBMISSION_FEE_BASE",
       "RPC_URL_SUBMISSION_FEE_ROBINHOOD",
+      "RPC_URL_SUBMISSION_FEE_SOLANA",
+      "SUBMISSION_FEE_SOLANA_RESOLVER_SEED",
     ]),
   ).toBe("live");
   expect(() =>
-    assertSubmissionFeeRelease(checkedIn(), production, () => []),
+    assertSubmissionFeeRelease(checkedIn(), production, () => [
+      "RPC_URL_SUBMISSION_FEE_SOLANA",
+      "SUBMISSION_FEE_SOLANA_RESOLVER_SEED",
+    ]),
   ).toThrow("resolver secret inventory is not ready");
-  const off = checkedIn();
+  const off = solanaOff();
   off.vars.SUBMISSION_FEE_MODE = "off";
-  expect(assertSubmissionFeeRelease(off, production, never)).toBe("off");
+  expect(
+    assertSubmissionFeeRelease(off, production, never, undefined, false),
+  ).toBe("off");
 });
 
 test("dry_run needs no key and no deployed contract", () => {
-  const config = checkedIn();
+  const config = solanaOff();
   config.vars.SUBMISSION_FEE_MODE = "dry_run";
-  expect(assertSubmissionFeeRelease(config, production, never)).toBe("dry_run");
+  expect(
+    assertSubmissionFeeRelease(config, production, never, undefined, false),
+  ).toBe("dry_run");
 });
 
 test("live is refused until every contract, start block and the key are in place", () => {
-  const config = checkedIn();
+  const config = solanaOff();
   config.vars.SUBMISSION_FEE_MODE = "live";
   const key = () => ["SUBMISSION_FEE_RESOLVER_KEY"];
   expect(() =>
-    assertSubmissionFeeRelease(config, production, key, unpublished),
+    assertSubmissionFeeRelease(config, production, key, unpublished, false),
   ).toThrow("every contract address and start block");
   expect(() =>
-    assertSubmissionFeeRelease(config, production, key, {
-      ...deployed,
-      startBlocks: { "base-mainnet": 10, "robinhood-mainnet": null },
-    }),
+    assertSubmissionFeeRelease(
+      config,
+      production,
+      key,
+      {
+        ...deployed,
+        startBlocks: { "base-mainnet": 10, "robinhood-mainnet": null },
+      },
+      false,
+    ),
   ).toThrow("every contract address and start block");
   expect(() =>
-    assertSubmissionFeeRelease(config, production, () => [], deployed),
+    assertSubmissionFeeRelease(config, production, () => [], deployed, false),
   ).toThrow("secret inventory is not ready");
   // A secret the Worker has no use for is refused too.
   expect(() =>
@@ -77,6 +102,7 @@ test("live is refused until every contract, start block and the key are in place
       production,
       () => ["SUBMISSION_FEE_RESOLVER_KEY", "FEE_WALLET_KEY_BASE"],
       deployed,
+      false,
     ),
   ).toThrow("secret inventory is not ready");
   expect(
@@ -85,20 +111,25 @@ test("live is refused until every contract, start block and the key are in place
       production,
       () => ["SUBMISSION_FEE_RESOLVER_KEY", "RPC_URL_SUBMISSION_FEE_BASE"],
       deployed,
+      false,
     ),
   ).toBe("live");
 });
 
 test("the reviewed tables hold both deployed contracts, so live waits only for the key", () => {
-  const config = checkedIn();
+  const config = solanaOff();
   config.vars.SUBMISSION_FEE_MODE = "live";
   expect(() =>
-    assertSubmissionFeeRelease(config, production, () => []),
+    assertSubmissionFeeRelease(config, production, () => [], undefined, false),
   ).toThrow("secret inventory is not ready");
   expect(
-    assertSubmissionFeeRelease(config, production, () => [
-      "SUBMISSION_FEE_RESOLVER_KEY",
-    ]),
+    assertSubmissionFeeRelease(
+      config,
+      production,
+      () => ["SUBMISSION_FEE_RESOLVER_KEY"],
+      undefined,
+      false,
+    ),
   ).toBe("live");
 });
 
@@ -128,11 +159,11 @@ test("no release workflow or package script builds the site with the pay page's 
 
 test("another database, a route, a missing schedule, a key in the file or a bad value is refused", () => {
   const refused = (change: (config: Config) => void, message: string) => {
-    const config = checkedIn();
+    const config = solanaOff();
     change(config);
-    expect(() => assertSubmissionFeeRelease(config, production, never)).toThrow(
-      message,
-    );
+    expect(() =>
+      assertSubmissionFeeRelease(config, production, never, undefined, false),
+    ).toThrow(message);
   };
   refused((config) => {
     config.d1_databases[0].database_id = "00000000-0000-0000-0000-000000000000";
@@ -207,27 +238,49 @@ const withoutSolana = {
 };
 const evmSecrets = ["SUBMISSION_FEE_RESOLVER_KEY"];
 
-test("the checked-in Worker ships Solana off, and an unpublished Solana program does not stop the EVM release", () => {
-  expect(checkedIn().vars.SUBMISSION_FEE_SOLANA_MODE).toBe("off");
+const solanaSecrets = [
+  "RPC_URL_SUBMISSION_FEE_SOLANA",
+  "SUBMISSION_FEE_SOLANA_RESOLVER_SEED",
+];
+
+test("the checked-in Worker is live on Solana with the page switch, and needs the endpoint and the seed", () => {
+  // Switched on 26 November 2026 (operator decision): the two change together.
+  expect(checkedIn().vars.SUBMISSION_FEE_SOLANA_MODE).toBe("live");
+  expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(true);
+  expect(
+    assertSubmissionFeeRelease(checkedIn(), production, () => [
+      ...evmSecrets,
+      ...solanaSecrets,
+    ]),
+  ).toBe("live");
+  // The published tables with either Solana secret missing stop the release.
+  for (const missing of solanaSecrets)
+    expect(() =>
+      assertSubmissionFeeRelease(checkedIn(), production, () => [
+        ...evmSecrets,
+        ...solanaSecrets.filter((name) => name !== missing),
+      ]),
+    ).toThrow("Solana secret inventory is not ready");
+});
+
+test("with Solana off, an unpublished Solana program does not stop the EVM release", () => {
   expect(
     assertSubmissionFeeRelease(
-      checkedIn(),
+      solanaOff(),
       production,
       () => evmSecrets,
       withoutSolana,
+      false,
     ),
   ).toBe("live");
   // Solana secrets installed ahead of the switch are not a foreign secret.
   expect(
     assertSubmissionFeeRelease(
-      checkedIn(),
+      solanaOff(),
       production,
-      () => [
-        ...evmSecrets,
-        "RPC_URL_SUBMISSION_FEE_SOLANA",
-        "SUBMISSION_FEE_SOLANA_RESOLVER_SEED",
-      ],
+      () => [...evmSecrets, ...solanaSecrets],
       withoutSolana,
+      false,
     ),
   ).toBe("live");
 });
@@ -242,6 +295,7 @@ test("a Solana mode other than off needs the published program and the endpoint;
       production,
       () => endpoint,
       withoutSolana,
+      false,
     ),
   ).toThrow("program id and its start slot");
   expect(() =>
@@ -250,6 +304,7 @@ test("a Solana mode other than off needs the published program and the endpoint;
       production,
       () => evmSecrets,
       withSolana,
+      false,
     ),
   ).toThrow("Solana secret inventory is not ready");
   expect(
@@ -258,17 +313,24 @@ test("a Solana mode other than off needs the published program and the endpoint;
       production,
       () => endpoint,
       withSolana,
+      false,
     ),
   ).toBe("live");
   const live = checkedIn();
   live.vars.SUBMISSION_FEE_SOLANA_MODE = "live";
   // Live without the page switch, and the page switch without live.
   expect(() =>
-    assertSubmissionFeeRelease(live, production, () => endpoint, withSolana),
+    assertSubmissionFeeRelease(
+      live,
+      production,
+      () => endpoint,
+      withSolana,
+      false,
+    ),
   ).toThrow("change together");
   expect(() =>
     assertSubmissionFeeRelease(
-      checkedIn(),
+      solanaOff(),
       production,
       () => endpoint,
       withSolana,

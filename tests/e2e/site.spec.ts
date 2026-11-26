@@ -2308,7 +2308,7 @@ test("how it works answers the submission fee question", async ({ page }) => {
     "Only on a project whose owner turned on the refundable submission fee",
   );
   await expect(answer).toContainText(
-    "2 USDC on Base or 2 USDG on Robinhood Chain",
+    "2 USDC on Base or Solana, or 2 USDG on Robinhood Chain",
   );
   await expect(answer).toContainText("in SLOP on Robinhood Chain at half");
   await expect(answer).toContainText(

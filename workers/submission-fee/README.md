@@ -367,10 +367,14 @@ deployed on Solana mainnet on 26 November 2026 and its upgrade authority
 removed (`contracts/DEPLOY-MAINNET.md`, "Submission fee deposit program on
 Solana"). Its id, `4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7`, and the slot of its
 `initialize` transaction, 474211652, are in `src/lib/submission-fee.mjs`.
-Publishing them switches nothing on: the fee is still off on Solana. The
-mode below is `off`, so nothing here reads or signs on Solana, and neither
-the endpoint secret `RPC_URL_SUBMISSION_FEE_SOLANA` nor the resolver secret
-`SUBMISSION_FEE_SOLANA_RESOLVER_SEED` is set on the Worker yet.
+The fee is switched on for Solana since 26 November 2026 (operator
+decision): the mode below is `live` and `SUBMISSION_FEE_SOLANA_SWITCHED_ON`
+is true. The endpoint secret `RPC_URL_SUBMISSION_FEE_SOLANA` and the resolver
+secret `SUBMISSION_FEE_SOLANA_RESOLVER_SEED` are set on the Worker, and a
+record-only pass against mainnet from Cloudflare read the program without
+error on 26 November 2026. A kept (not refunded) deposit and a real pull
+request payment have not yet been exercised on mainnet. SLOP stays payable
+on Robinhood Chain only.
 
 The Solana ledger's own configuration is read apart from the EVM ledgers'
 (operator decision, 26 November 2026): when its mode is `dry_run` or `live`
@@ -380,11 +384,14 @@ Base and Robinhood Chain still run.
 
 The Solana ledger is `solana-mainnet`. It has its own switch,
 `SUBMISSION_FEE_SOLANA_MODE` (`off`, `dry_run`, `live`), with the meanings of
-the table under "Modes", independent of `SUBMISSION_FEE_MODE`. It ships
-`off`. `live` changes only together with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`
+the table under "Modes", independent of `SUBMISSION_FEE_MODE`. It is
+`live`. `live` changes only together with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`
 in `src/lib/submission-fee.mjs`, which is what makes the pay page, Slopbot's
 comment and the public reads list Solana; the release refuses one without
-the other.
+the other, and refuses a mode other than `off` unless the Worker's secret
+names include the endpoint and, for `live`, the seed
+(`scripts/release-submission-fee.ts`). The release reads names only and does
+not bind either Solana secret; both are installed by hand.
 
 What differs from the EVM ledgers (`solana-core.ts`, `solana.ts`,
 `contracts/solana/submission-deposits.ts`):
@@ -528,10 +535,19 @@ change. Done on 26 November 2026: the program is deployed and initialized
 with its resolver `CuAMc2TYgLdzXRHEWSikzvdQQhWLyUBRbnGizQE2Xsxv`, its USDC
 vault is open, its upgrade authority is removed
 (`docs/submission-deposits-solana-deploy-runbook.md`), and the program id
-and the slot of `initialize` are in the tables. Not done: install the
-endpoint secret and set the mode to `dry_run`; install the resolver's seed
-and keep a little SOL on its address; then set the mode to `live` together
-with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`.
+and the slot of `initialize` are in the tables; the endpoint secret and the
+resolver's seed are installed; a record-only pass against mainnet from
+Cloudflare read the program without error; and the mode is `live` together
+with `SUBMISSION_FEE_SOLANA_SWITCHED_ON`. Keep a little SOL on the
+resolver's address for its network fees. Not yet exercised on mainnet: a
+kept (not refunded) deposit and a real pull request payment.
+
+The pay route runs in Pages, not here. In production it needs the Pages
+secret `PAYMENT_RPC_URLS` to be a JSON object whose `solana-mainnet` key is
+an https endpoint (`paymentRpcUrl` in `functions/api/v1/[[path]].ts`), and
+the Pages secret `TRACE_AUTH_SECRET` of 32 or more characters for its
+request counters. Without the endpoint the route answers 404 while the page
+still lists Solana; without the counter secret it answers 503.
 
 ## Modes
 

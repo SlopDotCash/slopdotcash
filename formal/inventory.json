@@ -6724,7 +6724,7 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "c6a0d177fab35321314db9534a702d6e247be7e9cc73ace2b1808c2ad9ffa283",
+      "sha256": "0e159c75777fd10e5a051f26d7f0090159cefb6e8fe7c49bd710d9f081b1c6ef",
       "models": [
         "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
@@ -6733,8 +6733,8 @@
         "formal/models/ui/ui_report_deposit.qnt"
       ],
       "candidateLines": [
-        15, 83, 85, 212, 431, 470, 471, 473, 474, 505, 507, 517, 665, 666, 668,
-        669, 676, 703, 705, 736, 741, 813
+        15, 83, 85, 212, 432, 471, 472, 474, 475, 506, 508, 518, 666, 667, 669,
+        670, 677, 704, 706, 737, 742, 814
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -8405,7 +8405,7 @@
     },
     {
       "path": "src/lib/submission-fee.mjs",
-      "sha256": "5ccefcb9d7abdc30e8ab43964b8e130e741e29a84daaac1299226e6775e410a3",
+      "sha256": "bd7d1ed3426a738f46a49505663236f54c918e75cdd6db450580d0c9cd0a2711",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/fees/submission_fee_deposit.qnt",
@@ -8413,7 +8413,7 @@
         "formal/models/fees/submission_fee_solana_deposit.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
       ],
-      "candidateLines": [70, 129, 151, 432, 443],
+      "candidateLines": [71, 130, 152, 433, 444],
       "review": "mapped-abstraction"
     },
     {
@@ -10898,7 +10898,7 @@
     },
     {
       "path": "workers/submission-fee/wrangler.toml",
-      "sha256": "896e0453ea877d455160edecd8d67a67cc9f84f7840d256d07808077b5bd4cae",
+      "sha256": "3cc25f8dd5d63a9dfd986b0ec7ace9ecd11347e507fa0bdeefe8894bb56d31c3",
       "models": ["formal/models/fees/submission_fee_send.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"

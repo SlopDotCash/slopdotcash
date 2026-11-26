@@ -187,15 +187,16 @@ function setup(
 }
 
 describe("the Solana switch", () => {
-  test("ships off, with the program published and nothing offered", () => {
+  test("is live in the checked-in file together with the page switch, and off still builds nothing", () => {
     // The deployed program and the slot of its `initialize` transaction.
     expect(SUBMISSION_FEE_CONTRACTS[NETWORK]).toBe(
       "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
     );
     expect(SUBMISSION_FEE_START_BLOCKS[NETWORK]).toBe(474211652);
-    expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(false);
-    // The published tables themselves: off builds no ledger, so nothing is
-    // read or sent, whatever the program id says.
+    // Switched on 26 November 2026 (operator decision).
+    expect(SUBMISSION_FEE_SOLANA_SWITCHED_ON).toBe(true);
+    // Off builds no ledger, so nothing is read or sent, whatever the
+    // program id says; an absent mode is off.
     expect(parseSolanaConfig({ SUBMISSION_FEE_SOLANA_MODE: "off" })).toEqual({
       mode: "off",
       ledger: null,
@@ -210,7 +211,20 @@ describe("the Solana switch", () => {
       expect(/^SUBMISSION_FEE_SOLANA_MODE = "live"$/mu.test(text)).toBe(
         SUBMISSION_FEE_SOLANA_SWITCHED_ON,
       );
-      expect(text).toMatch(/^SUBMISSION_FEE_SOLANA_MODE = "off"$/mu);
+      expect(text).toMatch(/^SUBMISSION_FEE_SOLANA_MODE = "live"$/mu);
+      // The checked-in values with the endpoint build the mainnet ledger
+      // from the published tables.
+      const vars = (Bun.TOML.parse(text) as { vars: Record<string, string> })
+        .vars;
+      const live = parseSolanaConfig({
+        ...vars,
+        RPC_URL_SUBMISSION_FEE_SOLANA: "https://solana.invalid/key",
+      });
+      expect(live.mode).toBe("live");
+      expect(live.ledger?.network).toBe(NETWORK);
+      expect(live.ledger?.contract).toBe(
+        SUBMISSION_FEE_CONTRACTS[NETWORK] as string,
+      );
     }
   });
 

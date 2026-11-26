@@ -162,6 +162,8 @@ test("a fee due lists each way to pay, the terms and the one contract before any
     "2 USDC on Base",
     "2 USDG on Robinhood Chain",
     /^75 SLOP on Robinhood Chain\. The SLOP amount follows/u,
+    // Switched on 26 November 2026: USDC only, listed after the EVM ways.
+    "2 USDC on Solana",
   ]);
   const terms = page.getByRole("region", { name: "What happens to a deposit" });
   for (const sentence of [
@@ -271,7 +273,7 @@ test("a SLOP amount that is not the fee at Slop's published rate is refused, and
   };
   await page.goto(PAGE, { waitUntil: "networkidle" });
   const due = page.getByRole("region", { name: "Fee due" });
-  await expect(due.getByRole("listitem")).toHaveCount(3);
+  await expect(due.getByRole("listitem")).toHaveCount(4);
   await expect(due).toContainText("75 SLOP on Robinhood Chain");
   // After those 48 hours the same record is refused.
   rate = { ...(rate as typeof FEE_RATE_REPLY), previous: null };
@@ -287,6 +289,7 @@ test("a SLOP amount that is not the fee at Slop's published rate is refused, and
   await expect(due.getByRole("listitem")).toHaveText([
     "2 USDC on Base",
     "2 USDG on Robinhood Chain",
+    "2 USDC on Solana",
   ]);
   await expect(
     due.getByText("SLOP is not offered right now", { exact: false }),

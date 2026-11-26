@@ -7,7 +7,8 @@ before the authority is removed). **These steps were run on mainnet on
 26 November 2026**, steps 1 to 10 and 12, not the optional step 11; the record
 is in `contracts/DEPLOY-MAINNET.md` ("Submission fee deposit program on
 Solana"). The program is `4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7`, its
-upgrade authority is removed, and the fee is still switched off on Solana.
+upgrade authority is removed, and the fee was switched on for Solana on
+26 November 2026 in a separate reviewed change (see the closing section).
 They were run on devnet on 25 November 2026 with throwaway keys (below). The repository
 owner signs every transaction in this runbook; no agent and no Slop service
 does. The program is `contracts/solana/programs/slop-submission-deposits`; see
@@ -486,9 +487,16 @@ program on Solana") holds the program address, the deployment, `initialize`
 and `open_vault` transactions, the commit, the program hash, the read-back and
 the two smoke test deposits, and the program id and start slot are in
 `src/lib/submission-fee.mjs`. The authority removal is recorded by its
-read-back ("Authority: none"), not by a transaction signature. The fee stays
-switched off on Solana, and the Worker's endpoint and resolver secrets are not
-set.
+read-back ("Authority: none"), not by a transaction signature.
+
+Switched on, 26 November 2026 (operator decision): after the deployment the
+Worker's endpoint secret `RPC_URL_SUBMISSION_FEE_SOLANA` and resolver secret
+`SUBMISSION_FEE_SOLANA_RESOLVER_SEED` were set, a record-only pass against
+mainnet from Cloudflare read the program without error, and one reviewed
+change set `SUBMISSION_FEE_SOLANA_MODE` to `live` together with
+`SUBMISSION_FEE_SOLANA_SWITCHED_ON`. The fee can be paid in USDC on Solana;
+SLOP stays payable on Robinhood Chain only. A kept (not refunded) deposit and a
+real pull request payment have not yet been exercised on mainnet.
 
 - Add the program address, the deployment, `initialize`, `open_vault` and
   authority-removal transactions, the commit, both hashes and the read-back to
@@ -498,7 +506,8 @@ set.
   (`src/lib/submission-fee.mjs`). That publishes the address and switches
   nothing on: nothing reads the program while `SUBMISSION_FEE_SOLANA_MODE` is
   `off`, and no fee is asked on Solana until
-  `SUBMISSION_FEE_SOLANA_SWITCHED_ON` says so.
+  `SUBMISSION_FEE_SOLANA_SWITCHED_ON` says so. Both changed on 26 November
+  2026, in the separate change recorded above.
 - Record the two smoke test deposits (their ids, the four transactions) with
   the deployment.
 - If the resolver key is ever replaced, the owner calls
