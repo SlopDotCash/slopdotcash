@@ -79,10 +79,13 @@ export type VerifiedFiles =
 
 const encoder = new TextEncoder();
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"];
+const nodeCrypto = typeof process !== "undefined" && typeof process.getBuiltinModule === "function"
+  ? process.getBuiltinModule("node:crypto")
+  : undefined;
 
 /** @throws {never} */
 export function sha256Hex(bytes: Uint8Array): string {
-  return bytesToHex(sha256(bytes));
+  return nodeCrypto !== undefined ? nodeCrypto.createHash("sha256").update(bytes).digest("hex") : bytesToHex(sha256(bytes));
 }
 
 const digests = (files: ReadonlyArray<FileDigest>) => files.map(({ path, sha256 }) => ({ path, sha256 }));

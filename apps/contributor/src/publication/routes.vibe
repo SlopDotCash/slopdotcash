@@ -6,6 +6,7 @@ import { type DiscoveryRow, artifactNames, discoveryPath } from "../client/publi
 import { getProjectsByIdByArtifact as rows } from "../client/refusals.vibe"
 import { publicSiteOrigin } from "../render/fields.ts"
 import { buildProjectPublication } from "../render/publication.ts"
+import type { TemplateIndex } from "../render/templateIndex.ts"
 import { type RestrictionState, clearanceOf, gateOf, manifestOf, optimistic, publicReadOf, restrictionStateOf } from "./gate.vibe"
 import { backlogOutOfRotationFor, backlogRead, intakeListingFor, intakeRead, monthListingFor } from "./listing.vibe"
 import { passThrough, templateBytes, templateIndex } from "./templates.vibe"
@@ -172,7 +173,7 @@ effect function discoveryReply(origin: string) {
   const counts = try intakeRead()
   const backlog = try backlogRead()
   const now = try Clock.currentTimeMillis
-  const index = try templateIndex(origin)
+  let index: TemplateIndex | undefined = undefined
   const listed: DiscoveryRow[] = []
   for (const project of projects) {
     const manifest = try manifestOf(project)
@@ -181,6 +182,7 @@ effect function discoveryReply(origin: string) {
     if (!discoverable(hopeful)) continue
     const facts = { ...hopeful, read: try publicReadOf(project, manifest) }
     if (!discoverable(facts)) continue
+    index ??= try templateIndex(origin)
     const known = { ...facts, clearance: try clearanceOf(project, index.templateSha256) }
     if (!discoverable(known)) continue
     const fields = try discoveryFieldsOf(project.projectId, manifest)

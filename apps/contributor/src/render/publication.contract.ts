@@ -1,5 +1,5 @@
 // spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"
-import { Arbitrary, Option, Schema } from "effect";
+import { Arbitrary, Equal, Hash, Option, Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { type Role, contributionFields, publicSiteOrigin, templatePaths } from "./fields.ts";
 import { type GuideRequest, type InstallGuide, installClients, renderInstallGuide } from "./installGuide.ts";
@@ -153,7 +153,36 @@ const bindsArtifacts = (input: PublicationInput, output: Publication) => {
   );
 };
 
-export const publicationBindsItsArtifacts = contract({ input: inputs, run: buildProjectPublication, deterministic: true, invariant: bindsArtifacts });
+const samePublication = (left: Publication, right: Publication): boolean => {
+  if (left.kind !== right.kind) return false;
+  if (left.kind !== "published" || right.kind !== "published") return Equal.equals(left, right);
+  if (left.files.size !== right.files.size) return false;
+  for (const [path, bytes] of left.files) {
+    const other = right.files.get(path);
+    if (other === undefined || Buffer.compare(bytes, other) !== 0) return false;
+  }
+  return true;
+};
+
+class ComparedPublication implements Equal.Equal {
+  readonly publication: Publication;
+  constructor(publication: Publication) {
+    this.publication = publication;
+  }
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof ComparedPublication && samePublication(this.publication, that.publication);
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.publication.kind);
+  }
+}
+
+export const publicationBindsItsArtifacts = contract({
+  input: inputs,
+  run: (input) => new ComparedPublication(buildProjectPublication(input)),
+  deterministic: true,
+  invariant: (input, output) => bindsArtifacts(input, output.publication),
+});
 
 const guideRequests = Arbitrary.schema(Schema.Struct({ id: Schema.String, reviewer: Schema.Boolean, client: Schema.Literals(installClients) })).pipe(
   Arbitrary.map(({ id, reviewer, client }): GuideRequest => {
