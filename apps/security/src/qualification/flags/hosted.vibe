@@ -1,7 +1,7 @@
 // spec/security/enforcement.md, "Story: Two eligible contributors pause a project and a fresh clean scan resumes it"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
 import { sha256Hex } from "@repo/platform/crypto"
 import { ControlPlane, ControlRefused, type Method, controlPlane } from "@repo/operations/controlPlane"
-import { type OwnedQualificationStorage, provisionQualificationStorage, removeQualificationStorage } from "@repo/operations/qualificationStorage"
+import { type OwnedQualificationStorage, provisionQualificationStorage, removeQualificationStorage, sameQualificationQueue } from "@repo/operations/qualificationStorage"
 import { Cloudflare, ToolFailed, cloudflare, pinnedWrangler } from "@repo/operations/wrangler"
 import { type FlagNames, FlagsRefused, bucketBinding, databaseBinding, flagNames, flagsSchema, queueBinding, runtimeVars } from "./plan.vibe"
 
@@ -251,6 +251,7 @@ export effect function flagsQualification(input: FlagsRun & { readonly root: str
     const work = owned.queues[0]
     if (work === undefined) throw refused("The work queue is not owned by this run")
     const queue = try decoded(QueueDetail, try api("queue", "GET", `queues/${work.queue_id}`), "queue")
+    if (!sameQualificationQueue(queue, work)) throw refused("Queue ownership changed")
     const [consumer, ...others] = queue.consumers
     const scripts = [consumer?.script, consumer?.script_name].filter((script) => script !== undefined)
     if (
@@ -296,6 +297,7 @@ export effect function flagsQualification(input: FlagsRun & { readonly root: str
         const work = owned.queues[0]
         if (work === undefined) throw refused("The work queue is not owned by this run")
         const queue = try decoded(QueueDetail, try api("queue", "GET", `queues/${work.queue_id}`), "queue")
+        if (!sameQualificationQueue(queue, work)) throw refused("Queue ownership changed")
         if (queue.consumers.length > 0) {
           try assertBindings()
           try api("remove consumer", "DELETE", `queues/${work.queue_id}/consumers/${consumerId ?? ""}`)

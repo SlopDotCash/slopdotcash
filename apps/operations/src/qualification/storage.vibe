@@ -20,6 +20,10 @@ export interface OwnedQualificationStorage {
 const uuidPattern = /^[a-f0-9-]{36}$/u
 const hex32 = /^[a-f0-9]{32}$/u
 
+export function sameQualificationQueue(observed: QueueEntry, owned: QueueEntry): boolean {
+  return observed.queue_id === owned.queue_id && observed.queue_name === owned.queue_name
+}
+
 effect function decoded<S extends Schema.Top, E>(schema: S, value: unknown, step: string, refused: (message: string) => E) {
   return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
     throw refused(`${step}: the answer has an unexpected shape`)
@@ -66,7 +70,7 @@ export effect function removeQualificationStorage<E>(control: ControlPlane.Shape
     const path = `queues/${queue.queue_id}`
     const result = try exit(effect {
       const current = try decoded(QueueEntry, try control.call("queue", "GET", path), "queue", refused)
-      if (current.queue_id !== queue.queue_id || current.queue_name !== queue.queue_name || !names.queues.includes(current.queue_name)) throw refused("Queue ownership changed")
+      if (!sameQualificationQueue(current, queue) || !names.queues.includes(current.queue_name)) throw refused("Queue ownership changed")
       try remove("remove queue", path)
     })
     if (Exit.isFailure(result)) errors += 1
