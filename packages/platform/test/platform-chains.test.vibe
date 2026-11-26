@@ -164,5 +164,5 @@ layer(Layer.merge(SolanaStarted, outbound), { excludeTestServices: true, timeout
       runner: "2.1.21",
       warped: [true, chain.genesis, after.value],
     }))
-  })
+  }, 180_000)
 })

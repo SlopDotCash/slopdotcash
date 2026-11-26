@@ -157,7 +157,8 @@ export function appFromJwt(world: GitHubWorld, jwt: string): App | string {
   const [header = "", payload = "", signature = ""] = jwt.split(".");
   const head = decoded(header), claims = decoded(payload);
   if (head?.alg !== "RS256" || claims === undefined) return "A JSON web token could not be decoded";
-  const app = world.app(String(claims.iss ?? ""));
+  const iss = typeof claims.iss === "string" ? claims.iss : typeof claims.iss === "number" ? String(claims.iss) : "";
+  const app = world.app(iss);
   if (app === undefined) return "Integration not found";
   if (!verify("sha256", Buffer.from(`${header}.${payload}`), app.publicKey, Buffer.from(signature, "base64url"))) return "A JSON web token could not be decoded";
   const now = Math.floor(world.now() / 1000);

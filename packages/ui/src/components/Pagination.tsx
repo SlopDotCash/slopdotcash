@@ -40,29 +40,33 @@ export function Pagination({
 }: PaginationProps) {
   const backRef = useRef<HTMLButtonElement>(null);
   const forwardRef = useRef<HTMLButtonElement>(null);
-  const pendingFocus = useRef<"back" | "forward" | null>(null);
+  const pendingFocusRef = useRef<"back" | "forward" | null>(null);
   if (state.pages === 1) return null;
   const move = (event: PageEvent, target: "back" | "forward", other: RefObject<HTMLButtonElement | null>) => {
     if (!enabled(state, event)) return;
     if (!enabled(step(state, event), event)) {
       other.current?.focus();
-      if (document.activeElement !== other.current) pendingFocus.current = target;
+      if (document.activeElement !== other.current) pendingFocusRef.current = target;
     }
     onSend(event);
   };
-  const bindTarget = (target: "back" | "forward", ref: RefObject<HTMLButtonElement | null>) =>
-    pendingFocus.current === target
-      ? (node: HTMLButtonElement | null) => {
-          ref.current = node;
-          if (node !== null && !node.disabled && pendingFocus.current === target) {
-            pendingFocus.current = null;
-            node.focus();
-          }
-        }
-      : ref;
+  const attachBack = (node: HTMLButtonElement | null) => {
+    backRef.current = node;
+    if (node !== null && !node.disabled && pendingFocusRef.current === "back") {
+      pendingFocusRef.current = null;
+      node.focus();
+    }
+  };
+  const attachForward = (node: HTMLButtonElement | null) => {
+    forwardRef.current = node;
+    if (node !== null && !node.disabled && pendingFocusRef.current === "forward") {
+      pendingFocusRef.current = null;
+      node.focus();
+    }
+  };
   return (
     <nav aria-label={label} className={cn("flex items-center justify-center gap-4", className)} {...props}>
-      <Button variant="outline" size="icon" aria-label={backLabel} ref={bindTarget("back", backRef)} disabled={!enabled(state, { type: "back" })} onClick={() => move({ type: "back" }, "forward", forwardRef)}>
+      <Button variant="outline" size="icon" aria-label={backLabel} ref={attachBack} disabled={!enabled(state, { type: "back" })} onClick={() => move({ type: "back" }, "forward", forwardRef)}>
         <ArrowLeft aria-hidden />
       </Button>
       <span role="status" className="font-mono text-sm text-muted-foreground tabular-nums">
@@ -71,7 +75,7 @@ export function Pagination({
           {state.page} / {state.pages}
         </span>
       </span>
-      <Button variant="outline" size="icon" aria-label={forwardLabel} ref={bindTarget("forward", forwardRef)} disabled={!enabled(state, { type: "forward" })} onClick={() => move({ type: "forward" }, "back", backRef)}>
+      <Button variant="outline" size="icon" aria-label={forwardLabel} ref={attachForward} disabled={!enabled(state, { type: "forward" })} onClick={() => move({ type: "forward" }, "back", backRef)}>
         <ArrowRight aria-hidden />
       </Button>
     </nav>

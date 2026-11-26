@@ -1,7 +1,7 @@
 // spec/operations/localValidator.md, "Story: Run tests only against the validator owned by the current stage"; spec/operations/localValidator.md, "The awaited stop and its exact receipt settle cleanup"
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -133,12 +133,12 @@ function pathRunner(directory: string): Runner {
       });
       child.once("close", () => void log.close());
     },
-    failure: async () => {
-      if (spawnFailure !== undefined) return spawnFailure;
-      if (child !== undefined && (child.exitCode !== null || child.signalCode !== null)) return new Error(`The local validator exited (${child.exitCode ?? child.signalCode})`);
-      return undefined;
+    failure: () => {
+      if (spawnFailure !== undefined) return Promise.resolve(spawnFailure);
+      if (child !== undefined && (child.exitCode !== null || child.signalCode !== null)) return Promise.resolve(new Error(`The local validator exited (${child.exitCode ?? child.signalCode})`));
+      return Promise.resolve(undefined);
     },
-    verify: async () => undefined,
+    verify: () => Promise.resolve(undefined),
     stop: async () => {
       const running = child;
       if (running === undefined || running.exitCode !== null || running.signalCode !== null) return;
@@ -146,7 +146,7 @@ function pathRunner(directory: string): Runner {
       running.kill("SIGTERM");
       await closed;
     },
-    purge: async () => undefined,
+    purge: () => Promise.resolve(undefined),
   };
 }
 
@@ -308,7 +308,7 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
       await halt();
       await runner.purge();
     } catch (error) {
-      throw new AggregateError([error], `Validator cleanup failed; kept ${directory} (${ownerLabel}=${owner}, ports ${ports.join(", ")})`);
+      throw new AggregateError([error], `Validator cleanup failed; kept ${directory} (${ownerLabel}=${owner}, ports ${ports.join(", ")})`, { cause: error });
     }
     await rm(directory, { recursive: true, force: true });
   });
@@ -343,6 +343,24 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
       warpSlot: async (target) => {
         const before = await slot();
         if (target <= before) throw new RangeError(`Warp slot ${target} is not after the current slot ${before}`);
+        const snapshotAt = (before / 100n + 1n) * 100n;
+        const waitUntil = Date.now() + 120_000;
+        while (Date.now() < waitUntil) {
+          const current = await slot();
+          if (current >= snapshotAt) {
+            if (runner.kind !== "path") {
+              await sleep(1_000);
+              break;
+            }
+            const entries = await readdir(ledger).catch(() => []);
+            const persisted = entries.some((name) => {
+              const match = /^snapshot-(\d+)-/u.exec(name);
+              return match !== null && BigInt(match[1] ?? "0") >= before;
+            });
+            if (persisted) break;
+          }
+          await sleep(250);
+        }
         await halt();
         const restarted = await boot([...args, "--warp-slot", String(target)]);
         if (restarted.genesis !== genesis) throw new Error(`The warped validator answered genesis ${restarted.genesis}, not ${genesis}`);
@@ -373,7 +391,7 @@ export async function sbfBuild(root: string, manifest: string): Promise<ProgramB
     });
   } catch (error) {
     await close();
-    if (isRecord(error) && (error.code === "ENOENT" || (typeof error.stderr === "string" && error.stderr.includes("no such command")))) throw new Error(`cargo build-sbf is not available: ${sbfHint}`);
+    if (isRecord(error) && (error.code === "ENOENT" || (typeof error.stderr === "string" && error.stderr.includes("no such command")))) throw new Error(`cargo build-sbf is not available: ${sbfHint}`, { cause: error });
     throw error;
   }
   return { out: directory, close, [Symbol.asyncDispose]: close };

@@ -87,7 +87,7 @@ export function statements(source: string): string[] {
     trigger = false;
   };
   while (i < source.length) {
-    const c = source[i]!, next = source[i + 1];
+    const c = source[i], next = source[i + 1];
     if (c === "-" && next === "-") {
       const end = source.indexOf("\n", i);
       i = end === -1 ? source.length : end;
@@ -114,7 +114,7 @@ export function statements(source: string): string[] {
     }
     if (/[A-Za-z_]/.test(c)) {
       let j = i;
-      while (j < source.length && /\w/.test(source[j]!)) j++;
+      while (j < source.length && /\w/.test(source[j])) j++;
       const word = source.slice(i, j).toUpperCase();
       if (word === "TRIGGER" && /^\s*CREATE\s+(TEMP\s+|TEMPORARY\s+)?$/i.test(current)) trigger = true;
       if (trigger && (word === "BEGIN" || word === "CASE")) depth++;

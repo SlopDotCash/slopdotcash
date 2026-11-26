@@ -180,9 +180,10 @@ export interface DecodedTransaction extends Transaction {
 
 export type Decoded<A, I> = { readonly kind: "decoded"; readonly value: A } | { readonly kind: "malformed"; readonly issue: I };
 
-class Malformed<I> {
+class Malformed<I> extends Error {
   readonly issue: I;
   constructor(issue: I) {
+    super(String(issue));
     this.issue = issue;
   }
 }
@@ -211,7 +212,7 @@ class Cursor {
   }
 
   byte(): number {
-    return this.take(1)[0] as number;
+    return this.take(1)[0];
   }
 
   compact(): number {
@@ -442,7 +443,7 @@ export function decodeMint(data: Uint8Array): Decoded<MintAccount, TokenIssue> {
     return {
       mintAuthority: optional(data, 0, (at) => key(data, at)),
       supply: u64(data, 36),
-      decimals: data[44] as number,
+      decimals: data[44],
       initialized: data[45] === 1,
       freezeAuthority: optional(data, 46, (at) => key(data, at)),
       ...extended(data, MINT_SIZE, MINT_ACCOUNT_TYPE),
@@ -459,7 +460,7 @@ export function decodeTokenAccount(data: Uint8Array): Decoded<TokenAccount, Toke
       owner: key(data, 32),
       amount: u64(data, 64),
       delegate: optional(data, 72, (at) => key(data, at)),
-      state: data[108] as number,
+      state: data[108],
       isNative: optional(data, 109, (at) => u64(data, at)),
       delegatedAmount: u64(data, 121),
       closeAuthority: optional(data, 129, (at) => key(data, at)),
@@ -640,9 +641,10 @@ export interface SendOptions {
   readonly maxRetries: number;
 }
 
-class Unreadable {
+class Unreadable extends Error {
   readonly issue: string;
   constructor(issue: string) {
+    super(issue);
     this.issue = issue;
   }
 }

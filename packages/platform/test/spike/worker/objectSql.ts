@@ -2,7 +2,7 @@ import { Exit } from "effect";
 import type { SqlValue } from "../../../src/bindings.ts";
 import type { DurableObjectStorage } from "../bindings.ts";
 
-const rollback = Symbol("rollback");
+const rollback = new Error("rollback");
 
 /** @throws {never} */
 export function transactionally<A, E>(storage: DurableObjectStorage, run: () => Exit.Exit<A, E>): Exit.Exit<A, E> {
