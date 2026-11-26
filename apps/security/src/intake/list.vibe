@@ -17,6 +17,7 @@ import { depositHeldOn } from "../deposit/hold.ts"
 import { depositView, depositViews } from "../deposit/view.vibe"
 import { idleMs, loaded, noVolatile, settled } from "../forwarding/store.vibe"
 import { ReadAborted, ReportUnreadable, githubNumber, readReport } from "../privacy/reads.vibe"
+import { handleSecurityRead } from "../readKey/routes.vibe"
 import { type ReportingProgram, ReportingPrograms } from "../receipt/program.vibe"
 import { routineOwnerRanking } from "../routine/store.vibe"
 import type { CaseRole } from "../receipt/statements.vibe"
@@ -69,13 +70,10 @@ function roleView(row: SubmissionRow, stored: StoredIntake, record: CaseStanding
 }
 
 function mayMove(row: SubmissionRow, saved: boolean, nowMs: number) {
-  switch (row.state) {
-    case "submitting": return row.attempt_started_at !== null && nowMs - millisOf(row.attempt_started_at) > submittingTimeoutMs
-    case "submitted": return nowMs - millisOf(row.attempt_started_at ?? row.updated_at) > submittedLimitMs
-    case "draft":
-    case "failed": return !saved && nowMs - millisOf(row.updated_at) > idleMs
-    default: return false
-  }
+  if (row.state === "submitting") return row.attempt_started_at !== null && nowMs - millisOf(row.attempt_started_at) > submittingTimeoutMs
+  if (row.state === "submitted") return nowMs - millisOf(row.attempt_started_at ?? row.updated_at) > submittedLimitMs
+  if (row.state === "draft" || row.state === "failed") return !saved && nowMs - millisOf(row.updated_at) > idleMs
+  return false
 }
 
 effect function settledRow(row: SubmissionRow, saved: boolean, nowMs: number) {
@@ -228,6 +226,6 @@ effect function read(actor: Actor, id: string, query: URLSearchParams) {
 }
 
 export const submissionReadRoutes = Layer.mergeAll(
-  handleRaw(listSubmissions, (input) => listed(input.actor)),
-  handleRaw(readSubmission, (input) => read(input.actor, input.params.id ?? "", input.query)),
+  handleSecurityRead(listSubmissions, (input) => listed(input.actor)),
+  handleSecurityRead(readSubmission, (input) => read(input.actor, input.params.id ?? "", input.query)),
 )

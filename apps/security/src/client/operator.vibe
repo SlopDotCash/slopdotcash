@@ -1,0 +1,57 @@
+// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export const SECURITY_QUEUE_PATH = "/api/v1/operator/security-queue"
+export const SECURITY_QUEUE_SCHEMA = "slop-security-queue-v1"
+
+export schema SecurityQueueProject {
+  readonly projectId: string
+  readonly open: number
+  readonly withoutAnalysis: number
+  readonly analysisFailed: number
+  readonly undecidedOver7Days: number
+  readonly oldestOpenAt: string
+}
+
+export schema SecurityQueueSummary {
+  readonly schema: "slop-security-queue-v1"
+  readonly generatedAt: string
+  readonly projects: ReadonlyArray<SecurityQueueProject>
+}
+
+export schema SecurityQueueRunRan {
+  readonly ran: true
+  readonly state: "running" | "complete" | "failed" | "unavailable"
+  readonly remainingEligible: number
+}
+
+export schema SecurityQueueRunSkipped {
+  readonly ran: false
+  readonly reason: "daily-limit" | "none-eligible" | "not-started"
+}
+
+export const SecurityQueueRunSchema = Schema.Union([SecurityQueueRunRan, SecurityQueueRunSkipped])
+
+export const readSecurityQueueRoute = route({
+  method: "GET",
+  path: SECURITY_QUEUE_PATH,
+  access: "public",
+  limitKib: 1,
+  request: undefined,
+  answer: SecurityQueueSummary,
+  rejected: "security_queue_unavailable",
+  cache: "no-store",
+})
+
+export const runSecurityQueueRoute = route({
+  method: "POST",
+  path: SECURITY_QUEUE_PATH,
+  access: "public",
+  limitKib: 1,
+  request: undefined,
+  answer: SecurityQueueRunSchema,
+  rejected: "security_queue_unavailable",
+  cache: "no-store",
+})
+
+export const operatorApi: ReadonlyArray<AnyRoute> = [readSecurityQueueRoute, runSecurityQueueRoute]

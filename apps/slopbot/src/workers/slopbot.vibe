@@ -18,6 +18,7 @@ import { budgetJobs } from "../budget/store.vibe"
 import { pointsDisputeRoutes } from "../disputes/internalRoute.vibe"
 import { processPendingPointsDisputes } from "../disputes/pointsTriage.vibe"
 import { dispatchFeeChecks } from "../fee/dispatch.vibe"
+import { checkStandingDeposits } from "../fee/standing.vibe"
 import { submissionFeeMode } from "../fee/store.vibe"
 import { feedRoutes } from "../feeds/routes.vibe"
 import { dispatchMaintainerHolds } from "../holds/record.vibe"
@@ -79,6 +80,7 @@ const scheduled = byCron<Layer.Success<ReturnType<typeof services>>>({
     { name: "slopbot due appeals", run: () => Effect.asVoid(dispatchDueAppeals()) },
     { name: "slopbot ready labels", run: () => Effect.asVoid(dispatchReadyChecks()) },
     { name: "slopbot submission fees", run: () => Effect.asVoid(dispatchFeeChecks()) },
+    { name: "slopbot standing deposits", run: () => Effect.asVoid(checkStandingDeposits()) },
     { name: "slopbot points disputes", run: () => Effect.asVoid(processPendingPointsDisputes()) },
     { name: "slopbot value requests", run: () => Effect.asVoid(consumePendingValueRequests()) },
     ...spendJobs,

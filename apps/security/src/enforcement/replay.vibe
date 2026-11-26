@@ -131,10 +131,18 @@ function expectedOf(row: Pick<JournalRow, "action" | "actor_role">): Expected | 
   return { kinds: listed, issuer: "ByModerator" }
 }
 
+type JournalAction = "quarantine" | "ban" | "request_reinstatement" | "reinstate" | "deny_reinstatement" | "reinstate_accounts"
+
+function isJournalAction(value: string): value is JournalAction {
+  return value === "quarantine" || value === "ban" || value === "request_reinstatement" || value === "reinstate" || value === "deny_reinstatement" || value === "reinstate_accounts"
+}
+
 effect function journalStep(e: Enforcement, row: JournalRow, accounts: ReadonlyArray<number>, released: ReadonlyArray<number>, named: Named) {
   if (row.actor_role === "contributor-flags" || row.actor_role === "vetting-service" && row.action === "ban") return e
+  if (!isJournalAction(row.action)) throw unproducible(row, "has no enforcement transition")
+  const action: JournalAction = row.action
   const by = idOf(row.actor_github_id)
-  switch (row.action) {
+  switch (action) {
     case "quarantine": return quarantine(e, by, fenceOf(e), try planOf(row))
     case "ban": return e.restriction === "ServiceBan" ? decideMalice(e, by, fenceOf(e), [...accounts]) : ban(e, by, fenceOf(e), try planOf(row))
     case "request_reinstatement":
@@ -156,7 +164,10 @@ effect function journalStep(e: Enforcement, row: JournalRow, accounts: ReadonlyA
       if (released.length === 0) throw unproducible(row, "releases no account")
       if (!canJournalAccountReinstatement(e, by, fenceOf(e), [...released])) throw unproducible(row, "reinstates accounts the account bans and appeals do not admit")
       return journalAccountReinstatement(e, by, fenceOf(e), [...released])
-    default: throw unproducible(row, "has no enforcement transition")
+    default: {
+      const _exhaustive: never = action
+      return _exhaustive
+    }
   }
 }
 

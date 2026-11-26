@@ -28,7 +28,7 @@ export interface FeeWay {
 }
 
 export type FeeOutcomeWhy = "merged" | "undecided" | "closed" | "wanted" | "marked";
-export type FeeReleaseWhy = "setting-off" | "author-exempt";
+export type FeeReleaseWhy = "setting-off" | "author-exempt" | "standing-deposit";
 
 export interface CommentFacts {
   readonly owner: string;
@@ -38,6 +38,7 @@ export interface CommentFacts {
   readonly item: string;
   readonly stableMinor: string;
   readonly ways: ReadonlyArray<FeeWay>;
+  readonly solana?: boolean;
 }
 
 export interface FeeOutcomeNote {
@@ -55,7 +56,23 @@ const address = /^0x[0-9a-fA-F]{40}$/u;
 const networkNames: Readonly<Record<string, string>> = {
   "base-mainnet": "Base",
   "robinhood-mainnet": "Robinhood Chain",
+  "solana-mainnet": "Solana",
 };
+
+const defaultSolanaContracts: Readonly<Record<string, string | null>> = {
+  "solana-mainnet": null,
+};
+
+const standingDepositStrikeWindowDays = 21;
+const standingDepositStrikeGraceHours = 48;
+
+/** @throws {never} */
+export function solanaFeeOffered(
+  contracts: Readonly<Record<string, string | null>> = defaultSolanaContracts,
+  switchedOn: boolean = false,
+): boolean {
+  return switchedOn && typeof contracts["solana-mainnet"] === "string";
+}
 
 /** @throws {never} */
 export function feeWays(options: ReadonlyArray<FeeOptionTerms>): FeeWay[] {
@@ -113,6 +130,9 @@ export function feeNeededComment(facts: CommentFacts): string {
     [...outcomeRules(facts.ways), "- A deposit that names another item, token or destination, or a lower amount than listed here, does not count and goes back."].join("\n"),
     "**How to pay**",
     `Pay page: https://slop.cash/fee/${facts.owner}/${facts.repo}/${facts.number}`,
+    ...((facts.solana ?? solanaFeeOffered())
+      ? [`The pay page also takes ${amount} USDC on Solana. A refund there goes to the paying wallet's own USDC account, and a kept deposit goes to Slop.`]
+      : []),
     "Or use the deposit contract directly: approve the contract for the amount on the token, then call `deposit(item, token, amount, keptTo)` with one row of this table. Any wallet can pay, and a refund goes to the wallet that paid.",
     `\`item\`: \`${facts.item}\``,
     [
@@ -147,7 +167,11 @@ function outcomeText(outcome: FeeOutcomeNote, ways: ReadonlyArray<FeeWay>): stri
 /** @throws {never} */
 export function feePaidComment(facts: PaidFacts): string {
   const network = facts.ways.find((way) => way.network === facts.paidNetwork);
-  const where = facts.paidDepositId !== null && network !== undefined ? `: deposit ${facts.paidDepositId} on ${network.networkName}` : "";
+  const where = facts.paidDepositId !== null && network !== undefined
+    ? `: deposit ${facts.paidDepositId} on ${network.networkName}`
+    : facts.paidDepositId !== null && facts.paidNetwork === "solana-mainnet"
+      ? `: deposit ${facts.paidDepositId} on Solana`
+      : "";
   return [
     feeMarker,
     "**Submission fee received**",
@@ -160,7 +184,18 @@ export function feePaidComment(facts: PaidFacts): string {
 }
 
 /** @throws {never} */
+export function feeCoveredComment(): string {
+  return [
+    feeMarker,
+    "**Covered by your standing deposit**",
+    "This pull request is covered by its author's standing deposit (https://slop.cash/deposit), so no submission fee is asked for it and Slopbot reviews it as usual. Do not send a separate deposit for it: one sent now does not count and goes back.",
+    `If a maintainer closes this pull request without a merge as spam or a plain copy and adds the label \`${keepFeeLabel}\` within ${standingDepositStrikeWindowDays} days, and both still stand ${standingDepositStrikeGraceHours} hours later, the whole standing deposit is kept and burned. An ordinary close costs nothing.`,
+  ].join("\n\n");
+}
+
+/** @throws {never} */
 export function feeReleasedComment(why: FeeReleaseWhy): string {
+  if (why === "standing-deposit") return feeCoveredComment();
   return [
     feeMarker,
     "**No submission fee is needed for this pull request**",

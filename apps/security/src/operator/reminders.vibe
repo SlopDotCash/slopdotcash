@@ -1,0 +1,109 @@
+// spec/security/reportNotices.md, "Routing saves one private case notice per eligible technical recipient"
+import { isoAt } from "@repo/platform/clock"
+import { D1, sql } from "@repo/platform/d1"
+import type { SecurityQueueProject } from "../client/operator.vibe"
+
+export const REMINDER_AFTER_DAYS = 7
+export const OWNER_REMINDER_PREFIX = "security-queue:"
+
+function isoWeek(nowMs: number): string {
+  const source = new Date(nowMs)
+  const day = new Date(Date.UTC(source.getUTCFullYear(), source.getUTCMonth(), source.getUTCDate()))
+  day.setUTCDate(day.getUTCDate() + 4 - (day.getUTCDay() || 7))
+  const yearStart = Date.UTC(day.getUTCFullYear(), 0, 1)
+  const week = Math.ceil(((day.getTime() - yearStart) / 86_400_000 + 1) / 7)
+  return `${day.getUTCFullYear()}-W${String(week).padStart(2, "0")}`
+}
+
+export function ownerReminderKey(projectId: string, nowMs: number): string {
+  return `${OWNER_REMINDER_PREFIX}${projectId}:${isoWeek(nowMs)}`
+}
+
+function longDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(iso))
+}
+
+export function ownerReminderDetail(waiting: number, oldestAt: string): string {
+  return waiting === 1
+    ? `1 private report has waited more than ${REMINDER_AFTER_DAYS} days for a decision. It was received on ${longDate(oldestAt)}.`
+    : `${waiting} private reports have waited more than ${REMINDER_AFTER_DAYS} days for a decision. The oldest was received on ${longDate(oldestAt)}.`
+}
+
+export effect function sendOwnerReminders(queue: ReadonlyArray<SecurityQueueProject>) {
+  const nowMs = try Clock.currentTimeMillis
+  const at = try isoAt(nowMs)
+  const db = try D1
+  let projects = 0
+  let failed = 0
+  for (const entry of queue) {
+    if (entry.undecidedOver7Days < 1) continue
+    projects += 1
+    const key = ownerReminderKey(entry.projectId, nowMs)
+    const detail = ownerReminderDetail(entry.undecidedOver7Days, entry.oldestOpenAt)
+    const wrote = db.run(sql`INSERT INTO notifications (
+      event_key, recipient_github_id, kind, subject, detail, action_path,
+      source_at, created_at
+    )
+    SELECT ${key}, audience.recipient, 'project_revision', ${entry.projectId}, ${detail}, '/inbox', ${at}, ${at}
+      FROM (
+        SELECT json_extract(a.value, '$.githubId') AS recipient
+          FROM projects p,
+               json_each(p.manifest, '$.securityBounty.approvers.technical') a
+         WHERE p.id = ${entry.projectId}
+        UNION
+        SELECT recipient
+          FROM projects p
+          JOIN (
+            SELECT listed.recipient
+              FROM (
+                SELECT a.applicant_github_id AS recipient
+                  FROM projects lp
+                  JOIN project_applications a ON a.id = lp.source_application_id
+                 WHERE lp.id = ${entry.projectId}
+                UNION
+                SELECT first.actor_github_id
+                  FROM projects lp
+                  JOIN project_revisions first
+                    ON first.project_id = lp.id AND first.revision = 1
+                 WHERE lp.id = ${entry.projectId} AND lp.source_application_id IS NULL
+                   AND first.actor_github_id IS NOT NULL
+              ) listed
+             WHERE EXISTS (
+               SELECT 1 FROM projects
+                WHERE id = ${entry.projectId}
+                  AND json_extract(manifest, '$.steward.github.type') = 'Organization'
+             )
+            UNION
+            SELECT json_extract(manifest, '$.steward.github.actorId')
+              FROM projects
+             WHERE id = ${entry.projectId}
+               AND (json_extract(manifest, '$.steward.github.type') IS NOT 'Organization'
+                    OR NOT EXISTS (
+                      SELECT a.applicant_github_id AS recipient
+                        FROM projects lp
+                        JOIN project_applications a ON a.id = lp.source_application_id
+                       WHERE lp.id = ${entry.projectId}
+                      UNION
+                      SELECT first.actor_github_id
+                        FROM projects lp
+                        JOIN project_revisions first
+                          ON first.project_id = lp.id AND first.revision = 1
+                       WHERE lp.id = ${entry.projectId} AND lp.source_application_id IS NULL
+                         AND first.actor_github_id IS NOT NULL
+                    ))
+          )
+         WHERE p.id = ${entry.projectId}
+           AND json_type(p.manifest, '$.securityBounty.approvers.technical') IS NULL
+      ) audience
+     WHERE typeof(audience.recipient) = 'text' AND length(audience.recipient) BETWEEN 1 AND 20
+       AND audience.recipient GLOB '[1-9]*' AND audience.recipient NOT GLOB '*[^0-9]*'
+       AND substr(${key}, 1, length(${OWNER_REMINDER_PREFIX} || ${entry.projectId} || ':')) = ${OWNER_REMINDER_PREFIX} || ${entry.projectId} || ':'
+    ON CONFLICT (event_key, recipient_github_id) DO NOTHING`) catch effect (error) => {
+      try Effect.logError("security owner reminders: write failed", { reason: error._tag })
+      return undefined
+    }
+    if (wrote === undefined) failed += 1
+  }
+  if (failed > 0) try Effect.logError(`security owner reminders: ${failed} could not be written`)
+  return { projects, failed }
+}

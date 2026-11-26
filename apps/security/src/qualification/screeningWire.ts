@@ -22,7 +22,6 @@ export interface WireGate {
 const demoVault = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// Synthetic local qualification only. Never deploy with real funds.
 contract DemoVault {
     mapping(address => uint256) public balances;
 

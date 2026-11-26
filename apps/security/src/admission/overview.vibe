@@ -59,21 +59,28 @@ effect function overview(actor: Actor) {
   const registry = try Registry
   const projects = []
   const flags = []
-  for (const current of try (try RegistryManifests).current()) {
+  const entries = try Effect.forEach(try (try RegistryManifests).current(), (current) => effect {
     const view = try registry.project(current.projectId)
-    if (view === undefined) continue
+    if (view === undefined) return undefined
     const named = try jsonOf(NamedManifest, current.manifest, "project manifest")
     const loaded = try enforcementOf(current.projectId)
     const observed = loaded === undefined ? undefined : try withRetainedEvidence(loaded.state)
-    if (loaded !== undefined) flags.push(...activeFlags(loaded, viewer))
-    projects.push({
-      id: view.projectId,
-      name: named.name,
-      status: view.rowStatus === "Active" ? "active" as const : "paused" as const,
-      revision: view.revision,
-      ...(view.repositories.length > 1 ? { repositories: view.repositories.map((repository) => ({ id: repository.fullName, githubId: repository.id === "" ? null : repository.id })) } : {}),
-      clearance: observed === undefined ? null : { state: projectClearance(observed), repositories: repositoryClearances(observed) },
-    })
+    return {
+      flags: loaded === undefined ? [] : activeFlags(loaded, viewer),
+      project: {
+        id: view.projectId,
+        name: named.name,
+        status: view.rowStatus === "Active" ? "active" as const : "paused" as const,
+        revision: view.revision,
+        ...(view.repositories.length > 1 ? { repositories: view.repositories.map((repository) => ({ id: repository.fullName, githubId: repository.id === "" ? null : repository.id })) } : {}),
+        clearance: observed === undefined ? null : { state: projectClearance(observed), repositories: repositoryClearances(observed) },
+      },
+    }
+  }, { concurrency: 8 })
+  for (const entry of entries) {
+    if (entry === undefined) continue
+    flags.push(...entry.flags)
+    projects.push(entry.project)
   }
   const queueRegistrationAvailable = try serviceAvailable()
   const storage = Option.isSome(try Effect.serviceOption(EvidenceBucket))

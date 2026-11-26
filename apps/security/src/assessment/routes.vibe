@@ -134,6 +134,20 @@ export effect function assessQualified(input: { readonly caseId: string; readonl
   return { kind: "finished", analysis: viewOf(finished, try Clock.currentTimeMillis) } satisfies Automatic
 }
 
+const operatorBudgetMs = 120_000
+
+export effect function retryForOperator(caseId: string) {
+  const nowMs = try Clock.currentTimeMillis
+  const authority = { ...initial.authority, epoch: 1, technical: [2] }
+  const run = Effect.flatMap(caseExclusions(caseId), (exclusions) => started(caseId, { type: "startOwnerRun", checkedEpoch: 1, nowMs, exclusions }, 2, authority)) catch effect (error) => {
+    if (error instanceof Rejected || error instanceof NotAssessable) return undefined
+    throw error
+  }
+  if (run === undefined) return undefined
+  const finished = try attempted(run, operatorBudgetMs)
+  return finished.rows.find((row) => row.attempt === run.attempt)?.state
+}
+
 export effect function scheduleReceiptAnalysis(caseId: string) {
   try later(effect {
     assessQualified({ caseId, version: 1 }) catch effect () => {

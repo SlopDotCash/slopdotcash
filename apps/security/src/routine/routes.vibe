@@ -13,17 +13,19 @@ import { type ActiveMode, type RoutineMode, routineMode } from "./tables.ts"
 
 export service RoutineSettings {
   readonly mode: RoutineMode
+  readonly nextSweepAt?: Ref.Ref<number>
 }
 
 export function routineSettings(value: string | undefined) {
-  return Layer.succeed(RoutineSettings, { mode: routineMode(value) })
+  return Layer.effect(RoutineSettings, effect {
+    return { mode: routineMode(value), nextSweepAt: try Ref.make(0) }
+  })
 }
 
 schema Waiting { cases: number }
 
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
 const sweepMs = 60_000
-const sweep = { nextAt: 0 }
 
 export const readRoutine = route({ method: "GET", path: "/api/v1/security-routine", access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "no-store" })
 export const runRoutine = route({ method: "POST", path: "/api/v1/security-routine", access: "sessionWrite", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "no-store" })
@@ -51,7 +53,9 @@ effect function status(actor: Actor) {
 
 effect function ran(actor: Actor) {
   const mode = try admitted(actor)
-  try exactKeys(try jsonBody(1), ["action"])
+  const body = try jsonBody(1)
+  try exactKeys(body, ["action"])
+  if (body.action !== "run") throw refused({ status: 400, error: "invalid_request", message: "Unknown routine action" })
   if (mode === "off") throw refused(postSecurityRoutine.routineDecisionsOff)
   const run = try runRoutineDecisions(mode, "admin", adminLimits)
   if (run === undefined) throw refused(postSecurityRoutine.routinePassRecent)
@@ -66,11 +70,13 @@ effect function backgroundPass(mode: ActiveMode, source: RoutineSource) {
 }
 
 export effect function routineSweep() {
-  const { mode } = try RoutineSettings
+  const { mode, nextSweepAt } = try RoutineSettings
   if (mode === "off") return
   const nowMs = try Clock.currentTimeMillis
-  if (nowMs < sweep.nextAt) return
-  sweep.nextAt = nowMs + sweepMs
+  if (nextSweepAt !== undefined) {
+    const due = try Ref.modify(nextSweepAt, (nextAt) => (nowMs < nextAt ? [false, nextAt] as const : [true, nowMs + sweepMs] as const))
+    if (!due) return
+  }
   try later(backgroundPass(mode, "request"))
 }
 

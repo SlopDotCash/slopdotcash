@@ -70,10 +70,16 @@ effect function activityOf(row: typeof ItemRow.Type) {
 effect function repositories() {
   const [items, listed] = try (try D1).batch([itemActivity, repositoryActivity])
   const activity = try decoded(ItemRow, items?.rows ?? [], "slopbot summary items")
+  const byRepository = new Map<number, ItemActivity[]>()
+  for (const row of activity) {
+    const group = byRepository.get(row.repository_id)
+    const entry = try activityOf(row)
+    if (group === undefined) byRepository.set(row.repository_id, [entry])
+    else group.push(entry)
+  }
   const summaries: Array<Readonly<Record<string, unknown>>> = []
   for (const repository of try decoded(RepositoryRow, listed?.rows ?? [], "slopbot summary repositories")) {
-    const own: ItemActivity[] = []
-    for (const row of activity) if (row.repository_id === repository.repository_id) own.push(try activityOf(row))
+    const own = byRepository.get(repository.repository_id) ?? []
     if (!listedInSummary(own)) continue
     const installationIds = Schema.decodeUnknownEffect(InstallationIds)(try parsedJson(repository.installation_ids, "installation ids are not JSON")) catch effect () => {
       throw new HistoryUnreadable({ issue: "installation ids do not decode" })

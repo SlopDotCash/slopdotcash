@@ -411,7 +411,13 @@ effect function heldBeforeAdmission(session: Session, bound: Review, fee: FeeTar
     return try skipAttempt(session, intakeCapReason)
   }
   const mayAsk = try monthlyReviewOpen(target)
-  const feeWaits = try feeStep(gateSubmissionFee({ target: fee, exemption: routed.exemption, mayAsk }))
+  const feeWaits = try feeStep(gateSubmissionFee({
+    target: fee,
+    exemption: routed.exemption,
+    mayAsk,
+    author: { id: context.issue.user.id, login: context.issue.user.login },
+    openedAt: context.pull?.created_at ?? null,
+  }))
   if (!canSkipForFee(bound, feeWaits)) return undefined
   try session.attempt.review.send({ type: "skipForFee", feeWaits })
   return try skipAttempt(session, feeNeededReason)

@@ -8,6 +8,6 @@ import { enforcementTables } from "./enforcement/tables.ts";
 import { evidenceTables } from "./evidence/tables.ts";
 import { intakeTables } from "./intake/tables.ts";
 
-const routineTables = ["security_routine_runs", "security_routine_decisions"] as const;
+const routineTables = ["security_routine_runs", "security_routine_decisions", "security_read_keys"] as const;
 
 export const writes = [...evidenceTables, ...intakeTables, ...admissionTables, ...enforcementTables, ...assessmentTables, ...caseTables, ...bountyTables, ...routineTables, ...depositTables] as const;

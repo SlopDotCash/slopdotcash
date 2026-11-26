@@ -184,13 +184,18 @@ export effect function assessmentPage(actor: AccessActor, cursorText: string | n
     if (read.phase === "Checking" && bound !== undefined) pending.push({ key, bound, read })
   }
   const administrator = try (try Roles).has(actor.githubId, "administrator")
-  const accesses = new Map<string, AccessCheck>()
+  const scopes = new Map<string, Bound>()
   for (const { bound } of pending) {
     const scope = `${bound.projectId}:${bound.binding.repository}`
-    if (!accesses.has(scope)) accesses.set(scope, try accessFor(bound, actor, administrator))
+    if (!scopes.has(scope)) scopes.set(scope, bound)
+  }
+  const accesses = new Map<string, AccessCheck>()
+  for concurrent (const [scope, bound] of scopes.entries()) {
+    accesses.set(scope, try accessFor(bound, actor, administrator))
   }
   const current = new Map<string, RegistryBinding>()
   const entries: Array<IncompleteAssessment & { readonly repositoryId: number }> = []
+  const succeededScopes = new Set<string>()
   let failed: { readonly status: number; readonly refusal: Refusal } | undefined = undefined
   for (const { key, bound, read } of pending) {
     const scope = `${bound.projectId}:${bound.binding.repository}`
@@ -202,6 +207,7 @@ export effect function assessmentPage(actor: AccessActor, cursorText: string | n
       if (failed === undefined || github) failed = { status: completed.status, refusal: github ? assessmentRefusals.githubUnavailable : assessmentRefusals.projectChanged }
       continue
     }
+    succeededScopes.add(scope)
     const item = completed.item
     if (item.tag !== "Unresolved") continue
     entries.push({
@@ -215,7 +221,7 @@ export effect function assessmentPage(actor: AccessActor, cursorText: string | n
       running: item.retryStatus === "Retrying",
     })
   }
-  if (failed !== undefined) return { kind: "unavailable", status: failed.status, refusal: failed.refusal } satisfies PageOutcome
+  if (failed !== undefined && succeededScopes.size === 0) return { kind: "unavailable", status: failed.status, refusal: failed.refusal } satisfies PageOutcome
   const listed = entries.filter((entry) => after(entry, cursor)).sort(ordered)
   const page = listed.slice(0, assessmentsPerPage)
   const last = page.at(-1)
