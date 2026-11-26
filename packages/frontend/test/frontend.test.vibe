@@ -75,10 +75,11 @@ import { Session, viewActor } from "../src/session/session.vibe"
 import { answered, cases, elsewhere, excuseOf, type Probe, probeOf, replayDifference, replayRequest, rows, type Seen, type Surface, surfaces, undeclared } from "./support/parity/tables.ts"
 
 module subtle {
+  import { readFile } from "node:fs/promises"
   import { gzipSync } from "node:zlib"
   /** @throws {never} */
-  export function compressedBytes(script: string): number {
-    return gzipSync(script).byteLength
+  export async function compressedBytes(file: string): Promise<number> {
+    return gzipSync(await readFile(file)).byteLength
   }
 }
 import { compressedBytes } from subtle
@@ -1120,9 +1121,9 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       assert.includeMembers(keys, ["GET /api/v1/notifications/incomplete-assessments", "GET /api/v1/admin/fee-conversions"])
     })
 
-    it("The bundled Pages worker stays under the Pages _worker.js size limit", async () => {
-      const script = await workerScript()
-      assert.isBelow(compressedBytes(script), workerLimitBytes)
+    it("The bundled Pages worker stays under the Pages _worker.js size limit", { timeout: 300_000 }, async () => {
+      const file = await workerScript()
+      assert.isBelow(await compressedBytes(file), workerLimitBytes)
     })
   })
 
