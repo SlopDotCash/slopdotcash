@@ -27,7 +27,7 @@ Everything is built on [the stack](AGENTS.md#the-stack): Node 26, pnpm, VibeLang
 
 ## Pull requests
 
-Open every pull request against `vibestack`, Slop's default
+Open every pull request against `develop`, Slop's default
 branch. The proposed merge must fully implement and integrate the top-level
 stories and models in [spec/index.md](spec/index.md) and its linked specs.
 Match each change to the exact behavior defined by its owning stories, rules
@@ -438,7 +438,7 @@ configured scopes are in `knip.config.js`, `.madgerc`, `.jscpd.json` and
 
 | When | Runs |
 |---|---|
-| Configured pull request and push triggers for `vibestack`, `development` and `main` | `pnpm verify --continue=dependencies-successful --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
+| Configured pull request and push triggers for `develop`, `vibestack`, `development` and `main` | `pnpm verify --continue=dependencies-successful --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
 | Native contract checks | Forge formatting and size checks, Foundry tests and SMT checks, locked Cargo tests, and a separate reproducible Solana artifact build |
 | Nightly on the default branch | `pnpm all check --continue -- --nightly` runs every check fresh under the fixed nightly profile |
 

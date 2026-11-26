@@ -2,9 +2,9 @@ name: ci
 
 on:
   pull_request:
-    branches: [vibestack, development, main]
+    branches: [develop, vibestack, development, main]
   push:
-    branches: [vibestack, development, main]
+    branches: [develop, vibestack, development, main]
 
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && !(github.head_ref == 'vibestack' && github.event.pull_request.head.repo.full_name == github.repository) && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'pull_request' && format('sha-{0}', github.event.pull_request.head.sha || github.sha) || github.run_attempt == '1' && github.ref || github.run_id }}
