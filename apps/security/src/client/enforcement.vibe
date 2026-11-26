@@ -134,7 +134,7 @@ export function scanClearanceView(assessment: ScanClearanceInput): ScanClearance
   const location = assessment.findingsLocation
   const repositoryClear = facts.flaggedChecks.length === 0 && facts.checksNotRun.length === 0 && facts.incompleteSurfaces.length === 0 && facts.openFindings.length === 0 && assessment.heldArtifacts === 0
   const passed: ScanClearanceBadge = { tone: "success", icon: "pass", label: "No check flagged" }
-  const slopSide = repositoryClear && facts.visibilityGaps.length === 0 && (location === undefined || location === "template")
+  const slopSide = repositoryClear && facts.visibilityGaps.length === 0 && location === "template"
   const located: ReadonlyArray<ScanClearanceBadge> = !repositoryClear || location === "unknown" ? []
     : location === "repository" || location === "both" ? [passed, { tone: "warning", icon: "note", label: location === "both" ? "Findings: repository + template" : "Findings: repository" }]
     : [passed]
