@@ -62,7 +62,6 @@ function completeHunks(lines: ReadonlyArray<string>): boolean {
 export function modifiedDiffSection(diff: string, path: string): DiffSection | undefined {
   if (!/^[\w./-]+$/u.test(path) || !diff.endsWith("\n") || diff.includes("\0")) return undefined;
   const lines = diff.slice(0, -1).split("\n");
-  // Quoted Git paths can spell the same target with escapes, so a literal-only scan cannot establish uniqueness in their presence.
   if (lines.some((line) => line.startsWith("diff --git ") && line.includes('"'))) return undefined;
   const expected = `diff --git a/${path} b/${path}`;
   const start = lines.indexOf(expected);
