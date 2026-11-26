@@ -1,7 +1,22 @@
 import { expect, test } from "bun:test";
 import { sha256Hex } from "../src/lib/sha256";
 import type { AcceptedImplementationSource } from "./accepted-implementation-digests";
-import { ImplementationMemo } from "./accepted-implementation-memo";
+import {
+  ImplementationMemo,
+  ImplementationMemoAuditError,
+} from "./accepted-implementation-memo";
+import {
+  IMPLEMENTATION_MEMO_AUDIT_ONE_IN,
+  IMPLEMENTATION_MEMO_CHANGED_CODE_AUDIT_ONE_IN,
+  IMPLEMENTATION_MEMO_RULES_DIGEST,
+  IMPLEMENTATION_MEMO_RULES_SOURCES,
+  IMPLEMENTATION_MEMO_RULES_VERSION,
+  rulesDigest,
+} from "./collection-memo";
+import {
+  readImplementationProofs,
+  readPreviousImplementationSources,
+} from "./generate-leaderboard";
 
 const repo = "R_eliza";
 const codeDigest = "c".repeat(64);
@@ -69,11 +84,11 @@ test("a verified ordinary acceptance survives a warm read without trusting the o
   expect(() =>
     read(
       bytes.replace(
+        "slop-accepted-implementation-memo-v3",
         "slop-accepted-implementation-memo-v2",
-        "slop-accepted-implementation-memo-v1",
       ),
     ),
-  ).toThrow("version or code digest");
+  ).toThrow("format or rules version");
   for (const invalid of [
     { ...squash, mergeSha: squash.headSha },
     { ...squash, mergeParentShas: source.mergeParentShas },
@@ -163,8 +178,13 @@ test("invalid or contradictory trusted evidence cannot become a cache hit", () =
   memo.rememberDigest(repo, source, digest);
   const bytes = memo.serialize(codeDigest, at);
   expect(() =>
-    ImplementationMemo.parse(bytes, "e".repeat(64), new Date(at)),
-  ).toThrow("version or code digest");
+    ImplementationMemo.parse(
+      bytes,
+      codeDigest,
+      new Date(at),
+      IMPLEMENTATION_MEMO_RULES_VERSION + 1,
+    ),
+  ).toThrow("format or rules version");
   expect(() =>
     ImplementationMemo.parse(
       bytes,
@@ -197,4 +217,182 @@ test("invalid or contradictory trusted evidence cannot become a cache hit", () =
   expect(() =>
     ImplementationMemo.parse(JSON.stringify(edited), codeDigest, new Date(at)),
   ).toThrow("unexpected fields");
+});
+
+test("a memo written under other code is kept and audited more often; other rules discard it", () => {
+  const memo = new ImplementationMemo();
+  memo.rememberPrevious(repo, prior, observation);
+  memo.rememberDigest(repo, source, digest);
+  const bytes = memo.serialize(codeDigest, at);
+  const same = ImplementationMemo.parse(bytes, codeDigest, new Date(at));
+  expect(same.auditOneIn).toBe(IMPLEMENTATION_MEMO_AUDIT_ONE_IN);
+  const changed = ImplementationMemo.parse(bytes, "e".repeat(64), new Date(at));
+  expect(changed.auditOneIn).toBe(
+    IMPLEMENTATION_MEMO_CHANGED_CODE_AUDIT_ONE_IN,
+  );
+  expect(changed.digest(repo, source)).toBe(digest);
+  expect(changed.previous(repo, prior)).toEqual(observation);
+  // The next memo is written under the code that produced it.
+  expect(
+    ImplementationMemo.parse(
+      changed.serialize("e".repeat(64), at),
+      "e".repeat(64),
+      new Date(at),
+    ).auditOneIn,
+  ).toBe(IMPLEMENTATION_MEMO_AUDIT_ONE_IN);
+});
+
+test("the implementation memo rules pin matches its sources", () => {
+  // A failure here means a rule source changed. If the change could make a
+  // saved digest or observation come out differently, raise
+  // IMPLEMENTATION_MEMO_RULES_VERSION; then update the pinned digest.
+  expect(
+    rulesDigest(
+      undefined,
+      IMPLEMENTATION_MEMO_RULES_SOURCES,
+      "implementation-memo-rules",
+    ),
+  ).toBe(IMPLEMENTATION_MEMO_RULES_DIGEST);
+});
+
+function restoredMemo(savedDigest = digest) {
+  const memo = new ImplementationMemo();
+  memo.rememberPrevious(repo, prior, observation);
+  memo.rememberDigest(repo, source, savedDigest);
+  const restored = ImplementationMemo.parse(
+    memo.serialize(codeDigest, at),
+    codeDigest,
+    new Date(at),
+  );
+  restored.auditOneIn = 1;
+  return restored;
+}
+
+const publicRepository = {
+  full_name: "elizaOS/eliza",
+  node_id: repo,
+  private: false,
+} as const;
+
+test("an audited saved digest that still matches is kept; a different one discards every saved entry", async () => {
+  const agreeing = restoredMemo();
+  let reads = 0;
+  const live = async () => {
+    reads += 1;
+    return {
+      digests: new Map([[source.id, digest]]),
+      unavailable: new Set<string>(),
+    };
+  };
+  const proofs = await readImplementationProofs(
+    live,
+    publicRepository,
+    [source],
+    agreeing,
+  );
+  expect(reads).toBe(1);
+  expect(proofs.digests.get(source.id)).toBe(digest);
+  expect(agreeing.stats).toMatchObject({ audited: 1, auditMismatches: 0 });
+
+  const disagreeing = restoredMemo("f".repeat(64));
+  await expect(
+    readImplementationProofs(live, publicRepository, [source], disagreeing),
+  ).rejects.toBeInstanceOf(ImplementationMemoAuditError);
+  expect(disagreeing.digest(repo, source)).toBeUndefined();
+  expect(disagreeing.previous(repo, prior)).toBeUndefined();
+  // With nothing saved left, the same read is simply live.
+  const again = await readImplementationProofs(
+    live,
+    publicRepository,
+    [source],
+    disagreeing,
+  );
+  expect(again.digests.get(source.id)).toBe(digest);
+});
+
+test("an audit whose live read proves nothing keeps the saved digest", async () => {
+  const memo = restoredMemo();
+  const proofs = await readImplementationProofs(
+    async () => ({ digests: new Map(), unavailable: new Set([source.id]) }),
+    publicRepository,
+    [source],
+    memo,
+  );
+  expect(proofs.digests.get(source.id)).toBe(digest);
+  expect(proofs.unavailable.size).toBe(0);
+  expect(memo.stats.auditMismatches).toBe(0);
+});
+
+function priorNode(changedFiles: number) {
+  return {
+    __typename: "PullRequest",
+    id: prior.id,
+    number: prior.number,
+    url: prior.url,
+    state: "MERGED",
+    mergedAt: prior.mergedAt,
+    repository: { id: repo, isPrivate: false },
+    headRefOid: source.headSha,
+    changedFiles,
+    additions: 47,
+    deletions: 0,
+    mergeCommit: {
+      oid: source.mergeSha,
+      tree: { oid: source.mergeTreeSha },
+      parents: {
+        totalCount: 2,
+        nodes: [
+          {
+            oid: source.mergeParentShas[0],
+            tree: { oid: source.firstParentTreeSha },
+          },
+          { oid: source.headSha, tree: { oid: "5".repeat(40) } },
+        ],
+      },
+    },
+    commits: {
+      totalCount: 1,
+      pageInfo: { hasNextPage: false },
+      nodes: [{ commit: { oid: source.headSha, parents: { totalCount: 1 } } }],
+    },
+  };
+}
+
+test("an audited saved observation is read again; a different live one discards every saved entry", async () => {
+  const client = (changedFiles: number) => ({
+    execute: async () => ({ nodes: [priorNode(changedFiles)] }),
+  });
+  const agreeing = restoredMemo();
+  const same = await readPreviousImplementationSources(
+    client(18) as never,
+    repo,
+    new Set(["18/47/0"]),
+    [prior],
+    agreeing,
+  );
+  expect(same.candidates.get("18/47/0")).toEqual([source]);
+  expect(agreeing.stats).toMatchObject({ audited: 1, auditMismatches: 0 });
+
+  const disagreeing = restoredMemo();
+  await expect(
+    readPreviousImplementationSources(
+      client(19) as never,
+      repo,
+      new Set(["18/47/0"]),
+      [prior],
+      disagreeing,
+    ),
+  ).rejects.toBeInstanceOf(ImplementationMemoAuditError);
+  expect(disagreeing.digest(repo, source)).toBeUndefined();
+
+  // A live read that proves nothing leaves the saved observation in use.
+  const silent = restoredMemo();
+  const kept = await readPreviousImplementationSources(
+    { execute: async () => ({ nodes: [null] }) } as never,
+    repo,
+    new Set(["18/47/0"]),
+    [prior],
+    silent,
+  );
+  expect(kept.candidates.get("18/47/0")).toEqual([source]);
 });

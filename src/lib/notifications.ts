@@ -185,7 +185,10 @@ export function notificationTitle(n: Notification): string {
     case "project_installation_lost":
       return `${n.subject}: reinstall Slopbot`;
     case "project_revision":
-      // The backlog rule reuses this kind (PRD section 5).
+      // The weekly report reminder and the backlog rule reuse this kind
+      // (PRD sections 8 and 5).
+      if (n.eventKey.startsWith("security-queue:"))
+        return `${n.subject} reports are waiting`;
       return n.eventKey.startsWith("backlog-rule:")
         ? n.eventKey.includes(":out:")
           ? `${n.subject} is out of rotation`
@@ -246,6 +249,7 @@ export function notificationAction(n: Notification): string {
       // Moderators get the same event with an admin link (contributor flags).
       return n.actionPath === "/admin" ? "Open admin" : "Open project";
     case "project_revision":
+      if (n.eventKey.startsWith("security-queue:")) return "Open Inbox";
       return n.eventKey.startsWith("backlog-rule:")
         ? "Open settings"
         : "Open project";

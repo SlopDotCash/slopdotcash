@@ -21,6 +21,7 @@ import {
 } from "../src/lib/points-implementation-corrections";
 import { sha256Hex } from "../src/lib/sha256";
 import { sqliteD1 } from "../tests/sqlite-d1";
+import { GitHubClient, GitHubError } from "../workers/slopbot/github";
 import { pointsSql } from "./generate-points";
 import { changeDigest } from "./pull-request-git-files";
 import {
@@ -32,6 +33,7 @@ import {
   collectHistoricalSourceAudit,
   historicalAssessmentAuditInputs,
   historicalPointsSql,
+  historicalRepositoryReadDiagnostic,
   verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
   verifyHistoricalDuplicateAcceptanceOrder,
@@ -43,6 +45,51 @@ import {
 const hash = (value: unknown) => sha256Hex(JSON.stringify(value));
 const time = "2026-11-15T01:00:00.000Z";
 const actor = { id: btoa("04:User42"), login: "origin", kind: "User" as const };
+
+test("historical GitHub metadata diagnostics preserve only fixed observations", async () => {
+  const privateFixture = "fixture-response-content-must-stay-private";
+  for (const [status, message, headers, code] of [
+    [401, privateFixture, {}, "unauthenticated"],
+    [
+      403,
+      privateFixture,
+      { "x-ratelimit-remaining": "0" },
+      "primary-rate-limit",
+    ],
+    [
+      403,
+      `Resource not accessible by integration. ${privateFixture}`,
+      {},
+      "access-denied",
+    ],
+    [403, privateFixture, {}, "forbidden-unclassified"],
+    [429, privateFixture, {}, "rate-limited"],
+    [503, privateFixture, {}, "http-refusal"],
+  ] as const) {
+    const fetchFixture = (async () =>
+      Response.json(
+        { message },
+        { status, headers },
+      )) as unknown as typeof fetch;
+    const github = GitHubClient.forToken("fixture-token", fetchFixture, {
+      observeSourceReadRefusal: true,
+    });
+    const diagnostic = await github
+      .get("/repos/fixture/source")
+      .then(() => null, historicalRepositoryReadDiagnostic);
+    expect(diagnostic).toEqual({ code, status });
+  }
+  expect(
+    historicalRepositoryReadDiagnostic(new GitHubError(404, privateFixture)),
+  ).toEqual({ code: "not-found", status: 404 });
+  expect(
+    historicalRepositoryReadDiagnostic(new SyntaxError(privateFixture)),
+  ).toEqual({ code: "invalid-json" });
+  expect(historicalRepositoryReadDiagnostic(new Error(privateFixture))).toEqual(
+    { code: "transport-or-response-failure" },
+  );
+});
+
 function fixture() {
   const award: PointAward = {
     key: pointKey("feed", actor.id, "merged-pull-request", "PR_source"),
@@ -3742,6 +3789,26 @@ test("historical publication installs the canonical merge runtime before verific
       "name: Read and verify the complete historical assessment catalog",
     ),
     workflow.indexOf("name: Preserve the assessment audit receipt"),
+  );
+  const collector = workflow.slice(
+    workflow.indexOf("name: Mint the read-only collector token"),
+    workflow.indexOf(
+      "name: Read and verify the complete historical assessment catalog",
+    ),
+  );
+  expect(collector).toContain(
+    "(inputs.operation == 'audit-assessments' || inputs.operation == 'replay-assessments') && vars.COLLECTOR_APP_CLIENT_ID != ''",
+  );
+  expect(collector).toContain(
+    `repositories: \${{ github.event.repository.name }}`,
+  );
+  expect(collector.match(/permission-[^:\n]+: [^\n]+/gu)).toEqual([
+    "permission-contents: read",
+    "permission-issues: read",
+    "permission-pull-requests: read",
+  ]);
+  expect(reading).toContain(
+    `GITHUB_TOKEN: \${{ steps.collector-token.outputs.token || github.token }}`,
   );
   expect(reading).toContain('"--$OPERATION"');
   expect(reading).toContain(

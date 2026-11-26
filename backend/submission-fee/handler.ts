@@ -34,7 +34,8 @@ const CACHE_CONTROL = "public, max-age=60";
 const ID = /^[1-9][0-9]{0,15}$/u;
 const CASE_ID = /^sc_[A-Za-z0-9_-]{8,72}$/u;
 
-async function rates(db: Database) {
+/** Every published SLOP rate, as the rate job wrote them; also read by the standing deposit API. */
+export async function publishedSlopRates(db: Database) {
   const { results } = await db
     .prepare(
       "SELECT effective_at, slop_per_usd FROM submission_fee_rates ORDER BY effective_at",
@@ -161,7 +162,10 @@ export async function handleSubmissionFeeApi(
     .slice(1);
   try {
     if (parts.length === 1 && parts[0] === "rate") {
-      const { current, previous } = slopRatesAt(await rates(deps.db), at);
+      const { current, previous } = slopRatesAt(
+        await publishedSlopRates(deps.db),
+        at,
+      );
       return respond(200, {
         schema: "slop-submission-fee-rate-v1",
         // The SLOP fee is this share of the stablecoin fee, at the rate.
@@ -226,7 +230,11 @@ export async function handleSubmissionFeeApi(
         // fee goes. Nothing more is due once the pull request is paid.
         due: paid
           ? []
-          : submissionFeeOptions(row.stable_minor, await rates(deps.db), at),
+          : submissionFeeOptions(
+              row.stable_minor,
+              await publishedSlopRates(deps.db),
+              at,
+            ),
         paid: paid
           ? {
               at: row.paid_at,

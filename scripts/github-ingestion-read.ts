@@ -226,8 +226,18 @@ export function githubIngestionReadTransport(
         !url.hash &&
         /^\/commits\/[a-f0-9]{40}\/pulls$/u.test(repositoryPath) &&
         /^\?per_page=100(?:&page=[1-9]\d*)?$/u.test(url.search);
+      // A single pull request read can also answer a transient 422 or 500
+      // (23 Nov: one 422 on elizaOS/eliza#37149 ended a three-hour
+      // collection; the same read answered 200 afterwards).
+      const pullRead =
+        gatewayRetry &&
+        /^\/pulls\/[1-9]\d*$/u.test(repositoryPath) &&
+        url.search === "";
       const serverErrorRetry =
-        pullFiles || commitPulls || (commitFilePage && gatewayRetry);
+        pullFiles ||
+        commitPulls ||
+        ((commitFilePage || pullRead) && gatewayRetry);
+      const validationRetryLimit = pullRead ? 2 : commitFilePage ? 1 : 0;
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
@@ -328,7 +338,7 @@ export function githubIngestionReadTransport(
         const retryServer =
           serverErrorRetry && response.status === 500 && serverRetries < 2;
         const retryValidation =
-          commitFilePage && response.status === 422 && validationRetries < 1;
+          response.status === 422 && validationRetries < validationRetryLimit;
         if (retryGateway || retryServer || retryValidation) {
           const retry = retryGateway
             ? ++gatewayRetries

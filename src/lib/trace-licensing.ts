@@ -2,6 +2,7 @@
 export const TRACE_TERMS_VERSIONS = [
   "private-trace-v1",
   "private-trace-v2",
+  "private-trace-v3",
 ] as const;
 
 export type TraceTermsVersion = (typeof TRACE_TERMS_VERSIONS)[number];

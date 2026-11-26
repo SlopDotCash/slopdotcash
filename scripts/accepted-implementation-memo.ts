@@ -5,7 +5,12 @@ import {
   acceptedOrdinaryCommitOid,
 } from "./accepted-implementation-digests";
 import type { AcceptedImplementationPredecessor } from "./accepted-implementation-history";
-import { COLLECTION_MEMO_FULL_INTERVAL_MS } from "./collection-memo";
+import {
+  COLLECTION_MEMO_FULL_INTERVAL_MS,
+  IMPLEMENTATION_MEMO_AUDIT_ONE_IN,
+  IMPLEMENTATION_MEMO_CHANGED_CODE_AUDIT_ONE_IN,
+  IMPLEMENTATION_MEMO_RULES_VERSION,
+} from "./collection-memo";
 
 export type PreviousImplementationObservation =
   | { kind: "ineligible" }
@@ -27,7 +32,18 @@ interface DigestEntry {
   observedAt: string | null;
 }
 
-const FORMAT = "slop-accepted-implementation-memo-v2";
+const FORMAT = "slop-accepted-implementation-memo-v3";
+
+/**
+ * A saved entry read again live came out differently. Every saved entry has
+ * been discarded; the caller reads the evidence again with nothing saved.
+ */
+export class ImplementationMemoAuditError extends Error {
+  constructor() {
+    super("A saved accepted implementation entry differs from its live read");
+    this.name = "ImplementationMemoAuditError";
+  }
+}
 const MAX_BYTES = 512 * 1024 * 1024;
 const MAX_ROWS = 200_000;
 const NODE_ID = /^[A-Za-z0-9_=+/-]{1,256}$/u;
@@ -243,30 +259,50 @@ export class ImplementationMemo {
   readonly #previous = new Map<string, PreviousEntry>();
   readonly #digests = new Map<string, DigestEntry>();
   #codeDigest: string | undefined;
+  #auditSeed = "";
+  /** About one reused saved entry in this many is also read live. */
+  auditOneIn = IMPLEMENTATION_MEMO_AUDIT_ONE_IN;
+  readonly stats = {
+    digestsReused: 0,
+    digestsRead: 0,
+    previousReused: 0,
+    previousRead: 0,
+    audited: 0,
+    auditMismatches: 0,
+  };
 
+  /**
+   * A memo written under other code is kept: its entries are facts about
+   * immutable Git objects and merged pull requests. Only another rules
+   * version discards it; changed code enlarges the audit sample instead.
+   */
   static parse(
     bytes: string,
     codeDigest: string,
     now: Date,
+    rulesVersion: number = IMPLEMENTATION_MEMO_RULES_VERSION,
   ): ImplementationMemo {
     if (Buffer.byteLength(bytes, "utf8") > MAX_BYTES)
       invalid("file is too large");
     const value = record(JSON.parse(bytes), [
       "format",
+      "rulesVersion",
       "codeDigest",
       "producedAt",
       "previous",
       "digests",
     ]);
-    if (
-      value.format !== FORMAT ||
-      string(value.codeDigest, DIGEST, "code digest") !== codeDigest
-    )
-      invalid("version or code digest");
+    if (value.format !== FORMAT || value.rulesVersion !== rulesVersion)
+      invalid("format or rules version");
+    const writtenUnder = string(value.codeDigest, DIGEST, "code digest");
+    string(codeDigest, DIGEST, "code digest");
     const producedAt = instant(value.producedAt);
     if (!recent(producedAt, now.getTime())) invalid("stale or future artifact");
     const memo = new ImplementationMemo();
     memo.#codeDigest = codeDigest;
+    memo.#auditSeed = producedAt;
+    if (writtenUnder !== codeDigest)
+      memo.auditOneIn = IMPLEMENTATION_MEMO_CHANGED_CODE_AUDIT_ONE_IN;
     for (const entry of rows(value.digests)) {
       const row = record(entry, [
         "repositoryNodeId",
@@ -338,6 +374,7 @@ export class ImplementationMemo {
 
   /** Recollect live metadata after a failed census while retaining native proofs. */
   beginPass(): void {
+    this.#resetReuseCounts();
     for (const [key, entry] of this.#previous) {
       if (entry.observedAt === null) this.#previous.delete(key);
     }
@@ -366,6 +403,7 @@ export class ImplementationMemo {
     );
     const bytes = `${JSON.stringify({
       format: FORMAT,
+      rulesVersion: IMPLEMENTATION_MEMO_RULES_VERSION,
       codeDigest,
       producedAt,
       previous,
@@ -377,6 +415,65 @@ export class ImplementationMemo {
       entry.observedAt ??= producedAt;
     for (const entry of this.#digests.values()) entry.observedAt ??= producedAt;
     return bytes;
+  }
+
+  /**
+   * Whether a saved entry for this pull request is in this run's audit
+   * sample. Deterministic for one restored memo; entries read in this run are
+   * never audited.
+   */
+  audits(repositoryNodeId: string, pullRequestId: string): boolean {
+    if (!this.#auditSeed) return false;
+    if (!Number.isSafeInteger(this.auditOneIn) || this.auditOneIn < 1)
+      invalid("audit rate");
+    return (
+      Number.parseInt(
+        sha256Hex(
+          `${this.#auditSeed}\0${repositoryNodeId}\0${pullRequestId}`,
+        ).slice(0, 8),
+        16,
+      ) %
+        this.auditOneIn ===
+      0
+    );
+  }
+
+  /** Compare a saved observation with a definitive live one. */
+  auditPrevious(
+    saved: PreviousImplementationObservation,
+    prior: AcceptedImplementationPredecessor,
+    live: PreviousImplementationObservation,
+  ): void {
+    this.#audit(
+      JSON.stringify(parseObservation(saved, prior.id)) ===
+        JSON.stringify(parseObservation(live, prior.id)),
+    );
+  }
+
+  /** Compare a saved native digest with a definitive live result. */
+  auditDigest(saved: string, live: string | undefined): void {
+    this.#audit(saved === live);
+  }
+
+  #resetReuseCounts(): void {
+    this.stats.digestsReused = 0;
+    this.stats.digestsRead = 0;
+    this.stats.previousReused = 0;
+    this.stats.previousRead = 0;
+  }
+
+  #audit(same: boolean): void {
+    this.stats.audited += 1;
+    if (same) return;
+    this.stats.auditMismatches += 1;
+    this.#resetReuseCounts();
+    // One difference means the saved entries cannot be trusted as a set.
+    for (const [key, entry] of this.#previous)
+      if (entry.observedAt !== null) this.#previous.delete(key);
+    for (const [key, entry] of this.#digests)
+      if (entry.observedAt !== null) this.#digests.delete(key);
+    this.#auditSeed = "";
+    throw new ImplementationMemoAuditError();
   }
 
   previous(
