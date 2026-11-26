@@ -39,7 +39,7 @@ function uiBody(uiVideo: string): string {
   ].join("\n");
 }
 
-test("a placeholder word before an inspectable artifact link still supplies evidence", () => {
+test("a partial-execution note before an inspectable artifact link still supplies evidence", () => {
   expect(
     missingSubmissionEvidence(
       nonUiBody(
@@ -50,12 +50,35 @@ test("a placeholder word before an inspectable artifact link still supplies evid
   ).toBeNull();
   expect(
     missingSubmissionEvidence(
-      uiBody(
-        "pending https://github.com/user-attachments/assets/18a47654-7a03-48a7-8000-f30bafafa283",
+      nonUiBody(
+        "not tested locally; CI green https://github.com/SlopDotCash/slopdotcash/actions/runs/123456",
       ),
       policy,
     ),
   ).toBeNull();
+});
+
+test("an absence marker stays missing even with an inspectable artifact link", () => {
+  for (const testResults of [
+    "n/a https://github.com/SlopDotCash/slopdotcash/actions/runs/123456",
+    "not applicable https://github.com/SlopDotCash/slopdotcash/actions/runs/123456",
+    "none https://github.com/SlopDotCash/slopdotcash/actions/runs/123456",
+    "tbd https://github.com/SlopDotCash/slopdotcash/actions/runs/123456",
+    "todo https://github.com/SlopDotCash/slopdotcash/actions/runs/123456",
+    "pending https://github.com/SlopDotCash/slopdotcash/actions/runs/123456",
+  ]) {
+    expect(
+      missingSubmissionEvidence(nonUiBody(testResults), policy)?.fields,
+    ).toEqual(["Test results"]);
+  }
+  expect(
+    missingSubmissionEvidence(
+      uiBody(
+        "pending https://github.com/user-attachments/assets/18a47654-7a03-48a7-8000-f30bafafa283",
+      ),
+      policy,
+    )?.fields,
+  ).toEqual(["UI video"]);
 });
 
 test("a placeholder without an inspectable artifact link stays missing", () => {
@@ -64,6 +87,8 @@ test("a placeholder without an inspectable artifact link stays missing", () => {
     "pending: results coming soon after CI finishes",
     "pending https://github.com",
     "todo: add the run link later",
+    "not run",
+    "not run https://github.com",
   ]) {
     expect(
       missingSubmissionEvidence(nonUiBody(testResults), policy)?.fields,

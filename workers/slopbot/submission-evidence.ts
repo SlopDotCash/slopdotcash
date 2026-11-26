@@ -66,15 +66,14 @@ function hasEvidence(field: string, value: string | undefined): boolean {
       );
     },
   );
-  // A placeholder word alone supplies nothing, but it does not erase an
-  // inspectable artifact link on the same line (for example a check that
-  // could not run locally beside its CI run link).
+  // An absence marker declares the evidence missing, so it stays missing
+  // even beside a link. A partial-execution note (for example a check that
+  // could not run locally beside its CI run link) does not erase that link.
   if (
-    /^(?:n\/?a\b|not (?:applicable|run|tested)\b|none\b|tbd\b|todo\b|pending\b)/iu.test(
-      value,
-    )
+    /^(?:n\/?a\b|not applicable\b|none\b|tbd\b|todo\b|pending\b)/iu.test(value)
   )
-    return linked;
+    return false;
+  if (/^not (?:run|tested)\b/iu.test(value)) return linked;
   if (field === "UI video" || field === UI_SCREENSHOTS) return linked;
   return (
     linked || (value.match(/[\p{L}\p{N}][\p{L}\p{N}_./-]*/gu)?.length ?? 0) >= 5
