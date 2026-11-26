@@ -133,7 +133,7 @@ export function OwnerAwards({ runtime, project, awardMonths, networkPays }: Owne
   const shown = useSession(runtime);
   const address = useAddress();
   const nowMs = useNow();
-  const bounds = monthBounds(project.id, awardMonths, nowMs);
+  const bounds = monthBounds(project.id, awardMonths, nowMs, project.reward.cycleCaps);
   const saved = savedCommitmentMonths(sessionSlots(), project.id, monthsBetween(bounds.first, bounds.start));
   const [opened, setOpened] = useState(saved.length > 0);
   const [period, setPeriod] = useState(bounds.start);
