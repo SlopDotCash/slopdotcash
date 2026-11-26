@@ -75,6 +75,12 @@ export interface Notification {
   acknowledgedAt?: string | null;
   /** Present only when an email delivery for this notice exists. */
   emailDelivery?: EmailDelivery;
+  /**
+   * Present only on the appellant's own Points dispute intake receipt.
+   * The receipt shares its event key and kind with the moderator queue
+   * row, so the title cannot tell them apart from those fields alone.
+   */
+  pointsDisputeReceipt?: boolean;
 }
 
 export interface NotificationsResponse {
@@ -121,7 +127,9 @@ function isNotification(value: unknown): value is Notification {
       n.acknowledgedAt === null ||
       isTimestamp(n.acknowledgedAt)) &&
     (n.emailDelivery === undefined ||
-      EMAIL_DELIVERY_STATES.includes(n.emailDelivery as EmailDelivery))
+      EMAIL_DELIVERY_STATES.includes(n.emailDelivery as EmailDelivery)) &&
+    (n.pointsDisputeReceipt === undefined ||
+      typeof n.pointsDisputeReceipt === "boolean")
   );
 }
 
@@ -185,7 +193,10 @@ export function notificationTitle(n: Notification): string {
     case "project_installation_lost":
       return `${n.subject}: reinstall Slopbot`;
     case "project_revision":
-      // The backlog rule reuses this kind (PRD section 5).
+      // The weekly report reminder and the backlog rule reuse this kind
+      // (PRD sections 8 and 5).
+      if (n.eventKey.startsWith("security-queue:"))
+        return `${n.subject} reports are waiting`;
       return n.eventKey.startsWith("backlog-rule:")
         ? n.eventKey.includes(":out:")
           ? `${n.subject} is out of rotation`
@@ -221,7 +232,9 @@ export function notificationTitle(n: Notification): string {
           : `${n.subject} payout held`;
     case "slopbot_appeal_review":
       return n.eventKey.startsWith("slopbot-points-dispute:")
-        ? "Points dispute to review"
+        ? n.pointsDisputeReceipt
+          ? "Points dispute filed"
+          : "Points dispute to review"
         : "Appeal to decide";
     case "slopbot_appeal_resolved":
       return n.eventKey.startsWith("slopbot-points-dispute:")
@@ -246,6 +259,7 @@ export function notificationAction(n: Notification): string {
       // Moderators get the same event with an admin link (contributor flags).
       return n.actionPath === "/admin" ? "Open admin" : "Open project";
     case "project_revision":
+      if (n.eventKey.startsWith("security-queue:")) return "Open Inbox";
       return n.eventKey.startsWith("backlog-rule:")
         ? "Open settings"
         : "Open project";

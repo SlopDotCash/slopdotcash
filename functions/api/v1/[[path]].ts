@@ -58,7 +58,10 @@ import {
   githubAppReportingReader,
   githubInstallationCheck,
 } from "../../../backend/security/github-advisories";
-import { handleSecurityApi } from "../../../backend/security/handler";
+import {
+  handleSecurityApi,
+  importGithubReports,
+} from "../../../backend/security/handler";
 import {
   githubIntakeOAuth,
   type IntakeConfig,
@@ -66,6 +69,10 @@ import {
 import { handleSecurityQueue } from "../../../backend/security/operator-queue";
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
 import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
+import {
+  handleSecurityReadKey,
+  securityReadKeyActor,
+} from "../../../backend/security/read-key";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
 import { reportDepositMode } from "../../../backend/security/report-deposit";
 import { analysisDependencies } from "../../../backend/security/report-intake";
@@ -392,7 +399,11 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     reportIntakeEnabled: env.SLOP_PRIVATE_INTAKE_MODE === "on",
     now,
     randomId,
-    sessionActor,
+    // A personal read-only key stands in for the session on GET reads under
+    // security-cases and security-submissions only (PRD section 8).
+    sessionActor: async (request) =>
+      (await sessionActor(request)) ??
+      (await securityReadKeyActor(request, db, now())),
     reportingRead: app
       ? githubAppReportingReader(app)
       : async () => ({ kind: "unavailable" }),
@@ -422,6 +433,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       adminGithubIds,
     },
   };
+  const securityReadKey = await handleSecurityReadKey(request, {
+    db,
+    sessionActor,
+    now,
+  });
+  if (securityReadKey !== null) return securityReadKey;
   const securityResponse = await handleSecurityApi(
     request,
     securityDependencies,
@@ -560,6 +577,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const securityQueue = await handleSecurityQueue(request, {
     token: env.OPERATOR_FEED_TOKEN,
     analysis: analysisDependencies(securityDependencies),
+    importReports: () => importGithubReports(securityDependencies),
   });
   if (securityQueue !== null) return securityQueue;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {

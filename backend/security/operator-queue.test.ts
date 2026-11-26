@@ -157,6 +157,7 @@ function fixture(options: { analyzerFails?: boolean } = {}) {
     );
   return {
     sqlite,
+    analysis,
     project,
     addCase,
     addAttempt,
@@ -320,6 +321,55 @@ describe("operator security queue", () => {
       reason: "daily-limit",
     });
     expect(t.attempts("sc_alpha00001")).toEqual([]);
+  });
+
+  test("POST imports new GitHub reports before it retries and reminds, and survives an import failure", async () => {
+    const t = fixture();
+    t.project("alpha");
+    t.addCase("sc_alpha00001", "alpha", before(DAY));
+    const order: string[] = [];
+    const post = (importReports: () => Promise<unknown>) =>
+      handleSecurityQueue(
+        new Request(URL_, {
+          method: "POST",
+          headers: { authorization: `Bearer ${TOKEN}` },
+          body: "{}",
+        }),
+        {
+          token: TOKEN,
+          analysis: {
+            ...t.analysis,
+            storedReport: async (caseId) => {
+              order.push("analysis");
+              return t.analysis.storedReport?.(caseId) ?? null;
+            },
+          },
+          importReports,
+        },
+      );
+    const first = await post(async () => {
+      order.push("import");
+    });
+    expect(first?.status).toBe(200);
+    expect(order).toEqual(["import", "analysis"]);
+    // GET never imports.
+    const read = await handleSecurityQueue(
+      new Request(URL_, { headers: { authorization: `Bearer ${TOKEN}` } }),
+      {
+        token: TOKEN,
+        analysis: t.analysis,
+        importReports: async () => {
+          order.push("import-on-get");
+        },
+      },
+    );
+    expect(read?.status).toBe(200);
+    expect(order).not.toContain("import-on-get");
+    // A failed import does not fail the job.
+    const failed = await post(async () => {
+      throw new Error("GitHub failed");
+    });
+    expect(failed?.status).toBe(200);
   });
 
   test("through the router, a wrong or missing token is the same answer as a path that does not exist", async () => {

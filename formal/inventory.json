@@ -49,7 +49,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "887e6eeac08c40a915c007eafe737c113ab3e75c2142ae19d750925240f9df22",
+      "sha256": "fe580091c558de8e15e070f766e192cf4a174f136967f7e5d14c2242be590572",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -157,7 +157,7 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "6b30f8c8c03db2613f40b5507321c1f78923259dbf810c013427e1d643afb131",
+      "sha256": "f9687d56212adfda9d69a26b45a18028257939997cdf4e16726a6f41eac8ff4d",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
@@ -269,7 +269,7 @@
     },
     {
       "path": "backend/http.ts",
-      "sha256": "5ba0313a8d8cd813d2ee6d3efd281833789f527d7b3f24bf9a3361d1c7bb2c4f",
+      "sha256": "763aae893d77bb376032dd91210eddec00b77509f6358cbf478f6f1d7504acc4",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -291,8 +291,8 @@
         "formal/models/vetting/vetting_evidence_inventory.qnt"
       ],
       "candidateLines": [
-        6, 7, 9, 44, 49, 118, 121, 126, 145, 158, 159, 160, 161, 162, 164, 165,
-        168, 173, 180
+        6, 7, 9, 44, 49, 118, 121, 126, 146, 159, 160, 161, 162, 163, 165, 166,
+        169, 174, 181
       ],
       "review": "mapped-abstraction"
     },
@@ -353,7 +353,7 @@
     },
     {
       "path": "backend/notifications/handler.ts",
-      "sha256": "b90f2c777b23c14c9f26d298348f134170e1c19d05890816988c6f9e3ec5c56e",
+      "sha256": "4afe07b85a248bcbb0191594e6b01b0f6a7041eaeb5fbe058a3f277b1a230ef7",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -361,7 +361,7 @@
         "formal/models/api/inbox_queries.qnt",
         "formal/models/api/incomplete_assessment_queries.qnt"
       ],
-      "candidateLines": [65, 72, 73, 144, 177, 211, 215, 280, 313, 334, 335],
+      "candidateLines": [66, 73, 74, 145, 178, 214, 218, 287, 320, 341, 342],
       "review": "mapped-abstraction"
     },
     {
@@ -785,7 +785,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "e84ca12f569ea7959c7175d9a63cb9160962b355d3164625305e916223cf266d",
+      "sha256": "32f729bcd257e7ebb165ed77015a2671197a2cbb1cf9b952aea7438534cd3e14",
       "models": [
         "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_owner_vault_lifecycle.qnt",
@@ -820,13 +820,13 @@
         476, 480, 481, 489, 555, 559, 978, 1015, 1031, 1127, 1141, 1146, 1153,
         1154, 1157, 1160, 1178, 1180, 1182, 1193, 1211, 1218, 1229, 1261, 1262,
         1278, 1284, 1293, 1295, 1300, 1301, 1302, 1303, 1315, 1316, 1317, 1320,
-        1325, 1364, 1424, 1474, 1510, 1528, 1602, 1684, 1695, 1722, 1723, 1736,
-        1746, 1780, 1838, 1839, 1892, 1942, 1948, 1952, 1976, 1982, 2018, 2026,
-        2029, 2030, 2083, 2084, 2085, 2105, 2178, 2290, 2291, 2303, 2324, 2326,
-        2330, 2341, 2351, 2366, 2372, 2382, 2419, 2438, 2442, 2493, 2642, 2646,
-        2677, 2698, 2699, 2713, 2716, 2721, 2722, 2768, 2782, 2800, 2817, 2849,
-        2853, 2863, 2872, 3016, 3042, 3193, 3213, 3259, 3299, 3310, 3311, 3424,
-        3432, 3450, 3649
+        1325, 1364, 1424, 1474, 1510, 1528, 1605, 1687, 1698, 1725, 1726, 1739,
+        1749, 1783, 1841, 1842, 1895, 1945, 1951, 1955, 1982, 1988, 2024, 2032,
+        2035, 2036, 2089, 2090, 2091, 2111, 2184, 2296, 2297, 2309, 2330, 2332,
+        2336, 2347, 2357, 2372, 2378, 2388, 2425, 2444, 2448, 2499, 2648, 2652,
+        2683, 2704, 2705, 2719, 2722, 2727, 2728, 2774, 2788, 2806, 2823, 2855,
+        2859, 2869, 2878, 3022, 3048, 3199, 3219, 3265, 3305, 3316, 3317, 3430,
+        3438, 3456, 3655
       ],
       "review": "mapped-abstraction"
     },
@@ -1121,12 +1121,14 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "68ec1f7f588d2464051b63d3603d56381a48878055407ca7425abf37b21c8a6f",
+      "sha256": "66c949ad226b4447bf4121002cd526f1a336bc39aac01028fd49407b8e53d120",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_advisory_state.qnt",
+        "formal/models/api/api_security_automatic_import.qnt",
         "formal/models/api/api_security_routine_decisions.qnt",
         "formal/models/api/notification_escalation.qnt",
         "formal/models/api/submission_receipt_verification.qnt",
@@ -1139,13 +1141,14 @@
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
-        316, 317, 368, 370, 377, 439, 447, 449, 522, 593, 661, 673, 695, 697,
-        705, 709, 725, 791, 944, 986, 1131, 1151, 1184, 1207, 1223, 1356, 1398,
-        1399, 1401, 1403, 1423, 1525, 1555, 1574, 1673, 1674, 1689, 1704, 1729,
-        1800, 1804, 1849, 1874, 2057, 2100, 2225, 2593, 2619, 2644, 2698, 2865,
-        2868, 2869, 2908, 2917, 2937, 2983, 3034, 3035, 3037, 3080, 3142, 3171,
-        3177, 3183, 3213, 3250, 3261, 3279, 3285, 3369, 3377, 3379, 3394, 3490,
-        3499, 3505, 3517, 3520, 3521, 3549, 3553, 3556, 3593
+        312, 313, 364, 366, 373, 435, 443, 445, 518, 544, 592, 681, 693, 715,
+        717, 725, 729, 745, 811, 837, 973, 1015, 1160, 1180, 1213, 1236, 1252,
+        1385, 1418, 1421, 1429, 1436, 1438, 1449, 1466, 1469, 1473, 1492, 1493,
+        1495, 1497, 1520, 1544, 1569, 1679, 1709, 1728, 1827, 1828, 1843, 1858,
+        1883, 1954, 1958, 2003, 2028, 2211, 2254, 2379, 2747, 2773, 2798, 2852,
+        3019, 3022, 3023, 3062, 3071, 3091, 3137, 3188, 3189, 3191, 3234, 3296,
+        3325, 3331, 3337, 3367, 3404, 3415, 3433, 3439, 3523, 3531, 3533, 3548,
+        3644, 3653, 3659, 3671, 3674, 3675, 3703, 3707, 3710, 3747
       ],
       "review": "mapped-abstraction"
     },
@@ -1161,9 +1164,19 @@
     },
     {
       "path": "backend/security/operator-queue.ts",
-      "sha256": "f4851d3abcc415cc38d7d6e12d99da8f7091896238b155945b34c194f94a2812",
-      "models": ["formal/models/api/api_security_queue.qnt"],
-      "candidateLines": [2, 28, 95, 104, 118, 172, 219, 222, 230],
+      "sha256": "a8cc0e6e169fdd00102cb8a6817a4226f79456bd2a699fe9abe68bd9e98c5e6a",
+      "models": [
+        "formal/models/api/api_security_automatic_import.qnt",
+        "formal/models/api/api_security_queue.qnt"
+      ],
+      "candidateLines": [2, 32, 100, 109, 123, 177, 224, 227, 235, 283],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/owner-reminders.ts",
+      "sha256": "a07b60b9cea3f33a3c1cb8d1eac3f0f1391e40322fcefa66d34ff08d9c9ac932",
+      "models": ["formal/models/api/api_security_owner_reminder.qnt"],
+      "candidateLines": [68],
       "review": "mapped-abstraction"
     },
     {
@@ -1208,6 +1221,13 @@
         "formal/models/api/api_private_case_roles.qnt"
       ],
       "candidateLines": [19, 22, 23],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/read-key.ts",
+      "sha256": "a9d698654cad1040cad3a066aaac3440edb2705271e5f2194a6af6c3534aed3a",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [52, 69, 77, 84, 88, 91, 93, 103, 108, 158],
       "review": "mapped-abstraction"
     },
     {
@@ -2415,7 +2435,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "f919af529d834b6729ae0e9619392ea4da6720895d22542d0dd1278578bef13e",
+      "sha256": "261958891de3208ddcb8cce09c9968ebf7980ab6003d342eedd5124520301e8c",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2427,7 +2447,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [605, 606, 642, 655],
+      "candidateLines": [623, 624, 660, 673],
       "review": "mapped-abstraction"
     },
     {
@@ -3922,6 +3942,20 @@
       "sha256": "7d00d4d179d0727473048f111dde9710f1da27c8539f349c8dbbeb6ffa478a63",
       "models": ["formal/models/slopbot/bot_joint_journal.qnt"],
       "candidateLines": [18, 22, 24, 30, 37, 39],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0153_security_advisory_states.sql",
+      "sha256": "b2cec009c31627b0d88c370a18b57ce31af150e9da7d356d38750fc49ce2fb7e",
+      "models": ["formal/models/api/api_security_advisory_state.qnt"],
+      "candidateLines": [1, 3, 6, 7, 11],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0154_security_read_keys.sql",
+      "sha256": "99923696199d8ee3fb0696376cfffce1afd0452489d9cabe89895aa285b5b532",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -5710,7 +5744,7 @@
     },
     {
       "path": "scripts/test-payout-browser.mjs",
-      "sha256": "70edbd360af4c1aad03876e9672181f146638889f1de92dbecba2ec82f5bb4b5",
+      "sha256": "62b6a7fd26db3aee54a68a518beeeb4dd761ae94b6a623ed7ce5ed71e612a3c9",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
         3, 37, 78, 88, 95, 101, 140, 149, 161, 166, 180, 183, 220, 222, 261
@@ -6386,7 +6420,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "b7ab3f6ac388b75be351d1203bd6a2dc8383d6e6987acbe49c888b80f4cb0df8",
+      "sha256": "d967bfd7ae2c8816b2bd29c8d027450fbb6d68e00bbb6d005060279256c10ca9",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -6398,20 +6432,20 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        20, 25, 97, 126, 127, 128, 130, 136, 146, 155, 158, 166, 169, 171, 173,
-        174, 195, 197, 253, 254, 255, 258, 259, 260, 261, 278, 284, 291, 299,
-        309, 316, 323, 337, 357, 374, 393, 394, 399, 423, 426, 427, 428, 429,
-        430, 432, 433, 450, 541, 542, 543, 545, 547, 548, 555, 556, 570, 572,
-        574, 576, 578, 581, 582, 586, 588, 590, 600, 601, 606, 608, 620, 621,
-        648, 652, 653, 663, 664, 675, 677, 684, 685, 704, 710, 736, 737, 738,
-        739, 742, 752, 777, 826, 839, 844, 853, 919, 939, 945, 954, 960, 965,
-        967, 970, 976, 977, 988, 997, 1005, 1007, 1016, 1019, 1020, 1021, 1022,
-        1024, 1025, 1028, 1029, 1040, 1073, 1077, 1134, 1135, 1205, 1215, 1220,
-        1238, 1240, 1242, 1245, 1246, 1247, 1249, 1317, 1321, 1423, 1424, 1425,
-        1455, 1456, 1497, 1498, 1499, 1501, 1508, 1510, 1514, 1516, 1518, 1527,
-        1528, 1534, 1540, 1545, 1554, 1555, 1556, 1557, 1560, 1561, 1563, 1568,
-        1569, 1572, 1573, 1575, 1581, 1587, 1588, 1589, 1590, 1593, 1594, 1602,
-        1614
+        20, 25, 98, 127, 128, 129, 131, 137, 147, 156, 159, 167, 170, 172, 174,
+        175, 196, 198, 254, 255, 256, 259, 260, 261, 262, 279, 285, 292, 300,
+        310, 317, 324, 338, 358, 375, 394, 395, 400, 424, 427, 428, 429, 430,
+        431, 433, 434, 451, 542, 543, 544, 546, 548, 549, 556, 557, 571, 573,
+        575, 577, 579, 582, 583, 587, 589, 591, 601, 602, 607, 609, 621, 622,
+        649, 653, 654, 664, 665, 676, 678, 685, 686, 705, 711, 737, 738, 739,
+        740, 743, 753, 778, 827, 840, 845, 854, 920, 940, 946, 955, 961, 966,
+        968, 971, 977, 978, 989, 998, 1006, 1008, 1017, 1020, 1021, 1022, 1023,
+        1025, 1026, 1029, 1030, 1041, 1074, 1078, 1145, 1146, 1216, 1226, 1231,
+        1249, 1251, 1253, 1256, 1257, 1258, 1260, 1328, 1332, 1434, 1435, 1436,
+        1466, 1467, 1508, 1509, 1510, 1512, 1519, 1521, 1525, 1527, 1529, 1538,
+        1539, 1545, 1551, 1556, 1565, 1566, 1567, 1568, 1571, 1572, 1574, 1579,
+        1580, 1583, 1584, 1586, 1592, 1598, 1599, 1600, 1601, 1604, 1605, 1613,
+        1625
       ],
       "review": "mapped-abstraction"
     },
@@ -6748,7 +6782,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "3b0d980781db1e5c994ce25f2ed1c38d011b48f205ec817fa64a005dedbf85e7",
+      "sha256": "3a58099f9c887e9839104689cd68838a4403d11a4d8983dde0cfc61619a4b322",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -6770,27 +6804,28 @@
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "candidateLines": [
-        42, 47, 153, 156, 204, 209, 259, 260, 262, 341, 352, 379, 381, 388, 401,
-        402, 404, 411, 414, 422, 454, 455, 456, 469, 470, 473, 477, 485, 490,
-        494, 512, 515, 517, 525, 534, 536, 542, 548, 549, 550, 553, 555, 558,
-        574, 575, 582, 585, 587, 590, 594, 597, 598, 599, 601, 604, 606, 607,
-        610, 611, 614, 617, 623, 624, 629, 632, 636, 645, 649, 653, 656, 660,
-        702, 724, 821, 831, 834, 872, 873, 877, 884, 889, 907, 946, 947, 954,
-        992, 1191, 1206, 1244, 1249, 1271, 1348, 1349, 1350, 1351, 1373, 1384,
-        1391, 1397, 1398, 1406, 1408, 1413, 1440, 1444, 1486, 1489, 1619, 1620,
-        1627, 1630, 1631, 1646, 1666, 1667, 1668, 1671, 1743, 1744, 1745, 1748,
-        1813, 1866, 1873, 1895, 1897, 1972, 1974, 1983, 1993, 2003, 2007, 2011,
-        2013, 2058, 2059, 2063, 2066, 2124, 2127, 2133, 2154, 2155, 2161, 2162,
-        2171, 2176, 2177, 2183, 2240, 2246, 2256, 2257, 2305, 2316, 2317, 2321,
-        2322, 2323, 2338, 2342, 2348, 2391, 2457, 2463, 2469, 2473, 2516, 2524,
-        2547, 2548, 2549, 2550, 2551, 2552, 2553, 2705, 2882, 2886, 2917, 3118,
-        3189, 3190, 3339, 3416, 3417, 3430, 3431, 3434, 3438, 3439, 3454, 3474,
-        3496, 3516, 3518, 3546, 3547, 3551, 3559, 3586, 3608, 3610, 3639, 3640,
-        3644, 3652, 3701, 3752, 3763, 3826, 3849, 3861, 3862, 3863, 3868, 3872,
-        3875, 3877, 3881, 4012, 4018, 4019, 4192, 4217, 4703, 4708, 4717, 4722,
-        4727, 4728, 4730, 4735, 4782, 4785, 4790, 4792, 4836, 4848, 4854, 4879,
-        4881, 4883, 4891, 4892, 4896, 4899, 4900, 4902, 4919, 4921, 4930, 4931,
-        4949, 4950, 4951, 4956, 4959, 4961, 4966, 4993, 5036, 5044, 5048, 5138
+        42, 47, 115, 154, 157, 205, 210, 260, 261, 263, 342, 353, 380, 382, 389,
+        402, 403, 405, 412, 415, 423, 455, 456, 457, 470, 471, 474, 478, 486,
+        491, 495, 513, 516, 518, 526, 535, 537, 543, 549, 550, 551, 554, 556,
+        559, 575, 576, 583, 586, 588, 591, 595, 598, 599, 600, 602, 605, 607,
+        608, 611, 612, 615, 618, 624, 625, 630, 633, 637, 646, 650, 654, 657,
+        661, 703, 725, 822, 832, 835, 873, 874, 878, 885, 890, 908, 947, 948,
+        955, 993, 1192, 1207, 1245, 1250, 1272, 1295, 1355, 1356, 1357, 1358,
+        1380, 1391, 1398, 1404, 1405, 1413, 1415, 1420, 1447, 1451, 1493, 1496,
+        1626, 1627, 1634, 1637, 1638, 1653, 1673, 1674, 1675, 1678, 1750, 1751,
+        1752, 1755, 1820, 1873, 1880, 1902, 1904, 1979, 1981, 1990, 2000, 2010,
+        2014, 2018, 2020, 2065, 2066, 2070, 2073, 2131, 2134, 2140, 2161, 2162,
+        2168, 2169, 2178, 2183, 2184, 2190, 2247, 2253, 2263, 2264, 2312, 2323,
+        2324, 2328, 2329, 2330, 2345, 2349, 2355, 2398, 2464, 2470, 2476, 2480,
+        2523, 2531, 2554, 2555, 2556, 2557, 2558, 2559, 2560, 2712, 2889, 2893,
+        2924, 3125, 3196, 3197, 3346, 3423, 3424, 3437, 3438, 3441, 3445, 3446,
+        3461, 3481, 3503, 3523, 3525, 3553, 3554, 3558, 3566, 3593, 3615, 3617,
+        3646, 3647, 3651, 3659, 3708, 3759, 3770, 3833, 3856, 3868, 3869, 3870,
+        3875, 3879, 3882, 3884, 3888, 4024, 4030, 4031, 4217, 4242, 4728, 4733,
+        4742, 4747, 4752, 4753, 4755, 4760, 4807, 4810, 4815, 4817, 4861, 4873,
+        4879, 4904, 4906, 4908, 4916, 4917, 4921, 4924, 4925, 4927, 4944, 4946,
+        4955, 4956, 4974, 4975, 4976, 4981, 4984, 4986, 4991, 5018, 5061, 5069,
+        5073, 5163
       ],
       "review": "mapped-abstraction"
     },
@@ -6813,6 +6848,15 @@
         1, 70, 78, 141, 142, 144, 151, 161, 162, 167, 172, 179, 192, 230, 241,
         242, 294, 321, 358, 403, 405, 406, 408, 411, 414, 415, 615, 617, 622,
         631
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/SecurityReadKey.tsx",
+      "sha256": "51befcd572c5636285b60c3d111d23fa4b9b59453e1999f9d666002885859944",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [
+        7, 19, 36, 37, 39, 45, 53, 62, 80, 81, 84, 89, 97, 120, 126
       ],
       "review": "mapped-abstraction"
     },
@@ -7376,17 +7420,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "abeff951e71562284ea14f5997d0747520c9422c8c81e4195bd973c9a3d5da40",
+      "sha256": "022c9216d34baa3ed7c7d0dc5b77e8a75a9f09c12a58bbea561c4438bcd953d2",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 281, 303, 351, 383, 441, 502, 510, 517, 557, 666, 697, 820, 847
+        71, 76, 313, 335, 383, 415, 473, 534, 542, 549, 589, 698, 729, 858, 885
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "7cc677e36ae508b875e9de41c5e526825e77ede3d1794753c838b063ea397c15",
+      "sha256": "2292c3105b8b9bb8947821919bc17ce83db8a612a2b1385eb121bf4b30964ff0",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
@@ -7401,17 +7445,17 @@
         "formal/models/ui/ui_snapshot_contract.qnt"
       ],
       "candidateLines": [
-        267, 268, 292, 298, 963, 1026, 1052, 1263, 1325, 1335, 1341, 1343, 1345,
-        1347, 1354, 1439, 1473, 1478, 1496, 1593, 2148, 2166, 2238, 2247, 2265,
-        2274, 2282, 2304, 2319, 2328, 2336, 2382, 2432, 2482, 2537, 2554, 2555,
-        2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2940, 2993,
-        3159, 3260, 3279, 3334, 3510, 3714, 3739, 3788, 3869, 3889, 3893, 4077,
-        4171, 4594, 4605, 4639, 4702, 4716, 5039, 5252, 5453, 5566, 5591, 5701,
-        5778, 5780, 5781, 5792, 5966, 5975, 5980, 6048, 6062, 6831, 6833, 6856,
-        6860, 6864, 6869, 7015, 7024, 7034, 7035, 7093, 7128, 7134, 7154, 7159,
-        7166, 7174, 7176, 7202, 7205, 7219, 7221, 7242, 7244, 7248, 7251, 7256,
-        7448, 7450, 7709, 7753, 7816, 7817, 8696, 8697, 8698, 8699, 8700, 8717,
-        8727, 8738, 8742, 8765, 8854, 8933, 8934, 9004, 9036, 9243
+        271, 272, 296, 302, 967, 1030, 1056, 1267, 1329, 1339, 1345, 1347, 1349,
+        1351, 1358, 1443, 1477, 1482, 1500, 1597, 2152, 2170, 2242, 2251, 2269,
+        2278, 2286, 2308, 2323, 2332, 2340, 2386, 2436, 2486, 2541, 2558, 2559,
+        2562, 2563, 2667, 2669, 2670, 2674, 2677, 2685, 2687, 2705, 2944, 2997,
+        3163, 3264, 3283, 3338, 3515, 3719, 3744, 3793, 3874, 3894, 3898, 4082,
+        4176, 4599, 4610, 4644, 4707, 4721, 5065, 5278, 5479, 5592, 5617, 5727,
+        5804, 5806, 5807, 5818, 5992, 6001, 6006, 6074, 6088, 6934, 6936, 6959,
+        6963, 6967, 6972, 7118, 7127, 7137, 7138, 7196, 7231, 7237, 7257, 7262,
+        7269, 7277, 7279, 7305, 7308, 7322, 7324, 7345, 7347, 7351, 7354, 7359,
+        7551, 7553, 7812, 7856, 7919, 7920, 8917, 8918, 8919, 8920, 8921, 8938,
+        8948, 8959, 8963, 8986, 9075, 9154, 9155, 9175, 9239, 9271, 9478
       ],
       "review": "mapped-abstraction"
     },
@@ -7474,13 +7518,13 @@
     },
     {
       "path": "src/lib/monthly-commitment-actions.ts",
-      "sha256": "91efe5605a98db36188b3867294616b875bde0c0af3053251a2ba1dc2bd1a8c5",
+      "sha256": "4753d101876602c40c6313e23c75ebae29bdb37a9104f85a836e8c9ccedd08ce",
       "models": [
         "formal/models/contracts/solana_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt"
       ],
       "candidateLines": [
-        45, 75, 78, 184, 185, 186, 201, 272, 274, 286, 379, 380, 381, 383, 384
+        45, 93, 96, 217, 218, 219, 234, 305, 307, 319, 412, 413, 414, 416, 417
       ],
       "review": "mapped-abstraction"
     },
@@ -7501,7 +7545,7 @@
     },
     {
       "path": "src/lib/notifications.ts",
-      "sha256": "19e49c75c23e977b82c850b2e838cfdf97024d8d78f21c82dab3f84af55d4d22",
+      "sha256": "15d400cdb2ad0c8c9ded48e382ecb40557d12cccf1004958f6afdd4ca369c7dd",
       "models": [
         "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/inbox_mark_read.qnt",
@@ -7509,7 +7553,7 @@
         "formal/models/ui/ui_inbox_reads.qnt",
         "formal/models/ui/ui_incomplete_assessments.qnt"
       ],
-      "candidateLines": [74, 293, 294],
+      "candidateLines": [74, 307, 308],
       "review": "mapped-abstraction",
       "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state."
     },
@@ -7663,7 +7707,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "883691b5290658fba3b44503a0dee9082d1aaead83a0effdf4e9cef8d9c4b45c",
+      "sha256": "0c0d03627bea8f4e4f1a55c8504913ceb85e51eceeaf27518bdfd0429722ea84",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -7675,7 +7719,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [384, 869, 948, 1271, 1292, 1304, 1311],
+      "candidateLines": [384, 869, 948, 1319, 1340, 1352, 1359],
       "review": "mapped-abstraction"
     },
     {
@@ -8096,6 +8140,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/security-advisory-state.ts",
+      "sha256": "1dcbcfe0b9ce1cbfd1647e2a24feceb92101a2a8784bad32f34dc98315696a24",
+      "models": ["formal/models/api/api_security_advisory_state.qnt"],
+      "candidateLines": [2, 24],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/security-bounty-proposal.ts",
       "sha256": "e51d0356617a132376e01e77af8d1fce85f716cf82fcdd7fb9b99b2336d7b599",
       "models": [],
@@ -8120,6 +8171,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure preservation of existing security terms/default split while rebuilding form fields; state is owned by the editor."
+    },
+    {
+      "path": "src/lib/security-read-key.ts",
+      "sha256": "f7149202bcf3ecfcdad4006fc03d94c46e5241725ab8e4164fb56c960895f694",
+      "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/security-report-deposit.mjs",
@@ -8841,7 +8899,7 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "0b2b80f5ecde3943eafead39a7120f456da9799b72ce8082171b629fe903b2c3",
+      "sha256": "84454546fae596fdf404160b4393942a3ec526e0bfdb1ed1c9ae655969a43af0",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
@@ -8853,13 +8911,13 @@
         "formal/models/payments/signed_send.qnt"
       ],
       "candidateLines": [
-        323, 390, 400, 405, 408, 409, 411, 412, 716, 909, 948, 982, 985, 986,
-        987, 988, 989, 1074, 1205, 1210, 1213, 1214, 1217, 1257, 1295, 1321,
-        1325, 1326, 1328, 1329, 1342, 1356, 1357, 1378, 1394, 1400, 1406, 1422,
-        1426, 1432, 1438, 1445, 1449, 1455, 1458, 1469, 1478, 1648, 1649, 1651,
-        1653, 1654, 1677, 1692, 1694, 1696, 1698, 1699, 1703, 1705, 1707, 1895,
-        1902, 1924, 1925, 1931, 1933, 1934, 1950, 1952, 1959, 1970, 1978, 1979,
-        1982, 1985, 1986, 1987
+        330, 331, 335, 336, 361, 428, 438, 443, 446, 447, 449, 450, 754, 947,
+        986, 1020, 1023, 1024, 1025, 1026, 1027, 1112, 1243, 1248, 1251, 1252,
+        1255, 1295, 1333, 1359, 1363, 1364, 1366, 1367, 1380, 1394, 1395, 1416,
+        1432, 1438, 1444, 1460, 1464, 1470, 1476, 1483, 1487, 1493, 1496, 1507,
+        1516, 1686, 1687, 1689, 1691, 1692, 1715, 1730, 1732, 1734, 1736, 1737,
+        1741, 1743, 1745, 1933, 1940, 1962, 1963, 1969, 1971, 1972, 1988, 1990,
+        1997, 2008, 2016, 2017, 2020, 2023, 2024, 2025
       ],
       "review": "mapped-abstraction"
     },
@@ -9524,7 +9582,7 @@
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "38ef0c7b0f2d9a5b5f2af43775d49bf9d465c3fedf5f0c093900c5083dab6110",
+      "sha256": "2f0d08f40a45cb7edb2962d94f916e9411f3984f0d43f273658699412c8de662",
       "models": [
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -9533,9 +9591,9 @@
       ],
       "candidateLines": [
         168, 190, 226, 279, 355, 356, 359, 360, 362, 364, 367, 369, 372, 377,
-        378, 386, 395, 404, 461, 471, 472, 473, 475, 476, 477, 478, 480, 482,
-        483, 490, 491, 492, 493, 502, 517, 570, 576, 682, 693, 703, 771, 772,
-        786, 799, 810
+        378, 381, 387, 396, 405, 462, 472, 473, 474, 476, 477, 478, 479, 481,
+        483, 484, 491, 492, 493, 494, 503, 518, 571, 577, 683, 694, 704, 772,
+        773, 787, 800, 811
       ],
       "review": "mapped-abstraction"
     },
@@ -10058,12 +10116,12 @@
     },
     {
       "path": "workers/slopbot/standing-deposit.ts",
-      "sha256": "a1415c1f3cddd6d5b74d99ae90c67cfde24045f9c76ad1d203b7dadae091d80c",
+      "sha256": "57402700f2fec6b5bd501d617d1d1d34723bf5da6bcda0eaeb5df12e4a3ae25d",
       "models": ["formal/models/fees/standing_deposit.qnt"],
       "candidateLines": [
-        14, 48, 54, 61, 66, 70, 77, 100, 102, 107, 117, 119, 123, 129, 131, 144,
-        148, 180, 183, 190, 194, 203, 204, 205, 208, 215, 245, 252, 261, 269,
-        280
+        14, 49, 55, 62, 67, 71, 78, 101, 103, 108, 118, 120, 124, 130, 132, 145,
+        149, 181, 184, 191, 195, 204, 205, 206, 209, 216, 256, 265, 277, 284,
+        293, 301, 312
       ],
       "review": "mapped-abstraction"
     },
@@ -12070,6 +12128,46 @@
       ]
     },
     {
+      "path": "formal/models/api/api_security_advisory_state.qnt",
+      "sha256": "5419d2ab38de9d54865b722a6cb57abb2b5140d49ae4266f56e8b65e60c34a65",
+      "sources": [
+        "backend/security/handler.ts",
+        "migrations/0153_security_advisory_states.sql",
+        "src/lib/security-advisory-state.ts"
+      ],
+      "scenarios": [
+        "closedOnGithubClearsTest",
+        "decidedStillOpenTest",
+        "outageKeepsLastStateTest",
+        "unreadShowsNothingTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_automatic_import.qnt",
+      "sha256": "50ffe55917e8c4778ceee111819638c23d80b25fb213d38131e8157718824253",
+      "sources": [
+        "backend/security/handler.ts",
+        "backend/security/operator-queue.ts"
+      ],
+      "scenarios": [
+        "importsOnceTest",
+        "laterReportIsImportedTest",
+        "outageWritesNothingTest",
+        "recoveryImportsTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_owner_reminder.qnt",
+      "sha256": "b087c0bd7eb09e38da12a45aa831aa7ff910c0b5b92191a6871426594aa038bf",
+      "sources": ["backend/security/owner-reminders.ts"],
+      "scenarios": [
+        "decidedStopsRemindersTest",
+        "nextWeekRemindsAgainTest",
+        "nothingWaitingWritesNothingTest",
+        "oncePerWeekTest"
+      ]
+    },
+    {
       "path": "formal/models/api/api_security_queue.qnt",
       "sha256": "4069b2b467a2109fdde8e4f3bb09e03b891c6e8a3ab709e7d1aad18e1cca9077",
       "sources": [
@@ -12090,6 +12188,22 @@
         "unscreenedReportIsSkippedTest",
         "unsetSecretIsNotFoundTest",
         "wrongOrMissingTokenIsNotFoundTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_read_key.qnt",
+      "sha256": "766d54726669c45a082cd7101f07e7f69242ebd36a88a96c96974c027136c36e",
+      "sources": [
+        "backend/security/read-key.ts",
+        "migrations/0154_security_read_keys.sql",
+        "src/SecurityReadKey.tsx",
+        "src/lib/security-read-key.ts"
+      ],
+      "scenarios": [
+        "closedAccountReadsNothingTest",
+        "createdKeyReadsTest",
+        "replacedKeyStopsTest",
+        "revokedKeyStopsTest"
       ]
     },
     {
@@ -15935,7 +16049,7 @@
     },
     {
       "path": "formal/models/payments/solana_executor_journal.qnt",
-      "sha256": "213baba64c72d08fc53bc10297e1fa8d860b07a8f8fe57f0d5a41aef720022b8",
+      "sha256": "84fa5ef8f317c326a2c30648c7d8b1d0e5288ee9a519701198bbb61aca456599",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/payment-executor/solana.ts"
@@ -15957,6 +16071,7 @@
         "knownSignatureReturnsBeforeExpiryReadTest",
         "laterRetirementDoesNotEraseExistingSignedBytesTest",
         "lostCommitReplyRetainsSignedBytesTest",
+        "paidBetweenLoadAndRefreshRefusesAttesterTest",
         "pendingFailureCannotReplaceKeeperTest",
         "quoteMayExpireBeforeCommitTest",
         "refreshedMatchingBindingRefusesReplacementTest",
