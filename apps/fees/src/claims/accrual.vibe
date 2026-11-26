@@ -32,9 +32,8 @@ function vaultKey(network: EnabledNetwork, vault: string) {
 effect function counted(row: ClaimRow) {
   const label = `fee claim of ${row.token}`
   if (open.has(row.state)) return try amountOf(row.amount_in, label)
-  if (row.state !== "finalized") return 0n
-  if (row.amount_out === null) throw new RowMismatch({ text: label, issue: "the finalized claim records no claimed amount" })
-  return try amountOf(row.amount_out, label)
+  if (row.state === "finalized" && row.amount_out === null) throw new RowMismatch({ text: label, issue: "the finalized claim records no claimed amount" })
+  return 0n
 }
 
 export effect function ownClaims(network: EnabledNetwork, scope: string) {

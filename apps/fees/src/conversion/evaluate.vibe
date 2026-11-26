@@ -5,11 +5,13 @@ import { ConversionChain, type QuoteFound, type QuoteRead, quoteNumber, safeNumb
 import { type Session, step } from "./session.vibe"
 
 module verified {
-  import { rescaleInput as rescaled } from "../kernels/arithmetic.ts"
+  import { rescaleInput as rescaled, spendableNative as spendableOf } from "../kernels/arithmetic.ts"
   /** @throws {never} */
   export function rescaleInput(amount: bigint, remaining: bigint, quotedOut: bigint): bigint { return rescaled(amount, remaining, quotedOut) }
+  /** @throws {never} */
+  export function spendableNative(balance: bigint, reserve: bigint): bigint { return spendableOf(balance, reserve) }
 }
-import { rescaleInput } from verified
+import { rescaleInput, spendableNative } from verified
 
 export const rescaleAttempts = 3
 
@@ -40,16 +42,21 @@ effect function factOf(token: number, address: string, amountIn: number, read: Q
   } satisfies Quote
 }
 
-export effect function evaluateToken(session: Session, token: number, address: string, target: string) {
+export effect function evaluateToken(session: Session, token: number, address: string, target: string, nativeReserve = 0n) {
   const chain = try ConversionChain
   try observeBalance(session, token, address)
   const available = spendable(session.state, token)
   if (available <= 0 || !canEvaluate(session.state, session.runId, probe(token, available), "Worker")) return undefined
   const entry = session.instance.tokens[token - 1]
   const scale = entry?.scale ?? 1n
+  const current = holding(session.state, token)
   const availableRaw = wideNumber(available) * scale
-  const held = holding(session.state, token).asset === "NativeAsset" ? try chain.balance(address) : (entry?.rawBalance ?? availableRaw)
-  let input = held < availableRaw ? held : availableRaw
+  const earnedRaw = current.asset === "NativeAsset"
+    ? spendableNative(wideNumber(current.feeIncome - current.sold) * scale, nativeReserve)
+    : availableRaw
+  const capped = earnedRaw < availableRaw ? earnedRaw : availableRaw
+  const held = current.asset === "NativeAsset" ? try chain.balance(address) : (entry?.rawBalance ?? capped)
+  let input = held < capped ? held : capped
   if (input <= 0n) return undefined
   const targetBalanceBefore = (try chain.balance(target)).toString()
   let read = try chain.quote(address, input)

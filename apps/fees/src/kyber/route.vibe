@@ -11,11 +11,11 @@ import { type SwapDescription, buildSlippage, decodedSwap, hopsOf, impactBps, us
 
 module verified {
   import { errorText as sanitized } from "../kernels/errorText.ts"
-  import { minimumOutput as floor } from "../kernels/arithmetic.ts"
+  import { roundedDivision as divided } from "../kernels/arithmetic.ts"
   /** @throws {never} */
   export function errorText(text: string): string { return sanitized(text) }
   /** @throws {never} */
-  export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint { return floor(amountOut, slippageBps) }
+  export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint { return divided(amountOut * (10_000n - slippageBps), 10_000n, true) }
 }
 import { errorText, minimumOutput } from verified
 

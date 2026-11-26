@@ -191,7 +191,7 @@ effect function minted(token: Address, wallet: Address, amount: bigint) {
   try promise(() => mint(base.chain, token, wallet, amount))
 }
 
-const directFee = 4_000_000_000_000_000n
+const directFee = 7_000_000_000_000_000n
 const nativeReserve = 1_000_000_000_000_000n
 
 effect function completedNativeAward(running: Converter, feeWallet: Address) {

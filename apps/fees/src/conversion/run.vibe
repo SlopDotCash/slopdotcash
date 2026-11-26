@@ -72,7 +72,7 @@ effect function tokens(session: Session, input: NetworkRun, records: Record<RowS
     const number = index + 1
     if (blocked.has(number)) continue
     if (!(try renewed(session, false))) return
-    const evaluated = evaluateToken(session, number, token.address, target.address) catch effect (error) => {
+    const evaluated = evaluateToken(session, number, token.address, target.address, input.network.nativeLimits?.perTransaction) catch effect (error) => {
       try Effect.logWarning("fee_conversion_error", { network: session.state.network, token: token.address, ...providerErrorLog(error, rpcProviderOf(session.state.network), error._tag) })
       return undefined
     }

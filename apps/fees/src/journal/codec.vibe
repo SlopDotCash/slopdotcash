@@ -558,7 +558,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     const topUps = asset === "NativeAsset" ? seen?.topUps ?? 0 : 0
     const observedBalance = Math.max(seen?.balance ?? 0, open)
     const feeIncome = asset === "NativeAsset" ? (seen?.received ?? 0) + claimed : Math.max((seen?.received ?? 0) + claimed, sold + observedBalance)
-    const vaultObserved = seen?.vaultObserved ?? 0
+    const vaultObserved = Math.max(seen?.vaultObserved ?? 0, openClaims)
     return {
       token,
       asset,
@@ -569,7 +569,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
       usdcOut: sum(modelRows, token, finalized("Conversion"), (row) => row.output),
       vault: seen?.vault === undefined ? 0 : names.number("vault", seen.vault),
       vaultObserved,
-      accrued: vaultObserved - claimed - openClaims,
+      accrued: vaultObserved - openClaims,
       claimed,
     }
   })
