@@ -1,5 +1,5 @@
 // spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"; spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"
-import { type Attempt, type Event, type Journal, Machine, type Notice, type Reply, canSetStorage, canSignIn, canSignOut, initial, machineOver, mayCreate, recoveryFor, slotOf } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { type Attempt, type Event, type Journal, type Notice, type Reply, canSetStorage, canSignIn, canSignOut, initial, machineOver, mayCreate, recoveryFor, slotOf } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { WalletDeclined } from "./discovery.vibe"
 import { type SlotStorage, attemptOfText, clearUnreadableText, readSlotText, sessionSlots, slotWritable, textOfAttempt, unreadableSlot, writeSlotText } from "./slots.ts"
 
@@ -22,7 +22,7 @@ export error AttemptUncertain { message: string }
 export error StorageUnwritable { message: string }
 
 export interface AttemptJournal {
-  readonly machine: Machine.Shape
+  readonly machine: Effect.Success<ReturnType<typeof machineOver>>
   follow(account: number): Journal!!
   recovery(): Attempt!!
   unreadable(): boolean!!

@@ -124,7 +124,7 @@ export interface FeePay {
   readonly noun: Noun
   readonly address: PayAddress
   readonly repository: FeeRepository | undefined
-  readonly machine: Machine.Shape
+  readonly machine: Effect.Success<ReturnType<typeof machineOver>>
   readonly changes: Stream.Stream<FeeShown>
   open(): PayFlow!!HttpClient.HttpClient
   shown(): FeeShown!!
