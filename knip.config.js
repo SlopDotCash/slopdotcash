@@ -5,10 +5,14 @@
 //   ignoreIssues server.vibe exports        AGENTS is used in its own file, in a body ignoreExportsUsedInFile cannot see
 //   root @informalsystems/quint, lemmascript  run as executables by vibestack/units.ts and vibestack/prove.ts
 //   root @vitest/browser                    loaded by Vitest's browser mode, beside @vitest/browser-playwright
-//   tailwindcss (ui, design-system, studio, apps)  resolved by @tailwindcss/vite and the lint plugin from CSS
+//   root @repo/design-system                read on disk by eslint.config.js and vibestack/design/test/design.test.ts (Turbo ^build)
+//   tailwindcss (ui, frontend, design-system, studio, apps)  resolved by @tailwindcss/vite and the lint plugin from CSS
 //   entry *.schema, *.contract              imported by the tests vibestack/testing/generate.ts writes under .cache/
+//   entry apps/*/src/tables.ts              loaded dynamically by apps/operations/src/release/publish/tables.vibe
+//   entry apps/*/test/support/**            Miniflare worker entries named as strings in test/support/**/vite.config.ts
 //   design-system eslint, eslint-plugin-better-tailwindcss, typescript-eslint  loaded by name in vibestack/design/test/design.test.ts
-//   contracts forge                         Foundry, installed beside Node, not from npm (packages/contracts/README.md)
+//   contracts forge, solana-test-validator  Foundry and Agave validator, installed beside Node, not from npm (packages/contracts/README.md)
+//   platform anvil, solana-test-validator   local chains spawned by packages/platform/src/testing/chains/{anvil,validator}.ts
 //   ignore frozen.json `ignore`             records copied byte for byte from development, never imported or rewritten
 //   apps/* anvil, solana-test-validator, docker, python3  local chains, the scan container and the install-guide authority,
 //                                           run as programs by journeys and programs, not from npm
@@ -28,10 +32,13 @@ const app = {
     "src/workers/*.classes.ts",
     "src/programs/*.vibe",
     "src/worker/*.vibe",
+    "src/tables.ts",
     "src/main.tsx",
     "vite.*.config.ts",
     "test/**/*.test.{ts,tsx,vibe}",
     "test/drivers/*.ts",
+    "test/support/**/worker.vibe",
+    "test/support/*Worker.vibe",
     "src/**/*.{schema,contract}.{ts,vibe}"
   ],
   "project": [
@@ -80,7 +87,8 @@ export default {
       "ignoreDependencies": [
         "@informalsystems/quint",
         "lemmascript",
-        "@vitest/browser"
+        "@vitest/browser",
+        "@repo/design-system"
       ]
     },
     "packages/ui": {
@@ -89,6 +97,21 @@ export default {
       ],
       "project": [
         "**/*.{ts,tsx,vibe,vibex,css}"
+      ],
+      "ignoreDependencies": [
+        "tailwindcss"
+      ]
+    },
+    "packages/frontend": {
+      "entry": [
+        "src/**/*.{meta,stories}.tsx",
+        "src/**/*.{schema,contract}.{ts,vibe}",
+        "test/**/*.test.{ts,tsx,vibe}",
+        "test/drivers/*.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,vibe,vibex,css}",
+        "test/**/*.{ts,tsx,vibe,vibex}"
       ],
       "ignoreDependencies": [
         "tailwindcss"
@@ -110,7 +133,8 @@ export default {
         "test/**/*.ts"
       ],
       "ignoreBinaries": [
-        "forge"
+        "forge",
+        "solana-test-validator"
       ]
     },
     "vibestack/studio": {
@@ -136,6 +160,10 @@ export default {
       "project": [
         "src/**/*.{ts,vibe}",
         "test/**/*.{ts,vibe}"
+      ],
+      "ignoreBinaries": [
+        "anvil",
+        "solana-test-validator"
       ]
     },
     "packages/ports": {
@@ -146,6 +174,10 @@ export default {
     "apps/security": {
       ...app,
       "entry": [...app.entry, "src/sandbox/job.vibe"]
+    },
+    "apps/slopbot": {
+      ...app,
+      "entry": [...app.entry, "test/support/ready.vibe"]
     },
     "apps/*": app
   }

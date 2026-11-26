@@ -3,7 +3,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { profile, type TestProfile } from "./testing/profile.ts";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
@@ -11,7 +10,7 @@ import { check, compareObservation, ConformanceError, departure, replay, transit
 import type { Model } from "./gen.ts";
 import { heading, type Spec } from "./parse.ts";
 import type { Step } from "./simulate.ts";
-import { exec, startGroup } from "./run.ts";
+import { exec, makeTempDir, removeTempDir, startGroup } from "./run.ts";
 import { COUNTEREXAMPLES, DRIVERS, filesUnder, indent, sha, testInputs, TRACES, type Remember, type Reported } from "./util.ts";
 
 export type Simulated = Found<any> & { traces: Sent<any>[][] };
@@ -151,10 +150,16 @@ export const driver: Driver = {
  * is added to `wrote`.
  */
 async function driven(root: string, name: string, machine: Machine, mode: TestProfile, wrote: Map<string, string>): Promise<{ problem?: string; summary?: string }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-driver-")), found = path.join(dir, "found.json"), saved = `${COUNTEREXAMPLES}/${name}`;
-  const before = new Set(filesUnder(root, saved));
-  fs.writeFileSync(found, JSON.stringify(machine.found));
-  const r = await exec(process.execPath, ["--import", "vibelang/register", import.meta.filename, name, found, mode], root).finally(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dir = makeTempDir("spec-driver-"), found = path.join(dir, "found.json"), saved = `${COUNTEREXAMPLES}/${name}`;
+  let r: Awaited<ReturnType<typeof exec>>;
+  let before: Set<string>;
+  try {
+    before = new Set(filesUnder(root, saved));
+    fs.writeFileSync(found, JSON.stringify(machine.found));
+    r = await exec(process.execPath, ["--import", "vibelang/register", import.meta.filename, name, found, mode], root);
+  } finally {
+    removeTempDir(dir);
+  }
   for (const file of filesUnder(root, saved).filter((file) => !before.has(file))) wrote.set(path.join(root, file), fs.readFileSync(path.join(root, file), "utf8"));
   let verdict: { problem?: string; summary?: string } | undefined;
   if (!r.stopped) {
