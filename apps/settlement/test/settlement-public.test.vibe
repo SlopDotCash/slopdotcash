@@ -376,7 +376,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       unindexed: [reads.unindexed.status, (reads.unindexed.body as { error: string }).error],
       vault: [reads.vault.status, reads.vault.cache, (reads.vault.body as { snapshots: ReadonlyArray<{ freeBalance: string | null }>; staleAfterMs: number; servedAt: string })],
       funding: [reads.funding.cache, reads.funding.body],
-      signedOut: [reads.signedOut.status, (reads.signedOut.body as { error: string }).error],
+      signedOut: [reads.signedOut.status, (reads.signedOut.body as { error: string }).error, reads.signedOut.cache],
       account: {
         payments: [...account.payments].sort((left, right) => left.id.localeCompare(right.id)).map((payment) => [payment.id, payment.deliveryState, payment.netBase]),
         balances: account.balances,
@@ -405,7 +405,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       unindexed: [503, "project_payments_not_indexed"],
       vault: [200, "public, max-age=60, s-maxage=60", (reads.vault.body as { snapshots: ReadonlyArray<{ freeBalance: string | null }>; staleAfterMs: number; servedAt: string })],
       funding: ["public, max-age=60, s-maxage=60", { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }, pledgedFunding] }],
-      signedOut: [401, "not_signed_in"],
+      signedOut: [401, "not_signed_in", "private, no-store"],
       account: {
         payments: [["o1", "paid", "980000"], ["o3", "needs_wallet", "490000"], ["o4", "paid", "980000"]],
         balances: [

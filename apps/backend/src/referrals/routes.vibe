@@ -19,8 +19,8 @@ const linkPrefix = `${linkRoot}/` as const
 const projectForm = "/projects/new"
 const referralSettings = "/account#referral"
 
-function parity(row: { readonly status: number; readonly error: string; readonly message: string }): Refusal {
-  return { status: row.status, code: row.error, message: row.message }
+function parity(row: { readonly status: number; readonly error: string; readonly message: string; readonly headers: Readonly<Record<string, string>> }): Refusal {
+  return { status: row.status, code: row.error, message: row.message, headers: row.headers }
 }
 
 const refusals: Record<Exclude<Choice, "Accepted" | "GitHubUnavailable">, Refusal> = {
@@ -145,7 +145,7 @@ effect function followLink() {
 const otherCodeMethods = ["GET", "PUT", "PATCH", "DELETE", "OPTIONS"] as const
 
 export const ReferralCodeRoutes = Layer.mergeAll(
-  handle({ ...chooseCode, request: undefined }, (input) => chooseName(input.actor.githubId)),
+  handle({ ...chooseCode, request: undefined, unauthenticated: parity(postReferralsCode.unauthorizedSignInWithGitHub) }, (input) => chooseName(input.actor.githubId)),
   HttpRouter.addAll(otherCodeMethods.map((method) => HttpRouter.route(method, chooseCode.path, answered(effect { throw new Refused(refusals.OriginForbidden) })))),
   answerSubtree(linkRoot, followLink()),
 )

@@ -9,8 +9,8 @@ import { type SignatureRefused, type SignedRequest, serviceKeys, verifySigned } 
 
 export error Refused { status: number; code: string; message: string; headers?: Readonly<Record<string, string>> }
 
-export function refuse(status: number, code: string, message = "") {
-  return new Refused({ status, code, message })
+export function refuse(status: number, code: string, message = "", headers?: Readonly<Record<string, string>>) {
+  return new Refused({ status, code, message, headers })
 }
 
 export const admission = {

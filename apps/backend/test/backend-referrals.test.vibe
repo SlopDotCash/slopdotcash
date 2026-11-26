@@ -182,11 +182,12 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     const alice = try member("41")
     const bob = try member("42")
     const admin = try member("7")
+    const anonymous = try area.request(codePath, { json: { code: "valid-name" } })
 
     const admission = {
       crossSite: outcome(try area.request(codePath, { json: { code: "valid-name" }, as: alice, origin: "https://elsewhere.test" })),
       wrongMethod: outcome(try area.request(codePath, { method: "GET", as: alice })),
-      anonymous: outcome(try area.request(codePath, { json: { code: "valid-name" } })),
+      anonymous: [...outcome(anonymous), anonymous.headers["cache-control"]],
       expectedMalformed: try choose("valid-name", alice, { "x-slop-expected-github-id": "041" }),
       expectedOther: try choose("valid-name", alice, { "x-slop-expected-github-id": "42" }),
       extraKey: outcome(try area.request(codePath, { json: { code: "valid-name", ref: "x" }, as: alice })),
@@ -278,7 +279,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       admission: {
         crossSite: [403, "origin_forbidden"],
         wrongMethod: [403, "origin_forbidden"],
-        anonymous: [401, "unauthorized"],
+        anonymous: [401, "unauthorized", "private, no-store"],
         expectedMalformed: [400, "invalid_expected_actor"],
         expectedOther: [403, "actor_changed"],
         extraKey: [400, "invalid_request"],

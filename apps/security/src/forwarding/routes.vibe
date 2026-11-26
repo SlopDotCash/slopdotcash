@@ -31,6 +31,7 @@ interface Row {
   readonly status: number
   readonly error: string
   readonly message: string
+  readonly headers?: Readonly<Record<string, string>>
 }
 
 interface Outcome {
@@ -53,7 +54,7 @@ const notFound = callbackRows.notFoundSubmissionNotFound
 const stale = sendRows.staleRevisionTheSubmissionChangedSince
 
 function refused(row: Row) {
-  return refuse(row.status, row.error, row.message)
+  return refuse(row.status, row.error, row.message, row.headers)
 }
 
 function exactKeys(body: Readonly<Record<string, unknown>>, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
