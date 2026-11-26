@@ -43,7 +43,7 @@ schema Person { githubId: string }
 schema Approvers { technical: ReadonlyArray<Person>; financial: ReadonlyArray<Person>; dispute: ReadonlyArray<Person> }
 schema Sponsor { githubId: string | null }
 schema OfferedAmount { grossMinor: string; currency: string; decimals: number }
-schema Capacity { awards: number; closesAt: string | null }
+schema Capacity { awards: number | null; closesAt: string | null }
 schema Split { researcherBasisPoints: number; slopBasisPoints: number }
 schema IntakeTarget { repository: string }
 schema Bounty { status: string; amount: OfferedAmount; capacity: Capacity; approvers: Approvers; intake: IntakeTarget; sponsor?: Sponsor; split?: Split; eligibility?: string; fundingPolicy?: string }

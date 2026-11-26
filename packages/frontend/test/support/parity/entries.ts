@@ -44,6 +44,8 @@ function apps(name: string): string {
 
 const slopbotApp = { SLOPBOT_APP_ID: app.id, SLOPBOT_APP_PRIVATE_KEY: app.privateKeyPem };
 
+export const parityPointsProtectionToken = "parity-points-protection-token-of-at-least-thirty-two-chars";
+
 export const successors: Readonly<Record<OldEntry, Successor>> = {
   pages: {
     kind: "worker",
@@ -53,7 +55,7 @@ export const successors: Readonly<Record<OldEntry, Successor>> = {
     bindings: {
       d1: { SLOP_DB: "slop-private" },
       r2: ["PRIVATE_TRACES", "VETTING_EVIDENCE"],
-      vars: { ...roles, SLOP_ENVIRONMENT: "production", PUBLIC_SITE_URL: "https://slop.cash", PAYMENT_NETWORKS: "[]", TRACE_AUTH_SECRET: "parity-trace-secret-of-at-least-forty-characters" },
+      vars: { ...roles, SLOP_ENVIRONMENT: "production", PUBLIC_SITE_URL: "https://slop.cash", PAYMENT_NETWORKS: "[]", TRACE_AUTH_SECRET: "parity-trace-secret-of-at-least-forty-characters", POINTS_PROTECTION_TOKEN: parityPointsProtectionToken },
     },
     services: ["SLOP_IDENTITY", "SLOP_NOTIFY", "SLOPBOT", "VETTING_SANDBOX"],
     assets: true,

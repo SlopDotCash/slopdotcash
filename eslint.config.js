@@ -16,11 +16,11 @@ const monorepo = 'CONTRIBUTING.md, "The monorepo"'
 const banned = ["redux", "react-redux", "zustand", "mobx", "jotai", "recoil", "valtio", "xstate", "vue", "svelte", "jest"]
 const scopes = ["reduxjs", "angular", "xstate", "vue", "sveltejs", "jest"]
 // Each workspace package's `exports` beyond its root: "@repo/design-system/theme.css", "@repo/backend/live". A directory
-// without a package.json is no workspace package (pnpm-workspace.yaml). A subpath pattern such as "./kernels/*" names
-// one file per match: its `*` stands for one path segment.
+// without a package.json is no workspace package (pnpm-workspace.yaml). A subpath pattern such as "./chain/*" matches
+// one or more non-traversal path segments, as Node package exports do.
 const exported = ["apps", "packages"].flatMap((parent) => readdirSync(parent).filter((dir) => existsSync(`${parent}/${dir}/package.json`)).flatMap((dir) => {
   const { name, exports = {} } = JSON.parse(readFileSync(`${parent}/${dir}/package.json`, "utf8"))
-  return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+"))
+  return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("(?!\\.\\.?(?:/|$))[^/]+(?:/(?!\\.\\.?(?:/|$))[^/]+)*"))
 }))
 // Files copied byte for byte from development and pinned by SHA-256 in frozen.json: records, never linted or rewritten.
 const frozen = JSON.parse(readFileSync(`${import.meta.dirname}/frozen.json`, "utf8")).ignore
