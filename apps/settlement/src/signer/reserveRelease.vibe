@@ -1,5 +1,5 @@
 // spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "The original balances and allocation survive every recovery step"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
-import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import type * as KeyValueStore from "effect/persistence/KeyValueStore"
 import { EvmRpc, type Hex, recoverDigest } from "@repo/platform/chain/evm"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { Journal } from "@repo/platform/journal"
@@ -10,7 +10,7 @@ import { type Period, parsePeriod } from "../kernels/calendar.ts"
 import { ordinaryScope, within } from "../journal/journal.vibe"
 import { ApprovalRefused, type ApprovalRequest, ReleaseApprover } from "../reserveRelease/release.vibe"
 import { release } from "../reserveRelease/store.vibe"
-import { AttesterConfig, type Deployment, authorityInForce, onChain, preflight, reviewedDeployment } from "./evm.vibe"
+import { type AttesterConfig, type Deployment, authorityInForce, onChain, preflight, reviewedDeployment } from "./evm.vibe"
 import { signEscrowDigest } from "./monthlyRoot.vibe"
 
 schema ApprovalRecord {

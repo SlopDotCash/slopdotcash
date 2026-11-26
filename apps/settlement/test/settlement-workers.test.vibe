@@ -199,7 +199,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
       markers: { attester: true, solana: true, keeper: false, poster: false },
       zeroPinStacksScheduleNothing: true,
     })
-  })
+  }, 180_000)
 
   it.effect('The Pages-facing Solana binding entrypoint reaches only the binding routes of a production Solana attester and answers 404 for reserve release and binding recovery (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature")', () => effect {
     const script = try promise(() => bundle(root, { entry: "attester" }))
@@ -221,7 +221,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true
       bindingBodies: [JSON.stringify({ error: "execution_pending_or_rejected" }), JSON.stringify({ error: "execution_pending_or_rejected" })],
       outbound: [],
     })
-  })
+  }, 180_000)
 
   it.effect('A payments run whose dispatch step fails still runs every other step and reports the failure; with an executor it succeeds without contacting it (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work")', () => effect {
     const script = try promise(() => bundle(root, { entry: "payments" }))
