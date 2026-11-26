@@ -3905,13 +3905,6 @@
       "review": "mapped-abstraction"
     },
     {
-      "path": "migrations/0148_security_report_deposit_claim_notice.sql",
-      "sha256": "8cea67a5cd46bdff26e1cdba39b1c4ecc194c9456e15979b72f22c248b2ec9bb",
-      "models": ["formal/models/api/api_security_report_deposit.qnt"],
-      "candidateLines": [],
-      "review": "mapped-abstraction"
-    },
-    {
       "path": "migrations/0148_trace_licensing.sql",
       "sha256": "6cd16553e70ebfe376025cd9f8835fa4f72fd798bc6321e3b472cceadcb1ddb5",
       "models": ["formal/models/api/api_trace_licensing.qnt"],
@@ -3962,6 +3955,13 @@
       "path": "migrations/0154_security_read_keys.sql",
       "sha256": "99923696199d8ee3fb0696376cfffce1afd0452489d9cabe89895aa285b5b532",
       "models": ["formal/models/api/api_security_read_key.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0155_security_report_deposit_claim_notice.sql",
+      "sha256": "8cea67a5cd46bdff26e1cdba39b1c4ecc194c9456e15979b72f22c248b2ec9bb",
+      "models": ["formal/models/api/api_security_report_deposit.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -12215,13 +12215,13 @@
     },
     {
       "path": "formal/models/api/api_security_report_deposit.qnt",
-      "sha256": "2d081cdfc85a95b7f2286b98d7be2f3f8c2c5e128ceca16a9de4b7edb74c0408",
+      "sha256": "7ec18e4311264d94a54d733956d0dbc9a758cc3cb0c5f6c7cc1db348718b480d",
       "sources": [
         "backend/security/report-deposit-hold.ts",
         "backend/security/report-deposit.ts",
         "backend/submission-fee/handler.ts",
         "migrations/0145_security_report_deposits.sql",
-        "migrations/0148_security_report_deposit_claim_notice.sql",
+        "migrations/0155_security_report_deposit_claim_notice.sql",
         "src/lib/security-report-deposit.mjs"
       ],
       "scenarios": [

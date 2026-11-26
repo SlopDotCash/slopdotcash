@@ -3,7 +3,7 @@
 // @source backend/submission-fee/handler.ts
 // @source src/lib/security-report-deposit.mjs
 // @source migrations/0145_security_report_deposits.sql
-// @source migrations/0148_security_report_deposit_claim_notice.sql
+// @source migrations/0155_security_report_deposit_claim_notice.sql
 // @evidence backend/security/report-deposit.test.ts
 // @evidence backend/security/submissions.test.ts
 // @evidence scripts/security-report-deposit.test.ts
