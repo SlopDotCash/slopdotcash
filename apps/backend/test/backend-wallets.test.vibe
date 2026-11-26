@@ -89,6 +89,42 @@ effect function read(path: string, headers: Readonly<Record<string, string>> = {
 }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Wallet challenge and consent routes keep the private HTTP refusal contract (spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version")', () => effect {
+    const area = try Area
+    const member = try signIn("807")
+    const jsonType = { "content-type": "application/json" }
+    const form = { method: "POST", body: "claimId=one", headers: { "content-type": "application/x-www-form-urlencoded" } }
+    const expected = (status: number, error: string) => [status, { error }, "private, no-store", "application/json; charset=utf-8"]
+    const response = (answer: Answer) => [answer.status, answer.body, answer.headers["cache-control"], answer.headers["content-type"]]
+    for (const action of ["challenge", "authorize", "bind-challenge", "bind-authorize"]) {
+      const path = `/api/v1/payments/wallets/${action}`
+      const answers = [
+        try area.request(path, { json: {} }),
+        try area.request(path, { method: "POST", body: "{", headers: jsonType }),
+        try area.request(path, { json: {}, origin: "https://other.invalid" }),
+        try area.request(path, form),
+        try area.request(path, { ...form, as: member }),
+        try area.request(path, { json: {}, headers: { cookie: `__Host-slop_points=${"x".repeat(48)}` } }),
+        try area.request(path),
+        try area.request(path, { as: member }),
+        try area.request(path, { method: "PUT", json: {}, as: member }),
+        try area.request(path, { method: "POST", body: "{", headers: jsonType, as: member }),
+      ]
+      try same(answers.map(response), [
+        expected(401, "not_signed_in"),
+        expected(401, "not_signed_in"),
+        expected(403, "origin_forbidden"),
+        expected(403, "origin_forbidden"),
+        expected(403, "origin_forbidden"),
+        expected(401, "session_expired"),
+        expected(401, "not_signed_in"),
+        expected(404, "not_found"),
+        expected(403, "origin_forbidden"),
+        expected(400, "invalid_request"),
+      ])
+    }
+  })
+
   it.effect('Replace a payout wallet without losing the current destination over HTTP (spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"; spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim")', () => effect {
     const area = try Area
     const member = try signIn("101")

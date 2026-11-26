@@ -9,6 +9,7 @@ import { Conflict } from "@repo/platform/stored"
 import { type OperatorClaim, type Registration, type WalletChain, Rejected, authorizationReadback, canReadProof, challengeLifetime, currentClaimRead, operatorOutcome, possessionLifetime, registrationReadback, walletOperator } from "../../gen/backend__wallets.effect.vibe"
 import { getWalletClaimsActorsByGithubIdCurrent, getWalletClaimsById, getWalletClaimsByIdPossession, getWalletClaimsCurrent, postOperatorWalletClaims, postPaymentsWalletsAuthorize, postPaymentsWalletsChallenge, postPaymentsWalletsRegister, postWalletClaims, postWalletClaimsByIdPossession, postWalletClaimsByIdPossessionChallenge } from "../client/refusals.vibe"
 import { AuthorizeFields, BearerClaimFields, ChallengeFields, OperatorClaimFields, PossessionFields, RegisterFields, actorWalletClaim, authorizeWallet, createWalletClaim, currentWalletClaim, operatorWalletClaim, possessionChallenge, possessionProof, registerWallet, walletChallenge, walletClaim, walletPossession } from "../client/wallets.vibe"
+import { paymentWalletWrite, paymentWalletWrongMethods } from "./paymentHttp.vibe"
 import { type StoredClaim, chainName, chainOf, operatorDigest, paymentWalletMessage, possessionView, registryDigests, validActorId, validIdentifier, validIsoTimestamp, validLogin, validSha256, walletClaimRepository, walletClaimView } from "./records.vibe"
 import { assertPossessionChallenge, paymentSigner, possessionAudience, possessionKind, possessionMessage, possessionSchemaVersion, signableSolanaAddress, solanaKey, verifyPossession, walletAddressValid } from "./signatures.vibe"
 import { type AttestationFacts, type ClaimFacts, type Loaded, type Partition, attestationOf, claimAt, claimByDigest, claimById, contextOf, freshContext, loadPartition, noFacts, positionOf, send } from "./store.vibe"
@@ -445,8 +446,9 @@ effect function createOperatorClaim(bearer: Bearer) {
 
 export const WalletRoutes = Layer.mergeAll(
   handleRaw(registerWallet, (input) => registerForPayments(input.actor)),
-  handleRaw(walletChallenge, (input) => challengeForPayments(input.actor)),
-  handleRaw(authorizeWallet, (input) => authorizeForPayments(input.actor)),
+  paymentWalletWrite(walletChallenge, challengeForPayments),
+  paymentWalletWrite(authorizeWallet, authorizeForPayments),
+  paymentWalletWrongMethods([walletChallenge, authorizeWallet]),
   handleRaw(currentWalletClaim, (input) => currentForBearer(input.actor, input.query)),
   handleRaw(actorWalletClaim, (input) => currentForActor(input.params.githubId ?? "", input.query)),
   handleRaw(walletClaim, (input) => publicClaim(input.params.id ?? "")),

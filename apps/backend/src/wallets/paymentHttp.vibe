@@ -1,0 +1,50 @@
+// spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"
+import { type Actor, ActorChanged, Caller, Refused, SessionExpired, Unauthenticated, handleRaw, methodNotAllowed, refuse, sameOriginWrite } from "@repo/platform/http"
+import type { AnyRoute, Route } from "@repo/platform/route"
+import { postPaymentsWalletsChallenge as rows } from "../client/refusals.vibe"
+import { presentedToken } from "../session.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+function refused(row: Row) {
+  return refuse(row.status, row.error, row.message ?? "", row.headers)
+}
+
+function privateRefusal(error: Refused) {
+  return refuse(error.status, error.code, error.message, { ...rows.notSignedIn.headers, ...error.headers })
+}
+
+effect function currentActor() {
+  const request = try HttpServerRequest.HttpServerRequest
+  return (try Caller).current() catch effect (error) => match (error) {
+    when Unauthenticated: throw refused(presentedToken(request.cookies) === undefined ? rows.notSignedIn : rows.sessionExpired);
+    when SessionExpired: throw refused(rows.sessionExpired);
+    when ActorChanged: throw refused(rows.actorChangedYourAccountChangedReload);
+    when Refused: throw privateRefusal(error);
+    default: throw error;
+  }
+}
+
+export function paymentWalletWrite<B, A, E, R>(route: Route<B, A, "sessionWrite">, handle: (actor: Actor) => HttpServerResponse.HttpServerResponse!E!R) {
+  return handleRaw({ ...route, access: "public" as const }, () => effect {
+    if (!(try sameOriginWrite())) throw refused(rows.originForbiddenPrivateNoStore)
+    const actor = try currentActor()
+    return handle(actor) catch effect (error) => {
+      if (error instanceof Refused) throw privateRefusal(error)
+      throw error
+    }
+  })
+}
+
+export function paymentWalletWrongMethods(routes: ReadonlyArray<AnyRoute>) {
+  return methodNotAllowed(routes, effect {
+    if ((try HttpServerRequest.HttpServerRequest).method !== "GET") throw refused(rows.originForbiddenPrivateNoStore)
+    try currentActor()
+    throw refused(rows.otherMethods.notFoundPrivateNoStore)
+  })
+}

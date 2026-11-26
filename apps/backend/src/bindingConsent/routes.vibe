@@ -7,6 +7,7 @@ import { type Binding, type ChallengeOutcome, type Deployment, type Event, type 
 import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
 import { ConsentFields, SolanaBindFields, bindAuthorize, bindChallenge, solanaBindComplete, solanaBindPrepare } from "../client/bindingConsent.vibe"
 import { postPaymentsWalletsBindAuthorize, postPaymentsWalletsBindChallenge, postPaymentsWalletsSolanaBindComplete, postPaymentsWalletsSolanaBindPrepare } from "../client/refusals.vibe"
+import { paymentWalletWrite, paymentWalletWrongMethods } from "../wallets/paymentHttp.vibe"
 import { type Loaded as Partition, claimAt, freshContext, positionOf } from "../wallets/store.vibe"
 import { AttesterRefused, AttesterUnavailable, attest } from "./attester.vibe"
 import { BindingVersions, type PaymentDeployment, PaymentDeployments, SolanaAttesters, deploymentModel } from "./deployments.vibe"
@@ -291,8 +292,9 @@ effect function solanaBind(actor: Actor, step: SolanaStep) {
 }
 
 export const BindingRoutes = Layer.mergeAll(
-  handleRaw(bindChallenge, (input) => challenge(input.actor)),
-  handleRaw(bindAuthorize, (input) => authorize(input.actor)),
+  paymentWalletWrite(bindChallenge, challenge),
+  paymentWalletWrite(bindAuthorize, authorize),
+  paymentWalletWrongMethods([bindChallenge, bindAuthorize]),
   handleRaw(solanaBindPrepare, (input) => solanaBind(input.actor, "prepare")),
   handleRaw(solanaBindComplete, (input) => solanaBind(input.actor, "complete")),
 )
