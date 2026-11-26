@@ -19,8 +19,9 @@ predicates; it keeps no state.
 ### A restricted project's artifacts answer gone and an unlisted or retired project's answer not found
 
 An artifact path is one of `skill.md`, `mission.md`, `codex.md`,
-`claude.md`, `claude-code.md`, `manual.md`, `skill-manifest.json` (each also
-with a `review-` prefix), `downloads/<name>.skill` and its `.sha256`
+`claude.md`, `claude-code.md`, `cursor.md`, `hermes.md`, `manual.md`,
+`skill-manifest.json` (each also with a `review-` prefix),
+`downloads/<name>.skill` and its `.sha256`
 (`<name>` of 1 to 96 characters from `a-z0-9-`), `terms.json`, and the
 aliases `SKILL.md` (for `skill.md`) and `review/SKILL.md` (for
 `review-skill.md`), under a valid project id. A restricted project answers
