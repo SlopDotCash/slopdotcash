@@ -6014,7 +6014,7 @@
     },
     {
       "path": "spec/contributor/publication.md",
-      "sha256": "7214281ea7c92cc8fc99831cf1838afbdb60ccd7d0249eaaeb351b4b7b0afe8a",
+      "sha256": "447d5d56d5086421212cf246a95c9e4c54904828dc96d91d26bfe25f7e95caa9",
       "module": "contributor__publication",
       "stories": [
         {
@@ -6023,15 +6023,15 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance",
-          "line": 254
+          "line": 255
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source",
-          "line": 363
+          "line": 364
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index",
-          "line": 597
+          "line": 598
         }
       ],
       "rules": [
@@ -6054,7 +6054,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / terms.json is served for every listed project, paused included, and carries only public program terms",
-          "line": 61,
+          "line": 62,
           "definitions": [
             "TermsField",
             "termsFields",
@@ -6065,7 +6065,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry",
-          "line": 80,
+          "line": 81,
           "definitions": [
             "artifactAnswer",
             "lawSkillNeedsFieldsAndClearance",
@@ -6075,7 +6075,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery lists one row per repository of each installable project with published generated skills",
-          "line": 122,
+          "line": 123,
           "definitions": [
             "RepositoryEntry",
             "DiscoveryRow",
@@ -6089,7 +6089,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing",
-          "line": 161,
+          "line": 162,
           "definitions": [
             "MonthListing",
             "IntakeListing",
@@ -6108,7 +6108,7 @@
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD",
-          "line": 223,
+          "line": 224,
           "definitions": [
             "ArtifactResponse",
             "handled",
@@ -6120,7 +6120,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The template index binds templateSha256 to the template, renderer and accepted-revision digests",
-          "line": 265,
+          "line": 266,
           "definitions": [
             "RevisionStatus",
             "SourceFile",
@@ -6141,7 +6141,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / Only bytes equal to the build commit's tracked tree are labelled committed",
-          "line": 314,
+          "line": 315,
           "definitions": [
             "sourceStatus",
             "groupStatus",
@@ -6153,7 +6153,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The server renders only template files whose bytes match the index digest",
-          "line": 342,
+          "line": 343,
           "definitions": [
             "ServedTemplateFile",
             "maxTemplateFileBytes",
@@ -6164,7 +6164,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Each global skill, its discovery copy, its index entry and llms.txt carry the same digest",
-          "line": 370,
+          "line": 371,
           "definitions": [
             "GlobalRole",
             "GlobalSource",
@@ -6193,7 +6193,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / llms.txt and skill-manifest.json state the build commit and its committed or working-tree status",
-          "line": 452,
+          "line": 453,
           "definitions": [
             "manifestStatus",
             "lawGlobalStatusIsExact",
@@ -6202,7 +6202,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / The bootstrap's renderer contract names files that exist byte-identical at the build commit",
-          "line": 477,
+          "line": 478,
           "definitions": [
             "guideRendererPaths",
             "globalSetPublishable",
@@ -6214,7 +6214,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Protocol documents are generated from their one maintained source and historical protocol links stay immutable",
-          "line": 507,
+          "line": 508,
           "definitions": [
             "ProtocolDocument",
             "DocumentSource",
@@ -6229,7 +6229,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Simulation samples cover listed, paused, restricted and unverified projects and committed and working-tree builds",
-          "line": 545,
+          "line": 546,
           "definitions": [
             "servedFacts",
             "knownValues",
@@ -6261,7 +6261,7 @@
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index / The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route",
-          "line": 606,
+          "line": 607,
           "definitions": [
             "SitemapProject",
             "PublishedCycle",
@@ -6303,39 +6303,39 @@
         },
         {
           "target": "../backend/backlogRule.md",
-          "line": 128
+          "line": 129
         },
         {
           "target": "./skillAuthority.md",
-          "line": 137
+          "line": 138
         },
         {
           "target": "../frontend/poolListing.md",
-          "line": 165
+          "line": 166
         },
         {
           "target": "../backend/mergeActivity.md",
-          "line": 171
-        },
-        {
-          "target": "../backend/intakeCap.md",
           "line": 172
         },
         {
+          "target": "../backend/intakeCap.md",
+          "line": 173
+        },
+        {
           "target": "../backend/backlogRule.md",
-          "line": 175
+          "line": 176
         },
         {
           "target": "./skillAuthority.md",
-          "line": 322
+          "line": 323
         },
         {
           "target": "../app/index.md",
-          "line": 614
+          "line": 615
         },
         {
           "target": "../frontend/routes.md",
-          "line": 615
+          "line": 616
         }
       ]
     },

@@ -32,7 +32,7 @@ interface TextRefusal {
   readonly headers: Readonly<Record<string, string>>
 }
 
-const artifactPath = /^(?:(?:review-)?(?:skill|mission|codex|claude|claude-code|manual)\.md|(?:review-)?skill-manifest\.json|downloads\/[a-z0-9-]{1,96}\.skill(?:\.sha256)?|terms\.json|SKILL\.md|review\/SKILL\.md)$/u
+const artifactPath = /^(?:(?:review-)?(?:skill|mission|codex|claude|claude-code|cursor|hermes|manual)\.md|(?:review-)?skill-manifest\.json|downloads\/[a-z0-9-]{1,96}\.skill(?:\.sha256)?|terms\.json|SKILL\.md|review\/SKILL\.md)$/u
 const projectPath = /^\/projects\/([^/]+)\/(.+)$/u
 const projectId = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
 const plainText = "text/plain; charset=utf-8"
