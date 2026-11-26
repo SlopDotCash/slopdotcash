@@ -483,7 +483,7 @@ pure def sometimesCloseCandidate(c: Closure): bool = c.outcome == CloseCandidate
 Source `missingSubmissionEvidence` and `hasSlopParticipationFooter` in
 `workers/slopbot/submission-evidence.ts`, `evidenceVerdict` in `review.ts`
 and development's model `formal/models/slopbot/bot_submission_evidence.qnt`
-(`bf73d46fa`, #3063; `8f401ba2f`, #3152; `cb568e59b`, #3197). The check
+(`bf73d46fa`, #3063; `8f401ba2f`, #3152; `cb568e59b`, #3197; `95859bbf4`, #3371). The check
 runs only for a contributor-scope pull request reviewed without
 limitations. It needs the published guide: a policy file named
 `CONTRIBUTING.md`, read completely, whose visible text has an `## Evidence`
@@ -501,12 +501,15 @@ type, and `docs` must stand alone. Every submission needs test results and
 proof of change; `non-ui` adds runtime logs, `ui` adds a UI video,
 `performance` benchmarks and `hardware` on-device testing; `ui` adds UI
 screenshots too when the guide's own Evidence section lists a
-`UI screenshots:` field. A value counts as present when it does not start
-with a placeholder (`N/A`, `NA`, `none`, `TBD`, `TODO`, `pending`,
-`not run`, `not tested`, `not applicable`, any case) and is an `https` link
-with a path to a host with a dot (no credentials, not `example.com`,
-`example.net` or `example.org`), or, outside UI video and UI screenshots, at
-least five words. Malformed change types are a finding, as is any required
+`UI screenshots:` field. An absence marker at the start of a value
+(`N/A`, `NA`, `none`, `TBD`, `TODO`, `pending`, `not applicable`, any case)
+keeps the field missing even if a link follows it. A value starting with
+`not run` or `not tested` (any case) counts only if it contains a qualifying
+`https` link. Such a link has a non-root path and a host with a dot, no
+credentials, and no example host (`example.com`, `example.net`, `example.org`
+or their `www.` forms). Other nonempty values count with a qualifying link
+or, outside UI video and UI screenshots, at least five words. Malformed
+change types are a finding, as is any required
 field that is not present. Reading the text is the `//@` kernel
 `apps/slopbot/src/review/evidence.ts`; this rule owns the field table, which
 [the contributor workflow](../contributor/workflow.md) imports, and the

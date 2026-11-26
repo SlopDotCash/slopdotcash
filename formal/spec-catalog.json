@@ -33231,7 +33231,7 @@
     },
     {
       "path": "spec/slopbot/closure.md",
-      "sha256": "001935b29d7545852099bdb3f1be60648886647dddd8696233a2ec3012cd5538",
+      "sha256": "cc47db67576858e362881364573ae190de774411e8c469be758489beec7d1ba9",
       "module": "slopbot__closure",
       "stories": [
         {
@@ -33240,11 +33240,11 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing",
-          "line": 549
+          "line": 552
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision",
-          "line": 594
+          "line": 597
         }
       ],
       "rules": [
@@ -33446,7 +33446,7 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing / A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label",
-          "line": 551,
+          "line": 554,
           "definitions": [
             "canLabelFinding",
             "labelFinding",
@@ -33458,7 +33458,7 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing / A restricted project permits only an authorized security comment and the confirmed scam label",
-          "line": 578,
+          "line": 581,
           "definitions": [
             "canCommentSecurity",
             "commentSecurity",
@@ -33471,7 +33471,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / A maintainer reopen or an author appeal blocks further review actions on that revision",
-          "line": 596,
+          "line": 599,
           "definitions": [
             "ReopenActorRole",
             "ReopenEvidence",
@@ -33488,7 +33488,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / An upheld appeal or a maintainer reopen removes the decision's finding label",
-          "line": 630,
+          "line": 633,
           "definitions": [
             "AppealVerdict",
             "AppealOutcome",
@@ -33502,7 +33502,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / Simulation samples include allowed and refused repository, participation and verdict observations",
-          "line": 651,
+          "line": 654,
           "definitions": [
             "verifiedSource",
             "ownRun",
@@ -33570,7 +33570,7 @@
         },
         {
           "target": "../contributor/workflow.md",
-          "line": 512
+          "line": 515
         }
       ]
     },
