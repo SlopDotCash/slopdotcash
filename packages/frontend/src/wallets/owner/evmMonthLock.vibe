@@ -3,11 +3,11 @@ import { CURRENT_PERIOD_CALL, OPEN_PLEDGED_GROSS_CALL, decodeCurrentPeriod, deco
 import { parseDecimalAmount } from "@repo/settlement/kernels/amounts"
 import { lockPeriod, validLockCount } from "../../../gen/frontend__vaultLocks.ts"
 import { WalletChoice, WalletFailed, WalletUntrusted, conflictMessage } from "../core/discovery.vibe"
-import { type EvmConnection, sendTransaction } from "../core/evm.vibe"
+import { type EvmConnection, evmRequest, sendTransaction } from "../core/evm.vibe"
 import { failureOf, providerRequest } from "../core/injected.ts"
-import { type Call, callPlan, pledgeCall, releaseCall } from "./evmCalls.ts"
-import { expectedOf } from "./evmEvidence.ts"
-import { type EvmVault, VaultActionRefused, batchProgress, checkBatchDeposit, readVault, readWalletTransaction, requireVaultWallet, reviewTransfer, sendBatch } from "./evmVault.vibe"
+import { type Call, callPlan, hexQuantity, pledgeCall, releaseCall } from "./evmCalls.ts"
+import { type AtomicBatchReceipts, type WalletReceipt, blockHashOf, blockNumberOf, expectedOf, isTransactionHash, matchesCall, receiptDeposits, transactionOf } from "./evmEvidence.ts"
+import { type EvmVault, VaultActionRefused, batchProgress, checkBatchDeposit, readVault, readWalletTransaction, receiptState, requireVaultWallet, reviewTransfer, sendBatch } from "./evmVault.vibe"
 import type { EvmBatchPlan } from "./ownerPlans.schema.ts"
 import { lockRefusal } from "./pledgeRefusals.ts"
 
@@ -41,7 +41,7 @@ export interface LockFacts {
 
 export type SentLock =
   | { readonly kind: "transaction"; readonly hash: string; readonly from: string; readonly call: Call }
-  | { readonly kind: "batch"; readonly reference: string; readonly gross: bigint; readonly plan: EvmBatchPlan }
+  | { readonly kind: "batch"; readonly reference: string; readonly gross: bigint; readonly plan: EvmBatchPlan; readonly prePromptBlock: bigint | undefined }
 
 export type LockCheck = "ChainPending" | "ChainFailed" | "ChainIncluded"
 
@@ -57,6 +57,7 @@ export const evmLockMessages = {
 error RawFailure { caught: unknown }
 
 const hexPattern = /^0x[0-9a-fA-F]+$/u
+const batchHeadTimeoutMs = 2_000
 
 function refused(message: string) {
   return new VaultActionRefused({ message })
@@ -164,11 +165,24 @@ effect function sendCall<E>(connection: EvmConnection, vault: EvmVault, call: Ca
   return { kind: "transaction", hash, from: connection.address, call } satisfies SentLock
 }
 
+effect function batchHead(connection: EvmConnection) {
+  const finalized = evmRequest(connection, "eth_getBlockByNumber", ["finalized", false]) catch () => undefined
+  const latest = evmRequest(connection, "eth_getBlockByNumber", ["latest", false]) catch () => undefined
+  const floor = blockNumberOf(finalized)
+  const height = blockNumberOf(latest)
+  const finalizedHash = blockHashOf(finalized)
+  const latestHash = blockHashOf(latest)
+  if (floor === undefined || height === undefined || height < floor || finalizedHash === undefined || latestHash === undefined
+    || !isTransactionHash(finalizedHash) || !isTransactionHash(latestHash) || (height === floor && latestHash.toLowerCase() !== finalizedHash.toLowerCase())) return undefined
+  return height
+}
+
 export effect function sendLock<E>(connection: EvmConnection, vault: EvmVault, facts: LockFacts, beforePrompt: void!E) {
   const first = facts.periods[0]
   if (first === undefined) throw refused(evmLockMessages.invalidMonth)
   const call = try Effect.try({ try: () => pledgeCall(vault.vault, first, facts.periods.length, facts.amountMinor), catch: (caught) => refused(caught instanceof Error ? caught.message : evmLockMessages.invalidMonth) })
   if (facts.depositText === "") return try sendCall(connection, vault, call, beforePrompt)
+  const prePromptBlock = Option.getOrUndefined(try Effect.timeoutOption(batchHead(connection), batchHeadTimeoutMs))
   const planned = try Ref.make<EvmBatchPlan | undefined>(undefined)
   const remember = effect (plan: EvmBatchPlan) => {
     try Ref.set(planned, plan)
@@ -181,13 +195,61 @@ export effect function sendLock<E>(connection: EvmConnection, vault: EvmVault, f
   }
   const plan = try Ref.get(planned)
   if (plan === undefined) throw refused(evmLockMessages.failed)
-  return { kind: "batch", reference, gross: facts.depositGross, plan } satisfies SentLock
+  return { kind: "batch", reference, gross: facts.depositGross, plan, prePromptBlock } satisfies SentLock
 }
 
 export effect function sendRelease<E>(connection: EvmConnection, vault: EvmVault, period: number, beforePrompt: void!E) {
   try requireVaultWallet(connection, vault)
   const call = try Effect.try({ try: () => releaseCall(vault.vault, period), catch: (caught) => refused(caught instanceof Error ? caught.message : evmLockMessages.invalidMonth) })
   return try sendCall(connection, vault, call, beforePrompt)
+}
+
+effect function checkAtomicLock(connection: EvmConnection, vault: EvmVault, sent: Extract<SentLock, { readonly kind: "batch" }>, batch: AtomicBatchReceipts) {
+  const { from, chainId, calls } = sent.plan
+  const { prePromptBlock } = sent
+  const vaultAddress = vault.vault.toLowerCase()
+  const pledge = calls.at(-1)
+  const deposit = calls.at(-2)
+  if (prePromptBlock === undefined || pledge?.to !== vaultAddress || deposit?.to !== vaultAddress
+    || from !== connection.address || from !== vault.owner.toLowerCase() || chainId !== hexQuantity(vault.chainId)) return "ChainPending" satisfies LockCheck
+  const expectedPledge = expectedOf(callPlan(from, vault.chainId, pledge))
+  const expectedDeposit = expectedOf(callPlan(from, vault.chainId, deposit))
+  const status = batch.confirmed ? "0x1" : "0x0"
+  let previous: WalletReceipt | undefined
+  let depositAt: number | undefined
+  let pledgeAt: number | undefined
+  let depositEvent = false
+  for (const [index, hash] of batch.hashes.entries()) {
+    const state = try receiptState(connection, vault, hash, undefined, "transactionIndex")
+    if (state === undefined || !state.canonical || !state.final || state.receipt.status !== status || state.receipt.blockNumber <= prePromptBlock) return "ChainPending" satisfies LockCheck
+    const receipt = state.receipt
+    if (previous !== undefined && (receipt.blockNumber < previous.blockNumber
+      || (receipt.blockNumber === previous.blockNumber && (receipt.transactionIndex === undefined || previous.transactionIndex === undefined || receipt.transactionIndex <= previous.transactionIndex)))) return "ChainPending" satisfies LockCheck
+    previous = receipt
+    const transaction = transactionOf(try evmRequest(connection, "eth_getTransactionByHash", [hash]), hash)
+    if (transaction === undefined) return "ChainPending" satisfies LockCheck
+    const isDeposit = matchesCall(transaction, expectedDeposit)
+    if (isDeposit) {
+      if (depositAt !== undefined) return "ChainPending" satisfies LockCheck
+      depositAt = index
+    }
+    if (matchesCall(transaction, expectedPledge)) {
+      if (pledgeAt !== undefined) return "ChainPending" satisfies LockCheck
+      pledgeAt = index
+    }
+    if (!batch.confirmed) continue
+    const deposits = receiptDeposits(vault.vault, receipt)
+    if (deposits === undefined) return "ChainPending" satisfies LockCheck
+    for (const { event } of deposits) {
+      if (event.name !== "Deposited" || event.depositor.toLowerCase() !== from) continue
+      if (event.amount !== sent.gross || depositEvent || !isDeposit) return "ChainPending" satisfies LockCheck
+      depositEvent = true
+    }
+  }
+  try requireVaultWallet(connection, vault)
+  if (depositAt === undefined || pledgeAt === undefined || depositAt >= pledgeAt) return "ChainPending" satisfies LockCheck
+  if (!batch.confirmed) return "ChainFailed" satisfies LockCheck
+  return (depositEvent ? "ChainIncluded" : "ChainPending") satisfies LockCheck
 }
 
 export effect function checkSentLock(connection: EvmConnection, vault: EvmVault, sent: SentLock) {
@@ -197,10 +259,12 @@ export effect function checkSentLock(connection: EvmConnection, vault: EvmVault,
     if (read.status === "failed" || read.receipt?.status === "0x0") return "ChainFailed" satisfies LockCheck
     return "ChainIncluded" satisfies LockCheck
   }
-  const report = try batchProgress(connection, vault, sent.reference)
+  const report = try batchProgress(connection, vault, sent.reference, sent.plan.calls.length)
+  if (report.kind === "atomicReceipts") return try checkAtomicLock(connection, vault, sent, report)
   if (report.kind === "notSent") return "ChainFailed" satisfies LockCheck
   if (report.kind !== "landed" || report.hash === undefined) return "ChainPending" satisfies LockCheck
   const deposit = try checkBatchDeposit(connection, vault, sent.gross, sent.plan, report.hash)
+  if ((report.confirmed === true && deposit === "failed") || (report.confirmed === false && deposit === "finalized")) return "ChainPending" satisfies LockCheck
   if (deposit === "finalized") return "ChainIncluded" satisfies LockCheck
   return (deposit === "failed" ? "ChainFailed" : "ChainPending") satisfies LockCheck
 }

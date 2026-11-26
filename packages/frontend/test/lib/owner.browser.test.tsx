@@ -1,7 +1,7 @@
 import { base58Encode, base64Encode } from "@repo/platform/chain/solana";
 import { webCrypto } from "@repo/platform/crypto";
 import { PLEDGED_FUNDS_SELECTOR, escrowAbi, evmAddress, factoryAbi } from "@repo/settlement/chain/evm/abi";
-import { expirePledgeCalldata, pledgeMonthsCalldata, setMonthlyCommitmentCalldata } from "@repo/settlement/chain/evm/actions";
+import { depositCalldata, expirePledgeCalldata, pledgeMonthsCalldata, setMonthlyCommitmentCalldata } from "@repo/settlement/chain/evm/actions";
 import { EVENT_TOPICS } from "@repo/settlement/chain/evm/events";
 import { vaultKey } from "@repo/settlement/chain/evm/factories";
 import { pledgeMonthInstructions } from "@repo/settlement/chain/solana/instructions";
@@ -10,8 +10,9 @@ import { toAmount } from "@repo/settlement/kernels/amounts";
 import { type Period, isPeriod, periodContaining } from "@repo/settlement/kernels/calendar";
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
-import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import { Effect, Fiber, Layer, ManagedRuntime, Option, Stream } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { TestClock } from "effect/testing";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { type Hex, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, erc20Abi, pad, toFunctionSelector } from "viem";
@@ -105,6 +106,7 @@ interface Mined {
   readonly input: string;
   readonly value: string;
   readonly block: bigint;
+  readonly transactionIndex: bigint;
   readonly logs: ReadonlyArray<{ address: string; topics: string[]; data: string }>;
 }
 
@@ -117,17 +119,24 @@ function addressOf(text: string) {
 const vaultKeys = [nativeVault, tokenVault].map((vault) => ({ vault, key: vaultKey({ owner: addressOf(owner), projectId: projectWord as never, asset: addressOf(vault.asset), purpose: "OrdinaryPurpose" }) }));
 
 type Pledges = Map<number, { amount: bigint; open: boolean }>;
+type LockBatchReport =
+  | "multiple" | "sameBlock" | "reversedIndex" | "stale" | "conflictingHead" | "duplicate" | "wrongMembership"
+  | "wrongChain" | "wrongReference" | "wrongDeposit" | "wrongPledge"
+  | "legacySingleton" | "modernSingleton" | "wrongSingletonChain" | "nonAtomicSingleton";
 
 const monthAfter = (period: number, months: number) => {
   const index = Math.floor(period / 100) * 12 + (period % 100) - 1 + months;
   return Math.floor(index / 12) * 100 + (index % 12) + 1;
 };
 
-function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string }) {
+function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string; readonly lockBatch?: LockBatchReport }) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
   const seen: string[] = [];
-  let finalized = 0n;
+  let finalized = options.lockBatch === "conflictingHead" ? 10n : 0n;
+  let lockBatch: { readonly id: string; readonly entries: ReadonlyArray<Mined> } | undefined;
+  const singleton = options.lockBatch === "legacySingleton" || options.lockBatch === "modernSingleton"
+    || options.lockBatch === "wrongSingletonChain" || options.lockBatch === "nonAtomicSingleton";
   const blockHash = (block: bigint) => hash(block.toString(16).slice(-1));
   const vaultOf = (to: string) => [nativeVault, tokenVault].find((vault) => vault.vault === to.toLowerCase());
   const read = (to: string, data: string): string => {
@@ -159,8 +168,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     if (pledges === undefined && ["currentPeriod", "openPledgedGross", "monthPledges"].includes(name.name)) throw Object.assign(new Error("execution reverted"), { code: 3, data: "0x" });
     throw new Error(`unexpected getter ${name.name}`);
   };
-  const mine = (transaction: { from?: string; to: string; data: string; value?: string }) => {
-    const block = BigInt(mined.length + 10);
+  const mine = (transaction: { from?: string; to: string; data: string; value?: string }, block = BigInt(mined.length + 10), transactionIndex = 0n) => {
     if (options.pledges !== undefined && options.failReceipts !== true && (transaction.data.startsWith(selector("pledgeMonths")) || transaction.data.startsWith(selector("expirePledge")))) {
       const decoded = decodeFunctionData({ abi: escrowAbi, data: transaction.data as Hex });
       const args = decoded.args as unknown as ReadonlyArray<number | bigint>;
@@ -173,16 +181,21 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     const logs = vault === undefined ? []
       : setting !== undefined ? [{ address: vault.vault, topics: [EVENT_TOPICS.MonthlyCommitmentSet], data: encodeAbiParameters([{ type: "uint128" }, { type: "bool" }], [setting[0], setting[1]]) }]
       : amount === 0n ? [] : [{ address: vault.vault, topics: [EVENT_TOPICS.Deposited, pad(owner as Hex)], data: encodeAbiParameters([{ type: "uint128" }], [amount]) }];
-    const entry = { hash: hash((mined.length + 1).toString(16)), from: (transaction.from ?? options.wallet ?? owner).toLowerCase(), to: transaction.to, input: transaction.data, value: transaction.value ?? "0x0", block, logs };
+    const entry = { hash: hash((mined.length + 1).toString(16)), from: (transaction.from ?? options.wallet ?? owner).toLowerCase(), to: transaction.to, input: transaction.data, value: transaction.value ?? "0x0", block, transactionIndex, logs };
     mined.push(entry);
     return entry;
   };
+  const previousLock = options.lockBatch === "stale" ? [
+    mine({ to: tokenVault.vault, data: depositCalldata(3_000_000n) }),
+    mine({ to: tokenVault.vault, data: pledgeMonthsCalldata(options.current ?? 0, 1, 2_000_000n) }),
+  ] : undefined;
   const receipt = (entry: Mined) => ({
     status: options.failReceipts === true ? "0x0" : "0x1",
     transactionHash: entry.hash,
     blockNumber: quantity(entry.block),
     blockHash: blockHash(entry.block),
-    logs: entry.logs.map((log, index) => ({ ...log, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), transactionHash: entry.hash, logIndex: quantity(BigInt(index)), removed: false })),
+    transactionIndex: quantity(entry.transactionIndex),
+    logs: options.failReceipts === true ? [] : entry.logs.map((log, index) => ({ ...log, blockNumber: quantity(entry.block), blockHash: blockHash(entry.block), transactionHash: entry.hash, logIndex: quantity(BigInt(index)), removed: false })),
   });
   const provider = {
     async request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
@@ -202,26 +215,84 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
         return mine(first as unknown as { to: string; data: string; value?: string }).hash;
       }
       if (method === "wallet_sendCalls") {
-        const calls = (first as unknown as { calls: Array<{ to: string; data: string }> }).calls;
-        const last = calls.map(mine).at(-1);
-        return { id: `batch-${last?.hash ?? ""}` };
+        const calls = (first as unknown as { calls: ReadonlyArray<{ to: string; data: string; value?: string }> }).calls;
+        const sharedBlock = options.lockBatch === "sameBlock" || options.lockBatch === "reversedIndex" ? BigInt(mined.length + 10) : undefined;
+        const entries = previousLock ?? calls.map((call, index) => {
+          const submitted = options.lockBatch === "wrongPledge" && call.data.startsWith(selector("pledgeMonths"))
+            ? { ...call, data: pledgeMonthsCalldata(options.current ?? 0, 1, 2_000_001n) }
+            : call;
+          return sharedBlock === undefined ? mine(submitted) : mine(submitted, sharedBlock, BigInt(index));
+        });
+        const last = entries.at(-1);
+        if (last === undefined || options.lockBatch === undefined) return { id: `batch-${last?.hash ?? ""}` };
+        const id = previousLock === undefined ? `0x${last.hash.slice(2).padStart(128, "0")}` : `0x${"b".repeat(128)}`;
+        if (singleton) {
+          const single = { ...last, logs: entries.flatMap((entry) => entry.logs) };
+          mined.splice(mined.length - entries.length, entries.length, single);
+          lockBatch = { id, entries: [single] };
+        } else {
+          lockBatch = { id, entries };
+        }
+        return { id };
       }
-      if (method === "wallet_getCallsStatus") return { status: 200, receipts: [{ transactionHash: String(params[0]).slice(6) }] };
+      if (method === "wallet_getCallsStatus") {
+        const reference = String(params[0]);
+        if (lockBatch === undefined) return { status: 200, receipts: [{ transactionHash: reference.slice(6) }] };
+        if (reference !== lockBatch.id) return { status: 400 };
+        if (options.lockBatch === "legacySingleton") return { status: 200, receipts: lockBatch.entries.map((entry) => ({ transactionHash: entry.hash })) };
+        const [firstEntry, secondEntry, ...remaining] = lockBatch.entries;
+        let entries = lockBatch.entries;
+        if (options.lockBatch === "duplicate" && secondEntry !== undefined) entries = [secondEntry, secondEntry, ...remaining];
+        if (options.lockBatch === "reversedIndex" && firstEntry !== undefined && secondEntry !== undefined) entries = [secondEntry, firstEntry, ...remaining];
+        const reportChain = options.lockBatch === "sameBlock" ? `0x0${chainId.toString(16)}` : quantity(BigInt(chainId));
+        return {
+          version: "2.0.0",
+          id: options.lockBatch === "wrongReference" ? `0x${"f".repeat(128)}` : lockBatch.id,
+          chainId: options.lockBatch === "wrongChain" || options.lockBatch === "wrongSingletonChain" ? "0x1" : reportChain,
+          status: options.failReceipts === true ? 500 : 200,
+          atomic: options.lockBatch !== "nonAtomicSingleton",
+          receipts: entries.map((entry) => ({
+            transactionHash: entry.hash,
+            blockNumber: quantity(entry.block),
+            blockHash: blockHash(entry.block),
+            status: options.failReceipts === true ? "0x0" : "0x1",
+            gasUsed: "0x5208",
+            logs: options.failReceipts === true ? [] : entry.logs,
+          })),
+        };
+      }
       if (method === "eth_getTransactionReceipt") {
         const entry = mined.find((item) => item.hash === params[0]);
         return entry === undefined ? null : receipt(entry);
       }
       if (method === "eth_getTransactionByHash") {
         const entry = mined.find((item) => item.hash === params[0]);
-        return entry === undefined ? null : { from: entry.from, to: entry.to, input: entry.input, value: entry.value };
+        if (entry === undefined) return null;
+        const wrongDeposit = options.lockBatch === "wrongDeposit" && entry.input.startsWith(selector("deposit"));
+        return {
+          hash: entry.hash,
+          from: entry.from,
+          to: entry.to,
+          input: wrongDeposit ? depositCalldata(3_000_001n) : entry.input,
+          value: entry.value,
+          blockNumber: quantity(entry.block),
+          blockHash: blockHash(entry.block),
+          transactionIndex: quantity(entry.transactionIndex),
+        };
       }
-      if (method === "eth_getBlockByNumber") return params[0] === "finalized" ? { number: quantity(finalized), hash: blockHash(finalized) } : { number: params[0], hash: blockHash(BigInt(String(params[0]))) };
+      if (method === "eth_getBlockByNumber") {
+        if (params[0] === "latest" && options.lockBatch === "legacySingleton") return null;
+        const block = params[0] === "latest" ? mined.at(-1)?.block ?? 9n : params[0] === "finalized" ? finalized : BigInt(String(params[0]));
+        const transactions = mined.filter((entry) => entry.block === block).map((entry) =>
+          options.lockBatch === "wrongMembership" && entry.input.startsWith(selector("deposit")) ? hash("f") : entry.hash);
+        return { number: quantity(block), hash: blockHash(block), transactions };
+      }
       if (method === "eth_getCode") return runtimeCode;
       if (method === "eth_getStorageAt") return `0x${"0".repeat(64)}`;
       throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
     },
   };
-  return { provider, seen, mined, mineCreation: () => mine({ to: factory, data: "0x" }).hash, mineCall: (call: { to: string; data: string }) => mine(call).hash, finalize: () => { finalized = BigInt(mined.length + 100); } };
+  return { provider, seen, mined, mineCreation: () => mine({ to: factory, data: "0x" }).hash, mineCall: (call: { to: string; data: string }) => mine(call).hash, finalize: (through = BigInt(mined.length + 100)) => { finalized = through; } };
 }
 
 function selector(name: string): string {
@@ -748,31 +819,83 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     });
   });
 
-  it(`a deposit and lock go to the wallet as one request, an included batch keeps checking until its finalized deposit, and a failed receipt locks nothing (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")`, async () => {
-    const batched = async (failReceipts: boolean, uuid: string) => {
-      const pledges: Pledges = new Map();
-      const chain = fakeChain({ atomic: true, send: "mine", pledges, current, failReceipts });
-      const runtime = cardRuntime({ owner, evm: tokenVault, solana: undefined });
-      let reloads = 0;
-      const result = await runtime.runPromise(Effect.gen(function* () {
-        announce(uuid, chain.provider);
-        const connection = yield* evmCard;
-        yield* readCard(rowOf(tokenVault, pledges, 10_000_000n), 10_000_000n, nowSeconds());
-        yield* connectCard(connection);
-        const review = yield* reviewCard(connection, 1, "2", "3", 1_000_000n);
-        yield* sendCard(connection);
-        const included = failReceipts ? undefined : (yield* Effect.timeoutOption(watchCard(connection, Effect.void), "6 seconds"), (yield* cardState).phase);
+  const batched = async (lockBatch: LockBatchReport, failReceipts = false) => {
+    const pledges: Pledges = new Map();
+    const chain = fakeChain({ atomic: true, send: "mine", pledges, current, lockBatch, failReceipts });
+    const runtime = cardRuntime({ owner, evm: tokenVault, solana: undefined });
+    let reloads = 0;
+    const journey = Effect.gen(function* () {
+      announce("4d5e6f7a-8b9c-4dae-8f01-3b4c5d6e7f8a", chain.provider);
+      const connection = yield* evmCard;
+      yield* readCard(rowOf(tokenVault, pledges, 10_000_000n), 10_000_000n, nowSeconds());
+      yield* connectCard(connection);
+      const review = yield* reviewCard(connection, 1, "2", "3", 1_000_000n);
+      yield* sendCard(connection);
+      const lock = yield* lockMachine();
+      const watcher = yield* Effect.forkChild(watchCard(connection, Effect.sync(() => { reloads += 1; })), { startImmediately: true });
+      const nextCheck = (checks: number) => Effect.gen(function* () {
+        yield* TestClock.adjust("5 seconds");
+        return Option.getOrThrow(yield* Stream.runHead(Stream.filter(lock.changes, (state) => state.checks === checks)));
+      });
+      let partial;
+      if (lockBatch === "multiple" && !failReceipts) {
+        const deposit = chain.mined.find((entry) => entry.input.startsWith(selector("deposit")));
+        if (deposit === undefined) throw new Error("Missing deposit transaction in the batch fixture.");
+        chain.finalize(deposit.block);
+        partial = (yield* nextCheck(1)).phase;
+      }
+      let state = yield* cardState;
+      if (state.phase === "LockChecking") {
         chain.finalize();
-        yield* watchCard(connection, Effect.sync(() => { reloads += 1; }));
-        const state = yield* cardState;
-        return { deposit: review.depositGross, included, phase: state.phase, notice: state.notice, withDeposit: sendsDeposit(state), last: chain.mined.at(-1)?.input };
-      }));
-      return { ...result, reloads, locked: [...pledges.values()], batches: chain.seen.filter((method) => method === "wallet_sendCalls").length, transactions: chain.seen.filter((method) => method === "eth_sendTransaction").length };
-    };
-    const shared = { deposit: 3_000_000n, last: pledgeMonthsCalldata(current, 1, 2_000_000n), batches: 1, transactions: 0 };
-    expect(await batched(false, "4d5e6f7a-8b9c-4dae-8f01-3b4c5d6e7f8a")).toMatchObject({ ...shared, included: "LockChecking", phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }] });
-    expect(await batched(true, "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f")).toEqual({ ...shared, included: undefined, phase: "LockFailed", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [] });
-  }, 40_000);
+        state = yield* nextCheck(state.checks + 1);
+      }
+      if (state.phase === "LockChecking") yield* Fiber.interrupt(watcher);
+      else yield* Fiber.join(watcher);
+      return { deposit: review.depositGross, partial, phase: state.phase, notice: state.notice, withDeposit: sendsDeposit(state), last: chain.mined.at(-1)?.input };
+    });
+    const result = await runtime.runPromise(Effect.provide(journey, TestClock.layer()));
+    return { ...result, reloads, locked: [...pledges.values()], batches: chain.seen.filter((method) => method === "wallet_sendCalls").length, transactions: chain.seen.filter((method) => method === "eth_sendTransaction").length };
+  };
+
+  it(`a deposit and lock use one request and the lock waits for both finalized receipts (spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")`, async () => {
+    expect(await batched("multiple")).toMatchObject({
+      deposit: 3_000_000n,
+      partial: "LockChecking",
+      phase: "LockIncluded",
+      last: pledgeMonthsCalldata(current, 1, 2_000_000n),
+      reloads: 1,
+      locked: [{ amount: 2_000_000n, open: true }],
+      batches: 1,
+      transactions: 0,
+    });
+  });
+
+  it("a lock batch verifies finalized receipts ordered within one block with a padded report chain ID", async () => {
+    expect(await batched("sameBlock")).toMatchObject({ phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }], batches: 1, transactions: 0 });
+  });
+
+  it("a legacy singleton lock batch still completes when the pre-prompt chain head is unavailable", async () => {
+    expect(await batched("legacySingleton")).toMatchObject({ phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }], batches: 1, transactions: 0 });
+  });
+
+  it("a modern singleton lock batch verifies its bound finalized receipt", async () => {
+    expect(await batched("modernSingleton")).toMatchObject({ phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }], batches: 1, transactions: 0 });
+  });
+
+  it("a fully reverted atomic lock batch locks nothing", async () => {
+    expect(await batched("multiple", true)).toMatchObject({ phase: "LockIdle", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [], batches: 1, transactions: 0 });
+  });
+
+  it("a reverted atomic lock batch with different deposit calldata stays pending", async () => {
+    expect(await batched("wrongDeposit", true)).toMatchObject({ phase: "LockChecking", reloads: 0, locked: [], batches: 1, transactions: 0 });
+  });
+
+  it.each([
+    "conflictingHead", "duplicate", "reversedIndex", "stale", "wrongChain", "wrongReference", "wrongDeposit", "wrongPledge", "wrongMembership",
+    "wrongSingletonChain", "nonAtomicSingleton",
+  ] as const)("a lock batch with %s evidence stays pending", async (shape) => {
+    expect(await batched(shape)).toMatchObject({ phase: "LockChecking", reloads: 0, batches: 1, transactions: 0 });
+  });
 
   it("a lapsed month is released with expirePledge by a connected wallet that is not the owner's, whose own lock review is refused", async () => {
     const lapsed = monthAfter(current, -3);
@@ -817,7 +940,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     const unsigned = new Uint8Array(65 + compiled.bytes.length);
     unsigned[0] = 1;
     unsigned.set(compiled.bytes, 65);
-    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signAndSendTransaction"] };
+    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signMessage", "solana:signAndSendTransaction"] };
     const signed: Uint8Array[] = [];
     const solanaWallet = {
       version: "1.0.0",
@@ -827,6 +950,10 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
       accounts: [account],
       features: {
         "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+        "solana:signMessage": {
+          version: "1.0.0",
+          signMessage: async ({ message }: { message: Uint8Array }) => [{ signedMessage: message, signature: await wallet.sign(message) }],
+        },
         "solana:signAndSendTransaction": {
           version: "1.0.0",
           supportedTransactionVersions: ["legacy"],
@@ -840,8 +967,8 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     cleanups.push(getWallets().register(solanaWallet));
     const run = async (wire: Uint8Array) => {
       const asked: unknown[] = [];
-      const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body));
+      const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = await new Request(input, init).json();
         asked.push(body);
         const answer = body.step === "check"
           ? { status: "finalized" }
