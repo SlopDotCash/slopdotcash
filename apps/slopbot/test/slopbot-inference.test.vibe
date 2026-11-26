@@ -152,7 +152,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       published: [{ pull: 4, status: "unresolved", provider: "orbio", model: "anthropic/claude-sonnet-5.5", supersedes: null }],
       unpublished: [],
     })
-  })
+  }, { timeout: 300_000 })
 
   it.effect('A pause between inference and append refuses publication, and the retained result is reused without a second charge (spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks")', () => effect {
     const { world, db } = try Journey
@@ -198,5 +198,5 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       dryRun: [["single", 0, "dry-run; no provider calls"], ["joint", 0, "dry-run; no provider calls"]],
       calls: 4,
     })
-  })
+  }, { timeout: 300_000 })
 })

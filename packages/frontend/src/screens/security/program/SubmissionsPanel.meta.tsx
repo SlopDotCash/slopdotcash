@@ -12,6 +12,7 @@ export const meta: ComponentMeta<SubmissionsPanelProps> = {
     cases: [caseRecord],
     focusId: null,
     grantError: null,
+    shows: () => true,
     onRefresh,
     entry: (submission) => <p>{submission.id}</p>,
   },
