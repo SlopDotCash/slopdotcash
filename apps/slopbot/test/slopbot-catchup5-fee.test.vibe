@@ -30,6 +30,7 @@ const installationId = 9601
 const projectId = "fee-journeys"
 const t0 = Date.parse("2026-11-22T12:00:00.000Z")
 const day = 86_400_000
+const hour = 3_600_000
 const since = "2026-11-21T00:00:00.000Z"
 
 module host {
@@ -201,6 +202,20 @@ effect function keepMarked(number: number, labelledAt: number) {
   })
 }
 
+effect function closeAppealed(number: number, closedAt: number) {
+  const { fees } = try FeeWorld
+  const node = try Effect.try(() => fees.fake.world.pull(repo, number).nodeId)
+  const appealKey = `appeal:${node}`
+  try Effect.promise(() => fees.db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${node}`, repositoryId, node, iso(closedAt)).run())
+  try Effect.promise(() => fees.db.prepare("INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at) VALUES (?, ?, ?, 301, ?, ?, ?)").bind(appealKey, repositoryId, node, JSON.stringify({ itemKind: "pull_request", number }), iso(closedAt + 1000), iso(closedAt + 1000 + day)).run())
+  return appealKey
+}
+
+effect function appealUpheld(appealKey: string, upheldAt: number) {
+  const { fees } = try FeeWorld
+  try Effect.promise(() => fees.db.prepare("UPDATE slopbot_appeals SET resolved_at = ?, resolution = 'upheld', resolved_by = 'maintainer', escalated_at = NULL WHERE appeal_key = ?").bind(iso(upheldAt), appealKey).run())
+}
+
 effect function keepLabelCalls() {
   const { fees } = try FeeWorld
   const labels = `/repositories/${repositoryId}/labels`
@@ -290,7 +305,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
     })
   })
 
-  it.effect('A paid fee swaps the label and queues the held review, merged is refund due, closed a week is kept due, unmarked wanted work closed a week is refund due and creates the keep label, marked wanted work is kept due, an unreadable wanted link waits a day, a label added after opening does not invite, a withdrawn payment asks again, and an unpaid pull request is not ready (spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending")', () => effect {
+  it.effect('A paid fee swaps the label and queues the held review, merged is refund due, closed a week is kept due, unmarked wanted work closed a week is refund due and creates the keep label, marked wanted work is kept due, an unreadable wanted link waits a day, a label added after opening does not invite, a close after the fourteen days is refund due as undecided when the check runs late and once no appeal of the close is open, a withdrawn payment asks again, and an unpaid pull request is not ready (spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending")', () => effect {
     const { fees } = try FeeWorld
     const merged = try opened("Merged after paying", t0 - 1000)
     const kept = try opened("Closed after paying", t0 - 1000)
@@ -337,14 +352,11 @@ layer(World, { timeout: "240 seconds" })((it) => {
     const labelCallsMarked = try keepLabelCalls()
     try keepMarked(lateMarked, decidedAt + 1000)
     try refreshed(lateMarked, decidedAt + 2000)
-    const appealedNode = try Effect.try(() => fees.fake.world.pull(repo, appealed).nodeId)
-    const appealKey = `appeal:${appealedNode}`
-    try Effect.promise(() => fees.db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${appealedNode}`, repositoryId, appealedNode, iso(t0 + 4000)).run())
-    try Effect.promise(() => fees.db.prepare("INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at) VALUES (?, ?, ?, 301, ?, ?, ?)").bind(appealKey, repositoryId, appealedNode, JSON.stringify({ itemKind: "pull_request", number: appealed }), iso(t0 + 5000), iso(t0 + 5000 + day)).run())
+    const appealKey = try closeAppealed(appealed, t0 + 4000)
     try refreshed(appealed, decidedAt)
     const heldByAppeal = (try seen(appealed)).item?.outcome ?? null
     const upheldAt = decidedAt + day
-    try Effect.promise(() => fees.db.prepare("UPDATE slopbot_appeals SET resolved_at = ?, resolution = 'upheld', resolved_by = 'maintainer', escalated_at = NULL WHERE appeal_key = ?").bind(iso(upheldAt), appealKey).run())
+    try appealUpheld(appealKey, upheldAt)
     try refreshed(appealed, upheldAt + 6 * day)
     const beforeUpheldWeek = (try seen(appealed)).item?.outcome ?? null
     try refreshed(appealed, upheldAt + 7 * day)
@@ -358,6 +370,25 @@ layer(World, { timeout: "240 seconds" })((it) => {
     const labelCallsUnread = try keepLabelCalls()
     try refreshed(lateLabel, decidedAt)
     const repositoryLabel = try Effect.try(() => fees.fake.world.repo(repo).labels.has("slop-keep-fee"))
+    const undecided = try opened("Closed after the fourteen days", t0 - 1000)
+    const undecidedMarked = try opened("Wanted work marked after the fourteen days", t0 - 1000, `Closes #${wantedBefore}`)
+    const onTheDay = try opened("Closed on the fourteenth day", t0 - 1000)
+    const undecidedAppealed = try opened("Closed after the fourteen days with close appeal", t0 - 1000)
+    const longOpen = [undecided, undecidedMarked, onTheDay, undecidedAppealed]
+    const refundAt = t0 + 1000 + 14 * day
+    for (const number of longOpen) try gated(number, t0)
+    for (const number of longOpen) try paidBy(number, t0 + 1000)
+    for (const number of longOpen) try refreshed(number, refundAt - day)
+    try closed(undecided, refundAt + hour, false)
+    try closed(undecidedMarked, refundAt + hour, false)
+    try keepMarked(undecidedMarked, refundAt + hour + 1000)
+    try closed(onTheDay, refundAt, false)
+    try closed(undecidedAppealed, refundAt + hour, false)
+    const undecidedAppealKey = try closeAppealed(undecidedAppealed, refundAt + hour)
+    for (const number of longOpen) try refreshed(number, refundAt + 2 * hour)
+    const undecidedHeld = { item: (try seen(undecidedAppealed)).item?.outcome ?? null, gate: try gateOf(undecidedAppealed) }
+    try appealUpheld(undecidedAppealKey, refundAt + 3 * hour)
+    try refreshed(undecidedAppealed, refundAt + 4 * hour)
     try same({
       invited: { item: (try seen(invited)).item?.outcome ?? null, gate: (try gateOf(invited))?.reason ?? null, labelCalls: labelCallsInvited.slice(labelCallsBefore.length), repositoryLabel },
       marked: { item: (try seen(marked)).item?.outcome ?? null, gate: (try gateOf(marked))?.reason ?? null, labelCalls: labelCallsMarked.slice(labelCallsInvited.length) },
@@ -405,6 +436,17 @@ layer(World, { timeout: "240 seconds" })((it) => {
       notReady: "not ready: its submission fee has not been paid",
       refundReview: false,
       earlyReview: false,
+    })
+    try same({
+      undecided: { item: (try seen(undecided)).item?.outcome ?? null, gate: (try gateOf(undecided))?.reason ?? null },
+      undecidedMarked: { item: (try seen(undecidedMarked)).item?.outcome ?? null, gate: (try gateOf(undecidedMarked))?.reason ?? null },
+      onTheDay: { item: (try seen(onTheDay)).item?.outcome ?? null, gate: try gateOf(onTheDay) },
+      undecidedAppealed: { held: undecidedHeld, item: (try seen(undecidedAppealed)).item?.outcome ?? null, gate: (try gateOf(undecidedAppealed))?.reason ?? null },
+    }, {
+      undecided: { item: "refund_due", gate: "refund_due: undecided" },
+      undecidedMarked: { item: "refund_due", gate: "refund_due: undecided" },
+      onTheDay: { item: null, gate: { reason: "fee-paid", next_check_at: iso(refundAt + 7 * day) } },
+      undecidedAppealed: { held: { item: null, gate: { reason: "fee-paid", next_check_at: iso(refundAt + 2 * hour + day) } }, item: "refund_due", gate: "refund_due: undecided" },
     })
   })
 

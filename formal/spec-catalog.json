@@ -35535,7 +35535,7 @@
     },
     {
       "path": "spec/slopbot/submissionFeeGate.md",
-      "sha256": "9b66906c6f673f5cd63301e2c7331ab3af0a2a162cf94624e700e9f0e172682e",
+      "sha256": "eb125c94191a0f6295a54efcb3952d38a9a24324551c8674e2d23c9d58fb61cc",
       "module": "slopbot__submissionFeeGate",
       "stories": [
         {
@@ -35630,6 +35630,7 @@
           "definitions": [
             "FeeDecision",
             "keptDeadline",
+            "closedUndecided",
             "settlementFor",
             "canRefreshPaid",
             "refreshPaid",
@@ -35647,6 +35648,7 @@
             "stepOnlyAPaidFeeQueuesTheReview",
             "lawMergedIsRefundDue",
             "lawKeptOnlyAfterTheWait",
+            "lawClosedAfterTheRefundAgeIsRefundDue",
             "lawOpenAppealHoldsClosedFee",
             "lawOpenRefundOnlyAfterTheWait",
             "LabelEvent",
@@ -35671,7 +35673,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / A withdrawn payment asks again",
-          "line": 373,
+          "line": 385,
           "definitions": [
             "canObserveWithdrawn",
             "observeWithdrawn",
@@ -35684,7 +35686,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Due checks are claimed before they are sent, 20 every five minutes",
-          "line": 398,
+          "line": 410,
           "definitions": [
             "feeDispatchBatch",
             "feeDispatchSeconds",
@@ -35697,7 +35699,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Simulation samples cover every mode, exemption, setting and pull request state",
-          "line": 428,
+          "line": 440,
           "definitions": [
             "liveFacts",
             "factsValues",
