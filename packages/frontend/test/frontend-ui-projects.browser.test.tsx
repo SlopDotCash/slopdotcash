@@ -66,12 +66,14 @@ async function createProject(owner: User, fullName: string, name: string, links:
   await expect.poll(async () => new URL(await site.where()).pathname, { timeout: 30_000 }).toMatch(/^\/projects\/[^/]+\/manage$/u);
   const id = decodeURIComponent(new URL(await site.where()).pathname.split("/")[2] ?? "");
   await shown(publish).toMatchObject({ visible: true });
+  await shown(text("Check details", true)).toMatchObject({ visible: true });
   return id;
 }
 
 async function manage(id: string, tab?: string) {
   await site.open(`/projects/${encodeURIComponent(id)}/manage`, tab);
   await shown(publish).toMatchObject({ visible: true });
+  await shown(text("Check details", true)).toMatchObject({ visible: true });
 }
 
 const shareField = field("Maintainer share (%, 0 to 30, optional)");
