@@ -5,11 +5,11 @@ import { safeNumber } from "../conversion/chain.vibe"
 import { claimFeesCalldata } from "../evm/abi.ts"
 import { feesPerGas, gasLimit } from "../evm/client.vibe"
 import { type KyberSettings, nativeValue, quote, referenceStable } from "../kyber/route.vibe"
-import type { EvmNetwork } from "../signer/intents.ts"
+import type { EvmNetwork } from "../evm/abi.ts"
 
 type Skipped = { readonly kind: "skipped"; readonly reason: string }
 
-export type Valued = { readonly kind: "valued"; readonly valueMicro: bigint } | Skipped
+type Valued = { readonly kind: "valued"; readonly valueMicro: bigint } | Skipped
 
 export type ValueAdmission = { readonly kind: "valued"; readonly valueMicro: number } | Skipped
 

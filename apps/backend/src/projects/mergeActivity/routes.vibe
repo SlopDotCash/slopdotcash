@@ -95,7 +95,4 @@ effect function answer() {
   return json(outcome.value, 200, servedCache)
 }
 
-export const MergeActivityRoutes = HttpRouter.addAll([
-  HttpRouter.route("*", mergeActivity.path, answered(answer())),
-  HttpRouter.route("*", `${mergeActivity.path}/`, answered(answer())),
-])
+export const MergeActivityRoutes = HttpRouter.add("*", mergeActivity.path, answered(answer()))

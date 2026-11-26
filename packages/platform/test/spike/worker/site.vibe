@@ -1,23 +1,6 @@
-import type { Fetcher } from "../../../src/bindings.ts"
+import type { ExecutionContext, Fetcher } from "../../../src/bindings.ts"
 import { answered, body, json } from "../../../src/http.vibe"
-import type { Routes } from "../../../src/worker.vibe"
-import type { ExecutionContext } from "../bindings.ts"
-import { keepRunning } from "./subtle.ts"
-
-export service Execution { readonly context: ExecutionContext }
-
-export effect function later<E, R>(program: void!E!R) {
-  const services = try Effect.context<R>()
-  const { context } = try Execution
-  keepRunning(context, services, program)
-}
-
-effect function forward(assets: Fetcher) {
-  const request = try HttpServerRequest.HttpServerRequest
-  const web = try orDie(HttpServerRequest.toWeb(request))
-  const response = try orDie(tryPromise(() => assets.fetch(web)))
-  return HttpServerResponse.fromWeb(response)
-}
+import { Execution, type Routes, forward } from "../../../src/worker.vibe"
 
 export interface Site<Env extends object, S, LE, A, RE> {
   readonly services: (env: Env) => Layer.Layer<S, LE>

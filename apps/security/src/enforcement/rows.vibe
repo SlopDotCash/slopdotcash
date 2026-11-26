@@ -88,7 +88,7 @@ const assessmentRepository = sql`COALESCE(a.repository_id, (SELECT json_extract(
 
 export function scopeReads(projectId: string): ReadonlyArray<Statement> {
   return [
-    sql`SELECT p.rowid AS project_row, CAST(json_extract(p.manifest, '$.steward.github.actorId') AS TEXT) AS steward, (SELECT r.actor_github_id FROM project_revisions r WHERE r.project_id = p.id AND r.revision = 1) AS creator, (SELECT g.granted_at FROM vetting_grandfathered_projects g WHERE g.project_id = p.id) AS frozen_at FROM projects p WHERE p.id = ${projectId}`,
+    sql`SELECT p.rowid AS project_row, CAST(json_extract(p.manifest, '$.steward.github.actorId') AS TEXT) AS steward, COALESCE((SELECT a.applicant_github_id FROM project_applications a WHERE a.id = p.source_application_id), (SELECT r.actor_github_id FROM project_revisions r WHERE r.project_id = p.id AND r.revision = 1 AND p.source_application_id IS NULL)) AS creator, (SELECT g.granted_at FROM vetting_grandfathered_projects g WHERE g.project_id = p.id) AS frozen_at FROM projects p WHERE p.id = ${projectId}`,
     sql`SELECT ${journalColumns} FROM ${journalFrom} WHERE e.project_id = ${projectId} ORDER BY e.sequence`,
     sql`SELECT ${flagColumns} FROM project_flags WHERE project_id = ${projectId} ORDER BY rowid`,
     sql`SELECT a.rowid AS row, a.id, a.revision, ${assessmentRepository} AS repository_id, a.state, a.requested_at, a.completed_at, a.flag_ids, a.replaces_assessment_id, CASE WHEN json_extract(a.result, '$.reusedAssessmentId') IS NOT NULL THEN 1 ELSE 0 END AS reused, a.template_sha256 FROM vetting_assessments a WHERE a.project_id = ${projectId} ORDER BY a.rowid`,

@@ -28,6 +28,8 @@ export error AuthorityUnavailable { projectId: string }
 
 schema Member { github_id: string }
 
+schema OpenDispute { open: number }
+
 function githubNumber(id: string) {
   const value = /^[1-9][0-9]{0,15}$/u.test(id) ? Number(id) : Number.NaN
   return Number.isSafeInteger(value) ? [value] : []
@@ -62,7 +64,8 @@ export effect function caseAuthority(scope: CaseScope, epoch: number) {
   const roles = try Roles
   const moderators = numbers(try roles.snapshot("moderator"))
   const viewerNumber = githubNumber(viewer)
-  const holdsRole = viewerNumber.some((id) => triagers.includes(id) || moderators.includes(id))
+  const [dispute] = try rows(OpenDispute, sql`SELECT 1 AS open FROM security_cases WHERE id=${scope.caseId} AND (appeal_state='open' OR related_party_review='pending')`)
+  const holdsRole = viewerNumber.some((id) => triagers.includes(id) || (dispute !== undefined && moderators.includes(id)))
   let technical: ReadonlyArray<string> = []
   if (viewer !== scope.reporterGithubId) {
     if (scope.program !== undefined) technical = scope.program.technical.filter((id) => id === viewer)

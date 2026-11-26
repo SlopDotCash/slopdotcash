@@ -2,7 +2,7 @@
 import { Cause, Context, Effect, Exit, Layer, type ManagedRuntime, Schema } from "effect";
 import { Miniflare, Request, type Response } from "miniflare";
 import type { SqlValue } from "../bindings.ts";
-import { type Applied, type Bindings, type ExtraWorker, type QueueOutcome, type ScheduledOutcome, type WorkerOptions, bundle, migrate, queue, scheduled, workerOptions } from "../testing.ts";
+import { type Applied, type Bindings, type ExtraWorker, type QueueOutcome, type ScheduledOutcome, type WorkerOptions, bundle, database, migrate, queue, scheduled, workerOptions } from "../testing.ts";
 import type { Internet } from "./internet.ts";
 import { migrationsDir } from "./paths.ts";
 
@@ -144,7 +144,7 @@ export function areaLayer(options: AreaOptions): Layer.Layer<Area> {
 
     const rows = async (text: string, params: ReadonlyArray<SqlValue>): Promise<Rows> => {
       if (primary === undefined) throw new Error("the area has no D1 binding");
-      const db = await mf.getD1Database(primary, "worker");
+      const db = await database(mf, primary, "worker");
       return (await db.prepare(text).bind(...params).all()).results;
     };
 
@@ -221,4 +221,23 @@ export async function outcome<A, E, R>(effect: Effect.Effect<A, E, R>, runtime?:
   const error = Cause.squash(exit.cause);
   if (isRefusal(error)) return "refused";
   throw error;
+}
+
+export interface PerKey<R> {
+  get(key: string): Promise<R>;
+  clear(): void;
+}
+
+export function perKey<R>(start: () => Promise<R>): PerKey<R> {
+  const made = new Map<string, R>();
+  return {
+    get: async (key) => {
+      const found = made.get(key);
+      if (found !== undefined) return found;
+      const started = await start();
+      made.set(key, started);
+      return started;
+    },
+    clear: () => made.clear(),
+  };
 }

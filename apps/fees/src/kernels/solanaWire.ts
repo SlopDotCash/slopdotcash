@@ -45,7 +45,7 @@ export interface WireTransaction {
   staticStart: number;
   keyCount: number;
   blockhashOffset: number;
-  legacy: boolean;
+  unversioned: boolean;
   instructions: WireInstruction[];
   lookups: WireLookup[];
 }
@@ -210,7 +210,7 @@ export function parseSolanaWire(bytes: Uint8Array): WireParse {
   //@ ensures \result.kind == "failure" ==> 1 <= \result.error && \result.error <= 7
   //@ ensures \result.kind == "transaction" ==> bytes.length <= 1232 && \result.value.messageOffset < bytes.length && \result.value.signatureCount == \result.value.requiredSignatures && \result.value.readonlySigned <= \result.value.requiredSignatures && \result.value.requiredSignatures <= \result.value.keyCount && \result.value.readonlyUnsigned <= \result.value.keyCount - \result.value.requiredSignatures
   //@ ensures \result.kind == "transaction" ==> \result.value.messageOffset < \result.value.staticStart && \result.value.staticStart + \result.value.keyCount * 32 == \result.value.blockhashOffset && \result.value.blockhashOffset + 32 <= bytes.length
-  //@ ensures \result.kind == "transaction" ==> (\result.value.legacy ==> \result.value.lookups.length == 0)
+  //@ ensures \result.kind == "transaction" ==> (\result.value.unversioned ==> \result.value.lookups.length == 0)
   //@ ensures \result.kind == "transaction" ==> forall(i, 0 <= i && i < \result.value.instructions.length ==> validInstruction(\result.value.instructions[i], bytes.length, \result.value.keyCount))
   //@ ensures \result.kind == "transaction" ==> forall(i, 0 <= i && i < \result.value.lookups.length ==> validLookup(\result.value.lookups[i], bytes.length))
   //@ ensures \result.kind == "transaction" ==> \result.value.keyCount + lookupAccounts(\result.value.lookups, \result.value.lookups.length) <= 256
@@ -221,8 +221,8 @@ export function parseSolanaWire(bytes: Uint8Array): WireParse {
   const messageOffset = signatures.next + signatureCount * 64;
   if (messageOffset >= bytes.length || bytes.length > maximumWireBytes) return { kind: "failure", error: 3 };
   let at = messageOffset;
-  const legacy = bytes[at] < 128;
-  if (!legacy) {
+  const unversioned = bytes[at] < 128;
+  if (!unversioned) {
     const version = bytes[at];
     at += 1;
     if (version !== 128) return { kind: "failure", error: 4 };
@@ -249,7 +249,7 @@ export function parseSolanaWire(bytes: Uint8Array): WireParse {
   if (instructionScan.error !== 0) return { kind: "failure", error: instructionScan.error };
   at = instructionScan.next;
   let lookups: WireLookup[] = [];
-  if (!legacy) {
+  if (!unversioned) {
     const lookupCount = readCompact(bytes, at);
     if (lookupCount.error !== 0) return { kind: "failure", error: lookupCount.error };
     const scan = scanLookups(bytes, lookupCount.next, lookupCount.value);
@@ -261,6 +261,6 @@ export function parseSolanaWire(bytes: Uint8Array): WireParse {
   if (at !== bytes.length || total > maximumWireAccounts || !accountsBelow(bytes, instructionScan.records, total)) return { kind: "failure", error: 7 };
   return {
     kind: "transaction",
-    value: { signatureCount, messageOffset, requiredSignatures, readonlySigned, readonlyUnsigned, staticStart, keyCount, blockhashOffset, legacy, instructions: instructionScan.records, lookups },
+    value: { signatureCount, messageOffset, requiredSignatures, readonlySigned, readonlyUnsigned, staticStart, keyCount, blockhashOffset, unversioned, instructions: instructionScan.records, lookups },
   };
 }

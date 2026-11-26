@@ -1,6 +1,6 @@
 // spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven"
-import { type Address, decodeEventLog, decodeFunctionData, decodeFunctionResult, encodeFunctionData, erc20Abi, type Hex, isHex, parseAbi } from "viem";
-import { dlnSourceAbi } from "../evm/abi.ts";
+import { type Address, decodeEventLog, decodeFunctionData, decodeFunctionResult, encodeFunctionData, type Hex, isHex, parseAbi } from "viem";
+import { dlnSourceAbi, tokenTransfers } from "../evm/abi.ts";
 
 const dlnSourceReads = parseAbi([
   "struct Order { uint64 makerOrderNonce; bytes makerSrc; uint256 giveChainId; bytes giveTokenAddress; uint256 giveAmount; uint256 takeChainId; bytes takeTokenAddress; uint256 takeAmount; bytes receiverDst; bytes givePatchAuthoritySrc; bytes orderAuthorityAddressDst; bytes allowedTakerDst; bytes allowedCancelBeneficiarySrc; bytes externalCall; }",
@@ -159,15 +159,9 @@ export function createdOrderMatches(logs: readonly DlnLog[], source: string, ter
 /** @throws {never} */
 export function walletDebit(logs: readonly DlnLog[], token: string, wallet: string): bigint {
   let paid = 0n;
-  for (const log of logs) {
-    if (lower(log.address) !== lower(token)) continue;
-    try {
-      const { args } = decodeEventLog({ abi: erc20Abi, eventName: "Transfer", topics: log.topics as [Hex, ...Hex[]], data: log.data });
-      if (lower(args.from) === lower(wallet)) paid += args.value;
-      if (lower(args.to) === lower(wallet)) paid -= args.value;
-    } catch {
-      continue;
-    }
+  for (const transfer of tokenTransfers(logs, token)) {
+    if (lower(transfer.from) === lower(wallet)) paid += transfer.value;
+    if (lower(transfer.to) === lower(wallet)) paid -= transfer.value;
   }
   return paid;
 }

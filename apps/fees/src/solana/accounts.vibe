@@ -3,60 +3,51 @@ import { SolanaRpc, address, base58Encode, isAddress } from "@repo/platform/chai
 import { jsonValue, sameList, sha256Hex, u32At, u64At, wholeText, wideOf } from "./bytes.ts"
 import { ASSOCIATED_TOKEN_PROGRAM, type ParsedTransaction, SYSTEM_PROGRAM, SolanaRefused, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, ata, intentHashOf, lookupTableProgram, refuse, rentSysvar } from "./wire.vibe"
 
-const Strings = Schema.Array(Schema.String)
-const Indexes = Schema.Array(Schema.Number)
+export schema LookupEvidence {
+  readonly address: string
+  readonly contextSlot: number
+  readonly dataSha256: string
+  readonly lastExtendedSlot: string
+  readonly writableIndexes: ReadonlyArray<number>
+  readonly readonlyIndexes: ReadonlyArray<number>
+  readonly writableAddresses: ReadonlyArray<string>
+  readonly readonlyAddresses: ReadonlyArray<string>
+}
 
-export const LookupEvidence = Schema.Struct({
-  address: Schema.String,
-  contextSlot: Schema.Number,
-  dataSha256: Schema.String,
-  lastExtendedSlot: Schema.String,
-  writableIndexes: Indexes,
-  readonlyIndexes: Indexes,
-  writableAddresses: Strings,
-  readonlyAddresses: Strings,
-})
+export schema ExpectationJson {
+  readonly program: string
+  readonly wallet: string
+  readonly inputMint: string
+  readonly inputProgram: string
+  readonly outputMint: string
+  readonly outputProgram: string
+  readonly amountIn: string
+  readonly quotedOut: string
+  readonly minimumOut: string
+  readonly slippageBps: number
+  readonly nativeInput?: boolean
+}
 
-export const ExpectationJson = Schema.Struct({
-  program: Schema.String,
-  wallet: Schema.String,
-  inputMint: Schema.String,
-  inputProgram: Schema.String,
-  outputMint: Schema.String,
-  outputProgram: Schema.String,
-  amountIn: Schema.String,
-  quotedOut: Schema.String,
-  minimumOut: Schema.String,
-  slippageBps: Schema.Number,
-  nativeInput: Schema.optionalKey(Schema.Boolean),
-})
+export schema AccountObservation {
+  readonly address: string
+  readonly owner: string | null
+  readonly executable: boolean | null
+  readonly lamports: string | null
+  readonly dataSha256: string | null
+  readonly dataLength: number
+  readonly slot: number
+}
 
-export const AccountObservation = Schema.Struct({
-  address: Schema.String,
-  owner: Schema.NullOr(Schema.String),
-  executable: Schema.NullOr(Schema.Boolean),
-  lamports: Schema.NullOr(Schema.String),
-  dataSha256: Schema.NullOr(Schema.String),
-  dataLength: Schema.Number,
-  slot: Schema.Number,
-})
+export schema RetainedRoute { readonly expectation: ExpectationJson; readonly accounts: ReadonlyArray<AccountObservation> }
 
-export const RetainedRoute = Schema.Struct({ expectation: ExpectationJson, accounts: Schema.Array(AccountObservation) })
-
-export const AccountProof = Schema.Struct({
-  messageHash: Schema.String,
-  keys: Strings,
-  loadedWritable: Strings,
-  loadedReadonly: Strings,
-  tables: Schema.Array(LookupEvidence),
-  route: Schema.optionalKey(RetainedRoute),
-})
-
-export type AccountProof = typeof AccountProof.Type
-export type LookupEvidence = typeof LookupEvidence.Type
-export type ExpectationJson = typeof ExpectationJson.Type
-export type AccountObservation = typeof AccountObservation.Type
-export type RetainedRoute = typeof RetainedRoute.Type
+export schema AccountProof {
+  readonly messageHash: string
+  readonly keys: ReadonlyArray<string>
+  readonly loadedWritable: ReadonlyArray<string>
+  readonly loadedReadonly: ReadonlyArray<string>
+  readonly tables: ReadonlyArray<LookupEvidence>
+  readonly route?: RetainedRoute
+}
 
 export interface RouteExpectation {
   readonly program: string
@@ -72,7 +63,7 @@ export interface RouteExpectation {
   readonly nativeInput: boolean
 }
 
-export interface Creation {
+interface Creation {
   readonly index: number
   readonly mint: string
   readonly tokenProgram: string
@@ -90,7 +81,7 @@ export effect function retainedProof(text: string) {
   return proof
 }
 
-export effect function publicKeys(keys: ReadonlyArray<string>) {
+effect function publicKeys(keys: ReadonlyArray<string>) {
   for (const key of keys) if (!isAddress(key)) try refuse("Invalid resolved Solana public key")
 }
 

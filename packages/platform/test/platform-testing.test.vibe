@@ -1,4 +1,5 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
+import { eventually, same } from "./support/checks.vibe"
 import { Response } from "miniflare"
 import { Area, areaLayer, outcome } from "../src/testing/area.ts"
 import { settableClock } from "../src/testing/clock.ts"
@@ -66,19 +67,6 @@ const Fixture = areaLayer({
 })
 
 error Rejected { reason: string }
-
-effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const value = try probe
-    if (done(value)) return value
-    try Effect.sleep("100 millis")
-  }
-  return try probe
-}
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
 
 layer(Fixture, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('An area Worker starts on every migration, retries a failing job into its dead-letter queue and runs its cron (spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"; spec/slopbot/jobQueue.md, "A dead-lettered job stays visible and has no recovery route until the owner decides one"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows")', () => effect {

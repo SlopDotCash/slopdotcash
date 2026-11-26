@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Request as WebRequest, Response as WebResponse } from "miniflare"
 import { SubmissionFeeRatesLive } from "@repo/backend/live"
 import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
@@ -12,6 +12,7 @@ import { burnAddress, feeWallet, networkTerms, noToken } from "../gen/backend__s
 import { submissionFeeApi } from "../src/client/submissionFee.vibe"
 import { SubmissionFeeRoutes } from "../src/submissionFee/routes.vibe"
 import { journalDatabase } from "./support/journal.ts"
+import { same } from "./support/checks.vibe"
 
 interface Env {
   readonly SLOP_DB: D1Database
@@ -73,10 +74,6 @@ effect function ask(world: World, path: string, method = "GET") {
   const text = try promise(() => response.text())
   const body: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
   return { status: response.status, cache: response.headers.get("cache-control"), body } satisfies Read
-}
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 function way(network: string, symbol: string, amount: string) {

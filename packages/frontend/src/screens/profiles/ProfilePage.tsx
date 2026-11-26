@@ -1,14 +1,14 @@
 // spec/frontend/views.md, "Story: Read a contributor's profile"; spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"
 import type { PublicMember } from "@repo/backend/client";
 import type { LeaderboardSnapshot } from "@repo/points/client";
-import { Button, DataState, Disclosure, ExternalLink, NotFound, Spinner, Status } from "@repo/ui";
+import { Button, cn, DataState, Disclosure, ExternalLink, NotFound, shell, Spinner, Status } from "@repo/ui";
+import { profileCard, profileCardHeading, profileCardTitle } from "./ProfileActivity.tsx";
 import { Clock, Info, Wallet as WalletIcon } from "lucide-react";
 import type { Effect } from "effect";
 import { useMemo, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { formatDateTime } from "../../app/format.ts";
 import { NotFoundHead } from "../../app/notFoundHead.ts";
-import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import { type ProfileActor, resolveProfileActor } from "../../projections/profile.ts";
 import { findHistoricalProject, findProjectByRepositoryId, type RegistryBoot } from "../../reads/registry.vibe";
@@ -39,7 +39,7 @@ export type ProfilePageProps = PageProps & {
 type ProjectSection = Effect.Success<ReturnType<typeof projectReads>>;
 type ContributorSection = Effect.Success<ReturnType<typeof contributorReads>>;
 
-const pageClass = pageShellClass("lg", "10", "py-12");
+const pageClass = cn(shell, "flex min-h-[70vh] flex-1 flex-col gap-8 pt-9 pb-18");
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 const failed: ReadonlySet<ReadStatus> = new Set(["Failed", "Invalid", "Unavailable", "Denied", "Cancelled"]);
 const pending: ReadonlySet<ReadStatus> = new Set(["Idle", "Loading"]);
@@ -99,7 +99,7 @@ function CurrentWallet({ reads, githubId, past }: Pick<Board, "reads"> & { githu
 function WalletLink({ proof, past }: { proof: WalletProof; past: boolean }) {
   const short = shortAddress(proof.address);
   return (
-    <ExternalLink href={proof.sourceUrl} className={`${linkClass} inline-flex items-center gap-1`} label={`${past ? "Past wallet" : "Wallet"} · ${short}`}>
+    <ExternalLink href={proof.sourceUrl} className="inline-flex min-h-6 items-center gap-1.5 rounded-sm font-mono hover:text-foreground" label={`${past ? "Past wallet" : "Wallet"} · ${short}`}>
       {past ? (
         <span title="Past wallet">
           <Clock aria-hidden className="size-3.5" />
@@ -139,18 +139,18 @@ function Projects({ boot, standings, actor }: Pick<Board, "boot" | "standings"> 
     return { id: view.project.id, name: projectName(boot, view.project.id) ?? view.project.id, slug: typeof record?.slug === "string" ? record.slug : view.project.id };
   });
   return (
-    <section aria-label="Projects" className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-xl font-semibold text-foreground">Projects</h2>
-        <span className="text-sm text-muted-foreground">{formatMonth(first.cycle.id)}</span>
+    <section aria-label="Projects" className={profileCard}>
+      <div className={profileCardHeading}>
+        <h2 className={profileCardTitle}>Projects</h2>
+        <span>{formatMonth(first.cycle.id)}</span>
       </div>
-      <ul className="flex flex-col gap-3">
+      <ul className="mt-6 grid gap-7.5">
         {named
           .sort((left, right) => left.name.localeCompare(right.name))
           .map((project) => (
             <li key={project.id}>
-              <a href={`/projects/${project.slug}`} className={linkClass}>
-                <strong>{project.name}</strong>
+              <a href={`/projects/${project.slug}`} className="rounded-sm font-bold text-foreground underline underline-offset-4 hover:decoration-2">
+                {project.name}
               </a>
             </li>
           ))}
@@ -304,10 +304,10 @@ function Snapshot({ props, section, sectionReads, reads, boot, product, tier, fo
           status="Stale"
           onRetry={onRetry}
           updatedAt={<time dateTime={snapshot.generatedAt}>{formatDateTime(snapshot.generatedAt)}</time>}
-          className="mx-auto w-full max-w-(--breakpoint-lg) px-4 pt-6"
+          className={cn(shell, "mb-1 pt-9")}
         />
       ) : null}
-      {standings === undefined ? <DataState status="Invalid" onRetry={onRetry} className="mx-auto w-full max-w-(--breakpoint-lg) px-4 pt-6" /> : null}
+      {standings === undefined ? <DataState status="Invalid" onRetry={onRetry} className={cn(shell, "mb-1 pt-9")} /> : null}
       <Resolve board={board} />
     </>
   );

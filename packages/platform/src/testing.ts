@@ -87,7 +87,7 @@ export function statements(source: string): string[] {
     trigger = false;
   };
   while (i < source.length) {
-    const c = source[i]!, next = source[i + 1];
+    const c = source[i], next = source[i + 1];
     if (c === "-" && next === "-") {
       const end = source.indexOf("\n", i);
       i = end === -1 ? source.length : end;
@@ -114,7 +114,7 @@ export function statements(source: string): string[] {
     }
     if (/[A-Za-z_]/.test(c)) {
       let j = i;
-      while (j < source.length && /\w/.test(source[j]!)) j++;
+      while (j < source.length && /\w/.test(source[j])) j++;
       const word = source.slice(i, j).toUpperCase();
       if (word === "TRIGGER" && /^\s*CREATE\s+(TEMP\s+|TEMPORARY\s+)?$/i.test(current)) trigger = true;
       if (trigger && (word === "BEGIN" || word === "CASE")) depth++;
@@ -284,7 +284,7 @@ interface Built {
 
 function bindingsOf(worker: string, options: Bindings, namespaces: { next: number }, compatibility: string): Built {
   const mailers: WorkerConfig[] = [];
-  const email = Object.fromEntries(Object.entries(options.email ?? {}).map(([binding, option]) => {
+  const email = Object.fromEntries(Object.entries(options.email ?? {}).map(([binding, option]): readonly [string, Env[string]] => {
     const { allowedDestinationAddresses, destinationAddress, sink }: MailBinding = option === true ? {} : typeof option === "function" ? { sink: option } : option;
     if (sink === undefined) {
       return [binding, {
@@ -399,8 +399,10 @@ export async function queue(mf: Miniflare, name: string, bodies: ReadonlyArray<u
   return ((await mf.getWorker()) as unknown as Triggers).queue(name, messages);
 }
 
-export async function database(mf: Miniflare, binding: string): Promise<D1Database> {
-  return (await mf.getD1Database(binding)) as unknown as D1Database;
+export async function database(mf: Miniflare, binding: string, worker?: string): Promise<D1Database> {
+  const found = (await mf.getBindings<Readonly<Record<string, D1Database | undefined>>>(worker))[binding];
+  if (found === undefined) throw new Error(`the worker has no D1 binding ${binding}`);
+  return found;
 }
 
 export async function storage(mf: Miniflare, binding: string): Promise<R2Bucket> {

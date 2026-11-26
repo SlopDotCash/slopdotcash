@@ -8,6 +8,7 @@ import { asFetch } from "@repo/platform/testing/quotes"
 import { Socket } from "effect/socket"
 import { inspectValueIntake } from "../src/programs/inspectValueIntake.vibe"
 import { inspectValueIntakeHistoryCommand, intakeHistoryQuery } from "../src/programs/inspectValueIntakeHistory.vibe"
+import { type TailEnding, type TailSeen, tailSockets } from "@repo/platform/testing/cloudflare"
 
 const accountId = "0123456789abcdef0123456789abcdef"
 const secret = "PRIVATE_TAIL_BODY"
@@ -23,8 +24,6 @@ const versions: Readonly<Record<string, string>> = {
 const movedDeployment = "66666666-6666-4666-8666-666666666666"
 const failureLine = { event: "historical-intake-failure", stage: "bundle-metadata", sourceIndex: 0, sourceCount: 1, errorName: "TypeError", httpStatus: null, messageSha256: null }
 
-type SocketEnd = "open" | "never" | "error" | number
-
 interface World {
   readonly movedAfter?: number
   readonly refuseDeployments?: boolean
@@ -32,12 +31,10 @@ interface World {
   readonly tailDeleted?: boolean
   readonly query?: unknown
   readonly queryStatus?: number
-  readonly socket?: SocketEnd
+  readonly socket?: TailEnding
 }
 
 interface Seen { readonly route: string; readonly body: string; readonly authorized: boolean }
-
-interface TailSeen { readonly url: string; readonly protocols: unknown; readonly sent: Array<string> }
 
 interface Traffic { readonly seen: Array<Seen>; readonly sockets: Array<TailSeen> }
 
@@ -72,29 +69,6 @@ function cloudflare(world: World, traffic: Traffic) {
     return new WebResponse("unexpected", { status: 404 })
   }
   return asFetch(internet({ hosts: { "api.cloudflare.com": handler } }).handler)
-}
-
-function tailSockets(frames: ReadonlyArray<string>, ending: SocketEnd, seen: Array<TailSeen>) {
-  return (url: string, protocols?: unknown): Socket.WebSocketLike => {
-    const record: TailSeen = { url, protocols, sent: [] }
-    seen.push(record)
-    const listeners = new Map<string, ReadonlyArray<(event: Socket.WebSocketEvent) => void>>()
-    const emit = (type: string, event: Socket.WebSocketEvent) => {
-      for (const listener of listeners.get(type) ?? []) listener(event)
-    }
-    return {
-      readyState: ending === "never" ? 0 : 1,
-      addEventListener: (type, listener) => { listeners.set(type, [...(listeners.get(type) ?? []), listener]) },
-      removeEventListener: (type, listener) => { listeners.set(type, (listeners.get(type) ?? []).filter((known) => known !== listener)) },
-      close: () => undefined,
-      send: (data) => {
-        record.sent.push(typeof data === "string" ? data : new TextDecoder().decode(data))
-        for (const frame of frames) emit("message", { type: "message", data: frame })
-        if (ending === "error") emit("error", { type: "error" })
-        if (typeof ending === "number") emit("close", { type: "close", code: ending })
-      },
-    }
-  }
 }
 
 function settings(temp: string, extra: Readonly<Record<string, string>>) {

@@ -1,8 +1,6 @@
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
 import type { Address, Hex } from "viem";
-import type { Network } from "../../gen/fees__runtime.ts";
-
-export type EvmNetwork = Exclude<Network, "Solana">;
+import type { EvmNetwork } from "../evm/abi.ts";
 
 interface EvmSend {
   readonly network: EvmNetwork;
@@ -117,5 +115,3 @@ export interface SolanaDlnOrder {
 export type SolanaIntent = SolanaClaim | JupiterSwap | SolanaDlnOrder;
 
 export type FeeIntent = EvmIntent | SolanaIntent;
-
-export type IntentKind = FeeIntent["kind"];

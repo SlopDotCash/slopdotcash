@@ -1,54 +1,33 @@
-import { Effect, Exit, Layer, ManagedRuntime } from "effect";
-import { type Hex, keccak256, serializeTransaction, type TransactionSerializableEIP1559 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { webCrypto } from "@repo/platform/crypto";
-import { d1 } from "@repo/platform/d1";
+import { Effect } from "effect";
+import { keccak256 } from "viem";
 import { outcome } from "@repo/platform/testing/area";
-import { settableClock } from "@repo/platform/testing/clock";
-import type { Driver, Options } from "../../gen/fees__buybackPool.conformance.ts";
+import type { Options } from "../../gen/fees__buybackPool.conformance.ts";
 import type { Event, Pool } from "../../gen/fees__buybackPool.ts";
-import type { Sender } from "../../gen/fees__runtime.ts";
 import type { IncomeEntry } from "../../src/buyback/codec.vibe";
 import type { ArrivalEntry, PoolInstance } from "../../src/buybackPool/codec.vibe";
 import { type Facts, poolOf, send, sendFloors } from "../../src/buybackPool/store.vibe";
-import { runText } from "../../src/journal/codec.vibe";
 import { robinhoodUsdg } from "../../src/runtime/pins.ts";
-import { journal, send as journalSend } from "../../src/journal/store.vibe";
-import { type GenerationNames, dayMs, generationInstance, generationNames, journalDatabase } from "../support/journal.ts";
+import { type GenerationNames, generationInstance, generationNames, gweiSigned, heldLease, hex, journalDriver, journalHarness, senderOf } from "../support/journal.ts";
 
-const senders: ReadonlyArray<Sender> = ["ReleaseWorkflow", "Owner", "Worker", "Other"];
 const buybackStart = 1_794_441_600_000;
 const gwei = 1_000_000_000n;
 const reservedUnits = 50_000;
 const receiptBase = { RobinhoodFee: 1_000_000, SlopFee: 2_000_000 } as const;
 const secondAsset = "0x00000000000000000000000000000000000000e7";
-const started = await journalDatabase("fee-buyback-pool-conformance");
-const clock = settableClock(0);
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(started.db), webCrypto, clock.layer));
+const harness = await journalHarness("fee-buyback-pool-conformance");
+const { clock, runtime } = harness;
 
 let generation = 0;
 let names: GenerationNames = generationNames(generation);
 let pool: PoolInstance = instanceOf(generation, names);
 const receipts = new Map<number, number>();
 
-function hex(value: number, width: number): string {
-  return value.toString(16).padStart(width, "0");
-}
-
-function offsetOf(at: number): number {
-  return at * 1_000 * dayMs;
-}
-
 function instanceOf(at: number, named: GenerationNames): PoolInstance {
   const journalInstance = generationInstance(at, "Robinhood");
   return {
-    scope: journalInstance.scope, offset: offsetOf(at), held: journalInstance.held, names: named, wallet: journalInstance.held.wallets[0] ?? "", journal: journalInstance,
+    scope: journalInstance.scope, offset: journalInstance.epoch, held: journalInstance.held, names: named, wallet: journalInstance.held.wallets[0] ?? "", journal: journalInstance,
     assets: [robinhoodUsdg, secondAsset], arrivalEvidence: [], arrivals: [], feeEvidence: [], fees: [], reserved: [], slopEvidence: [], slopFees: [], runs: 0, runFrom: 0,
   };
-}
-
-function senderOf(by: unknown): Sender {
-  return senders.find((sender) => sender === by) ?? "Other";
 }
 
 function begin() {
@@ -63,16 +42,8 @@ function journalOf() {
   return { ...generationInstance(generation, "Robinhood"), held: pool.held };
 }
 
-async function leaseOn(): Promise<string | undefined> {
-  const instance = journalOf();
-  const { state } = await runtime.runPromise(journal(instance, names));
-  const runId = state.lease.holder !== 0 && state.lease.expiresAt >= state.clock ? state.lease.holder : state.nextRun;
-  if (runId === state.nextRun) {
-    const acquired = await runtime.runPromise(Effect.exit(journalSend(instance, names, { type: "acquireLease", runId, trigger: "Recovery" }, "Worker")));
-    if (!Exit.isSuccess(acquired)) return undefined;
-  }
-  const text = names.text("run", runId);
-  return text === undefined ? undefined : runText(instance.scope, text, "Recovery");
+function leaseOn(): Promise<string | undefined> {
+  return heldLease(harness, journalOf(), names);
 }
 
 function shellReceipt(kind: keyof typeof receiptBase, receipt: number, entry: Omit<IncomeEntry, "text" | "kind">): { readonly shellId: number; readonly entry: IncomeEntry } {
@@ -118,19 +89,12 @@ function amountOfNumber(value: number): number[] {
   return limbs;
 }
 
-async function evmSigned(nonce: number) {
-  const account = privateKeyToAccount(`0x${hex(generation + 1, 64)}`);
-  const unsigned: TransactionSerializableEIP1559 = { type: "eip1559", chainId: 4663, nonce, gas: 1n, maxFeePerGas: BigInt(reservedUnits) * gwei, maxPriorityFeePerGas: 0n, to: account.address, value: 0n };
-  const rawTx = await account.signTransaction(unsigned);
-  return { rawTx, intentHash: keccak256(serializeTransaction(unsigned)) };
-}
-
 async function sendFacts(tx: number, purchase: boolean): Promise<Facts> {
   const runId = await leaseOn();
   if (runId === undefined) return {};
   const floors = await runtime.runPromise(sendFloors({ ...pool, journal: journalOf() }));
-  const bytes = await evmSigned(floors.evm);
-  const txId = keccak256(bytes.rawTx as Hex);
+  const bytes = await gweiSigned(generation, 4663, floors.evm, reservedUnits);
+  const txId = keccak256(bytes.rawTx);
   names.bind("tx", txId, tx);
   const limits = { perTransaction: 200_000n * gwei, perDay: 2_000_000n * gwei, additionalFeeReserve: 0n };
   const signed = { txId, rawTx: bytes.rawTx, nonce: floors.evm, maximumWei: (BigInt(reservedUnits) * gwei).toString(), intentHash: bytes.intentHash, limits, expiresAt: 4_102_444_800 };
@@ -170,16 +134,6 @@ async function observe(): Promise<Pool> {
   return { ...state, rhReceipts: state.rhReceipts.map(back), slopReceipts: state.slopReceipts.map(back) };
 }
 
-begin();
-
-export const driver: Driver & AsyncDisposable = {
-  reset: () => begin(),
-  dispatch: (_key, event, by) => dispatch(event, by),
-  observe: () => observe(),
-  [Symbol.asyncDispose]: async () => {
-    await runtime.dispose();
-    await started[Symbol.asyncDispose]();
-  },
-};
+export const driver = journalDriver<Event, Pool>(harness, { reset: begin, dispatch, observe });
 
 export const options: Options = { keys: ["pool"], walks: 5, steps: 12 };

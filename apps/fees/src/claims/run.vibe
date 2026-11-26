@@ -11,7 +11,8 @@ import { providerErrorLog, rpcProviderOf } from "../kernels/providerFailure.ts"
 import type { KyberSettings } from "../kyber/route.vibe"
 import type { VaultFact } from "../runtime/reviewed.vibe"
 import { FeeWallet, type Prepared, type Signed, signedFacts } from "../signer/feeWallet.vibe"
-import type { EvmNetwork, FeeIntent } from "../signer/intents.ts"
+import type { EvmNetwork } from "../evm/abi.ts"
+import type { FeeIntent } from "../signer/intents.ts"
 import { solanaSignedFacts } from "../signer/solana.vibe"
 import { type FinalizedAccrual, evmFinalizedAccrual, observeAccrual, solanaFinalizedAccrual } from "./accrual.vibe"
 import { ClaimRefused, evmVault, failureText, roleRefusal } from "./evm.vibe"
@@ -86,14 +87,19 @@ function factsOf(signed: Signed, vault: string): Facts {
   return { ...(signed.family === "evm" ? signedFacts(signed) : solanaSignedFacts(signed)), vault }
 }
 
+effect function claimable(holding: Holding, current: { readonly roleFree: boolean; readonly accrued: bigint } | undefined) {
+  if (current === undefined) return undefined
+  if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
+  const amount = smaller(wideNumber(holding.accrued), current.accrued)
+  return amount === 0n ? undefined : amount
+}
+
 effect function evmPlan(session: Session, holding: Holding, fact: VaultFact, settings: EvmClaimSettings) {
   const network = session.state.network as EvmNetwork
   const head = try (try EvmRpc).head("latest")
   const current = try evmVault(fact, head.number)
-  if (current === undefined) return undefined satisfies Planning
-  if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
-  const amount = smaller(wideNumber(holding.accrued), current.accrued)
-  if (amount === 0n) return undefined satisfies Planning
+  const amount = try claimable(holding, current)
+  if (current === undefined || amount === undefined) return undefined satisfies Planning
   const valued = try evmClaimValue(network, fact.token, amount, settings.kyber)
   if (valued.kind === "skipped") return { skipped: valued.reason, amount } satisfies Planning
   const floor = valueAdmission(session.state, candidateOf(session.state, holding, amount, current.roleFree), valued.valueMicro)
@@ -105,10 +111,8 @@ effect function evmPlan(session: Session, holding: Holding, fact: VaultFact, set
 
 effect function solanaPlan(session: Session, holding: Holding, fact: VaultFact, settings: SolanaClaimSettings) {
   const current = try solanaVault(fact, "finalized")
-  if (current === undefined) return undefined satisfies Planning
-  if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
-  const amount = smaller(wideNumber(holding.accrued), current.accrued)
-  if (amount === 0n) return undefined satisfies Planning
+  const amount = try claimable(holding, current)
+  if (current === undefined || amount === undefined) return undefined satisfies Planning
   const value = current.deployment.mint === settings.jupiter.usdc ? amount : (try jupiterQuote(settings.jupiter, current.deployment.mint, amount, 0)).outAmount
   const floor = valueAdmission(session.state, candidateOf(session.state, holding, amount, current.roleFree), value)
   if (floor.kind === "skipped") return { skipped: floor.reason, amount } satisfies Planning

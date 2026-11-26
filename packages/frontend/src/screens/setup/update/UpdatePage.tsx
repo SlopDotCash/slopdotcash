@@ -4,6 +4,7 @@ import { Alert, Button, NotFound, PageHeader, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
 import { Check, CloudCheck, CloudOff, Lock, Settings2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { pageShellClass } from "../../../app/PageShell.tsx";
 import { NotFoundHead } from "../../../app/notFoundHead.ts";
 import { type PageProps, signInPurposes } from "../../../app/pages.ts";
@@ -105,6 +106,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const inFlight = useRef(false);
   const lookups = useRef(0);
   const branch = useIntegrationBranch(runtime);
+  const nowMs = useNow();
   const current = published !== undefined && published.revision >= base.revision ? published : base;
   const managed = managedOf(current.revision, current.manifest);
   if (managed === undefined)
@@ -114,7 +116,6 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
       </Frame>
     );
   const { manifest } = managed;
-  const nowMs = useNow();
   if (removal.status === "removed") return <ProjectRemoved name={manifest.name} />;
   const review = reviewOf(managed, edit, new Date(nowMs), branch.change);
   const valid = Object.keys(review.errors).length === 0;
@@ -129,10 +130,8 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     setAttempted(true);
     const invalid = Object.keys(review.errors);
     if (invalid.length > 0) {
-      setOpen((groups) => new Set([...groups, ...invalid.map(groupOf)]));
-      const target = fieldIds[invalid[0] ?? ""] ?? invalid[0] ?? "";
-      requestAnimationFrame(() => focusField(target));
-      return;
+      flushSync(() => setOpen((groups) => new Set([...groups, ...invalid.map(groupOf)])));
+      return focusField(fieldIds[invalid[0] ?? ""] ?? invalid[0] ?? "");
     }
     if (!review.changed || review.stale) return;
     const submitted = edit;

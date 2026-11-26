@@ -1101,7 +1101,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const area = try Area
     const session = "frontend-site-session-".padEnd(48, "x")
     try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public) VALUES (?, ?, ?, ?, 0)", "actor", "42", "member", "2026-11-01T00:00:00.000Z")
-    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), "actor", "2099-01-01T00:00:00.000Z")
+    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), "actor", new Date(Date.now() + 3_600_000).toISOString())
     return { cookie: `__Host-slop_points=${session}`, actorId: "actor", githubId: "42", login: "member" } satisfies Session
   }
 
@@ -1135,7 +1135,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       try same([named.status, named.headers.location, named.headers["cache-control"]], [302, "https://slop.test/projects/new", "no-store"])
     })
 
-    it.effect('Every area answers its API through the composed worker, an unknown API path answers JSON, and project artifacts come before the shell (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing")', () => effect {
+    it.effect('Every area answers its API through the composed worker, an unknown API path answers JSON, and project artifacts come before the shell (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing")', () => effect {
       const area = try Area
       served.html = shell
       const paths = ["/api/v1/points/people", "/api/v1/notifications", "/api/v1/vetting/sandbox", "/api/v1/private-request-intake", "/api/v1/points/journal", "/api/v1/slopbot/summary", "/api/v1/payments/received", "/api/v1/admin/fee-conversions"]

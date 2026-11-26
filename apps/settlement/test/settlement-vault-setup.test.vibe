@@ -63,7 +63,7 @@ effect function reviewedFactory(escrow: EscrowStack) {
   const probe = try promise(() => escrow.createVault({ owner, projectId: word(0x5e7a0n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 1n, monthlyEnabled: false }))
   const slot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
   const factoryImplementation = try address(`0x${slot.slice(-40)}`)
-  return {
+  const reviewed: ReviewedFactory = {
     network: "base-mainnet", sourceCommit: SOURCE_COMMIT, codeSha256: try codeDigest(escrow, probe), bindingDelaySeconds: 0n,
     identityAuthority: try address(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT, factory: escrow.factory,
     factoryCodeSha256: try codeDigest(escrow, escrow.factory), registrar: try address(escrow.roles.registrar.address),
@@ -72,7 +72,8 @@ effect function reviewedFactory(escrow: EscrowStack) {
       vaultImplementationCodeSha256: try codeDigest(escrow, escrow.implementation), factoryImplementation,
       factoryImplementationCodeSha256: try codeDigest(escrow, factoryImplementation),
     },
-  } as unknown as ReviewedFactory
+  }
+  return reviewed
 }
 
 effect function migrated(name: string) {
@@ -146,6 +147,7 @@ const Started = Layer.effect(World, effect {
   const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
   const db = try migrated("settlement-vault-setup")
   const factory = try reviewedFactory(escrow)
+  escrow.chain.setFinalized(try promise(() => escrow.head()))
   const projects = new Map<string, Listed>()
   const access = new Map<string, AuthorityRead>([
     [OWNER.githubId, { actorGithubId: OWNER.githubId, repositoryId: "repo-1", permission: "PermissionVerified", installation: "Installed" }],
@@ -154,7 +156,7 @@ const Started = Layer.effect(World, effect {
   const appended: Appended[] = []
   const clock = settableClock(windowOpen * 1000)
   const urls = Redacted.make([chain.url] as ReadonlyArray<string>)
-  const owner = escrow.roles.owner.address
+  const owner = try address(escrow.roles.owner.address)
   const services = Layer.mergeAll(
     ports(projects, access, appended),
     Layer.succeed(Wallets, {
@@ -239,7 +241,7 @@ effect function snapshotCount(projectId: string) {
 }
 
 effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+  try sync(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function sweepAfter(minutes: number) {

@@ -25,8 +25,3 @@ export function evmKey(secret: string): EvmKey | undefined {
     return undefined;
   }
 }
-
-/** @throws {never} */
-export function derivesWallet(secret: string, wallet: string): boolean {
-  return evmKey(secret)?.address === wallet.toLowerCase();
-}

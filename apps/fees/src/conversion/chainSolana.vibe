@@ -10,7 +10,7 @@ import { amountOf, weiAmount } from "../journal/codec.vibe"
 import { type JupiterSettings, quoteRead } from "../jupiter/quote.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
 import type { VaultFact } from "../runtime/reviewed.vibe"
-import { FeeWallet, type Prepared, SignRefused, type Signed as WalletSigned } from "../signer/feeWallet.vibe"
+import { FeeWallet, type Prepared, type SignRefused, type Signed as WalletSigned } from "../signer/feeWallet.vibe"
 import type { JupiterSwap } from "../signer/intents.ts"
 import { jsonValue } from "../solana/bytes.ts"
 import { carryProviderFailure } from "../kernels/providerFailure.ts"
@@ -19,12 +19,7 @@ import { type SolanaSend, nativeReceipt, routeStatus } from "../solana/receipt.v
 import { refuse } from "../solana/wire.vibe"
 import { ChainUnavailable, ConversionChain, type OpenSend, type Replacement, type Reservable, SendRefused, type SendIntent, type SendStatus, type Signed } from "./chain.vibe"
 
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-}
-import { errorText } from verified
+import { errorText } from "../kernels/verified.vibe"
 
 export interface SolanaChainOptions {
   readonly jupiter: JupiterSettings

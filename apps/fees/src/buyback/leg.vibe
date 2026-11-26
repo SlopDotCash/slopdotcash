@@ -3,7 +3,7 @@ import type { Address, EvmRpc, Hex } from "@repo/platform/chain/evm"
 import { type SolanaRpc, base64Decode } from "@repo/platform/chain/solana"
 import { type BridgeOrder, type BridgeQuote, type Buyback, type Event, canDecide, canReportUnfilled, decisionOf, openSend, orderTermsValid, signs, spentInWindow } from "../../gen/fees__buyback.effect.vibe"
 import { unitsOf } from "../journal/codec.vibe"
-import { broadcast as broadcastEvm, attemptStatus, FeeChain, feesPerGas, nativeCost, tokenBalance } from "../evm/client.vibe"
+import { broadcast as broadcastEvm, attemptStatus, type FeeChain, feesPerGas, nativeCost, tokenBalance } from "../evm/client.vibe"
 import { approvalSettled } from "../evm/approval.vibe"
 import { type JupiterSettings, jupiterQuote } from "../jupiter/quote.vibe"
 import { type KyberSettings, nativeValue } from "../kyber/route.vibe"
@@ -13,14 +13,15 @@ import { createdOrder, evmRefund, fill, solanaOrderDebit, solanaRefund } from ".
 import { nativeReceipt } from "../solana/receipt.vibe"
 import { type FeeSolana, broadcastSolana, walletBalance } from "../solana/client.vibe"
 import { wrappedSol } from "../solana/wire.vibe"
-import { type EvmSigned, type SolanaSigned, FeeWallet } from "../signer/feeWallet.vibe"
+import { type SolanaSigned, FeeWallet } from "../signer/feeWallet.vibe"
 import type { DlnOrderTerms, PreparationAttempt } from "../signer/intents.ts"
 import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { chainIds, circleUsdc, robinhoodUsdg } from "../runtime/pins.ts"
 import { type Leg, type Ledger, type SendRecord, type Terms, modelBalance } from "./codec.vibe"
 import { orderParties } from "./parties.ts"
 import { providerErrorLog } from "../kernels/providerFailure.ts"
-import { BuybackRefused, type Facts, type SignedFacts, ledgerOf, send, sendFloors } from "./store.vibe"
+import { BuybackRefused, type Facts, ledgerOf, send, sendFloors } from "./store.vibe"
+import { type SignedFacts, big, signedFacts, tagOf } from "./send.vibe"
 
 module verified {
   import { boundedSend as bounded, entitlement as entitled } from "../kernels/buybackShares.ts"
@@ -68,14 +69,6 @@ export interface LegResult { readonly leg: Leg; readonly state: Buyback; readonl
 
 function usdcOf(leg: Leg) {
   return leg.network === "Base" ? circleUsdc.base : leg.network === "Ethereum" ? circleUsdc.ethereum : circleUsdc.solana
-}
-
-function tagOf(error: unknown) {
-  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"
-}
-
-effect function big(text: string) {
-  return try orDie(Effect.try(() => BigInt(text)))
 }
 
 effect function refuse(event: Event["type"], issue: string) {
@@ -164,10 +157,6 @@ effect function evmPriced(running: Running, settings: LegSettings, proposal: Evm
   return { quote, summary }
 }
 
-function signedFacts(settings: LegSettings, signed: EvmSigned) {
-  return { txId: signed.txId, rawTx: signed.rawTx, nonce: signed.prepared.nonce, maximumWei: signed.prepared.maximumWei.toString(), intentHash: signed.prepared.unsigned.intentHash, limits: settings.native } satisfies SignedFacts
-}
-
 effect function admissible(running: Running, request: BridgeOrder) {
   if (orderTermsValid(running.state, request) && signs(running.state)) return true
   const reason = request.reservedTaker !== "" ? "the order reserves its fill for a taker the bridge terms do not admit" : "the order terms are outside the approved bounds"
@@ -195,7 +184,7 @@ effect function approve(running: Running, settings: LegSettings, proposal: EvmOr
   const signed = try wallet.sign({ kind: "DlnApprove", network, nonceFloor: try big(String(floors.evm)), valueMicro: order.giveAmount, amount: order.giveAmount, takeAmount: order.takeAmount, nativeFee: order.nativeFee, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("approveOrder", "a bridge approval is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  try step(running, { type: "approveOrder", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { summary, takeAmount: order.takeAmount.toString(), balance: balance.toString(), signed: signedFacts(settings, signed) })
+  try step(running, { type: "approveOrder", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { summary, takeAmount: order.takeAmount.toString(), balance: balance.toString(), signed: signedFacts(settings.native, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_approval_submitted", signed.txId)
 }
 
@@ -215,7 +204,7 @@ effect function orderEvm(running: Running, settings: LegSettings) {
   const signed = try (try FeeWallet).sign({ kind: "DlnCreateOrder", network, nonceFloor: try big(String(floors.evm)), valueMicro: amount, order, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("order", "an EVM bridge order is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  try step(running, { type: "order", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { terms: termsJson(order), balance: balance.toString(), signed: signedFacts(settings, signed) })
+  try step(running, { type: "order", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { terms: termsJson(order), balance: balance.toString(), signed: signedFacts(settings.native, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_bridge_submitted", signed.txId)
 }
 

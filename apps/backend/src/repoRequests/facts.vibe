@@ -73,11 +73,11 @@ export effect function listedProjects(targets: ReadonlyArray<{ readonly repoId: 
   const repoIds = [...new Set(targets.map((target) => target.repoId))]
   const keys = [...new Set(targets.map((target) => target.fullName.toLowerCase()))]
   const byId = new Map<string, string[]>()
-  for (const row of try allChunked(ListedByIdRow, repoIds, (chunk) => sql`SELECT CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) AS repo_id, id AS project_id FROM projects WHERE CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) IN (${list(chunk)}) UNION ALL SELECT CAST(json_extract(listed.value, '$.githubId') AS TEXT) AS repo_id, projects.id AS project_id FROM projects, json_each(projects.manifest, '$.repositories') listed WHERE CAST(json_extract(listed.value, '$.githubId') AS TEXT) IN (${list(chunk)})`)) {
+  for (const row of try allChunked(ListedByIdRow, repoIds, (chunk) => sql`SELECT CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) AS repo_id, id AS project_id FROM projects WHERE CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) IN ${list(chunk)} UNION ALL SELECT CAST(json_extract(listed.value, '$.githubId') AS TEXT) AS repo_id, projects.id AS project_id FROM projects, json_each(projects.manifest, '$.repositories') listed WHERE CAST(json_extract(listed.value, '$.githubId') AS TEXT) IN ${list(chunk)}`)) {
     byId.set(row.repo_id, [...(byId.get(row.repo_id) ?? []), row.project_id])
   }
   const byKey = new Map<string, string[]>()
-  for (const row of try allChunked(ListedByKeyRow, keys, (chunk) => sql`SELECT repository_key, project_id FROM project_repositories WHERE repository_key IN (${list(chunk)})`)) {
+  for (const row of try allChunked(ListedByKeyRow, keys, (chunk) => sql`SELECT repository_key, project_id FROM project_repositories WHERE repository_key IN ${list(chunk)}`)) {
     byKey.set(row.repository_key, [...(byKey.get(row.repository_key) ?? []), row.project_id])
   }
   for (const target of targets) {

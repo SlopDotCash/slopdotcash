@@ -24,7 +24,7 @@ export function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-const rollback = Symbol("rollback");
+const rollback = new Error("rollback");
 
 /** @throws {never} */
 export function durableEngine(storage: TransactionalStorage): SqlEngine {

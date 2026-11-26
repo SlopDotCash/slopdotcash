@@ -1,7 +1,7 @@
 // spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/cases.md, "Story: Obtain a human decision on every report the routine pass leaves open"
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { D1, allChunked, list, rows, sql } from "@repo/platform/d1"
-import { type Actor, handleRaw, json, refuse } from "@repo/platform/http"
+import { type Actor, json, refuse } from "@repo/platform/http"
 import { StorageFailure } from "@repo/platform/r2"
 import { Roles } from "@repo/platform/roles"
 import type { Authority } from "../../gen/security__cases.ts"

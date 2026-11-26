@@ -10,7 +10,7 @@ import { SecurityOffer } from "./SecurityOffer.tsx";
 import { utc } from "./summary.ts";
 import type { ProgramTerms } from "./terms.schema.ts";
 
-const sectionClass = "flex flex-col gap-4 rounded-lg border border-border bg-card p-6 text-card-foreground";
+const sectionClass = "grid gap-3 rounded-xl border border-border bg-card p-6 text-card-foreground";
 
 function Fact({ term, children }: { term: string; children: ReactNode }) {
   return (
@@ -99,7 +99,7 @@ export function ScopeTerms({ terms, onCopy }: { terms: ProgramTerms; onCopy?: (t
   const { scope } = terms;
   return (
     <section id="security-scope" aria-labelledby="security-scope-heading" className={sectionClass}>
-      <h2 id="security-scope-heading" className="text-xl font-semibold">
+      <h2 id="security-scope-heading" className="mb-4 text-lg leading-snug font-extrabold tracking-tight">
         Scope
       </h2>
       <dl className="flex flex-col gap-3 text-sm">

@@ -1,3 +1,4 @@
+// spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
 import { useCallback, useReducer, useRef } from "react";
 import { Clipboard } from "lucide-react";
 import { type CopyStatus, canRest, copyAnnouncement, enabled, initial, step } from "../../gen/ui__copy.ts";
@@ -45,7 +46,6 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
     if (node === null) resting.current?.abort();
   }, []);
 
-  // spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"; "Success settles back to ready; failure stays until the next attempt"
   const press = async () => {
     if (!enabled(state, { type: "copy" })) return;
     resting.current?.abort();

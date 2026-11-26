@@ -1,0 +1,14 @@
+import { assert } from "@effect/vitest"
+
+export effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const value = try probe
+    if (done(value)) return value
+    try Effect.sleep("100 millis")
+  }
+  return try probe
+}
+
+export effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}

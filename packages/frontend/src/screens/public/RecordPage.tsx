@@ -55,7 +55,7 @@ function Cycles({ months, now }: { months: ReadonlyArray<RecordMonth>; now: numb
   const total = FIXED.length + rows.length;
   const merged = FIXED.reduce((a, f) => a + f.merged, 0) + rows.reduce((a, m) => a + (m.counts?.calendarMerged ?? 0), 0);
   const reviews = FIXED.reduce((a, f) => a + f.reviews, 0) + rows.reduce((a, m) => a + (m.counts?.calendarReviews ?? 0), 0);
-  const last = rows.length > 0 ? rows[rows.length - 1]!.month : FIXED[FIXED.length - 1]!.month;
+  const last = rows.at(-1)?.month ?? FIXED.at(-1)?.month ?? "";
   const perPool = FIXED.slice(1)
     .map((f) => `${f.perPool} for ${monthOnly(f.month)}`)
     .concat(rows.map((m) => `${byContributors(m.pools).map((c) => `${n(c.contributors)} in ${c.projectId}`).join(" and ")} for ${monthOnly(m.month)}`));

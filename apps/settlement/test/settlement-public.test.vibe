@@ -5,12 +5,12 @@ import { EdgeCache, noEdgeCache } from "@repo/platform/cache"
 import { DeploymentTier, type Tier, deploymentTier } from "@repo/platform/config"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, type Statement, d1, sql } from "@repo/platform/d1"
-import { Caller, Unauthenticated, json } from "@repo/platform/http"
+import { Caller, Unauthenticated } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { area, pages, worker } from "@repo/platform/worker"
+import { area, pages, unmatchedApi, worker } from "@repo/platform/worker"
 import { Request as WebRequest, Response as WebResponse } from "miniflare"
 import { contributorAllocation, recipientAllocation } from "../src/client/contributorAllocation.vibe"
 import { reservedAwardsRoute } from "../src/client/operator.vibe"
@@ -52,14 +52,8 @@ interface OperatorAnswer {
 const operatorAssets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("missing", { status: 404 }) as unknown as globalThis.Response) }
 
 const operatorArea = area({ name: "reservedAwards", api: [reservedAwardsRoute], routes: ReservedAwardFeedRoutes, provides: Layer.empty })
-const operatorUnmatched = area({
-  name: "unmatchedApi",
-  api: [],
-  routes: HttpRouter.add("*", "/api/v1/*", Effect.succeed(json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }))),
-  provides: Layer.empty,
-})
 const operatorSite = pages({
-  areas: [operatorArea, operatorUnmatched],
+  areas: [operatorArea, unmatchedApi],
   services: (env: OperatorEnv) => Layer.mergeAll(
     d1(env.SLOP_DB),
     rolesFrom(env),
@@ -69,7 +63,7 @@ const operatorSite = pages({
   ),
   assets: "ASSETS",
 })
-const operatorBaseline = pages({ areas: [operatorUnmatched], services: (_env: OperatorEnv) => Layer.empty, assets: "ASSETS" })
+const operatorBaseline = pages({ areas: [unmatchedApi], services: (_env: OperatorEnv) => Layer.empty, assets: "ASSETS" })
 
 service Public {
   readonly reads: D1Database

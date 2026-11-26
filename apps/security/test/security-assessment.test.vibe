@@ -401,7 +401,7 @@ effect function receiptScopeKept(assessed: Assessed.Shape) {
     revised: 200,
     revisedRun: receiptScope,
     exclusions: { defaults: 10, owner: [ownerLine.length] },
-    rows: [[1, 1, "failed", "slop-security-case-analysis-2"], [2, 1, "complete", "slop-security-case-analysis-2"], [3, 2, "complete", "slop-security-case-analysis-2"]],
+    rows: [[1, 1, "failed", "slop-security-case-analysis-3"], [2, 1, "complete", "slop-security-case-analysis-3"], [3, 2, "complete", "slop-security-case-analysis-3"]],
   })
 }
 

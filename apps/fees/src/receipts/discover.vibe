@@ -9,8 +9,8 @@ import { type TokenFact, type VaultFact, holdingKind } from "../runtime/reviewed
 import { ConversionChain, safeNumber } from "../conversion/chain.vibe"
 import { type Session, step } from "../conversion/session.vibe"
 
-export error ReceiptUnrepresentable { token: string; receipt: string }
-export error BalanceUnrepresentable { token: string }
+error ReceiptUnrepresentable { token: string; receipt: string }
+error BalanceUnrepresentable { token: string }
 
 export interface Transfer { readonly receipt: string; readonly token: string; readonly amount: bigint }
 

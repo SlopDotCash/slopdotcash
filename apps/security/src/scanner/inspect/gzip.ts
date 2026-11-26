@@ -107,7 +107,7 @@ export function expandGzipInputs(input: ReadonlyArray<ScanInputFile>, knownPath:
   const derivedFiles: ScanInputFile[] = [];
   const archives: VettingArtifact[] = [];
   const gaps: string[] = [];
-  const pending = input.map((file) => ({ file, ancestors: new Set<string>() as ReadonlySet<string> }));
+  const pending: Array<{ readonly file: ScanInputFile; readonly ancestors: ReadonlySet<string> }> = input.map((file) => ({ file, ancestors: new Set<string>() }));
   for (let index = 0; index < pending.length; index++) {
     const next = pending[index];
     if (next === undefined) continue;

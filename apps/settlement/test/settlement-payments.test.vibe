@@ -20,7 +20,7 @@ import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { transactionId } from "../src/chain/evm/transactions.ts"
 import { type BindingInput, bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
 import { decodeBinding, decodeProject } from "../src/chain/solana/accounts.ts"
-import { type EscrowCall, decodeEscrowCall } from "../src/chain/solana/instructions.ts"
+import { type EscrowCall, escrowInvocations } from "../src/chain/solana/instructions.ts"
 import { bindingAddress } from "../src/chain/solana/pda.ts"
 import { parsePeriod } from "../src/kernels/calendar.ts"
 import { readMint } from "../src/kernels/token2022.ts"
@@ -35,7 +35,7 @@ import { verifyFinalized } from "../src/payments/verify.vibe"
 import { type LedgerAccess, reconciliationServices } from "../src/programs/reconcileEvents.vibe"
 import type { EvmDeployment } from "../src/vault/policy.vibe"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
-import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, nativeMonth, tokenProjects } from "./support/solana/escrow.ts"
+import { type Deployment as SolanaEscrow, type Scenario, type Sent, escrowDeployment, nativeMonth, tokenProjects } from "./support/solana/escrow.ts"
 
 interface Script {
   readonly submits: PaymentRequest[]
@@ -171,7 +171,7 @@ function said(error: unknown) {
 }
 
 effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+  try sync(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function address(account: Address) {
@@ -358,8 +358,8 @@ effect function strayAttempts(asset: string) {
 
 effect function secondToken() {
   const { escrow } = try Journey
-  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["integration/TestDollar.sol"])), (output) => promise(() => output.close()))
-  const deployed = try promise(() => deploy(escrow.chain, `${built.out}/TestDollar.sol/TestDollar.json`, [], escrow.roles.registrar.address))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["test/FeeConverterFixture.sol"])), (output) => promise(() => output.close()))
+  const deployed = try promise(() => deploy(escrow.chain, `${built.out}/FeeConverterFixture.sol/FeeConverterUSDC.json`, [], escrow.roles.registrar.address))
   return try address(deployed)
 }
 
@@ -501,7 +501,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const afterAuthorization = try phaseOf(deployment, award.id)
     const replayed = outcomeOf(try indexed(deployment, "paid", payout.receipt.transactionHash, payout.index, award.id))
     const stored = try shell(rows(Schema.Struct({ state: Schema.String, paid_transaction: Schema.NullOr(Schema.String), vault: Schema.String }), sql`SELECT state, paid_transaction, vault FROM payment_obligations WHERE id = ${award.id}`))
-    const notices = try shell(rows(Schema.Struct({ event_key: Schema.String, kind: Schema.String }), sql`SELECT event_key, kind FROM notifications WHERE event_key LIKE ${`%${award.id}%`} ORDER BY event_key`))
+    const notices = try shell(rows(Schema.Struct({ event_key: Schema.String, kind: Schema.String }), sql`SELECT event_key, kind FROM notifications WHERE instr(event_key, ${award.id}) > 0 ORDER BY event_key`))
     try same({ reserved, first, whileHeld, replayedWhileHeld, cleared, afterAuthorization, replayed, stored, notices }, {
       reserved: "Recorded",
       first: "held: UnauthorizedDestination",
@@ -633,7 +633,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const refusalFailures = try shell(rows(Schema.Struct({ attempt_id: Schema.String }), sql`SELECT attempt_id FROM payment_attempt_failures WHERE attempt_id = ${pending}`))
     const parkedDispatch = try shell(dispatchPayment(deployment, asset, second.id))
     const heldOutbox = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_outbox WHERE obligation_id = ${second.id}`))
-    const heldNotices = try shell(rows(Schema.Struct({ kind: Schema.String, recipient: Schema.String }), sql`SELECT kind, recipient_github_id AS recipient FROM notifications WHERE (event_key LIKE ${`payout-exception:${second.id}:%`} OR event_key LIKE ${`payout-held:${second.id}:%`}) ORDER BY kind`))
+    const heldNotices = try shell(rows(Schema.Struct({ kind: Schema.String, recipient: Schema.String }), sql`SELECT kind, recipient_github_id AS recipient FROM notifications WHERE (instr(event_key, ${`payout-exception:${second.id}:`}) = 1 OR instr(event_key, ${`payout-held:${second.id}:`}) = 1) ORDER BY kind`))
     try same({ lost, afterLoss, resent, sameKey: keys[0] === keys[1], unreachable, beforeProof, proven, strays, afterProof, failures: failures.length, freshKey: newest !== keys[0], recovered, queue: (try phaseOf(deployment, award.id)).queue, refusedCancel, afterRefusal, refusalFailures, parkedDispatch, heldOutbox, heldNotices }, {
       lost: "ExecutorUnavailable",
       afterLoss: { investigation: "Reserved", payment: "VaultReserved", queue: "Ready" },
@@ -715,13 +715,14 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     try promise(() => escrow.send(escrow.roles.donor.address, otherToken, encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [escrow.roles.donor.address, 6_000_000n] })))
     const otherTransfer = try promise(() => escrow.send(escrow.roles.donor.address, otherToken, encodeFunctionData({ abi: tokenAbi, functionName: "transfer", args: [recipient, 6_000_000n] })))
     const [transferLog] = try promise(() => escrow.logs(otherToken, otherTransfer.blockNumber, otherTransfer.blockNumber))
+    if (transferLog === undefined) return try die(new Error("the second token's transfer emitted no Transfer log"))
     try bound(vault, 50n, recipient, 0n, digest)
     const payout = try paid(vault, award.id, 1n)
     const wrongOwner = try address(escrow.roles.donor.address)
     const unbound = try Effect.try(() => payCalldata(award.id, 2n))
     const reverted = try promise(() => escrow.chain.transact({ from: escrow.roles.donor.address, to: vault, data: unbound }))
     const outcomes = [
-      outcomeOf(try indexed(deployment, "paid", otherTransfer.transactionHash, transferLog?.logIndex ?? 0, award.id)),
+      outcomeOf(try indexed(deployment, "paid", otherTransfer.transactionHash, transferLog.logIndex, award.id)),
       outcomeOf(try indexed(deployment, "paid", tokenTransfer.transactionHash, 0, award.id)),
       outcomeOf(try indexed(deployment, "paid", foreignPayout.receipt.transactionHash, foreignPayout.index, award.id)),
       outcomeOf(try indexed({ ...deployment, owner: wrongOwner, review: { ...deployment.review, owner: wrongOwner } }, "paid", payout.receipt.transactionHash, payout.index, award.id)),
@@ -804,7 +805,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const events = try shell(rows(Schema.Struct({ kind: Schema.String, transaction_id: Schema.String }), sql`SELECT kind, transaction_id FROM payment_events WHERE obligation_id = ${committed.id} ORDER BY rowid`))
     const obligations = try shell(rows(Schema.Struct({ state: Schema.String, paid_transaction: Schema.NullOr(Schema.String) }), sql`SELECT state, paid_transaction FROM payment_obligations WHERE id = ${committed.id}`))
     const outbox = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_outbox WHERE obligation_id = ${committed.id}`))
-    const notices = try shell(rows(Schema.Struct({ event_key: Schema.String }), sql`SELECT event_key FROM notifications WHERE event_key LIKE ${`%${committed.id}%`} ORDER BY event_key`))
+    const notices = try shell(rows(Schema.Struct({ event_key: Schema.String }), sql`SELECT event_key FROM notifications WHERE instr(event_key, ${committed.id}) > 0 ORDER BY event_key`))
     const cursor = try shell(rows(Schema.Struct({ position: Schema.String }), sql`SELECT position FROM payment_chain_cursors WHERE project_id = ${reviewedProject}`))
     try same({ changedDigest, preview, previewWrites, refusedBeforeWrites, writesBeforeApply, applied, replayed, unauthorized, paid, paidAgain, events, obligations, outbox, notices, cursor }, {
       changedDigest: "refused: Reviewed reconciliation packet changed",
@@ -871,8 +872,19 @@ effect function sentAs(label: string) {
   return try sentIn(scenario, label)
 }
 
-function positionOf(program: SolanaAddress, instructions: ReadonlyArray<{ readonly program: SolanaAddress; readonly data: Uint8Array }>, call: EscrowCall["name"]) {
-  return instructions.findIndex((instruction) => instruction.program === program && decodeEscrowCall(instruction.data)?.name === call)
+effect function positionOf(program: SolanaAddress, sent: Sent, call: EscrowCall["name"]) {
+  return try Effect.orDie(finalizedPosition(program, sent, call))
+}
+
+effect function finalizedPosition(program: SolanaAddress, sent: Sent, call: EscrowCall["name"]) {
+  const { escrow } = try SolanaJourney
+  provide Layer.provideMerge(solanaRpc({ urls: Redacted.make([escrow.chain.validator.url]), genesis: escrow.chain.validator.genesis }), outbound) {
+    const fetched = try (try SolanaRpc).transaction(sent.signature, "finalized")
+    const invocations = fetched === undefined ? undefined : escrowInvocations(fetched, program)
+    const found = invocations?.kind === "decoded" ? invocations.value.find((invocation) => invocation.call?.name === call) : undefined
+    if (found === undefined) return try die(new Error(`the finalized ${sent.label} transaction has no ${call} invocation`))
+    return found.position
+  }
 }
 
 effect function solanaDeployment() {
@@ -925,7 +937,7 @@ effect function boundWallet(binding: SolanaAddress) {
 effect function solanaIndexed(deployment: SolanaPaymentDeployment, kind: "reserved" | "paid", label: string, call: "commit" | "pay", obligationId: string) {
   const { scenario } = try SolanaJourney
   const sent = try sentAs(label)
-  return onSolana(indexPaymentEvent(deployment, { kind, transactionId: sent.signature, eventIndex: positionOf(scenario.program, sent.instructions, call), obligationId })) catch (error) => said(error)
+  return onSolana(indexPaymentEvent(deployment, { kind, transactionId: sent.signature, eventIndex: try positionOf(scenario.program, sent, call), obligationId })) catch (error) => said(error)
 }
 
 effect function tamperedDeployment(deployment: SolanaPaymentDeployment) {
@@ -1030,7 +1042,7 @@ layer(Layer.mergeAll(SolanaStarted, webCrypto, outbound), { excludeTestServices:
     const nativeAward = (try sentIn(native, "commit leaf")).calls.find((call) => call.name === "commit_monthly_award")
     if (nativeAward === undefined || nativeAward.name !== "commit_monthly_award") return try die(new Error("the native award was not committed"))
     const nativePay = try sentIn(native, "pay")
-    const nativeReference: EventReference = { kind: "paid", transactionId: nativePay.signature, eventIndex: positionOf(native.program, nativePay.instructions, "pay_native"), obligationId: nativeAward.awardId }
+    const nativeReference: EventReference = { kind: "paid", transactionId: nativePay.signature, eventIndex: try positionOf(native.program, nativePay, "pay_native"), obligationId: nativeAward.awardId }
     const nativeOutcomes = {
       plain: try nativeVerified(nativeProject, nativeReference),
       lamportsMoved: try tamperedNative(nativeProject, nativeReference, [[`getTransaction ${nativePay.signature}`, lamportsMoved]]),

@@ -10,7 +10,7 @@ import { observedOf } from "./codec.vibe"
 import type { NetworkConfig } from "./config.vibe"
 import { type Resolution, advanceCursor, cursor, recordResolution, removeMissing, removeReorganised, storedDeposit, upsertDeposit } from "./store.vibe"
 
-export interface Scanned {
+interface Scanned {
   readonly finalizedThrough: number
   readonly recorded: number
   readonly resolved: number

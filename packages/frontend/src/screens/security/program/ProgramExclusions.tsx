@@ -8,7 +8,7 @@ export type ProgramExclusionsProps = {
 function ExclusionList({ id, title, lines }: { id: string; title: string; lines: ReadonlyArray<string> }) {
   return (
     <div className="flex flex-col gap-2">
-      <h3 id={id} className="font-semibold text-foreground">
+      <h3 id={id} className="text-lg leading-snug font-bold tracking-tight text-foreground">
         {title}
       </h3>
       <ul aria-labelledby={id} className="flex list-disc flex-col gap-1 pl-5 text-sm">

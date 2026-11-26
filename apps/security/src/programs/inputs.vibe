@@ -1,0 +1,39 @@
+// spec/security/scanController.md, "A deployed release serves the scanner input list of its own commit"
+import { gitBytes } from "@repo/platform/git"
+import { utf8Text } from "@repo/platform/git/bytes"
+import { scannerInputs } from "../scanner/inputs/list.vibe"
+import { SCANNER_DIRECTORIES, SCANNER_EXCLUDED } from "../scanner/inputs/paths.ts"
+import { checkoutHead } from "./checkout.vibe"
+
+export error ScannerInputsUsage { message: string }
+
+export const scannerInputsFile = "scanner-inputs.json"
+
+export effect function checkoutRoot() {
+  const bytes = gitBytes({ args: ["rev-parse", "--show-toplevel"], limit: 4096, seconds: 30 }, "The checkout root is unreadable") catch effect () => {
+    throw new ScannerInputsUsage({ message: "The checkout root is unreadable" })
+  }
+  const root = (utf8Text(bytes) ?? "").trim()
+  if (root === "") throw new ScannerInputsUsage({ message: "The checkout root is unreadable" })
+  return root
+}
+
+export effect function scannerInputsDocument(root: string) {
+  const commit = try checkoutHead()
+  if (!/^[a-f0-9]{40}$/u.test(commit)) throw new ScannerInputsUsage({ message: "The checkout head is not a commit" })
+  const files = try scannerInputs(root)
+  return { schemaVersion: "1", commit, directories: [...SCANNER_DIRECTORIES], excluded: [...SCANNER_EXCLUDED], files }
+}
+
+export effect function publishScannerInputs(args: ReadonlyArray<string>) {
+  if (args.length !== 2 || args[0] !== "--out" || (args[1] ?? "") === "") throw new ScannerInputsUsage({ message: "usage: scanner-inputs --out <dir>" })
+  const path = try Path.Path
+  const fs = try FileSystem.FileSystem
+  const out = path.resolve(args[1] ?? "")
+  const document = try scannerInputsDocument(try checkoutRoot())
+  const target = path.join(out, scannerInputsFile)
+  fs.writeFileString(target, `${JSON.stringify(document, null, 2)}\n`) catch effect () => {
+    throw new ScannerInputsUsage({ message: `${target} is unwritable` })
+  }
+  try Console.log(`[Slop] published ${document.files.length} scanner inputs for ${document.commit.slice(0, 12)}`)
+}

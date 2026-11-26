@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex } from "@noble/hashes/utils.js"
@@ -7,7 +7,7 @@ import type { D1Database } from "@repo/platform/bindings"
 import { EvmRpc, checksum } from "@repo/platform/chain/evm"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { d1, rows, sql } from "@repo/platform/d1"
-import { SolanaRpc, address as solanaAddress, base58Decode, base58Encode, base64Encode, findPda, publicKey } from "@repo/platform/chain/solana"
+import { type SolanaRpc, address as solanaAddress, base58Decode, base58Encode, base64Encode, findPda, publicKey } from "@repo/platform/chain/solana"
 import type { Handler } from "@repo/platform/testing"
 import { type Account, type Anvil, type Served, anvil, deploy, forgeBuild, forward, refuseMainnet, serve } from "@repo/platform/testing/chains"
 import { internet } from "@repo/platform/testing/internet"
@@ -31,8 +31,9 @@ import { definitions } from "../src/runtime/networks.vibe"
 import { circleUsdc, kyberswap, robinhoodUsdg, solanaGenesis } from "../src/runtime/pins.ts"
 import { type TokenFact, type VaultFact, holdingKind } from "../src/runtime/reviewed.vibe"
 import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
-import { FeeSolana, feeSolana } from "../src/solana/client.vibe"
+import { type FeeSolana, feeSolana } from "../src/solana/client.vibe"
 import { generationInstance, journalDatabase } from "./support/journal.ts"
+import { logged, same } from "./support/checks.vibe"
 
 const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
 const sources = ["src/ProjectEscrow.sol", "vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol", "test/FeeConverterFixture.sol"]
@@ -299,10 +300,6 @@ effect function vaultTotals() {
   return { free: try vaultWord("freeBalance"), principal: try vaultWord("reservedPrincipal"), awardFees: try vaultWord("reservedFees"), accrued: try vaultWord("accruedFees") }
 }
 
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
-
 type FloorNetwork = "Base" | "Ethereum" | "Robinhood"
 
 interface FloorVault {
@@ -381,17 +378,6 @@ effect function runtimeDryRun() {
   const config: WorkerConfig = { source: 1, converterMode: "DryRun", buybackMode: "DryRun", networks: ["Base", "Ethereum", "Robinhood"], keys: [], nativeLimits: ["Base", "Ethereum", "Robinhood"], evmWallet: 1, solanaWallet: 2 }
   const variable: Runtime = try apply(initial, { type: "setReleaseVariable", variable: true }, "Owner")
   return try apply(variable, { type: "publish", config }, "ReleaseWorkflow")
-}
-
-effect function logged<A, E, R>(program: A!E!R) {
-  const events: Array<Readonly<Record<string, unknown>>> = []
-  const capture = Logger.layer([Logger.make((options) => {
-    const message: unknown = options.message
-    const [event, fields] = Array.isArray(message) ? message : [message, undefined]
-    if (typeof event === "string") events.push({ event, ...(typeof fields === "object" && fields !== null ? fields : {}) })
-  })], { mergeWithExisting: true })
-  const value = try Effect.provide(program, capture)
-  return { value, events }
 }
 
 effect function floorRun(network: FloorNetwork, generation: number) {

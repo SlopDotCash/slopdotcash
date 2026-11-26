@@ -20,6 +20,7 @@ const Reward = Schema.Struct({
   kind: Schema.Literals(["monthly-pool", "external-prize-share"]),
   monthlyCapMinor: Schema.String,
   monthlyCapDisplay: Schema.String,
+  chain: Schema.optional(Schema.NullOr(Schema.String)),
   cycleCaps: Schema.optional(Schema.Array(Schema.Struct({ cycleId: Schema.String, monthlyCapMinor: Schema.String }))),
   reviewBudget: Schema.optional(Budget),
   externalOpportunity: Schema.optional(Schema.Struct({ name: Schema.optional(Schema.String), advertisedAmountDisplay: Schema.optional(Schema.String) })),
@@ -82,6 +83,7 @@ export interface ShownProject extends CardProject {
   readonly repositories: ProjectRecord["repositories"];
   readonly reward: CardProject["reward"] & {
     readonly monthlyCapDisplay: string;
+    readonly chain?: string;
     readonly cycleCaps: ReadonlyArray<CycleCap>;
     readonly reviewBudget?: PoolCommitment;
     readonly honorSystem?: boolean;
@@ -127,6 +129,7 @@ export function projectOf(record: unknown): ShownProject | undefined {
       kind: reward.kind,
       monthlyCapMinor,
       monthlyCapDisplay: reward.monthlyCapDisplay,
+      ...(reward.chain == null ? {} : { chain: reward.chain }),
       cycleCaps: caps.map((cap, index) => ({ cycleId: cap.cycleId, monthlyCapMinor: capMinors[index] ?? 0n })),
       reviewBudget: reward.reviewBudget && { committedMinor, fundingState: reward.reviewBudget.fundingState, monthlyCapDisplay: reward.reviewBudget.monthlyCapDisplay },
       externalOpportunity: reward.externalOpportunity,

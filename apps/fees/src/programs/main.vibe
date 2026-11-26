@@ -14,13 +14,7 @@ import { qualifyRobinhoodRpc } from "./robinhoodRpc.vibe"
 import { qualifySolanaRpcPair } from "./solanaRpcPair.vibe"
 import { probeSolanaRpc } from "./solanaRpcProbe.vibe"
 import { rotateSolanaRpc } from "./solanaRpcRotation.vibe"
-
-module verified {
-  import { jsonValue } from "../solana/bytes.ts"
-  /** @throws {never} */
-  export function parsedJson(text: string): unknown { return jsonValue(text) }
-}
-import { parsedJson } from verified
+import { parsedJson } from "../kernels/verified.vibe"
 
 export error PreflightRefused { message: string }
 

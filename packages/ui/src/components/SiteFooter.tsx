@@ -20,7 +20,7 @@ export type SiteFooterProps = ComponentProps<"footer"> & {
  */
 export function SiteFooter({ label = "Community", brand, compact = false, className, children, ...props }: SiteFooterProps) {
   return (
-    <footer className={cn("overflow-x-clip", compact ? "bg-card text-card-foreground" : "bg-primary text-primary-foreground", className)} {...props}>
+    <footer className={cn(compact ? "bg-card text-card-foreground" : "bg-primary text-primary-foreground", className)} {...props}>
       <div className={cn(shell, "flex flex-wrap justify-between", compact ? "items-center gap-4 py-6" : "items-end gap-8 py-12")}>
         {brand ? <div className="flex min-w-0 flex-col items-start gap-5">{brand}</div> : null}
         <nav
@@ -28,8 +28,8 @@ export function SiteFooter({ label = "Community", brand, compact = false, classN
           className={cn(
             childFocusRing,
             childTarget,
-            "ml-auto flex min-w-0 max-w-full flex-col items-end gap-3 font-semibold *:w-fit *:max-w-full *:rounded-sm *:wrap-anywhere *:underline-offset-4 *:hover:underline",
-            compact ? "text-sm" : "text-base leading-page *:focus-visible:ring-primary-foreground",
+            "ml-auto flex min-w-0 max-w-full flex-col items-end gap-3 font-semibold *:w-fit *:min-w-11 *:max-w-full *:text-right *:rounded-sm *:wrap-anywhere *:underline-offset-4 *:hover:underline",
+            compact ? "text-sm leading-page" : "text-base leading-page *:focus-visible:ring-primary-foreground",
           )}
         >
           {children}

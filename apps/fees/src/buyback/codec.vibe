@@ -2,7 +2,7 @@
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Rows } from "@repo/platform/stored"
-import type { Amount } from "../../gen/settlement__money.effect.vibe"
+import { type Amount, equalAmounts } from "../../gen/settlement__money.effect.vibe"
 import { type BridgeDecision, type BridgeOrder, type BridgeReason, type Buyback, type DecisionState, type IncomeKey, type IncomeKind, apply, approveOrder, closeOrder, decodeState, initial, loseSend, observeArrival, observeCancelling, observeRefund, order, reportUnfilled, settleApproval, settleOrder } from "../../gen/fees__buyback.effect.vibe"
 import type { Network } from "../../gen/fees__runtime.effect.vibe"
 import type { Instance, Names } from "../journal/codec.vibe"
@@ -10,19 +10,17 @@ import { networkNames } from "../journal/codec.vibe"
 import { type NetworkName, inScope } from "../journal/writes.vibe"
 import type { Held } from "../runtime/config.vibe"
 
-module limbs {
-  import type { Amount } from "../../gen/settlement__money.ts"
-  import { toAmount } from "@repo/settlement/kernels/amounts"
-  /** @throws {never} */
-  export function amountOfBig(value: bigint): Amount { return toAmount(value < 0n ? 0n : value) }
-}
-import { amountOfBig } from limbs
+import { amountOfBig } from "../kernels/verified.vibe"
 
 export interface IncomeEntry {
   readonly kind: IncomeKind
   readonly text: string
   readonly amount: Amount
   readonly chainTime: number
+}
+
+export function matchesIncome(found: IncomeEntry | undefined, amount: Amount, chainTime: number) {
+  return found !== undefined && equalAmounts(found.amount, amount) && found.chainTime === chainTime
 }
 
 export interface Leg {
@@ -109,7 +107,7 @@ export function modelBalance(balance: bigint): number {
   return Number(balance < maximumModelBalance ? balance : maximumModelBalance)
 }
 
-export function legRows(network: NetworkName, scope: string): Statement {
+function legRows(network: NetworkName, scope: string): Statement {
   return sql`${inScope(network, scope)} AND (kind = 'bridge' OR (kind = 'approval' AND route = 'debridge'))`
 }
 
@@ -136,7 +134,7 @@ effect function whole(text: string | null, label: string) {
   return Number(text)
 }
 
-export effect function termsOf(text: string | null, label: string) {
+effect function termsOf(text: string | null, label: string) {
   const value = try Effect.try({ try: () => JSON.parse(text ?? "null") as unknown, catch: () => new RowMismatch({ text: label, issue: "the order terms are not JSON" }) })
   const terms = Schema.decodeUnknownEffect(TermsJson)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "the bridge row lacks its recorded order terms" }) }
   if (!orderIdPattern.test(terms.orderId) || !decimal.test(terms.takeAmount) || terms.takeAmount === "0" || !decimal.test(terms.nativeFee))
@@ -156,7 +154,7 @@ effect function recordedDecision(row: Send, offset: number) {
   return { state, reason, amount: try whole(row.amount_in, label), live: row.mode === "live", at: millisOf(row.created_at) - offset } satisfies BridgeDecision
 }
 
-export effect function balanceOf(text: string | null | undefined) {
+effect function balanceOf(text: string | null | undefined) {
   if (text === null || text === undefined || !decimal.test(text)) return undefined
   return modelBalance(try orDie(Effect.try(() => BigInt(text))))
 }

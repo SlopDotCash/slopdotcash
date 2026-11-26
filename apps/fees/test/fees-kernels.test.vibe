@@ -1,7 +1,7 @@
 import { it } from "@effect/vitest"
 import { holds } from "vibestack/testing"
 import { errorText } from "../src/kernels/errorText.ts"
-import { type TraversalBlock, expiryBlocksPerRun, expiryTraversalStep } from "../src/kernels/expiryCoverage.ts"
+import { type TraversalBlock, expiryBlocksPerRun, expiryTraversalStep } from "@repo/settlement/kernels/expiryCoverage"
 import { type RouteBinding, type RouteExpectedKeys, routeBindingError, routeValue } from "../src/kernels/jupiterPolicy.ts"
 import { type NativeFeeEarning, type NativeLiabilityEntry, nativeDailyLiability, nativeFeeEarnings, nativeFeeRemainder } from "../src/kernels/nativeLiability.ts"
 import { type RouteTokenBalance, firstDebitedHolding, routeTokenCredit } from "../src/kernels/routeCredit.ts"
@@ -193,7 +193,7 @@ it.effect('A signed Solana transaction is parsed into exact spans, and anything 
     const parsed = parseSolanaWire(bytes)
     if (parsed.kind !== "transaction") return false
     const { value } = parsed
-    return value.signatureCount === want.signatureCount && value.messageOffset === want.messageOffset && value.requiredSignatures === want.requiredSignatures && value.keyCount === want.keyCount && value.staticStart === want.staticStart && value.blockhashOffset === want.blockhashOffset && value.legacy === want.legacy && JSON.stringify(value.instructions) === JSON.stringify(want.spans)
+    return value.signatureCount === want.signatureCount && value.messageOffset === want.messageOffset && value.requiredSignatures === want.requiredSignatures && value.keyCount === want.keyCount && value.staticStart === want.staticStart && value.blockhashOffset === want.blockhashOffset && value.unversioned === want.legacy && JSON.stringify(value.instructions) === JSON.stringify(want.spans)
   })
   try holds(Arbitrary.all([wireShape, whole(0, 2000)]), ([shape, cut]) => {
     const { bytes } = encode(shape)

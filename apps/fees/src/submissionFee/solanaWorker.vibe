@@ -1,5 +1,4 @@
 // spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
-import { ed25519 } from "@noble/curves/ed25519.js"
 import { hexToBytes } from "@noble/hashes/utils.js"
 import { jsonRpc } from "@repo/platform/chain/rpc"
 import { base58Encode, base64Decode, base64Encode } from "@repo/platform/chain/solana"
@@ -7,6 +6,7 @@ import { isoAt, isoNow } from "@repo/platform/clock"
 import { D1 } from "@repo/platform/d1"
 import { SubmissionFeeItems } from "@repo/ports/slopbot"
 import { solanaGenesis } from "../runtime/pins.ts"
+import { solanaSeedKey } from "../signer/solanaKey.ts"
 import { decimal } from "../evm/abi.ts"
 import { SubmissionFeeConfigInvalid, type Mode } from "./config.vibe"
 import {
@@ -202,9 +202,9 @@ export effect function runSolanaSubmissionFee(env: SolanaSubmissionFeeEnv, progr
     const configBytes = configReply?.value === null || configReply?.value === undefined ? undefined : base64Decode(configReply.value.data[0] ?? "")
     const onChainConfig = configBytes === undefined ? undefined : decodeSubmissionConfig(configBytes)
     const seedBytes = try Effect.try(() => hexToBytes(seedHex))
-    const pubBytes = try Effect.try(() => ed25519.getPublicKey(seedBytes))
-    const resolverAddress = base58Encode(pubBytes)
-    if (onChainConfig !== undefined && onChainConfig.resolver === resolverAddress) {
+    const key = solanaSeedKey(seedBytes)
+    const resolverAddress = key?.address
+    if (key !== undefined && resolverAddress !== undefined && onChainConfig !== undefined && onChainConfig.resolver === resolverAddress) {
       const items = try SubmissionFeeItems
       for (const deposit of try resolvable(config.network)) {
         const account = openById.get(deposit.depositId)
@@ -235,7 +235,7 @@ export effect function runSolanaSubmissionFee(env: SolanaSubmissionFeeEnv, progr
         if (feeReply.value === null) continue
         const feeLamports = try orDie(Effect.try(() => BigInt(feeReply.value ?? 0)))
         if (feeLamports > config.maxLamportsPerTx) continue
-        const sig = try Effect.try(() => ed25519.sign(msg, seedBytes))
+        const sig = key.sign(msg)
         const tx = new Uint8Array(1 + 64 + msg.length)
         tx[0] = 1
         tx.set(sig, 1)

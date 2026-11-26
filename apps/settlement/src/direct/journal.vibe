@@ -1,5 +1,5 @@
 // spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"
-import { ConstraintViolation, RowMismatch, type Statement, decoded, rows, sql } from "@repo/platform/d1"
+import { ConstraintViolation, type RowMismatch, type Statement, decoded, decodedJson, rows, sql, wholeNumber } from "@repo/platform/d1"
 import { type Aggregate, Conflict, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import type { EffectiveWallet } from "@repo/ports/backend"
 import type { ApprovedAward } from "@repo/ports/security"
@@ -25,14 +25,8 @@ module limbs {
   export function nonceOf(text: string): bigint | undefined {
     return /^0x[\da-f]{1,16}$/iu.test(text) || /^(?:0|[1-9]\d{0,19})$/u.test(text) ? BigInt(text) : undefined
   }
-  /** @throws {never} */
-  export function wholeNumber(text: string | undefined): number {
-    if (text === undefined) return -1
-    const value = /^0x[\da-f]{1,13}$/iu.test(text) || /^(?:0|[1-9]\d{0,15})$/u.test(text) ? Number(text) : -1
-    return Number.isSafeInteger(value) ? value : -1
-  }
 }
-import { amountOf, nonceOf, wholeNumber } from limbs
+import { amountOf, nonceOf } from limbs
 
 export schema StoredReceipt {
   readonly legIndex: number
@@ -109,24 +103,19 @@ export function legPaid(journal: Journal, legIndex: number): boolean {
   return journal.legs.some((leg) => leg.legIndex === legIndex)
 }
 
-effect function parsed<S extends Schema.Constraint>(schema: S, text: string, label: string) {
-  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new RowMismatch({ text: label, issue: "stored JSON is malformed" }) })
-  return Schema.decodeUnknownEffect(schema)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "stored JSON does not match its shape" }) }
-}
-
 effect function journalOf(caseId: string, [payments, revisions, receipts, consents, paid]: ReadonlyArray<Rows>) {
   const [payment] = try decoded(PaymentRow, payments ?? [], "direct payment")
   const stored: Revision[] = []
   for (const row of try decoded(RevisionRow, revisions ?? [], "direct payment revisions")) {
-    stored.push({ generation: row.generation, intent: try parsed(DirectIntent, row.intent, "direct payment successor"), retirement: try parsed(StoredRetirement, row.retirement, "direct payment retirement") })
+    stored.push({ generation: row.generation, intent: try decodedJson(DirectIntent, row.intent, "direct payment successor"), retirement: try decodedJson(StoredRetirement, row.retirement, "direct payment retirement") })
   }
   const legs: Leg[] = []
   for (const row of try decoded(ReceiptRow, receipts ?? [], "direct transfer receipts")) {
-    legs.push({ legIndex: row.leg_index, network: row.network, transactionId: row.transaction_id, evidence: try parsed(StoredReceipt, row.evidence, "direct transfer evidence") })
+    legs.push({ legIndex: row.leg_index, network: row.network, transactionId: row.transaction_id, evidence: try decodedJson(StoredReceipt, row.evidence, "direct transfer evidence") })
   }
   const accepted: Consent[] = []
   for (const row of try decoded(ConsentRow, consents ?? [], "payment consents")) {
-    const deployment = try parsed(Schema.Unknown, row.deployment, "payment consent")
+    const deployment = try decodedJson(Schema.Unknown, row.deployment, "payment consent")
     const direct = Schema.decodeUnknownEffect(StoredConsent)(deployment) catch () => undefined
     if (direct !== undefined && (direct.rail === "direct" || direct.rail === "direct-recovery")) accepted.push({ caseRevision: row.case_revision, deployment: direct, reporterGithubId: row.reporter_github_id })
   }
@@ -134,7 +123,7 @@ effect function journalOf(caseId: string, [payments, revisions, receipts, consen
     caseId,
     network: payment?.network,
     preparedAt: payment?.prepared_at,
-    original: payment === undefined ? undefined : try parsed(DirectIntent, payment.intent, "direct payment intent"),
+    original: payment === undefined ? undefined : try decodedJson(DirectIntent, payment.intent, "direct payment intent"),
     revisions: stored,
     legs,
     consents: accepted,

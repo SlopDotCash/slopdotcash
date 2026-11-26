@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { base58 } from "@scure/base";
-import { childEnvironment, portsFree, rpc, supervised } from "./faults.ts";
+import { childEnvironment, isList, isRecord, portsFree, rpc, supervised } from "./faults.ts";
 
 export const SOLANA_TEST_IMAGE = "docker.io/anzaxyz/agave@sha256:45eee2ce535d1c72e68637172ea506ac33a7178c86cd6453159e6d7cede13b6f";
 export const SOLANA_TEST_BINARY_SHA256 = "06b6f43f0705e01dd34a5569b1ef08cee8e902db5f77b0fe04b721ad5e71fff0";
@@ -69,8 +69,6 @@ const payerLamports = 1_000_000_000_000_000;
 const systemProgram = "11111111111111111111111111111111";
 const sbfHint = `install the Agave ${SOLANA_TEST_VERSION} CLI so that \`cargo build-sbf\` is on PATH; it fetches platform tools ${sbfTools} on first use`;
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
-
 const isPublicKey = (text: string) => {
   try {
     return base58.decode(text).length === 32;
@@ -98,7 +96,7 @@ async function dockerContext(): Promise<ReadonlyArray<string>> {
   } catch {
     throw new Error(`Neither solana-test-validator ${SOLANA_TEST_VERSION} nor Docker is available: ${installHint}`);
   }
-  const current = Array.isArray(contexts) ? contexts[0] : undefined;
+  const current = isList(contexts) ? contexts[0] : undefined;
   const host = isRecord(current) && isRecord(current.Endpoints) && isRecord(current.Endpoints.docker) ? current.Endpoints.docker.Host : undefined;
   if (!isRecord(current) || typeof current.Name !== "string" || typeof host !== "string" || !host.startsWith("unix://")) throw new Error("The Docker context must use a local Unix socket");
   return ["--context", current.Name];
@@ -133,12 +131,12 @@ function pathRunner(directory: string): Runner {
       });
       child.once("close", () => void log.close());
     },
-    failure: async () => {
-      if (spawnFailure !== undefined) return spawnFailure;
-      if (child !== undefined && (child.exitCode !== null || child.signalCode !== null)) return new Error(`The local validator exited (${child.exitCode ?? child.signalCode})`);
-      return undefined;
+    failure: () => {
+      if (spawnFailure !== undefined) return Promise.resolve(spawnFailure);
+      if (child !== undefined && (child.exitCode !== null || child.signalCode !== null)) return Promise.resolve(new Error(`The local validator exited (${child.exitCode ?? child.signalCode})`));
+      return Promise.resolve(undefined);
     },
-    verify: async () => undefined,
+    verify: () => Promise.resolve(undefined),
     stop: async () => {
       const running = child;
       if (running === undefined || running.exitCode !== null || running.signalCode !== null) return;
@@ -146,7 +144,7 @@ function pathRunner(directory: string): Runner {
       running.kill("SIGTERM");
       await closed;
     },
-    purge: async () => undefined,
+    purge: () => Promise.resolve(undefined),
   };
 }
 
@@ -159,7 +157,7 @@ async function dockerRunner(owner: string, rpcPort: number, mounts: ReadonlyArra
   } catch {
     throw new Error(`The pinned validator image is not present: run \`docker pull ${SOLANA_TEST_IMAGE}\``);
   }
-  const found = Array.isArray(image) ? image[0] : undefined;
+  const found = isList(image) ? image[0] : undefined;
   if (!isRecord(found) || found.Architecture !== "amd64" || found.Os !== "linux") throw new Error("The pinned validator image has an unexpected platform");
   const name = `slop-solana-test-${owner}`;
   const volume = `slop-solana-ledger-${owner}`;
@@ -169,7 +167,7 @@ async function dockerRunner(owner: string, rpcPort: number, mounts: ReadonlyArra
     const id = await run(["ps", "-aq", "--filter", `name=^${name}$`]);
     if (id === "") return undefined;
     const inspected: unknown = JSON.parse(await run(["inspect", name]));
-    const container = Array.isArray(inspected) ? inspected[0] : undefined;
+    const container = isList(inspected) ? inspected[0] : undefined;
     const labels = isRecord(container) && isRecord(container.Config) && isRecord(container.Config.Labels) ? container.Config.Labels : undefined;
     if (labels?.[ownerLabel] !== owner) throw new Error("Refusing to touch a validator container owned by another run");
     return container;
@@ -192,7 +190,7 @@ async function dockerRunner(owner: string, rpcPort: number, mounts: ReadonlyArra
       const published = isRecord(container) && isRecord(container.NetworkSettings) && isRecord(container.NetworkSettings.Ports) ? container.NetworkSettings.Ports : {};
       for (const port of ports) {
         const bindings = published[`${port}/tcp`];
-        if (!Array.isArray(bindings) || bindings.length !== 1 || !isRecord(bindings[0]) || bindings[0].HostIp !== "127.0.0.1" || bindings[0].HostPort !== String(port)) {
+        if (!isList(bindings) || bindings.length !== 1 || !isRecord(bindings[0]) || bindings[0].HostIp !== "127.0.0.1" || bindings[0].HostPort !== String(port)) {
           throw new Error("The validator port is not published only on IPv4 loopback");
         }
       }
@@ -238,7 +236,7 @@ async function ready(url: string, runner: Runner): Promise<string> {
 async function confirmed(url: string, signature: string): Promise<void> {
   for (let attempt = 0; attempt < 600; attempt++) {
     const statuses = await rpc(url, "getSignatureStatuses", [[signature], { searchTransactionHistory: true }]);
-    const status = isRecord(statuses) && Array.isArray(statuses.value) ? statuses.value[0] : undefined;
+    const status = isRecord(statuses) && isList(statuses.value) ? statuses.value[0] : undefined;
     if (isRecord(status)) {
       if (status.err !== null) throw new Error(`Airdrop ${signature} failed: ${JSON.stringify(status.err)}`);
       if (status.confirmationStatus === "finalized") return;
@@ -308,7 +306,7 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
       await halt();
       await runner.purge();
     } catch (error) {
-      throw new AggregateError([error], `Validator cleanup failed; kept ${directory} (${ownerLabel}=${owner}, ports ${ports.join(", ")})`);
+      throw new AggregateError([error], `Validator cleanup failed; kept ${directory} (${ownerLabel}=${owner}, ports ${ports.join(", ")})`, { cause: error });
     }
     await rm(directory, { recursive: true, force: true });
   });
@@ -322,6 +320,17 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
     const current = await call("getSlot", [{ commitment: "processed" }]);
     if (typeof current !== "number" || !Number.isSafeInteger(current)) throw new Error("getSlot answered no slot");
     return BigInt(current);
+  };
+  const snapshotted = async () => {
+    const root = await call("getSlot", [{ commitment: "finalized" }]);
+    if (typeof root !== "number" || !Number.isSafeInteger(root)) throw new Error("getSlot answered no finalized slot");
+    const until = Date.now() + 120_000;
+    while (Date.now() < until) {
+      const highest = await call("getHighestSnapshotSlot").catch(() => undefined);
+      if (isRecord(highest) && typeof highest.full === "number" && highest.full >= root) return;
+      await sleep(250);
+    }
+    throw new Error(`No full snapshot reached the finalized slot ${root} within 120 seconds, and a warped restart keeps only what the newest snapshot holds`);
   };
   try {
     const { genesis, binarySha256 } = await boot(["--reset", ...args]);
@@ -341,6 +350,7 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
         return signature;
       },
       warpSlot: async (target) => {
+        await snapshotted();
         const before = await slot();
         if (target <= before) throw new RangeError(`Warp slot ${target} is not after the current slot ${before}`);
         await halt();
@@ -373,7 +383,7 @@ export async function sbfBuild(root: string, manifest: string): Promise<ProgramB
     });
   } catch (error) {
     await close();
-    if (isRecord(error) && (error.code === "ENOENT" || (typeof error.stderr === "string" && error.stderr.includes("no such command")))) throw new Error(`cargo build-sbf is not available: ${sbfHint}`);
+    if (isRecord(error) && (error.code === "ENOENT" || (typeof error.stderr === "string" && error.stderr.includes("no such command")))) throw new Error(`cargo build-sbf is not available: ${sbfHint}`, { cause: error });
     throw error;
   }
   return { out: directory, close, [Symbol.asyncDispose]: close };

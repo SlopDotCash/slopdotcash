@@ -11,7 +11,8 @@ import { type KyberRefused, type KyberSettings, type KyberUnavailable, type Rout
 import type { NativeLimits } from "../runtime/config.vibe"
 import { type EvmCall, SignRefused, bridgeCostWithin, bridgeTermsOf, derivedCall, pinnedRouter, replacementTransaction } from "./evm.vibe"
 import { type EvmKey, evmKey, feeWalletEvmMarker } from "./evmKey.ts"
-import type { EvmIntent, EvmNetwork, FeeIntent, SolanaIntent } from "./intents.ts"
+import type { EvmNetwork } from "../evm/abi.ts"
+import type { EvmIntent, FeeIntent, SolanaIntent } from "./intents.ts"
 
 export { SignRefused } from "./evm.vibe"
 

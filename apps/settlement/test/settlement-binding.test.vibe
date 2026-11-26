@@ -78,7 +78,8 @@ const Site = areaLayer({
 })
 
 effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+  const { outboundErrors } = try Area
+  try sync(() => assert.deepStrictEqual(actual, expected, JSON.stringify({ actual, outboundErrors })))
 }
 
 function field(answer: Answer, name: string): unknown {

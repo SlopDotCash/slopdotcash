@@ -58,7 +58,7 @@ effect function listed(projectId: string, revision: number, manifest: string) {
   return { projectId, active: true, revision, manifest, manifestSha256: try sha256Hex(manifest), updatedAt: "2026-11-01T00:00:00.000Z" } satisfies RegistryManifest
 }
 effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+  try sync(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function amount(value: bigint) {
@@ -251,7 +251,7 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
     const budgeted = try sentOwn(owner, blockhash, [price, ...instructionsOf(verified, deposit)])
     const budgetedCheck = try checkFunding(verified, deposit, plan.blockhash, budgeted, capture, depositFacts)
     const { deployment } = try Escrow
-    const transfer: Instruction = { program: SYSTEM_PROGRAM, accounts: [meta(owner.address, true, true), meta(deployment.feeRecipient.address, true)], data: concat(Uint8Array.of(2, 0, 0, 0), u64le(try amount(1n))) }
+    const transfer: Instruction = { program: SYSTEM_PROGRAM, accounts: [meta(owner.address, true, true), meta(deployment.chain.payer.address, true)], data: concat(Uint8Array.of(2, 0, 0, 0), u64le(try amount(1n))) }
     const prefixed = try sentOwn(owner, blockhash, [transfer, ...instructionsOf(verified, deposit)])
     const prefixedCheck = try refusalOf(checkFunding(verified, deposit, plan.blockhash, prefixed, capture, depositFacts))
     const malformedId = try refusalOf(checkFunding(verified, deposit, plan.blockhash, "not-a-signature", capture, depositFacts))

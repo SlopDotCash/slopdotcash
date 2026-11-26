@@ -1,0 +1,12 @@
+import { gitBytes, systemGit } from "../git/process.vibe"
+
+export effect function testGit(directory: string, args: ReadonlyArray<string>) {
+  const bytes = try Effect.provide(gitBytes({ args: ["-C", directory, "-c", "user.name=Slop tests", "-c", "user.email=tests@slop.invalid", "-c", "commit.gpgsign=false", ...args], limit: 1024 * 1024, seconds: 60 }, `git ${args[0]} failed`), systemGit)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+export effect function commitAll(repository: string, message: string) {
+  try testGit(repository, ["add", "-A"])
+  try testGit(repository, ["commit", "-q", "-m", message])
+  return try testGit(repository, ["rev-parse", "HEAD"])
+}

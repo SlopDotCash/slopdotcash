@@ -3,7 +3,7 @@ import { sha256Hex } from "@repo/platform/crypto"
 import { D1, rows, sql } from "@repo/platform/d1"
 import { isoNow } from "@repo/platform/clock"
 import { type JsonRpc } from "@repo/platform/chain/rpc"
-import { base58Decode, base58Encode, base64Decode, base64Encode, publicKey } from "@repo/platform/chain/solana"
+import { base58Decode, base58Encode, base64Decode, base64Encode, hostedSolanaOperator, publicKey } from "@repo/platform/chain/solana"
 import { signedBy } from "../chain/solana/transactions.ts"
 import { type IssuedPlan, type SolanaDirectRail, SolanaDirectInvalid, loopbackRpc, rawSolana } from "./solana.vibe"
 
@@ -121,20 +121,8 @@ function slot(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 }
 
-export function recoveryOperator(endpoint: string): string | undefined {
-  const url = URL.parse(endpoint)
-  if (url === null || url.protocol !== "https:") return undefined
-  const host = url.hostname.toLowerCase()
-  if (host === "api.mainnet-beta.solana.com") return "solana-public"
-  if (host === "solana-rpc.publicnode.com") return "allnodes-publicnode"
-  if (host === "public.rpc.solanavibestation.com") return "solana-vibe-station"
-  if (host.endsWith(".alchemy.com")) return "alchemy"
-  if (host.endsWith(".helius-rpc.com")) return "helius"
-  return undefined
-}
-
 function operatorOf(endpoint: string, genesis: string) {
-  const known = recoveryOperator(endpoint)
+  const known = hostedSolanaOperator(endpoint)
   if (known !== undefined || genesis === MAINNET || !loopbackRpc(endpoint)) return known
   return `local-validator:${new URL(endpoint).host}`
 }

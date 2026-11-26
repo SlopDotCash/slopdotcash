@@ -174,8 +174,8 @@ export effect function flagsQualification(input: FlagsRun & { readonly root: str
     return { first, again }
   }
 
-  effect function wrangler(step: string, args: ReadonlyArray<string>, seconds = deploySeconds) {
-    return try tools.wrangler(step, { args, cwd: input.workspace, seconds })
+  effect function wrangler(step: string, args: ReadonlyArray<string>, seconds = deploySeconds, quiet = false) {
+    return try tools.wrangler(step, { args, cwd: input.workspace, seconds, quiet })
   }
 
   effect function assertVersion(expected: string | undefined) {
@@ -372,7 +372,7 @@ export effect function flagsQualification(input: FlagsRun & { readonly root: str
   effect function qualified() {
     try provision()
     const config = try configured()
-    for (const database of owned.databases) try wrangler("schema", ["d1", "migrations", "apply", database.name, "--remote", "--config", config], migrationSeconds)
+    for (const database of owned.databases) try wrangler("schema", ["d1", "migrations", "apply", database.name, "--remote", "--config", config], migrationSeconds, true)
     stage = "deploy-worker"
     uncertain.add(run)
     try wrangler("deploy", ["deploy", "--config", config, "--tag", source, "--message", `Disposable recovery qualification ${run}`])

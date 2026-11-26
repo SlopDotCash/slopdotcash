@@ -1,6 +1,6 @@
 // spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
 import { ConstraintViolation, first, sql } from "@repo/platform/d1"
-import { Refused, admission, answerSubtree, answered, body, handle, json } from "@repo/platform/http"
+import { Refused, admission, answerSubtree, answered, body, handle } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Refusal } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
@@ -142,11 +142,11 @@ effect function followLink() {
   return linkAnswer(linkRoute(link.state, path, safeMethod, key, syntaxValid, link.membership), url.origin)
 }
 
-const otherCodeMethods = ["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"] as const
+const otherCodeMethods = ["GET", "PUT", "PATCH", "DELETE", "OPTIONS"] as const
 
 export const ReferralCodeRoutes = Layer.mergeAll(
   handle({ ...chooseCode, request: undefined }, (input) => chooseName(input.actor.githubId)),
-  HttpRouter.addAll(otherCodeMethods.map((method) => HttpRouter.route(method, chooseCode.path, answered(succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST" })))))),
+  HttpRouter.addAll(otherCodeMethods.map((method) => HttpRouter.route(method, chooseCode.path, answered(effect { throw new Refused(refusals.OriginForbidden) })))),
   answerSubtree(linkRoot, followLink()),
 )
 

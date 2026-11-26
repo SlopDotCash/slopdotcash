@@ -68,6 +68,7 @@ const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pa
 const distributorAbi = parseAbi(["function postRoot(uint256 index, bytes32 root, uint256 newTotal)", "function voidRoot(uint256 index)"])
 const dollarAbi = parseAbi(["function mint(address to, uint256 amount)"])
 const scanLimit = 1_000_000n
+const miningStep = 100_000
 const chainNow = "2027-01-01T03:00:00.000Z"
 const keep: Rewrite = (_method, result) => result
 
@@ -276,6 +277,10 @@ effect function transact(chain: Anvil, from: `0x${string}`, to: string, data: `0
   return receipt
 }
 
+effect function mined(chain: Anvil, blocks: number) {
+  for (let left = blocks; left > 0; left -= miningStep) try promise(() => chain.mine(Math.min(left, miningStep)))
+}
+
 effect function headOf(chain: Anvil) {
   const head = try promise(() => chain.rpc("eth_blockNumber"))
   return try orDie(Effect.try(() => BigInt(String(head))))
@@ -450,7 +455,7 @@ layer(Layer.mergeAll(ChainStarted, webCrypto, outbound), { excludeTestServices: 
 
   it.effect('A scan over more than one million blocks is split and reads every block once (spec/settlement/referralWatch.md, "Log scans cover every block from deployment to the observed tip once, in ranges of at most one million blocks")', () => effect {
     const bench = try Chain
-    try promise(() => bench.chain.mine(1_000_001))
+    try mined(bench.chain, 1_000_001)
     const limited = try rangeLimited(bench.chain)
     const setup = try chainSetup(bench, limited.url)
     const tip = try headOf(bench.chain)

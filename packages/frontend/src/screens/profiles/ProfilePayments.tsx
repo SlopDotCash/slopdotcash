@@ -2,7 +2,7 @@
 import type { DirectTransfer, PublicVaultPayment } from "@repo/settlement/client";
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { isNetworkKey, NETWORKS } from "@repo/settlement/kernels/networks";
-import { Button, ExternalLink, NetworkMark, Spinner, Status } from "@repo/ui";
+import { Button, cn, ExternalLink, NetworkMark, Spinner, Status } from "@repo/ui";
 import { ExternalLink as ExternalLinkIcon, RotateCcw } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
@@ -13,6 +13,7 @@ import { formatDate, formatMonth, PaymentRecord, VaultPaymentRecord } from "../p
 import { contributorStateLabel, cycleLifecyclePresentation, percentText, pointsText } from "../cycles/labels.ts";
 import type { Tier } from "../../platform/config.vibe";
 import { type CycleShare, moneyReceived, shownRecords } from "./profile.ts";
+import { profileCard, profileCardTitle } from "./ProfileActivity.tsx";
 
 export type ProfilePaymentsProps = {
   /** The member's archived cycle rows, once the cycle index is read. */
@@ -151,10 +152,10 @@ export function ProfilePayments({ cycles, githubId, direct, vault, nameOf, nowMs
     ...(vaultRows ?? []).map((payment) => ({ id: `vault:${payment.id}`, sortAt: payment.indexedAt, content: <VaultPaymentRecord payment={payment} projectName={nameOf(payment.projectId)} /> })),
   ].sort((left, right) => right.sortAt.localeCompare(left.sortAt) || left.id.localeCompare(right.id));
   return (
-    <section aria-label="Awards and payments" className="flex flex-col gap-4">
-      <h2 className="text-xl font-semibold text-foreground">Awards and payments</h2>
-      <p className="flex items-baseline gap-2">
-        <strong className="font-mono tabular-nums">
+    <section aria-label="Awards and payments" className={cn(profileCard, "gap-4")}>
+      <h2 className={profileCardTitle}>Awards and payments</h2>
+      <p className="text-muted-foreground">
+        <strong className="block font-mono text-2xl font-bold text-foreground tabular-nums">
           {total !== undefined ? (
             formatRewardMinor(total)
           ) : failed ? (

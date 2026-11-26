@@ -2,6 +2,7 @@
 import { Alert, Button, Field, Select, Spinner, Status } from "@repo/ui";
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { flushSync } from "react-dom";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { SignInPanel } from "../../../app/SignInPanel.tsx";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
@@ -133,7 +134,7 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
   const [note, setNote] = useState<string | null>(null);
   const reload = () => void run(section, loadCases(owner));
   const open = (caseId: string | null) => {
-    setSelected(caseId);
+    flushSync(() => setSelected(caseId));
     if (typeof location !== "undefined" && typeof history !== "undefined") {
       const query = new URLSearchParams(location.search);
       if (caseId) query.set("case", caseId);
@@ -144,9 +145,7 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
     if (caseId) {
       reload();
       if (typeof document !== "undefined") {
-        requestAnimationFrame(() => {
-          document.getElementById("security-case-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
+        document.getElementById("security-case-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     } else void run(section, openCase(owner, null));
   };

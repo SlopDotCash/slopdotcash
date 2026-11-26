@@ -1,4 +1,4 @@
-// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
+// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import { CallerLive } from "@repo/backend/caller"
 import { type BackendVars, backend, backendServices } from "@repo/backend/live"
 import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
@@ -10,9 +10,9 @@ import { edgeCache } from "@repo/platform/cache"
 import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { json, outbound } from "@repo/platform/http"
+import { outbound } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
-import { type Area, type Execution, area, later, pages } from "@repo/platform/worker"
+import { type Area, type Execution, area, later, pages, unmatchedApi } from "@repo/platform/worker"
 import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, protectedMonthsAccess } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
@@ -104,17 +104,6 @@ type Provided = Layer.Success<ReturnType<typeof services>> | Execution
 function closed<A extends Area<never, unknown>>(areas: ReadonlyArray<A>, unmet: [Exclude<Needs<A>, Gives<A> | Provided>] extends [never] ? "closed" : Exclude<Needs<A>, Gives<A> | Provided>) {
   return { areas, unmet }
 }
-
-const unmatchedApi = area({
-  name: "unmatchedApi",
-  api: [],
-  routes: HttpRouter.add("*", "/api/v1/*", effect {
-    const path = URL.parse((try HttpServerRequest.HttpServerRequest).originalUrl)?.pathname ?? ""
-    const headers = path.startsWith("/api/v1/traces") ? { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } : undefined
-    return json({ error: "not_found" }, 404, headers)
-  }),
-  provides: Layer.empty,
-})
 
 const projectSections = new Set(["project-vaults", "project-github", "project-revisions", "project-session", "project-setup", "project-applications", "project-appeals"])
 

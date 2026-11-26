@@ -240,11 +240,11 @@ function workStatus(read: Settled<{ readonly work: Work }>): ReadStatus {
 /** @throws {never} */
 function liveView(work: Work, found: Found, cycleId: string): { readonly view?: ProjectCycleView; readonly collected: boolean; readonly message?: string } {
   const terms = found.props.projectTerms(found.boot).find((entry) => entry.id === found.project.id);
-  const { snapshot } = work.board;
+  const { snapshot, payment } = work.board;
   if (terms === undefined || !projectActivityCollected(snapshot, terms, cycleId)) return { collected: false };
   if (!projectCycleHasOpened(snapshot, terms, cycleId)) return { collected: true };
   try {
-    return { collected: true, view: projectCycleView({ snapshot, registry: found.props.repositoryRegistry(found.boot), project: terms, cycleId }) };
+    return { collected: true, view: projectCycleView({ snapshot, payment, registry: found.props.repositoryRegistry(found.boot), project: terms, cycleId }) };
   } catch (error) {
     return { collected: true, message: error instanceof Error ? error.message : "The cycle could not be computed." };
   }

@@ -40,7 +40,7 @@ export function DataState({ status, children, onRetry, retryLabel = "Retry", ske
   const stale = status === "Stale";
   const retry = onRetry && readOffersRetry(status)
     ? stale
-      ? <Button variant="ghost" size="icon" aria-label={retryLabel} title={retryLabel} onClick={onRetry}><RotateCcw aria-hidden /></Button>
+      ? <Button variant="ghost" size="icon" aria-label={retryLabel} title={retryLabel} onClick={onRetry} className="size-8 [&_svg]:size-4"><RotateCcw aria-hidden /></Button>
       : <Button variant="outline" size="sm" onClick={onRetry}>{retryLabel}</Button>
     : null;
   const notice =
@@ -48,10 +48,16 @@ export function DataState({ status, children, onRetry, retryLabel = "Retry", ske
       <Status presentation={presentation} />
     ) : status === "Empty" ? (
       <EmptyState title={presentation.label} icon={<StatusIcon icon={presentation.icon} className="size-6" />}>{emptyAction}</EmptyState>
+    ) : stale ? (
+      <p className="inline-flex flex-wrap items-center gap-2 text-ui font-semibold text-muted-foreground">
+        <StatusIcon icon={presentation.icon} className={cn("size-3.5", tones[presentation.tone].text)} />
+        {presentation.label}
+        {updatedAt ? <> · {updatedAt}</> : null}
+        {retry}
+      </p>
     ) : (
       <Alert variant={tones[presentation.tone].alert} announcement="Silent" action={retry}>
         <Status presentation={presentation} />
-        {stale && updatedAt ? <span className="text-sm text-muted-foreground"> · {updatedAt}</span> : null}
       </Alert>
     );
   return (

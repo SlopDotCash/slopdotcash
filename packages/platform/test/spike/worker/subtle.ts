@@ -1,4 +1,3 @@
-import { type Context, Effect } from "effect";
 import type { EdgeCache, ExecutionContext } from "../bindings.ts";
 
 /** @throws {never} */
@@ -72,9 +71,4 @@ export function cacheable(body: string, seconds: number): Response {
 /** @throws {never} */
 export function keep(context: ExecutionContext, run: () => Promise<unknown>): void {
   context.waitUntil(run());
-}
-
-/** @throws {never} */
-export function keepRunning<E, R>(context: ExecutionContext, services: Context.Context<R>, program: Effect.Effect<void, E, R>): void {
-  context.waitUntil(Effect.runPromiseWith(services)(program));
 }

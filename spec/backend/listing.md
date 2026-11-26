@@ -66,7 +66,8 @@ registry rule that reads no funding (Slop development `b1b08de50`,
 `src/lib/pool-funding.ts`), and agent discovery applies the
 [publication](../contributor/publication.md) rule, which imports it
 (`backend/projects/skill-publication.ts`); both also leave out a project
-paused at its [intake cap](./intakeCap.md). Those rules are stated there and
+paused at its [intake cap](./intakeCap.md) or out of rotation under the
+[backlog rule](./backlogRule.md). Those rules are stated there and
 not here; they apply on top of these predicates and never move a project
 between tiers, and `GET /api/v1/projects` stays unfiltered. An honor-system
 promise changes no listing.

@@ -37,7 +37,12 @@ module node {
   import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
   import { tmpdir } from "node:os"
   import { dirname, join } from "node:path"
+  import { fileURLToPath } from "node:url"
   export interface Run { readonly status: number | null; readonly stdout: string; readonly stderr: string }
+  /** @throws {never} */
+  export function urlPath(url: URL): string {
+    return fileURLToPath(url)
+  }
   function listed(root: string, prefix: string): string[] {
     return readdirSync(join(root, prefix)).flatMap((name) => {
       const path = prefix === "" ? name : `${prefix}/${name}`
@@ -60,10 +65,10 @@ module node {
   }
   /** @throws {Error} */
   export function python(program: string, input: unknown): unknown {
-    const run = spawnSync("python3", ["-I", "-B", "-c", program], {
+    const run = spawnSync("python3", ["-I", "-B", "-X", "utf8", "-c", program], {
       input: JSON.stringify(input),
       encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "" },
+      env: { PATH: process.env.PATH ?? "", PYTHONUTF8: "1" },
       maxBuffer: 256 * 1024 * 1024,
     })
     if (run.error !== undefined) throw run.error
@@ -90,9 +95,9 @@ module node {
     rmSync(directory, { recursive: true, force: true })
   }
 }
-import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles } from node
+import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles, urlPath } from node
 
-const frozenTemplateSha256 = "c332043b6d4a25583221f9718a7fcab8efe2098c2c60ce3162176840c9ee6258"
+const frozenTemplateSha256 = "3d97b2c55cb56bb40502eb9ac13a75ff3d67b6aa8cc4b0bf0b745ab23caed2e4"
 const pinnedCommit = "8660a61214a6427a4e66c540c7dc73d50cc7790b"
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
 const encoder = new TextEncoder()
@@ -918,10 +923,12 @@ const carriedOutputs: Readonly<Record<string, string>> = {
   "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
   "protocol/private-trace-v2.md": "70a886b5dbbdfaf69fafe5d9b3210e8a8eff7bfd4f2e31705fcec0ec2e436dfa",
   "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
-  "skill-templates/skills/project-contributor-template/SKILL.md": "c322132f525b38dee2e611f1ee1c57833c20215ecc3f8cb4a1485da7378ce2ce",
+  "skill-templates/skills/project-contributor-template/SKILL.md": "b2d6bd0d9fe25e8777eaee7de89401e1b6fb738eece46dc0899885cbadc16c21",
   "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
+  "skill-templates/skills/project-contributor-template/references/session-log.md": "0da3dd3a52e050df6d0399be72456c34a48980ec9ce954da6e02148a55d2bb00",
   "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "2a7b22d80fcfeb838b3dcf993eaf541fb4b252fbf63f599f7932b8251d70254a",
-  "skill-templates/skills/project-contributor-template/scripts/run-receipt.mjs": "a887a6ffb39c6aff7074a87680f5c36c820c60dfccdc5f3a9ddb0d29486721e9",
+  "skill-templates/skills/project-contributor-template/scripts/run-receipt.mjs": "e4688dd4441ea5f044ae3d7f58060b7be9d8af99c783ed6466824d516db33c1c",
+  "skill-templates/skills/project-contributor-template/scripts/session-export.mjs": "a3392569e3ed418b708ab50866197ebd68480f70c00aaaf19fd25ad80a0da608",
   "skill-templates/skills/project-contributor-template/scripts/skill-authority.d.mts": "cbb5b0466305c37007951b25c7d1fcdc0557de690ff93e2d8db59ed4e1b0d8f0",
   "skill-templates/skills/project-contributor-template/scripts/skill-authority.mjs": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
   "skill-templates/skills/project-contributor-template/scripts/terms-preflight.mjs": "1e9b2d54ccf2c6eb8f336094d56b7c29a7213804c2e3f524ee811614fe5afd99",
@@ -933,7 +940,7 @@ const SiteBuilt = Layer.effect(SiteProgram, effect {
   const fs = try FileSystem.FileSystem
   const path = try Path.Path
   const scratch = try fs.makeTempDirectoryScoped({ prefix: "slop-site-" })
-  const packageRoot = new URL("..", import.meta.url).pathname
+  const packageRoot = urlPath(new URL("..", import.meta.url))
   const build = workerBuild({ programs: { main: "src/programs/main.vibe" }, outDir: path.join(scratch, "dist") })
   try promise(() => createBuilder({ root: packageRoot, configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
   const repository = path.join(scratch, "repository")
@@ -1376,8 +1383,8 @@ function intakeCounts(answer: "Counts" | "Fail", capped: ReadonlyArray<CappedCou
   return {
     answer,
     counts: [
-      { projectId: "alpha", openOutside: 450, observedAt: observedHoursAgo(1) },
-      ...capped.map(({ openOutside, hoursAgo }) => ({ projectId: "capped-project", openOutside, observedAt: observedHoursAgo(hoursAgo) })),
+      { projectId: "alpha", openOutside: 450, observedAt: observedHoursAgo(1), waitingOutside: 0, lastMergedAt: null },
+      ...capped.map(({ openOutside, hoursAgo }) => ({ projectId: "capped-project", openOutside, observedAt: observedHoursAgo(hoursAgo), waitingOutside: 0, lastMergedAt: null })),
     ],
   }
 }
@@ -1537,7 +1544,7 @@ effect function reinstate(githubId: string) {
 }
 
 layer(Layer.merge(Running, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Serve each project\'s skills, terms and discovery row only while it is listed and cleared (spec/contributor/publication.md, "Story: Serve a project\'s skills only while it is listed and cleared"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month\'s configured amount is positive"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/projections.md, "Removed public evidence pages and downloads stay unavailable"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+  it.effect('Serve each project\'s skills, terms and discovery row only while it is listed and cleared (spec/contributor/publication.md, "Story: Serve a project\'s skills only while it is listed and cleared"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month\'s configured amount is positive"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/projections.md, "Removed public evidence pages and downloads stay unavailable"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
     const records = new Map<string, Stored>()
     for (const fixture of fixtures) records.set(fixture.id, try storeRevision(fixture, 1, manifestOf(fixture)))
     try secured(

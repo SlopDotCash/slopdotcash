@@ -27,7 +27,7 @@ import { KeeperRefused, publicJson, siteOrigin } from "./registry.vibe"
 import { rpcSession, scanSession } from "./sessions.vibe"
 import { type SolanaContext, type SolanaPayOutcome, type SolanaScope, observedSolanaChain, onKeeperSolana, readSolanaPayment, solanaCause, solanaRoles, solanaUrls, submitSolanaPayment, verifiedSolana } from "./solana.vibe"
 import { submitSolanaMonthly } from "./solanaMonthly.vibe"
-import { bindIdentity, indexPaid, indexReserved, keeperD1, markChecked, unpaidAwards } from "./store.vibe"
+import { bindIdentity, indexPaid, indexReserved, keeperD1, markChecked, reservedSource, unpaidAwards } from "./store.vibe"
 import { quantityOf } from "./units.ts"
 
 export interface KeeperRun {
@@ -90,7 +90,7 @@ function keeperIndexer(target: PaymentDeployment, scope: string, scan: ScanMachi
       try scan.send({ type: "beginReceipt" })
       const indexed = effect {
         const reference: EventReference = { kind: event.kind, transactionId: event.transactionId, eventIndex: event.eventIndex, obligationId: event.obligationId }
-        const evidence = try verifyFinalized(target, reference, undefined)
+        const evidence = try verifyFinalized(target, reference, event.kind === "paid" ? try reservedSource(scope, event.obligationId) : undefined)
         try scan.send({ type: "verifyReceipt", verified: true })
         if (event.kind === "reserved") try indexReserved(scope, event.obligationId, evidence.githubUserId, evidenceText(evidence))
         else if ((try indexPaid(scope, event.obligationId, evidenceText(evidence))) !== 1) throw new KeeperRefused({ message: "Finalized payment has no indexed funded award" })

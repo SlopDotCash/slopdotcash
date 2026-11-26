@@ -11,7 +11,7 @@ import { type ExpiryProvider, ExpiryOperators } from "./operators.vibe"
 import { type CoverageBlock, type Cursor, type Target, historyBlock, initialCursor, scanned, slotNumber } from "./scan.vibe"
 
 module verified {
-  import { matchingExpiryCoverage } from "../kernels/expiryCoverage.ts"
+  import { matchingExpiryCoverage } from "@repo/settlement/kernels/expiryCoverage"
   import type { Cursor } from "./scan.vibe"
   /** @throws {never} */
   export function matchingCoverage(a: Cursor, b: Cursor): boolean {

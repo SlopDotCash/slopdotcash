@@ -1,7 +1,7 @@
 // spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/projections.md, "Story: Let anyone fund a project from its public page and see who funded"
 import { fromAmount, parseBaseUnits, toAmount } from "@repo/settlement/kernels/amounts";
 import { type Period, periodContaining } from "@repo/settlement/kernels/calendar";
-import { Alert, DataState, NetworkMark, Spinner } from "@repo/ui";
+import { Alert, cn, DataState, NetworkMark, Spinner, sectionTitle } from "@repo/ui";
 import { Hourglass } from "lucide-react";
 import { useState } from "react";
 import { type Coverage, fundersView, lessThanOneMonthText, monthsCovered, type PoolFacts, publicFunding } from "../../../../gen/frontend__projections.ts";
@@ -183,7 +183,7 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
   const chain = project.escrow?.chain;
   return (
     <section className="flex flex-col gap-4" aria-label="Project escrow">
-      <h2 className="flex items-center gap-2 text-xl font-semibold text-foreground">
+      <h2 className={cn(sectionTitle, "flex items-center gap-3")}>
         Project vault {chain === "base" ? <NetworkMark network="Base" showName={false} /> : chain === "solana" ? <NetworkMark network="Solana" showName={false} /> : null}
       </h2>
       {deployments.length === 0 && account > 0 && onVaultRegistered !== undefined ? (

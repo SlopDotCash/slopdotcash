@@ -1,0 +1,18 @@
+import { sha256Hex } from "../crypto.vibe"
+import { D1, type Statement, sql } from "../d1.vibe"
+
+export interface Members {
+  readonly joinedAt: string
+  tokenOf(githubId: string): string
+}
+
+export effect function signedUp(githubIds: ReadonlyArray<string>, members: Members) {
+  const statements: Statement[] = []
+  for (const githubId of githubIds) {
+    statements.push(
+      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${`member-${githubId}`}, ${members.joinedAt}, 1, 5)`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(members.tokenOf(githubId))}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+    )
+  }
+  try (try D1).batch(statements)
+}

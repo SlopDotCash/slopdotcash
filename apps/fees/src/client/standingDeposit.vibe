@@ -46,7 +46,7 @@ export schema StandingDepositAnswer {
   readonly covers: ReadonlyArray<StandingDepositCover>
 }
 
-export schema EmptyStandingDepositRequest {}
+export const EmptyStandingDepositRequest = Schema.Struct({})
 
 export const standingDepositPath = "/api/v1/standing-deposit"
 export const standingDepositWithdrawPath = "/api/v1/standing-deposit/withdraw"

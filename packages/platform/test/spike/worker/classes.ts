@@ -1,7 +1,7 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Cause, Exit, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "../../../src/crypto.vibe";
-import type { DurableObjectState } from "../bindings.ts";
+import type { DurableObjectState } from "../../../src/bindings.ts";
 import { Refusal, entries, migrateJournal, objectStorage, record } from "./journal.vibe";
 import { type ServiceEnv, serviceLayer, stamp } from "./stamps.vibe";
 

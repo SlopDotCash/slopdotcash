@@ -288,9 +288,14 @@ resolution and that resolution names the claimed path. A verified
 original-contributor repair credits the accepted copy's commit the same way:
 its linked author, else the accepted pull request's creator. An unverified
 repair, or an original merge without that one resolution, leaves the
-claim's actor set unknown, which holds the unit. In every case the claim's
-lines are counted from the accepted copy's commit and file (the line rule
-above). Development: `workUnitCreditActorIds`, `workUnitLineWeights`.
+claim's actor set unknown, which holds the whole joint assessment. In every
+case the claim's lines are counted from the accepted copy's commit and file
+(the line rule above): when the accepted copy is a merge commit without
+exactly one resolution naming the claimed path, its actor stays known and
+only the unit's lines are incomplete, which holds the joint assessment
+when the unit has several recipients and leaves a sole recipient the whole
+score ([allocation](./allocation.md)). Development:
+`workUnitCreditActorIds`, `workUnitLineWeights`.
 
 ```quint
 type RetainedCopy = OrdinaryCopy | VerifiedRepair | UnverifiedRepair

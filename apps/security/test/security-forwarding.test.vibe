@@ -300,7 +300,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('A direct report verifies into a GitHub-verified case and a failed verification keeps the draft (spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant")', () => effect {
     const forwarding = try Forwarding
     const filed = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: login, summary: "Admin panel accepts a forged session", description: "A forged session cookie opens the admin panel without a password.", cvssVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" })))
-    const foreign = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: "someone-else", summary: "Upload endpoint stores files outside the bucket", description: "A crafted file name writes outside the upload bucket." })))
+    const foreign = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: "someone-else", credits: [{ login: "someone-else", type: "reporter" }, { login, type: "finder" }], summary: "Upload endpoint stores files outside the bucket", description: "A crafted file name writes outside the upload bucket." })))
     const start = effect (key: string, advisory: string) => {
       const created = try call(forwarding, "/api/v1/security-submissions", [], { projectId: project, idempotencyKey: key, origin: "direct", advisory })
       return { created, id: shown(created).id }

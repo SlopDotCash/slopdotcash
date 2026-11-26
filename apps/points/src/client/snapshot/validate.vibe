@@ -1130,18 +1130,21 @@ export effect function decodeSnapshot(raw: unknown) {
   return raw as LeaderboardSnapshot
 }
 
-export effect function validateSnapshot(raw: unknown, repositories: RepositoryRegistry): LeaderboardSnapshot!SnapshotInvalid!Experimental.Crypto.Crypto {
+export effect function validateScoreAndPayment(raw: unknown, repositories: RepositoryRegistry) {
   if (!isRecord(raw)) throw new SnapshotInvalid({ message: "snapshot must be an object" })
   if (raw.schemaVersion !== schemaVersion) throw new SnapshotInvalid({ message: `snapshot.schemaVersion must be ${schemaVersion}` })
   const snapshot = try decodeSnapshot(raw)
   const registry = registryOf(repositories)
   const problem = snapshotProblem(registry, snapshot, raw, try externalIdsOf(snapshot))
   if (problem !== undefined) throw new SnapshotInvalid({ message: problem })
-  if (snapshot.paymentReviewBasis !== undefined) {
-    const payment = paymentView(snapshot, raw)
-    if (payment.kind === "refused") throw new SnapshotInvalid({ message: payment.message })
-    try validateSnapshot(payment.snapshot, repositories)
-  }
+  if (snapshot.paymentReviewBasis === undefined) return { snapshot, payment: undefined }
+  const payment = paymentView(snapshot, raw)
+  if (payment.kind === "refused") throw new SnapshotInvalid({ message: payment.message })
+  return { snapshot, payment: try validateSnapshot(payment.snapshot, repositories) }
+}
+
+export effect function validateSnapshot(raw: unknown, repositories: RepositoryRegistry): LeaderboardSnapshot!SnapshotInvalid!Experimental.Crypto.Crypto {
+  const { snapshot } = try validateScoreAndPayment(raw, repositories)
   return snapshot
 }
 

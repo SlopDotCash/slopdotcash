@@ -82,8 +82,8 @@ export function IntakePanel({ readiness, project, form, onCheck }: IntakePanelPr
   const stored = readiness.status === "checked" && readiness.value.storedIntake;
   const [open, setOpen] = useState<boolean | null>(null);
   return (
-    <section aria-labelledby="security-report" className="flex flex-col gap-4 rounded-lg border border-border bg-card p-6 text-card-foreground">
-      <h2 id="security-report" className="text-xl font-semibold">
+    <section aria-labelledby="security-report" className="mx-auto grid w-full max-w-208 gap-3 rounded-xl border border-border bg-card p-6 text-card-foreground">
+      <h2 id="security-report" className="mb-4 text-lg leading-snug font-extrabold tracking-tight">
         Private report
       </h2>
       <p className="flex flex-wrap items-center gap-3">
