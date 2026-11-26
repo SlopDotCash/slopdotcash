@@ -53,7 +53,7 @@ export function shiftMonth(period: string, months: number): string {
   }
 }
 
-/** @throws {never} */
+/** The monthly award navigator also honors the recorded Eliza October cap when public history is empty. @throws {never} */
 export function monthBounds(projectId: string, publicMonths: ReadonlyArray<string>, nowMs: number, cycleCaps?: FundingReward["cycleCaps"]): MonthBounds {
   const months = [...new Set(publicMonths.filter((month) => parsePeriod(month) !== undefined))].sort();
   const firstPeriod = formatPeriod(FIRST_PERIOD);
