@@ -377,19 +377,20 @@ pure def validRunBatch(candidates: List[BindingCandidate], batch: List[BindingCa
 A test stack signs for registry test networks only. A production stack signs
 for registry mainnets only, only while that network's mainnet execution flag
 is on, and only as the identity attester: it refuses the relayer (pay) role.
-The flags are reviewed configuration (`mainnet-execution.mjs`, changed only
-through a reviewed pull request), not a product rule: the laws below hold for
-every configuration. The reviewed configuration today activates only Base
-mainnet (owner activation of 24 October 2026); a later reviewed activation
-changes `reviewedActivation`, not these rules. A configuration naming a test
-network activates nothing.
+The reviewed production configuration enables Base (owner decision, 24 October
+2026), Solana and Robinhood Chain (operator decision, 14 November 2026).
+Ethereum stays disabled. PRD section 11 records the 16 November finalized
+payouts as the qualification evidence for Solana and Robinhood Chain. Change
+`reviewedActivation` only through a reviewed pull request with explicit
+activation for that network. The signing laws below apply to every
+configuration, and a configuration naming a test network cannot activate it.
 
 ```quint
 type Stack = TestStack | ProductionStack
 type ServiceNetwork = BaseMainnet | EthereumMainnet | RobinhoodMainnet | SolanaMainnet | BaseSepolia | RobinhoodTestnet | EthereumSepolia | SolanaDevnet | SolanaTestnet
 pure def mainnet(network: ServiceNetwork): bool =
   network == BaseMainnet or network == EthereumMainnet or network == RobinhoodMainnet or network == SolanaMainnet
-pure val reviewedActivation: List[ServiceNetwork] = List(BaseMainnet)
+pure val reviewedActivation: List[ServiceNetwork] = List(BaseMainnet, SolanaMainnet, RobinhoodMainnet)
 pure def mainnetExecution(activation: List[ServiceNetwork], network: ServiceNetwork): bool = mainnet(network) and activation.includes(network)
 pure def stackMaySign(activation: List[ServiceNetwork], stack: Stack, network: ServiceNetwork, operation: Operation): bool =
   if (stack == TestStack) not(mainnet(network)) and (permittedOperation(IdentityAttester, operation) or operation == Pay)

@@ -25357,47 +25357,58 @@
     },
     {
       "path": "spec/settlement/attesterActivation.md",
-      "sha256": "2e89b2eaf9de56f1c4770c78472d427cce6b359e8f0fa4d82a16fcdc41326587",
+      "sha256": "8e45e8cb880015bdf5c33a65e914d74acea8b0924be8ec5334c189ddd174c9d1",
       "module": "settlement__attesterActivation",
       "stories": [
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated",
-          "line": 33
+          "line": 26
         }
       ],
       "rules": [
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / A released switch is on only for an activated lane, in qualification order",
-          "line": 35,
+          "line": 28,
           "definitions": [
             "Actor",
             "PaymentService",
             "SolanaCheck",
+            "ReleasePhase",
+            "HistoricalRelease",
             "SignerRead",
             "Activation",
             "initial",
+            "historicalNetworks",
+            "historicalRelease",
             "solanaReady",
             "eligible",
             "canObserveLedger",
             "observeLedger",
+            "canObserveHistoricalRelease",
+            "observeHistoricalRelease",
             "canObserveSolanaCheck",
             "observeSolanaCheck",
             "canReleaseSwitches",
             "releaseSwitches",
             "alwaysSwitchNeedsActivatedLane",
+            "alwaysHistoricalNetworksAreReviewed",
             "alwaysNetworkListIsSwitchedOn",
             "alwaysLedgerShape",
             "stepEvidenceOnlyGrows",
+            "stepHistoricalNetworksCannotReturn",
             "lawRobinhoodNeedsThirdLane",
             "lawSolanaNeedsRecoveryVaultAndReadiness",
+            "lawHistoricalReleaseNeedsBaseAndMatchedEvidence",
+            "lawReleaseCannotRestoreDisabledHistoricalNetworks",
             "sometimesBaseOn",
             "sometimesThreeNetworksOn",
+            "sometimesKeepsHistoricalNetworksOn",
             "sometimesSolanaHeldForReadiness"
           ]
         },
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / The executor and attester refuse a disabled network before reading any signer secret",
-          "line": 90,
+          "line": 120,
           "definitions": [
             "noRead",
             "canRequestSigner",
@@ -25409,14 +25420,17 @@
           ]
         },
         {
-          "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / Simulation samples include the 14 November development values",
-          "line": 113,
+          "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / Simulation samples include the reviewed legacy switch and its refused alternatives",
+          "line": 143,
           "definitions": [
             "activatedValues",
+            "networkValues",
+            "evidenceValues",
             "onValues",
             "byValues",
             "weight_observeLedger",
-            "weight_releaseSwitches"
+            "weight_releaseSwitches",
+            "eval_witness_sometimesKeepsHistoricalNetworksOn"
           ]
         }
       ],
@@ -25425,8 +25439,12 @@
       ],
       "references": [
         {
+          "target": "./signer.md",
+          "line": 9
+        },
+        {
           "target": "../operations/escrowQualification.md",
-          "line": 17
+          "line": 13
         }
       ]
     },
@@ -31408,7 +31426,7 @@
     },
     {
       "path": "spec/settlement/signer.md",
-      "sha256": "7c2d8dd8328e08c76ac3d6126c82640deea44da74efd4cf7398bab65fd57c3e4",
+      "sha256": "95e5090c833aa1bb8cb2dc9db0df2533d43d49c3dee627f661b06ca13c40914d",
       "module": "settlement__signer",
       "stories": [
         {
@@ -31601,7 +31619,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 410,
+          "line": 411,
           "definitions": [
             "actorValues",
             "attemptValues",

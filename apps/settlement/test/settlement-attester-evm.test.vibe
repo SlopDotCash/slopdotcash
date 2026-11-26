@@ -17,6 +17,7 @@ import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { bindingTypedData } from "../src/chain/evm/typedData.ts"
 import { loadBinding } from "../src/journal/bindings.vibe"
 import { type Entries, createJournal, journaled, ordinaryScope } from "../src/journal/journal.vibe"
+import { attesterPlan } from "../src/programs/deployments.vibe"
 import { bindDestinations, failureKind, ordinaryTables, paymentWalletMessage } from "../src/signer/binding.vibe"
 import { AttesterConfig, activation, attesterConfig } from "../src/signer/evm.vibe"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
@@ -341,23 +342,37 @@ layer(Layer.provideMerge(Started, webCrypto), { excludeTestServices: true, timeo
     const { escrow, pins } = try Bench
     const watched = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [{ fault: "http500" }]))
     const counting = try acquireRelease(promise(() => serve(watched)), (opened) => promise(() => opened.close()))
-    const robinhood = pins.replaceAll(`"network":"${network}"`, '"network":"robinhood-mainnet"').replaceAll('"chain":"base"', '"chain":"robinhood"').replaceAll('"chainId":"8453"', '"chainId":"4663"')
-    const production = try configured("production", counting.url, robinhood)
+    const ethereum = pins.replaceAll(`"network":"${network}"`, '"network":"ethereum"').replaceAll('"chain":"base"', '"chain":"ethereum"').replaceAll('"chainId":"8453"', '"chainId":"1"')
+    const production = try configured("production", counting.url, ethereum)
     const test = try configured("test", counting.url, pins)
     const outsideActivation = attested(production, bindDestinations(ordinaryScope, ordinaryTables)) catch (error) => failureKind(error)
     const testStack = attested(test, bindDestinations(ordinaryScope, ordinaryTables)) catch (error) => failureKind(error)
+    const planSchema = Schema.Array(Schema.Struct({ network: Schema.String, enabled: Schema.Boolean }))
+    const plan = try Schema.decodeUnknownEffect(planSchema)(try attesterPlan({ projects: [] }, false))
     try same({
-      decisions: [
-        activation("ProductionStack", "base-mainnet", "TestRelayerPay").kind,
-        activation("TestStack", "base-sepolia", "TestRelayerPay").kind,
-        activation("ProductionStack", "robinhood-mainnet", "BindDestination").kind,
-        activation("TestStack", "base-mainnet", "BindDestination").kind,
-        activation("ProductionStack", "base-mainnet", "BindDestination").kind,
-      ],
+      release: Object.fromEntries(plan.map(({ network, enabled }) => [network, enabled])),
+      decisions: {
+        productionRelaying: activation("ProductionStack", "base-mainnet", "TestRelayerPay").kind,
+        testRelaying: activation("TestStack", "base-sepolia", "TestRelayerPay").kind,
+        robinhood: activation("ProductionStack", "robinhood-mainnet", "BindDestination").kind,
+        solana: activation("ProductionStack", "solana-mainnet", "SolanaBindingHalf").kind,
+        ethereum: activation("ProductionStack", "ethereum", "BindDestination").kind,
+        testOnMainnet: activation("TestStack", "base-mainnet", "BindDestination").kind,
+        base: activation("ProductionStack", "base-mainnet", "BindDestination").kind,
+      },
       runs: [outsideActivation, testStack],
       rpcRequests: watched.fired.length,
     }, {
-      decisions: ["NotActivated", "Activated", "NotActivated", "NotActivated", "Activated"],
+      release: { "base-mainnet": true, ethereum: false, "robinhood-mainnet": true, "solana-mainnet": true },
+      decisions: {
+        productionRelaying: "NotActivated",
+        testRelaying: "Activated",
+        robinhood: "Activated",
+        solana: "Activated",
+        ethereum: "NotActivated",
+        testOnMainnet: "NotActivated",
+        base: "Activated",
+      },
       runs: ["NotActivated", "NotActivated"],
       rpcRequests: 0,
     })
