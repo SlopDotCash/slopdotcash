@@ -269,7 +269,7 @@
     },
     {
       "path": "backend/http.ts",
-      "sha256": "5ba0313a8d8cd813d2ee6d3efd281833789f527d7b3f24bf9a3361d1c7bb2c4f",
+      "sha256": "763aae893d77bb376032dd91210eddec00b77509f6358cbf478f6f1d7504acc4",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
@@ -291,8 +291,8 @@
         "formal/models/vetting/vetting_evidence_inventory.qnt"
       ],
       "candidateLines": [
-        6, 7, 9, 44, 49, 118, 121, 126, 145, 158, 159, 160, 161, 162, 164, 165,
-        168, 173, 180
+        6, 7, 9, 44, 49, 118, 121, 126, 146, 159, 160, 161, 162, 163, 165, 166,
+        169, 174, 181
       ],
       "review": "mapped-abstraction"
     },
