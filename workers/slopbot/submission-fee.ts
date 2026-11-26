@@ -1216,11 +1216,12 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
 // ---------------------------------------------------------------------------
 // Wanted work (operator decision, 22 November 2026; PRD section 5).
 
-const WANTED_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+const WANTED_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $before: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       createdAt
-      timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], last: 100) {
+      timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], last: 100, before: $before) {
+        pageInfo { hasPreviousPage startCursor }
         nodes {
           __typename
           ... on LabeledEvent { createdAt label { name } }
@@ -1249,11 +1250,16 @@ type LabelEvent = {
   label?: { name: string } | null;
 };
 
+type TimelinePage = {
+  nodes: LabelEvent[];
+  pageInfo?: { hasPreviousPage: boolean; startCursor: string | null };
+};
+
 type WantedAnswer = {
   repository: {
     pullRequest: {
       createdAt: string;
-      timelineItems: { nodes: LabelEvent[] };
+      timelineItems: TimelinePage;
       closingIssuesReferences: {
         nodes: {
           repository: { databaseId: number } | null;
@@ -1291,17 +1297,8 @@ export function wantedAtOpen(answer: WantedAnswer, repositoryId: number) {
   });
 }
 
-/**
- * When the pull request's current keep-fee label was added, or null when
- * the label is absent. The fetched events are the most recent label
- * events, so the last keep-label event is the current addition whenever
- * the label stands; a label whose addition fell outside that window
- * reads as absent here and the caller waits instead of guessing.
- */
-export function keepMarkAt(answer: WantedAnswer): string | null {
-  const pull = answer.repository?.pullRequest;
-  if (!pull) return null;
-  const events = pull.timelineItems.nodes
+function keepEvents(nodes: LabelEvent[]): LabelEvent[] {
+  return nodes
     .filter(
       (event) =>
         event.label?.name === SUBMISSION_FEE_KEEP_LABEL &&
@@ -1310,8 +1307,23 @@ export function keepMarkAt(answer: WantedAnswer): string | null {
     .sort(
       (a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""),
     );
-  const last = events.at(-1);
+}
+
+function keepMarkAtFromNodes(nodes: LabelEvent[]): string | null {
+  const last = keepEvents(nodes).at(-1);
   return last?.__typename === "LabeledEvent" ? (last.createdAt ?? null) : null;
+}
+
+/**
+ * When the pull request's current keep-fee label was added, or null when
+ * the label is absent. The caller pages older label events until a
+ * keep-label event is in hand, so the last keep-label event is the
+ * current addition whenever the label stands.
+ */
+export function keepMarkAt(answer: WantedAnswer): string | null {
+  const pull = answer.repository?.pullRequest;
+  if (!pull) return null;
+  return keepMarkAtFromNodes(pull.timelineItems.nodes);
 }
 
 /** Whether the pull request closes a wanted issue; null when unreadable. */
@@ -1320,14 +1332,37 @@ async function closesWantedIssue(
   job: PullRef & { repositoryId: number },
 ): Promise<{ wanted: boolean | null; keepMarkedAt: string | null }> {
   try {
-    const answer = await github.graphql<WantedAnswer>(WANTED_QUERY, {
-      owner: job.owner,
-      repo: job.repo,
-      number: job.number,
-    });
+    const read = (before: string | null) =>
+      github.graphql<WantedAnswer>(WANTED_QUERY, {
+        owner: job.owner,
+        repo: job.repo,
+        number: job.number,
+        before,
+      });
+    const answer = await read(null);
+    const pull = answer.repository?.pullRequest;
+    if (!pull) return { wanted: false, keepMarkedAt: null };
+    let nodes = pull.timelineItems.nodes;
+    let pageInfo = pull.timelineItems.pageInfo;
+    // A standing label whose addition is older than the newest 100 label
+    // events still has an addition time; page back until it is found so
+    // the deposit reaches an outcome instead of waiting on the window.
+    while (
+      keepEvents(nodes).length === 0 &&
+      pageInfo?.hasPreviousPage &&
+      pageInfo.startCursor
+    ) {
+      const cursor = pageInfo.startCursor;
+      const older = await read(cursor);
+      const olderPull = older.repository?.pullRequest;
+      if (!olderPull || olderPull.timelineItems.nodes.length === 0) break;
+      nodes = [...olderPull.timelineItems.nodes, ...nodes];
+      pageInfo = olderPull.timelineItems.pageInfo;
+      if (pageInfo?.startCursor === cursor) break;
+    }
     return {
       wanted: wantedAtOpen(answer, job.repositoryId),
-      keepMarkedAt: keepMarkAt(answer),
+      keepMarkedAt: keepMarkAtFromNodes(nodes),
     };
   } catch {
     return { wanted: null, keepMarkedAt: null };

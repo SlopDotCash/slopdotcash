@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a81c05f0c7994542f2fb5f4e1846735adcd77ce0d4d791bf979c7c149da2482a",
+  "inventorySha256": "320c4169fc35d1ec7d21ddc4a6cf1fe7f753edbec9c40a6ad10d6ab0e1a2526e",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -5224,7 +5224,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 1153,
+      "line": 1158,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],

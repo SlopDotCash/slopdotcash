@@ -214,6 +214,8 @@ function world(options: WorldOptions = {}) {
     wantedEvents: null as { type: string; at: string; label: string }[] | null,
     /** When the keep-fee label was added; defaults to the close time. */
     keepLabelAt: null as string | null,
+    /** The keep addition sits behind 100 newer label events. */
+    keepLabelOutsideWindow: false,
     graphqlDown: false,
     repoLabels: [] as string[],
     draft: options.draft ?? false,
@@ -397,25 +399,43 @@ function world(options: WorldOptions = {}) {
       }
       if (path === "/graphql" && method === "POST") {
         if (github.graphqlDown) return new Response(null, { status: 502 });
+        const body = (await request.json().catch(() => ({}))) as {
+          variables?: { before?: string | null };
+        };
+        const keepEvent = {
+          __typename: "LabeledEvent",
+          createdAt: github.keepLabelAt ?? github.closedAt ?? OPENED_AFTER,
+          label: { name: SUBMISSION_FEE_KEEP_LABEL },
+        };
+        const outsideWindow =
+          github.keepLabelOutsideWindow &&
+          github.labels.includes(SUBMISSION_FEE_KEEP_LABEL);
+        const timelineItems = outsideWindow
+          ? body.variables?.before === "keep-older"
+            ? {
+                pageInfo: { hasPreviousPage: false, startCursor: null },
+                nodes: [keepEvent],
+              }
+            : {
+                pageInfo: { hasPreviousPage: true, startCursor: "keep-older" },
+                nodes: Array.from({ length: 100 }, () => ({
+                  __typename: "LabeledEvent",
+                  createdAt: github.closedAt ?? OPENED_AFTER,
+                  label: { name: "bug" },
+                })),
+              }
+          : {
+              pageInfo: { hasPreviousPage: false, startCursor: null },
+              nodes: github.labels.includes(SUBMISSION_FEE_KEEP_LABEL)
+                ? [keepEvent]
+                : [],
+            };
         return Response.json({
           data: {
             repository: {
               pullRequest: {
                 createdAt: options.openedAt ?? OPENED_AFTER,
-                timelineItems: {
-                  nodes: github.labels.includes(SUBMISSION_FEE_KEEP_LABEL)
-                    ? [
-                        {
-                          __typename: "LabeledEvent",
-                          createdAt:
-                            github.keepLabelAt ??
-                            github.closedAt ??
-                            OPENED_AFTER,
-                          label: { name: SUBMISSION_FEE_KEEP_LABEL },
-                        },
-                      ]
-                    : [],
-                },
+                timelineItems,
                 closingIssuesReferences: {
                   nodes:
                     github.wantedEvents === null
@@ -1036,6 +1056,36 @@ test("closed for a wanted issue: a keep label added after the 7 days does not ke
       "submission fee: refund_due: wanted",
     );
     expect(w.item()).toMatchObject({ outcome: "refund_due" });
+  } finally {
+    w.close();
+  }
+});
+
+test("closed for a wanted issue: a timely keep label behind newer label events still decides", async () => {
+  const w = world();
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    w.pay(paid.toISOString());
+    await w.check(paid);
+    w.github.wantedEvents = [
+      {
+        type: "LabeledEvent",
+        at: "2026-11-01T00:00:00Z",
+        label: "slop-wanted",
+      },
+    ];
+    const closed = new Date(paid.getTime() + 2 * DAY);
+    w.github.state = "closed";
+    w.github.closedAt = closed.toISOString();
+    await w.check(new Date(closed.getTime() + DAY));
+    w.github.labels.push(SUBMISSION_FEE_KEEP_LABEL);
+    w.github.keepLabelAt = new Date(closed.getTime() + 5 * DAY).toISOString();
+    w.github.keepLabelOutsideWindow = true;
+    expect((await w.check(new Date(closed.getTime() + 7 * DAY))).outcome).toBe(
+      "submission fee: kept_due: marked",
+    );
+    expect(w.item()).toMatchObject({ outcome: "kept_due" });
   } finally {
     w.close();
   }

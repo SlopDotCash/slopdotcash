@@ -10152,7 +10152,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "sha256": "ff3085067616902c0b3d30ff78ac3eb2ee73e4a14cf4ea30e96cef4987212858",
+      "sha256": "a22525a876ff054d7ce44a580b3e80dc6b57df0227001bd8d219526c0150a5be",
       "models": [
         "formal/models/api/api_submission_fee_setting.qnt",
         "formal/models/slopbot/bot_submission_fee.qnt"
@@ -10161,9 +10161,9 @@
         346, 385, 396, 405, 407, 409, 418, 474, 495, 500, 507, 510, 512, 546,
         547, 549, 550, 561, 567, 592, 601, 602, 633, 637, 671, 702, 750, 761,
         762, 772, 829, 831, 885, 970, 1003, 1020, 1032, 1040, 1042, 1044, 1045,
-        1046, 1067, 1069, 1101, 1102, 1104, 1107, 1108, 1122, 1123, 1298, 1320,
-        1347, 1387, 1391, 1397, 1421, 1434, 1450, 1471, 1490, 1524, 1547, 1551,
-        1565, 1577, 1583, 1634, 1635, 1637, 1662
+        1046, 1067, 1069, 1101, 1102, 1104, 1107, 1108, 1122, 1123, 1383, 1405,
+        1432, 1472, 1476, 1482, 1506, 1519, 1535, 1556, 1575, 1613, 1636, 1640,
+        1654, 1666, 1672, 1723, 1724, 1726, 1751
       ],
       "review": "mapped-abstraction"
     },
@@ -18569,7 +18569,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_fee.qnt",
-      "sha256": "3ee433da055f6ab4aa39a0c45cff0741d27f222160d1ca4dfd9fe1bc4652a084",
+      "sha256": "c3a6acd98ace3d7c0fb21893619dce3ef70a803e4e0fad644b6c42138c513905",
       "sources": [
         "migrations/0141_submission_fee_items.sql",
         "migrations/0142_slopbot_fee_gates.sql",
@@ -18610,6 +18610,7 @@
         "unpaidMergeHasNothingDueTest",
         "upheldAppealReopensAndRefundsTest",
         "wantedClosedIsSentBackTest",
+        "wantedLateMarkIsSentBackTest",
         "wantedMarkedIsKeptTest",
         "wantedUnreadableWaitsTest",
         "withdrawnPaymentAsksAgainTest"
