@@ -8,6 +8,7 @@ import { correctionsCommand } from "./corrections.vibe"
 import { inspectValueIntakeCommand } from "./inspectValueIntake.vibe"
 import { inspectValueIntakeHistoryCommand } from "./inspectValueIntakeHistory.vibe"
 import { qualifyValueModelsCommand } from "./qualify.vibe"
+import { readyAutoMergeCommand } from "./readyAutoMerge.vibe"
 import { reviewedReplay } from "./replay.vibe"
 import { valueSettingsCommand } from "./valueSettings.vibe"
 
@@ -25,5 +26,6 @@ program({
     "reviewed-replay": command(reviewedReplay),
     "value-settings": command(valueSettingsCommand),
     corrections: command(correctionsCommand),
+    "ready-auto-merge": command(readyAutoMergeCommand),
   },
 }).runMain()

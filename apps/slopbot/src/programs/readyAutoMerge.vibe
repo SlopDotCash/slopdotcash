@@ -1,0 +1,393 @@
+// spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"
+import * as Base64 from "effect/encoding/Base64"
+
+export const pilotRepository = "SlopDotCash/slopdotcash"
+export const pilotRepositoryId = 1319812413
+export const readyLabel = "slopbot:ready"
+export const slopbotBot = { id: 340374191, login: "slopdotcash[bot]" } as const
+export const neverBases: ReadonlyArray<string> = ["main", "vibestack"]
+export const maxMergesPerRun = 5
+export const projectFile = ".github/slop-project.json"
+
+const maxListPages = 5
+const maxEventPages = 10
+const maxReviewPages = 10
+const maxFilePages = 30
+const maxPermissionLookups = 25
+const requestTimeoutMs = 20_000
+
+export interface ApiResponse {
+  readonly status: number
+  readonly data: unknown
+}
+
+export type Api = (method: "GET" | "PUT" | "POST", path: string, body?: unknown) => ApiResponse!unknown
+
+export type Outcome =
+  | { readonly number: number; readonly action: "merged" | "would-merge"; readonly detail: string }
+  | { readonly number: number; readonly action: "skipped"; readonly detail: string }
+
+export interface RunOptions {
+  readonly api: Api
+  readonly repository: string
+  readonly enabled: string | undefined
+  readonly dryRun: boolean
+  readonly log?: (line: string) => void!!
+}
+
+interface Pull {
+  readonly number: number
+  readonly state: string
+  readonly merged: boolean
+  readonly draft: boolean
+  readonly mergeable: boolean | null
+  readonly mergeableState: string
+  readonly headSha: string
+  readonly baseRef: string
+  readonly baseRepositoryId: number
+  readonly authorId: number
+  readonly changedFiles: number
+  readonly labels: ReadonlyArray<string>
+}
+
+interface Review {
+  readonly userId: number
+  readonly login: string
+  readonly state: string
+  readonly commit: string | null
+}
+
+export error ReadyAutoMergeFailed { message: string }
+error Skip { reason: string }
+
+function skip(reason: string) {
+  return new Skip({ reason })
+}
+
+effect function record(value: unknown, what: string) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw skip(`${what} is unreadable`)
+  return value as Readonly<Record<string, unknown>>
+}
+
+effect function text(value: unknown, what: string) {
+  if (typeof value !== "string" || value.length === 0) throw skip(`${what} is unreadable`)
+  return value
+}
+
+effect function integer(value: unknown, what: string) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw skip(`${what} is unreadable`)
+  return value
+}
+
+effect function timestamp(value: unknown, what: string) {
+  const parsed = typeof value === "string" ? Date.parse(value) : Number.NaN
+  if (!Number.isFinite(parsed)) throw skip(`${what} has no readable time`)
+  return parsed
+}
+
+effect function read(api: Api, path: string, what: string) {
+  const response = try api("GET", path)
+  if (response.status !== 200) throw skip(`${what} could not be read (HTTP ${response.status})`)
+  return response.data
+}
+
+effect function pages(api: Api, path: string, what: string, maxPages: number) {
+  const items: unknown[] = []
+  const joiner = path.includes("?") ? "&" : "?"
+  for (let page = 1; ; page += 1) {
+    if (page > maxPages) throw skip(`${what} is too long to read in full`)
+    const data = try read(api, `${path}${joiner}per_page=100&page=${page}`, what)
+    if (!Array.isArray(data)) throw skip(`${what} is unreadable`)
+    const entries: ReadonlyArray<unknown> = data
+    items.push(...entries)
+    if (entries.length < 100) return items
+  }
+}
+
+effect function parsePull(data: unknown) {
+  const pull = try record(data, "the pull request")
+  const head = try record(pull.head, "the head")
+  const base = try record(pull.base, "the base")
+  const baseRepository = try record(base.repo, "the base repository")
+  const author = try record(pull.user, "the author")
+  if (typeof pull.merged !== "boolean" || typeof pull.draft !== "boolean") throw skip("the pull request is unreadable")
+  if (pull.mergeable !== null && typeof pull.mergeable !== "boolean") throw skip("the pull request is unreadable")
+  if (!Array.isArray(pull.labels)) throw skip("the labels are unreadable")
+  const labels: string[] = []
+  for (const label of pull.labels) labels.push(try text((try record(label, "a label")).name, "a label"))
+  return {
+    number: try integer(pull.number, "the number"),
+    state: try text(pull.state, "the state"),
+    merged: pull.merged,
+    draft: pull.draft,
+    mergeable: pull.mergeable,
+    mergeableState: try text(pull.mergeable_state, "the mergeable state"),
+    headSha: try text(head.sha, "the head commit"),
+    baseRef: try text(base.ref, "the base branch"),
+    baseRepositoryId: try integer(baseRepository.id, "the base repository"),
+    authorId: try integer(author.id, "the author"),
+    changedFiles: try integer(pull.changed_files, "the changed file count"),
+    labels,
+  } satisfies Pull
+}
+
+effect function requireMergeable(pull: Pull, defaultBranch: string) {
+  if (pull.state !== "open" || pull.merged) throw skip("it is not open")
+  if (pull.draft) throw skip("it is a draft")
+  if (!pull.labels.includes(readyLabel)) throw skip(`it does not carry ${readyLabel}`)
+  if (pull.baseRepositoryId !== pilotRepositoryId) throw skip("its base is another repository")
+  if (neverBases.includes(pull.baseRef) || pull.baseRef === defaultBranch) throw skip(`its base is ${pull.baseRef}, which this workflow never merges into`)
+  if (pull.mergeable !== true) throw skip(pull.mergeable === null ? "GitHub has not worked out whether it can merge yet" : "GitHub reports it cannot merge")
+  if (pull.mergeableState !== "clean") throw skip(`GitHub reports its merge state as ${pull.mergeableState}, not clean`)
+}
+
+effect function requireIntegrationBranch(api: Api, repository: string, baseRef: string, known: Map<string, boolean>) {
+  let registered = known.get(baseRef)
+  if (registered === undefined) {
+    const file = try record(try read(api, `/repos/${repository}/contents/${projectFile}?ref=${encodeURIComponent(baseRef)}`, `${projectFile} on ${baseRef}`), projectFile)
+    if (file.encoding !== "base64") throw skip(`${projectFile} is unreadable`)
+    const encoded = try text(file.content, projectFile)
+    const rawBytes = Base64.decode(encoded.replace(/\s+/gu, ""))
+    if (Result.isFailure(rawBytes)) throw skip(`${projectFile} on ${baseRef} is not valid JSON`)
+    const decoded = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes.success)) as unknown) catch effect () => {
+      throw skip(`${projectFile} on ${baseRef} is not valid JSON`)
+    }
+    const declared = try record(decoded, projectFile)
+    const declaredRepository = try record(declared.repository, `${projectFile} repository`)
+    registered = declaredRepository.fullName === repository && declaredRepository.id === String(pilotRepositoryId) && declaredRepository.integrationBranch === baseRef
+    known.set(baseRef, registered)
+  }
+  if (!registered) throw skip(`${baseRef} is not the project's registered integration branch`)
+}
+
+effect function slopbotLabelTime(api: Api, repository: string, number: number) {
+  const events = try pages(api, `/repos/${repository}/issues/${number}/events`, "the event history", maxEventPages)
+  let newest: { readonly at: number; readonly event: Readonly<Record<string, unknown>> } | undefined = undefined
+  let lastForcePush = Number.NEGATIVE_INFINITY
+  for (const item of events) {
+    const event = try record(item, "an event")
+    const kind = try text(event.event, "an event")
+    if (kind === "head_ref_force_pushed") {
+      lastForcePush = Math.max(lastForcePush, try timestamp(event.created_at, "a force push"))
+      continue
+    }
+    if (kind !== "labeled" && kind !== "unlabeled") continue
+    if ((try record(event.label, "a label event")).name !== readyLabel) continue
+    const at = try timestamp(event.created_at, "a label event")
+    if (newest === undefined || at >= newest.at) newest = { at, event }
+  }
+  if (newest === undefined) throw skip("its event history shows no ready label")
+  if (newest.event.event !== "labeled") throw skip("the newest ready label event is a removal")
+  const actor = try record(newest.event.actor, "the labelling account")
+  if (actor.id !== slopbotBot.id || actor.login !== slopbotBot.login || actor.type !== "Bot") {
+    throw skip(`the ready label was last added by ${String(actor.login)}, not Slopbot`)
+  }
+  if (lastForcePush >= newest.at) throw skip("the head was force pushed after Slopbot added the label")
+  return newest.at
+}
+
+effect function standingApprovers(api: Api, repository: string, pull: Pull, labelledAt: number) {
+  const reviews = try pages(api, `/repos/${repository}/pulls/${pull.number}/reviews`, "the reviews", maxReviewPages)
+  const latest = new Map<number, Review>()
+  let headSeenBeforeLabel = false
+  for (const item of reviews) {
+    const review = try record(item, "a review")
+    const state = try text(review.state, "a review")
+    const commit = typeof review.commit_id === "string" ? review.commit_id : null
+    if (commit === pull.headSha && state !== "PENDING" && (try timestamp(review.submitted_at, "a review")) <= labelledAt) {
+      headSeenBeforeLabel = true
+    }
+    if (review.user === null) continue
+    const user = try record(review.user, "a reviewer")
+    if (user.type !== "User") continue
+    if (state !== "APPROVED" && state !== "CHANGES_REQUESTED" && state !== "DISMISSED") continue
+    const userId = try integer(user.id, "a reviewer")
+    latest.set(userId, { userId, login: try text(user.login, "a reviewer"), state, commit })
+  }
+  const approvals: Review[] = []
+  const requests: Review[] = []
+  for (const review of latest.values()) {
+    if (review.userId === pull.authorId) continue
+    if (review.state === "APPROVED" && review.commit === pull.headSha) approvals.push(review)
+    if (review.state === "CHANGES_REQUESTED") requests.push(review)
+  }
+  if (approvals.length === 0) throw skip("no approval stands at its head commit")
+  if (approvals.length + requests.length > maxPermissionLookups) throw skip("it has too many reviews to check")
+  effect function writes(review: Review) {
+    const permission = try record(
+      try read(api, `/repos/${repository}/collaborators/${encodeURIComponent(review.login)}/permission`, `the permission of ${review.login}`),
+      `the permission of ${review.login}`,
+    )
+    const user = try record(permission.user, `the permission of ${review.login}`)
+    return user.id === review.userId && (permission.permission === "admin" || permission.permission === "write")
+  }
+  for (const review of requests) {
+    if (try writes(review)) throw skip(`${review.login} has an open change request`)
+  }
+  const approvers: string[] = []
+  for (const review of approvals) {
+    if (try writes(review)) approvers.push(review.login)
+  }
+  if (approvers.length === 0) throw skip("no approval at its head commit is from an account with write access")
+  if (!headSeenBeforeLabel) throw skip("the ready label is older than every review of its head commit")
+  return approvers.sort()
+}
+
+effect function requireNoWorkflowPaths(api: Api, repository: string, pull: Pull) {
+  if (pull.changedFiles < 1) throw skip("it changes no file")
+  if (pull.changedFiles > maxFilePages * 100) throw skip("it changes too many files to check")
+  const files = try pages(api, `/repos/${repository}/pulls/${pull.number}/files`, "the changed files", maxFilePages)
+  if (files.length !== pull.changedFiles) throw skip("the changed file list is incomplete")
+  for (const item of files) {
+    const file = try record(item, "a changed file")
+    const paths = [try text(file.filename, "a changed file")]
+    if (file.previous_filename !== undefined && file.previous_filename !== null) {
+      paths.push(try text(file.previous_filename, "a renamed file"))
+    }
+    for (const path of paths) {
+      if (path.toLowerCase().startsWith(".github/") || path === ".github") {
+        throw skip(`it touches ${path}, and nothing under .github/ merges this way`)
+      }
+    }
+  }
+}
+
+export function mergeComment(headSha: string, approvers: ReadonlyArray<string>) {
+  return [
+    `Merged automatically by this repository's ready auto-merge workflow at ${headSha}.`,
+    `It carried the \`${readyLabel}\` label and was approved at that commit by ${approvers.join(", ")}.`,
+    "Slopbot applied the label and did not merge.",
+  ].join(" ")
+}
+
+effect function consider(api: Api, repository: string, defaultBranch: string, number: number, dryRun: boolean, branches: Map<string, boolean>) {
+  const path = `/repos/${repository}/pulls/${number}`
+  const pull = try parsePull(try read(api, path, "the pull request"))
+  if (pull.number !== number) throw skip("the pull request is unreadable")
+  try requireMergeable(pull, defaultBranch)
+  try requireIntegrationBranch(api, repository, pull.baseRef, branches)
+  const labelledAt = try slopbotLabelTime(api, repository, number)
+  const approvers = try standingApprovers(api, repository, pull, labelledAt)
+  try requireNoWorkflowPaths(api, repository, pull)
+  const again = try parsePull(try read(api, path, "the pull request"))
+  if (again.headSha !== pull.headSha || again.baseRef !== pull.baseRef) throw skip("its head or base changed during the checks")
+  try requireMergeable(again, defaultBranch)
+  const detail = `head ${pull.headSha} into ${pull.baseRef}, approved by ${approvers.join(", ")}`
+  if (dryRun) return { number, action: "would-merge", detail } satisfies Outcome
+  const merge = try api("PUT", `${path}/merge`, { sha: pull.headSha, merge_method: "merge" })
+  const merged = typeof merge.data === "object" && merge.data !== null && "merged" in merge.data && merge.data.merged === true
+  if (merge.status !== 200 || !merged) throw skip(`GitHub refused the merge (HTTP ${merge.status})`)
+  const comment = try api("POST", `/repos/${repository}/issues/${number}/comments`, { body: mergeComment(pull.headSha, approvers) })
+  return {
+    number,
+    action: "merged",
+    detail: comment.status === 201 ? detail : `${detail}; the comment was not posted (HTTP ${comment.status})`,
+  } satisfies Outcome
+}
+
+function errorDetail(error: unknown): string {
+  if (error instanceof Skip) return error.reason
+  if (typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string") return `a read failed (${error._tag})`
+  return `a read failed (${error instanceof Error ? error.name : "error"})`
+}
+
+export effect function runReadyAutoMerge(options: RunOptions) {
+  const log = options.log ?? ((line: string) => Console.log(line))
+  const { api, repository, dryRun } = options
+  if (repository !== pilotRepository) throw new ReadyAutoMergeFailed({ message: `The pilot covers ${pilotRepository} only` })
+  if (!dryRun && options.enabled !== "on") {
+    try log("SLOPBOT_AUTO_MERGE is not on; nothing was read or merged.")
+    return [] as ReadonlyArray<Outcome>
+  }
+  const startup = effect {
+    const repo = try record(try read(api, `/repos/${repository}`, "the repository"), "the repository")
+    if (repo.id !== pilotRepositoryId || repo.full_name !== repository) throw skip("the repository is not the pilot repository")
+    const defaultBranch = try text(repo.default_branch, "the default branch")
+    const issues = try pages(api, `/repos/${repository}/issues?state=open&labels=${encodeURIComponent(readyLabel)}&sort=created&direction=asc`, "the labelled pull requests", maxListPages)
+    const numbers: number[] = []
+    for (const item of issues) {
+      const entry = try record(item, "a labelled item")
+      if (entry.pull_request !== undefined && entry.pull_request !== null) numbers.push(try integer(entry.number, "a pull request number"))
+    }
+    numbers.sort((left, right) => left - right)
+    return { defaultBranch, numbers }
+  }
+  const started = startup catch effect (error) => {
+    const reason = error instanceof Skip ? error.reason : error instanceof Error ? error.message : "unknown error"
+    throw new ReadyAutoMergeFailed({ message: `Ready auto-merge could not start: ${reason}` })
+  }
+  const branches = new Map<string, boolean>()
+  const outcomes: Outcome[] = []
+  let merges = 0
+  for (const number of started.numbers) {
+    let outcome: Outcome
+    if (merges >= maxMergesPerRun) {
+      outcome = { number, action: "skipped", detail: `this run already reached its limit of ${maxMergesPerRun}` }
+    } else {
+      const result = try exit(consider(api, repository, started.defaultBranch, number, dryRun, branches))
+      if (Exit.isSuccess(result)) {
+        outcome = result.value
+        merges += 1
+      } else {
+        outcome = { number, action: "skipped", detail: errorDetail(Cause.squash(result.cause)) }
+      }
+    }
+    outcomes.push(outcome)
+    try log(`#${outcome.number} ${outcome.action}: ${outcome.detail}`)
+  }
+  try log(`${started.numbers.length} labelled pull request(s); ${outcomes.filter((entry) => entry.action === "merged").length} merged${dryRun ? " (dry run, nothing written)" : ""}.`)
+  return outcomes as ReadonlyArray<Outcome>
+}
+
+export effect function githubRestApi(token: Redacted.Redacted<string>, dryRun: boolean) {
+  const client = try HttpClient.HttpClient
+  const api: Api = (method, path, body) => effect {
+    if (dryRun && method !== "GET") throw new ReadyAutoMergeFailed({ message: "A dry run never writes to GitHub" })
+    const headers: Record<string, string> = {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${Redacted.value(token)}`,
+      "user-agent": "slop-ready-auto-merge",
+      "x-github-api-version": "2022-11-28",
+    }
+    const base = HttpClientRequest.make(method)(`https://api.github.com${path}`).pipe(HttpClientRequest.setHeaders(headers))
+    const request = body === undefined ? base : HttpClientRequest.bodyText(base, JSON.stringify(body), "application/json")
+    const response = try timeoutOrElse(
+      provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "error" }),
+      { duration: Duration.millis(requestTimeoutMs), orElse: () => Effect.fail(new ReadyAutoMergeFailed({ message: "GitHub request timed out" })) },
+    )
+    const data = response.json catch () => null
+    return { status: response.status, data } satisfies ApiResponse
+  }
+  return api
+}
+
+effect function optionalEnv(name: string) {
+  return (try Config.withDefault(Config.String(name), "")).trim()
+}
+
+export effect function readyAutoMergeCommand(args: ReadonlyArray<string>) {
+  const dryRun = args.includes("--dry-run")
+  const unknown = args.find((arg) => arg !== "--dry-run")
+  if (unknown !== undefined) throw new ReadyAutoMergeFailed({ message: `Unknown argument: ${unknown}` })
+  const token = try optionalEnv("GITHUB_TOKEN")
+  if (token === "") throw new ReadyAutoMergeFailed({ message: "GITHUB_TOKEN is required" })
+  const repository = (try optionalEnv("GITHUB_REPOSITORY")) || pilotRepository
+  const enabled = (try optionalEnv("SLOPBOT_AUTO_MERGE")) || undefined
+  const summaryPath = try optionalEnv("GITHUB_STEP_SUMMARY")
+  const lines: string[] = []
+  const api = try githubRestApi(Redacted.make(token), dryRun)
+  try runReadyAutoMerge({
+    api,
+    repository,
+    enabled,
+    dryRun,
+    log: (line) => effect {
+      try Console.log(line)
+      lines.push(line)
+    },
+  })
+  if (summaryPath !== "") {
+    const fs = try FileSystem.FileSystem
+    try fs.writeFileString(summaryPath, `${lines.map((line) => `- ${line}`).join("\n")}\n`, { flag: "a" })
+  }
+}

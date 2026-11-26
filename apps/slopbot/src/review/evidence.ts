@@ -83,8 +83,10 @@ function checkableLink(reference: string): boolean {
 }
 
 function hasEvidence(field: EvidenceField, value: string | undefined): boolean {
-  if (!value || /^(?:n\/?a\b|not (?:applicable|run|tested)\b|none\b|tbd\b|todo\b|pending\b)/iu.test(value)) return false;
+  if (!value) return false;
   const linked = (value.match(/https:\/\/[^\s<>()[\]]+/giu) ?? []).some(checkableLink);
+  if (/^(?:n\/?a\b|not applicable\b|none\b|tbd\b|todo\b|pending\b)/iu.test(value)) return false;
+  if (/^not (?:run|tested)\b/iu.test(value)) return linked;
   if (field === "UiVideo" || field === "UiScreenshots") return linked;
   return linked || (value.match(/[\p{L}\p{N}][\p{L}\p{N}_./-]*/gu)?.length ?? 0) >= 5;
 }
@@ -106,6 +108,7 @@ export function hasSlopParticipationFooter(body: string): boolean {
   return visibleLines(body).includes(participationFooter);
 }
 
+/** @throws {never} */
 export function missingSubmissionEvidence(body: string, policy: readonly PolicyText[]): MissingEvidence | null {
   const guide = publishedGuide(policy);
   if (guide === undefined) return null;
