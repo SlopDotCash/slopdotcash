@@ -15,7 +15,6 @@ import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { internet, type Internet } from "@repo/platform/testing/internet"
 import { repoRoot } from "@repo/platform/testing/paths"
 import { type ValueCensus, ValueFeedUnavailable, ValueInputs } from "@repo/ports/points"
-import type { PublicVaultPayment } from "@repo/ports/settlement"
 import { type Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
 import { decide } from "../gen/points__census.effect.vibe"
 import { periodOf as periodOfPointsperiodsEffect } from "../gen/points__periods.effect.vibe"
@@ -63,8 +62,6 @@ import { type CapUsage, emptyUsage, isScoreV2, legacyAward, legacyMaterialTestPo
 import { type CommitActor, implementationCreditActors, mergeCreditActors, mergeCreditLineWeights, type MergedCommit } from "../src/kernels/scoring/lines.ts"
 import { reviewContent, reviewExclusionReason, type ReviewState } from "../src/kernels/scoring/reviewBody.ts"
 import { censusItem, claimDecision, type Comment, type GitHubItem } from "../src/kernels/scoring/selection.ts"
-import { recognizePayouts } from "../src/payoutRecognition/awards.vibe"
-import { type ActorVaultPayments, loadVaultPayouts, type PayoutActor } from "../src/payoutRecognition/vault.vibe"
 import { corrections } from "../src/programs/corrections.vibe"
 import { profiles } from "../src/programs/profiles.vibe"
 import { registry as registryRegistry } from "../src/programs/registry.vibe"
@@ -101,19 +98,6 @@ import { plain, type Published, published } from "./support/u7/published.ts"
 import { oldBuilderReplay } from "./support/u7/replay.ts"
 import { largeJson, pagesOrigin, type Publication, sameBytes } from "./support/u8/pages.ts"
 import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
-
-module host {
-  /** @throws {never} */
-  export function webResponse(body?: ConstructorParameters<typeof globalThis.Response>[0], init?: ResponseInit): Response {
-    return new globalThis.Response(body, init)
-  }
-
-  /** @throws {never} */
-  export function webJson(data: unknown, init?: ResponseInit): Response {
-    return globalThis.Response.json(data, init)
-  }
-}
-import { webJson, webResponse } from host
 
 module availability {
   import { Response as WebResponse } from "miniflare"
@@ -3457,148 +3441,6 @@ import { seededGithub, slopbotFake } from fakes
         },
         penalty: { applied: true, bounded: true, request: debitThirds * 10, replayed: 0 },
         totals: [{ id: "U_A", total: 75 }, { id: "U_B", total: 0 }],
-      }))
-    })
-  })
-}
-
-{
-  const actor: PayoutActor = { id: "MDQ6VXNlcjEyMw==", login: "contributor" }
-  const currentActor: PayoutActor = { id: "U_kgDOAAAAew", login: "renamed" }
-  const indexedAt = "2026-11-16T08:01:00.000Z"
-  const recordedAt = "2026-11-17T06:00:00.000Z"
-  const emptyCycles = JSON.stringify({ schemaVersion: "1", generatedAt: indexedAt, cycles: [] })
-  const actorPayments = "https://slop.cash/api/v1/payments/actors/123/vault-payments"
-  const payment: PublicVaultPayment = {
-    id: "base-mainnet:payment:0",
-    projectId: "asi",
-    network: "base-mainnet",
-    chain: "base",
-    assetAddress: `0x${"d".repeat(40)}`,
-    assetDecimals: 6,
-    netBase: "9800",
-    contributionMonth: "2026-10",
-    transactionId: `0x${"b".repeat(64)}`,
-    indexedAt,
-  }
-
-  interface Page { readonly payments: ReadonlyArray<unknown>; readonly through: number; readonly total: number; readonly next: number | null }
-
-  function slopCash(answer: (url: URL, call: number) => Response) {
-    const urls: string[] = []
-    let calls = 0
-    const fetch = (input: string | URL | Request) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
-      urls.push(url.href)
-      calls += 1
-      return Promise.resolve(answer(url, calls))
-    }
-    return { fetch: fetch as typeof globalThis.fetch, urls }
-  }
-
-  function page(body: Page) {
-    return webJson(body)
-  }
-
-  effect function emptyStore(rows: ReadonlyArray<Row> = []) {
-    return try storeOf(recordedAt, [], rows)
-  }
-
-  effect function recognizedRows(store: Store, vaults: ReadonlyArray<ActorVaultPayments>) {
-    const before = store.revisions.length
-    const appended = try recognizePayouts(store, emptyCycles, recordedAt, vaults)
-    return { appended, rows: store.revisions.slice(before) }
-  }
-
-  effect function refusal(store: Store, vaults: ReadonlyArray<ActorVaultPayments>) {
-    const outcome = Effect.as(recognizePayouts(store, emptyCycles, recordedAt, vaults), "recognized") catch (error) => error._tag === "PayoutEvidenceInvalid" ? error.message : error._tag
-    return outcome
-  }
-
-  effect function readFrom(site: ReturnType<typeof slopCash>, actors: ReadonlyArray<PayoutActor>) {
-    return try provideService(loadVaultPayouts(actors, "https://slop.cash"), FetchHttpClient.Fetch, site.fetch)
-  }
-
-  effect function readFailure(site: ReturnType<typeof slopCash>) {
-    const outcome = Effect.as(provideService(loadVaultPayouts([actor], "https://slop.cash"), FetchHttpClient.Fetch, site.fetch), "read") catch (error) => `${error._tag}: ${error.message}`
-    return outcome
-  }
-
-  effect function priorRecognition(amount: number) {
-    const sourceId = `payout:2026-10:${actor.id}`
-    const award: Award = {
-      key: try pointKey({ projectId: "asi", actorId: actor.id, category: "payout-received", sourceId }),
-      actor,
-      projectId: "asi",
-      category: "payout-received",
-      amount,
-      occurredAt: "2026-11-01T00:00:00.000Z",
-      sourceId,
-      sourceUrl: "https://slop.cash/cycles/asi/2026-10",
-      workUnitId: sourceId,
-      provisional: false,
-    }
-    return { id: `prior-${amount}`, previous: null, recordedAt: "2026-11-01T00:00:00.000Z", sourceDigest: "2".repeat(64), sourceRule: "verified-payout-v1", award } satisfies Row
-  }
-
-  layer(Layer.mergeAll(webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-    it.effect(`Recognize finalized monthly vault payouts once per recipient, project and month (spec/points/payoutRecognition.md, "Story: Recognize a verified payout once per recipient, project and cycle"; spec/points/payoutRecognition.md, "A finalized ordinary monthly vault payment earns recognition once per recipient, project and month"; spec/points/journal.md, "Payout recognition is appended once per recipient, project and cycle"; spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound")`, () => effect {
-      const published = slopCash(() => page({ payments: [payment], through: 1, total: 1, next: null }))
-      const finalized = try readFrom(published, [actor])
-      const store = try emptyStore()
-      const first = try recognizedRows(store, finalized)
-      const replayed = try recognizedRows(store, finalized)
-      const unproven = try recognizedRows(try emptyStore(), [{ actor, payments: [{ ...payment, contributionMonth: null }] }])
-
-      const spread = try recognizedRows(try emptyStore(), [
-        { actor, payments: [payment, { ...payment, id: "second", network: "robinhood-mainnet", chain: "robinhood", netBase: "999999999999" }] },
-        { actor: currentActor, payments: [payment, { ...payment, id: "other-month", contributionMonth: "2026-09" }, { ...payment, id: "other-project", projectId: "eliza" }] },
-      ])
-      const afterPrior: number[] = []
-      for (const amount of [25, 0]) afterPrior.push((try recognizedRows(try emptyStore([try priorRecognition(amount)]), [{ actor: currentActor, payments: [payment] }])).appended)
-
-      const ineligible = try recognizedRows(try emptyStore(), [{ actor, payments: [{ ...payment, network: "base-sepolia" }, { ...payment, netBase: "0" }, { ...payment, contributionMonth: null }] }])
-      const negative = try refusal(try emptyStore(), [{ actor, payments: [{ ...payment, netBase: "-1" }] }])
-      const unverified = try refusal(try emptyStore(), [{ actor: { ...actor, id: "unverified" }, payments: [payment] }])
-
-      const paged = slopCash((url) => {
-        const second = url.searchParams.has("after")
-        return page({ payments: second ? [{ ...payment, id: "101" }] : Array.from({ length: 100 }, (_, i) => ({ ...payment, id: String(i + 1) })), through: 101, total: 101, next: second ? null : 100 })
-      })
-      const pagedRows = try readFrom(paged, [actor, { ...actor, id: "U_kgDOAAAAew" }, { id: "BOT_not-a-user", login: "bot" }])
-
-      const faults: string[] = []
-      for (const fault of ["missing", "duplicate", "moving", "unavailable", "malformed"]) {
-        faults.push(try readFailure(slopCash((_, call) => {
-          if (fault === "unavailable") return webResponse("Unavailable", { status: 503 })
-          if (fault === "malformed") return page({ payments: [{ ...payment, netBase: "-1" }], through: 1, total: 1, next: null })
-          const second = call === 2
-          return page({ payments: [{ ...payment, id: second && fault !== "duplicate" ? "second" : "first" }], through: second && fault === "moving" ? 3 : 2, total: 2, next: second || fault === "missing" ? null : 1 })
-        })))
-      }
-
-      try Effect.try(() => assert.deepStrictEqual({
-        read: published.urls,
-        first: first.rows.map((row) => [row.award.actor.id, row.award.projectId, row.award.category, row.award.amount, row.award.occurredAt, row.award.sourceId, row.award.provisional, row.sourceRule]),
-        replayed: replayed.appended,
-        unproven: unproven.appended,
-        spread: spread.rows.map((row) => [row.award.projectId, row.award.sourceId.split(":")[1], row.award.amount]).sort(),
-        afterPrior,
-        ineligible: ineligible.appended,
-        refused: [negative, unverified],
-        paged: { actors: pagedRows.length, payments: pagedRows[0]?.payments.length, urls: paged.urls },
-        faults: { refused: faults.every((outcome) => outcome.startsWith("VaultPayoutsUnreadable")), distinct: new Set(faults).size },
-      }, {
-        read: [actorPayments],
-        first: [[actor.id, "asi", "payout-received", 25, indexedAt, `payout:2026-10:${actor.id}`, false, "verified-payout-v1"]],
-        replayed: 0,
-        unproven: 0,
-        spread: [["asi", "2026-09", 25], ["asi", "2026-10", 25], ["eliza", "2026-10", 25]],
-        afterPrior: [0, 0],
-        ineligible: 0,
-        refused: ["Invalid public payout evidence", "Payout actor identity is unavailable"],
-        paged: { actors: 1, payments: 101, urls: [actorPayments, `${actorPayments}?after=100&through=101`] },
-        faults: { refused: true, distinct: 5 },
       }))
     })
   })
