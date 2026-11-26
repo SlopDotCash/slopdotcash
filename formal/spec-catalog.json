@@ -34533,12 +34533,16 @@
     },
     {
       "path": "spec/slopbot/readyLabel.md",
-      "sha256": "84eaeb7fb6856ee025c81c0bd795322a13c8a58267ef51d0180102eaff9ff062",
+      "sha256": "fd9217427c343e9ea833a7971175e138dbc0beaba38d5c3cb5346c7764722e05",
       "module": "slopbot__readyLabel",
       "stories": [
         {
           "heading": "Story: Label a pull request ready only while every condition holds at its head",
           "line": 22
+        },
+        {
+          "heading": "Story: Merge verified ready pull requests through this repository's workflow",
+          "line": 428
         }
       ],
       "rules": [
@@ -34700,6 +34704,38 @@
             "observedValues",
             "secondsValues",
             "weight_refresh"
+          ]
+        },
+        {
+          "heading": "Story: Merge verified ready pull requests through this repository's workflow / The pilot workflow merges only on Slop's own repository when switched on, into the registered integration branch, and never touches `.github/`",
+          "line": 435,
+          "definitions": [
+            "pilotRepository",
+            "pilotRepositoryId",
+            "slopbotBotId",
+            "slopbotBotLogin",
+            "maxAutoMergesPerRun",
+            "autoMergeListPageLimit",
+            "autoMergeEventPageLimit",
+            "autoMergeReviewPageLimit",
+            "autoMergeFilePageLimit",
+            "AutoMergeLabelSource",
+            "AutoMergeReason",
+            "AutoMergeCandidate",
+            "autoMergeSwitchActive",
+            "autoMergePermittedBase",
+            "autoMergePullOk",
+            "autoMergeReason",
+            "autoMergeAllowed",
+            "autoMergeWillWrite",
+            "lawAutoMergeSwitchOffNeverWrites",
+            "lawAutoMergeNeverTargetsMainOrDefault",
+            "lawAutoMergeRequiresSlopbotFreshLabel",
+            "lawAutoMergeRequiresWriteApprovalAndNoChangeRequest",
+            "lawAutoMergeRequiresCleanAndNoGithubPaths",
+            "lawAutoMergeRecheckPinsHeadBaseAndRunCap",
+            "validAutoMergeCandidate",
+            "candidateValues"
           ]
         }
       ],
