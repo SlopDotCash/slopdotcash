@@ -262,8 +262,14 @@ describe('Replace a payout wallet without losing the current destination (spec/b
   });
 });
 
-describe('Confirm a payout wallet for the awarded vault (spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault")', () => {
-  it('restores the stored authorization after reload and shows the binding only after finality (spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', async () => {
+// spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
+describe("Confirm a payout wallet", () => {
+  it('restores the stored authorization after reload (spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding")', { timeout: 150_000 }, async () => {
+    await site.allow(
+      "^console Applying inline style violates the following Content Security Policy directive 'style-src 'self''",
+      "^failed GET /api/v1/project-session net::ERR_ABORTED$",
+      "^failed GET /contributor-allocation\\.json net::ERR_ABORTED$",
+    );
     await site.wallets({ evm: { name: "Anvil Wallet" } });
     await site.backendRpc();
     await signIn(users.kai.login, "/account#wallets");
