@@ -4215,14 +4215,14 @@
     },
     {
       "path": "scripts/collection-memo.ts",
-      "sha256": "c732c37145d9360cd807edc8eba15bca11fd038b239c6c2499bf6c63cfcbb078",
+      "sha256": "1589fff084c853604270ecacdf4e8eccba3069799aa2eb08dbcb5cd16ce2acb0",
       "models": [
         "formal/models/points/implementation_memo_audit.qnt",
         "formal/models/points/incremental_collection.qnt"
       ],
       "candidateLines": [
         65, 102, 128, 296, 301, 307, 489, 491, 492, 495, 510, 518, 523, 563,
-        574, 607, 753
+        574, 607, 754
       ],
       "review": "mapped-abstraction"
     },
@@ -5790,7 +5790,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "cec9fbe614faca1cbd0e9f72d80f08d622496b9c921d14709d9333a07829817a",
+      "sha256": "1945b2a9e2444ff6bd698556bf6cadb631fe283eacc31dc614dc0ffb104735ba",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5801,8 +5801,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        85, 96, 153, 212, 213, 214, 215, 217, 218, 307, 308, 309, 311, 312, 975,
-        1004, 1269, 1439, 1476, 1494, 1535, 1559
+        85, 96, 153, 212, 213, 214, 215, 217, 218, 307, 308, 309, 311, 312, 997,
+        1026, 1298, 1521, 1562, 1580, 1630, 1656
       ],
       "review": "mapped-abstraction"
     },
@@ -19114,14 +19114,19 @@
     },
     {
       "path": "formal/models/slopbot/value_history_warmup.qnt",
-      "sha256": "ab1cc7368a364109ff2e0694757ee38aeb0f1abbe82fad1a13d273a1ab99e019",
+      "sha256": "32522fe84e85287f5f939cfc3d5e6d5bfa95cd3f7f6b3ef6badbc52822edce8c",
       "sources": ["scripts/value-ingestion.ts"],
       "scenarios": [
+        "changeDuringLoopReachesLaterPagesTest",
         "droppedReadEndsReadAheadTest",
         "droppedReadIsRepeatedByLoopTest",
         "failureSurfacesFromLoopInOrderTest",
-        "loopWaitsForReadAheadTest",
+        "loopDoesNotReadAheadOfItselfTest",
+        "loopWaitsForInFlightReadTest",
+        "readAheadMovesWithLoopTest",
         "readAheadStaysWithinLimitTest",
+        "readAheadStaysWithinWindowTest",
+        "recordPageIsReadAgainTest",
         "sequentialOnlyTest",
         "sequentialReadsEveryPageTest",
         "warmedPageIsNotReadAgainTest",
