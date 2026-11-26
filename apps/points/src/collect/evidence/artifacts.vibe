@@ -161,7 +161,7 @@ function jsonLines(text: string, complete: boolean): ReadonlyArray<unknown> | un
 
 function decodedText(bytes: Uint8Array): string | undefined {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^﻿/, "").trim()
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/u, "").trim()
   } catch {
     return undefined
   }
@@ -209,7 +209,7 @@ function documentProblem(bytes: Uint8Array, complete: boolean, reference: Refere
 
 function htmlResponse(contentType: string, bytes: Uint8Array): boolean {
   if (contentType === "text/html" || contentType === "application/xhtml+xml") return true
-  const prefix = new TextDecoder().decode(bytes.subarray(0, 512)).replace(/^﻿/, "").trimStart().toLowerCase()
+  const prefix = new TextDecoder().decode(bytes.subarray(0, 512)).replace(/^\uFEFF/u, "").trimStart().toLowerCase()
   return prefix.startsWith("<!doctype html") || prefix.startsWith("<html") || prefix.startsWith("<head")
 }
 

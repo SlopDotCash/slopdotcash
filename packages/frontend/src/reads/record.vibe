@@ -5,7 +5,7 @@ import { Unreadable } from "./resource.vibe"
 export const RECORD_DATA_PATH = "/data/record.json"
 const RECORD_MAX_BYTES = 4 * 1024 * 1024
 
-const RecordPool = Schema.Struct({
+const RecordPoolSchema = Schema.Struct({
   projectId: Schema.String,
   month: Schema.String,
   capUsdc: Schema.Number,
@@ -20,7 +20,7 @@ const RecordPool = Schema.Struct({
   file: Schema.optional(Schema.String),
 })
 
-const RecordSettlement = Schema.Struct({
+const RecordSettlementSchema = Schema.Struct({
   projectId: Schema.String,
   month: Schema.String,
   capUsdc: Schema.NullOr(Schema.Number),
@@ -29,7 +29,7 @@ const RecordSettlement = Schema.Struct({
   transfers: Schema.Number,
 })
 
-const RecordCyclePool = Schema.Struct({
+const RecordCyclePoolSchema = Schema.Struct({
   projectId: Schema.String,
   month: Schema.String,
   files: Schema.Array(Schema.String),
@@ -39,10 +39,10 @@ const RecordCyclePool = Schema.Struct({
   reviewEndsAt: Schema.NullOr(Schema.String),
   capUsdc: Schema.NullOr(Schema.Number),
   contributors: Schema.Number,
-  settlement: Schema.NullOr(RecordSettlement),
+  settlement: Schema.NullOr(RecordSettlementSchema),
 })
 
-const RecordMonth = Schema.Struct({
+const RecordMonthSchema = Schema.Struct({
   month: Schema.String,
   counts: Schema.NullOr(Schema.Struct({
     merged: Schema.Number,
@@ -51,10 +51,10 @@ const RecordMonth = Schema.Struct({
     calendarReviews: Schema.Number,
   })),
   uniqueContributors: Schema.Number,
-  pools: Schema.Array(RecordCyclePool),
+  pools: Schema.Array(RecordCyclePoolSchema),
 })
 
-const RecordProject = Schema.Struct({
+const RecordProjectSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   status: Schema.String,
@@ -66,13 +66,13 @@ const RecordProject = Schema.Struct({
   prize: Schema.NullOr(Schema.String),
 })
 
-const ReceiptRecipient = Schema.Struct({
+const ReceiptRecipientSchema = Schema.Struct({
   login: Schema.NullOr(Schema.String),
   received: Schema.String,
   transactions: Schema.Array(Schema.Struct({ id: Schema.String, url: Schema.String })),
 })
 
-const Receipt = Schema.Struct({
+const ReceiptSchema = Schema.Struct({
   anchor: Schema.String,
   projectId: Schema.String,
   project: Schema.String,
@@ -84,7 +84,7 @@ const Receipt = Schema.Struct({
   total: Schema.String,
   fee: Schema.String,
   feeExact: Schema.Boolean,
-  recipients: Schema.Array(ReceiptRecipient),
+  recipients: Schema.Array(ReceiptRecipientSchema),
   own: Schema.NullOr(Schema.Struct({ payments: Schema.Number, total: Schema.String })),
   privateRecords: Schema.Boolean,
   reserved: Schema.NullOr(Schema.String),
@@ -109,11 +109,11 @@ const PublicRecordSchema = Schema.Struct({
     allocatedUsdc: Schema.Number,
     unclaimedUsdc: Schema.Number,
     platformFeeCollected: Schema.Boolean,
-    pools: Schema.Array(RecordPool),
-    settlements: Schema.optional(Schema.Array(RecordSettlement)),
+    pools: Schema.Array(RecordPoolSchema),
+    settlements: Schema.optional(Schema.Array(RecordSettlementSchema)),
   }),
-  months: Schema.optional(Schema.Array(RecordMonth)),
-  projects: Schema.Array(RecordProject),
+  months: Schema.optional(Schema.Array(RecordMonthSchema)),
+  projects: Schema.Array(RecordProjectSchema),
   proposal: Schema.Struct({
     projectId: Schema.String,
     cycleId: Schema.String,
@@ -125,17 +125,17 @@ const PublicRecordSchema = Schema.Struct({
   }),
   receipts: Schema.optional(Schema.Struct({
     builtAt: Schema.NullOr(Schema.String),
-    items: Schema.Array(Receipt),
+    items: Schema.Array(ReceiptSchema),
   })),
 })
 
-export type RecordPool = Schema.Schema.Type<typeof RecordPool>
-export type RecordSettlement = Schema.Schema.Type<typeof RecordSettlement>
-export type RecordCyclePool = Schema.Schema.Type<typeof RecordCyclePool>
-export type RecordMonth = Schema.Schema.Type<typeof RecordMonth>
-export type RecordProject = Schema.Schema.Type<typeof RecordProject>
-export type ReceiptRecipient = Schema.Schema.Type<typeof ReceiptRecipient>
-export type Receipt = Schema.Schema.Type<typeof Receipt>
+export type RecordPool = Schema.Schema.Type<typeof RecordPoolSchema>
+export type RecordSettlement = Schema.Schema.Type<typeof RecordSettlementSchema>
+export type RecordCyclePool = Schema.Schema.Type<typeof RecordCyclePoolSchema>
+export type RecordMonth = Schema.Schema.Type<typeof RecordMonthSchema>
+export type RecordProject = Schema.Schema.Type<typeof RecordProjectSchema>
+export type ReceiptRecipient = Schema.Schema.Type<typeof ReceiptRecipientSchema>
+export type Receipt = Schema.Schema.Type<typeof ReceiptSchema>
 export type PublicRecord = Schema.Schema.Type<typeof PublicRecordSchema>
 
 export effect function loadPublicRecord() {

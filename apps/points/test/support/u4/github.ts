@@ -126,12 +126,12 @@ export function servedRegistry(body: unknown): Served {
   return {
     paths,
     fetcher: {
-      fetch: async (request) => {
+      fetch: (request) => {
         const url = new URL(request.url);
         paths.push(`${request.method} ${url.origin}${url.pathname}`);
-        return url.pathname === "/api/v1/projects"
+        return Promise.resolve(url.pathname === "/api/v1/projects"
           ? new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", "x-slop-project-api-contract": "1" } })
-          : new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+          : new Response("{}", { status: 404, headers: { "content-type": "application/json" } }));
       },
     },
   };

@@ -23,7 +23,7 @@ export const meta: ComponentMeta<ReadyLabelFieldsProps> = {
     },
     // spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"
     On: async () => {
-      await expect([(screen.getByLabelText("Approvals required") as HTMLInputElement).value, (screen.getByLabelText("Extra protected paths") as HTMLTextAreaElement).value]).toEqual(["2", "docs/legal/\n*.sql"]);
+      await expect([screen.getByLabelText<HTMLInputElement>("Approvals required").value, screen.getByLabelText<HTMLTextAreaElement>("Extra protected paths").value]).toEqual(["2", "docs/legal/\n*.sql"]);
     },
     // spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"
     Refused: async () => {

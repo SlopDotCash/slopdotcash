@@ -114,7 +114,7 @@ async function started(key: string): Promise<Held> {
   const number = world.addPull({ repo, author: "carol", title: "Ready check", headSha: "1".padStart(40, "0") });
   const commentId = world.addComment(repo, number, { author: fake.app.bot.login, body: `${marker}\n### Slopbot review\n\nNo finding.` });
   await db.prepare("INSERT INTO slopbot_item_comments (item_node_id, repository_id, comment_id) VALUES (?, ?, ?)").bind(world.pull(repo, number).nodeId, repositoryId, commentId).run();
-  let state: Held | undefined;
+  const holder: { state: Held | undefined } = { state: undefined };
   const clock = settableClock(base + 1000);
   const queue = Layer.succeed(JobQueue, { send: (_job: Job) => Effect.void });
   const ports = Layer.mergeAll(
@@ -143,18 +143,18 @@ async function started(key: string): Promise<Held> {
     }),
   );
   function current(): Held {
-    if (state === undefined) throw new Error("the driver state is not ready");
-    return state;
+    if (holder.state === undefined) throw new Error("the driver state is not ready");
+    return holder.state;
   }
   function manifestRow() {
     return { projectId: "ready-project", active: true, revision: 1, manifest: current().manifest, manifestSha256: "0".repeat(64), updatedAt: new Date(base).toISOString() };
   }
-  const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, handlerOf(current, fake) as typeof globalThis.fetch));
+  const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, handlerOf(current, fake)));
   const githubLayer = Layer.provide(github({ authority: fake.authority, token: Redacted.make(fake.tokens.installation(installationId)), userAgent: "slopbot-ready-conformance" }), http);
   const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "ready-conformance-secret", SLOPBOT_APP_USER_ID: String(fake.app.bot.id) });
   const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, queue, ports, githubLayer, settings)) as unknown as ManagedRuntime.ManagedRuntime<never, never>;
-  state = { fake, runtime, clock, db, number, commentId, now: 1, heads: 1, manifest: JSON.stringify({ id: "ready-project" }), contributor: true, hidden: false, hiddenComment: false, report: {}, atWrite: "SameHead", reads: 0 };
-  return state;
+  holder.state = { fake, runtime, clock, db, number, commentId, now: 1, heads: 1, manifest: JSON.stringify({ id: "ready-project" }), contributor: true, hidden: false, hiddenComment: false, report: {}, atWrite: "SameHead", reads: 0 };
+  return holder.state;
 }
 
 async function stateOf(key: string): Promise<Held> {

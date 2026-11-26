@@ -117,7 +117,7 @@ export effect function originalContributorFollowupProof(
     const proof: FollowupProof = { binding, source, nativeAcceptance: undefined }
     return proof
   }
-  let followed = source
+  let followed: CorrectionSource
   let nativeAcceptance: NativeAcceptance | undefined = undefined
   if (claims !== undefined) {
     const current = try answer(pullPath, Schema.Unknown)

@@ -101,7 +101,7 @@ export effect function refreshQueue() {
     const paths = (repository: number) => pathOf(view, repository)
     const assessments = try projectAssessments(projectId)
     const byRow = (row: number) => assessments.find((each) => each.row === row)
-    let plans: Plan[] = []
+    let plans: Plan[]
     const retries: { readonly pending: Assessment; readonly pin: Pin }[] = []
     if (flagPaused) {
       const pins = try pinReads(loaded.state, view, assessments)

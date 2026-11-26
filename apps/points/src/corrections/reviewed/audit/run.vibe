@@ -28,6 +28,7 @@ export interface AuditInputs {
   readonly sourceDigest: string
   readonly expectedPointsDigest: string
   readonly stageReview: boolean
+  readonly requireNoActive: boolean
 }
 
 export interface AuditReport {
@@ -93,7 +94,9 @@ export effect function historicalAssessmentAuditInputs(replay: boolean) {
   const sourceDigest = try environment("HISTORICAL_SOURCE_AUDIT_SHA256")
   const expectedPointsDigest = try environment("HISTORICAL_POINTS_BASELINE_SHA256")
   const review = try Config.withDefault(Config.String("HISTORICAL_ASSESSMENT_STAGE_REVIEW"), "false")
+  const requireNoActive = try Config.withDefault(Config.String("HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE"), "false")
   try require(projectPattern.test(projectId) && [sourceDigest, expectedPointsDigest].every((digest) => digestPattern.test(digest)), "Assessment audit requires exact scope and baseline digests")
+  try require(requireNoActive === "false" || (requireNoActive === "true" && replay), "The no-active-assessments requirement needs a read-only replay")
   if (review !== "false") {
     const repository = try environment("GITHUB_REPOSITORY")
     const sha = try environment("GITHUB_SHA")
@@ -101,7 +104,12 @@ export effect function historicalAssessmentAuditInputs(replay: boolean) {
       (try environment("GITHUB_WORKFLOW_REF")) === `${repository}/.github/workflows/reviewed-historical-points.yml@refs/heads/main` &&
       (try environment("GITHUB_WORKFLOW_SHA")) === sha && /^[a-f0-9]{40}$/u.test(sha), "Historical review staging requires the exact replay workflow")
   }
-  return { projectId, sourceDigest, expectedPointsDigest, stageReview: review === "true" } satisfies AuditInputs
+  return { projectId, sourceDigest, expectedPointsDigest, stageReview: review === "true", requireNoActive: requireNoActive === "true" } satisfies AuditInputs
+}
+
+export effect function historicalReplayRequiresCollection(status: ReceiptStatus, requireNoActive: boolean) {
+  if (requireNoActive && status !== "no-scoped-active-assessments") throw refusal("Active assessments require the shared collector replay")
+  return status === "requires-value-replay"
 }
 
 export effect function currentProjectScope(projectId: string) {
@@ -125,8 +133,8 @@ effect function liveRepository(repository: string, githubId: string, nodeId: str
   try require(live.node_id === nodeId && String(live.id) === githubId && live.full_name.toLowerCase() === repository.toLowerCase() && !live.private, "Historical repository identity changed")
 }
 
-export effect function capturedCut(classified: ClassifiedScope, heads: HistoricalAssessmentHeads) {
-  let state = try apply(initial, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount }, dispatch)
+export effect function capturedCut(classified: ClassifiedScope, heads: HistoricalAssessmentHeads, requireNoActive = false) {
+  let state = try apply(initial, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount, requireNoActive }, dispatch)
   for (const observation of classified.observations) state = try apply(state, observation, dispatch)
   return state
 }
@@ -159,7 +167,7 @@ export effect function auditedScope(setPhase: (phase: AuditPhase) => void, repla
   try require((try batchDigest(baseline)) === inputs.expectedPointsDigest && baseline.revisions.length === catalog.heads.d1PointsCount, "Assessment audit Points baseline differs from the public journal")
   setPhase("assessment source reconciliation")
   const classified = try classifyHistoricalAssessmentScope(catalog, sourceAudit, inputs.projectId, historicalEvidence({ baseline, integrationBranch: project.integrationBranch }, inputs.projectId))
-  const state = try boundCut(try capturedCut(classified, catalog.heads), classified.receipt)
+  const state = try boundCut(try capturedCut(classified, catalog.heads, inputs.requireNoActive), classified.receipt)
   const { heads } = catalog
   const report: AuditReport = {
     schemaVersion: "1",

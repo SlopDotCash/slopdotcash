@@ -967,14 +967,14 @@ interface Api {
 function api(state: Partial<Api> = {}) {
   const held: Api = { item: undefined, report: undefined, rate: { schema: "slop-submission-fee-rate-v1", slopShareBps: 5000, rate: { effectiveAt: askedAt, slopPerUsd: rate }, previous: null }, reads: [], ...state };
   const answer = (body: unknown) => (body === undefined ? new Response(null, { status: 404 }) : body === "down" ? new Response(null, { status: 503 }) : Response.json(body));
-  const fetch: typeof globalThis.fetch = async (input) => {
+  const fetch: typeof globalThis.fetch = (input) => {
     const path = new URL(input instanceof Request ? input.url : String(input), location.href).pathname;
     held.reads.push(path);
-    if (path === "/api/v1/projects") return Response.json(registry);
-    if (path === `/api/v1/submission-fee/items/${repositoryId}/${pullNumber}`) return answer(held.item);
-    if (path === `/api/v1/submission-fee/reports/${caseId}`) return answer(held.report);
-    if (path === "/api/v1/submission-fee/rate") return answer(held.rate);
-    return new Response(null, { status: 404 });
+    if (path === "/api/v1/projects") return Promise.resolve(Response.json(registry));
+    if (path === `/api/v1/submission-fee/items/${repositoryId}/${pullNumber}`) return Promise.resolve(answer(held.item));
+    if (path === `/api/v1/submission-fee/reports/${caseId}`) return Promise.resolve(answer(held.report));
+    if (path === "/api/v1/submission-fee/rate") return Promise.resolve(answer(held.rate));
+    return Promise.resolve(new Response(null, { status: 404 }));
   };
   return { held, fetch };
 }

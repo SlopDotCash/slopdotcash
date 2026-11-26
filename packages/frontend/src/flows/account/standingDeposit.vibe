@@ -36,19 +36,19 @@ const StandingDueWaySchema = Schema.Struct({
   keptTo: Schema.String,
 })
 
-const StandingPaidSchema = Schema.Struct({
-  network: Schema.String,
-  depositId: Schema.String,
-  token: Schema.String,
-  symbol: Schema.String,
-  decimals: Schema.Number,
-  kind: Schema.Literals(["stable", "slop"]),
-  amount: Schema.String,
-  payer: Schema.String,
-  transaction: Schema.String,
-  at: Schema.String,
-  finalized: Schema.Boolean,
-})
+schema StandingPaidSchema {
+  readonly network: string
+  readonly depositId: string
+  readonly token: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly kind: "stable" | "slop"
+  readonly amount: string
+  readonly payer: string
+  readonly transaction: string
+  readonly at: string
+  readonly finalized: boolean
+}
 
 const StandingDepositRowSchema = Schema.Struct({
   round: Schema.Number,

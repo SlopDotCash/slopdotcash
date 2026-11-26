@@ -13,10 +13,10 @@ breaks the contrast this spec requires.
 ```quint
 type Role = Background | Foreground | Card | CardForeground | Popover | PopoverForeground
   | Primary | PrimaryForeground | PrimaryHover | PrimaryPressed | Secondary | SecondaryForeground | Muted | MutedForeground
-  | Accent | AccentForeground | Destructive | DestructiveForeground | Border | Input | Ring | Ok | Warn | Info
+  | Accent | AccentForeground | Destructive | DestructiveForeground | Border | Input | Ring | Ok | Warn | Info | Gold
 pure val roles = List(Background, Foreground, Card, CardForeground, Popover, PopoverForeground,
   Primary, PrimaryForeground, PrimaryHover, PrimaryPressed, Secondary, SecondaryForeground, Muted, MutedForeground,
-  Accent, AccentForeground, Destructive, DestructiveForeground, Border, Input, Ring, Ok, Warn, Info)
+  Accent, AccentForeground, Destructive, DestructiveForeground, Border, Input, Ring, Ok, Warn, Info, Gold)
 pure def token(role: Role): str = match role {
   | Background => "background" | Foreground => "foreground" | Card => "card" | CardForeground => "card-foreground"
   | Popover => "popover" | PopoverForeground => "popover-foreground" | Primary => "primary"
@@ -24,7 +24,7 @@ pure def token(role: Role): str = match role {
   | Secondary => "secondary" | SecondaryForeground => "secondary-foreground"
   | Muted => "muted" | MutedForeground => "muted-foreground" | Accent => "accent" | AccentForeground => "accent-foreground"
   | Destructive => "destructive" | DestructiveForeground => "destructive-foreground" | Border => "border"
-  | Input => "input" | Ring => "ring" | Ok => "ok" | Warn => "warn" | Info => "info"
+  | Input => "input" | Ring => "ring" | Ok => "ok" | Warn => "warn" | Info => "info" | Gold => "gold"
 }
 pure def lawTokensAreDistinct(a: Role, b: Role): bool = a != b implies token(a) != token(b)
 ```
@@ -48,7 +48,7 @@ pure val requiredContrast: List[Pair] =
     pair(PrimaryForeground, PrimaryHover, 45), pair(PrimaryForeground, PrimaryPressed, 45), pair(SecondaryForeground, Secondary, 45), pair(MutedForeground, Muted, 45), pair(AccentForeground, Accent, 45),
     pair(DestructiveForeground, Destructive, 45))
     .concat(onPageAndCard(MutedForeground, 45)).concat(onPageAndCard(Primary, 45)).concat(onPageAndCard(Destructive, 45))
-    .concat(onPageAndCard(Ok, 45)).concat(onPageAndCard(Warn, 45)).concat(onPageAndCard(Info, 45))
+    .concat(onPageAndCard(Ok, 45)).concat(onPageAndCard(Warn, 45)).concat(onPageAndCard(Info, 45)).concat(onPageAndCard(Gold, 45))
     .concat(onPageAndCard(Input, 30)).concat(onPageAndCard(Ring, 30))
 pure def required(text: Role, surface: Role): int =
   requiredContrast.foldl(0, (minimum, p) => if (p.text == text and p.surface == surface and p.least > minimum) p.least else minimum)

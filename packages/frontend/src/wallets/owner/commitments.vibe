@@ -149,7 +149,7 @@ export effect function reviewEvmSetting(connection: EvmConnection, vault: EvmVau
   const enabled = try evmRequest(connection, "eth_call", [{ to: vault.vault, data: MONTHLY_ENABLED_CALL }, "finalized"])
   const current = settingOf(String(cap), String(enabled))
   if (current === undefined) throw refused(commitmentMessages.settingInvalid)
-  const projectCap = automatic ? vaultMonthlyCap(reward, vault, totals.decimals) : { kind: "cap" as const, cap: 0n }
+  const projectCap = automatic ? vaultMonthlyCap(reward, vault, totals.decimals, try Clock.currentTimeMillis) : { kind: "cap" as const, cap: 0n }
   if (projectCap.kind === "refused") throw refused(projectCap.message)
   if (automatic && projectCap.cap <= 0n) throw refused(commitmentMessages.settingAmount)
   const target = settingTarget(automatic, projectCap.cap, current)
@@ -257,7 +257,7 @@ export effect function reviewSolanaSetting(projectId: string, deployment: Deploy
   const current = settingStateOf(read.setting.current)
   const decimals = read.setting.decimals
   if (current === undefined || !Number.isSafeInteger(decimals) || decimals < 0 || decimals > 36) throw refused(commitmentMessages.settingResponse)
-  const projectCap = automatic ? vaultMonthlyCap(reward, deployment, decimals) : { kind: "cap" as const, cap: 0n }
+  const projectCap = automatic ? vaultMonthlyCap(reward, deployment, decimals, try Clock.currentTimeMillis) : { kind: "cap" as const, cap: 0n }
   if (projectCap.kind === "refused") throw refused(projectCap.message)
   if (automatic && projectCap.cap <= 0n) throw refused(commitmentMessages.settingAmount)
   const target = settingTarget(automatic, projectCap.cap, current)

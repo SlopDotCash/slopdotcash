@@ -47,7 +47,7 @@ function FormError({ message }: { message: string | null }) {
 }
 
 function DirectVerifyForm({ projects, onVerify, onUnavailable }: { projects: ReadonlyArray<ProgramChoice>; onVerify: LinkReportsViewProps["onVerify"]; onUnavailable: () => void }) {
-  const [selectedProjectId, setProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [advisory, setAdvisory] = useState("");
   const [key, setKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +70,7 @@ function DirectVerifyForm({ projects, onVerify, onUnavailable }: { projects: Rea
   };
   return (
     <form className="flex flex-col gap-4" onSubmit={submit}>
-      <ProjectField projects={projects} value={projectId} onChange={setProjectId} />
+      <ProjectField projects={projects} value={projectId} onChange={setSelectedProjectId} />
       {chosen === undefined ? null : <DepositNotice project={chosen} />}
       <Field label="GitHub advisory ID">
         <Input autoComplete="off" pattern={ghsa} placeholder="GHSA-xxxx-xxxx-xxxx" required spellCheck={false} value={advisory} onChange={(event) => setAdvisory(event.target.value)} />
@@ -132,7 +132,7 @@ function RecordForm({ projects, onRecord }: { projects: ReadonlyArray<ProgramCho
 }
 
 function ImportReports({ projects, onImport }: { projects: ReadonlyArray<ProgramChoice>; onImport: LinkReportsViewProps["onImport"] }) {
-  const [selectedProjectId, setProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState<ImportNote>({ note: null, error: null });
   const projectId = projects.some((project) => project.id === selectedProjectId) ? selectedProjectId : (projects[0]?.id ?? "");
@@ -148,7 +148,7 @@ function ImportReports({ projects, onImport }: { projects: ReadonlyArray<Program
   };
   return (
     <form className="flex flex-col gap-4" onSubmit={submit}>
-      {projects.length > 1 ? <ProjectField projects={projects} value={projectId} onChange={setProjectId} /> : null}
+      {projects.length > 1 ? <ProjectField projects={projects} value={projectId} onChange={setSelectedProjectId} /> : null}
       {shown.note === null ? null : <p role="status">{shown.note}</p>}
       <FormError message={shown.error} />
       <Button type="submit" variant="secondary" className="self-start" loading={busy}>

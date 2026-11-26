@@ -8,7 +8,7 @@ import { maxIndexBytes, maxPageBytes, maxRevisions, maxShardBytes, pointsRule, s
 import { assembleProjection } from "../publication/projections.vibe"
 import type { PublishedRecord } from "../../gen/points__publication.ts"
 import { type Event as TransportEvent, type ProjectionRead, Machine as TransportMachine, initial as transportInitial, machineOver as transportOver, resetWaitMs, resetsOf } from "../../gen/points__projectionTransport.effect.vibe"
-import { type CopyEvidence, type CopyState, type Environment, type Event, type PublicHistory, type Recovery, type RecoveryEvidence, type SourceCoverage, Machine, decodeState, enabled, initial, machineOver } from "../../gen/points__recovery.effect.vibe"
+import { type CopyEvidence, type CopyState, type Environment, type Event, type PublicHistory, type Recovery, type RecoveryEvidence, type SourceCoverage, Machine, enabled, initial, machineOver } from "../../gen/points__recovery.effect.vibe"
 
 export error RecoveryRefused { outcome: string; message: string }
 

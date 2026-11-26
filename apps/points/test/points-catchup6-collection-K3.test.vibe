@@ -69,7 +69,7 @@ module fakes {
         outstandingAttempts += 1
         if (outstandingAttempts === 1) {
           await failed
-          await new Promise<void>((resolve) => setImmediate(resolve))
+          await Promise.resolve()
           throw Object.assign(new Error("socket connection closed"), { code: "ECONNRESET" })
         }
         events.push("outstanding shard retried")

@@ -260,7 +260,7 @@ export function mixedSubmittedAndSquashFixture(perPathNative = false) {
       patchSha256: sha256Of(""),
       paths: [],
     },
-  } as (typeof retirement.source.commits)[number]);
+  });
   retirement.source.commitCount = retirement.source.commits.length;
   const firstAudit = f.packet.sourceAudit.sources[0];
   if (firstAudit !== undefined) firstAudit.headSha = headSha;

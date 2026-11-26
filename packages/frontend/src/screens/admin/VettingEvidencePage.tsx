@@ -2,7 +2,6 @@
 import { Alert, Button, Disclosure, Field, Input, PageHeader, Spinner } from "@repo/ui";
 import { LockKeyhole, TriangleAlert } from "lucide-react";
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import type { PageProps } from "../../app/pages.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { SignInPanel } from "../../app/SignInPanel.tsx";
@@ -95,7 +94,8 @@ export function VettingEvidencePage({ runtime }: PageProps) {
   const [lookup, setLookup] = useState<EvidenceRun | null>(initial.assessmentId && initial.runId ? initial : null);
   const [open, setOpen] = useState(lookup === null);
   const [attempt, setAttempt] = useState(0);
-  const assessmentInput = useRef<HTMLInputElement>(null);
+  const assessmentInputRef = useRef<HTMLInputElement>(null);
+  const pendingFocusRef = useRef(false);
   if (shown === undefined)
     return (
       <Frame>
@@ -120,16 +120,24 @@ export function VettingEvidencePage({ runtime }: PageProps) {
     setAttempt((count) => count + 1);
     setOpen(false);
   };
+  const assessmentRef = (node: HTMLInputElement | null) => {
+    assessmentInputRef.current = node;
+    if (node !== null && pendingFocusRef.current) {
+      pendingFocusRef.current = false;
+      node.focus();
+    }
+  };
   const edit = () => {
-    flushSync(() => setOpen(true));
-    assessmentInput.current?.focus();
+    if (open) return assessmentInputRef.current?.focus();
+    pendingFocusRef.current = true;
+    setOpen(true);
   };
   return (
     <Frame>
       <Disclosure summary="Find evidence" open={open} onOpenChange={setOpen}>
         <form className="flex flex-col gap-4" onSubmit={inspect}>
           <Field label="Assessment ID">
-            <Input ref={assessmentInput} required value={assessmentId} onChange={(event) => setAssessmentId(event.target.value)} />
+            <Input ref={assessmentRef} required value={assessmentId} onChange={(event) => setAssessmentId(event.target.value)} />
           </Field>
           <Field label="Run ID">
             <Input required value={runId} onChange={(event) => setRunId(event.target.value)} />

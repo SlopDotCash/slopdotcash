@@ -7,13 +7,14 @@ import { d1 } from "@repo/platform/d1"
 import { github } from "@repo/platform/github"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
-import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { githubFake } from "@repo/platform/testing/github"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { IntakePause, type ProjectView, Registry, RegistryManifests, Restrictions, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
 import { Enforcement } from "@repo/ports/security"
 import { dispatchFeeChecks } from "../src/fee/dispatch.vibe"
 import { gateSubmissionFee } from "../src/fee/gate.vibe"
+import { reopenKeptFee } from "../src/fee/items.vibe"
 import { feeReviewJob, refreshSubmissionFee } from "../src/fee/refresh.vibe"
 import { SubmissionFeeMode, feeUnpaid } from "../src/fee/store.vibe"
 import { webhookSettings } from "../src/ingress/webhook.vibe"
@@ -188,11 +189,15 @@ effect function wantedIssue(labelledAt: number) {
   })
 }
 
-effect function keepMarked(number: number) {
+effect function keepMarked(number: number, labelledAt: number) {
   const { fees } = try FeeWorld
   try Effect.try(() => {
-    const pull = fees.fake.world.pull(repo, number)
-    pull.labels = [...pull.labels, fees.fake.world.addLabel(repo, { name: "slop-keep-fee" })]
+    const world = fees.fake.world
+    const pull = world.pull(repo, number)
+    pull.labels = [...pull.labels, world.addLabel(repo, { name: "slop-keep-fee" })]
+    world.record(pull, "labeled", world.account("ada"), { label: { name: "slop-keep-fee" } })
+    const event = pull.timeline[pull.timeline.length - 1]
+    if (event !== undefined) pull.timeline[pull.timeline.length - 1] = { ...event, createdAt: iso(labelledAt) }
   })
 }
 
@@ -313,9 +318,11 @@ layer(World, { timeout: "240 seconds" })((it) => {
     const wantedAfter = try wantedIssue(t0)
     const invited = try opened("Wanted work", t0 - 1000, `Closes #${wantedBefore}`)
     const marked = try opened("Wanted work the maintainer keeps", t0 - 1000, `Closes #${wantedBefore}`)
+    const lateMarked = try opened("Wanted work marked after the week", t0 - 1000, `Closes #${wantedBefore}`)
+    const appealed = try opened("Closed PR with close appeal", t0 - 1000)
     const unread = try opened("Wanted link unreadable", t0 - 1000, `Closes #${wantedBefore}`)
     const lateLabel = try opened("Labelled after opening", t0 - 1000, `Closes #${wantedAfter}`)
-    const wanted = [invited, marked, unread, lateLabel]
+    const wanted = [invited, marked, lateMarked, appealed, unread, lateLabel]
     for (const number of wanted) try gated(number, t0)
     for (const number of wanted) try paidBy(number, t0 + 1000)
     for (const number of wanted) try refreshed(number, t0 + 3000)
@@ -325,9 +332,26 @@ layer(World, { timeout: "240 seconds" })((it) => {
     try Effect.try(() => keepLabelCreatedOnce(fees.fake, repo, repositoryId))
     try refreshed(invited, decidedAt)
     const labelCallsInvited = try keepLabelCalls()
-    try keepMarked(marked)
+    try keepMarked(marked, t0 + 4000 + 2 * day)
     try refreshed(marked, decidedAt)
     const labelCallsMarked = try keepLabelCalls()
+    try keepMarked(lateMarked, decidedAt + 1000)
+    try refreshed(lateMarked, decidedAt + 2000)
+    const appealedNode = try Effect.try(() => fees.fake.world.pull(repo, appealed).nodeId)
+    const appealKey = `appeal:${appealedNode}`
+    try Effect.promise(() => fees.db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'close', '', ?)").bind(`close:${appealedNode}`, repositoryId, appealedNode, iso(t0 + 4000)).run())
+    try Effect.promise(() => fees.db.prepare("INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at) VALUES (?, ?, ?, 301, ?, ?, ?)").bind(appealKey, repositoryId, appealedNode, JSON.stringify({ itemKind: "pull_request", number: appealed }), iso(t0 + 5000), iso(t0 + 5000 + day)).run())
+    try refreshed(appealed, decidedAt)
+    const heldByAppeal = (try seen(appealed)).item?.outcome ?? null
+    const upheldAt = decidedAt + day
+    try Effect.promise(() => fees.db.prepare("UPDATE slopbot_appeals SET resolved_at = ?, resolution = 'upheld', resolved_by = 'maintainer', escalated_at = NULL WHERE appeal_key = ?").bind(iso(upheldAt), appealKey).run())
+    try refreshed(appealed, upheldAt + 6 * day)
+    const beforeUpheldWeek = (try seen(appealed)).item?.outcome ?? null
+    try refreshed(appealed, upheldAt + 7 * day)
+    const afterUpheldWeek = (try seen(appealed)).item?.outcome ?? null
+    const reopenedChanges = try at(upheldAt + 7 * day + 1000, reopenKeptFee(appealKey, iso(upheldAt + 7 * day + 1000)))
+    const afterReopen = (try seen(appealed)).item?.outcome ?? null
+    const labelCallsBeforeUnread = try keepLabelCalls()
     fees.unreadLink = true
     try refreshed(unread, decidedAt)
     fees.unreadLink = false
@@ -337,11 +361,15 @@ layer(World, { timeout: "240 seconds" })((it) => {
     try same({
       invited: { item: (try seen(invited)).item?.outcome ?? null, gate: (try gateOf(invited))?.reason ?? null, labelCalls: labelCallsInvited.slice(labelCallsBefore.length), repositoryLabel },
       marked: { item: (try seen(marked)).item?.outcome ?? null, gate: (try gateOf(marked))?.reason ?? null, labelCalls: labelCallsMarked.slice(labelCallsInvited.length) },
-      unread: { item: (try seen(unread)).item?.outcome ?? null, gate: try gateOf(unread), labelCalls: labelCallsUnread.slice(labelCallsMarked.length) },
+      lateMarked: { item: (try seen(lateMarked)).item?.outcome ?? null, gate: (try gateOf(lateMarked))?.reason ?? null },
+      appealed: { heldByAppeal, beforeUpheldWeek, afterUpheldWeek, reopenedChanges, afterReopen },
+      unread: { item: (try seen(unread)).item?.outcome ?? null, gate: try gateOf(unread), labelCalls: labelCallsUnread.slice(labelCallsBeforeUnread.length) },
       lateLabel: { item: (try seen(lateLabel)).item?.outcome ?? null, gate: (try gateOf(lateLabel))?.reason ?? null },
     }, {
       invited: { item: "refund_due", gate: "refund_due: wanted", labelCalls: ["GET", "POST"], repositoryLabel: true },
       marked: { item: "kept_due", gate: "kept_due: marked", labelCalls: ["GET"] },
+      lateMarked: { item: "refund_due", gate: "refund_due: wanted" },
+      appealed: { heldByAppeal: null, beforeUpheldWeek: null, afterUpheldWeek: "kept_due", reopenedChanges: true, afterReopen: null },
       unread: { item: null, gate: { reason: "fee-paid", next_check_at: iso(decidedAt + day) }, labelCalls: [] },
       lateLabel: { item: "kept_due", gate: "kept_due: closed" },
     })

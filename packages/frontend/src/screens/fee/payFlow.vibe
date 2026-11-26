@@ -2,7 +2,7 @@
 import { switchedOn as submissionFeeSwitchedOn } from "@repo/backend/client"
 import { reportDepositPath, submissionFeePath } from "@repo/fees/client"
 import { REPORT_DEPOSIT_SWITCHED_ON } from "@repo/security/client"
-import { type ChainResult, type FreshRead, Machine, type PayFlow, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConfirmUnsent, canConnectWallet, canDisconnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
+import { type ChainResult, type FreshRead, type Machine, type PayFlow, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConfirmUnsent, canConnectWallet, canDisconnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
 import type { Attempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { networkLabel } from "../../kernels/assetText.ts"
 import { fetchBounded } from "../../platform/bounded.vibe"
@@ -182,6 +182,62 @@ function hashOf(attempt: Attempt, saved: SavedDeposit): string {
   return attempt.hash !== "" ? attempt.hash : attempt.candidate
 }
 
+function receivedNotice(setup: FeeSetupShape, said: typeof words[Noun], way: FeeWay, hash: string): string {
+  const network = networkLabel(way.network)
+  const blocks = termsOf(setup.terms, way.network)?.confirmations ?? 0
+  return `Deposit received in a ${network} block. ${said.recorded} once that block is ${blocks} blocks deep, usually within a few minutes. A refund or ${said.kept} is sent only after ${network} finalizes the block. You can leave this page. ${hash}`
+}
+
+function openingOf(address: PayAddress, addressed: boolean, repository: FeeRepository | undefined, registryFailed: boolean, setup: FeeSetupShape) {
+  return {
+    subject: address.kind === "report" ? "ReportDeposit" : "PullRequestFee",
+    addressed,
+    registered: address.kind === "report" || repository !== undefined || registryFailed,
+    switchedOn: address.kind === "report" ? setup.reportDeposit : setup.submissionFee,
+  } as const
+}
+
+effect function readFeeRecord(subject: FeeSubject | undefined, terms: FeeTerms) {
+  if (subject === undefined) return { kind: "failed" } satisfies Read
+  const body: unknown = fetched(pathOf(subject), subject.kind === "PullRequestFee" ? itemLimitBytes : reportLimitBytes, subject.kind === "PullRequestFee" ? "submission fee record" : "report deposit record") catch () => undefined
+  if (body === undefined) return { kind: "failed" } satisfies Read
+  if (body === absent) return { kind: "missing" } satisfies Read
+  const rates = listsSlop(body) ? try readRates() : undefined
+  return { kind: "checked", checked: checkedRecord(body, subject, terms, rates) } satisfies Read
+}
+
+effect function feeChainCheck(connection: EvmConnection, saved: SavedDeposit, attempt: Attempt, item: string, keeper: SlotKeeper<"deposit">, onSaved: (next: SavedDeposit) => FeeShown!!) {
+  if (saved.step !== "batch") return try checkFeeDeposit(connection, saved.way, item, hashOf(attempt, saved), saved.step)
+  const batched = try checkFeeBatch(connection, saved.way, item, attempt.hash, hashOf(attempt, saved))
+  if (batched.transaction !== "" && saved.transaction === "" && keeper.annotate("deposit", attempt.identity, planText({ ...saved, transaction: batched.transaction }))) {
+    try onSaved({ ...saved, transaction: batched.transaction })
+  }
+  return batched.status
+}
+
+effect function attemptFeeCheck(connection: EvmConnection, saved: SavedDeposit, attempt: Attempt, origin: "AutoCheck" | "PayerCheck", item: string, keeper: SlotKeeper<"deposit">, onSaved: (next: SavedDeposit) => FeeShown!!) {
+  if (origin === "PayerCheck") try switchFeeChain(connection, saved.way)
+  return { check: try feeChainCheck(connection, saved, attempt, item, keeper, onSaved), failure: "" } satisfies Attempted
+}
+
+effect function followFeeDesk(machine: Machine.Shape, onAutoCheck: () => PayFlow!!Needs, onObserveNow: () => void!!, onReload: () => PayFlow!!HttpClient.HttpClient) {
+  const autoChecks = effect {
+    while (true) {
+      const before = try machine.get()
+      try sleep(autoAskDelay(before.autoAsks) * 1000)
+      if (canAsk(try machine.get(), "AutoCheck", timer)) try onAutoCheck()
+    }
+  }
+  const refreshes = effect {
+    while (true) {
+      try sleep(recordRefreshSeconds * 1000)
+      try onObserveNow()
+      if (recordRefreshDue(try machine.get())) try onReload()
+    }
+  }
+  try Effect.all([autoChecks, refreshes], { concurrency: "unbounded", discard: true })
+}
+
 export effect function openPayPage(address: PayAddress, storage: SlotStorage | undefined) {
   const pay = try feeDesk(address, storage)
   try pay.open()
@@ -239,17 +295,8 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
     if (canObserveClock(try machine.get(), now, clock)) try sent({ type: "observeClock", now }, clock)
   }
 
-  effect function readRecord() {
-    if (subject === undefined) return { kind: "failed" } satisfies Read
-    const body: unknown = fetched(pathOf(subject), subject.kind === "PullRequestFee" ? itemLimitBytes : reportLimitBytes, subject.kind === "PullRequestFee" ? "submission fee record" : "report deposit record") catch () => undefined
-    if (body === undefined) return { kind: "failed" } satisfies Read
-    if (body === absent) return { kind: "missing" } satisfies Read
-    const rates = listsSlop(body) ? try readRates() : undefined
-    return { kind: "checked", checked: checkedRecord(body, subject, setup.terms, rates) } satisfies Read
-  }
-
   effect function reload() {
-    const read = try readRecord()
+    const read = try readFeeRecord(subject, setup.terms)
     const state = try machine.get()
     if (read.kind === "missing") {
       if (canObserveNoRecord(state, reader)) try sent({ type: "observeNoRecord" }, reader)
@@ -285,7 +332,7 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
   }
 
   effect function confirmFresh(way: FeeWay) {
-    const read = try readRecord()
+    const read = try readFeeRecord(subject, setup.terms)
     const fresh = read.kind === "checked" && recordValid(read.checked.record, read.checked.ratesRead) ? read.checked.shown : undefined
     if (read.kind === "failed") throw new PayRefused({ message: said.unavailable })
     const answer: FreshRead = fresh !== undefined && fresh.paid === null && stillDue(fresh, way) ? "SameDue" : "ChangedDue"
@@ -293,21 +340,6 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
     if (answer === "SameDue") return
     try reload()
     throw new PayRefused({ message: fresh !== undefined && fresh.paid !== null ? said.alreadyPaid : way.kind === "slop" && fresh?.slopWithheld === true ? payMessages.slopUnread : said.changed })
-  }
-
-  effect function chainCheck(connection: EvmConnection, saved: SavedDeposit, attempt: Attempt) {
-    if (saved.step !== "batch") return try checkFeeDeposit(connection, saved.way, item, hashOf(attempt, saved), saved.step)
-    const batched = try checkFeeBatch(connection, saved.way, item, attempt.hash, hashOf(attempt, saved))
-    if (batched.transaction !== "" && saved.transaction === "" && keeper.annotate("deposit", attempt.identity, planText({ ...saved, transaction: batched.transaction }))) {
-      try update((current) => ({ ...current, saved: { ...saved, transaction: batched.transaction } }))
-    }
-    return batched.status
-  }
-
-  effect function receivedNotice(way: FeeWay, hash: string) {
-    const network = networkLabel(way.network)
-    const blocks = termsOf(setup.terms, way.network)?.confirmations ?? 0
-    return `Deposit received in a ${network} block. ${said.recorded} once that block is ${blocks} blocks deep, usually within a few minutes. A refund or ${said.kept} is sent only after ${network} finalizes the block. You can leave this page. ${hash}`
   }
 
   effect function settle(result: ChainResult, saved: SavedDeposit, attempt: Attempt, origin: "AutoCheck" | "PayerCheck", connection: EvmConnection) {
@@ -319,7 +351,7 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
       try reload()
     } else if (result === "ReceivedRead") {
       const before = try shown()
-      const notice = try receivedNotice(saved.way, hash)
+      const notice = receivedNotice(setup, said, saved.way, hash)
       try update((current) => ({ ...current, notice, error: "" }))
       if (before.notice !== notice) try reload()
     } else if (result === "ApprovalRead") {
@@ -335,11 +367,6 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
     }
   }
 
-  effect function attempted(connection: EvmConnection, saved: SavedDeposit, attempt: Attempt, origin: "AutoCheck" | "PayerCheck") {
-    if (origin === "PayerCheck") try switchFeeChain(connection, saved.way)
-    return { check: try chainCheck(connection, saved, attempt), failure: "" } satisfies Attempted
-  }
-
   effect function checked(origin: "AutoCheck" | "PayerCheck") {
     const by = origin === "AutoCheck" ? timer : payer
     try observeNow()
@@ -350,28 +377,12 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
     if (connection === undefined || saved === undefined || !canAsk(state, origin, by)) return state
     try sent({ type: "ask", origin }, by)
     const attempt = (try machine.get()).slot
-    const outcome: Attempted = attempted(connection, saved, attempt, origin) catch (error) => ({ check: "pending", failure: error.message })
+    const outcome: Attempted = attemptFeeCheck(connection, saved, attempt, origin, item, keeper, (next) => update((now) => ({ ...now, saved: next }))) catch (error) => ({ check: "pending", failure: error.message })
     const result = results[outcome.check]
     if (canAnswer(try machine.get(), result, chainReader)) try sent({ type: "answer", result }, chainReader)
     try settle(result, (try shown()).saved ?? saved, attempt, origin, connection)
     try update((now) => ({ ...now, error: outcome.failure !== "" ? outcome.failure : result === "FinalMismatch" ? now.error : "" }))
     return try machine.get()
-  }
-
-  effect function autoChecks() {
-    while (true) {
-      const before = try machine.get()
-      try sleep(autoAskDelay(before.autoAsks) * 1000)
-      if (canAsk(try machine.get(), "AutoCheck", timer)) try checked("AutoCheck")
-    }
-  }
-
-  effect function refreshes() {
-    while (true) {
-      try sleep(recordRefreshSeconds * 1000)
-      try observeNow()
-      if (recordRefreshDue(try machine.get())) try reload()
-    }
   }
 
   effect function submit(connection: EvmConnection, reviewed: Reviewed) {
@@ -411,12 +422,7 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
     return answer
   }
 
-  const opening = {
-    subject: address.kind === "report" ? "ReportDeposit" : "PullRequestFee",
-    addressed,
-    registered: address.kind === "report" || repository !== undefined || registryFailed,
-    switchedOn: address.kind === "report" ? setup.reportDeposit : setup.submissionFee,
-  } as const
+  const opening = openingOf(address, addressed, repository, registryFailed, setup)
 
   effect function open() {
     if (canOpenPage(try machine.get(), opening.subject, opening.addressed, opening.registered, opening.switchedOn, bundle)) try sent({ type: "openPage", ...opening }, bundle)
@@ -489,8 +495,6 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
       if ((try machine.get()).connected) return try shown()
       return try update((current) => ({ ...current, wallet: undefined, reviewed: undefined }))
     },
-    follow: effect () => {
-      try Effect.all([autoChecks(), refreshes()], { concurrency: "unbounded", discard: true })
-    },
+    follow: () => followFeeDesk(machine, () => checked("AutoCheck"), observeNow, reload),
   } satisfies FeePay
 }

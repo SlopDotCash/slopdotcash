@@ -141,7 +141,7 @@ function provenanceFile(value: unknown): ProvenanceFile | null {
   if (value === null) return null;
   const row = assemblyRecord(value);
   if (row.executable !== null && typeof row.executable !== "boolean") throw new Error("Invalid provenance mode");
-  return { sha256: provenanceDigest(row.sha256), bytes: provenanceSize(row.bytes), executable: row.executable as boolean | null };
+  return { sha256: provenanceDigest(row.sha256), bytes: provenanceSize(row.bytes), executable: row.executable };
 }
 
 /** @throws {never} */

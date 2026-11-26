@@ -56,18 +56,18 @@ type QueueScanProps = {
 
 function QueueScan({ runtime, actorId, project, banned, onQueued, onAccessLost }: QueueScanProps) {
   const [reason, setReason] = useState("");
-  const [selectedRepository, setRepository] = useState("");
+  const [selectedRepository, setSelectedRepository] = useState("");
   const repository = project.repositories?.some((entry) => entry.id === selectedRepository) ? selectedRepository : (project.repositories?.[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef(false);
+  const inFlightRef = useRef(false);
   const queue = async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setBusy(true);
     setError(null);
     const acted = await act(runtime, queueScan(actorId, { projectId: project.id, revision: project.revision, reason, ...(project.repositories ? { repository } : {}) }), (failure) => failure._tag !== "VettingIncomplete" && isAdminActionAccessLoss(failure), "The scan could not be queued.");
-    inFlight.current = false;
+    inFlightRef.current = false;
     setBusy(false);
     if (acted.ok) return onQueued();
     setError(acted.message);
@@ -89,7 +89,7 @@ function QueueScan({ runtime, actorId, project, banned, onQueued, onAccessLost }
       >
         {project.repositories ? (
           <Field label="Repository">
-            <Select value={repository} onChange={(event) => setRepository(event.target.value)}>
+            <Select value={repository} onChange={(event) => setSelectedRepository(event.target.value)}>
               {project.repositories.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.id}

@@ -1,5 +1,6 @@
 // spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/views.md, "Recent Points sum each UTC day of the last days including today"
 import type { ManagedRuntime } from "effect";
+import { useState } from "react";
 import { snapshotStaleAfterMs } from "../../../gen/frontend__snapshotCache.ts";
 import { untilTime } from "../../platform/clock.vibe";
 import { useOnce } from "../security/program/hooks.ts";
@@ -20,4 +21,15 @@ export function staleFrom(generatedAt: string): number {
 /** Renders the calling component again once `at` has passed. */
 export function useBoundary<R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, at: number): void {
   useOnce(runtime, `boundary:${at}`, () => untilTime(at));
+}
+
+export function useBoundaryTime<R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, candidates: ReadonlyArray<number | undefined>): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const at = nextBoundary(nowMs, candidates);
+  const reached = useOnce(runtime, `boundary:${at}`, () => untilTime(at));
+  if (reached.status === "done" && nowMs < at) {
+    setNowMs(at);
+    return at;
+  }
+  return nowMs;
 }

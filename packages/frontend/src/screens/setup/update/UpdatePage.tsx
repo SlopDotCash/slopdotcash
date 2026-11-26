@@ -4,7 +4,6 @@ import { Alert, Button, NotFound, PageHeader, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
 import { Check, CloudCheck, CloudOff, Lock, Settings2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { pageShellClass } from "../../../app/PageShell.tsx";
 import { NotFoundHead } from "../../../app/notFoundHead.ts";
 import { type PageProps, signInPurposes } from "../../../app/pages.ts";
@@ -98,13 +97,14 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const [published, setPublished] = useState<Published>();
   const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [attempted, setAttempted] = useState(false);
-  const [open, setOpen] = useState<ReadonlySet<FormGroup>>(new Set(["listing"]));
+  const [open, setOpen] = useState<ReadonlySet<FormGroup>>(() => new Set(["listing"]));
   const [submission, setSubmission] = useState<Submission>({ status: "idle" });
   const [removal, setRemoval] = useState<Removal>({ status: "idle" });
   const [repository, setRepository] = useState("");
   const [addition, setAddition] = useState<Addition>({ state: "idle" });
-  const inFlight = useRef(false);
-  const lookups = useRef(0);
+  const inFlightRef = useRef(false);
+  const lookupsRef = useRef(0);
+  const pendingFocusRef = useRef<string | null>(null);
   const branch = useIntegrationBranch(runtime);
   const nowMs = useNow();
   const current = published !== undefined && published.revision >= base.revision ? published : base;
@@ -121,24 +121,31 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const valid = Object.keys(review.errors).length === 0;
   const publishing = submission.status === "publishing";
   const shown = (field: string) => (attempted ? review.errors[field] : undefined);
+  const mainRef = (node: HTMLElement | null) => {
+    if (node === null || pendingFocusRef.current === null) return;
+    const target = pendingFocusRef.current;
+    pendingFocusRef.current = null;
+    focusField(target);
+  };
   const update = (field: UpdateField, value: string) => store.update((latest) => withField(latest, field, value, managed.revision));
   const changePending = (change: (list: ReadonlyArray<PendingRepository>) => ReadonlyArray<PendingRepository>) =>
     store.update((latest) => withField(latest, "repositories", pendingText(change(pendingRepositories(latest.fields?.repositories ?? ""))), managed.revision));
 
   const publish = async () => {
-    if (inFlight.current) return;
+    if (inFlightRef.current) return;
     setAttempted(true);
     const invalid = Object.keys(review.errors);
     if (invalid.length > 0) {
-      flushSync(() => setOpen((groups) => new Set([...groups, ...invalid.map(groupOf)])));
-      return focusField(fieldIds[invalid[0] ?? ""] ?? invalid[0] ?? "");
+      pendingFocusRef.current = fieldIds[invalid[0] ?? ""] ?? invalid[0] ?? "";
+      setOpen((groups) => new Set([...groups, ...invalid.map(groupOf)]));
+      return;
     }
     if (!review.changed || review.stale) return;
     const submitted = edit;
-    inFlight.current = true;
+    inFlightRef.current = true;
     setSubmission({ status: "publishing" });
     const exit = await runtime.runPromiseExit(publishUpdate({ projectId: base.projectId, manifest: review.next, expectedRevision: managed.revision, monthlyAmount: review.monthlyAmount, actor: actorId, branch: review.branchRequest }));
-    inFlight.current = false;
+    inFlightRef.current = false;
     if (Exit.isSuccess(exit)) {
       const { project, setup: answered } = exit.value;
       const after = managedOf(project.revision, project.manifest)?.manifest;
@@ -157,10 +164,10 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   };
 
   const remove = async () => {
-    if (inFlight.current) return false;
-    inFlight.current = true;
+    if (inFlightRef.current) return false;
+    inFlightRef.current = true;
     const exit = await runtime.runPromiseExit(removeManaged(base.projectId, managed.revision, actorId));
-    inFlight.current = false;
+    inFlightRef.current = false;
     if (Exit.isSuccess(exit)) {
       setRemoval({ status: "removed" });
       return true;
@@ -174,11 +181,11 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
 
   const add = async () => {
     const name = normalizeRepositoryInput(repository);
-    const lookup = ++lookups.current;
+    const lookup = ++lookupsRef.current;
     if (listedNames(manifest, review.added).includes(name.toLowerCase())) return setAddition({ state: "error", message: `${name} is already listed.` });
     setAddition({ state: "loading" });
     const exit = await runtime.runPromiseExit(lookupRepository(name));
-    if (lookup !== lookups.current) return;
+    if (lookup !== lookupsRef.current) return;
     if (Exit.isFailure(exit)) return setAddition({ state: "error", message: failureMessage(exit.cause, "Repository could not load.") });
     const refusal = additionRefusal(exit.value, listedNames(manifest, pendingRepositories(store.get().edit.fields?.repositories ?? "")));
     if (refusal !== undefined) return setAddition({ state: "error", message: refusal });
@@ -193,7 +200,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     </Button>
   );
   return (
-    <main className={page}>
+    <main ref={mainRef} className={page}>
       <nav aria-label="Breadcrumb" className="text-sm">
         <a href={`/projects/${manifest.slug}`} className="text-muted-foreground hover:text-foreground">
           {manifest.name}

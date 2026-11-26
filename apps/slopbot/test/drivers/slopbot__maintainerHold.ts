@@ -32,7 +32,7 @@ function iso(seconds: number) {
 }
 
 function translated<T>(value: T): T {
-  if (Array.isArray(value)) return value.map((each) => translated(each)) as T;
+  if (Array.isArray(value)) return (value as ReadonlyArray<unknown>).map((each) => translated(each)) as T;
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, key === "itemNode" && field === "pr" ? node() : translated(field)])) as T;
 }

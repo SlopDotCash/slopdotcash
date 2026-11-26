@@ -10,7 +10,7 @@ import { scopeAllows } from "../publish/scope.vibe"
 import { observe } from "../scope/facts.vibe"
 import { type CommentFacts, type FeeOutcomeNote, feeNeededComment, feePaidComment } from "./comments.ts"
 import { type FeePullRead, type FeeTarget, feePullOf, publishedWays, readFeePull, releaseFee, scopedOf, stepped, storedFeeSetting, waysAt, writeFeeComment } from "./gate.vibe"
-import { itemByPull, setDueOutcome } from "./items.vibe"
+import { itemByPull, setDueOutcome, slopbotCloseAppeal } from "./items.vibe"
 import { type GateRow, SubmissionFeeMode, askLeaseMillis, feeNeededLabel, feeNeededReason, feePaidLabel, gateModel, gateRow, keepGate, secondsOf } from "./store.vibe"
 import { ensureKeepLabel, wantedLink } from "./wanted.vibe"
 
@@ -38,7 +38,7 @@ function done(outcome: string, review: boolean = false): FeeRefresh {
 function pullFactsOf(read: FeePullRead, contributorScope: boolean): PullFacts {
   const merged = read.merged === true
   const keepMarked = keepMarkedOf((read.labels ?? []).map((label) => label.name))
-  return { readable: true, open: read.state === "open" && !merged, merged, draft: read.draft === true, closedAt: secondsOf(read.closed_at), contributorScope, installationActive: true, invited: "NotInvited", keepMarked }
+  return { readable: true, open: read.state === "open" && !merged, merged, draft: read.draft === true, closedAt: secondsOf(read.closed_at), appealOpen: false, appealUpheldAt: 0, contributorScope, installationActive: true, invited: "NotInvited", keepMarked, keepMarkedAt: 0 }
 }
 
 function reviewable(pull: PullFacts) {
@@ -92,9 +92,10 @@ function outcomeNoteOf(settlement: string, pull: PullFacts): FeeOutcomeNote | un
 effect function linkedPull(checked: Checked) {
   const { job, target, pull } = checked
   if (pull.open || pull.merged) return pull
-  const invited = try wantedLink(job)
-  if (invited === "InvitedWork") try ensureKeepLabel(target)
-  return { ...pull, invited } satisfies PullFacts
+  const appeal = try slopbotCloseAppeal(job.repositoryId, target.itemNodeId)
+  const wanted = try wantedLink(job, pull.keepMarked)
+  if (wanted.invited === "InvitedWork") try ensureKeepLabel(target)
+  return { ...pull, appealOpen: appeal?.open === true, appealUpheldAt: secondsOf(appeal?.upheldAt), invited: wanted.invited, keepMarkedAt: wanted.keepMarkedAt } satisfies PullFacts
 }
 
 effect function paid(checked: Checked) {
@@ -119,6 +120,9 @@ effect function paid(checked: Checked) {
     const decided = settlementFor(model.feeItem.paidAt, pull, model.now)
     const note = outcomeNoteOf(decided.settlement, pull)
     nextCheckAt = isoOfSeconds(decided.nextCheckAt)
+    if (note === undefined && gate.reason.startsWith("kept_due")) {
+      commentId = try writeFeeComment(target, commentId, feePaidComment({ ...paidFacts, outcome: null }))
+    }
     if (note !== undefined && (try setDueOutcome(feePullOf(target.pull), note.kind, at))) {
       reason = `${note.kind}: ${note.why}`
       commentId = try writeFeeComment(target, commentId, feePaidComment({ ...paidFacts, outcome: note }))
@@ -154,7 +158,7 @@ export effect function refreshSubmissionFee(job: SubmissionFeeJob) {
   const feeSetting = try storedFeeSetting(item.projectId)
   const facts: FeeFacts = { mode, contractPublished: true, feeSetting, settingSince: 0, openedAt: 0, exemption: "ExemptionUnknown", mayAsk: false }
   const model = gateModel(gate, item, nowMillis)
-  const target: FeeTarget = { pull: job, projectId: item.projectId, itemNodeId: "", appUser: Number(appUserId) }
+  const target: FeeTarget = { pull: job, projectId: item.projectId, itemNodeId: read.node_id ?? "", appUser: Number(appUserId) }
   const checked: Checked = { job, target, gate, item, model, facts, pull, nowMillis, at }
   if (!feeLive(facts)) return done("submission fee is not live")
   if (item.paidAt === null) return try unpaid(checked)

@@ -25,17 +25,17 @@ export interface IntegrationBranchControl {
 export function useIntegrationBranch(runtime: PageRuntime): IntegrationBranchControl {
   const [choices, setChoices] = useState<BranchChoices>({ state: "idle" });
   const [name, setName] = useState("");
-  const loads = useRef(0);
+  const loadsRef = useRef(0);
   const load = async (stored: StoredRepository) => {
-    const id = ++loads.current;
+    const id = ++loadsRef.current;
     setName("");
     setChoices({ state: "loading" });
     const exit = await runtime.runPromiseExit(integrationBranchChoices(stored));
-    if (id !== loads.current) return;
+    if (id !== loadsRef.current) return;
     setChoices(Exit.isSuccess(exit) ? { state: "ready", choices: exit.value } : { state: "error", message: failureMessage(exit.cause, branchMessages.failed) });
   };
   const clear = () => {
-    loads.current += 1;
+    loadsRef.current += 1;
     setName("");
     setChoices({ state: "idle" });
   };

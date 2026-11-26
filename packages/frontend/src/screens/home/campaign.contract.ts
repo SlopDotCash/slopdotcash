@@ -36,7 +36,7 @@ export const eachJourneyCampaignCyclesThroughEveryActionAndBack = contract({
   deterministic: true,
   invariant: (campaigns, cycles) =>
     campaigns.every((campaign, index) => {
-      const cycle = cycles[index]!;
+      const cycle = cycles[index];
       return (
         cycle.returned &&
         cycle.totalMs === fullCycleMs(campaign) &&

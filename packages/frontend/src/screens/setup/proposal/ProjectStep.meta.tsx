@@ -26,7 +26,7 @@ export const meta: ComponentMeta<ProjectStepProps> = {
     },
     // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
     Links: async () => {
-      await expect([(screen.getByLabelText("Website (optional)") as HTMLInputElement).value, (screen.getByLabelText("X account (optional)") as HTMLInputElement).value]).toEqual(["http://ntwrk.party", "@elizaOS"]);
+      await expect([screen.getByLabelText<HTMLInputElement>("Website (optional)").value, screen.getByLabelText<HTMLInputElement>("X account (optional)").value]).toEqual(["http://ntwrk.party", "@elizaOS"]);
       await expect(screen.getByText("Use an https:// address.")).toBeTruthy();
     },
     // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"

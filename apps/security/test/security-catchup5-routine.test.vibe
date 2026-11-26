@@ -282,5 +282,57 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       { ended: ended.status, rejected: [rejected?.receipt, rejected?.nextAction, rejected?.due], kept: kept?.receipt, lapsedRows },
       { ended: 200, rejected: ["rejected", null, 0], kept: "needs-information", lapsedRows: [["needs-proof", "two-calls", 1, 2], ["no-proof-received", "clock", 1, 0]] },
     )
+
+    const humanRejected = try submit(world, "52008", "routine-hrej-0000001", "Header check skips trailing whitespace", "parseHeader() trims only leading spaces. Reproduction: send trailing space.")
+    const waitingProof = try submit(world, "52009", "routine-wait-0000001", "Gas estimation could be tighter", "No reproduction steps or test attached.")
+    const humanState = try caseState(world, humanRejected.caseId)
+    const humanDecision = try exchanged(routined, routined.live, `/api/v1/security-cases/${humanRejected.caseId}/actions`, maintainer, { action: "decide", outcome: "rejected", severity: "low", loss: "not-verified", inScope: true, relatedParty: false, expectedRevision: humanState?.revision, idempotencyKey: "routine-hrej-decide-01", reason: "Not a security issue." })
+    for (const _call of ["first", "reversed"]) {
+      fake.reply(routineOf("Gas estimation could be tighter"), read({ proof: "missing", missing: ["runnable-proof"], severity: "low" }))
+    }
+    clock.set(clock.now() + 4 * minute)
+    try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+
+    const summaryAt = new Date(clock.now()).toISOString()
+    for (const [id, text] of [
+      [bare.caseId, "Human requested failing test"],
+      [lapsed.caseId, "Routine proof clock closed"],
+      [humanRejected.caseId, "Maintainer rejected non-issue"],
+      [waitingProof.caseId, "Routine waiting for proof"],
+    ] as const) {
+      try promise(() => world.db.prepare("INSERT INTO security_case_analyses (case_id, attempt, state, prompt_revision, summary, started_at, finished_at, report_version) VALUES (?, 1, 'complete', 'test-v1', ?, ?, ?, 1)").bind(id, text, summaryAt, summaryAt).run())
+    }
+
+    try submit(world, "52010", "routine-probe-000001", "Stale nonce accepted after bridge pause", "bridge() accepts the previous nonce after unpause(). Attached test reproduces.")
+    const seenEarlier: Array<ReadonlyArray<string>> = []
+    for (const _call of ["first", "reversed"]) {
+      fake.reply((call) => {
+        if (!routineOf("Stale nonce accepted after bridge pause")(call)) return false
+        const body = jsonValue(said(call)) as { readonly earlierReports?: ReadonlyArray<{ readonly id: string }> }
+        seenEarlier.push((body.earlierReports ?? []).map((entry) => entry.id))
+        return true
+      }, read({ severity: "high" }))
+    }
+    clock.set(clock.now() + 4 * minute)
+    const probed = try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+    const earlierIds = new Set(seenEarlier.flat())
+    try same(
+      {
+        humanDecision: humanDecision.status,
+        probed: probed.status,
+        includesHumanRejected: earlierIds.has(humanRejected.caseId),
+        includesHumanInfo: earlierIds.has(bare.caseId),
+        excludesRoutineClockClose: !earlierIds.has(lapsed.caseId),
+        excludesRoutineProofWait: !earlierIds.has(waitingProof.caseId),
+      },
+      {
+        humanDecision: 200,
+        probed: 200,
+        includesHumanRejected: true,
+        includesHumanInfo: true,
+        excludesRoutineClockClose: true,
+        excludesRoutineProofWait: true,
+      },
+    )
   })
 })

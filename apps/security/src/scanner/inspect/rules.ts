@@ -26,6 +26,9 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+const INSTRUCTION_NEGATION = String.raw`\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b`;
+const SECRET_SEND_VERB = String.raw`\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b`;
+const TRAILING_REFUSAL = String.raw`\b(?:refus(?:e[ds]?|ing)(?!\s+to\s+(?:tell|inform|notify|alert|warn|mention|report|disclose|explain|log|show)\b)|declin(?:e[ds]?|ing)|reject(?:ed|ing|s)?|disobey(?:ed|ing|s)?|prohibit(?:ed|ing|s)?|forbid(?:den|ding|s)?|ignore\s+(?:it|that|this|the\s+(?:request|instruction|prompt|message))|(?:must|should)\s+be\s+(?:refused|declined|rejected|ignored|blocked|denied)|(?:do\s+not|don['\u2019]?t|never|must\s+not|should\s+not|cannot|can['\u2019]?t)\s+(?:comply|obey|follow(?:\s+(?:it|that|this|the\s+(?:request|instruction|prompt)))?|do\s+(?:it|so|that|this)|proceed|execute|fulfill|honou?r|allow|permit|accept|agree))\b`;
 
 const RULES: Rule[] = [
   {
@@ -129,8 +132,10 @@ const RULES: Rule[] = [
   {
     threat: "prompt-injection",
     severity: "medium",
-    pattern:
-      /(?<![^\n])(?![^\n]*\b(?:never|not|don['\u2019]?t|avoid|without|refuse)\b)[^\n]*\b(?:send|post|upload|exfiltrate|paste|forward|transmit|share|email)\b[^\n]{0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)[^\n]{0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))/iu,
+    pattern: new RegExp(
+      String.raw`(?=${SECRET_SEND_VERB})(?<!${INSTRUCTION_NEGATION}(?:(?![.!?;]\s)[^\n]){0,200})${SECRET_SEND_VERB}(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}(?:\b(?:api[ _-]?keys?|tokens?|secrets?|credentials?|passwords?|private[ _-]keys?|seed[ _-]phrases?|mnemonics?)\b|\.env\b)(?:(?!${INSTRUCTION_NEGATION})[^\n]){0,60}\b(?:to|into|via|at|with)\s+(?:https?:\/\/|(?:a|an|the|this|that|my|our|your)\s+(?:[\w-]+\s+)?(?:webhook|url|endpoint|server|channel|gist|pastebin|address|inbox|form|dm|discord|telegram|slack|bot))(?!(?:(?![.!?;]\s)[^\n]){0,160}${TRAILING_REFUSAL})`,
+      "iu",
+    ),
     summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },

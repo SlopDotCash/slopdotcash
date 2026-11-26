@@ -5,7 +5,7 @@ import type { FetchOutcome } from "../../../gen/security__admission.effect.vibe"
 import { type QueuedScan, ScanQueue } from "../../client/admission.vibe"
 import { AcquisitionFailed, AcquisitionRefused, acquireRepository } from "../acquire/git.vibe"
 import { HttpClientError } from "effect/http"
-import { ScanService, ServiceUnavailable, decodedAnswer, signedJson } from "./service.vibe"
+import { ScanService, ServiceUnavailable, signedJson } from "./service.vibe"
 
 export const queuePath = "/api/v1/vetting/requests"
 const pinnedLimit = 1024 * 1024

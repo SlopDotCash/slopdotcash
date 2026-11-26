@@ -80,7 +80,7 @@ effect function same(actual: unknown, expected: unknown) {
 
 effect function call(scenario: Scenario, method: "GET" | "POST" | "DELETE", path: string, body?: string) {
   const log = freshLog()
-  const app = sandboxWorker((env: ReleaseVars) => containersFor(scenario, log))
+  const app = sandboxWorker((_env: ReleaseVars) => containersFor(scenario, log))
   const fetcher = { fetch: (request: globalThis.Request) => app.fetch(request, release, { waitUntil: () => undefined }) }
   const base = HttpClientRequest.make(method)(`https://vetting-sandbox.internal${path}`)
   const request = body === undefined ? base : HttpClientRequest.bodyText(base, body, "application/json")

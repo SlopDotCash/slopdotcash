@@ -138,7 +138,8 @@ export function listenForFragments(decide: (alignment: HashAlignment) => AlignTo
     if (targetId === "") return
     const earlier = entryOf(history.state)
     const entry = { key: earlier?.href === href ? earlier.key : crypto.randomUUID(), href }
-    const currentState = typeof history.state === "object" && history.state !== null ? history.state : {}
+    const state: unknown = history.state
+    const currentState = typeof state === "object" && state !== null && !Array.isArray(state) ? Object.fromEntries(Object.entries(state)) : {}
     history.replaceState({ ...currentState, __slopHashScroll: entry }, "")
     const restore = restoring ?? (queryOnly ? { left: scrollX, top: scrollY } : undefined)
     if (restore !== undefined) keepPosition(entry.key, restore)

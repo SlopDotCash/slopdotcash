@@ -26,24 +26,24 @@ export function pagesOrigin(initial: Publication, options: PagesOptions = {}): P
   const origins: string[] = [];
   const paths: string[] = [];
   const roots: string[] = [];
-  const answer = async (input: string | URL | Request): Promise<Response> => {
+  const answer = (input: string | URL | Request): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     origins.push(url.origin);
     paths.push(url.pathname);
-    if (options.answer !== undefined && options.answer.path === url.pathname) return new Response(options.answer.body, { status: options.answer.status });
+    if (options.answer !== undefined && options.answer.path === url.pathname) return Promise.resolve(new Response(options.answer.body, { status: options.answer.status }));
     if (url.pathname === "/data/leaderboard.json") {
       roots.push(url.searchParams.get("snapshot") ?? "");
-      return new Response(active.root.slice());
+      return Promise.resolve(new Response(active.root.slice()));
     }
     const part = active.parts.find((candidate) => candidate.path === url.pathname);
     if (options.replaceAfter !== undefined && url.pathname === options.replaceAfter.path) active = options.replaceAfter.next;
     if (part === undefined) {
       missing += 1;
-      return new Response(null, { status: 404 });
+      return Promise.resolve(new Response(null, { status: 404 }));
     }
-    return new Response(part.bytes.slice());
+    return Promise.resolve(new Response(part.bytes.slice()));
   };
-  return { fetch: answer as typeof globalThis.fetch, origins, paths, roots, missingParts: () => missing };
+  return { fetch: answer, origins, paths, roots, missingParts: () => missing };
 }
 
 /** @throws {never} */

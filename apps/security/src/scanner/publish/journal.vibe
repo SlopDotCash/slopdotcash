@@ -28,7 +28,6 @@ const anyField = Schema.optionalKey(Schema.Unknown)
 const IntakeReceipt = Schema.Struct({
   assessment: Schema.Struct({ id: anyField, revision: anyField, state: anyField, commitSha: anyField, templateSha256: anyField, policyVersion: anyField, resultSha256: anyField }),
 })
-type IntakeReceipt = typeof IntakeReceipt.Type
 
 const rejectedStatuses: ReadonlySet<number> = new Set([400, 401, 403, 404, 413, 422])
 
@@ -61,7 +60,7 @@ export effect function approved(body: string) {
   return { result: parsed.result, resultSha256: try sha256Hex(bytes) }
 }
 
-function matches(receipt: IntakeReceipt, result: ScanResult, resultSha256: string) {
+function matches(receipt: typeof IntakeReceipt.Type, result: ScanResult, resultSha256: string) {
   const assessment = receipt.assessment
   return (
     assessment.id === result.assessmentId &&

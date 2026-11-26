@@ -1,10 +1,40 @@
 // spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"
 import { sha256Hex } from "@repo/platform/crypto"
-import { MergeResolution } from "@repo/platform/git/evidence"
+import { MergeResolution, mergeResolutionLineCounts } from "@repo/platform/git/evidence"
 import { correctionRule, digestOf } from "../collect/inventory.vibe"
 import { assertCorrectionRegistry } from "../collect/registry.vibe"
 
 export error CorrectionRefused { message: string }
+
+const node = /^[A-Za-z0-9_=-]{4,256}$/u
+export const digestPattern = /^[a-f0-9]{64}$/u
+const botLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u
+const userLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+const actorKinds: ReadonlyArray<string> = ["User", "Bot", "Mannequin", "Organization"]
+
+export function correctionFailure(message: string) {
+  return new CorrectionRefused({ message: `Implementation correction: ${message}` })
+}
+
+export effect function check(holds: boolean, message: string) {
+  if (!holds) throw correctionFailure(message)
+}
+
+export function isNodeId(value: string) {
+  return node.test(value)
+}
+
+export effect function validActor(value: CorrectionActor | null) {
+  if (value === null) return
+  try check(node.test(value.id) && (value.kind === "Bot" ? botLogin : userLogin).test(value.login) && actorKinds.includes(value.kind), "invalid GitHub actor")
+}
+
+export function correctionClaimCommit(commit: CorrectionCommit) {
+  const resolution = commit.mergeResolution
+  const parents = commit.parentShas
+  return commit.parentCount <= 1 || (resolution !== undefined && parents !== undefined &&
+    (mergeResolutionLineCounts(resolution, { sha: commit.sha, parents: parents.map((sha) => ({ sha })) })?.length ?? 0) > 0)
+}
 
 export schema CorrectionActor { readonly id: string; readonly login: string; readonly kind: string }
 export schema CorrectionFile { readonly path: string; readonly additions: number; readonly deletions: number }

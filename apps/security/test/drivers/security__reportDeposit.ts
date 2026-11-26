@@ -382,7 +382,7 @@ async function depositOf(caseId: string | undefined): Promise<Shown["deposit"]> 
 
 async function observed(): Promise<Shown> {
   const [project] = (await db.prepare("SELECT manifest FROM projects WHERE id=?").bind(projectOf()).all()).results;
-  const settings = { mode, projectOn: reportDepositOnManifest(String(project?.manifest ?? "{}")), deposit: await depositOf(entry?.caseId) };
+  const settings = { mode, projectOn: reportDepositOnManifest(typeof project?.manifest === "string" ? project.manifest : "{}"), deposit: await depositOf(entry?.caseId) };
   if (entry === undefined) return { ...settings, ...unreceived };
   const record = await runtime.runPromise(caseRecord(entry.caseId));
   const { screening } = await runtime.runPromise(screeningAt(entry.submissionId));

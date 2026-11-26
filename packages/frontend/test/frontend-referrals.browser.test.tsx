@@ -129,10 +129,12 @@ async function openRequested(backend: Backend, search: string) {
 }
 
 async function visit(search: string) {
-  await act(() => {
-    history.replaceState(null, "", `${location.pathname}${search}`);
-    dispatchEvent(new PopStateEvent("popstate"));
-  });
+  await act(() =>
+    Promise.resolve().then(() => {
+      history.replaceState(null, "", `${location.pathname}${search}`);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }),
+  );
 }
 
 async function closeAll() {
@@ -147,8 +149,9 @@ async function closeAll() {
 
 function recordClipboard() {
   const copied: string[] = [];
-  vi.spyOn(navigator.clipboard, "writeText").mockImplementation(async (text) => {
+  vi.spyOn(navigator.clipboard, "writeText").mockImplementation((text) => {
     copied.push(text);
+    return Promise.resolve();
   });
   return copied;
 }

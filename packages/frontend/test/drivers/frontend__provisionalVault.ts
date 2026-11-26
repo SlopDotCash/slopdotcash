@@ -16,12 +16,14 @@ const vault = { network: "base-mainnet", chainId: 8453n, vault: "0x0000000000000
 const fresh = () => Effect.runPromise(provisionalVault(memoryStorage(), "slop:vault-action:v1:base-mainnet:provisional", vault, vault.owner, 1));
 let setup = await fresh();
 
+const actorOf = (by: unknown): string => (typeof by === "string" ? by : "");
+
 export const driver: Driver = {
   reset: async () => {
     setup = await fresh();
   },
-  dispatch: (_key, event: Event, by) => outcome(setup.machine.send(event, String(by ?? ""))),
-  receive: (_key, raw, by) => outcome(setup.machine.receive(raw, String(by ?? ""))),
+  dispatch: (_key, event: Event, by) => outcome(setup.machine.send(event, actorOf(by))),
+  receive: (_key, raw, by) => outcome(setup.machine.receive(raw, actorOf(by))),
   observe: () => Effect.runPromise(setup.machine.get()),
 };
 

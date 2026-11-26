@@ -6,7 +6,7 @@ import { type EarlierReport, type RoutineInput, type RoutineProposal, routineMes
 import { privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
 import { caseReceipt, exactReport } from "../assessment/store.vibe"
 import { routineClosingLines } from "../program/exclusions.ts"
-import { routineActorGithubId } from "./reasons.ts"
+import { routineActorGithubId, routineProofNextAction } from "./reasons.ts"
 import type { CallAudit } from "./store.vibe"
 
 export interface CallTarget {
@@ -39,6 +39,18 @@ effect function earlierReports(caseId: string) {
     FROM security_cases c, security_cases r
     WHERE r.id = ${caseId} AND c.project_id = r.project_id AND c.id <> r.id
       AND c.submission_state = 'verified'
+      AND NOT (c.receipt_state = 'needs-information' AND c.next_action IS ${routineProofNextAction})
+      AND NOT (
+        c.receipt_state = 'rejected'
+        AND c.technical_decider_github_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM security_routine_decisions d
+          WHERE d.case_id = c.id
+            AND d.mode = 'live'
+            AND d.outcome = 'no-proof-received'
+            AND d.applied = 1
+        )
+      )
       AND (c.received_at < r.received_at OR (c.received_at = r.received_at AND c.rowid < r.rowid))
       AND NOT ${depositHeldOn("c.id")}
     ORDER BY c.received_at DESC, c.rowid DESC LIMIT ${earlierLimit}`)

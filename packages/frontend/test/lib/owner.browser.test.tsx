@@ -39,7 +39,7 @@ import { connectEvm } from "../../src/wallets/core/evm.vibe";
 import { connectSolana } from "../../src/wallets/core/solana.vibe";
 import { sessionSlots } from "../../src/wallets/core/slots.ts";
 import { batchFlow } from "../../src/wallets/owner/batchedDeposit.vibe";
-import { deploymentOf } from "../../src/wallets/owner/commitmentCalls.ts";
+import { deploymentOf, vaultMonthlyCap } from "../../src/wallets/owner/commitmentCalls.ts";
 import { type EvmVault, type VaultReview, checkTransfer, reviewTransfer, sendTransfer } from "../../src/wallets/owner/evmVault.vibe";
 import { ownerMonthlyPage } from "../../src/wallets/owner/ownerMonthly.vibe";
 import { type Answer, type OwnerVaultPage, type Saved, ownerVaultPage } from "../../src/wallets/owner/ownerVault.vibe";
@@ -1318,11 +1318,23 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
       return { resumed: [resumed.phase, resumed.slotOwner, resumed.slot.hash], checked, phase: (yield* monthly.machine.get()).setting.phase, kept: sessionStorage.getItem(settingKey) };
     }));
 
-    expect({ release, setting, checks: asked.slice(1).map((entry) => entry.body), prompts: chain.seen.filter((method) => method === "eth_sendTransaction" || method === "wallet_sendCalls").length }).toEqual({
+    const rewardAsset = { network: "base", address: vaultDeployment.asset, decimals: 18 };
+    expect({
+      release,
+      setting,
+      checks: asked.slice(1).map((entry) => entry.body),
+      prompts: chain.seen.filter((method) => method === "eth_sendTransaction" || method === "wallet_sendCalls").length,
+      pinnedCaps: [
+        vaultMonthlyCap({ kind: "monthly-pool", chain: "base", monthlyCapMinor: "250000000", cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "500000000" }, { cycleId: "2026-09", monthlyCapMinor: "900000000" }], asset: rewardAsset }, vaultDeployment, 18, Date.parse("2026-11-15T00:00:00Z")),
+        vaultMonthlyCap({ kind: "monthly-pool", chain: "base", monthlyCapMinor: "0", cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "400000000" }], asset: rewardAsset }, vaultDeployment, 18, Date.parse("2026-12-03T23:59:59Z")),
+        vaultMonthlyCap({ kind: "monthly-pool", chain: "base", monthlyCapMinor: "0", cycleCaps: [{ cycleId: "2026-11", monthlyCapMinor: "400000000" }], asset: rewardAsset }, vaultDeployment, 18, Date.parse("2026-12-04T00:00:00Z")),
+      ],
+    }).toEqual({
       release: { resumed: ["Sent", actor, hash("e")], checked: ["finalized", "Done"], kept: null },
       setting: { resumed: ["Sent", actor, settingHash], checked: { status: "finalized", enabled: true, hash: settingHash }, phase: "Done", kept: null },
       checks: [{ network: deployment.network, manifestSha256: frozenMonth.manifestSha256, planId, transactionId: hash("e") }],
       prompts: 0,
+      pinnedCaps: [{ kind: "cap", cap: 500_000_000n }, { kind: "cap", cap: 400_000_000n }, { kind: "cap", cap: 0n }],
     });
   });
 });

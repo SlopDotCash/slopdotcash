@@ -299,7 +299,7 @@ async function headersFor(method: string, path: string, body: Uint8Array, signin
 export async function signed(world: World, method: "GET" | "POST", path: string, body: unknown = undefined, signing: Signing = {}): Promise<Answer> {
   const bytes = body === undefined ? new Uint8Array() : new TextEncoder().encode(typeof body === "string" ? body : JSON.stringify(body));
   const headers = { ...(await headersFor(method, path, bytes, signing)), ...(method === "POST" ? { "content-type": "application/json" } : {}) };
-  const response = (await world.mf.dispatchFetch(`${origin}${path}`, { method, headers, redirect: "manual", ...(method === "POST" ? { body: bytes } : {}) })) as unknown as Response;
+  const response = await world.mf.dispatchFetch(`${origin}${path}`, { method, headers, redirect: "manual", ...(method === "POST" ? { body: bytes } : {}) });
   const type = response.headers.get("content-type");
   return { status: response.status, cache: response.headers.get("cache-control"), type, body: (type ?? "").startsWith("application/json") ? await response.json() : await response.text() };
 }
@@ -319,7 +319,7 @@ async function session(world: World, githubId: string): Promise<string> {
 
 export async function read(world: World, path: string, as?: string): Promise<Answer> {
   const headers: Record<string, string> = as === undefined ? {} : { cookie: `__Host-slop_points=${await session(world, as)}`, "x-slop-expected-github-id": as };
-  const response = (await world.mf.dispatchFetch(`${origin}${path}`, { headers, redirect: "manual" })) as unknown as Response;
+  const response = await world.mf.dispatchFetch(`${origin}${path}`, { headers, redirect: "manual" });
   const type = response.headers.get("content-type");
   return { status: response.status, cache: response.headers.get("cache-control"), type, body: (type ?? "").startsWith("application/json") ? await response.json() : await response.text() };
 }

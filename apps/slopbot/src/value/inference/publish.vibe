@@ -311,7 +311,7 @@ export effect function singleDecision(evidence: Evidence, policy: Policy, reposi
   if (evidence.limitations.length > 0 || policy.text.trim() === "") return { status: "incomplete", latestDigest: head } satisfies SingleDecision
   let sourceDigest = try sourceDigestOf(evidence, policy)
   if (latest.sourceDigest !== sourceDigest && evidence.repairBodyEdit !== undefined) {
-    const { repairBodyEdit, ...historical } = evidence
+    const { repairBodyEdit: _repairBodyEdit, ...historical } = evidence
     if ((try sourceDigestOf(historical, policy)) === latest.sourceDigest) sourceDigest = latest.sourceDigest
   }
   if (!evidenceMatchesRepository(evidence, repository) || evidence.pull.state !== "closed" || latest.headSha !== evidence.pull.head.sha || latest.mergeSha !== evidence.pull.merge_commit_sha

@@ -67,7 +67,7 @@ async function forward(fake: GitHubFake, request: Request, body: GraphqlRequest)
   return fake.fetch(new Request(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(body) }));
 }
 
-async function answered(response: Response, data: unknown, errors?: unknown): Promise<Response> {
+function answered(response: Response, data: unknown, errors?: unknown): Response {
   return new Response(JSON.stringify(errors === undefined ? { data } : { data, errors }), { status: response.status, headers: response.headers });
 }
 

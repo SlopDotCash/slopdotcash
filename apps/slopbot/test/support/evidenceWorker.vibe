@@ -115,15 +115,7 @@ export effect function seeded() {
 }
 
 function fetcherOf(fake: GitHubFake): Fetcher {
-  return {
-    fetch: async (request) => {
-      try {
-        return await fake.fetch(request)
-      } catch (cause) {
-        throw cause
-      }
-    },
-  }
+  return { fetch: (request) => fake.fetch(request) }
 }
 
 export function githubOver(world: Seeded) {
