@@ -1,15 +1,17 @@
 import type { ComponentMeta } from "vibestack/stories";
 import type { AgentMarkProps } from "./AgentMark.tsx";
 
-// Each client once; the name is hidden by default and stays the accessible name.
 export const meta: ComponentMeta<AgentMarkProps> = {
-  args: { agent: "Cursor" },
+  args: { agent: "Claude Code" },
   examples: {
-    Claude: { agent: "Claude", showName: true },
-    ChatGPT: { agent: "ChatGPT", showName: true },
-    Grok: { agent: "Grok", showName: true },
-    "Meta AI": { agent: "Meta AI (Muse Spark)", showName: true },
+    Codex: { agent: "Codex", showName: true },
+    Cursor: { agent: "Cursor", showName: true },
+    Antigravity: { agent: "Antigravity", showName: true },
     OpenClaw: { agent: "OpenClaw", showName: true },
     "Hermes Agent": { agent: "Hermes Agent", showName: true },
+    "GitHub Copilot": { agent: "GitHub Copilot", showName: true },
+    "Grok Bot": { agent: "Grok Bot", showName: true },
+    "Meta Muse": { agent: "Meta Muse", showName: true },
+    OpenCode: { agent: "OpenCode", showName: true },
   },
 };

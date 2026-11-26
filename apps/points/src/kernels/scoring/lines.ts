@@ -1,5 +1,6 @@
 //@ backend dafny
 // spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- referenced in Dafny //@ ensures contract
 import { type ActorKind, eligibleKind, linesFor } from "../../../gen/points__authorship.ts";
 
 export interface CommitActor { id: string; kind: string }

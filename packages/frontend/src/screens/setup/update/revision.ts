@@ -485,6 +485,8 @@ const settingFields: Readonly<Partial<Record<ChangeField, SettingField>>> = {
   image: "ImageField",
   headline: "HeadlineField",
   description: "DescriptionField",
+  website: "HeadlineField",
+  x: "HeadlineField",
   integrationBranch: "IntegrationBranchField",
   contributionGuide: "ContributionGuideField",
 };

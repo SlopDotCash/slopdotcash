@@ -17,6 +17,7 @@ const file: GitHubFile = { filename: "src/parser.ts", status: "modified", additi
 
 export const theBuiltInSetCoversEachNamedCategory = exactly<string, string | null>([
   [".github/dependabot.yml", "CI or GitHub settings"],
+  [".GitHub/workflows/ci.yml", "CI or GitHub settings"],
   [".gitlab-ci.yml", "CI or GitHub settings"],
   [".circleci/config.yml", "CI or GitHub settings"],
   ["package-lock.json", "a dependency manifest or lockfile"],

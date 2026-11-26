@@ -1,5 +1,6 @@
 //@ backend dafny
 // spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- referenced in Dafny //@ ensures contract
 import { windowDays } from "../../gen/points__window.ts";
 
 export const dayMs = 86400000;

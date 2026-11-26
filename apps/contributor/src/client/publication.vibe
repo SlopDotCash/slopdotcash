@@ -28,7 +28,7 @@ export const ProjectTerms = Schema.Struct({
 
 export const discoveryPath = "/.well-known/slop/projects.json"
 
-const guideNames = ["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "manual.md", "skill-manifest.json"]
+const guideNames = ["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "cursor.md", "hermes.md", "manual.md", "skill-manifest.json"]
 
 export const artifactNames: ReadonlyArray<string> = [
   ...guideNames,

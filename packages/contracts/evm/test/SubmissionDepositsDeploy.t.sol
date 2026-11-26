@@ -21,6 +21,11 @@ contract SubmissionDepositsDeployTest {
 
     address internal constant OWNER = address(0xA11CE);
     address internal constant RESOLVER = address(0x5E501);
+    address internal constant MAINNET_DEPLOYER = 0x5d9823205961809c02ddeb9e736254367706eEDe;
+    uint256 internal constant MAINNET_DEPLOYER_NONCE = 1;
+    address internal constant MAINNET_SUBMISSION_DEPOSITS = 0xDe40B32A4156ABC2A05987367966d994BcFbf8D8;
+    bytes32 internal constant MAINNET_RUNTIME_CODEHASH =
+        0xe4c13bf58d547617ad10f4ee7bf4a43fb47ab68a4f6e841f5c22acd3874c55ef;
 
     event SubmissionDepositsDeployed(
         uint256 indexed chainId, address indexed deposits, address owner, address resolver, uint64 reclaimDelay
@@ -91,5 +96,18 @@ contract SubmissionDepositsDeployTest {
         base.deploy(OWNER, address(0));
         vm.expectRevert(refusal("owner and resolver must differ"));
         base.deploy(OWNER, OWNER);
+    }
+
+    function test_PinsMainnetDeploymentAddressAndRuntimeCodeHash() public {
+        require(
+            vm.computeCreateAddress(MAINNET_DEPLOYER, MAINNET_DEPLOYER_NONCE) == MAINNET_SUBMISSION_DEPOSITS,
+            "deployed address"
+        );
+        vm.chainId(8453);
+        SubmissionDeposits baseDeposits = base.deploy(OWNER, RESOLVER);
+        require(address(baseDeposits).codehash == MAINNET_RUNTIME_CODEHASH, "base runtime code hash");
+        vm.chainId(4663);
+        SubmissionDeposits robinhoodDeposits = robinhood.deploy(OWNER, RESOLVER);
+        require(address(robinhoodDeposits).codehash == MAINNET_RUNTIME_CODEHASH, "robinhood runtime code hash");
     }
 }

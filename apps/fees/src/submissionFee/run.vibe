@@ -1,15 +1,16 @@
-// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"
+// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"
 import type { FeeNetwork } from "../../gen/backend__submissionFeeTerms.ts"
 import type { SendConfig } from "../../gen/fees__submissionFeeSends.effect.vibe"
 import { type ResolverEnv, type ResolverSigner, SubmissionFeeSigners, resolverSecret, submissionFeeChain } from "./chain.vibe"
-import { type NetworkConfig, type SubmissionFeeEnv, SubmissionFeeConfigInvalid, parseConfig, parseMode } from "./config.vibe"
+import { type Mode, type NetworkConfig, type SubmissionFeeEnv, SubmissionFeeConfigInvalid, parseConfig, parseMode } from "./config.vibe"
 import { judgeDeposits } from "./judge.vibe"
 import { recheck, sendConfigOf } from "./parked.vibe"
 import { planResolutions } from "./plan.vibe"
 import { ratePass } from "./rate.vibe"
 import { scan } from "./scan.vibe"
 import { type SendOutcome, reconcile, send } from "./sends.vibe"
-import { type SolanaRunResult, type SolanaSubmissionFeeEnv, runSolanaSubmissionFee } from "./solanaWorker.vibe"
+import { SOLANA_SUBMISSION_FEE_NETWORK } from "./solanaProgram.ts"
+import { type SolanaDeploymentInput, type SolanaRunResult, type SolanaSubmissionFeeEnv, parseSolanaMode, runSolanaSubmissionFee } from "./solanaWorker.vibe"
 import { failureReason, labelled, message, step } from "./steps.vibe"
 
 export interface SubmissionFeeWorkerEnv extends SubmissionFeeEnv, ResolverEnv, SolanaSubmissionFeeEnv {}
@@ -34,8 +35,15 @@ export interface NetworkFailure {
 }
 
 export type DepositRun =
-  | { readonly status: "off"; readonly solana?: SolanaRunResult }
-  | { readonly status: "ran"; readonly mode: "dry_run" | "live"; readonly unset: ReadonlyArray<string>; readonly networks: ReadonlyArray<NetworkResult | NetworkFailure>; readonly solana?: SolanaRunResult }
+  | { readonly status: "off" }
+  | {
+      readonly status: "ran"
+      readonly mode: Mode
+      readonly solanaMode?: "dry_run" | "live"
+      readonly unset: ReadonlyArray<string>
+      readonly networks: ReadonlyArray<NetworkResult | SolanaRunResult | NetworkFailure>
+      readonly solana?: SolanaRunResult | NetworkFailure
+    }
 
 effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: ResolverSigner | null) {
   const unread: NetworkResult = { network: network.network, status: "ran", finalizedThrough: null, recorded: 0, resolved: 0, judged: 0, paid: 0, send: "none", parked: 0, released: 0 }
@@ -59,33 +67,55 @@ effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: R
   return { ...ran, ...sent, released } satisfies NetworkResult
 }
 
-export effect function depositPass(env: SubmissionFeeWorkerEnv, terms: ReadonlyArray<FeeNetwork>) {
-  const solana = (env.SUBMISSION_FEE_SOLANA_MODE ?? "off").trim() === "off"
-    ? undefined
-    : (try runSolanaSubmissionFee(env))
-  if ((try parseMode(env)) === "off") return { status: "off", ...solana === undefined ? {} : { solana } } satisfies DepositRun
-  const config = try parseConfig(env, terms)
-  if (config.mode === "off") return { status: "off", ...solana === undefined ? {} : { solana } } satisfies DepositRun
-  const mode = config.mode
-  for (const network of config.unset) {
-    try Effect.logInfo("submission_fee_contract_unset", { network })
-  }
-  const secret = mode === "live" ? resolverSecret(env) : undefined
-  if (mode === "live" && config.networks.length > 0 && secret === undefined)
-    throw new SubmissionFeeConfigInvalid({ issue: "live mode needs SUBMISSION_FEE_RESOLVER_KEY" })
-  const signers = try SubmissionFeeSigners
-  const networks: (NetworkResult | NetworkFailure)[] = []
-  for (const network of config.networks) {
-    const ran = effect {
-      const signer = secret === undefined ? null : try signers.evm(network.network, secret)
-      return try runNetwork(network, sendConfigOf(mode, signer !== null, network.gas), signer)
+export effect function depositPass(env: SubmissionFeeWorkerEnv, terms: ReadonlyArray<FeeNetwork>, solanaDeployment: SolanaDeploymentInput = {}) {
+  const evmMode = try parseMode(env)
+  const solanaMode = parseSolanaMode(env) catch () => "live" as const
+  if (evmMode === "off" && solanaMode === "off") return { status: "off" } satisfies DepositRun
+  const config = evmMode === "off" ? null : try parseConfig(env, terms)
+  const unset: string[] = [...config?.unset ?? []]
+  const networks: (NetworkResult | SolanaRunResult | NetworkFailure)[] = []
+  if (config !== null && config.mode !== "off") {
+    for (const network of config.unset) {
+      try Effect.logInfo("submission_fee_contract_unset", { network })
     }
-    const result = ran catch effect (error) => {
-      return { network: network.network, error: message(error), reason: failureReason(error) } satisfies NetworkFailure
+    const secret = config.mode === "live" ? resolverSecret(env) : undefined
+    if (config.mode === "live" && config.networks.length > 0 && secret === undefined)
+      throw new SubmissionFeeConfigInvalid({ issue: "live mode needs SUBMISSION_FEE_RESOLVER_KEY" })
+    const signers = try SubmissionFeeSigners
+    for (const network of config.networks) {
+      const ran = effect {
+        const signer = secret === undefined ? null : try signers.evm(network.network, secret)
+        return try runNetwork(network, sendConfigOf(config.mode === "live" ? "live" : "dry_run", signer !== null, network.gas), signer)
+      }
+      const result = ran catch effect (error) => {
+        return { network: network.network, error: message(error), reason: failureReason(error) } satisfies NetworkFailure
+      }
+      networks.push(result)
     }
-    networks.push(result)
   }
-  return { status: "ran", mode, unset: config.unset, networks, ...solana === undefined ? {} : { solana } } satisfies DepositRun
+  let solana: SolanaRunResult | NetworkFailure | undefined
+  if (solanaMode !== "off") {
+    const solanaNetwork = solanaDeployment.network ?? SOLANA_SUBMISSION_FEE_NETWORK
+    const solanaRan = step("config.solana", runSolanaSubmissionFee(env, solanaDeployment)) catch effect (error) => {
+      return { network: solanaNetwork, error: message(error), reason: failureReason(error) } satisfies NetworkFailure
+    }
+    if ("status" in solanaRan && solanaRan.status === "unset") {
+      unset.push(solanaNetwork)
+      try Effect.logInfo("submission_fee_contract_unset", { network: solanaNetwork })
+    } else if (!("status" in solanaRan) || solanaRan.status !== "off") {
+      solana = solanaRan
+      networks.push(solanaRan)
+    }
+  }
+  const activeSolanaMode = solanaMode === "off" ? undefined : solanaMode
+  return {
+    status: "ran",
+    mode: config?.mode ?? "off",
+    ...activeSolanaMode === undefined ? {} : { solanaMode: activeSolanaMode },
+    unset,
+    networks,
+    ...solana === undefined ? {} : { solana },
+  } satisfies DepositRun
 }
 
 export effect function ratePassOf(env: SubmissionFeeEnv, terms: ReadonlyArray<FeeNetwork>) {

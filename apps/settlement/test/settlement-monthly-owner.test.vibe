@@ -3,7 +3,7 @@ import { Request as WebRequest } from "miniflare"
 import type { D1Database, ExecutionContext, SqlValue } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
-import { Caller, Unauthenticated } from "@repo/platform/http"
+import { Caller, Refused, Unauthenticated } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { migrationsDir } from "@repo/platform/testing/paths"
@@ -14,6 +14,7 @@ import { coordinateMonthlyPayments } from "../src/monthly/coordinator.vibe"
 import { monthlyRoutes } from "../src/monthly/routes.vibe"
 import { monthlyFacts } from "../src/monthly/store.vibe"
 import { PaymentNetworks } from "../src/owner/networks.vibe"
+import { admitted } from "../src/owner/vaultSetup.vibe"
 
 interface Env {
   readonly SLOP_DB: D1Database
@@ -448,5 +449,63 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
       otherVault: 200, otherVaultNoticeLocksAtCutoff: false,
       sierraChanges: 1, sierraNotices: 0,
     })
+  })
+
+  it.effect('Vault setup authorization names a renamed repository by its current path (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan")', () => effect {
+    const manifest = JSON.stringify({
+      id: "renamed-vault",
+      status: "active",
+      repositories: [{ id: "acme/old-repo", githubUrl: "https://github.com/acme/renamed-repo/" }],
+      reward: { kind: "monthly-pool", chain: "base", monthlyCapMinor: "1000" },
+    })
+    const manifestSha256 = try sha256Hex(manifest)
+    const view: ProjectView = {
+      projectId: "renamed-vault",
+      revision: 2,
+      manifestSha256,
+      rowStatus: "Active",
+      manifestStatus: "Active",
+      listingTier: "Community",
+      retirement: "NotRetired",
+      stewardGithubId: steward,
+      stewardAccount: "UserSteward",
+      listing: { fromApplication: false },
+      repositories: [{ id: "501", nodeId: "R_501", fullName: "acme/renamed-repo", integrationBranch: "main", aliases: ["acme/old-repo"] }],
+      closureConsent: false,
+    }
+    const vaultServices = Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { return projectId === "renamed-vault" ? view : undefined },
+        byRepository: () => effect { return undefined },
+        byPath: () => effect { return undefined },
+        active: () => effect { return [view] },
+        pausedProjects: () => effect { return [] },
+        fence: () => effect { return sql`1` },
+        appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+      }),
+      Layer.succeed(RegistryManifests, {
+        current: () => effect { return [] },
+        project: (projectId) => effect { return projectId === "renamed-vault" ? { projectId, active: true, revision: 2, manifest, manifestSha256, updatedAt: "2026-11-01T00:00:00.000Z" } : undefined },
+      }),
+      Layer.succeed(Authority, {
+        repository: (read) => effect { return { ...read, permission: "PermissionVerified", installation: "Installed", repositoryAdmin: false } },
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: () => effect { return { restricted: false } },
+        fence: () => effect { return sql`1` },
+        unbanned: () => effect { return sql`1` },
+      }),
+      Layer.succeed(PaymentNetworks, { served: ["base-sepolia"], urls: () => effect { return undefined } }),
+    )
+    provide vaultServices {
+      const outcome = admitted("renamed-vault", { githubId: maintainer, login: "maintainer" }) catch (error) =>
+        error instanceof Refused ? { status: error.status, code: error.code, message: error.message } : error._tag
+      try same(outcome, {
+        status: 403,
+        code: "vault_authority_required",
+        message: "Only the project steward or an admin of acme/renamed-repo can set up the project vault.",
+      })
+    }
   })
 })

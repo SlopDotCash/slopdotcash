@@ -3,14 +3,14 @@ import { maxMemoBytes } from "../../../gen/points__collectionMemo.effect.vibe"
 import { GitHub } from "@repo/platform/github"
 import { zipContent, zipEntries } from "../../ingestion/archive.ts"
 import { CheckpointInvalid } from "../../ingestion/discussions.vibe"
-import { ArtifactListing, type RestoreOptions, WorkflowRun, checkpointDirectoryName, downloaded, extracted, git, selectedArtifact } from "../../ingestion/restore.vibe"
+import { ArtifactListing, type RestoreOptions, type WorkflowRun, checkpointDirectoryName, downloaded, extracted, git, selectedArtifact } from "../../ingestion/restore.vibe"
 
 export const memoFileName = "collection-memo.json"
 export const implementationMemoFileName = "accepted-implementation-memo.json"
 export const maxMemoArchiveBytes = maxMemoBytes + 1024 * 1024
 export const maxMemoAgeMs = 7 * 24 * 60 * 60 * 1000
 export const memoDownloadTimeoutMs = 300_000
-const maxRuns = 40
+const maxAttempts = 5
 const memoArtifact = /^collection-memo-([1-9][0-9]{0,5})$/u
 const implementationMemoArtifact = /^accepted-implementation-memo-([1-9][0-9]{0,5})$/u
 const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
@@ -22,7 +22,18 @@ const trustedEvents: ReadonlyArray<string> = ["push", "workflow_dispatch", "sche
 
 export error MemoRestoreRefused { message: string }
 
-export schema WorkflowRuns { readonly workflow_runs: ReadonlyArray<WorkflowRun> }
+export schema ProducerWorkflowRun {
+  readonly id: number
+  readonly head_sha: string
+  readonly head_branch: string
+  readonly event: string
+  readonly path: string
+  readonly status: string
+  readonly run_attempt: number
+  readonly created_at: string
+  readonly repository: { readonly full_name: string }
+  readonly head_repository: { readonly full_name: string }
+}
 
 export interface Restored {
   readonly memo: boolean
@@ -98,15 +109,32 @@ function messageOf(error: { readonly _tag: string }) {
   return "message" in error && typeof error.message === "string" && error.message !== "" ? error.message : error._tag
 }
 
-effect function trustedRuns(repo: string, currentRun: string) {
+effect function candidateRunIds(repo: string, currentRun: string, now: number) {
   const github = try GitHub
-  const listed = try github.json(`/repos/${repo}/actions/workflows/deploy.yml/runs?branch=main&status=completed&per_page=${maxRuns}`, WorkflowRuns)
-  const runs: ProducerRun[] = []
-  for (const answered of listed.workflow_runs) {
-    const run = String(answered.id) === currentRun ? undefined : trustedProducerRun(answered, repo)
-    if (run !== undefined) runs.push(run)
+  const found = new Set<string>()
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const listing = try github.json(`/repos/${repo}/actions/artifacts?name=collection-memo-${attempt}&per_page=100`, ArtifactListing)
+    for (const artifact of listing.artifacts) {
+      if (artifact.expired) continue
+      const created = Date.parse(artifact.created_at)
+      const runId = String(artifact.workflow_run.id)
+      if (Number.isFinite(created) && now - created >= 0 && now - created <= maxMemoAgeMs && positiveId.test(runId) && runId !== currentRun) found.add(runId)
+    }
   }
-  return runs
+  return [...found]
+}
+
+effect function trustedRuns(repo: string, currentRun: string, now: number) {
+  const github = try GitHub
+  const runs: Array<{ readonly run: ProducerRun; readonly createdAt: number }> = []
+  for (const runId of try candidateRunIds(repo, currentRun, now)) {
+    const answered = try github.json(`/repos/${repo}/actions/runs/${runId}`, ProducerWorkflowRun)
+    if (String(answered.id) !== runId) continue
+    const createdAt = Date.parse(answered.created_at)
+    const run = Number.isFinite(createdAt) ? trustedProducerRun(answered, repo) : undefined
+    if (run !== undefined) runs.push({ run, createdAt })
+  }
+  return runs.sort((left, right) => right.createdAt - left.createdAt || Number(right.run.id) - Number(left.run.id)).map(({ run }) => run)
 }
 
 effect function isAncestor(run: ProducerRun, currentSha: string) {
@@ -166,7 +194,7 @@ export effect function restoreMemo(options: RestoreOptions) {
   const fs = try FileSystem.FileSystem
   const search = effect {
     const currentRun = try Config.String("GITHUB_RUN_ID")
-    for (const run of try trustedRuns(repo, currentRun)) {
+    for (const run of try trustedRuns(repo, currentRun, now)) {
       if (!(try isAncestor(run, currentSha))) continue
       const restored = try restoredFromRun(options, repo, run, output, wantDiscussions, now)
       if (restored !== undefined) return restored

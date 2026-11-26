@@ -63,9 +63,20 @@ const AGENT_INSTRUCTIONS = new Set([
   "claude.local.md",
   "llms.txt",
 ]);
-const PACKAGE_MANAGER_CONFIGS = new Set([".npmrc", ".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", "bunfig.toml"]);
+const PACKAGE_MANAGER_CONFIGS = new Set([
+  ".npmrc",
+  ".pypirc",
+  ".yarnrc",
+  ".yarnrc.yml",
+  ".pnpmfile.cjs",
+  "bunfig.toml",
+  "pip.conf",
+  "pip.ini",
+]);
 const INSTALL_FILES = new Set([
   "setup.py",
+  "setup.hs",
+  "setup.lhs",
   "build.rs",
   "extconf.rb",
   "makefile",
@@ -133,6 +144,7 @@ export const MSBUILD_RECIPE = new RegExp(String.raw`\.(?:${MSBUILD_EXTENSIONS})$
 export const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
 export const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 export const CMAKE_SOURCE = /(?:^|\/)cmakelists\.txt$|\.cmake$/iu;
+const CARGO_CONFIG = /(?:^|\/)\.cargo\/config(?:\.toml)?$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 export const EXECUTABLE_BINARIES = /\.(?:node|wasm|so|dylib|dll|exe|jar|pyc|class|bin|a|o)$/iu;
@@ -189,6 +201,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     INSTALL_FILES.has(name) ||
     rubyManifest ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
+    CARGO_CONFIG.test(lower) ||
     BUILD_RECIPE.test(lower) ||
     inDirectory(lower, ".husky") ||
     inDirectory(lower, ".devcontainer") ||

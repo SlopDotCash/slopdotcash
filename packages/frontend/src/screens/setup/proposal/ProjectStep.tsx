@@ -82,7 +82,7 @@ export function ProjectStep({ proposal: p, picker, branches, branchesLoading, ex
       {text({ field: "headline", label: "Short description" })}
       <TextField label="Goal" name="goal" multiline value={p.goal} error={shown("goal")} onChange={(value) => onChange("goal", value)} />
       <div className="grid gap-4 sm:grid-cols-2">
-        <TextField label="Website (optional)" name="website" placeholder="https://example.com" value={p.website} error={shown("website")} onChange={(value) => onChange("website", value)} />
+        <TextField label="Website (optional)" name="website" type="url" placeholder="https://example.com" value={p.website} error={shown("website")} onChange={(value) => onChange("website", value)} />
         <TextField label="X account (optional)" name="x" placeholder="@handle" value={p.x} error={shown("x")} onChange={(value) => onChange("x", value)} />
       </div>
       <TextField label="Acceptance criteria" name="criteria" multiline value={p.criteria} error={shown("criteria")} onChange={(value) => onChange("criteria", value)} />

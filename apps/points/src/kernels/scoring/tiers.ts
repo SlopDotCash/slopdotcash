@@ -1,5 +1,6 @@
 //@ backend dafny
 // spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- referenced in Dafny //@ ensures contract
 import { sizePoints } from "../../../gen/points__allocation.ts";
 
 export type ScoreTier = "micro" | "small" | "medium" | "large" | "xl" | "exceptional";
