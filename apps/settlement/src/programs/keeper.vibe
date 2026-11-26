@@ -4,7 +4,7 @@ import { commandModeLabel, journalRegistry, keeperConfig, modelConfiguration } f
 import { hasFailures } from "../keeper/diagnostics.vibe"
 import { processVariable } from "../keeper/environment.ts"
 import { configuredStart, keeperCore } from "../keeper/lifecycle.vibe"
-import { keeperTick } from "../keeper/run.vibe"
+import { type SelectedAward, keeperTick } from "../keeper/run.vibe"
 import { operatorKey } from "../keeper/signer.vibe"
 import { operatorSolanaSeed } from "../keeper/solana.vibe"
 import { IDENTITY_KEY, openKeeperStore, recordOf } from "../keeper/store.vibe"
@@ -12,33 +12,50 @@ import { IDENTITY_KEY, openKeeperStore, recordOf } from "../keeper/store.vibe"
 export error KeeperArguments { message: string }
 export error KeeperUnavailable { message: string }
 
-const USAGE = "Use --config <operator.json> --journal <persistent.sqlite>; omit --execute for read-only chain checks"
+const USAGE = "Use --config <operator.json> --journal <persistent.sqlite>; add --award-id <id> for one funded award; optionally supply --reservation <transaction:index>; omit --execute for read-only chain checks"
 
 interface Arguments {
   readonly config: string
   readonly journal: string
   readonly execute: boolean
+  readonly award?: SelectedAward
 }
 
 effect function parsed(args: ReadonlyArray<string>) {
   let config: string | undefined = undefined
   let journal: string | undefined = undefined
+  let awardId: string | undefined = undefined
+  let reservation: SelectedAward["reservation"]
   let execute = false
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index]
     if (flag === "--execute" && !execute) execute = true
     else if (flag === "--config" && config === undefined) config = args[++index]
     else if (flag === "--journal" && journal === undefined) journal = args[++index]
+    else if (flag === "--award-id" && awardId === undefined) {
+      awardId = args[++index]
+      if (awardId === undefined || !/^(?:0x)?[0-9a-f]{64}$/u.test(awardId)) throw new KeeperArguments({ message: USAGE })
+    }
+    else if (flag === "--reservation" && reservation === undefined) {
+      const reference = /^([0-9a-zA-Z]+):(0|[1-9][0-9]*)$/u.exec(args[++index] ?? "")
+      const eventIndex = Number(reference?.[2])
+      if (reference === null || !Number.isSafeInteger(eventIndex)) throw new KeeperArguments({ message: USAGE })
+      reservation = { transactionId: reference[1], eventIndex }
+    }
     else throw new KeeperArguments({ message: USAGE })
   }
   if (config === undefined || journal === undefined) throw new KeeperArguments({ message: USAGE })
-  return { config, journal, execute } satisfies Arguments
+  if (awardId === undefined && reservation !== undefined) throw new KeeperArguments({ message: USAGE })
+  const award = awardId === undefined ? undefined : { id: awardId, ...reservation === undefined ? {} : { reservation } }
+  return { config, journal, execute, ...award === undefined ? {} : { award } } satisfies Arguments
 }
 
 export effect function keeperCommand(args: ReadonlyArray<string>) {
   const options = try parsed(args)
   const text = (try FileSystem.FileSystem).readFileString(options.config) catch effect () => { throw new KeeperArguments({ message: USAGE }) }
   const config = try keeperConfig(text, undefined)
+  if (options.award !== undefined && (config.projectIds.length !== 1 || options.award.id.startsWith("0x") !== (config.family === "evm")))
+    throw new KeeperArguments({ message: "Select one configured project and an award ID in the configured chain format" })
   const mode = options.execute ? "Execute" as const : "DryRun" as const
   provide Layer.mergeAll(fileJournal(options.journal), operatorKey(() => options.execute ? processVariable("KEEPER_EVM_PRIVATE_KEY") : undefined), operatorSolanaSeed(() => options.execute ? processVariable("KEEPER_SOLANA_SIGNER_SEED") : undefined)) {
     try openKeeperStore()
@@ -46,7 +63,7 @@ export effect function keeperCommand(args: ReadonlyArray<string>) {
     const core = try keeperCore(try configuredStart(modelConfiguration(mode, config, 0), journalRegistry(stored, config)))
     try core.admit(1, "InternalTick")
     const started = try core.begin(1)
-    const run = try keeperTick(core, started.runId, config, mode)
+    const run = try keeperTick(core, started.runId, config, mode, options.award)
     try Console.log(JSON.stringify({ mode: commandModeLabel(mode), network: config.network, results: run.results }, null, 2))
     if (hasFailures(run.results)) throw new KeeperUnavailable({ message: "Operator keeper has unavailable work; durable attempts are retained" })
   }

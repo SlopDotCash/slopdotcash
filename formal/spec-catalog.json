@@ -27346,7 +27346,7 @@
     },
     {
       "path": "spec/settlement/keeperScan.md",
-      "sha256": "67ada5f6f952a8f7949dbf97fb7d383982ee50e0edf638c8dcf0e7ce8b07cc0a",
+      "sha256": "abb9e02a84d556af4e3083d4df30c1b436fd24d9eb950958043d19c21bbbed49",
       "module": "settlement__keeperScan",
       "stories": [
         {
@@ -27374,7 +27374,7 @@
         },
         {
           "heading": "Story: Preserve the operation that failed during a keeper run / Returning to scanning requires successful receipt verification and indexing",
-          "line": 54,
+          "line": 65,
           "definitions": [
             "canBeginReceipt",
             "beginReceipt",
@@ -27418,7 +27418,7 @@
         },
         {
           "target": "./keeperDiagnostics.md",
-          "line": 60
+          "line": 71
         }
       ]
     },

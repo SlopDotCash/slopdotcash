@@ -205,13 +205,17 @@ effect function gasRows() {
   }))
 }
 
-effect function award(actor: bigint, source: bigint, gross: bigint) {
+effect function awardReservation(actor: bigint, source: bigint, gross: bigint) {
   const { escrow, vault } = try Bench
   const sourceDigest = word(source)
   const id = try Effect.try(() => awardId(escrow.chainId, vault, sourceDigest))
   const data = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id, actor, gross, sourceDigest }))
-  try promise(() => escrow.send(escrow.roles.owner.address, vault, data))
-  return id
+  const receipt = try promise(() => escrow.send(escrow.roles.owner.address, vault, data))
+  return { id, receipt }
+}
+
+effect function award(actor: bigint, source: bigint, gross: bigint) {
+  return (try awardReservation(actor, source, gross)).id
 }
 
 effect function bind(actor: bigint, wallet: Account) {
@@ -392,10 +396,10 @@ effect function writtenConfig(file: string, text: string) {
   return path
 }
 
-effect function spawnKeeper(program: string, configPath: string) {
+effect function spawnKeeper(program: string, configPath: string, args: ReadonlyArray<string> = ["--execute"]) {
   const { journalPath, operator } = try Bench
   const spawner = try ChildProcessSpawner.ChildProcessSpawner
-  return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, "--execute"], { env: { KEEPER_EVM_PRIVATE_KEY: operator.privateKey }, extendEnv: true }))
+  return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, ...args], { env: { KEEPER_EVM_PRIVATE_KEY: operator.privateKey }, extendEnv: true }))
 }
 
 layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServices.layer)), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
@@ -421,6 +425,50 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       first: ["submitted", "awaiting-wallet"],
       second: [undefined, "awaiting-wallet"],
       gas: [true],
+    })
+  })
+
+  it.effect('The keeper CLI can settle one exact funded award while leaving other executable awards alone (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing")', () => effect {
+    const { escrow, program, vault } = try Bench
+    const { id: selected, receipt } = try awardReservation(190n, 0xa190n, 7_000n)
+    const other = try award(191n, 0xa191n, 8_000n)
+    try bind(190n, escrow.roles.recipient)
+    try bind(191n, escrow.roles.donor)
+    try finalize()
+    const config = try writtenConfig("exact-award.json", try operatorConfig(escrow.chain.url))
+    const before = try operatorNonce()
+    const run = (id: string, execute: boolean, reservation?: string) => scoped(effect {
+      const args = ["--award-id", id, ...reservation === undefined ? [] : ["--reservation", reservation], ...execute ? ["--execute"] : []]
+      const handle = try spawnKeeper(program, config, args)
+      const [stdout, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode]
+      const result = try Effect.try(() => JSON.parse(stdout) as KeeperRun)
+      return { code: Number(code), results: result.results.map(({ operation, state }) => [operation, state]) }
+    })
+    const dry = try run(selected, false)
+    const commitment = decodeEscrowLogs(vault, try promise(() => escrow.logs(vault, receipt.blockNumber, receipt.blockNumber)))
+      .find((log) => log.kind === "event" && log.event.name === "AwardCommitted" && log.event.id === selected)
+    if (commitment === undefined) return try die(new Error("test award reservation has no event"))
+    const index = commitment.at.index
+    try journal(inTransaction((tx) => tx.run(sql`DELETE FROM awards WHERE id = ${selected}`)))
+    const absent = try run(selected, true)
+    const badReference = try run(selected, true, `${receipt.transactionHash}:${index + 1}`)
+    const withoutSend = try operatorNonce()
+    const submitted = try run(selected, true, `${receipt.transactionHash}:${index}`)
+    try settled()
+    const verified = try run(selected, true)
+    const after = try operatorNonce()
+    const stillReady = try run(other, false)
+    try run(other, true)
+    try settled()
+    try same({ dry, absent, badReference, readSends: withoutSend - before, submitted, verified, sends: after - before, stillReady }, {
+      dry: { code: 0, results: [[`award:${selected}`, "ready"]] },
+      absent: { code: 1, results: [[`award:${selected}`, "unavailable"]] },
+      badReference: { code: 1, results: [["deployment", "unavailable"]] },
+      readSends: 0n,
+      submitted: { code: 0, results: [[`award:${selected}`, "submitted"]] },
+      verified: { code: 0, results: [[`award:${selected}`, "paid"]] },
+      sends: 1n,
+      stillReady: { code: 0, results: [[`award:${other}`, "ready"]] },
     })
   })
 

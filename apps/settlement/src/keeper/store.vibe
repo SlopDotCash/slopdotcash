@@ -73,6 +73,15 @@ export effect function unpaidAwards(scope: string, limit: number) {
   })
 }
 
+schema SelectedAwardRow { readonly id: string; readonly actor: string; readonly paid: number }
+
+export effect function indexedAward(scope: string, id: string) {
+  return try inTransaction((tx) => effect {
+    const [row] = try decoded(SelectedAwardRow, try tx.all(sql`SELECT id, actor, payment IS NOT NULL AS paid FROM awards WHERE scope = ${scope} AND id = ${id}`), "keeper selected award")
+    return row
+  })
+}
+
 schema ReserveRow { readonly reserve: string }
 schema ReservedEvidence { readonly sourceDigest: string }
 
