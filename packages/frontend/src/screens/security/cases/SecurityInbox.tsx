@@ -118,6 +118,7 @@ export function CasesView({ list, filter, onFilter, selected, onOpen, note, refr
 }
 
 function initialCase(): string | null {
+  if (typeof location === "undefined") return null;
   const id = new URLSearchParams(location.search).get("case");
   return id !== null && casePattern.test(id) ? id : null;
 }
@@ -133,12 +134,21 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
   const reload = () => void run(section, loadCases(owner));
   const open = (caseId: string | null) => {
     setSelected(caseId);
-    const query = new URLSearchParams(location.search);
-    if (caseId) query.set("case", caseId);
-    else query.delete("case");
-    history.replaceState(history.state, "", `${embedded ? "/inbox" : "/security"}?${query}`);
-    if (caseId) reload();
-    else void run(section, openCase(owner, null));
+    if (typeof location !== "undefined" && typeof history !== "undefined") {
+      const query = new URLSearchParams(location.search);
+      if (caseId) query.set("case", caseId);
+      else query.delete("case");
+      const suffix = query.size > 0 ? `?${query}` : "";
+      history.replaceState(history.state, "", `${embedded ? "/inbox" : "/security"}${suffix}`);
+    }
+    if (caseId) {
+      reload();
+      if (typeof document !== "undefined") {
+        requestAnimationFrame(() => {
+          document.getElementById("security-case-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+    } else void run(section, openCase(owner, null));
   };
   const created = (value: unknown) => {
     const record = caseOf(value);
@@ -174,7 +184,7 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
           note={note}
           refreshError={list.refreshError}
           onReload={reload}
-          detail={selected ? <CaseDetail key={selected} runtime={section} owner={owner} caseId={selected} payment={payment} /> : null}
+          detail={selected ? <div id="security-case-detail"><CaseDetail key={selected} runtime={section} owner={owner} caseId={selected} payment={payment} /></div> : null}
           reports={(cases) => (
             <SecurityReports
               runtime={runtime}

@@ -4,6 +4,8 @@ import { Alert, Button, DataState, PageHeader, Spinner } from "@repo/ui";
 import { Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PageProps } from "../../app/pages.ts";
+import { PageShell } from "../../app/PageShell.tsx";
+import { ReferralClaims } from "./ReferralClaims.tsx";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import type { AccessLost } from "../../wallets/core/binding.vibe";
 import { loginHrefFor, useSession } from "../../app/useSession.ts";
@@ -120,10 +122,9 @@ function DirectTransfers({ account }: { account: PaymentsAccount }) {
   );
 }
 
-/** The signed-in account's awards, payments, direct transfers and contributor allocation, each with its own state; nothing is shown as paid without finalized evidence. */
-export function PayoutsView({ loading, signedOut, loginHref, problem, account, onRetry, consent, allocation }: PayoutsViewProps) {
+export function PayoutsView({ loading, signedOut, loginHref, problem, account, onRetry, consent, allocation, referrals }: PayoutsViewProps & { referrals?: ReactNode }) {
   return (
-    <main className="mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8">
+    <PageShell width="lg" gap="6">
       <PageHeader
         title="Payouts"
         icon={<Wallet className="size-6" />}
@@ -157,7 +158,8 @@ export function PayoutsView({ loading, signedOut, loginHref, problem, account, o
           {allocation}
         </>
       ) : null}
-    </main>
+      {referrals}
+    </PageShell>
   );
 }
 
@@ -191,6 +193,7 @@ export function PayoutsPage({ runtime }: PageProps) {
       onRetry={feed.restart}
       consent={account ? (payment) => <PayoutConsent runtime={runtime} account={account} payment={payment} onAccessLost={(lost) => feed.publish(lostShown(lost))} /> : undefined}
       allocation={account ? <AllocationSection runtime={runtime} account={account} /> : undefined}
+      referrals={actor !== "" ? <ReferralClaims runtime={runtime} githubId={actor} /> : undefined}
     />
   );
 }

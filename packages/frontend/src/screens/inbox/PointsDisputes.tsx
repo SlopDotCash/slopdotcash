@@ -1,9 +1,9 @@
 // spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
-import { Alert, Button, Field, ListItem, Textarea } from "@repo/ui";
+import { Alert, Button, ExternalLink, Field, ListItem, Textarea } from "@repo/ui";
 import { type FormEvent, useState } from "react";
 import { formatDateTime } from "../../app/format.ts";
+import { run, useMounted } from "../../app/hooks.ts";
 import { disputeStateLabel } from "../../flows/account/disputes.vibe";
-import { run, useMounted } from "../security/program/hooks.ts";
 import type { AwardList, Dispute } from "./fixtures.ts";
 import { type InboxRuntime, answerReview, pointsReview, requestReview } from "./runtime.vibe";
 
@@ -35,9 +35,9 @@ const points = (amount: number) => `${amount.toLocaleString()} points`;
 
 function OriginalWork({ href }: { href: string }) {
   return (
-    <a href={href} className="text-primary underline underline-offset-4">
+    <ExternalLink href={href} className="text-primary underline underline-offset-4">
       Original work
-    </a>
+    </ExternalLink>
   );
 }
 
@@ -45,6 +45,7 @@ function FilingForm({ item, busy, onBack, onFile }: { item: DisputedAward; busy:
   const [reason, setReason] = useState("");
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
     onFile(reason);
   };
   return (
@@ -125,9 +126,9 @@ function AwardRows({ list, busy, onOlder, onReview }: { list: AwardList; busy: b
             <ListItem
               key={item.revisionId}
               title={
-                <a href={item.award.sourceUrl} className="underline-offset-4 hover:underline">
+                <ExternalLink href={item.award.sourceUrl} className="underline-offset-4 hover:underline">
                   {item.award.projectId} · {formatDateTime(item.award.occurredAt)}
-                </a>
+                </ExternalLink>
               }
               trailing={<strong>{points(item.award.amount)}</strong>}
               actions={
@@ -231,6 +232,7 @@ export function PointsReview({ section, actor }: { section: InboxRuntime; actor:
     setReads((value) => value + 1);
   };
   const act = (work: Sent) => {
+    if (busy) return;
     setBusy(true);
     setError(undefined);
     void run(section, work).then((done) => {

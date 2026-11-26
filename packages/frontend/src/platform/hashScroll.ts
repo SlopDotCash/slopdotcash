@@ -26,21 +26,19 @@ const readerInputs = ["keydown", "pointerdown", "touchstart", "wheel"] as const
 const positionPrefix = "slop:hash-scroll:"
 
 function targetIdOf(hash: string): string {
+  if (hash === "") return ""
   try {
-    return hash === "" ? "" : decodeURIComponent(hash.slice(1))
+    return decodeURIComponent(hash.slice(1))
   } catch {
     return ""
   }
 }
 
 function alignmentKeyOf(href: string): string {
-  try {
-    const url = new URL(href)
-    if (url.pathname === "/") url.searchParams.delete("audience")
-    return url.href
-  } catch {
-    return href
-  }
+  const url = URL.parse(href)
+  if (url === null) return href
+  if (url.pathname === "/") url.searchParams.delete("audience")
+  return url.href
 }
 
 function entryOf(state: unknown): Entry | undefined {
@@ -50,8 +48,10 @@ function entryOf(state: unknown): Entry | undefined {
 }
 
 function positionOf(key: string): Position | undefined {
+  const raw = webStorage("session")?.getItem(positionPrefix + key)
+  if (!raw) return undefined
   try {
-    const stored: unknown = JSON.parse(webStorage("session")?.getItem(positionPrefix + key) ?? "null")
+    const stored: unknown = JSON.parse(raw)
     return typeof stored === "object" && stored !== null && "left" in stored && "top" in stored && typeof stored.left === "number" && typeof stored.top === "number" ? { left: stored.left, top: stored.top } : undefined
   } catch {
     return undefined
@@ -67,26 +67,19 @@ function keepPosition(key: string, position: Position) {
 }
 
 function traversedHere(): Position | undefined {
-  try {
-    const [navigation] = performance.getEntriesByType("navigation")
-    const entry = entryOf(history.state)
-    return navigation instanceof PerformanceNavigationTiming && navigation.type === "back_forward" && entry?.href === location.href ? positionOf(entry.key) : undefined
-  } catch {
-    return undefined
-  }
+  if (typeof performance === "undefined" || typeof history === "undefined" || typeof location === "undefined") return undefined
+  const [navigation] = performance.getEntriesByType("navigation")
+  const entry = entryOf(history.state)
+  return navigation instanceof PerformanceNavigationTiming && navigation.type === "back_forward" && entry?.href === location.href ? positionOf(entry.key) : undefined
 }
 
 function reveal(targetId: string) {
-  try {
-    const target = document.getElementById(targetId)
-    if (target === null) return
-    for (let parent: HTMLElement | null = target; parent !== null; parent = parent.parentElement) {
-      if (parent instanceof HTMLDetailsElement) parent.open = true
-    }
-    target.scrollIntoView({ behavior: "auto", block: "start" })
-  } catch {
-    return
+  const target = document.getElementById(targetId)
+  if (target === null) return
+  for (let parent: HTMLElement | null = target; parent !== null; parent = parent.parentElement) {
+    if (parent instanceof HTMLDetailsElement) parent.open = true
   }
+  target.scrollIntoView({ behavior: "auto", block: "start" })
 }
 
 function decided(alignment: Alignment, decide: (alignment: HashAlignment) => AlignTo): AlignTo {
@@ -94,21 +87,19 @@ function decided(alignment: Alignment, decide: (alignment: HashAlignment) => Ali
 }
 
 /** @throws {never} */
-export function listenForFragments(decide: (alignment: HashAlignment) => AlignTo): void {
+export function listenForFragments(decide: (alignment: HashAlignment) => AlignTo): () => void {
+  if (typeof window === "undefined" || typeof document === "undefined" || typeof location === "undefined") return () => {}
+
   let previous: Entry | undefined
   let active: Alignment | undefined
   let observer: MutationObserver | undefined
   let frame = 0
 
   function settle() {
-    try {
-      observer?.disconnect()
-      observer = undefined
-      cancelAnimationFrame(frame)
-      for (const type of readerInputs) removeEventListener(type, takeOver, true)
-    } catch {
-      return
-    }
+    observer?.disconnect()
+    observer = undefined
+    cancelAnimationFrame(frame)
+    for (const type of readerInputs) removeEventListener(type, takeOver, true)
   }
 
   function align() {
@@ -116,12 +107,8 @@ export function listenForFragments(decide: (alignment: HashAlignment) => AlignTo
     if (alignment === undefined) return
     const decision = decided(alignment, decide)
     if (decision === "NoAlignment") return settle()
-    try {
-      if (decision === "RestorePosition" && alignment.restore !== undefined) scrollTo({ ...alignment.restore, behavior: "instant" })
-      else reveal(alignment.targetId)
-    } catch {
-      settle()
-    }
+    if (decision === "RestorePosition" && alignment.restore !== undefined) scrollTo({ ...alignment.restore, behavior: "instant" })
+    else reveal(alignment.targetId)
   }
 
   function takeOver() {
@@ -130,61 +117,60 @@ export function listenForFragments(decide: (alignment: HashAlignment) => AlignTo
   }
 
   function remember() {
-    try {
-      const alignment = active
-      if (alignment === undefined || alignment.entry.href !== location.href) return
-      const decision = decided(alignment, decide)
-      if (alignment.restore !== undefined && decision !== "NoAlignment") return align()
-      if (decision === "NoAlignment") settle()
-      keepPosition(alignment.entry.key, { left: scrollX, top: scrollY })
-    } catch {
-      return
-    }
+    const alignment = active
+    if (alignment === undefined || alignment.entry.href !== location.href) return
+    const decision = decided(alignment, decide)
+    if (alignment.restore !== undefined && decision !== "NoAlignment") return align()
+    if (decision === "NoAlignment") settle()
+    keepPosition(alignment.entry.key, { left: scrollX, top: scrollY })
   }
 
   function open(restoring: Position | undefined) {
-    try {
-      const href = location.href
-      if (previous?.href === href) return
-      const key = alignmentKeyOf(href)
-      const queryOnly = previous !== undefined && previous.key === key
-      previous = { key, href }
-      settle()
-      active = undefined
-      const targetId = targetIdOf(new URL(href).hash)
-      if (targetId === "") return
-      const earlier = entryOf(history.state)
-      const entry = { key: earlier?.href === href ? earlier.key : crypto.randomUUID(), href }
-      history.replaceState({ ...history.state, __slopHashScroll: entry }, "")
-      const restore = restoring ?? (queryOnly ? { left: scrollX, top: scrollY } : undefined)
-      if (restore !== undefined) keepPosition(entry.key, restore)
-      active = { entry, targetId, restore, restoring: restoring !== undefined, queryOnly: restoring === undefined && queryOnly, startedMs: performance.now(), readerInput: false }
-      for (const type of readerInputs) addEventListener(type, takeOver, { capture: true, passive: type !== "wheel" })
+    const href = location.href
+    if (previous?.href === href) return
+    const key = alignmentKeyOf(href)
+    const queryOnly = previous !== undefined && previous.key === key
+    previous = { key, href }
+    settle()
+    active = undefined
+    const parsed = URL.parse(href)
+    const targetId = parsed === null ? "" : targetIdOf(parsed.hash)
+    if (targetId === "") return
+    const earlier = entryOf(history.state)
+    const entry = { key: earlier?.href === href ? earlier.key : crypto.randomUUID(), href }
+    const currentState = typeof history.state === "object" && history.state !== null ? history.state : {}
+    history.replaceState({ ...currentState, __slopHashScroll: entry }, "")
+    const restore = restoring ?? (queryOnly ? { left: scrollX, top: scrollY } : undefined)
+    if (restore !== undefined) keepPosition(entry.key, restore)
+    active = { entry, targetId, restore, restoring: restoring !== undefined, queryOnly: restoring === undefined && queryOnly, startedMs: performance.now(), readerInput: false }
+    for (const type of readerInputs) addEventListener(type, takeOver, { capture: true, passive: type !== "wheel" })
+    if (document.body !== null) {
       observer = new MutationObserver(align)
       observer.observe(document.body, { childList: true, subtree: true })
-      frame = requestAnimationFrame(align)
-      align()
-      void document.fonts.ready.then(align)
-    } catch {
-      return
     }
+    frame = requestAnimationFrame(align)
+    align()
+    if (document.fonts !== undefined) void document.fonts.ready.then(align)
   }
 
   function traversed(event: PopStateEvent) {
-    try {
-      const entry = entryOf(event.state)
-      open(event.isTrusted && entry?.href === location.href ? positionOf(entry.key) : undefined)
-    } catch {
-      return
-    }
+    const entry = entryOf(event.state)
+    open(event.isTrusted && entry?.href === location.href ? positionOf(entry.key) : undefined)
   }
 
-  try {
-    addEventListener("popstate", traversed)
-    addEventListener("hashchange", () => open(undefined))
-    addEventListener("scroll", remember, { passive: true })
-    open(traversedHere())
-  } catch {
-    return
+  function onHashChange() {
+    open(undefined)
+  }
+
+  addEventListener("popstate", traversed)
+  addEventListener("hashchange", onHashChange)
+  addEventListener("scroll", remember, { passive: true })
+  open(traversedHere())
+
+  return () => {
+    settle()
+    removeEventListener("popstate", traversed)
+    removeEventListener("hashchange", onHashChange)
+    removeEventListener("scroll", remember)
   }
 }

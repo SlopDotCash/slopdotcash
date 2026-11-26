@@ -1,6 +1,6 @@
 // spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"
 import { Cause, type Effect, Exit, type ManagedRuntime } from "effect";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BountyRefused } from "../../../wallets/bounty/paymentCase.vibe";
 
 export type Acted<A> = { readonly ok: true; readonly value: A } | { readonly ok: false; readonly message: string; readonly stale: boolean };
@@ -30,16 +30,16 @@ export interface Action {
 /** One control group's running action: a second start while one runs is ignored, as the old `sending` guard did. `onStart` runs when an action really starts. */
 export function useAction(onStart?: () => void): Action {
   const [state, setState] = useState<{ busy: boolean; error: string | null; stale: boolean }>({ busy: false, error: null, stale: false });
-  const [guard] = useState(() => ({ running: false }));
+  const running = useRef(false);
   return {
     ...state,
     run(work, done) {
-      if (guard.running) return;
-      guard.running = true;
+      if (running.current) return;
+      running.current = true;
       onStart?.();
       setState({ busy: true, error: null, stale: false });
       void work().then((result) => {
-        guard.running = false;
+        running.current = false;
         if (result.ok) {
           setState({ busy: false, error: null, stale: false });
           done?.(result.value);

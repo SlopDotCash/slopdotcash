@@ -1,0 +1,146 @@
+// spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"
+import { fetchBounded } from "../platform/bounded.vibe"
+import { Unreadable } from "./resource.vibe"
+
+export const RECORD_DATA_PATH = "/data/record.json"
+const RECORD_MAX_BYTES = 4 * 1024 * 1024
+
+const RecordPool = Schema.Struct({
+  projectId: Schema.String,
+  month: Schema.String,
+  capUsdc: Schema.Number,
+  allocatedUsdc: Schema.Number,
+  paidUsdc: Schema.Number,
+  transfers: Schema.Number,
+  rows: Schema.Number,
+  unclaimedRows: Schema.Number,
+  unclaimedUsdc: Schema.Number,
+  firstAt: Schema.NullOr(Schema.String),
+  exampleSignature: Schema.NullOr(Schema.String),
+  file: Schema.optional(Schema.String),
+})
+
+const RecordSettlement = Schema.Struct({
+  projectId: Schema.String,
+  month: Schema.String,
+  capUsdc: Schema.NullOr(Schema.Number),
+  settledAt: Schema.String,
+  paidUsdc: Schema.Number,
+  transfers: Schema.Number,
+})
+
+const RecordCyclePool = Schema.Struct({
+  projectId: Schema.String,
+  month: Schema.String,
+  files: Schema.Array(Schema.String),
+  status: Schema.String,
+  generatedAt: Schema.String,
+  approvedAt: Schema.NullOr(Schema.String),
+  reviewEndsAt: Schema.NullOr(Schema.String),
+  capUsdc: Schema.NullOr(Schema.Number),
+  contributors: Schema.Number,
+  settlement: Schema.NullOr(RecordSettlement),
+})
+
+const RecordMonth = Schema.Struct({
+  month: Schema.String,
+  counts: Schema.NullOr(Schema.Struct({
+    merged: Schema.Number,
+    reviews: Schema.Number,
+    calendarMerged: Schema.Number,
+    calendarReviews: Schema.Number,
+  })),
+  uniqueContributors: Schema.Number,
+  pools: Schema.Array(RecordCyclePool),
+})
+
+const RecordProject = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  status: Schema.String,
+  kind: Schema.NullOr(Schema.String),
+  capDisplay: Schema.NullOr(Schema.String),
+  chain: Schema.NullOr(Schema.String),
+  authority: Schema.NullOr(Schema.String),
+  repository: Schema.NullOr(Schema.String),
+  prize: Schema.NullOr(Schema.String),
+})
+
+const ReceiptRecipient = Schema.Struct({
+  login: Schema.NullOr(Schema.String),
+  received: Schema.String,
+  transactions: Schema.Array(Schema.Struct({ id: Schema.String, url: Schema.String })),
+})
+
+const Receipt = Schema.Struct({
+  anchor: Schema.String,
+  projectId: Schema.String,
+  project: Schema.String,
+  month: Schema.String,
+  networkName: Schema.String,
+  asset: Schema.String,
+  stable: Schema.Boolean,
+  contributors: Schema.Number,
+  total: Schema.String,
+  fee: Schema.String,
+  feeExact: Schema.Boolean,
+  recipients: Schema.Array(ReceiptRecipient),
+  own: Schema.NullOr(Schema.Struct({ payments: Schema.Number, total: Schema.String })),
+  privateRecords: Schema.Boolean,
+  reserved: Schema.NullOr(Schema.String),
+  firstSentAt: Schema.String,
+  lastSentAt: Schema.String,
+  merges: Schema.NullOr(Schema.Struct({
+    windowDays: Schema.Number,
+    asOf: Schema.String,
+    repositories: Schema.Array(Schema.Struct({
+      repository: Schema.String,
+      mergedOutside: Schema.Number,
+      medianHours: Schema.NullOr(Schema.Number),
+    })),
+  })),
+})
+
+const PublicRecordSchema = Schema.Struct({
+  builtAt: Schema.String,
+  money: Schema.Struct({
+    transfers: Schema.Number,
+    paidUsdc: Schema.Number,
+    allocatedUsdc: Schema.Number,
+    unclaimedUsdc: Schema.Number,
+    platformFeeCollected: Schema.Boolean,
+    pools: Schema.Array(RecordPool),
+    settlements: Schema.optional(Schema.Array(RecordSettlement)),
+  }),
+  months: Schema.optional(Schema.Array(RecordMonth)),
+  projects: Schema.Array(RecordProject),
+  proposal: Schema.Struct({
+    projectId: Schema.String,
+    cycleId: Schema.String,
+    status: Schema.String,
+    allocations: Schema.Number,
+    capUsdc: Schema.Number,
+    approvedUsdc: Schema.Number,
+    generatedAt: Schema.String,
+  }),
+  receipts: Schema.optional(Schema.Struct({
+    builtAt: Schema.NullOr(Schema.String),
+    items: Schema.Array(Receipt),
+  })),
+})
+
+export type RecordPool = Schema.Schema.Type<typeof RecordPool>
+export type RecordSettlement = Schema.Schema.Type<typeof RecordSettlement>
+export type RecordCyclePool = Schema.Schema.Type<typeof RecordCyclePool>
+export type RecordMonth = Schema.Schema.Type<typeof RecordMonth>
+export type RecordProject = Schema.Schema.Type<typeof RecordProject>
+export type ReceiptRecipient = Schema.Schema.Type<typeof ReceiptRecipient>
+export type Receipt = Schema.Schema.Type<typeof Receipt>
+export type PublicRecord = Schema.Schema.Type<typeof PublicRecordSchema>
+
+export effect function loadPublicRecord() {
+  const body = try fetchBounded(RECORD_DATA_PATH, RECORD_MAX_BYTES, "The public record")
+  return Schema.decodeUnknownEffect(PublicRecordSchema)(body) catch effect () => {
+    throw new Unreadable({ message: "The public record is not in the expected shape." })
+  }
+}

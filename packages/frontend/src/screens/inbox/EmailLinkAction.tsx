@@ -79,6 +79,7 @@ function LinkBody({ section, state, signInHref, onRetryCheck }: BodyProps) {
   const [error, setError] = useState<string>();
   const { step, problem } = stepOf(state, check);
   const confirm = () => {
+    if (busy) return;
     setBusy(true);
     setError(undefined);
     void run(section, confirmEmailLink()).then((done) => {

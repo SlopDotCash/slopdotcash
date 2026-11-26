@@ -2,18 +2,19 @@
 import { DataState, Disclosure, PageHeader, Status } from "@repo/ui";
 import type { Effect } from "effect";
 import { BookOpen, Download, Users } from "lucide-react";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import type { RegistryBoot } from "../../reads/registry.vibe";
 import { useShownRead } from "../projects/hooks.ts";
 import { projectRuntime } from "../projects/reads.vibe";
 import { ContributionPointTiers } from "../public/index.ts";
-import { type Settled, useOnce } from "../security/program/hooks.ts";
+import { retryOnce, type Settled, useOnce } from "../../app/hooks.ts";
 import { People, type PeopleMembers } from "./People.tsx";
 import { stewardsOf } from "./peopleRows.ts";
 import { useQuery } from "./query.ts";
 import { type ContributorRuntime, contributorReads, contributorRuntime, origin, registryBoot } from "./reads.vibe";
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-8 px-4 py-12";
+const pageClass = pageShellClass("lg", "8", "py-12");
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 
 const reviewTiers: ReadonlyArray<readonly [string, number]> = [
@@ -82,7 +83,7 @@ export function PointsPage({ runtime }: PageProps) {
       {reads.status === "running" ? (
         <DataState status="Loading" />
       ) : reads.status === "failed" ? (
-        <DataState status="Failed" onRetry={() => location.reload()} retryLabel="Retry contributors" />
+        <DataState status="Failed" onRetry={() => retryOnce(section, "reads")} retryLabel="Retry contributors" />
       ) : (
         <Members section={section} reads={reads.value} boot={bootOf(registry)} />
       )}

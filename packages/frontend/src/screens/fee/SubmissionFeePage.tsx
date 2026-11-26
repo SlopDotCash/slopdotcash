@@ -6,17 +6,35 @@ import { Receipt } from "lucide-react";
 import { useState } from "react";
 import { wantedLabelName } from "../../../gen/backend__mergeActivity.ts";
 import type { PageProps } from "../../app/pages.ts";
+import { PageShell } from "../../app/PageShell.tsx";
 import { networkLabel } from "../../kernels/assetText.ts";
 import { amountText, wayKey } from "../../wallets/fee/feeCalls.ts";
+import type { SolanaFeeWay } from "../../wallets/fee/solanaDeposit.vibe";
 import { PaidRecord, PayForm, RecordState } from "./PayForm.tsx";
 import type { FeePay, FeeSetup, FeeWay } from "./payFlow.vibe";
 import { type FeeRuntime, feeRuntime } from "./runtime.vibe";
+import { SubmissionFeePaySolana } from "./SubmissionFeePaySolana.tsx";
 import { useOpened, usePay } from "./usePay.ts";
 
-const page = "mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-8";
 const section = "flex flex-col gap-3";
 const heading = "text-xl font-semibold text-foreground";
 const link = "text-primary underline underline-offset-4 hover:decoration-2";
+
+const isSolanaNetwork = (network: string) => network.startsWith("solana");
+
+function toSolanaWay(way: FeeWay): SolanaFeeWay {
+  return {
+    network: way.network,
+    programId: way.contract,
+    token: way.token,
+    symbol: way.symbol,
+    decimals: way.decimals,
+    amount: way.amount,
+    minimumAccepted: way.minimumAccepted,
+    keptTo: way.keptTo,
+    kind: "stable",
+  };
+}
 
 function Terms({ ways }: { ways: readonly FeeWay[] }) {
   const stable = [...new Set(ways.filter((way) => way.kind === "stable").map((way) => way.symbol))].join(" or ");
@@ -50,9 +68,19 @@ function Terms({ ways }: { ways: readonly FeeWay[] }) {
 function Opened({ runtime, pay, named, number }: { runtime: FeeRuntime; pay: FeePay; named: string; number: string }) {
   const { state, shown } = usePay(runtime, pay);
   const [open, setOpen] = useState(false);
+  const [openSolana, setOpenSolana] = useState(false);
+  const [openReclaim, setOpenReclaim] = useState(false);
   if (state?.page === "NotAddressed") return <p className="text-muted-foreground">This address does not name a pull request.</p>;
   const record = shown?.record;
   const due = record?.due ?? [];
+  const solanaDue = due.find((way) => isSolanaNetwork(way.network));
+  const evmDue = due.filter((way) => !isSolanaNetwork(way.network));
+  const solanaPaid = record?.paid !== null && record?.paid !== undefined && isSolanaNetwork(record.paid.network) && record.outcome === null;
+  const pullNumber = Number(number);
+  const solanaSubject =
+    pay.repository !== undefined && record !== undefined && Number.isSafeInteger(pullNumber) && pullNumber > 0
+      ? { repositoryId: pay.repository.repository, pullNumber, item: String(record.item) }
+      : null;
   const recorded = state !== undefined && (state.page === "SwitchedOff" || state.page === "Due" || state.page === "Recorded");
   return (
     <>
@@ -82,12 +110,30 @@ function Opened({ runtime, pay, named, number }: { runtime: FeeRuntime; pay: Fee
       {recorded && record && shown ? (
         <>
           <PaidRecord record={record} held="The deposit is held by the deposit contract until this pull request is decided." />
+          {solanaPaid && solanaSubject !== null && solanaDue !== undefined ? (
+            openReclaim ? (
+              <SubmissionFeePaySolana
+                runtime={runtime}
+                subject={solanaSubject}
+                way={null}
+                reclaim={toSolanaWay(solanaDue)}
+                defaultDepositAddress={record.paid ? String(record.paid.depositId) : ""}
+                onDeposit={() => void runtime.runPromise(pay.reload())}
+              />
+            ) : (
+              <div>
+                <Button variant="outline" size="sm" onClick={() => setOpenReclaim(true)}>
+                  Take back a Solana deposit
+                </Button>
+              </div>
+            )
+          ) : null}
           {state.page === "SwitchedOff" ? <p className="text-muted-foreground">Slop recorded this pull request for a fee, but the fee is not switched on, so nothing is asked for it now.</p> : null}
           {state.switchedOn && due.length > 0 ? (
             <>
               <section aria-label="Fee due" className={section}>
                 <h2 className={heading}>Fee due</h2>
-                <p className="text-muted-foreground">One deposit pays the fee for this pull request. Slopbot's review is free and starts once the deposit is recorded.</p>
+                <p className="text-muted-foreground">One deposit pays the fee for this pull request. Slopbot&apos;s review is free and starts once the deposit is recorded.</p>
                 <ul className="flex flex-col gap-1">
                   {due.map((way) => (
                     <li key={wayKey(way)}>
@@ -97,7 +143,7 @@ function Opened({ runtime, pay, named, number }: { runtime: FeeRuntime; pay: Fee
                   ))}
                 </ul>
                 {record.slopWithheld ? (
-                  <p className="text-muted-foreground">SLOP is not offered right now: Slop's published SLOP rate could not be read, so the SLOP amount could not be checked. Reload the page to try again.</p>
+                  <p className="text-muted-foreground">SLOP is not offered right now: Slop&apos;s published SLOP rate could not be read, so the SLOP amount could not be checked. Reload the page to try again.</p>
                 ) : null}
               </section>
               <Terms ways={due} />
@@ -105,10 +151,26 @@ function Opened({ runtime, pay, named, number }: { runtime: FeeRuntime; pay: Fee
           ) : null}
           {state.switchedOn && (open || state.slot.identity !== "" || shown.unreadable) ? (
             <PayForm runtime={runtime} pay={pay} state={state} shown={shown} noun="pull request" />
-          ) : state.switchedOn && due.length > 0 ? (
-            <div>
+          ) : state.switchedOn && evmDue.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
               <Button onClick={() => setOpen(true)}>Pay from a wallet</Button>
+              {solanaDue !== undefined && solanaSubject !== null && !openSolana ? (
+                <Button variant="secondary" onClick={() => setOpenSolana(true)}>Pay on Solana</Button>
+              ) : null}
             </div>
+          ) : state.switchedOn && solanaDue !== undefined && solanaSubject !== null && !openSolana ? (
+            <div>
+              <Button onClick={() => setOpenSolana(true)}>Pay on Solana</Button>
+            </div>
+          ) : null}
+          {state.switchedOn && openSolana && solanaDue !== undefined && solanaSubject !== null ? (
+            <SubmissionFeePaySolana
+              runtime={runtime}
+              subject={solanaSubject}
+              way={toSolanaWay(solanaDue)}
+              reclaim={null}
+              onDeposit={() => void runtime.runPromise(pay.reload())}
+            />
           ) : null}
         </>
       ) : null}
@@ -120,13 +182,13 @@ export function SubmissionFeePage({ route, setup }: Pick<PageProps, "route"> & {
   const runtime = feeRuntime(setup);
   const opened = useOpened(runtime, { kind: "pullRequest", owner: route.owner, repo: route.repo, number: route.number });
   return (
-    <main className={page}>
+    <PageShell width="md" gap="8">
       <PageHeader title="Submission fee" icon={<Receipt className="size-6 text-primary" />} />
       {opened.status === "running" ? <Spinner label="Loading the fee record" /> : null}
       {opened.status === "failed" ? <Alert variant="destructive">{opened.message}</Alert> : null}
       {opened.status === "done" ? (
         <Opened runtime={runtime} pay={opened.value} named={opened.value.repository?.repository ?? `${route.owner}/${route.repo}`} number={route.number} />
       ) : null}
-    </main>
+    </PageShell>
   );
 }

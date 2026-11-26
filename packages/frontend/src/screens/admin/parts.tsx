@@ -2,12 +2,15 @@
 import { Alert, Button, CopyButton, cn, ExternalLink, StatusIcon, type StatusProps } from "@repo/ui";
 import { Effect, Exit } from "effect";
 import type { MouseEvent, ReactNode } from "react";
-import { flushSync } from "react-dom";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageRuntime, PageServices } from "../../app/runtime.vibe";
+import { navigateWithin } from "../../app/useAddress.ts";
 import { failureMessage } from "../setup/proposal/run.ts";
 import { isWebLink } from "./enforcement.ts";
 
-export const page = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8";
+export { navigateWithin };
+
+export const page = pageShellClass("lg", "6");
 
 export type Acted<A> = { readonly ok: true; readonly value: A } | { readonly ok: false; readonly message: string; readonly accessLost: boolean };
 
@@ -20,13 +23,6 @@ export async function act<A, E extends { readonly _tag: string; readonly message
   return { ok: false, message: failure.value.message === "" ? fallback : failure.value.message, accessLost: lost(failure.value) };
 }
 
-/** Shows another view of this page in place, keeping what the page holds, and adds it to the history. */
-export function navigateWithin(href: string) {
-  history.pushState({}, "", href);
-  flushSync(() => dispatchEvent(new PopStateEvent("popstate")));
-}
-
-/** Opens another view of this page in place; a modified click opens it as a link does. */
 export function openWithin(href: string) {
   return (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

@@ -3,6 +3,7 @@ import { PageHeader } from "@repo/ui";
 import { UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PageProps } from "../../app/pages.ts";
+import { PageShell } from "../../app/PageShell.tsx";
 import { loginHrefFor, useSession } from "../../app/useSession.ts";
 import { writeClipboard } from "../../platform/navigatorClipboard.ts";
 import { ReferralSection } from "../../referrals/index.ts";
@@ -22,6 +23,8 @@ import {
   watchOffers,
   watchWallets,
 } from "./runtime.vibe";
+import { SecurityReadKey } from "./SecurityReadKey.tsx";
+import { TraceLicensing } from "./TraceLicensing.tsx";
 import { useView } from "./useView.ts";
 import { walletPanelOpened } from "./walletPanel.vibe";
 import { WalletManagement } from "./WalletManagement.tsx";
@@ -45,13 +48,12 @@ function SettingsSection({ id, title, children }: { id: string; title: string; c
   );
 }
 
-/** The Settings page's frame: its heading, then its sections, all expanded. */
 export function SettingsView({ children }: { children: ReactNode }) {
   return (
-    <main className="mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-12 px-4 py-12">
+    <PageShell width="md" gap="12" className="py-12">
       <PageHeader title="Settings" icon={<UserRound className="size-6" />} />
       {children}
-    </main>
+    </PageShell>
   );
 }
 
@@ -108,12 +110,23 @@ export function SettingsPage({ runtime }: PageProps) {
   if (shown === undefined) return null;
   const section = accountRuntime(runtime);
   const signedIn = shown.view.status === "signedIn";
+  const githubId = signedIn ? shown.view.session.githubId : undefined;
   const local = shown.deployment.localBackendOrigin;
   return (
     <SettingsView>
       <Wallets section={section} signInHref={loginHrefFor(shown, walletsAddress)} />
       {signedIn ? <Email section={section} signInHref={loginHrefFor(shown, notificationsAddress)} localMailHref={local === undefined ? undefined : `${local}/__dev/mail`} /> : null}
       {signedIn ? <ReferralSection runtime={runtime} /> : null}
+      {githubId !== undefined ? (
+        <SettingsSection id="trace-licensing" title="Trace licensing">
+          <TraceLicensing runtime={runtime} githubId={githubId} />
+        </SettingsSection>
+      ) : null}
+      {githubId !== undefined ? (
+        <SettingsSection id="security-read-key" title="Security read key">
+          <SecurityReadKey runtime={runtime} githubId={githubId} />
+        </SettingsSection>
+      ) : null}
     </SettingsView>
   );
 }

@@ -96,7 +96,7 @@ export const SecurityCase = Schema.Struct({
   paymentNetworks: Schema.Array(Schema.String),
   paymentDeadline: Schema.NullOr(Schema.String),
   awardFunds: Schema.optional(Schema.NullOr(Schema.Struct({ currency: Schema.String, decimals: Schema.Number, availableMinor: Schema.String }))),
-  advisory: Schema.optional(Schema.NullOr(Schema.Struct({ repository: Schema.String, ghsa: Schema.String, url: Schema.String }))),
+  advisory: Schema.optional(Schema.NullOr(Schema.Struct({ repository: Schema.String, ghsa: Schema.String, url: Schema.String, state: Schema.optional(Schema.NullOr(Schema.String)) }))),
   receiptState: Schema.optional(Schema.String),
   remediationState: Schema.optional(Schema.String),
   disclosureState: Schema.optional(Schema.String),

@@ -4,7 +4,8 @@ import { Alert, Button, PageHeader, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { useNow } from "../../../app/hooks.ts";
+import { pageShellClass } from "../../../app/PageShell.tsx";
 import type { PageProps } from "../../../app/pages.ts";
 import type { PageRuntime, SessionShown } from "../../../app/runtime.vibe";
 import { useAddress } from "../../../app/useAddress.ts";
@@ -60,7 +61,7 @@ export type ProposalPageProps = PageProps & {
 
 type Submission = { readonly status: "idle" | "submitting" } | { readonly status: "failed"; readonly message: string; readonly installSlopbot: boolean } | ({ readonly status: "created" } & CreatedProject);
 
-const page = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8";
+const page = pageShellClass("lg", "6");
 const signInReturn = "/projects/new";
 const fundingFields = { mode: "fundingMode", network: "settlementChain", assetKind: "rewardKind", tokenAddress: "rewardAssetAddress", tokenSymbol: "rewardAssetSymbol", monthlyAmount: "monthlyPool" } as const satisfies Record<FundingField, ProposalField>;
 const lastStep: StepIndex = 2;
@@ -123,14 +124,16 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
   const step = saved.step;
   const facts = branchesOf(p, lookup);
   const shownFor = (field: ProposalField) => shownError(saved, errors, field);
-  const { manifest, bounty } = draftManifest({ proposal: p, actor, valid, now: new Date().toISOString() });
+  const nowMs = useNow();
+  const { manifest, bounty } = draftManifest({ proposal: p, actor, valid, now: new Date(nowMs).toISOString() });
 
   const update = (change: (current: Wizard) => Wizard) => store.update(change);
   const change = (field: Exclude<ProposalField, "repository">, value: string) => update((current) => withField(current, field, value, branchesOf(current.proposal, lookup)));
   const focusOn = (field: ProposalField) => {
     const owner = stepOfField(field) ?? step;
-    flushSync(() => update((current) => ({ ...current, step: owner })));
-    focusField(owner === 0 && p.repositoryNumericId === "" ? "repository" : field);
+    update((current) => ({ ...current, step: owner }));
+    const target = owner === 0 && p.repositoryNumericId === "" ? "repository" : field;
+    requestAnimationFrame(() => focusField(target));
   };
   const goTo = (index: StepIndex) => {
     if (index > step || index === lastStep) {
@@ -141,8 +144,8 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
       }
     }
     if (index === lastStep && step !== lastStep) void runtime.runPromise(refreshSession());
-    flushSync(() => update((current) => ({ ...current, step: index })));
-    focusHeading();
+    update((current) => ({ ...current, step: index }));
+    requestAnimationFrame(() => focusHeading());
   };
   const clearReferrer = () => update((current) => ({ ...current, referrer: null }));
 

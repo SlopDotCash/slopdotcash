@@ -54,10 +54,10 @@ type QueueScanProps = {
   onAccessLost: () => void;
 };
 
-/** An administrator investigation: a scan of the current revision, queued with its reason. */
 function QueueScan({ runtime, actorId, project, banned, onQueued, onAccessLost }: QueueScanProps) {
   const [reason, setReason] = useState("");
-  const [repository, setRepository] = useState(project.repositories?.[0]?.id ?? "");
+  const [selectedRepository, setRepository] = useState("");
+  const repository = project.repositories?.some((entry) => entry.id === selectedRepository) ? selectedRepository : (project.repositories?.[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);

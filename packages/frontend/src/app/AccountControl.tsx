@@ -2,6 +2,12 @@
 import { AccountMenu, AccountMenuItem, Button, Spinner } from "@repo/ui";
 import type { SessionView } from "../session/session.vibe";
 
+export interface OwnedProjectLink {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+}
+
 export type AccountControlProps = {
   view: SessionView;
   loginHref: string;
@@ -9,11 +15,12 @@ export type AccountControlProps = {
   signingOut: boolean;
   signOutFailed: boolean;
   onSignOut: () => void;
+  ownedProjects?: ReadonlyArray<OwnedProjectLink>;
 };
 
 const avatarOf = (login: string) => `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?size=80`;
 
-export function AccountControl({ view, loginHref, onLoginPage, signingOut, signOutFailed, onSignOut }: AccountControlProps) {
+export function AccountControl({ view, loginHref, onLoginPage, signingOut, signOutFailed, onSignOut, ownedProjects = [] }: AccountControlProps) {
   if (view.status !== "signedIn" && onLoginPage) return null;
   if (view.status === "checking") return <Spinner label="Checking login" />;
   if (view.status !== "signedIn") {
@@ -29,6 +36,7 @@ export function AccountControl({ view, loginHref, onLoginPage, signingOut, signO
     ["Inbox", "/inbox"],
     ["Payouts", "/earnings"],
     ["Settings", "/account"],
+    ...ownedProjects.map((project): readonly [string, string] => [`${project.name} settings`, `/projects/${encodeURIComponent(project.slug)}/manage`]),
     ...(admin ? [["Admin", "/admin"] as const] : []),
   ];
   return (

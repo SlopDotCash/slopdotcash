@@ -68,6 +68,9 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
           <TextField label="Acceptance criteria" name="criteria" multiline value={value.criteria} error={shown("criteria")} onChange={(entry) => onChange("criteria", entry)} />
           <ReadyLabelFields value={value} shown={shown} onChange={onChange} />
           <TextField label="Pause new contributors when this many outside pull requests are open (optional)" name="intakeCap" inputMode="numeric" value={value.intakeCap} error={shown("intakeCap")} onChange={(entry) => onChange("intakeCap", entry)} />
+          <p className="text-xs text-muted-foreground">
+            Backlog rule: projects with 50 or more outside pull requests waiting a week, or with open work and no merge in 14 days (starting 1 December 2026), step out of rotation until caught up.
+          </p>
           <Disclosure {...group("moreRules", "More rules")}>
             <div className="flex flex-col gap-4 pt-2">
               {skillRuleFields.map((field) => (

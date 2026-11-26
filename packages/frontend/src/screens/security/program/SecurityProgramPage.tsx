@@ -2,6 +2,7 @@
 import { Alert, Button, DataState, ExternalLink, Metric, MetricGrid, PageHeader, Status, type StatusProps } from "@repo/ui";
 import { ExternalLink as ExternalLinkIcon, ShieldCheck } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { pageShellClass } from "../../../app/PageShell.tsx";
 import type { PageProps } from "../../../app/pages.ts";
 import { pageOrigin } from "../../../platform/environment.ts";
 import { writeClipboard } from "../../../platform/navigatorClipboard.ts";
@@ -9,7 +10,7 @@ import { useView } from "../../account/useView.ts";
 import { bountyPrompt } from "../../funding/awards/BountyIntroduction.tsx";
 import { AgentPrompt } from "../../home/AgentPrompt.tsx";
 import { ProjectNav } from "../../projects/ProjectNav.tsx";
-import { run, useOnce } from "./hooks.ts";
+import { retryOnce, run, useOnce } from "../../../app/hooks.ts";
 import { programShares } from "./amounts.ts";
 import { IntakePanel } from "./IntakePanel.tsx";
 import { AwardTerms, ScopeTerms, TrustTerms } from "./ProgramTerms.tsx";
@@ -43,7 +44,7 @@ export type SecurityProgramViewProps = {
 /** A revision published from this page, applied in place to the terms above it. */
 export type PublishedProgram = { readonly revision: number; readonly manifest: unknown };
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-12";
+const pageClass = pageShellClass("md", "8", "py-12");
 
 function Published({ revision }: { revision: number | undefined }) {
   return revision === undefined ? null : (
@@ -150,15 +151,16 @@ type Shown = { readonly projectId: string; readonly revision: number; readonly p
 export function SecurityProgramPage({ runtime, route, settings }: PageProps & { settings?: SettingsSlot }) {
   const section = programRuntime(runtime);
   const [published, setPublished] = useState<Shown | null>(null);
-  const read = useOnce(section, `program:${route.projectId}`, () => loadProgram(route.projectId));
+  const key = `program:${route.projectId}`;
+  const read = useOnce(section, key, () => loadProgram(route.projectId));
   if (read.status === "running")
     return (
       <main className={pageClass}>
         <DataState status="Loading" />
       </main>
     );
-  if (read.status === "failed") return <ProgramFailed read={{ kind: "failed", message: read.message }} onRetry={() => location.reload()} />;
-  if (read.value.kind !== "found") return <ProgramFailed read={read.value} onRetry={() => location.reload()} />;
+  if (read.status === "failed") return <ProgramFailed read={{ kind: "failed", message: read.message }} onRetry={() => retryOnce(section, key)} />;
+  if (read.value.kind !== "found") return <ProgramFailed read={read.value} onRetry={() => retryOnce(section, key)} />;
   const loaded = read.value.project;
   const current = published?.projectId === loaded.id ? published : null;
   const project = current?.project ?? loaded;

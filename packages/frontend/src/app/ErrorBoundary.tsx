@@ -1,5 +1,5 @@
 // spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"
-import { Button, PageHeader } from "@repo/ui";
+import { Button, cn, PageHeader, shell } from "@repo/ui";
 import { Component, type ReactNode } from "react";
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -12,9 +12,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
   override render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <main role="alert" className="flex flex-col items-start gap-4">
+      <main role="alert" className={cn(shell, "flex flex-col items-start gap-4 py-8")}>
         <PageHeader title="Something broke" />
-        <Button onClick={() => location.reload()}>Reload</Button>
+        <Button onClick={() => this.setState({ failed: false })}>Try again</Button>
       </main>
     );
   }

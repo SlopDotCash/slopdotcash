@@ -2,7 +2,6 @@
 import { Button, StatusIcon } from "@repo/ui";
 import { ListChecks } from "lucide-react";
 import { useState } from "react";
-import { flushSync } from "react-dom";
 import { normalizeRepositoryInput } from "../../../flows/projects/proposal.ts";
 import { focusField, SelectField, TextField } from "../fields/ProjectFields.tsx";
 
@@ -28,8 +27,8 @@ export function RepositoryChoice({ selected, onChoose, list, onRetryList, error,
   const option = repositories.find((entry) => entry.repository.toLowerCase() === selected.toLowerCase())?.repository ?? selected;
   const typed = manual || list.status === "error" || (list.status === "ready" && repositories.length === 0);
   const switchTo = (next: boolean) => {
-    flushSync(() => setManual(next));
-    focusField("repository");
+    setManual(next);
+    requestAnimationFrame(() => focusField("repository"));
   };
   return (
     <div className="flex flex-col gap-2">

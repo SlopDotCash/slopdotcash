@@ -3,7 +3,8 @@ import { Avatar, EmptyState, Status, Table, TableBody, TableCaption, TableCell, 
 import { formatRewardCapDisplay, formatRewardMinor, monthlyPoolUnfunded } from "../../kernels/assetText.ts";
 import { capFor, type ExclusionRelationship, type PoolContributor, type PrizeContributor, type ProjectCycleView } from "../../projections/projectView.ts";
 import { reviewerStandings } from "../../projections/standings.ts";
-import { formatDate, formatMonth, type ShownProject } from "../projects/index.ts";
+import type { ShownProject } from "../projects/project.schema.ts";
+import { formatDate, formatMonth } from "../projects/summary.ts";
 import { percentText } from "./labels.ts";
 
 export type CycleAllocationProps = {
