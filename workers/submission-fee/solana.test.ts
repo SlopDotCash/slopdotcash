@@ -667,6 +667,176 @@ describe("settling deposits", () => {
   });
 });
 
+describe("a send that landed and failed", () => {
+  // The attack: a payer closes their token account just before each run's
+  // transaction lands and opens it again afterwards.
+  const closes = (t: ReturnType<typeof setup>, wallet: string) => {
+    const address = solanaAssociatedTokenAddress(t.chain.mint, wallet);
+    const kept = t.chain.accounts.get(address);
+    if (!kept) throw new Error("no token account");
+    return {
+      /** Lands the newest send while the account is closed. */
+      landClosed() {
+        t.chain.accounts.delete(address);
+        t.chain.land(t.sends().at(-1)?.tx_id as string);
+        t.chain.accounts.set(address, kept);
+      },
+    };
+  };
+  const five = async (t: ReturnType<typeof setup>) => {
+    for (const pull of [7, 8, 9, 10, 11]) {
+      t.ask(pull);
+      t.pay(pull, pull === 7 ? { payer: OTHER } : {});
+    }
+    await t.ledger();
+    for (const pull of [7, 8, 9, 10, 11]) t.decide(pull, "refund_due");
+  };
+  const ids = (send: Record<string, unknown>) =>
+    (JSON.parse(send.deposits as string) as { id: number }[]).map(
+      (entry) => entry.id,
+    );
+
+  test("its deposits are sent one by one, the bad one is parked, and the others are refunded", async () => {
+    const t = setup("live", { perDay: "1000000" });
+    await five(t);
+    const attacker = closes(t, OTHER);
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    expect(ids(t.sends()[0])).toEqual([1, 2, 3, 4, 5]);
+    attacker.landClosed();
+    // The batch failed on chain: the first deposit goes alone.
+    expect(await t.ledger()).toMatchObject({ send: "sent", parked: 0 });
+    expect(t.sends()[0]).toMatchObject({
+      state: "failed",
+      reason: "resolve transaction failed",
+    });
+    expect(ids(t.sends()[1])).toEqual([1]);
+    attacker.landClosed();
+    // Its own send failed: it is parked, and the next deposit goes alone.
+    expect(await t.ledger()).toMatchObject({ send: "sent", parked: 1 });
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_parked",
+      network: NETWORK,
+      depositId: 1,
+      refund: true,
+      reason: "reverted_alone",
+    });
+    for (const id of [2, 3, 4, 5]) {
+      expect(ids(t.sends().at(-1) as Record<string, unknown>)).toEqual([id]);
+      t.chain.land(t.sends().at(-1)?.tx_id as string);
+      const result = await t.ledger();
+      expect(result).toMatchObject({
+        resolved: 1,
+        send: id === 5 ? "none" : "sent",
+      });
+      expect(t.deposit(id)).toMatchObject({ state: "refunded" });
+    }
+    // The parked deposit is left alone for a day.
+    expect(t.deposit(1)).toMatchObject({ state: "refund_due" });
+    const before = t.sends().length;
+    t.later(23 * 3600_000);
+    expect(await t.ledger()).toMatchObject({ released: 0, send: "none" });
+    expect(t.sends()).toHaveLength(before);
+    // Then it is tried again, alone. It fails again and is parked again.
+    t.later(2 * 3600_000);
+    expect(await t.ledger()).toMatchObject({ released: 1, send: "sent" });
+    expect(ids(t.sends().at(-1) as Record<string, unknown>)).toEqual([1]);
+    attacker.landClosed();
+    expect(await t.ledger()).toMatchObject({ parked: 1, send: "none" });
+    // A day later the account stays open and the refund goes through.
+    t.later(25 * 3600_000);
+    expect(await t.ledger()).toMatchObject({ released: 1, send: "sent" });
+    t.chain.land(t.sends().at(-1)?.tx_id as string);
+    await t.ledger();
+    expect(t.deposit(1)).toMatchObject({ state: "refunded" });
+    expect(t.item(7).outcome).toBe("refunded");
+  });
+
+  test("deposits that were in no failed send still go together, and a deposit whose own send failed goes last", async () => {
+    const t = setup("live", { perDay: "1000000" });
+    await five(t);
+    const attacker = closes(t, OTHER);
+    await t.ledger();
+    attacker.landClosed();
+    await t.ledger();
+    attacker.landClosed();
+    await t.ledger();
+    // Deposit 1 is parked; 2 is in flight alone. Two new deposits arrive.
+    for (const pull of [12, 13]) {
+      t.ask(pull);
+      t.pay(pull);
+    }
+    for (const id of [2, 3, 4, 5]) {
+      expect(ids(t.sends().at(-1) as Record<string, unknown>)).toEqual([id]);
+      t.chain.land(t.sends().at(-1)?.tx_id as string);
+      await t.ledger();
+    }
+    for (const pull of [12, 13]) t.decide(pull, "refund_due");
+    // A day on, deposit 1 is released in the same run the new ones are due:
+    // the two new ones go first, together, and deposit 1 after them.
+    t.later(25 * 3600_000);
+    expect(await t.ledger()).toMatchObject({ released: 1, send: "sent" });
+    expect(ids(t.sends().at(-1) as Record<string, unknown>)).toEqual([6, 7]);
+    t.chain.land(t.sends().at(-1)?.tx_id as string);
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    expect(ids(t.sends().at(-1) as Record<string, unknown>)).toEqual([1]);
+  });
+
+  test("a deposit whose own send failed is not sent again once half the day's lamports are spent", async () => {
+    // Each send pays 5,000 lamports: the batch and the single spend 10,000
+    // of 30,000. Two more refunds take the day to 20,000, past the half.
+    const t = setup("live", { perDay: "30000" });
+    for (const pull of [7, 8, 9]) {
+      t.ask(pull);
+      t.pay(pull, pull === 7 ? { payer: OTHER } : {});
+    }
+    await t.ledger();
+    for (const pull of [7, 8, 9]) t.decide(pull, "refund_due");
+    const attacker = closes(t, OTHER);
+    await t.ledger();
+    attacker.landClosed();
+    await t.ledger();
+    attacker.landClosed();
+    for (const id of [2, 3]) {
+      await t.ledger();
+      expect(ids(t.sends().at(-1) as Record<string, unknown>)).toEqual([id]);
+      t.chain.land(t.sends().at(-1)?.tx_id as string);
+    }
+    await t.ledger();
+    // Released by hand, as a recheck within the same UTC day would.
+    t.sqlite
+      .query(
+        "UPDATE submission_fee_parked SET released_at = checked_at WHERE deposit_id = 1",
+      )
+      .run();
+    const before = t.sends().length;
+    expect(await t.ledger()).toMatchObject({ send: "none" });
+    expect(t.sends()).toHaveLength(before);
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_solana_failed_alone_waits",
+      network: NETWORK,
+    });
+  });
+
+  test("the destinations and the simulation are read at confirmed commitment, the records at finalized", async () => {
+    const t = setup();
+    t.ask(7);
+    t.pay(7);
+    await t.ledger();
+    t.decide(7, "refund_due");
+    const seen: [string, unknown][] = [];
+    t.chain.onCall = (method, params) => {
+      if (method === "getMultipleAccounts" || method === "simulateTransaction")
+        seen.push([method, (params[1] as { commitment?: string }).commitment]);
+    };
+    expect(await t.ledger()).toMatchObject({ send: "sent" });
+    expect(seen).toEqual([
+      ["getMultipleAccounts", "finalized"],
+      ["getMultipleAccounts", "confirmed"],
+      ["simulateTransaction", "confirmed"],
+    ]);
+  });
+});
+
 describe("the resolve transaction", () => {
   test("a full batch of refunds to different payers fits one transaction", () => {
     const programId = fakeAddress(200);

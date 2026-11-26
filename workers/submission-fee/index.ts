@@ -60,6 +60,9 @@ export interface Env extends SubmissionFeeEnv {
   SUBMISSION_FEE_DB: SubmissionFeeD1Database;
 }
 
+/** The Solana ledger's name where its own configuration could not be read. */
+const SOLANA_LEDGER = "solana-mainnet";
+
 export const DEPOSIT_CRON = "*/5 * * * *";
 export const RATE_CRON = "7 * * * *";
 
@@ -115,17 +118,35 @@ export async function runDeposits(
   const solanaMode = parseSolanaMode(env);
   if (evmMode === "off" && solanaMode === "off") return { status: "off" };
   const config = evmMode === "off" ? null : configured(env, overrides);
-  const parsedSolana = parseSolanaConfig(env);
-  const solana = overrides.solanaConfig
-    ? overrides.solanaConfig(parsedSolana)
-    : parsedSolana;
+  // The Solana ledger's own configuration is read by itself: an error in it
+  // (a missing endpoint or lamport limit) fails the Solana part of the run
+  // only, and Base and Robinhood Chain still run.
+  let solana: SolanaFeeConfig = { mode: solanaMode, ledger: null };
+  let solanaFault: { error: unknown } | null = null;
+  if (solanaMode !== "off")
+    try {
+      // Labelled, so the reported reason reads `config.solana/TypeError`.
+      solana = labelled(
+        {
+          solana() {
+            const parsed = parseSolanaConfig(env);
+            return overrides.solanaConfig
+              ? overrides.solanaConfig(parsed)
+              : parsed;
+          },
+        },
+        "config",
+      ).solana();
+    } catch (error) {
+      solanaFault = { error };
+    }
   if ((config === null || config.mode === "off") && solana.mode === "off")
     return { status: "off" };
   const log = overrides.log ?? print;
   const unset = [...(config?.unset ?? [])];
   // A switched-on Solana ledger with no published program reads nothing.
-  if (solana.mode !== "off" && solana.ledger === null)
-    unset.push("solana-mainnet");
+  if (solana.mode !== "off" && solana.ledger === null && solanaFault === null)
+    unset.push(SOLANA_LEDGER);
   for (const network of unset)
     log({ event: "submission_fee_contract_unset", network });
   const store = labelled(new D1FeeStore(env.SUBMISSION_FEE_DB), "store");
@@ -192,6 +213,7 @@ export async function runDeposits(
       }
     }
   }
+  if (solanaFault !== null) failed(SOLANA_LEDGER, solanaFault.error);
   if (solana.mode !== "off" && solana.ledger !== null) {
     const ledger = solana.ledger;
     try {

@@ -185,6 +185,12 @@ export interface SolanaFeeChain extends ResolverChain {
  * signature. It paid no fee, so it is not counted in the day's spend.
  */
 export const SOLANA_EXPIRED = "blockhash expired before the transaction landed";
+/**
+ * Why a send failed when its transaction is in a finalized block and the
+ * program or the token program refused it there. Such a send passed its
+ * simulation, so the chain changed between the simulation and the block.
+ */
+export const SOLANA_LANDED_FAILED = "resolve transaction failed";
 
 /** The provider did not answer usefully. Carries a status or code, no text. */
 export class SolanaFeeRpcError extends Error {
@@ -279,6 +285,10 @@ export function createSolanaFeeChain(
   const tracked = new Map<number, string>();
   let lookup: ((depositId: number) => Promise<string | null>) | null = null;
   const FINAL = "finalized";
+  // The send path only: where a payout goes and whether the transaction
+  // would run are read from the newest confirmed bank, about a second old,
+  // so little can change before the block. Nothing is recorded from it.
+  const CONFIRMED = "confirmed";
   const limit = options.requests ?? SOLANA_REQUESTS_PER_RUN;
 
   let sequence = 0;
@@ -345,10 +355,11 @@ export function createSolanaFeeChain(
     };
   };
 
-  /** Up to 100 accounts read together at one finalized slot. */
+  /** Up to 100 accounts read together at one slot, finalized by default. */
   const accounts = async (
     addresses: readonly string[],
     minContextSlot?: number,
+    commitment: string = FINAL,
   ) => {
     if (addresses.length === 0 || addresses.length > SOLANA_RECORDS_PER_READ)
       throw new Error("Between 1 and 100 accounts are read together");
@@ -356,7 +367,7 @@ export function createSolanaFeeChain(
       await rpc("getMultipleAccounts", [
         addresses,
         {
-          commitment: FINAL,
+          commitment,
           encoding: "base64",
           ...(minContextSlot === undefined ? {} : { minContextSlot }),
         },
@@ -451,7 +462,9 @@ export function createSolanaFeeChain(
         throw new PayoutFailedError(entry.id);
       open.push(deposit);
     }
-    // The destinations, read together at a slot not before the records'.
+    // The destinations, read together at confirmed commitment and at a slot
+    // not before the records': a token account closed a moment ago is seen
+    // closed here, before anything is signed.
     const wallets = open.map((deposit, at) =>
       entries[at].refund ? deposit.payer : deposit.keptTo,
     );
@@ -460,6 +473,7 @@ export function createSolanaFeeChain(
         solanaAssociatedTokenAddress(network.mint, wallet),
       ),
       read.slot,
+      CONFIRMED,
     );
     return open.map((deposit, at) => {
       if (!deliverable(destinations.values[at], network.mint, wallets[at]))
@@ -500,7 +514,7 @@ export function createSolanaFeeChain(
   };
 
   /**
-   * Runs the unsigned transaction against the bank. A program or token
+   * Runs the unsigned transaction against the confirmed bank. A program or token
    * failure becomes SendRevertedError; anything else (an unknown blockhash,
    * a fee payer without SOL) says nothing about a deposit and is thrown as
    * it is.
@@ -510,7 +524,7 @@ export function createSolanaFeeChain(
       object(
         await rpc("simulateTransaction", [
           solanaBase64(concat(Uint8Array.of(1), new Uint8Array(64), body)),
-          { encoding: "base64", sigVerify: false, commitment: FINAL },
+          { encoding: "base64", sigVerify: false, commitment: CONFIRMED },
         ]),
       ).value,
     );
@@ -911,7 +925,7 @@ export function createSolanaFeeChain(
       const status = object(found[0]);
       if (status.confirmationStatus !== FINAL) return { kind: "pending" };
       if (status.err !== null && status.err !== undefined)
-        return { kind: "failed", reason: "resolve transaction failed" };
+        return { kind: "failed", reason: SOLANA_LANDED_FAILED };
       return { kind: "finalized", blockNumber: integer(status.slot) };
     },
   };

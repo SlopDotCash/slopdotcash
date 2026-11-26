@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "4ed4c8b9e952f6a8bc224d186ef63402a4010fa1548c9e825b30bd342546ea73",
+  "inventorySha256": "0a2c571584a4925077c6d6b34592ce8456da5c6d3d9171e1daf048e32761c896",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -5391,7 +5391,8 @@
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -5405,7 +5406,8 @@
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -5419,7 +5421,8 @@
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": ["payout_failed", "reverted_alone"],
       "review": "candidate-only"
@@ -5433,7 +5436,8 @@
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": ["ok", "payout_failed"],
       "review": "candidate-only"
@@ -5447,7 +5451,8 @@
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -5461,7 +5466,8 @@
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -5475,46 +5481,52 @@
       "models": [
         "formal/models/fees/submission_fee_deposit.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
-        "formal/models/fees/submission_fee_send.qnt"
+        "formal/models/fees/submission_fee_send.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
-      "lexicallyUnmentionedValues": ["chain_mismatch", "ran"],
+      "lexicallyUnmentionedValues": ["chain_mismatch"],
       "review": "candidate-only"
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 87,
+      "line": 90,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
       "models": [
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt",
-        "formal/models/fees/submission_fee_solana_deposit.qnt"
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 89,
+      "line": 92,
       "name": "solanaMode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
       "models": [
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_send.qnt",
-        "formal/models/fees/submission_fee_solana_deposit.qnt"
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "workers/submission-fee/solana-core.ts",
-      "line": 179,
+      "line": 195,
       "name": "state",
       "kind": "string-union",
       "values": ["kept", "reclaimed", "refunded"],
-      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
+      "models": [
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -5524,7 +5536,10 @@
       "name": "state",
       "kind": "string-union",
       "values": ["kept", "reclaimed", "refunded"],
-      "models": ["formal/models/fees/submission_fee_solana_deposit.qnt"],
+      "models": [
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -5539,7 +5554,8 @@
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt",
-        "formal/models/fees/submission_fee_solana_deposit.qnt"
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -5555,7 +5571,8 @@
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt",
-        "formal/models/fees/submission_fee_solana_deposit.qnt"
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -5571,7 +5588,8 @@
         "formal/models/fees/submission_fee_rate.qnt",
         "formal/models/fees/submission_fee_report_deposit.qnt",
         "formal/models/fees/submission_fee_send.qnt",
-        "formal/models/fees/submission_fee_solana_deposit.qnt"
+        "formal/models/fees/submission_fee_solana_deposit.qnt",
+        "formal/models/fees/submission_fee_solana_failed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"

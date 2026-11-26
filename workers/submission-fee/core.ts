@@ -920,9 +920,14 @@ export async function recheck(
   return released;
 }
 
-/** Reconciles the send in flight. True while one is still unsettled. */
+/**
+ * Reconciles the send in flight. True while one is still unsettled.
+ * `onFailed` runs before a send is marked failed; when it throws the send
+ * stays in flight and the next run reconciles it again.
+ */
 export async function reconcile(
   deps: NetworkDependencies<ResolverChain>,
+  onFailed?: (send: SendRow, reason: string) => Promise<void>,
 ): Promise<boolean> {
   const { store, chain, network } = deps;
   const send = await store.openSend(network.network);
@@ -946,6 +951,7 @@ export async function reconcile(
       deps.log({ ...base, event: "submission_fee_send_finalized" });
       return false;
     case "failed":
+      await onFailed?.(send, status.reason);
       await store.updateSend(send.id, {
         state: "failed",
         reason: status.reason,

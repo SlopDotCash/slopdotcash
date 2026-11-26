@@ -42,11 +42,26 @@
  *     or sent is logged with a fixed reason, set aside and tried again
  *     later, and every step runs even when an earlier one failed.
  *
- * Everything is read at finalized commitment, so a pull request is marked
- * paid only by a finalized deposit; there is no earlier confirmed step. The
- * cursor row holds the next deposit id, not a block. A refund whose payer
- * has no usable associated token account is parked, as a blacklisted payer
- * is on the EVM chains, and the Worker never creates a token account.
+ * Everything recorded is read at finalized commitment, so a pull request is
+ * marked paid only by a finalized deposit; there is no earlier confirmed
+ * step. The cursor row holds the next deposit id, not a block. A refund
+ * whose payer has no usable associated token account is parked, as a
+ * blacklisted payer is on the EVM chains, and the Worker never creates a
+ * token account.
+ *
+ * A resolve transaction of several deposits is all or nothing, and a payer
+ * can close their token account between the simulation and the block. So
+ * (operator decision, 26 November 2026):
+ *
+ *   - right before signing, the destinations and the simulation are read
+ *     at confirmed commitment, not finalized, which leaves about a second
+ *     instead of about thirteen for such a change;
+ *   - a deposit that was in a send which landed and failed is from then on
+ *     sent in a transaction of its own, so it cannot fail another's;
+ *   - a deposit whose own single send landed and failed is parked, looked
+ *     at again a day later like every parked deposit, and from then on sent
+ *     after every other deposit, and only while less than half of the day's
+ *     lamports is spent.
  */
 
 import { submissionFeeSameAddress } from "../../src/lib/submission-fee.mjs";
@@ -63,6 +78,7 @@ import {
   send,
 } from "./core";
 import {
+  SOLANA_LANDED_FAILED,
   SOLANA_MAX_BATCH,
   SOLANA_RECORDS_PER_READ,
   type SolanaFeeChain,
@@ -421,10 +437,46 @@ export async function scanSolana(
 }
 
 /**
+ * The send in flight. A send of one deposit that landed and failed parks
+ * that deposit before the send is marked failed: its payout cannot go
+ * through by itself. A failed send of several deposits parks none; `vet`
+ * sends each of them alone from then on.
+ */
+async function reconcileSolana(
+  deps: SolanaDependencies,
+): Promise<{ inFlight: boolean; parked: number }> {
+  const { store, network } = deps;
+  let parked = 0;
+  const inFlight = await reconcile(deps, async (sent, reason) => {
+    if (reason !== SOLANA_LANDED_FAILED || sent.deposits.length !== 1) return;
+    const [entry] = sent.deposits;
+    await store.park(
+      network.network,
+      entry,
+      "reverted_alone",
+      deps.now().toISOString(),
+    );
+    parked += 1;
+    deps.log({
+      event: "submission_fee_parked",
+      network: network.network,
+      depositId: entry.id,
+      refund: entry.refund,
+      reason: "reverted_alone",
+    });
+  });
+  return { inFlight, parked };
+}
+
+/**
  * The planned deposits a send may carry: accepted deposits first, then the
  * rest, each compared by itself with its record on chain. One that cannot
  * be read is left for the next run; one whose record differs from its row
  * is parked. Neither stops another.
+ *
+ * A deposit that was in a send which landed and failed goes alone: when it
+ * is the first in line it is the whole send, and otherwise it waits for a
+ * later run. A deposit whose own single send failed goes after every other.
  */
 async function vet(
   deps: SolanaDependencies,
@@ -447,14 +499,32 @@ async function vet(
       event: "submission_fee_solana_courtesy_refunds_wait",
       network: network.network,
     });
+  const failed = await store.solanaFailedOnChain(network.network);
+  // A deposit whose own send failed on chain costs a network fee each time
+  // it fails again. Like a courtesy refund it waits once half of the day's
+  // fees is spent, so the rest of the day is kept for the other deposits.
+  if (!courtesy && planned.some((entry) => failed.alone.has(entry.id)))
+    deps.log({
+      event: "submission_fee_solana_failed_alone_waits",
+      network: network.network,
+    });
+  const rest = planned.filter((entry) => !failed.alone.has(entry.id));
   const ordered = [
-    ...planned.filter((entry) => first.has(entry.id)),
-    ...(courtesy ? planned.filter((entry) => !first.has(entry.id)) : []),
+    ...rest.filter((entry) => first.has(entry.id)),
+    ...(courtesy
+      ? [
+          ...rest.filter((entry) => !first.has(entry.id)),
+          ...planned.filter((entry) => failed.alone.has(entry.id)),
+        ]
+      : []),
   ].slice(0, SOLANA_VETTED_PER_RUN);
   const entries: SendEntry[] = [];
   let parked = 0;
   for (const entry of ordered) {
     if (entries.length === SOLANA_MAX_BATCH) break;
+    const alone = failed.together.has(entry.id);
+    // Never beside another deposit: it waits for a run it is first in.
+    if (alone && entries.length > 0) continue;
     try {
       const row = await store.deposit(network.network, entry.id);
       if (!row) throw new Error("A planned deposit has no row");
@@ -487,6 +557,7 @@ async function vet(
         continue;
       }
       entries.push(entry);
+      if (alone) break;
     } catch (error) {
       deps.log({
         event: "submission_fee_solana_set_aside",
@@ -558,9 +629,13 @@ export async function runSolanaLedger(
   // The send in flight first: a send found finalized here has its deposits'
   // outcomes recorded from its own transaction by the scan below. A send
   // whose state could not be read counts as still in flight.
-  const inFlight =
-    deps.mode === "live" &&
-    (await step("reconcile", () => reconcile(deps))) !== false;
+  const reconciled =
+    deps.mode === "live"
+      ? await step("reconcile", () => reconcileSolana(deps))
+      : { inFlight: false, parked: 0 };
+  const inFlight = reconciled === null || reconciled.inFlight;
+  // A deposit parked because its own send failed on chain.
+  result.parked = reconciled?.parked ?? 0;
   const listing = await step("list", () => chain.listing());
   if (listing !== null) {
     result.open = listing.open.size;
@@ -606,7 +681,7 @@ export async function runSolanaLedger(
   const sent = await step("send", () => send(deps, vetted.entries));
   if (sent !== null) {
     result.send = sent.send;
-    result.parked = sent.parked;
+    result.parked += sent.parked;
   }
   result.parked += vetted.parked;
   return finish();
