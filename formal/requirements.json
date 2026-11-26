@@ -1693,6 +1693,13 @@
           "rules": [
             "Story: Take a reporter's deposit only as burned SLOP for the report that asked it / A deposit pays a report only as SLOP to the burn address on Robinhood Chain for an asked row"
           ]
+        },
+        {
+          "spec": "spec/fees/submissionFeeStandingDeposits.md",
+          "rules": [
+            "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / A standing deposit pays its row only as burned SLOP on the standing ledger",
+            "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes"
+          ]
         }
       ],
       "status": "uncovered-no-spec",

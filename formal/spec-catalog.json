@@ -9146,7 +9146,7 @@
     },
     {
       "path": "spec/fees/index.md",
-      "sha256": "cce4b6b59491bd024f6fe91e07e438fa366a57bea9ee33c3accffcadf3d3835e",
+      "sha256": "43573bba88c5ee223857b0e960c01e0b515ccf61ff968f4280680beb786a8448",
       "module": "fees",
       "stories": [],
       "rules": [],
@@ -9213,8 +9213,12 @@
           "line": 19
         },
         {
-          "target": "../settlement/",
+          "target": "./submissionFeeStandingDeposits.md",
           "line": 20
+        },
+        {
+          "target": "../settlement/",
+          "line": 21
         }
       ]
     },
@@ -9812,12 +9816,16 @@
     },
     {
       "path": "spec/fees/submissionFeeSends.md",
-      "sha256": "0109bfa630d68c851a489869bb6f06a706871601c8ef7fe6344be57cecafc9d9",
+      "sha256": "5dca9d32c6146216e65cb5c557008e501f755bb9b55f06b20d4b8d92e5176bcb",
       "module": "fees__submissionFeeSends",
       "stories": [
         {
           "heading": "Story: Send only what is due, once, inside the native ceilings",
           "line": 33
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors",
+          "line": 283
         }
       ],
       "rules": [
@@ -9948,6 +9956,42 @@
             "refusedValues",
             "brokenValues"
           ]
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last",
+          "line": 290,
+          "definitions": [
+            "solanaMaxBatch",
+            "solanaExpiredReason",
+            "solanaLandedFailedReason",
+            "solanaCountsTowardDailyBudget",
+            "solanaMayJoinBatch",
+            "solanaCourtesyAllowed",
+            "solanaParkOnSingleFailure",
+            "lawSolanaExpiredPaysNoBudget",
+            "lawSolanaLandedFailedCountsBudget",
+            "lawSolanaTaintedNeverBatchesWithAnother",
+            "lawSolanaSingleFailureParksOnlySingleLandedFail",
+            "modeValues",
+            "sendRowValues",
+            "reasonValues",
+            "batchSizeValues",
+            "depositCountValues"
+          ]
+        },
+        {
+          "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers",
+          "line": 335,
+          "definitions": [
+            "WorkerLedgerResult",
+            "WorkerOutcomes",
+            "workerRunOutcomes",
+            "lawSolanaConfigErrorLeavesEvmRunning",
+            "lawSolanaOffIsInert",
+            "evmOnValues",
+            "solanaModeValues",
+            "solanaConfigOkValues"
+          ]
         }
       ],
       "imports": [
@@ -9971,6 +10015,133 @@
           "line": 21
         }
       ]
+    },
+    {
+      "path": "spec/fees/submissionFeeStandingDeposits.md",
+      "sha256": "c2538ab4247529c7223fc1193dfd75fded87b2f01cd97ce20ed86894b76f51c4",
+      "module": "fees__submissionFeeStandingDeposits",
+      "stories": [
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger",
+          "line": 22
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / A standing deposit pays its row only as burned SLOP on the standing ledger",
+          "line": 28,
+          "definitions": [
+            "StandingRefusal",
+            "StandingDepositFacts",
+            "StandingResolveFacts",
+            "standingDepositNetwork",
+            "standingDepositLedger",
+            "standingDepositContract",
+            "standingDepositStartBlock",
+            "standingDepositUsdMinor",
+            "standingDepositCap",
+            "standingDepositReclaimDays",
+            "standingDepositExpiryDays",
+            "standingDepositWindowDays",
+            "standingDepositGraceHours",
+            "standingDepositVerdict",
+            "standingResolveAction",
+            "lawStandingPaidOnlyByBurnedSlop",
+            "lawStandingKeptOnlyAsBurnedSlop",
+            "depositFactsValues",
+            "standingResolveFactsValues"
+          ]
+        },
+        {
+          "heading": "Story: Take and settle standing deposits only as burned SLOP on the standing ledger / Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes",
+          "line": 101,
+          "definitions": [
+            "StandingRowState",
+            "StandingOutcome",
+            "CoverKind",
+            "Slot",
+            "CoverSlot",
+            "StandingState",
+            "emptySlot",
+            "initial",
+            "slotOf",
+            "withSlot",
+            "openCoveredCount",
+            "coverEnded",
+            "coveringNow",
+            "mayCover",
+            "strikeHappened",
+            "allCoveredClear",
+            "coverStateOf",
+            "checkedSlot",
+            "dueOutcomeOf",
+            "canPostRow",
+            "postRow",
+            "canCancelRow",
+            "cancelRow",
+            "canPayRow",
+            "payRow",
+            "canRequestWithdraw",
+            "requestWithdraw",
+            "canExpireDeposit",
+            "expireDeposit",
+            "canPassWait",
+            "passWait",
+            "canOwnerRefuseStanding",
+            "ownerRefuseStanding",
+            "canRecordFirstMerge",
+            "recordFirstMerge",
+            "canOpenSlot",
+            "openSlot",
+            "canCoverSlot",
+            "coverSlot",
+            "canAskSlot",
+            "askSlot",
+            "canMergeSlot",
+            "mergeSlot",
+            "canCloseSlot",
+            "closeSlot",
+            "canReopenSlot",
+            "reopenSlot",
+            "canLabelSlot",
+            "labelSlot",
+            "canUnlabelSlot",
+            "unlabelSlot",
+            "canEndWindow",
+            "endWindow",
+            "canEndGrace",
+            "endGrace",
+            "canCheckCover",
+            "checkCover",
+            "canDecideOutcome",
+            "decideOutcome",
+            "canSendOutcome",
+            "sendOutcome",
+            "slotConsistent",
+            "alwaysOneOutcomeAtMostOnce",
+            "alwaysKeptOnlyAfterStrike",
+            "alwaysRefundOnlyAfterWait",
+            "alwaysUnpaidCoversNothing",
+            "alwaysStrikeIsFinal",
+            "sometimesCoveredAndRefunded",
+            "sometimesStrikeKeepsDeposit",
+            "sometimesCapAsksSecondPull",
+            "sometimesExpiryRefunds",
+            "sometimesCancelledCoversNothing",
+            "eval_witness_sometimesCoveredAndRefunded",
+            "eval_witness_sometimesStrikeKeepsDeposit",
+            "eval_witness_sometimesCapAsksSecondPull",
+            "eval_witness_sometimesExpiryRefunds",
+            "eval_witness_sometimesCancelledCoversNothing",
+            "slotValues"
+          ]
+        }
+      ],
+      "imports": [
+        "fees__submissionFeeDeposits",
+        "backend__submissionFeeTerms"
+      ],
+      "references": []
     },
     {
       "path": "spec/frontend/batchedDeposit.md",
