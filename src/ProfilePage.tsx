@@ -8,8 +8,12 @@ import {
 import { readBoundedJson } from "./lib/browser-json";
 import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
-import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
+import {
+  createGlobalLeaders,
+  penaltyAppliedThirds,
+} from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
+import { journalPenaltyAppliedThirds } from "./lib/points";
 import { resolveProfileActor } from "./lib/profile-actor";
 import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
@@ -147,9 +151,15 @@ export function ProfilePage({
   const penalties = (state.snapshot.penalties ?? []).filter(
     (penalty) => penalty.actor.id === actor.id,
   );
-  // The same open-month deductions as the accepted-work credits.
-  const appliedPenalties = openMonthScores(state.snapshot, state.cycleIndex)
-    .deductions.byPenalty;
+  // The Points journal names the applied debit when loaded; the rolling
+  // ledger is the fallback for a month without a cycle record.
+  const appliedPenalties = penaltyAppliedThirds(
+    state.snapshot,
+    state.cycleIndex,
+    points.state.status === "ready"
+      ? journalPenaltyAppliedThirds(points.state.journal)
+      : undefined,
+  );
   const historicalWallet = history.find(({ contributor }) => contributor.wallet)
     ?.contributor.wallet;
   const wallet =
@@ -232,11 +242,17 @@ export function ProfilePage({
                 </StatusBadge>
                 <span>
                   {formatCycleMonth(penalty.occurredAt.slice(0, 7))} −
-                  {formatPointsFromThirds(penalty.debitThirds)} pts ·{" "}
-                  {formatPointsFromThirds(
-                    appliedPenalties.get(penalty.id) ?? 0,
-                  )}{" "}
-                  applied
+                  {formatPointsFromThirds(penalty.debitThirds)} pts
+                  {appliedPenalties.has(penalty.id) ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      {formatPointsFromThirds(
+                        appliedPenalties.get(penalty.id) as number,
+                      )}{" "}
+                      applied
+                    </>
+                  ) : null}
                 </span>
               </li>
             ))}

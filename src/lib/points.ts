@@ -468,6 +468,25 @@ export function latestPoints(
 ): Map<string, PointRevision> {
   return new Map(journal.revisions.map((r) => [r.award.key, r]));
 }
+
+/**
+ * The debit each journal penalty actually applied, in score thirds, keyed
+ * by the penalty's work unit (`<pull request id>:penalty`). The journal
+ * caps a debit at the accepted work of its project and UTC month over the
+ * full record, so a month whose cycle record is already published keeps
+ * its applied amount here after the rolling snapshot window moves on.
+ */
+export function journalPenaltyAppliedThirds(
+  journal: PointsJournal,
+): Map<string, number> {
+  const applied = new Map<string, number>();
+  for (const revision of latestPoints(journal).values()) {
+    const award = revision.award;
+    if (award.category !== "slopbot-penalty") continue;
+    applied.set(award.workUnitId, Math.abs(award.amount) / POINTS_PER_THIRD);
+  }
+  return applied;
+}
 export function appendPointAwards(
   journal: PointsJournal,
   awards: PointAward[],
