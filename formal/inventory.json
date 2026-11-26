@@ -1023,7 +1023,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "sha256": "e8afd9b8c57ceda6acfa3d6a7a4e3c2486c5d81947fd0bf387294c8b40590eae",
+      "sha256": "9bbe53239942dbd2f5e309dd2c7df6c32a2087d0deb85b4c633df8db4d94a404",
       "models": [
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
@@ -1032,8 +1032,8 @@
         "formal/models/api/api_security_routine_decisions.qnt"
       ],
       "candidateLines": [
-        154, 190, 194, 218, 230, 231, 279, 397, 424, 494, 537, 556, 561, 592,
-        675, 693, 739, 742
+        161, 197, 201, 225, 237, 238, 286, 404, 431, 501, 544, 563, 568, 599,
+        682, 700, 746, 749
       ],
       "review": "mapped-abstraction"
     },
@@ -1106,7 +1106,7 @@
     },
     {
       "path": "backend/security/github-advisories.ts",
-      "sha256": "8ab1da5da068d3777ef3fc222923c57fc74e7392f5c8c83c45978851d867fb1f",
+      "sha256": "01d223f41cfba6bf8929eb3595b2f9b39ea0ae45537d563e9c08a2903a976130",
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt",
@@ -1115,13 +1115,14 @@
       ],
       "candidateLines": [
         89, 352, 391, 396, 397, 400, 419, 434, 461, 514, 541, 543, 545, 546,
-        563, 567, 595, 679, 695, 697, 703, 705, 718, 749, 767
+        563, 567, 595, 676, 677, 678, 684, 704, 706, 708, 710, 717, 718, 720,
+        730, 746, 748, 754, 756, 769, 800, 818
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "66c949ad226b4447bf4121002cd526f1a336bc39aac01028fd49407b8e53d120",
+      "sha256": "bae82ef09b6d31df7ca43a7e5fb42bf8f75d90ebc2d550b3f029c9da8639ca68",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -1145,10 +1146,11 @@
         717, 725, 729, 745, 811, 837, 973, 1015, 1160, 1180, 1213, 1236, 1252,
         1385, 1418, 1421, 1429, 1436, 1438, 1449, 1466, 1469, 1473, 1492, 1493,
         1495, 1497, 1520, 1544, 1569, 1679, 1709, 1728, 1827, 1828, 1843, 1858,
-        1883, 1954, 1958, 2003, 2028, 2211, 2254, 2379, 2747, 2773, 2798, 2852,
-        3019, 3022, 3023, 3062, 3071, 3091, 3137, 3188, 3189, 3191, 3234, 3296,
-        3325, 3331, 3337, 3367, 3404, 3415, 3433, 3439, 3523, 3531, 3533, 3548,
-        3644, 3653, 3659, 3671, 3674, 3675, 3703, 3707, 3710, 3747
+        1883, 1954, 1958, 1997, 1999, 2001, 2003, 2021, 2046, 2229, 2272, 2397,
+        2765, 2791, 2816, 2870, 3037, 3040, 3041, 3080, 3089, 3109, 3155, 3206,
+        3207, 3209, 3252, 3314, 3343, 3349, 3355, 3385, 3422, 3433, 3451, 3457,
+        3541, 3549, 3551, 3566, 3662, 3671, 3677, 3689, 3692, 3693, 3721, 3725,
+        3728, 3765
       ],
       "review": "mapped-abstraction"
     },
@@ -2435,7 +2437,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "b0226e334d6e26c5ec406416c5a41033eadad19890be78007302b64ffcbfb428",
+      "sha256": "dd18032b89fdd5fcea1fe2e4a3214392dad5d83175e457c72f46118506131a54",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2447,7 +2449,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [623, 624, 660, 673],
+      "candidateLines": [625, 626, 662, 675],
       "review": "mapped-abstraction"
     },
     {

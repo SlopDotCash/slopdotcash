@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "d1507c00bba934ed3b46e624d6dddd49a38d0addd585447e139c9c779183aca6",
+  "inventorySha256": "e75374feee081357364ff1fa91c04959ef0f0e3f6a6926482a4c0a76897d7400",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -367,7 +367,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 89,
+      "line": 96,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -383,7 +383,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 99,
+      "line": 106,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -399,7 +399,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 129,
+      "line": 136,
       "name": "submission_state",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -415,7 +415,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 705,
+      "line": 712,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -446,7 +446,7 @@
     },
     {
       "path": "backend/security/github-advisories.ts",
-      "line": 679,
+      "line": 730,
       "name": "state",
       "kind": "string-union",
       "values": ["no", "unknown"],

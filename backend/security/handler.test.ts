@@ -16,6 +16,7 @@ import type {
   SecurityAppealInput,
 } from "./analysis";
 import { pvrState, type SecurityD1Database } from "./case-store";
+import type { IdentityFacts } from "./github-advisories";
 import { handleSecurityApi } from "./handler";
 
 const migrations = readdirSync("migrations")
@@ -228,6 +229,8 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
   const appealInputs: SecurityAppealInput[] = [];
   let analyzerFails = false;
   let analyzerConfigured = true;
+  let identityRead: ((githubId: string) => Promise<IdentityFacts>) | null =
+    null;
   const analyzer: SecurityAnalyzer = {
     provider: "fixture",
     model: "fixture-model",
@@ -286,6 +289,7 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
                 repositoryNodeId: target.repositoryNodeId!,
               },
         advisories,
+        identityRead,
         analyzer: analyzerConfigured ? analyzer : null,
         moderatorGithubIds: MODERATORS,
       },
@@ -519,6 +523,11 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
     },
     setBeforeBatch: (hook: () => void) => {
       beforeBatch = hook;
+    },
+    setIdentityRead: (
+      reader: ((githubId: string) => Promise<IdentityFacts>) | null,
+    ) => {
+      identityRead = reader;
     },
   };
 }
@@ -983,6 +992,76 @@ describe("automatic private intake", () => {
     expect(members()).toEqual([
       { github_id: TRIAGER.githubId, revoked_at: null },
     ]);
+  });
+
+  test("assign-triager verifies the login against the GitHub account id before writing", async () => {
+    const { act, call, receive, setIdentityRead, sqlite } = open();
+    const id = await receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    const STRANGER = { githubId: "710000077", githubLogin: "stranger" };
+    setIdentityRead(async (githubId) => {
+      if (githubId === STRANGER.githubId)
+        return { state: "found", login: STRANGER.githubLogin };
+      if (githubId === "710000099") return { state: "missing" };
+      return { state: "unavailable" };
+    });
+
+    const mismatch = await act(MAINTAINER, id, {
+      action: "assign-triager",
+      githubId: STRANGER.githubId,
+      githubLogin: "trusted-name",
+    });
+    expect(mismatch.status).toBe(409);
+    expect(mismatch.body.error).toBe("identity_mismatch");
+
+    const missing = await act(MAINTAINER, id, {
+      action: "assign-triager",
+      githubId: "710000099",
+      githubLogin: "ghost",
+    });
+    expect(missing.status).toBe(404);
+    expect(missing.body.error).toBe("account_not_found");
+
+    const unavailable = await act(MAINTAINER, id, {
+      action: "assign-triager",
+      githubId: "710000088",
+      githubLogin: "nobody",
+    });
+    expect(unavailable.status).toBe(502);
+    expect(unavailable.body.error).toBe("github_unavailable");
+
+    expect(
+      sqlite
+        .query("SELECT github_id FROM security_case_members WHERE case_id = ?")
+        .all(id),
+    ).toEqual([]);
+
+    const assigned = await act(MAINTAINER, id, {
+      action: "assign-triager",
+      githubId: STRANGER.githubId,
+      githubLogin: "Stranger",
+    });
+    expect(assigned.status).toBe(200);
+    expect(
+      sqlite
+        .query(
+          "SELECT github_id, github_login FROM security_case_members WHERE case_id = ?",
+        )
+        .all(id),
+    ).toEqual([
+      { github_id: STRANGER.githubId, github_login: STRANGER.githubLogin },
+    ]);
+    expect((await call(STRANGER, "GET", `security-cases/${id}`)).status).toBe(
+      200,
+    );
+    expect(
+      (
+        await call(
+          { githubId: "710000088", githubLogin: "nobody" },
+          "GET",
+          `security-cases/${id}`,
+        )
+      ).status,
+    ).toBe(404);
   });
 });
 
