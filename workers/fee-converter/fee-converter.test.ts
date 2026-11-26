@@ -21,6 +21,7 @@ import {
   type ConversionRow,
   type FeeVault,
   type PreparedSend,
+  providerErrorLog,
   providerFailure,
   type Quote,
   type QuoteResult,
@@ -331,6 +332,100 @@ test("provider diagnostics distinguish response parsing from authentication with
   } finally {
     h.sqlite.close();
   }
+});
+
+test("EVM RPC auth observes only the failing attempt and leaves broadcast bytes intact", async () => {
+  const settings = config({
+    FEE_CONVERTER_MODE: "dry_run",
+    FEE_CONVERTER_NETWORKS: "robinhood",
+    FEE_WALLET_ROBINHOOD: WALLET,
+    RPC_URL_ROBINHOOD: "https://fee-rpc.invalid/fixture-do-not-report",
+  });
+  type Reply = {
+    status: number;
+    code?: number;
+    message?: string;
+  };
+  const readReplies: Reply[] = [];
+  const writeReplies: Reply[] = [];
+  const broadcasts: unknown[] = [];
+  const chain = createEvmClient({
+    config: settings.networks[0],
+    limits: settings.limits,
+    kyberClientId: "fixture",
+    fetch: (async (...[input, init]: Parameters<typeof fetch>) => {
+      const request = new Request(input, init);
+      expect(new URL(request.url).hostname).toBe("fee-rpc.invalid");
+      const { id, method, params } = (await request.json()) as {
+        id: number;
+        method: string;
+        params: unknown;
+      };
+      const read = method === "eth_call";
+      if (!read) {
+        expect(method).toBe("eth_sendRawTransaction");
+        broadcasts.push(params);
+      }
+      const reply = (read ? readReplies : writeReplies).shift();
+      if (!reply) throw new Error("Unexpected fixture RPC attempt");
+      return Response.json(
+        reply.code === undefined
+          ? { jsonrpc: "2.0", id, result: `0x${"0".repeat(64)}` }
+          : {
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: reply.code,
+                message: reply.message ?? "fixture-do-not-report",
+              },
+            },
+        { status: reply.status },
+      );
+    }) as typeof fetch,
+  });
+  for (const status of [401, 403, 200, 429]) {
+    readReplies.push({ status, code: -32000 });
+    const error = await chain.balance(TOKEN).catch((failure) => failure);
+    expect(error).toBeInstanceOf(Error);
+    expect(providerFailure(error)).toEqual(
+      status === 401 || status === 403
+        ? {
+            provider: "evm-rpc",
+            stage: "rpc-response",
+            method: "eth_call",
+            httpStatus: status,
+          }
+        : undefined,
+    );
+    if (status === 401 || status === 403)
+      expect(JSON.stringify(providerErrorLog(error))).not.toContain(
+        "fixture-do-not-report",
+      );
+  }
+
+  readReplies.push(
+    { status: 403, code: -32603 },
+    { status: 200, code: -32000 },
+  );
+  const raw = "0x01";
+  writeReplies.push({ status: 401, code: -32000 }, { status: 200 });
+  const [retriedRead, failedSend] = await Promise.all([
+    chain.balance(TOKEN).catch((error) => error),
+    chain.broadcast(raw).catch((error) => error),
+  ]);
+  expect(retriedRead).toBeInstanceOf(Error);
+  expect(providerFailure(retriedRead)).toBeUndefined();
+  expect(failedSend).toBeInstanceOf(Error);
+  expect(providerFailure(failedSend)).toEqual({
+    provider: "evm-rpc",
+    stage: "rpc-response",
+    method: "eth_sendRawTransaction",
+    httpStatus: 401,
+  });
+  await expect(chain.broadcast(raw)).resolves.toBeUndefined();
+  expect(broadcasts).toEqual([[raw], [raw]]);
+  expect(readReplies).toHaveLength(0);
+  expect(writeReplies).toHaveLength(0);
 });
 
 for (const network of ["base", "ethereum", "robinhood", "solana"] as const) {
