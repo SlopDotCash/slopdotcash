@@ -247,7 +247,6 @@ const commented = {
   "apps/backend/test/backend-session.test.vibe": 3,
   "apps/backend/test/backend-setup.test.vibe": 6,
   "apps/backend/test/backend-wallets.test.vibe": 3,
-  "apps/points/test/points-U12.test.vibe": 2,
   "apps/points/test/points.test.vibe": 2,
   "apps/points/test/support/catchup3-e1/world.ts": 1,
   "apps/points/test/support/u16/github.ts": 3,
