@@ -1,8 +1,7 @@
-// spec/security/scanController.md, "A run dispatches only when every gate holds and otherwise skips"; spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
+// spec/security/scanController.md, "A run dispatches only when every gate holds and otherwise skips"; spec/security/scanController.md, "The controller runs a pass only on the same commit or an unchanged earlier commit of its branch"; spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
 import { webCrypto, ed25519KeyPair } from "@repo/platform/crypto"
 import { outbound } from "@repo/platform/http"
 import { jsonVar } from "@repo/platform/config"
-import { systemGit } from "@repo/platform/git"
 import { providers } from "@repo/platform/providers"
 import { type RateCard, type ScannerProfile, profileApproved } from "../scanner/providers/review.ts"
 import { maxReplyBytes } from "../scanner/providers/route.vibe"
@@ -11,7 +10,12 @@ import { type ScanPassReport, ScanSettings, runScanPass } from "../scanner/run/p
 import { ScanAcquisition } from "../scanner/run/queue.vibe"
 import { ScanService, signedJson } from "../scanner/run/service.vibe"
 import { sandboxPath } from "../scanner/sandboxClient/client.vibe"
-import { protectedCheckout, secretVariable } from "./checkout.vibe"
+import { GitHub, github } from "@repo/platform/github"
+import { runnerMayScan } from "../../gen/security__scanController.effect.vibe"
+import { scannerInputs } from "../scanner/inputs/list.vibe"
+import { type ComparedFile, runnerCompare } from "../scanner/inputs/paths.ts"
+import { protectedCheckout, secretVariable, variable } from "./checkout.vibe"
+import { checkoutRoot } from "./inputs.vibe"
 
 export error ScanControllerFailed { message: string }
 export error ScanPassIncomplete { message: string }
@@ -26,6 +30,8 @@ schema Rate {
 }
 export schema RateCards { primary: Rate; specialist: Rate }
 schema BridgeHealth { ok?: boolean; revision?: string; imageSha256?: string }
+schema ComparedEntry { filename: string; previous_filename?: string }
+schema CompareAnswer { status: string; files: ReadonlyArray<ComparedEntry> }
 
 const rateKeys = ["uncachedInputNanoUsdPerToken", "cachedInputNanoUsdPerToken", "cacheCreationNanoUsdPerToken", "outputNanoUsdPerToken"] as const
 
@@ -43,17 +49,47 @@ export function passSucceeded(report: ScanPassReport) {
   return report.refreshed && report.assessments.every((assessment) => assessment.state === "published" && assessment.outcome === "accepted")
 }
 
-effect function bridgeMatches(sha: string) {
+effect function bridgeHealth() {
   const value = try signedJson({ step: "bridge", method: "GET", path: sandboxPath, timeoutMs: 30_000, limitBytes: 64 * 1024 })
   const unknownHealth: BridgeHealth = {}
   const health = Schema.decodeUnknownEffect(BridgeHealth)(value) catch effect () => {
     return unknownHealth
   }
-  if (health.revision !== sha) {
-    const deployed = /^[a-f0-9]{40}$/u.test(health.revision ?? "") ? health.revision : "no valid revision"
-    try Console.error(`The isolated runner reports ${deployed}; this checkout is ${sha}. Dispatch again after the release of this checkout succeeds.`)
+  return health
+}
+
+effect function compared(repository: string, deployed: string, checkout: string, tokens: ReadonlyArray<Redacted.Redacted<string> | undefined>) {
+  for (const token of tokens) {
+    if (token === undefined) continue
+    const read = Effect.provide(effect {
+      return try (try GitHub).json(`/repos/${repository}/compare/${deployed}...${checkout}`, CompareAnswer, { limitBytes: 32 * 1024 * 1024 })
+    }, github({ token, userAgent: "slop-vetting-controller", timeoutMs: 30_000 }))
+    const answer = read catch () => undefined
+    if (answer !== undefined) return { status: answer.status, files: answer.files satisfies ReadonlyArray<ComparedFile> }
   }
-  return health.ok === true && health.revision === sha && /^[a-f0-9]{64}$/u.test(health.imageSha256 ?? "")
+  return undefined
+}
+
+effect function runnerMatches(sha: string, githubToken: Redacted.Redacted<string>) {
+  const health = try bridgeHealth()
+  const deployed = health.revision ?? ""
+  if (health.ok !== true || !/^[a-f0-9]{40}$/u.test(deployed) || !/^[a-f0-9]{64}$/u.test(health.imageSha256 ?? "")) {
+    try Console.error(`The isolated runner reports no valid revision; this checkout is ${sha}. Dispatch again after the release of this checkout succeeds.`)
+    return false
+  }
+  if (deployed === sha) return true
+  const repository = try variable("GITHUB_REPOSITORY")
+  if (repository === undefined || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) return false
+  const compare = try compared(repository, deployed, sha, [githubToken, try secretVariable("GITHUB_COMPARE_TOKEN")])
+  const inputs = new Set(try scannerInputs(try checkoutRoot()))
+  const known = runnerCompare({ deployed, checkout: sha, compare, inputs })
+  if (runnerMayScan(known)) {
+    try Console.log(`The isolated runner reports ${deployed}, an earlier commit of this branch; no scanner input changed up to ${sha}, so this pass runs.`)
+    return true
+  }
+  const reason = !known.readable ? "the compare is unreadable" : !known.ahead ? `the checkout is not ahead (${compare?.status ?? "unknown"})` : !known.complete ? "the compare is truncated" : "a scanner input changed"
+  try Console.error(`The isolated runner reports ${deployed}; this checkout is ${sha} (${reason}). Dispatch again after the release of this checkout succeeds.`)
+  return false
 }
 
 effect function controlled(stage: Ref.Ref<string>) {
@@ -84,7 +120,7 @@ effect function controlled(stage: Ref.Ref<string>) {
     try Ref.set(stage, "journal")
     try journaled("controller-readiness")
     try Ref.set(stage, "bridge")
-    const ready = try bridgeMatches(sha)
+    const ready = try runnerMatches(sha, githubToken)
     try Ref.set(stage, "runner-revision")
     if (!ready) throw new ScanControllerFailed({ message: "The matching isolated runner has not been deployed" })
     try Ref.set(stage, "scan")

@@ -602,6 +602,7 @@ export const postProjects = {
   registryConflictAlreadyListedOnSlop: { status: 409, error: "registry_conflict", messageFrom: "`${repositoryName} is already listed on Slop as ${project.id}. Open ${origin}/projects/${project.id}/manage to continue its setup instead of creating it again.`", headers: jsonNoStoreSlopProjectApiContract },
   registryConflictTheProjectIdIsAlreadyUsed: { status: 409, error: "registry_conflict", messageFrom: "`The project id ${candidate.id} is already used by another project. Choose a different project id.`", headers: jsonNoStoreSlopProjectApiContract },
   invalidManifestANewProjectHasNoMaintainerShareHistory: { status: 422, error: "invalid_manifest", message: "A new project has no maintainer share history; set only the maintainer share", headers: jsonNoStoreSlopProjectApiContract },
+  catchUpRefusedANewProjectIs: { status: 422, error: "catch_up_refused", message: "A new project is not catching up on reviews; start it from the project's settings once it is listed", headers: jsonNoStoreSlopProjectApiContract },
 } as const
 
 export const putProjectsById = {
@@ -649,6 +650,7 @@ export const postProjectApplicationsByIdPublish = {
   alreadyDecided: { status: 409, error: "already_decided", messageFrom: "`Application was already ${application.status}`", headers: jsonNoStoreSlopProjectApiContract },
   ...withInvalidManifestV2,
   registryConflictTheProjectIdRepositoryOrRestrictionsChanged: { status: 409, error: "registry_conflict", message: "The project id, repository or restrictions changed, or the application was published. Reload before retrying.", headers: jsonNoStoreSlopProjectApiContract },
+  catchUpRefusedANewProjectIs: { status: 422, error: "catch_up_refused", message: "A new project is not catching up on reviews; start it from the project's settings once it is listed", headers: jsonNoStoreSlopProjectApiContract },
 } as const
 
 export const postProjectApplicationsByIdCancel = {

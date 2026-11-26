@@ -1,4 +1,4 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why"
 import { formatBaseUnits, fromAmount } from "@repo/settlement/kernels/amounts";
 import type { Tier } from "../../../gen/backend__projects.ts";
 import { type HomeCard, type HomeEntry, homeBefore, homeDescriptionLimit, homeGroup, type ListingFacts, listedThisMonth as listedThisMonthOf, onHome } from "../../../gen/frontend__poolListing.ts";
@@ -41,6 +41,7 @@ export interface ListedProject extends CardProject {
   readonly escrow?: { readonly deployments: ReadonlyArray<{ readonly network: string }> };
   /** Whether the owner's intake cap holds the project out of the lists; never while the merge activity read is pending or failed. */
   readonly held?: boolean;
+  readonly outOfRotation?: boolean;
   /** The owner's published maintainer share as a card line, when there is one. */
   readonly shareLine?: string;
   /** How many whole months the recorded vaults' free funds cover of this month's amount. */
@@ -183,9 +184,9 @@ export function listedThisMonth(project: ListedProject): boolean {
   return listedThisMonthOf(listingOf(project));
 }
 
-/** Whether /sponsors lists the project: listed this month and not held at its intake cap, whatever its status. @throws {never} */
+/** Whether /sponsors lists the project: listed this month and not held at its intake cap or out of rotation under the backlog rule, whatever its status. @throws {never} */
 export function onSponsors(project: ListedProject): boolean {
-  return listedThisMonth(project) && project.held !== true;
+  return listedThisMonth(project) && project.held !== true && project.outOfRotation !== true;
 }
 
 const tiers = { featured: "Featured", community: "Community", retired: "Retired" } as const satisfies Record<ListedProject["listingTier"], Tier>;
@@ -197,7 +198,7 @@ function homeEntry(project: ListedProject): HomeEntry {
 
 /** Every Featured or Community project Home lists once the funding read settles, in registry order. @throws {never} */
 export function homeProjects<P extends ListedProject>(projects: ReadonlyArray<P>): P[] {
-  return projects.filter((project) => onHome(homeEntry(project), project.held === true));
+  return projects.filter((project) => onHome(homeEntry(project), project.held === true || project.outOfRotation === true));
 }
 
 /** @throws {never} */

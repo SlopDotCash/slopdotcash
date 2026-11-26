@@ -1,6 +1,7 @@
-// spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"
+// spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why"
 import { type IntakeCount, IntakeCounts, type RegistryManifest } from "@repo/ports/backend"
 import type { StoredCount } from "../../gen/backend__intakeCap.effect.vibe"
+import type { BacklogRead } from "../../gen/backend__backlogRule.effect.vibe"
 import { type IntakeListing, type MonthListing, intakeListingOf, monthListingOf } from "../../gen/contributor__publication.effect.vibe"
 import type { PoolFacts } from "../../gen/frontend__projections.effect.vibe"
 import { type Amount, zero } from "../../gen/settlement__money.effect.vibe"
@@ -68,14 +69,44 @@ function capOf(manifest: unknown): number {
   return Number.isSafeInteger(cap) && cap >= 1 ? cap : 0
 }
 
-function storedCount(count: IntakeCount, now: number): ReadonlyArray<StoredCount> {
+function storedCount(count: IntakeCount): ReadonlyArray<StoredCount> {
   const observed = Date.parse(count.observedAt)
   if (!Number.isFinite(observed) || !Number.isSafeInteger(count.openOutside)) return []
-  return [{ read: true, count: count.openOutside, observedAt: -Math.ceil((now - observed) / hourMs) }]
+  return [{ read: true, count: count.openOutside, observedAt: Math.floor(observed / hourMs) }]
 }
 
 export function intakeListingFor(read: IntakeRead, project: RegistryManifest, manifest: unknown, now: number): IntakeListing {
   const counts = read?.get(project.projectId)
-  if (counts === undefined) return intakeListingOf(false, 0, project.active, 0, [])
-  return intakeListingOf(true, capOf(manifest), project.active, 0, counts.flatMap((count) => storedCount(count, now)))
+  const nowHours = Math.floor(now / hourMs)
+  if (counts === undefined) return intakeListingOf(false, 0, project.active, nowHours, [], backlogExempt(manifest), catchUpUntilOf(manifest), [])
+  return intakeListingOf(true, capOf(manifest), project.active, nowHours, counts.flatMap((count) => storedCount(count)), backlogExempt(manifest), catchUpUntilOf(manifest), counts.flatMap((count) => storedBacklogRead(count)))
+}
+
+schema BountyOnlyProgram { readonly rewardMode: "bounty-only" }
+schema BountyOnlyField { readonly securityBounty: BountyOnlyProgram }
+schema CatchUpSetting { readonly catchUpUntil: string }
+schema CatchUpField { readonly slopbot: CatchUpSetting }
+
+const bountyOnlyOf = Schema.is(BountyOnlyField)
+const catchUpOf = Schema.is(CatchUpField)
+
+function backlogExempt(manifest: unknown): boolean {
+  const pool = monthlyPoolOf(manifest) ? manifest.reward : undefined
+  if (pool === undefined) return true
+  if (bountyOnlyOf(manifest)) return true
+  return /^(?:0+|-\d+)$/u.test(pool.monthlyCapMinor)
+}
+
+function catchUpUntilOf(manifest: unknown): number {
+  if (!catchUpOf(manifest)) return 0
+  const until = Date.parse(manifest.slopbot.catchUpUntil)
+  return Number.isFinite(until) ? Math.floor(until / hourMs) : 0
+}
+
+function storedBacklogRead(count: IntakeCount): ReadonlyArray<BacklogRead> {
+  const observed = Date.parse(count.observedAt)
+  if (!Number.isFinite(observed) || !Number.isSafeInteger(count.waitingOutside)) return []
+  const mergedAt = count.lastMergedAt === null ? 0 : Date.parse(count.lastMergedAt)
+  if (!Number.isFinite(mergedAt)) return []
+  return [{ read: true, waiting: count.waitingOutside, lastMergedAt: Math.floor(mergedAt / hourMs), observedAt: Math.floor(observed / hourMs) }]
 }

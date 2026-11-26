@@ -728,6 +728,183 @@
       ]
     },
     {
+      "path": "spec/backend/backlogRule.md",
+      "sha256": "e7da499fc8283c3cf695bcec1969b4bc53c24cce4ef1873d4cde9ba6d8b1d939",
+      "module": "backend__backlogRule",
+      "stories": [
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up",
+          "line": 31
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up / Fifty or more waiting pull requests take a project out of rotation",
+          "line": 37,
+          "definitions": [
+            "BacklogRead",
+            "overLimit",
+            "readMaxAgeHours",
+            "startsAtHours",
+            "unreadRead",
+            "hasRecentRead",
+            "recentWaiting",
+            "recentMerged",
+            "overLimitHeld",
+            "lawSingleRepoOverLimitHolds"
+          ]
+        },
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up / Work waiting with no merge in fourteen days is dormant",
+          "line": 63,
+          "definitions": [
+            "dormantHours",
+            "dormantHeld",
+            "dormantWarningDue",
+            "lawSingleRepoDormantHolds",
+            "lawQuietNeverDormant",
+            "lawNoReadHoldsNothing",
+            "lawOneMergeClearsDormancy"
+          ]
+        },
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up / No recent read decides nothing, and nothing leaves rotation before 1 December 2026",
+          "line": 93,
+          "definitions": [
+            "ListRead",
+            "Backlog",
+            "owner",
+            "registry",
+            "schedule",
+            "browserReader",
+            "discoveryServer",
+            "slopbot",
+            "initial",
+            "catchUpRunning",
+            "outOfRotation",
+            "wouldLeave",
+            "canObserveStatus",
+            "observeStatus",
+            "canObserveExempt",
+            "observeExempt",
+            "canObserveClock",
+            "observeClock",
+            "canStoreRead",
+            "storeRead",
+            "canFailRead",
+            "failRead",
+            "lawBeforeStartLists",
+            "lawExemptLists",
+            "lawInactiveLists",
+            "lawCatchUpLists",
+            "lawNoRecentReadLists"
+          ]
+        },
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up / The lists leave an out-of-rotation project out and its page says why",
+          "line": 144,
+          "definitions": [
+            "overLimitNotice",
+            "dormantNotice",
+            "catchUpNoticePrefix",
+            "catchUpNoticeSuffix",
+            "canBrowserRead",
+            "browserRead",
+            "canServerRead",
+            "serverRead",
+            "onHome",
+            "onSponsors",
+            "discovered",
+            "noticeShown",
+            "catchUpShown",
+            "alwaysOutLeavesLists",
+            "alwaysInRotationIsListed",
+            "alwaysFailedReadListsAsBefore",
+            "alwaysCatchUpShownWhileRunning"
+          ]
+        },
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up / A project returns by itself at the first recent read that clears it",
+          "line": 181,
+          "definitions": [
+            "alwaysReturnNeedsClearRead",
+            "sometimesBackByItself"
+          ]
+        },
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up / A catch-up pause keeps a project in rotation for at most fourteen days",
+          "line": 195,
+          "definitions": [
+            "catchUpMaxHours",
+            "catchUpCanStart",
+            "catchUpCanMove",
+            "catchUpRefused",
+            "canStartCatchUp",
+            "startCatchUp",
+            "canMoveCatchUp",
+            "moveCatchUp",
+            "canEndCatchUp",
+            "endCatchUp",
+            "canRecordCatchUp",
+            "recordCatchUp",
+            "lawCatchUpStartWindow",
+            "lawCatchUpNeverPastStart",
+            "lawNewProjectRefusesCatchUp",
+            "alwaysCatchUpWithinFourteenDays",
+            "sometimesCatchUpKeepsListed",
+            "sometimesCatchUpRecorded"
+          ]
+        },
+        {
+          "heading": "Story: Keep the lists to projects whose maintainers are keeping up / The owner hears once before the rule starts, and once each time a project leaves rotation",
+          "line": 241,
+          "definitions": [
+            "inboxKind",
+            "backlogRuleKeyPrefix",
+            "canSendNotice",
+            "sendNotice",
+            "lawNoticeSentOnce",
+            "lawPreviewBeforeStart",
+            "sometimesNoticeSent",
+            "readsValues",
+            "rValues",
+            "waitingValues",
+            "lastMergedAtValues",
+            "nowValues",
+            "untilValues",
+            "startedAtValues",
+            "lastStartMonthValues",
+            "nowMonthValues",
+            "repositoryValues",
+            "historyValues",
+            "keyValues",
+            "byValues",
+            "weight_storeRead",
+            "weight_startCatchUp",
+            "eval_witness_sometimesBackByItself",
+            "eval_witness_sometimesCatchUpKeepsListed",
+            "eval_witness_sometimesCatchUpRecorded",
+            "eval_witness_sometimesNoticeSent"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./intakeCap.md",
+          "line": 6
+        },
+        {
+          "target": "./mergeActivity.md",
+          "line": 12
+        },
+        {
+          "target": "../frontend/poolListing.md",
+          "line": 27
+        }
+      ]
+    },
+    {
       "path": "spec/backend/bindingConsent.md",
       "sha256": "d63009379a4e468697e48ae0a5e0f28d6a886b00bd82bd400e29a217a4d516fe",
       "module": "backend__bindingConsent",
@@ -1325,7 +1502,7 @@
     },
     {
       "path": "spec/backend/index.md",
-      "sha256": "edc264bcf4cbf5346b0ab66071c24308019a1a1a7ba0efc97024e198953f11e0",
+      "sha256": "d9c8f242d245e051319442afe5c3fec888337c04d9eb7447d7cfe705d484e1d0",
       "module": "backend",
       "stories": [],
       "rules": [],
@@ -1416,33 +1593,37 @@
           "line": 27
         },
         {
-          "target": "./readyLabelSettings.md",
+          "target": "./backlogRule.md",
           "line": 28
         },
         {
-          "target": "./submissionFeeTerms.md",
+          "target": "./readyLabelSettings.md",
           "line": 29
         },
         {
-          "target": "./submissionFeeSettings.md",
+          "target": "./submissionFeeTerms.md",
           "line": 30
+        },
+        {
+          "target": "./submissionFeeSettings.md",
+          "line": 31
         }
       ]
     },
     {
       "path": "spec/backend/intakeCap.md",
-      "sha256": "d0e1f5012c1d9f8e214b4c5f48b03e5e146332e09b82a147824ed5be8c622c0b",
+      "sha256": "2f864f51b5bba6c475bb80fa6d65f4e92d6e2f7680c223d3c120ba90d16be28b",
       "module": "backend__intakeCap",
       "stories": [
         {
           "heading": "Story: Pause new contributors while the review queue is full",
-          "line": 29
+          "line": 32
         }
       ],
       "rules": [
         {
           "heading": "Story: Pause new contributors while the review queue is full / The count takes every open outside pull request that is not a draft, answered or not",
-          "line": 35,
+          "line": 38,
           "definitions": [
             "openOutsideCount",
             "lawDraftsMaintainersAndBotsNeverCount",
@@ -1452,7 +1633,7 @@
         },
         {
           "heading": "Story: Pause new contributors while the review queue is full / A recent count at or above the cap of an active project pauses it",
-          "line": 49,
+          "line": 52,
           "definitions": [
             "StoredCount",
             "ListRead",
@@ -1488,7 +1669,7 @@
         },
         {
           "heading": "Story: Pause new contributors while the review queue is full / The lists leave a paused project out, its page says why, and a failed read lists it as before",
-          "line": 101,
+          "line": 104,
           "definitions": [
             "canBrowserRead",
             "browserRead",
@@ -1505,7 +1686,7 @@
         },
         {
           "heading": "Story: Pause new contributors while the review queue is full / Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap",
-          "line": 127,
+          "line": 130,
           "definitions": [
             "intakeCapReason",
             "canReview",
@@ -1540,12 +1721,16 @@
         {
           "target": "../frontend/poolListing.md",
           "line": 26
+        },
+        {
+          "target": "./backlogRule.md",
+          "line": 28
         }
       ]
     },
     {
       "path": "spec/backend/listing.md",
-      "sha256": "41d8c8203b904423a0d4c860e58d6ab17ab01126fde377de786a2fc3389a9135",
+      "sha256": "2c1e810fe620dfd66d85339cdabf2c8f212c73642d82a4b999ddefe0f55fd791",
       "module": "backend__listing",
       "stories": [
         {
@@ -1617,6 +1802,10 @@
         {
           "target": "./intakeCap.md",
           "line": 69
+        },
+        {
+          "target": "./backlogRule.md",
+          "line": 70
         }
       ]
     },
@@ -5822,7 +6011,7 @@
     },
     {
       "path": "spec/contributor/publication.md",
-      "sha256": "dc1acaf9e5506d83c67013aa6ee97ae593bc1e65ec8a1bd64eb5482c3f996622",
+      "sha256": "7214281ea7c92cc8fc99831cf1838afbdb60ccd7d0249eaaeb351b4b7b0afe8a",
       "module": "contributor__publication",
       "stories": [
         {
@@ -5831,15 +6020,15 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance",
-          "line": 247
+          "line": 254
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source",
-          "line": 356
+          "line": 363
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index",
-          "line": 590
+          "line": 597
         }
       ],
       "rules": [
@@ -5896,8 +6085,8 @@
           ]
         },
         {
-          "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing",
-          "line": 160,
+          "heading": "Story: Serve a project's skills only while it is listed and cleared / Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing",
+          "line": 161,
           "definitions": [
             "MonthListing",
             "IntakeListing",
@@ -5909,13 +6098,14 @@
             "lawFailedCountReadPausesNothing",
             "lawUnreadCountsPauseNothing",
             "lawRecentCountAtCapPauses",
+            "lawOutOfRotationPauses",
             "lawListingGatesServeByDirectLink",
             "lawDiscoveryIsInstallerGateListedAndOpen"
           ]
         },
         {
           "heading": "Story: Serve a project's skills only while it is listed and cleared / Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD",
-          "line": 216,
+          "line": 223,
           "definitions": [
             "ArtifactResponse",
             "handled",
@@ -5927,7 +6117,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The template index binds templateSha256 to the template, renderer and accepted-revision digests",
-          "line": 258,
+          "line": 265,
           "definitions": [
             "RevisionStatus",
             "SourceFile",
@@ -5948,7 +6138,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / Only bytes equal to the build commit's tracked tree are labelled committed",
-          "line": 307,
+          "line": 314,
           "definitions": [
             "sourceStatus",
             "groupStatus",
@@ -5960,7 +6150,7 @@
         },
         {
           "heading": "Story: Publish the build's template index with exact provenance / The server renders only template files whose bytes match the index digest",
-          "line": 335,
+          "line": 342,
           "definitions": [
             "ServedTemplateFile",
             "maxTemplateFileBytes",
@@ -5971,7 +6161,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Each global skill, its discovery copy, its index entry and llms.txt carry the same digest",
-          "line": 363,
+          "line": 370,
           "definitions": [
             "GlobalRole",
             "GlobalSource",
@@ -6000,7 +6190,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / llms.txt and skill-manifest.json state the build commit and its committed or working-tree status",
-          "line": 445,
+          "line": 452,
           "definitions": [
             "manifestStatus",
             "lawGlobalStatusIsExact",
@@ -6009,7 +6199,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / The bootstrap's renderer contract names files that exist byte-identical at the build commit",
-          "line": 470,
+          "line": 477,
           "definitions": [
             "guideRendererPaths",
             "globalSetPublishable",
@@ -6021,7 +6211,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Protocol documents are generated from their one maintained source and historical protocol links stay immutable",
-          "line": 500,
+          "line": 507,
           "definitions": [
             "ProtocolDocument",
             "DocumentSource",
@@ -6036,7 +6226,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Simulation samples cover listed, paused, restricted and unverified projects and committed and working-tree builds",
-          "line": 538,
+          "line": 545,
           "definitions": [
             "servedFacts",
             "knownValues",
@@ -6068,7 +6258,7 @@
         },
         {
           "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index / The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route",
-          "line": 599,
+          "line": 606,
           "definitions": [
             "SitemapProject",
             "PublishedCycle",
@@ -6091,6 +6281,7 @@
         "frontend__projections",
         "frontend__poolListing",
         "backend__intakeCap",
+        "backend__backlogRule",
         "app",
         "frontend__routes"
       ],
@@ -6108,32 +6299,40 @@
           "line": 12
         },
         {
+          "target": "../backend/backlogRule.md",
+          "line": 128
+        },
+        {
           "target": "./skillAuthority.md",
-          "line": 136
+          "line": 137
         },
         {
           "target": "../frontend/poolListing.md",
-          "line": 164
+          "line": 165
         },
         {
           "target": "../backend/mergeActivity.md",
-          "line": 170
-        },
-        {
-          "target": "../backend/intakeCap.md",
           "line": 171
         },
         {
+          "target": "../backend/intakeCap.md",
+          "line": 172
+        },
+        {
+          "target": "../backend/backlogRule.md",
+          "line": 175
+        },
+        {
           "target": "./skillAuthority.md",
-          "line": 315
+          "line": 322
         },
         {
           "target": "../app/index.md",
-          "line": 607
+          "line": 614
         },
         {
           "target": "../frontend/routes.md",
-          "line": 608
+          "line": 615
         }
       ]
     },
@@ -11352,7 +11551,7 @@
     },
     {
       "path": "spec/frontend/poolListing.md",
-      "sha256": "dae6e02af840c36fabb9157862daaf93257968dad57d258123c294d52f0685ee",
+      "sha256": "61c4f3cbe4ca51a47c1452627cf0c5e22112ef635f577a24cbece37a2485badb",
       "module": "frontend__poolListing",
       "stories": [
         {
@@ -11361,7 +11560,7 @@
         },
         {
           "heading": "Story: Pick a project from the Featured and Community sections",
-          "line": 100
+          "line": 114
         }
       ],
       "rules": [
@@ -11386,17 +11585,23 @@
             "pausedInstallText",
             "notListedInstallText",
             "intakeHeld",
+            "backlogHeld",
             "installNotice",
             "lawHeldNeedsACurrentCount",
             "lawUnreadCountsHoldNothing",
+            "lawBacklogHeldNeedsACurrentRead",
+            "lawBacklogHeldStartsInDecember",
             "lawPausedSentenceFirst",
             "lawListedProjectNeedsNoNotice",
-            "countsValues"
+            "countsValues",
+            "readsValues",
+            "nowValues",
+            "untilValues"
           ]
         },
         {
           "heading": "Story: Pick a project from the Featured and Community sections / Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page",
-          "line": 102,
+          "line": 116,
           "definitions": [
             "HomeEntry",
             "noProjectsText",
@@ -11422,7 +11627,7 @@
         },
         {
           "heading": "Story: Pick a project from the Featured and Community sections / Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order",
-          "line": 169,
+          "line": 184,
           "definitions": [
             "HomeGroup",
             "HomeCard",
@@ -11445,6 +11650,7 @@
         "frontend__views",
         "settlement__money",
         "backend__intakeCap",
+        "backend__backlogRule",
         "backend__projects"
       ],
       "references": [
@@ -11461,7 +11667,7 @@
           "line": 18
         },
         {
-          "target": "../backend/intakeCap.md",
+          "target": "../backend/backlogRule.md",
           "line": 21
         },
         {
@@ -11469,16 +11675,24 @@
           "line": 67
         },
         {
+          "target": "../backend/backlogRule.md",
+          "line": 68
+        },
+        {
+          "target": "../backend/backlogRule.md",
+          "line": 120
+        },
+        {
           "target": "../ui/pagination.md",
-          "line": 114
+          "line": 129
         },
         {
           "target": "../backend/projects.md",
-          "line": 122
+          "line": 137
         },
         {
           "target": "./projections.md",
-          "line": 172
+          "line": 187
         }
       ]
     },
@@ -24180,18 +24394,22 @@
     },
     {
       "path": "spec/security/scanController.md",
-      "sha256": "be8b5f149a1fa58cdff4ade86aced7a0b52f309a31198eaa9cf1a727af5a9875",
+      "sha256": "ec5d5e8d73a12a7821c1596dbe6097f611d1045b20e71ea982d78b3341941096",
       "module": "security__scanController",
       "stories": [
         {
           "heading": "Story: Dispatch a scan only for the deployed release of the branch head",
-          "line": 10
+          "line": 12
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since",
+          "line": 91
         }
       ],
       "rules": [
         {
           "heading": "Story: Dispatch a scan only for the deployed release of the branch head / Each protected branch tracks its head, its released head and its active scans",
-          "line": 12,
+          "line": 14,
           "definitions": [
             "Ref",
             "Branch",
@@ -24209,10 +24427,12 @@
         },
         {
           "heading": "Story: Dispatch a scan only for the deployed release of the branch head / A run dispatches only when every gate holds and otherwise skips",
-          "line": 30,
+          "line": 46,
           "definitions": [
             "Gate",
             "gateValues",
+            "unchangedScanner",
+            "scansUnchangedRunner",
             "mayDispatch",
             "dispatch",
             "canFinishRun",
@@ -24223,6 +24443,35 @@
             "lawDispatchScansReleasedHead",
             "sometimesDispatched",
             "sometimesAdvancedHeadSkipped"
+          ]
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since / A deployed release serves the scanner input list of its own commit",
+          "line": 102,
+          "definitions": [
+            "alwaysServedInputsMatchRelease",
+            "alwaysReleasedHeadIsUnchanged"
+          ]
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since / A later head dispatches only when it descends from the release and no scanner input changed",
+          "line": 117,
+          "definitions": [
+            "lawDispatchRunsUnchangedScanner",
+            "sometimesScannedBehindRelease",
+            "sometimesScannerChangeWaits",
+            "eval_witness_sometimesScannedBehindRelease",
+            "eval_witness_sometimesScannerChangeWaits"
+          ]
+        },
+        {
+          "heading": "Story: Scan on an earlier release of the branch when no scanner input changed since / The controller runs a pass only on the same commit or an unchanged earlier commit of its branch",
+          "line": 143,
+          "definitions": [
+            "RunnerCompare",
+            "compareValues",
+            "runnerMayScan",
+            "lawRunnerScansOnlyAnUnchangedScanner"
           ]
         }
       ],

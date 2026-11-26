@@ -1,0 +1,79 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { systemGit } from "@repo/platform/git"
+import { repoRoot } from "@repo/platform/testing/paths"
+import { runnerMayScan } from "../gen/security__scanController.effect.vibe"
+import { scannerInputs } from "../src/scanner/inputs/list.vibe"
+import { COMPARE_FILE_LIMIT, SCANNER_ENTRIES, SCANNER_FILES, changedScannerInputs, runnerCompare } from "../src/scanner/inputs/paths.ts"
+import { type Workspace, workspace } from "./support/git/fixtures.ts"
+import { scannerRepository } from "./support/scan/inputs.ts"
+
+const deployed = "1".repeat(40)
+const checkout = "2".repeat(40)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function opened() {
+  return try acquireRelease(orDie(Effect.try(() => workspace())), (made: Workspace) => sync(() => made.close()))
+}
+
+layer(Layer.mergeAll(NodeServices.layer, systemGit), { excludeTestServices: true, timeout: "10 minutes" })((it) => {
+  it.effect('The scanner input list follows the entries\' relative, workspace and generated imports, keeps the scanner directories and fixed files, and refuses an unresolved import (spec/security/scanController.md, "A deployed release serves the scanner input list of its own commit")', () => scoped(effect {
+    const space = try opened()
+    const resolved = try orDie(Effect.try(() => scannerRepository(space.root, "scanner", [
+      "import { git } from \"@repo/platform/git\"",
+      "import { runnerMayScan } from \"../../gen/security__scanController.effect.vibe\"",
+      "import { Effect } from \"effect\"",
+      "",
+    ].join("\n"))))
+    const files = try scannerInputs(resolved.path)
+    try same({
+      sorted: [...files].sort().join("\n") === files.join("\n"),
+      entries: [...SCANNER_ENTRIES, ...SCANNER_FILES].every((path) => files.includes(path)),
+      imported: ["apps/security/src/programs/scan.vibe", "packages/platform/src/git/index.ts", "packages/platform/package.json"].every((path) => files.includes(path)),
+      generatedFromSpec: ["spec/security/scanController.md", "spec/security/kernel.md"].every((path) => files.includes(path)),
+      notRun: ["apps/security/src/scanner/run/pass.test.vibe", "apps/security/src/scanner/run/README.md"].some((path) => files.includes(path)),
+      unrelated: files.includes("apps/points/src/unrelated.vibe"),
+    }, { sorted: true, entries: true, imported: true, generatedFromSpec: true, notRun: false, unrelated: false })
+    const missing = try orDie(Effect.try(() => scannerRepository(space.root, "missing", "import { gone } from \"./gone.vibe\"\n")))
+    const refusal = try exit(scannerInputs(missing.path))
+    try same(Exit.isFailure(refusal) && String(Cause.squash(refusal.cause)).includes("Unresolved scanner import ./gone.vibe"), true)
+    const unknownPackage = try orDie(Effect.try(() => scannerRepository(space.root, "package", "import { x } from \"@repo/absent/x\"\n")))
+    const unknown = try exit(scannerInputs(unknownPackage.path))
+    try same(Exit.isFailure(unknown), true)
+  }))
+
+  it.effect('The scanner input list of this repository holds the controller, the runner, the vetting API and their specs, and leaves unrelated apps out (spec/security/scanController.md, "A deployed release serves the scanner input list of its own commit")', () => effect {
+    const files = try scannerInputs(repoRoot)
+    try same({
+      controller: ["apps/security/src/programs/scan.vibe", "apps/security/src/scanner/inputs/paths.ts", "spec/security/scanController.md"].every((path) => files.includes(path)),
+      runner: ["apps/security/src/sandbox/job.vibe", "apps/security/src/workers/sandbox.vibe", "apps/security/sandbox/Dockerfile"].every((path) => files.includes(path)),
+      api: ["apps/security/src/admission/routes.vibe", "apps/security/src/evidence/routes.vibe"].every((path) => files.includes(path)),
+      lock: ["pnpm-lock.yaml", ".github/workflows/vetting-controller.yml"].every((path) => files.includes(path)),
+      tests: files.some((path) => path.includes("/test/") || /\.test\./u.test(path)),
+      unrelated: files.some((path) => path.startsWith("apps/points/src/collect/")),
+    }, { controller: true, runner: true, api: true, lock: true, tests: false, unrelated: false })
+  })
+
+  it.effect('A pass runs on the same commit, or on an earlier commit the checkout is ahead of with a complete compare that touches no scanner input; anything else refuses (spec/security/scanController.md, "The controller runs a pass only on the same commit or an unchanged earlier commit of its branch")', () => effect {
+    const inputs = new Set(["apps/security/src/programs/scan.vibe", "pnpm-lock.yaml", "packages/platform/src/git/index.ts"])
+    const mayScan = (status: string | undefined, files: ReadonlyArray<{ readonly filename: string; readonly previous_filename?: string }>, at = checkout) =>
+      runnerMayScan(runnerCompare({ deployed, checkout: at, compare: status === undefined ? undefined : { status, files }, inputs }))
+    const unrelated = [{ filename: "apps/points/src/collect/run/index.vibe" }, { filename: "apps/security/src/scanner/run/notes.md" }]
+    try same({
+      sameCommit: mayScan(undefined, [], deployed),
+      unrelatedAhead: mayScan("ahead", unrelated),
+      importTouched: mayScan("ahead", [...unrelated, { filename: "packages/platform/src/git/index.ts" }]),
+      lockTouched: mayScan("ahead", [{ filename: "pnpm-lock.yaml" }]),
+      renamedOutOfScanner: mayScan("ahead", [{ filename: "apps/points/src/moved.vibe", previous_filename: "apps/security/src/scanner/run/old.vibe" }]),
+      newScannerFile: mayScan("ahead", [{ filename: "apps/security/src/sandbox/added.vibe" }]),
+      diverged: mayScan("diverged", unrelated),
+      behind: mayScan("behind", []),
+      truncated: mayScan("ahead", Array.from({ length: COMPARE_FILE_LIMIT }, (_, index) => ({ filename: `docs/page-${index}.md` }))),
+      unreadable: mayScan(undefined, []),
+    }, { sameCommit: true, unrelatedAhead: true, importTouched: false, lockTouched: false, renamedOutOfScanner: false, newScannerFile: false, diverged: false, behind: false, truncated: false, unreadable: false })
+    try same(changedScannerInputs([{ filename: "apps/security/src/scanner/run/notes.md" }, { filename: "apps/security/src/scanner/run/pass.test.vibe" }, { filename: "pnpm-lock.yaml" }], inputs), ["pnpm-lock.yaml"])
+  })
+})

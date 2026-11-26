@@ -43,8 +43,7 @@ jobs:
           GH_TOKEN: ${{ steps.dispatch-token.outputs.token || github.token }}
           TRIGGER_EVENT: ${{ github.event_name }}
           RELEASE_REF: ${{ github.event.workflow_run.head_branch }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+          COMPARE_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           wait_budget="${SCAN_DISPATCH_WAIT_BUDGET:-3900}"
@@ -79,28 +78,32 @@ jobs:
           fi
           for ref in $refs; do
             head="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
-            if [ "$TRIGGER_EVENT" = workflow_run ]; then
-              if [ "$head" != "$RELEASE_SHA" ]; then
-                echo "::notice title=Scanner waits for release::$ref advanced after this release; its new head must deploy before scanning."
+            # The site serves the scanner input list of the commit its release
+            # deployed. A scan runs on that commit, or on a later commit of the
+            # branch that changed no listed input and no path in a scanner
+            # directory; the controller checks the same rule against its own
+            # checkout (PRD section 8, operator decision of 23 November 2026).
+            case "$ref" in
+              main) site="https://slop.cash" ;;
+              development) site="https://staging.slop.cash" ;;
+            esac
+            inputs="$(mktemp)"
+            if ! curl -fsS --max-time 30 "$site/scanner-inputs.json" -o "$inputs" \
+              || ! jq -e '.schemaVersion == "1" and (.commit | type == "string" and test("^[0-9a-f]{40}$")) and (.files | type == "array" and length > 0 and all(type == "string")) and (.directories | type == "array" and all(type == "string")) and (.excluded | type == "array" and all(type == "string"))' "$inputs" >/dev/null; then
+              echo "::notice title=Scanner waits for release::$ref serves no readable scanner input list, so no scan is dispatched."
+              rm -f "$inputs"
+              continue
+            fi
+            live="$(jq -r .commit "$inputs")"
+            if [ "$live" != "$head" ]; then
+              changed="$(GH_TOKEN="$COMPARE_TOKEN" gh_retry gh api "repos/$GITHUB_REPOSITORY/compare/$live...$head" | jq --slurpfile list "$inputs" 'if .status == "ahead" and (.files | length) < 300 then [.files[] | .filename, (.previous_filename // empty)] | map(select(. as $path | ($list[0].files | index($path)) != null or (($list[0].directories | any(. as $dir | $path | startswith($dir))) and ($list[0].excluded | any(. as $dir | $path | startswith($dir)) | not) and ($path | test("([.]test[.]([cm]?[jt]sx?|vibe)|[.]md|(^|/)test/.*)$") | not)))) | length else "out-of-order" end' || echo unreadable)"
+              if [ "$changed" != 0 ]; then
+                echo "::notice title=Scanner waits for release::$ref serves $live; up to $head a scanner input changed or the commits are not in order ($changed), so its release must deploy before scanning."
+                rm -f "$inputs"
                 continue
               fi
-              released="$RELEASE_RUN_ID"
-            else
-              released="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // empty')"
             fi
-            if [ -z "$released" ]; then
-              echo "::notice title=Scanner waits for release::$ref head $head has no successful release yet. Its isolated runner is not deployed, so no scan is dispatched."
-              continue
-            fi
-            case "$ref" in
-              main) release_job="Deploy trusted production bundle" ;;
-              development) release_job="Deploy verified development to staging" ;;
-            esac
-            deployed="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/jobs?per_page=100" --paginate --slurp | jq "[.[].jobs[] | select(.name == \"$release_job\" and .conclusion == \"success\")] | length")"
-            if [ "$deployed" -eq 0 ]; then
-              echo "::notice title=Scanner waits for release::$ref did not complete its deployment job."
-              continue
-            fi
+            rm -f "$inputs"
             active="$(gh_retry gh run list --repo "$GITHUB_REPOSITORY" --workflow vetting-controller.yml --branch "$ref" --event workflow_dispatch --json status --jq '[.[] | select(.status != "completed")] | length')"
             if [ "$active" -eq 0 ]; then
               gh_retry gh workflow run vetting-controller.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"
@@ -162,6 +165,7 @@ jobs:
       - name: Run bounded scanner and retain publication state
         env:
           GITHUB_TOKEN: ${{ steps.read-token.outputs.source == 'app' && steps.scan-token.outputs.token || github.token }}
+          GITHUB_COMPARE_TOKEN: ${{ github.token }}
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
           SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
           VETTING_RATE_CARDS: ${{ vars.VETTING_RATE_CARDS }}

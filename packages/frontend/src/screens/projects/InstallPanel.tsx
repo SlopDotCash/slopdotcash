@@ -15,7 +15,7 @@ export type InstallPanelProps = {
   clearance: Clearance;
   /** This month's listing facts from the registry; a project with no amount this month is not listed, which is not a clearance problem. */
   listing: ListingFacts;
-  /** Whether the merge activity read shows the project held at its intake cap. */
+  /** Whether the merge activity read shows the project held at its intake cap or out of rotation under the backlog rule. */
   held: boolean;
   /** The origin the page was reached at, which the prompt names the skill by. */
   origin: string;
