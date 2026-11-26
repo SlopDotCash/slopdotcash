@@ -39,15 +39,9 @@ interface Outcome {
   readonly extra?: Readonly<Record<string, unknown>>
 }
 
-interface Current {
-  readonly forwarding: Loaded | undefined
-  readonly row: SubmissionRow
-}
-
 schema Candidate { github_id: string }
 schema Found { id: string }
 schema DuplicateDetail { detail: string | null }
-schema Blocker { state: string }
 
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
 const submissionId = /^ss_[A-Za-z0-9_-]{8,72}$/u

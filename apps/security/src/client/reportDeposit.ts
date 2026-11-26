@@ -27,13 +27,13 @@ export function isReportCaseId(caseId: string): boolean {
   return caseIdPattern.test(caseId);
 }
 
-/** `keccak256(abi.encodePacked("slop-report-v1", caseId))` in lowercase hex, or undefined for anything but a Slop case id. @throws {never} */
+/** @throws {never} */
 export function reportDepositItem(caseId: string): string | undefined {
   if (!isReportCaseId(caseId)) return undefined;
   return keccak(new TextEncoder().encode(`slop-report-v1${caseId}`)).toLowerCase();
 }
 
-/** SLOP base units for the deposit at a rate, rounded up to a whole SLOP; undefined without a valid rate. @throws {never} */
+/** @throws {never} */
 export function reportDepositAmount(slopPerUsd: string | null | undefined): string | undefined {
   if (slopPerUsd === null || slopPerUsd === undefined) return undefined;
   const scaled = slopRateScaled(slopPerUsd);
@@ -47,12 +47,12 @@ function member(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
 }
 
-/** True unless the project's manifest sets `security.reportDeposit` to false. @throws {never} */
+/** @throws {never} */
 export function reportDepositOn(project: unknown): boolean {
   return member(member(project, "security"), "reportDeposit") !== false;
 }
 
-/** The setting read from a stored manifest's JSON text; unreadable text reads as on, as an absent setting does. @throws {never} */
+/** @throws {never} */
 export function reportDepositOnManifest(text: string): boolean {
   try {
     return reportDepositOn(JSON.parse(text) as unknown);
@@ -61,7 +61,7 @@ export function reportDepositOnManifest(text: string): boolean {
   }
 }
 
-/** "395 SLOP" for a base-unit amount. @throws {never} */
+/** @throws {never} */
 export function depositAmountText(baseUnits: string): string {
   const value = /^[0-9]{1,78}$/u.test(baseUnits) ? BigInt(baseUnits) : 0n;
   const fraction = (value % oneSlop).toString().padStart(slopDecimals, "0").replace(/0+$/u, "");

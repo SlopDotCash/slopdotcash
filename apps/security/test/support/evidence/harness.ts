@@ -202,7 +202,7 @@ export async function partialDownload(world: World, path: string, as: string, co
   const response = await respond(world, path, { as, headers: { cookie, "sec-fetch-site": "same-origin" } });
   const stream = response.body;
   if (stream === null) return { status: response.status, received: 0, failed: false };
-  const readerOf = stream.getReader();
+  const readerOf = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>;
   let received = 0;
   let interrupted = false;
   try {

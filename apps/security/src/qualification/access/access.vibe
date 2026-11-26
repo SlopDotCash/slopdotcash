@@ -68,7 +68,7 @@ export effect function qualifyAccess(env: FixtureEnv) {
       chunks.push({ index: chunks.length, sha256: try sha256Hex(data.subarray(offset, offset + size)), sizeBytes: size, offset })
     }
     const service = `/api/v1/vetting/evidence/${id}/${runId}`
-    const object = { sha256: sha, sizeBytes: data.length, kind: "trace", label: "Harmless qualification bytes", contentType: "application/octet-stream", ...(chunked ? { chunks: chunks.map(({ offset, ...chunk }) => chunk) } : {}) }
+    const object = { sha256: sha, sizeBytes: data.length, kind: "trace", label: "Harmless qualification bytes", contentType: "application/octet-stream", ...(chunked ? { chunks: chunks.map(({ offset: _offset, ...chunk }) => chunk) } : {}) }
     try signedOk("POST", service, encoder.encode(JSON.stringify({ traceSha256: sha, objects: [object] })), "application/json")
     if (chunked) {
       for (const chunk of chunks) try signedOk("PUT", `${service}/${sha}/chunks/${chunk.index}`, data.subarray(chunk.offset, chunk.offset + chunk.sizeBytes), "application/octet-stream")

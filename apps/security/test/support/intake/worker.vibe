@@ -89,7 +89,8 @@ function ports(env: Env) {
         project: (projectId) => provideService(effect {
           const view = projects.get(projectId)
           if (view === undefined) return undefined
-          const row = try first(RevisionRow, sql`SELECT revision FROM projects WHERE id=${projectId}`)
+          const now = new Date(try Clock.currentTimeMillis).toISOString()
+          const row = try first(RevisionRow, sql`SELECT revision FROM project_revisions WHERE project_id=${projectId} AND created_at<=${now} ORDER BY revision DESC LIMIT 1`)
           return row === undefined ? view : { ...view, revision: row.revision }
         }, D1, db),
         byRepository: () => succeed(undefined),

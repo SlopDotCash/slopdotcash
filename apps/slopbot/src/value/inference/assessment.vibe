@@ -133,7 +133,7 @@ export effect function valueModelSource(evidence: Evidence | WorkUnitEvidence) {
   const item = try orDie(Effect.try(() => JSON.stringify(evidence, (key: string, value: unknown) => {
     if (key !== "addedBinary" || value === null || typeof value !== "object") return value
     binary = true
-    const { contentBase64, ...metadata } = value as Readonly<Record<string, unknown>>
+    const { contentBase64: _contentBase64, ...metadata } = value as Readonly<Record<string, unknown>>
     return { ...metadata, contentOmittedFromModel: true }
   })))
   return { item, systemSuffix: binary ? binarySourceNote : "" } satisfies ModelSource

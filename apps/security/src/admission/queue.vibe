@@ -1,16 +1,18 @@
 // spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/admission.md, "A replaced template requeues the pending assessment with its original commit"
 import { isoNow } from "@repo/platform/clock"
-import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { randomId } from "@repo/platform/crypto"
 import { update } from "@repo/platform/stored"
 import { Authority, type ProjectView } from "@repo/ports/backend"
 import type { RequestOrigin } from "../../gen/security__enforcement.ts"
 import { canRequeueTemplate } from "../../gen/security__enforcement.effect.vibe"
 import { idOf } from "../enforcement/replay.vibe"
 import { enforcementAggregate, rosterOf } from "../enforcement/store.vibe"
-import { executableContent } from "./binding.ts"
-import { compose, manifestText, vettingService } from "./compose.vibe"
+import { compose, vettingService } from "./compose.vibe"
 import { type Pin, PinUnavailable, listedRepository, livePin } from "./livePin.vibe"
+import { ContentUnreadable, contentSha256 } from "./pins.vibe"
 import { type Assessment, type Queued, assessment, nextAssessmentNumber, queueStatement, templateReplacementReason } from "./store.vibe"
+
+export { ContentUnreadable, contentSha256 }
 
 export interface Requester {
   readonly githubId: string
@@ -22,15 +24,6 @@ export interface Plan {
   readonly reason: string
   readonly origin: RequestOrigin
   readonly by: number
-}
-
-export error ContentUnreadable { projectId: string }
-
-export effect function contentSha256(projectId: string) {
-  const text = try manifestText(projectId)
-  const manifest: unknown = text === undefined ? undefined : try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ContentUnreadable({ projectId }) })
-  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) throw new ContentUnreadable({ projectId })
-  return try sha256Hex(executableContent(manifest as Record<string, unknown>))
 }
 
 effect function assessmentId() {

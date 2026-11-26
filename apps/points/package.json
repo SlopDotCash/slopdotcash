@@ -4,10 +4,22 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": "./src/client/index.vibe",
-    "./collect": "./src/collect/run/index.vibe",
-    "./corrections": "./src/corrections/index.vibe",
-    "./live": "./src/live.vibe",
+    "./client": {
+      "types": "./.vibe/declarations/src/client/index.d.vibe.ts",
+      "default": "./src/client/index.vibe"
+    },
+    "./collect": {
+      "types": "./.vibe/declarations/src/collect/run/index.d.vibe.ts",
+      "default": "./src/collect/run/index.vibe"
+    },
+    "./corrections": {
+      "types": "./.vibe/declarations/src/corrections/index.d.vibe.ts",
+      "default": "./src/corrections/index.vibe"
+    },
+    "./live": {
+      "types": "./.vibe/declarations/src/live.d.vibe.ts",
+      "default": "./src/live.vibe"
+    },
     "./testing": "./test/support/published.ts"
   },
   "scripts": {

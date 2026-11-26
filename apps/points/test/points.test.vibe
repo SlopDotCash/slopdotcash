@@ -113,7 +113,7 @@ import { iso as isoE6, missingSource as missingSourceE6, project as projectE6, t
 import { historyText as historyTextU1 } from "./support/u1/history.ts"
 import { registry as registryU10, userNodeId } from "./support/u10/actors.ts"
 import { absentService, areaApi, type Site, site } from "./support/u11/pages.ts"
-import { actionsRepository, type Campaign, campaign, day as dayU13, fastClock, forkRun, mainHead, repository as repositoryU13, retained, searchPath, start as startU13, trustedRun } from "./support/u13/github.ts"
+import { actionsRepository, type Campaign, campaign, day as dayU13, forkRun, mainHead, repository as repositoryU13, retained, searchPath, start as startU13, trustedRun } from "./support/u13/github.ts"
 import { alpha, author, baseGeneratedAt, beta, carrier, censusDigest, collectedAt, correctionRule, gamma, type Pool, receiptSchema, registry as registryU14, sourceOf, transferSql, urlOf } from "./support/u14/fixtures.ts"
 import { ada, avatarOf, fetcherOf as fetcherOfU16, grace, linus, previousCensus, seeded as seededU16, startIso, start as startU16 } from "./support/u16/github.ts"
 import { type HistoricalCycle, historicalCycle, type HistoricalEvent } from "./support/u2/history.ts"
@@ -6422,7 +6422,6 @@ import { seededGithub, slopbotFake } from fakes
     })
 
     it.effect('Owner website and X links publish as presentation, validate and clear, and ready-label settings publish within their bounds (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting")', () => effect {
-      const area = try Area
       const steward = try member(stewardId)
       const linked = try listed("linked-tool", "linked", linkedId)
       const id = linked.id

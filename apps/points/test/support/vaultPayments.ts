@@ -9,13 +9,14 @@ interface Page {
 export function slopCash(answer: (url: URL, call: number) => Response) {
   const urls: string[] = [];
   let calls = 0;
-  const fetch = async (input: string | URL | Request) => {
+  /** @throws {never} */
+  const fetch = (input: string | URL | Request) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     urls.push(url.href);
     calls += 1;
-    return answer(url, calls);
+    return Promise.resolve(answer(url, calls));
   };
-  return { fetch: fetch as typeof globalThis.fetch, urls };
+  return { fetch, urls };
 }
 
 export function page(body: Page) {

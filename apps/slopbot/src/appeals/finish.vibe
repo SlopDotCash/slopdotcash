@@ -1,9 +1,11 @@
 // spec/slopbot/appeals.md, "A verified maintainer reopen of the revision resolves the appeal as upheld, even after escalation"; spec/slopbot/appeals.md, "Each stage comment is posted once and a resolution retry resumes its recorded writes"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"; spec/slopbot/maintainerHold.md, "A confirmed maintainer reopen or an upheld appeal removes the uncertain label"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"; spec/slopbot/composition.md, "A confirmed maintainer reopen from the retained webhook source marks the attempt reopened, records the reopen and reverses the debit"; spec/slopbot/composition.md, "The author's appeal is triaged and decided once; an upheld appeal reverses the debit and reopens only Slopbot's own close"; spec/slopbot/composition.md, "Slopbot reopens only its own current close, and a Scam close asks each moderator once"
+import { isoNow } from "@repo/platform/clock"
 import { canReopenOwnClose } from "../../gen/slopbot__closeAttempt.effect.vibe"
 import { reopenItem } from "../closeAttempt/github.vibe"
 import { reversePenalty } from "../closeAttempt/penalty.vibe"
 import { type ReopenSubject, observeCurrent, observeDisputes } from "../closeAttempt/reopen.vibe"
 import { attemptState, confirmedAttempt, openAttempt, restoredAttempt, sendAttempt, storedOf } from "../closeAttempt/store.vibe"
+import { reopenKeptFee } from "../fee/items.vibe"
 import { categoryLabel, removeLabel, uncertainLabel } from "../publish/labels.vibe"
 import { requireScope } from "../publish/scope.vibe"
 import { publishStage } from "./publication.vibe"
@@ -60,6 +62,7 @@ export effect function finishAppeal(session: AppealSession, appealKey: string) {
   const covered: Covered = { revision: revisionOfKey(appealKey), occurredAt: row.opened_at }
   const decided = `appeal ${row.resolution} by the ${row.resolved_by ?? "maintainer"}`
   const itemNodeId = itemOf(session).itemNodeId
+  if (row.resolution === "upheld") try reopenKeptFee(appealKey, try isoNow())
   if (row.resolution === "upheld" && reversalOnly(session)) try reversePenalty(itemNodeId, "appeal_upheld", covered)
   else if (row.resolution === "upheld") {
     const currentRevision = try undoFinding(session, covered)

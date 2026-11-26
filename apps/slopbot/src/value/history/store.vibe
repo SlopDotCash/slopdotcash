@@ -3,7 +3,7 @@ import { sha256Hex } from "@repo/platform/crypto"
 import { isoNow } from "@repo/platform/clock"
 import { D1, type Statement, first, sql } from "@repo/platform/d1"
 import type { Event, History, Observation, Page, Row, Verdict } from "../../../gen/slopbot__valueHistory.ts"
-import { type Machine, apply, canAcceptPage, canAcceptRow, machineOver, rowOf, startHistory } from "../../../gen/slopbot__valueHistory.effect.vibe"
+import { apply, canAcceptPage, canAcceptRow, machineOver, rowOf, startHistory } from "../../../gen/slopbot__valueHistory.effect.vibe"
 import { type HistoryRepository, HistoryUnreadable, type JournalRow, type LegacySource, StoredRecord, parsedJson, valueAssessmentKey, verifiedLegacyHead, workUnitHistoryPage } from "./read.vibe"
 
 export interface HistoryTarget {
@@ -130,7 +130,7 @@ export effect function historyReader(project: number, target: number) {
 }
 
 export interface HistorySession {
-  readonly machine: Machine.Shape
+  readonly machine: Effect.Success<ReturnType<typeof historyReader>>
   readonly names: Names
   readonly rows: JournalRow[]
 }

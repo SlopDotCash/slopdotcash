@@ -389,7 +389,7 @@ function scanResultOf(value: unknown): ScanResult {
     checks: checksOf(checks),
     visibilityGaps: list(body.visibilityGaps, "visibilityGaps", 50, (item, name) => text(item, name, 300)),
     execution,
-    reusedAssessmentId: reused === null ? null : (reused as string),
+    reusedAssessmentId: reused === null ? null : reused,
     primaryReview,
     specialistReview,
     artifacts: list(body.artifacts, "artifacts", 500, (item, name) => releasedOnlyWhenClean(artifactOf(item, name))),

@@ -2,14 +2,26 @@
 import { first, rows, sql } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Award, AppealState, PrivateCase, Receipt, RelatedReview, Submission } from "../../gen/security__cases.ts"
-import { initial as noCase } from "../../gen/security__cases.effect.vibe"
-import type { Phase, Review, Screening } from "../../gen/security__screening.ts"
+import { canReviseReport, initial as noCase } from "../../gen/security__cases.effect.vibe"
+import type { Phase, Review, RevisionEvidence, Screening } from "../../gen/security__screening.ts"
 import { qualified, recoverable, revisionPermitted } from "../../gen/security__screening.effect.vibe"
 import { noExclusions } from "../../gen/security__terms.effect.vibe"
 import { type CaseAuthority } from "../caseAuthority/snapshot.vibe"
 import { depositHeldOn } from "../deposit/hold.ts"
 import { githubNumber } from "../privacy/reads.vibe"
-import { revisionEvidence } from "./revision.vibe"
+
+export function revisionEvidence(row: SubmissionRow, current: PrivateCase, actorGithubId: string, stored: { readonly object: boolean; readonly admitted: boolean }): RevisionEvidence {
+  return {
+    isReporter: row.reporter_github_id === actorGithubId,
+    draftOrFailed: row.state === "draft" || row.state === "failed",
+    noAdvisory: row.advisory_ghsa === null,
+    caseNeedsInformation: current.receipt === "NeedsInformation",
+    exactCaseCas: true,
+    allowedCaseState: canReviseReport(current, githubNumber(actorGithubId), current.reportVersion + 1),
+    exactObjectStored: stored.object,
+    admitted: stored.admitted,
+  }
+}
 
 export schema SubmissionRow {
   id: string

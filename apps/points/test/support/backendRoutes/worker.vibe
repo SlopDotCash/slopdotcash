@@ -25,7 +25,6 @@ function services(env: Env) {
   const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, edgeCache(caches), rolesFrom(env))
   const reads = Layer.provide(github({ token: Redacted.make(env.SLOP_GITHUB_READ_TOKEN), userAgent: "slop-points-backend-routes" }), outbound)
   const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), base)
-  // The trace API's bearer routes (wallet registration) verify contributor bearer tokens as the pages Worker does.
   const shell = Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(env), securityBindings(env), traceServices(env), reads), notices)
   return Layer.provideMerge(enforcementPorts, shell)
 }

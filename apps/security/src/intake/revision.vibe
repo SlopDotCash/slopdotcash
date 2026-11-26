@@ -1,24 +1,11 @@
 // spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"
 import { type Statement, sql } from "@repo/platform/d1"
-import type { PrivateCase } from "../../gen/security__cases.ts"
-import { canReviseReport, reviseReport } from "../../gen/security__cases.effect.vibe"
-import type { RevisionEvidence } from "../../gen/security__screening.ts"
+import { reviseReport } from "../../gen/security__cases.effect.vibe"
 import { receiptColumns } from "../cases/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
-import { type CaseStanding, type StoredIntake, type SubmissionRow, caseOf } from "./rows.vibe"
+import { type CaseStanding, type StoredIntake, caseOf, revisionEvidence } from "./rows.vibe"
 
-export function revisionEvidence(row: SubmissionRow, current: PrivateCase, actorGithubId: string, stored: { readonly object: boolean; readonly admitted: boolean }): RevisionEvidence {
-  return {
-    isReporter: row.reporter_github_id === actorGithubId,
-    draftOrFailed: row.state === "draft" || row.state === "failed",
-    noAdvisory: row.advisory_ghsa === null,
-    caseNeedsInformation: current.receipt === "NeedsInformation",
-    exactCaseCas: true,
-    allowedCaseState: canReviseReport(current, githubNumber(actorGithubId), current.reportVersion + 1),
-    exactObjectStored: stored.object,
-    admitted: stored.admitted,
-  }
-}
+export { revisionEvidence }
 
 export interface Revision {
   readonly stored: StoredIntake

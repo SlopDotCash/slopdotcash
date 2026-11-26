@@ -1,7 +1,7 @@
 // spec/slopbot/closure.md, "Only the author's own authenticated run for the exact PR supplies participation authority"; spec/contributor/openedRun.md, "One invocation validates the PR, reuses its own run and records one exact event"
 import { Members } from "@repo/ports/backend"
 import { RunEvidence } from "@repo/ports/contributor"
-import { type Membership, type ParticipationEvidence, type ReviewIdentity, participationAuthority } from "../../gen/slopbot__closure.effect.vibe"
+import { type ParticipationEvidence, type ReviewIdentity, participationAuthority } from "../../gen/slopbot__closure.effect.vibe"
 import type { Exemption } from "../../gen/slopbot__routing.effect.vibe"
 import type { ReviewContext, ReviewTarget } from "../context/load.vibe"
 import { exemptionOf, marker } from "../routing/facts.vibe"

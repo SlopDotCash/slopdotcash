@@ -29,7 +29,7 @@ export function site(answer: Answer): { readonly fetch: typeof globalThis.fetch;
     sent.push({ url: request.url, authorization: request.headers.get("authorization"), accept: request.headers.get("accept") });
     return Promise.resolve(answer(new URL(request.url)));
   };
-  return { fetch: fetch as typeof globalThis.fetch, sent };
+  return { fetch, sent };
 }
 
 /** @throws {never} */
@@ -39,7 +39,7 @@ export function listing(body: unknown, status = 200): () => Response {
 
 /** @throws {never} */
 export function routedFetch(handler: WebHandler): typeof globalThis.fetch {
-  return ((input: string | URL | Request, init?: RequestInit) => handler(new Request(input, init))) as typeof globalThis.fetch;
+  return (input: string | URL | Request, init?: RequestInit) => handler(new Request(input, init));
 }
 
 export async function routeRequest(handler: WebHandler, url: string, init: RequestInit): Promise<RouteAnswer> {
@@ -87,5 +87,5 @@ export function resetSite(options: { readonly scenario: string; readonly target:
     if (file === undefined) return Promise.resolve(new Response(null, { status: 404 }));
     return Promise.resolve(new Response(scenario === "reset-then-corrupt" && url.pathname === "/data/points/1.json" ? `${file} ` : file));
   };
-  return { fetch: fetch as typeof globalThis.fetch, attempts: () => attempts, indexReads: () => indexReads };
+  return { fetch, attempts: () => attempts, indexReads: () => indexReads };
 }
