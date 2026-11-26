@@ -166,12 +166,16 @@ it.live('A GitHub GraphQL collection splits a batch the gateway cannot build, wa
   const fake = world.fake
   const ids = try Effect.try(() => pullNodeIds(fake, 4))
   const waits: number[] = []
+  const budgetWaits: string[] = []
   const client = graphqlClient({
     token: Redacted.make(world.token),
     sleep: (millis) => effect {
       waits.push(millis)
       clock.advance(millis)
     },
+    onBudgetWait: (message) => sync(() => {
+      budgetWaits.push(message)
+    }),
   })
   const recorder = batchRecorder(fake)
   provide Layer.provide(client, outboundVia(recorder.fetcher)), clock.layer {
@@ -202,24 +206,42 @@ it.live('A GitHub GraphQL collection splits a batch the gateway cannot build, wa
     try graphql.execute(rateLimitQuery)
     const drainedAt = clock.now()
     try graphql.ensureBudget(100)
-    const waited = { waits: waits.splice(0), remaining: (try graphql.rateLimit()).remaining }
+    const waited = { waits: waits.splice(0), remaining: (try graphql.rateLimit()).remaining, logged: budgetWaits.splice(0) }
     const spendable = graphql.ensureBudget(100) catch (error) => error._tag
-    withRateLimit(fake, 50, resetAt)
+    const rolledResetAt = resetAt + 3_600_000
+    withRateLimit(fake, 2_600, rolledResetAt)
+    try graphql.execute(rateLimitQuery)
+    const afterRollover = graphql.ensureBudget(2_400) catch (error) => error._tag
+    const rolloverWaits = waits.splice(0)
+    withRateLimit(fake, 50, rolledResetAt)
+    try graphql.execute(rateLimitQuery)
+    try graphql.ensureBudget(100)
+    waits.splice(0)
+    budgetWaits.splice(0)
+    withRateLimit(fake, 50, rolledResetAt)
     try graphql.execute(rateLimitQuery)
     const stopped = graphql.ensureBudget(100) catch (error) => error._tag
     const backoff = [250, 500, 1_000, 2_000]
     const refused = (batch: ReadonlyArray<string>) => Array.from({ length: 5 }, () => batch)
+    const waitMs = resetAt - drainedAt + 1_000
     try same(
-      { split, bothGone, tailGone, headRejected, waited, spendable, stopped, requests: try graphql.requestCount() },
+      { split, bothGone, tailGone, headRejected, waited, spendable, stopped, afterRollover, rolloverWaits, rolloverLogged: budgetWaits, requests: try graphql.requestCount() },
       {
         split: { nodes: ids, statuses: [502, 502, 502, 502, 502, 200, 200], waits: backoff },
         bothGone: { outcome: `SourceNodeUnavailable ${goneHead} ${goneTail}`, requested: [...refused(goneIds), [goneHead], [goneTail]], waits: backoff },
         tailGone: { outcome: `SourceNodeUnavailable ${goneTail}`, requested: [...refused([kept, goneTail]), [kept], [goneTail]], waits: backoff },
         headRejected: { outcome: "GraphqlFailed GitHub GraphQL rejected the leaderboard query: The GitHub fake resolves node(id) for repositories, issues, pull requests, commits and accounts, not Label.", requested: [...refused([label.nodeId, kept]), [label.nodeId]], waits: backoff },
-        waited: { waits: [resetAt - drainedAt + 1_000], remaining: 5_000 },
+        waited: {
+          waits: [waitMs],
+          remaining: 5_000,
+          logged: [`waiting ${waitMs} ms for the GitHub GraphQL budget reset at ${new Date(resetAt).toISOString()}; required 100 points (1/4900 points consumed in the current window, 150 remaining; reserve 100)`],
+        },
         spendable: undefined,
         stopped: "BudgetExceeded",
-        requests: 29,
+        afterRollover: undefined,
+        rolloverWaits: [],
+        rolloverLogged: [],
+        requests: 31,
       },
     )
   }
