@@ -4876,9 +4876,11 @@
     },
     {
       "path": "scripts/maintainer-decisions.ts",
-      "sha256": "ccfd1995462efa2707294b33a4d9c5de2ef59371756149858183defbe164c70a",
+      "sha256": "7ae9f107a87a7ae2277dcc2d22b8fa5c5cb9176bcdff2b8119c5c9dbe18f8757",
       "models": ["formal/models/rewards/maintainer_share.qnt"],
-      "candidateLines": [109, 211, 219, 317, 339, 340, 341, 343, 347],
+      "candidateLines": [
+        112, 194, 196, 198, 227, 233, 248, 343, 365, 366, 367, 369, 373
+      ],
       "review": "mapped-abstraction"
     },
     {
