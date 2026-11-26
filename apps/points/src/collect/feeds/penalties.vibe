@@ -108,11 +108,6 @@ export effect function assertPenaltyHistory(records: ReadonlyArray<PenaltyHistor
   return records
 }
 
-export effect function projectPenalties(projectId: string, timeoutMs = feedTimeoutMs) {
-  const read = try penaltyRecords(projectId, false, false, timeoutMs)
-  return read.records satisfies ReadonlyArray<PenaltyFeedRecord>
-}
-
 export effect function projectPenaltyHistory(projectId: string, timeoutMs = feedTimeoutMs) {
   const read = try penaltyRecords(projectId, true, false, timeoutMs)
   if (read.kind !== "history") return try refuse(envelopeRefused)
@@ -164,4 +159,3 @@ export effect function penaltyState(records: ReadonlyArray<PenaltyHistoryRecord>
   }
   return state
 }
-

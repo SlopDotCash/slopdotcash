@@ -9,7 +9,7 @@ import { installationOf } from "../../installation/store.vibe"
 import { observe } from "../../scope/facts.vibe"
 import { DeliveryRow, type Numbering, type Source, deliveriesVersion, deliveriesWhere, deliveryFrom, numbered, outcomeNames, scopeKeysOf, stateNames, timeOf } from "./rows.vibe"
 
-export { type Source, InvalidSources } from "./rows.vibe"
+export type { Source } from "./rows.vibe"
 
 export interface Run {
   readonly startedAt: number
