@@ -514,9 +514,12 @@ its `###` headings raised to `##`. `/protocol/private-trace-v2.md` is
 `# Private trace privacy contract v2`, a blank line, and the one maintained
 section `## Private trace privacy contract v2` of the same file (the version 2
 contract of 22 November 2026), trimmed, with its `###` headings raised to
-`##`. A section ends at the next heading of its depth or shallower, so the
-version 1 section ends at the version 2 heading and stays published byte for
-byte: version 1 keeps governing traces uploaded under it, and each privacy
+`##`. `/protocol/private-trace-v3.md` is `# Private trace privacy contract v3`,
+a blank line, and the one maintained section `## Private trace privacy
+contract v3` of the same file (the version 3 contract of 23 November 2026),
+trimmed, with its `###` headings raised to `##`. A section ends at the next
+heading of its depth or shallower, so versions 1 and 2 stay published byte for
+byte: each keeps governing traces uploaded under it, and each privacy
 document has exactly its own section. `/protocol/points-v1.md` and
 `/protocol/scoring-v2.md` are `# Slop Points`, a link to PRD section 7 on the
 `development` branch, that section with headings raised, and a historical
@@ -528,18 +531,20 @@ final newline. A missing source section or an invalid identity record fails
 the build; no second copy of any of them is maintained.
 
 ```quint
-type ProtocolDocument = PrivateTraceV1 | PrivateTraceV2 | PointsV1 | ScoringV2 | IdentityV1
-type DocumentSource = PrivacyContractSection | PrivacyContractV2Section | PrdSectionSeven | IdentityRecordSource
+type ProtocolDocument = PrivateTraceV1 | PrivateTraceV2 | PrivateTraceV3 | PointsV1 | ScoringV2 | IdentityV1
+type DocumentSource = PrivacyContractSection | PrivacyContractV2Section | PrivacyContractV3Section | PrdSectionSeven | IdentityRecordSource
 pure val historicalProtocolCommit = "ebf468873147a7ec119858915deca6cb3177eb0d"
 pure def documentSource(doc: ProtocolDocument): DocumentSource =
-  if (doc == PrivateTraceV1) PrivacyContractSection else if (doc == PrivateTraceV2) PrivacyContractV2Section else if (doc == IdentityV1) IdentityRecordSource else PrdSectionSeven
+  if (doc == PrivateTraceV1) PrivacyContractSection else if (doc == PrivateTraceV2) PrivacyContractV2Section else if (doc == PrivateTraceV3) PrivacyContractV3Section else if (doc == IdentityV1) IdentityRecordSource else PrdSectionSeven
 pure def historicalLink(doc: ProtocolDocument): str =
   if (doc == PointsV1 or doc == ScoringV2) historicalProtocolCommit else ""
 pure def protocolPublishable(sectionsFound: bool, identityValid: bool): bool = sectionsFound and identityValid
 pure def lawPointsDocumentsKeepImmutableLink(doc: ProtocolDocument): bool =
   documentSource(doc) == PrdSectionSeven implies historicalLink(doc) == historicalProtocolCommit
 pure def lawPrivacyContractHasOneSource(doc: ProtocolDocument): bool =
-  (documentSource(doc) == PrivacyContractSection iff doc == PrivateTraceV1) and (documentSource(doc) == PrivacyContractV2Section iff doc == PrivateTraceV2)
+  (documentSource(doc) == PrivacyContractSection iff doc == PrivateTraceV1)
+    and (documentSource(doc) == PrivacyContractV2Section iff doc == PrivateTraceV2)
+    and (documentSource(doc) == PrivacyContractV3Section iff doc == PrivateTraceV3)
 pure def lawMissingSourceFailsBuild(identityValid: bool): bool = not(protocolPublishable(false, identityValid))
 ```
 

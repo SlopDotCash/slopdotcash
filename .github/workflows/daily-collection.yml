@@ -71,7 +71,6 @@ jobs:
     name: Publish or resume a main collection
     if: >-
       (github.event_name == 'workflow_run' &&
-       github.ref == 'refs/heads/main' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.id == github.event.repository.id &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')) ||

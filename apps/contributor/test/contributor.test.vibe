@@ -947,6 +947,7 @@ const carriedOutputs: Readonly<Record<string, string>> = {
   "protocol/points-v1.md": sha256Hex(utf8Bytes(pointsDocument("points-v1.md"))),
   "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
   "protocol/private-trace-v2.md": "70a886b5dbbdfaf69fafe5d9b3210e8a8eff7bfd4f2e31705fcec0ec2e436dfa",
+  "protocol/private-trace-v3.md": "088aae3e97656bf69c5dec03181eb5ffe04722bc8304a38f841fa6dd016e7261",
   "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
   "skill-templates/skills/project-contributor-template/SKILL.md": "ee5e2a3f88c4f88f574f69825b272ceb2e716d0d20295b89b59c1a8abeb7f331",
   "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
@@ -1058,18 +1059,23 @@ effect function statuses() {
 
 const privacyContract = "apps/contributor/docs/private-trace-v1.md"
 const versionTwoHeading = "\n## Private trace privacy contract v2\n"
+const versionThreeHeading = "\n## Private trace privacy contract v3\n"
 const versionOneOnly = ["50% of what the buyer pays"]
 const versionTwoTerms = ["# Private trace privacy contract v2", "Licensing is not available yet", "50% of what the buyer pays", "while the setting is on", "also store the terms version once consent records ship", "Retention is permanent", "[REDACTED:CREDENTIAL]"]
+const versionThreeTerms = ["# Private trace privacy contract v3", "Licensing is available from your account settings", "private-trace-v3", "OSI-approved licence", "[REDACTED:OUTSIDE_REPO]", "Retention is permanent", "[REDACTED:CREDENTIAL]"]
 const neitherVersion = ["## Cloudflare provisioning", "## Storage contract"]
 
 effect function privacyContracts() {
   const v1 = try outputText("protocol/private-trace-v1.md")
   const v2 = try outputText("protocol/private-trace-v2.md")
+  const v3 = try outputText("protocol/private-trace-v3.md")
   return {
     v1Lacks: [...versionOneOnly, ...neitherVersion].filter((term) => v1.includes(term)),
     v1Keeps: ["Retention is permanent", "No website or API"].filter((term) => !v1.includes(term)),
     v2Lacks: versionTwoTerms.filter((term) => !v2.includes(term)),
     v2Excludes: neitherVersion.filter((term) => v2.includes(term)),
+    v3Lacks: versionThreeTerms.filter((term) => !v3.includes(term)),
+    v3Excludes: neitherVersion.filter((term) => v3.includes(term)),
   }
 }
 
@@ -1077,6 +1083,12 @@ effect function withoutVersionTwo() {
   const { repository } = try SiteProgram
   const contract = try (try FileSystem.FileSystem).readFileString((try Path.Path).join(repository, privacyContract))
   try edited(privacyContract, utf8Bytes(contract.slice(0, contract.indexOf(versionTwoHeading) + 1)))
+}
+
+effect function withoutVersionThree() {
+  const { repository } = try SiteProgram
+  const contract = try (try FileSystem.FileSystem).readFileString((try Path.Path).join(repository, privacyContract))
+  try edited(privacyContract, utf8Bytes(contract.slice(0, contract.indexOf(versionThreeHeading) + 1)))
 }
 
 effect function edited(file: string, bytes: Uint8Array) {
@@ -1191,6 +1203,10 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
     const missingVersionTwoRun = try runSite()
     try restored()
 
+    try withoutVersionThree()
+    const missingVersionThreeRun = try runSite()
+    try restored()
+
     try edited("skills/slop-contributor/notes.md", utf8Bytes("a second file\n"))
     const twoFileRun = try runSite()
     const afterRefusals = try published()
@@ -1204,12 +1220,12 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
 
     const committed = ["committed", "committed", "committed"]
     try Effect.try(() => assert.deepStrictEqual(
-      { committedRun, committedOutputs, committedStatuses, committedContracts, globalDesktopHandoff, editedRun, editedStatuses, untrackedRun, invalidEntryRun, invalidMaintainerRun, missingVersionTwoRun, twoFileRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs), sitemapWritten, repeatedCycleRun, unexpectedFieldRun, withoutRegistry },
+      { committedRun, committedOutputs, committedStatuses, committedContracts, globalDesktopHandoff, editedRun, editedStatuses, untrackedRun, invalidEntryRun, invalidMaintainerRun, missingVersionTwoRun, missingVersionThreeRun, twoFileRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs), sitemapWritten, repeatedCycleRun, unexpectedFieldRun, withoutRegistry },
       {
         committedRun: { code: 0, refusal: undefined },
         committedOutputs: expected,
         committedStatuses: { templates: "committed", renderer: "committed", manifest: "committed", skills: committed, llms: committed },
-        committedContracts: { v1Lacks: [], v1Keeps: [], v2Lacks: [], v2Excludes: [] },
+        committedContracts: { v1Lacks: [], v1Keeps: [], v2Lacks: [], v2Excludes: [], v3Lacks: [], v3Excludes: [] },
         globalDesktopHandoff: true,
         editedRun: { code: 0, refusal: undefined },
         editedStatuses: { templates: "working-tree", renderer: "committed", manifest: "working-tree", skills: ["working-tree", "committed", "committed"], llms: ["working-tree", "committed", "committed"] },
@@ -1217,6 +1233,7 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
         invalidEntryRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop" },
         invalidMaintainerRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop-maintainer" },
         missingVersionTwoRun: { code: 1, refusal: "SiteRefused: [Slop] required document section is missing: ## Private trace privacy contract v2" },
+        missingVersionThreeRun: { code: 1, refusal: "SiteRefused: [Slop] required document section is missing: ## Private trace privacy contract v3" },
         twoFileRun: { code: 1, refusal: "SiteRefused: [Slop] slop-contributor must remain one reviewable SKILL.md" },
         refusalsWroteNothing: true,
         sitemapWritten: { ran: { code: 0, refusal: undefined }, sitemap: expectedSitemap },
