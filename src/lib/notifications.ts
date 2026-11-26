@@ -34,6 +34,7 @@ const NOTIFICATION_KINDS = [
   "slopbot_appeal_review",
   "slopbot_appeal_resolved",
   "slopbot_scam_review",
+  "trace_licensing_available",
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -184,7 +185,10 @@ export function notificationTitle(n: Notification): string {
     case "project_installation_lost":
       return `${n.subject}: reinstall Slopbot`;
     case "project_revision":
-      // The backlog rule reuses this kind (PRD section 5).
+      // The weekly report reminder and the backlog rule reuse this kind
+      // (PRD sections 8 and 5).
+      if (n.eventKey.startsWith("security-queue:"))
+        return `${n.subject} reports are waiting`;
       return n.eventKey.startsWith("backlog-rule:")
         ? n.eventKey.includes(":out:")
           ? `${n.subject} is out of rotation`
@@ -228,6 +232,8 @@ export function notificationTitle(n: Notification): string {
         : "Appeal resolved";
     case "slopbot_scam_review":
       return `${n.subject} scam closure: review author`;
+    case "trace_licensing_available":
+      return "You can now license your traces";
     case "security_case":
       return `Case ${n.subject} updated`;
     case "security_report_received":
@@ -243,6 +249,7 @@ export function notificationAction(n: Notification): string {
       // Moderators get the same event with an admin link (contributor flags).
       return n.actionPath === "/admin" ? "Open admin" : "Open project";
     case "project_revision":
+      if (n.eventKey.startsWith("security-queue:")) return "Open Inbox";
       return n.eventKey.startsWith("backlog-rule:")
         ? "Open settings"
         : "Open project";
@@ -270,6 +277,8 @@ export function notificationAction(n: Notification): string {
         : "Open appeal on GitHub";
     case "slopbot_scam_review":
       return "Open closed item on GitHub";
+    case "trace_licensing_available":
+      return "Open trace licensing";
     case "security_case":
     case "security_report_received":
       return "Open security cases";

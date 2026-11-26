@@ -329,6 +329,42 @@ Slopbot never closes a pull request for an unpaid fee, an unpaid pull request
 never gets `slopbot:ready`, and a maintainer can review and merge without it.
 Value assessment and scoring never read the fee.
 
+### Standing deposit
+
+Operator decision, 23 November 2026 (PRD section 5, "Standing deposit"; rules
+in `src/lib/standing-deposit.mjs`). A contributor may post one SLOP deposit
+from `https://slop.cash/deposit` instead of a fee on each pull request.
+
+- **Cover (`live` only, where the fee applies).** Before it asks, and for an
+  ask that is still unpaid, the gate checks the author's current paid deposit
+  (no outcome, not cancelled, not withdrawn, under 340 days old), the owner's
+  `slopbot.submissionFee.standingDeposits` (absent is on), fewer than 10 open
+  covered pull requests, and a merged pull request by the author on the
+  project's registered repositories: one GitHub search with the installation
+  token, whose positive answer is kept a day in
+  `standing_deposit_merged_authors`. A failed search is no, so the fee is
+  asked. A covered pull request gets a row in `standing_deposit_covers`
+  (window from the later of opening and payment), the fee comment with its
+  own text, the label `slopbot:deposit-covered`, and the review runs. An
+  unpaid ask is taken back first (gate reason `standing-deposit`); a paid fee
+  is never released. The asking comment points regular contributors to the
+  page. Nothing can be covered until the Worker records a paid deposit, which
+  needs the standing contract deployed.
+- **Watch (`checkStandingDeposits`, every scheduled run, any mode).** Each due
+  cover's pull request is read: merged, closed, `closed_at`, and
+  `slop-keep-fee`. Closed without a merge inside the 21-day window and
+  labelled is `pending` from the moment Slopbot first sees both; still so 48
+  hours later it is a `strike`, final and never read again. Removing the
+  label or reopening clears it. Past the window without a strike it is
+  `clear`; a clear cover is read again only to see it close, so it stops
+  counting toward the cap. A read that fails decides nothing and is retried.
+- **Decide.** For each paid deposit with no outcome, after the covers are
+  read: a strike makes it `kept_due` (the first strike's pull request is
+  recorded); 21 days after the withdrawal request, or after 340 days from
+  payment (reason `expired`), with every cover clear, it is `refund_due`. The
+  outcome is written once. The submission-fee Worker sends what is due.
+
+
 The ways to pay in the comment come from `submissionFeeOptions` in
 `src/lib/submission-fee.mjs`, the same rule the Worker judges a deposit by:
 the stablecoin of each network with a published contract at the amount fixed

@@ -93,6 +93,80 @@ class Trust(unittest.TestCase):
         )
 
 
+class Candidates(unittest.TestCase):
+    """Memo runs are found by artifact name, not in a fixed window of runs."""
+
+    def fake(self, memos, runs):
+        calls = []
+
+        def fetch(endpoint):
+            calls.append(endpoint)
+            if "/actions/artifacts?name=" in endpoint:
+                attempt = int(endpoint.split("collection-memo-")[1].split("&")[0])
+                return {"artifacts": [a for a in memos if a["name"] == f"collection-memo-{attempt}"]}
+            run_id = int(endpoint.rsplit("/", 1)[1])
+            return runs[run_id]
+
+        return fetch, calls
+
+    def release(self, run_id, created, **extra):
+        value = Trust.run_(Trust(), head_sha=str(run_id) * 40, created_at=created)
+        value.update({"id": run_id, "event": "push"})
+        value.update(extra)
+        return value
+
+    def memo(self, run_id, attempt=1, age=timedelta(hours=3), **extra):
+        return artifact(
+            f"collection-memo-{attempt}",
+            age=age,
+            workflow_run={"id": run_id, "head_sha": str(run_id) * 40},
+            **extra,
+        )
+
+    def test_finds_a_memo_older_than_many_quick_releases(self):
+        # 23 Nov: 75 quick releases after the only memo pushed it out of the
+        # newest 40 runs. Asking by artifact name still finds it.
+        fetch, calls = self.fake(
+            [self.memo(1, age=timedelta(days=2))],
+            {1: self.release(1, "2026-11-17T07:17:00Z")},
+        )
+        found = list(restore.candidate_runs("o/r", "99", "c" * 40, NOW, fetch, lambda a, b: True))
+        self.assertEqual([run["id"] for run in found], [1])
+        self.assertFalse(any("/workflows/" in call for call in calls))
+
+    def test_newest_trusted_ancestor_first(self):
+        fetch, _ = self.fake(
+            [self.memo(1, age=timedelta(days=3)), self.memo(2, attempt=2), self.memo(3)],
+            {
+                1: self.release(1, "2026-11-16T07:00:00Z"),
+                2: self.release(2, "2026-11-19T07:00:00Z"),
+                3: self.release(3, "2026-11-19T08:00:00Z"),
+            },
+        )
+        found = list(restore.candidate_runs(
+            "o/r", "99", "c" * 40, NOW, fetch, lambda sha, current: sha != "3" * 40
+        ))
+        self.assertEqual([run["id"] for run in found], [2, 1])
+
+    def test_skips_old_expired_untrusted_and_current_runs(self):
+        fetch, _ = self.fake(
+            [
+                self.memo(1, age=timedelta(days=8)),
+                self.memo(2, expired=True),
+                self.memo(3),
+                self.memo(4),
+            ],
+            {
+                1: self.release(1, "2026-11-11T07:00:00Z"),
+                2: self.release(2, "2026-11-19T07:00:00Z"),
+                3: self.release(3, "2026-11-19T07:00:00Z", head_branch="development"),
+                4: self.release(4, "2026-11-19T07:00:00Z"),
+            },
+        )
+        found = list(restore.candidate_runs("o/r", "4", "c" * 40, NOW, fetch, lambda a, b: True))
+        self.assertEqual(found, [])
+
+
 class Extract(unittest.TestCase):
     def test_extracts_exactly_one_memo(self):
         with tempfile.TemporaryDirectory() as tmp:

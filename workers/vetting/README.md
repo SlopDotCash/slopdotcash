@@ -338,7 +338,11 @@ workflow, `package.json` and `bun.lock`. The controller reads GitHub's compare
 of the two commits; a compare that is unreadable, not `ahead` or truncated at
 300 files refuses the pass until the checkout's own release is deployed. The
 dispatcher applies the same rule with the directory and file list before
-dispatching, using the commit the environment's site serves. Source and
+dispatching, using the commit the environment's site serves. Each release
+publishes the scanner input list of its commit at `/scanner-inputs.json`;
+the outside scheduler that starts scans while `main` is not the default
+branch refuses a merge that touches a listed file, so it agrees with the
+controller. Source and
 model responses stay in private temporary files and are deleted at the end of
 the pass; no workflow artifact contains them. Risky artifacts still execute
 only through the separate Cloudflare sandbox.

@@ -15,6 +15,10 @@ replay before the owner reviews a correction packet. The audit receipt binds
 the captured journal heads. Publication uses a current owner-reviewed packet
 and the trusted financial and source checks.
 
+Both read-only operations use the repository-scoped Collector App when it is
+configured. They fall back to the workflow token if the App cannot issue a
+token. Audits still require the same complete REST and GraphQL evidence.
+
 The read-only `replay-assessments` operation takes the same scope and digest
 inputs. It replays the canonical scorer against the frozen assessment catalog
 and the complete GitHub census for the selected repository. It rechecks the
@@ -83,7 +87,7 @@ The packet contains the complete reviewed source audit, the exact optional value
 
 The normal rolling scoring boundary stays unchanged. This workflow uses the existing Points SQL writer and D1 batch triggers. It checks the current registry and enforcement state. It captures both assessment journal heads before checking the selected value records. The final batch insert requires the exact prior Points checkpoint and refuses any intervening assessment for this project or repository. Existing SQL financial guards reject protected award changes. A lost import response is reconciled through the existing batch and public-checkpoint readback. A repeat of the same published candidate reports success without rebuilding it.
 
-Each project needs a freshly reviewed packet when its public baseline or registry revision advances. The packet's producer and reviewer are recorded identities, and the reviewer must currently hold owner authority. The private packet is not uploaded as an Actions artifact. Logs publish only the project ID, revision counts, candidate digest and execution mode.
+Each project needs a freshly reviewed packet when its public baseline or registry revision advances. The packet's producer and reviewer are recorded identities, and the reviewer must currently hold owner authority. The private packet is not uploaded as an Actions artifact. Publication logs report the project ID, revision counts, candidate digest and execution mode. Replay failures report a fixed phase and any applicable closed-source check code. Exception text and per-source evidence stay private.
 
 Importing an assessment does not itself publish historical Points. Complete that journal import first, then construct the packet using the actual deployed record digests and current full Points checkpoint. The October allocation workflow runs after the corrected checkpoint is verified publicly and privately.
 

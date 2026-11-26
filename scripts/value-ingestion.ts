@@ -53,11 +53,14 @@ import {
   canonicalJson,
   revalidateAttributionEntries,
 } from "./attribution-memo";
-import type {
-  AttributionMemoEntry,
-  AttributionMemoFence,
-  AttributionMemoResult,
-  CollectionMemoSession,
+import {
+  type AttributionLog,
+  type AttributionMemoEntry,
+  type AttributionMemoFence,
+  type AttributionMemoResult,
+  type CollectionMemoSession,
+  collectionMemoStatsLines,
+  watchAttribution,
 } from "./collection-memo";
 import { rebindHistoricalStandaloneReview } from "./historical-closed-review-source";
 import type { ValueReferenceDiscussionSource } from "./historical-discussion-evidence";
@@ -560,6 +563,8 @@ export interface AttributionMemoContext {
   session: CollectionMemoSession;
   /** Seeds the audit sample, so one cutoff always audits the same sources. */
   cutoffAt: string;
+  /** Slow-attribution and reuse-count lines; the default is stderr. */
+  log?: AttributionLog;
 }
 
 type ValueGithub = Pick<GitHubClient, "get" | "graphql" | "fileText"> & {
@@ -880,6 +885,7 @@ export async function loadValueInputs(
         >["authors"];
       };
 
+  // attribution-rules: begin retained-authors
   // Every branch credits primary authors. Read retained-copy evidence only
   // for known ordinary unlinked commits first accepted by this PR; a later
   // promotion cannot trigger another attribution pass for imported work.
@@ -1050,6 +1056,7 @@ export async function loadValueInputs(
       ? { kind: "none" }
       : { kind: "authors", authors: answer.bindings };
   }
+  // attribution-rules: end retained-authors
 
   /** The live computation, recorded for the next collection. */
   async function liveAttribution(
@@ -1188,11 +1195,16 @@ export async function loadValueInputs(
     for (const outcome of attributionOutcomes) {
       const entry = reusable.get(outcome.id);
       if (!entry || !memo.session.audits(outcome.id, memo.cutoffAt)) continue;
+      const done = watchAttribution(
+        `${repositoryOf(outcome)}#${outcome.number}`,
+        memo.log,
+      );
       const answer = await liveAttribution(
         outcome,
         repositoryOf(outcome),
         eligible.get(outcome.id) as Set<string>,
       );
+      done(answer.kind === "hold" ? "audited, hold" : "audited");
       answers.set(outcome.id, answer);
       memo.session.stats.audited += 1;
       if (canonicalJson(memoResult(answer)) !== canonicalJson(entry.result)) {
@@ -1205,10 +1217,16 @@ export async function loadValueInputs(
     const shas = eligible.get(outcome.id) ?? new Set<string>();
     let answer = answers.get(outcome.id);
     const entry = reusable.get(outcome.id);
+    // An audited answer was timed above; this pass only takes it.
+    const done = answer
+      ? null
+      : watchAttribution(`${repositoryId}#${outcome.number}`, memo?.log);
+    let how = "computed live";
     if (!answer && entry) {
       const reused = await reusedAttribution(entry);
       if (reused && memo) {
         answer = reused;
+        how = "reused from the memo";
         memo.session.next.set(outcome.id, entry);
         memo.session.stats.reused += 1;
       }
@@ -1217,6 +1235,7 @@ export async function loadValueInputs(
       answer = await liveAttribution(outcome, repositoryId, shas);
       if (memo && shas.size) memo.session.stats.live += 1;
     }
+    done?.(answer.kind === "hold" ? `${how}, hold` : how);
     if (answer.kind === "hold")
       implementationAttributionHolds.set(outcome.id, answer.limitations);
     else if (answer.kind === "authors")
@@ -1227,6 +1246,12 @@ export async function loadValueInputs(
       total: attributionOutcomes.length,
     });
   }
+  // Reported here, not only after a written snapshot, so a collection that
+  // fails in a later phase has still said what it reused.
+  if (memo)
+    (memo.log?.write ?? ((line: string) => void process.stderr.write(line)))(
+      collectionMemoStatsLines(memo.session),
+    );
 
   // First history pages read ahead of the loop below, keyed by the outcome's
   // position and the exact arguments of its first read. The loop takes each
