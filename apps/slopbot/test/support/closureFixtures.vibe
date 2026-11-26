@@ -1,0 +1,102 @@
+import { jsonVar } from "@repo/platform/config"
+import { D1, decoded, sql } from "@repo/platform/d1"
+import { Members, ProjectStatus, type ProjectView, Registry, Restrictions, Retirement } from "@repo/ports/backend"
+import { Enforcement, Restriction } from "@repo/ports/security"
+import { Participation } from "../../src/routing/facts.vibe"
+
+schema TestProject {
+  readonly projectId: string
+  readonly path: string
+  readonly repositoryId: string
+  readonly rowStatus: ProjectStatus
+  readonly retirement: Retirement
+  readonly restriction: Restriction
+  readonly closureConsent: boolean
+}
+
+schema TestDecision { readonly kind: "QualifierNamed" | "VerifierLaunchLifted"; readonly reference: string; readonly actor: number }
+schema TestReview {
+  readonly category: "Spam" | "Scam" | "EmptyItem" | "Duplicate" | "Busywork" | "Gaming" | "LowQuality" | "OutOfScope" | "MissingEvidence" | "NoFinding"
+  readonly realCases: number
+  readonly counterexamples: number
+  readonly evidenceDigest: string
+  readonly reviewer: number
+  readonly elapsedDays: number
+}
+schema TestQualifying { readonly by: number; readonly review: TestReview }
+export schema TestRecords { readonly decisions: ReadonlyArray<TestDecision>; readonly qualifications: ReadonlyArray<TestQualifying> }
+schema MemberRow { readonly closed_at: string | null }
+
+const TestProjects = Schema.Array(TestProject)
+
+function viewOf(project: typeof TestProject.Type): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 3,
+    manifestSha256: "0".repeat(64),
+    rowStatus: project.rowStatus,
+    manifestStatus: project.rowStatus,
+    listingTier: "Community",
+    retirement: project.retirement,
+    stewardGithubId: "100",
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: project.closureConsent,
+  }
+}
+
+export function registryOver(text: string) {
+  return Layer.unwrap(effect {
+    const projects = try jsonVar("TEST_PROJECTS", text, TestProjects)
+    const byId = (projectId: string) => projects.find((project) => project.projectId === projectId)
+    return Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
+        byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+        byPath: (fullName) => effect {
+          const found = projects.find((project) => project.path === fullName.toLowerCase())
+          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+        },
+        active: () => effect { return projects.map(viewOf) },
+        pausedProjects: () => Effect.succeed([]),
+        appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: (projectId) => effect { return { restricted: (byId(projectId)?.restriction ?? "Clear") !== "Clear" } },
+        fence: () => effect { return sql`1` },
+        unbanned: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Enforcement, {
+        project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
+        fence: () => effect { return sql`1` },
+      }),
+    )
+  })
+}
+
+function membership(githubId: string) {
+  return sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`
+}
+
+export const members = Layer.effect(Members, effect {
+  const db = try D1
+  return {
+    status: (githubId) => effect {
+      const [found] = try decoded(MemberRow, try db.all(membership(githubId)), "membership")
+      if (found === undefined) return "MemberAbsent"
+      return found.closed_at === null ? "MemberActive" : "MemberClosed"
+    },
+  }
+})
+
+export const participants = Layer.effect(Participation, effect {
+  const db = try D1
+  return {
+    member: (githubId) => effect {
+      return (try decoded(MemberRow, try db.all(membership(githubId)), "membership")).length > 0
+    },
+  }
+})

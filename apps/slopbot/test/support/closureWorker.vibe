@@ -2,14 +2,13 @@
 import type { D1Database } from "@repo/platform/bindings"
 import { jsonVar } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
-import { D1, d1, decoded, sql } from "@repo/platform/d1"
+import { d1 } from "@repo/platform/d1"
 import { type GitHub, github } from "@repo/platform/github"
 import { answered, body, json, outbound } from "@repo/platform/http"
 import { worker } from "@repo/platform/worker"
 import { RunEvidenceLive } from "@repo/contributor/live"
-import { Members, ProjectStatus, type ProjectView, type ReadFailure, Registry, Restrictions, Retirement } from "@repo/ports/backend"
+import { type Members, type ReadFailure, Registry } from "@repo/ports/backend"
 import type { RunEvidence } from "@repo/ports/contributor"
-import { Enforcement, Restriction } from "@repo/ports/security"
 import { ClosureActivation, type ReviewedRecords, activationFrom, activationView, releaseOf, reviewedRecords } from "../../src/activation/config.vibe"
 import { qualityEvidence, qualityHook, qualitySubject } from "../../src/activation/quality.vibe"
 import { type ClosureDecision, closeStillAllowed, decideFinding } from "../../src/closure/decide.vibe"
@@ -18,8 +17,8 @@ import { type ReviewTarget, loadContext } from "../../src/context/load.vibe"
 import { ReviewJob } from "../../src/jobs/job.vibe"
 import { type ReviewHooks, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
 import { routeProviders } from "../../src/route/route.vibe"
-import { Participation } from "../../src/routing/facts.vibe"
 import { observe } from "../../src/scope/facts.vibe"
+import { TestRecords, members, participants, registryOver } from "./closureFixtures.vibe"
 import { reviewIntakeGate } from "./intakeGate.vibe"
 
 export interface Env {
@@ -36,99 +35,6 @@ export interface Env {
   readonly TEST_VERIFIER_KEY: string
   readonly TEST_QUALITY_PROFILE: string
 }
-
-schema TestProject {
-  readonly projectId: string
-  readonly path: string
-  readonly repositoryId: string
-  readonly rowStatus: ProjectStatus
-  readonly retirement: Retirement
-  readonly restriction: Restriction
-  readonly closureConsent: boolean
-}
-
-schema TestDecision { readonly kind: "QualifierNamed" | "VerifierLaunchLifted"; readonly reference: string; readonly actor: number }
-schema TestReview {
-  readonly category: "Spam" | "Scam" | "EmptyItem" | "Duplicate" | "Busywork" | "Gaming" | "LowQuality" | "OutOfScope" | "MissingEvidence" | "NoFinding"
-  readonly realCases: number
-  readonly counterexamples: number
-  readonly evidenceDigest: string
-  readonly reviewer: number
-  readonly elapsedDays: number
-}
-schema TestQualifying { readonly by: number; readonly review: TestReview }
-schema TestRecords { readonly decisions: ReadonlyArray<TestDecision>; readonly qualifications: ReadonlyArray<TestQualifying> }
-schema MemberRow { readonly closed_at: string | null }
-
-const TestProjects = Schema.Array(TestProject)
-
-function viewOf(project: typeof TestProject.Type): ProjectView {
-  return {
-    projectId: project.projectId,
-    revision: 3,
-    manifestSha256: "0".repeat(64),
-    rowStatus: project.rowStatus,
-    manifestStatus: project.rowStatus,
-    listingTier: "Community",
-    retirement: project.retirement,
-    stewardGithubId: "100",
-    stewardAccount: "UserSteward",
-    listing: { fromApplication: false },
-    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
-    closureConsent: project.closureConsent,
-  }
-}
-
-function registryOver(text: string) {
-  return Layer.unwrap(effect {
-    const projects = try jsonVar("TEST_PROJECTS", text, TestProjects)
-    const byId = (projectId: string) => projects.find((project) => project.projectId === projectId)
-    return Layer.mergeAll(
-      Layer.succeed(Registry, {
-        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
-        byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
-        byPath: (fullName) => effect {
-          const found = projects.find((project) => project.path === fullName.toLowerCase())
-          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
-        },
-        active: () => effect { return projects.map(viewOf) },
-        pausedProjects: () => Effect.succeed([]),
-        appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
-        fence: () => effect { return sql`1` },
-      }),
-      Layer.succeed(Restrictions, {
-        account: () => effect { return { banned: false } },
-        project: (projectId) => effect { return { restricted: (byId(projectId)?.restriction ?? "Clear") !== "Clear" } },
-        fence: () => effect { return sql`1` },
-        unbanned: () => effect { return sql`1` },
-      }),
-      Layer.succeed(Enforcement, {
-        project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
-        fence: () => effect { return sql`1` },
-      }),
-    )
-  })
-}
-
-const members = Layer.effect(Members, effect {
-  const db = try D1
-  return {
-    status: (githubId) => effect {
-      const [found] = try decoded(MemberRow, try db.all(sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`), "membership")
-      if (found === undefined) return "MemberAbsent"
-      return found.closed_at === null ? "MemberActive" : "MemberClosed"
-    },
-  }
-})
-
-const participants = Layer.effect(Participation, effect {
-  const db = try D1
-  return {
-    member: (githubId) => effect {
-      return (try decoded(MemberRow, try db.all(sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`), "membership")).length > 0
-    },
-  }
-})
 
 function activationOver(env: Env) {
   return Layer.effect(ClosureActivation, effect {
