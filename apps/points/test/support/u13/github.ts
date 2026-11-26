@@ -74,7 +74,7 @@ export function fastClock(begin: number): FastClock {
     monotonicTimeNanos: Effect.sync(nanos),
     sleep: (duration) => {
       const millis = Duration.toMillis(duration);
-      return Effect.andThen(live.sleep(Duration.millis(millis / 1000)), Effect.sync(() => {
+      return Effect.andThen(live.sleep(Duration.millis(millis / 20)), Effect.sync(() => {
         now += millis;
         slept.push(millis);
       }));
