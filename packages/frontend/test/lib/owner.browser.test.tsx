@@ -1033,8 +1033,8 @@ describe('Close ASI\'s November month early from its owner awards (spec/frontend
   });
 });
 
-describe('Review earlier monthly awards (spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/octoberImport.md, "A proposal already written is never added to or replaced")', () => {
-  it("keeps Eliza October reachable in December from its recorded cap even when the public index is empty", async () => {
+describe('Monthly award navigation (spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff")', () => {
+  it("keeps Eliza October reachable in December", async () => {
     const december = Date.parse("2026-12-01T00:00:00.000Z");
     const octoberEntry = [{ cycleId: "2026-10", monthlyCapMinor: "0" }];
     const project: FundingProject = { ...lockProject, id: "eliza", slug: "eliza", reward: { ...lockProject.reward, cycleCaps: octoberEntry } };
@@ -1049,7 +1049,7 @@ describe('Review earlier monthly awards (spec/frontend/ownerMonthly.md, "Only a 
     cleanups.push(() => {
       hostedClock.mockRestore();
       answering = undefined;
-      root.unmount();
+      void act(() => root.unmount());
       void runtime.dispose();
     });
     await act(() => Promise.resolve(root.render(<OwnerAwards runtime={runtime} project={project} awardMonths={[]} networkPays={() => true} />)));
