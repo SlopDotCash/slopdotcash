@@ -11701,7 +11701,7 @@
     },
     {
       "path": "spec/frontend/presentation.md",
-      "sha256": "64d444d2b05a947c9b64e7885f2b5bb2ed48ded803eb27547dd6213454b3b70c",
+      "sha256": "4783fbd3db46f4b14712f1c458875d4560d8b33e491c7bc1153cc0433ae91bcf",
       "module": "frontend__presentation",
       "stories": [
         {
@@ -11738,7 +11738,7 @@
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home",
-          "line": 511
+          "line": 524
         }
       ],
       "rules": [
@@ -11930,6 +11930,7 @@
           "line": 470,
           "definitions": [
             "AgentTarget",
+            "AgentPayload",
             "AgentShortcut",
             "agentShortcuts",
             "siteSkillPath",
@@ -11939,14 +11940,14 @@
             "genericPromptAvailable",
             "lawOpeningAnyShortcutCopies",
             "lawShortcutsNeverReplaceGenericSetup",
-            "lawOnlyWebChatsOpenNewTabs",
+            "lawOnlyDesktopHandoffsOpenNewTabs",
             "shortcutValues",
             "shortcutsValues"
           ]
         },
         {
           "heading": "Story: Choose the contributor or maintainer journey on Home / Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together",
-          "line": 516,
+          "line": 529,
           "definitions": [
             "HomeAudience",
             "CopyFeedback",
