@@ -1,6 +1,7 @@
 // spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work"
 import { Button, ConfirmDialog, type ConfirmationEvent, PageHeader, useConfirmation } from "@repo/ui";
 import type { ReactNode } from "react";
+import { pageShellClass } from "../../../app/PageShell.tsx";
 
 export type RemoveProjectProps = {
   name: string;
@@ -41,7 +42,7 @@ export function RemoveProject({ name, disabled, remove, reason }: RemoveProjectP
 /** The page once the project is removed. */
 export function ProjectRemoved({ name }: { name: string }) {
   return (
-    <main className="mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8">
+    <main className={pageShellClass("lg", "6")}>
       <PageHeader title="Project removed" />
       <p role="status">{name} is removed from Slop. History, earned Points, private cases, and funded obligations are preserved.</p>
       <a href="/projects" className="text-primary underline underline-offset-4">

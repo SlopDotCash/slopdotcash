@@ -31,6 +31,17 @@ export function solanaKey(secret: string): SolanaKey | undefined {
 }
 
 /** @throws {never} */
+export function solanaSeedKey(seed: Uint8Array): SolanaKey | undefined {
+  if (seed.length !== 32) return undefined;
+  try {
+    const address = base58.encode(ed25519.getPublicKey(seed));
+    return { address, publicHalf: address, sign: (message) => ed25519.sign(message, seed) };
+  } catch {
+    return undefined;
+  }
+}
+
+/** @throws {never} */
 export function controlsWallet(secret: string, wallet: string): boolean {
   const key = solanaKey(secret);
   return key !== undefined && key.address === wallet && key.publicHalf === wallet;

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { entry, executableDigest, installedProgram, inSteadyCheck, recall, stableInstallation, store, steady, dafnyLauncher, verifierIdentity, type Memory } from "./cache.ts";
-import { NEEDS_DAFNY, exec, stamp } from "./run.ts";
+import { NEEDS_DAFNY, execWithinSlot, makeTempDir, removeTempDir, stamp, withSlot } from "./run.ts";
 import { SIMULATOR, TABLE } from "./simulator.ts";
 
 /** A file a tool reads: its text, and what of the text decides the run, which is what the run is remembered under. */
@@ -65,7 +65,7 @@ const TOOLS = {
  * is remembered, and not when the program was installed again during the run; a process that outlives a reinstall
  * names the program installed now.
  */
-export async function act(memory: Memory, tool: keyof typeof TOOLS, args: string[], dir: string, files: Record<string, Input>): Promise<Ran> {
+export async function act(memory: Memory, tool: keyof typeof TOOLS, args: string[], dir: string | { temp: string }, files: Record<string, Input>): Promise<Ran> {
   if (tool === "dafny" && !inSteadyCheck()) return steady(() => act(memory, tool, args, dir, files));
   const { launcher, script, answered }: Tool = TOOLS[tool];
   const installed = launcher && installedProgram(memory.root, launcher);
@@ -76,23 +76,37 @@ export async function act(memory: Memory, tool: keyof typeof TOOLS, args: string
   const at = await entry(memory.root, "action", [id, JSON.stringify(args), ...Object.keys(files).sort().flatMap((f) => [f, files[f].key])], (tool === "quint" || tool === "simulator") && args[0] === "run");
   const known = recall<Ran>(memory, at);
   if (known) return known;
-  const where = path.resolve(memory.root, dir);
-  fs.rmSync(where, { recursive: true, force: true });
-  fs.mkdirSync(where, { recursive: true });
-  for (const [f, { text }] of Object.entries(files)) fs.writeFileSync(path.join(where, f), text);
   const began = performance.now();
   const isolated = installed?.isolated;
   const selected = script ? isolated?.script ?? script : isolated?.entry;
   const env = isolated ? { ...process.env, NODE_PATH: undefined, NODE_OPTIONS: undefined, NODE_PRESERVE_SYMLINKS: undefined, NODE_PRESERVE_SYMLINKS_MAIN: undefined } : undefined;
   const priority = tool === "quint" || tool === "simulator" ? 0 : 2;
-  const r = await exec(selected ? process.execPath : exe, selected ? [...isolated ? ["--no-global-search-paths"] : [], selected, ...args] : args, where, env, undefined, memory.actionSignal, priority).catch((e: Error) => { throw new Error(`${tool} could not be run (${exe}): ${e.message}; ${tool === "dafny" ? NEEDS_DAFNY : "run pnpm install"}`); });
-  const written = fs.readdirSync(where, { withFileTypes: true }).filter((f) => f.isFile() && !Object.hasOwn(files, f.name)).map((f) => f.name).sort();
-  const ran: Ran = { ok: r.status === 0 && !r.stopped, status: r.status, out: `${r.stdout}${r.stderr}${r.stopped ? `\n${r.stopped}\n` : ""}`, stderr: r.stderr, stopped: r.stopped,
-    files: Object.fromEntries(written.map((f) => [f, fs.readFileSync(path.join(where, f), "utf8")])) };
-  if (!ran.stopped && answered(args, ran)) {
-    if (installed) {
-      if (stableInstallation(!script || stamp([script]) === since)) store(memory, at, ran, { program: installed, began });
-    } else store(memory, at, ran, "dafny");
+  const tempPrefix = typeof dir === "string" ? undefined : dir.temp;
+  const slotted = await withSlot(async (): Promise<Ran> => {
+    const where = tempPrefix ? makeTempDir(tempPrefix) : path.resolve(memory.root, dir as string);
+    try {
+      if (!tempPrefix) {
+        fs.rmSync(where, { recursive: true, force: true });
+        fs.mkdirSync(where, { recursive: true });
+      }
+      for (const [f, { text }] of Object.entries(files)) fs.writeFileSync(path.join(where, f), text);
+      const r = await execWithinSlot(selected ? process.execPath : exe, selected ? [...isolated ? ["--no-global-search-paths"] : [], selected, ...args] : args, where, env, undefined, memory.actionSignal).catch((e: Error) => { throw new Error(`${tool} could not be run (${exe}): ${e.message}; ${tool === "dafny" ? NEEDS_DAFNY : "run pnpm install"}`); });
+      const written = fs.readdirSync(where, { withFileTypes: true }).filter((f) => f.isFile() && !Object.hasOwn(files, f.name)).map((f) => f.name).sort();
+      const ran: Ran = { ok: r.status === 0 && !r.stopped, status: r.status, out: `${r.stdout}${r.stderr}${r.stopped ? `\n${r.stopped}\n` : ""}`, stderr: r.stderr, stopped: r.stopped,
+        files: Object.fromEntries(written.map((f) => [f, fs.readFileSync(path.join(where, f), "utf8")])) };
+      if (!ran.stopped && answered(args, ran)) {
+        if (installed) {
+          if (stableInstallation(!script || stamp([script]) === since)) store(memory, at, ran, { program: installed, began });
+        } else store(memory, at, ran, "dafny");
+      }
+      return ran;
+    } finally {
+      if (tempPrefix) removeTempDir(where);
+    }
+  }, memory.actionSignal, priority);
+  if (slotted.canceled) {
+    const stopped = "proof work was canceled after simulation failed";
+    return { ok: false, status: -1, out: `\n${stopped}\n`, stderr: "", stopped, files: {} };
   }
-  return ran;
+  return slotted.value;
 }

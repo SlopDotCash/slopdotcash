@@ -1,8 +1,9 @@
 // spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"
-import { type SlopbotFailureNotice, type SlopbotSpendNotice, safeProviderFailure } from "../notifications/contracts.schema.vibe"
+import { type ProjectApplicationNotice, type SlopbotFailureNotice, type SlopbotSpendNotice, safeProviderFailure, stripHeaderControls } from "../notifications/contracts.schema.vibe"
 import { adminMime, inboxMime } from "./mime.ts"
 import { utcText } from "./utc.ts"
 
+type ApplicationNotice = typeof ProjectApplicationNotice.Type
 type SpendNotice = typeof SlopbotSpendNotice.Type
 type FailureNotice = typeof SlopbotFailureNotice.Type
 
@@ -62,13 +63,41 @@ function spendDollars(micro: number): string {
   return `$${Math.floor(micro / 1_000_000)}.${String(Math.floor((micro % 1_000_000) / 10_000)).padStart(2, "0")}`
 }
 
-export type AdminNotice = { readonly kind: "spend"; readonly notice: SpendNotice } | { readonly kind: "failure"; readonly notice: FailureNotice }
+export type AdminNotice =
+  | { readonly kind: "spend"; readonly notice: SpendNotice }
+  | { readonly kind: "failure"; readonly notice: FailureNotice }
+  | { readonly kind: "application"; readonly notice: ApplicationNotice }
 
 function adminSubject(admin: AdminNotice): string {
-  return admin.kind === "failure" ? "Slopbot: Surplus request failed" : `Slopbot API cost: ${admin.notice.month} crossed ${spendDollars(admin.notice.thresholdMicroUsd)}`
+  switch (admin.kind) {
+    case "failure": return "Slopbot: Surplus request failed"
+    case "spend": return `Slopbot API cost: ${admin.notice.month} crossed ${spendDollars(admin.notice.thresholdMicroUsd)}`
+    case "application": return `New Slop project application: ${stripHeaderControls(admin.notice.projectName)}`
+    default: {
+      const _exhaustive: never = admin
+      return _exhaustive
+    }
+  }
 }
 
 function adminText(admin: AdminNotice): string {
+  if (admin.kind === "application") {
+    const notice = admin.notice
+    const name = stripHeaderControls(notice.projectName)
+    return [
+      "A person submitted a new project application to Slop.",
+      "",
+      `Project name: ${name}`,
+      `Project id: ${notice.projectId}`,
+      `Repository: https://github.com/${notice.repository}`,
+      `Applicant: ${notice.applicantLogin} (https://github.com/${notice.applicantLogin})`,
+      `Submitted at: ${notice.submittedAt}`,
+      `Application id: ${notice.applicationId}`,
+      "",
+      `Review it in the admin panel: ${notice.reviewUrl}`,
+      "",
+    ].join("\n")
+  }
   if (admin.kind === "failure") {
     const notice = admin.notice
     return [

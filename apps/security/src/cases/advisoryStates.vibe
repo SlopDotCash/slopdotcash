@@ -1,0 +1,51 @@
+// spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"
+import { isoNow } from "@repo/platform/clock"
+import { D1, allChunked, list, sql } from "@repo/platform/d1"
+import type { PrivateReport } from "../receipt/github.vibe"
+
+schema AdvisoryStateRow {
+  repository: string
+  ghsa: string
+  state: string
+}
+
+export interface AdvisoryIdentity {
+  readonly repository: string
+  readonly ghsa: string
+}
+
+const advisoryStateValues: ReadonlySet<string> = new Set(["triage", "draft", "published", "closed"])
+const batchSize = 50
+
+export effect function recordAdvisoryStates(repository: string, reports: ReadonlyArray<PrivateReport>) {
+  const known = reports.filter((report): report is PrivateReport & { readonly state: string } => report.state !== null && advisoryStateValues.has(report.state))
+  if (known.length === 0) return
+  const at = try isoNow()
+  const db = try D1
+  effect {
+    for (let index = 0; index < known.length; index += batchSize) {
+      const part = known.slice(index, index + batchSize)
+      try db.batch(part.map((report) =>
+        sql`INSERT INTO security_advisory_states (repository, ghsa, state, changed_at) VALUES (${repository}, ${report.ghsa}, ${report.state}, ${at}) ON CONFLICT(repository, ghsa) DO UPDATE SET state = excluded.state, changed_at = excluded.changed_at WHERE security_advisory_states.state <> excluded.state`,
+      ))
+    }
+  } catch effect () => {
+    try Effect.logError("security advisory states: one write failed")
+  }
+}
+
+export effect function advisoryStates(advisories: ReadonlyArray<AdvisoryIdentity>) {
+  const states = new Map<string, string>()
+  if (advisories.length === 0) return states
+  const wanted = new Set(advisories.map((entry) => `${entry.repository}/${entry.ghsa}`))
+  const ghsas = [...new Set(advisories.map((entry) => entry.ghsa))]
+  const found = allChunked(AdvisoryStateRow, ghsas, (chunk) => sql`SELECT repository, ghsa, state FROM security_advisory_states WHERE ghsa IN ${list(chunk)}`) catch effect (error) => {
+    if (error._tag === "DatabaseFailure" && /no such table/iu.test(error.message)) return []
+    throw error
+  }
+  for (const row of found) {
+    const key = `${row.repository}/${row.ghsa}`
+    if (wanted.has(key)) states.set(key, row.state)
+  }
+  return states
+}

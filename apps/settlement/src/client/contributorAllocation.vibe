@@ -145,6 +145,10 @@ function stateOf(allocation: Allocation): AllocationState | undefined {
     case "AwaitingWallet": return "awaiting-wallet"
     case "Unclaimed": return "unclaimed"
     case "Unpublished": return undefined
+    default: {
+      const _exhaustive: never = allocation.phase
+      return _exhaustive
+    }
   }
 }
 

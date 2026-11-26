@@ -1,0 +1,93 @@
+// spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row's due outcome or a refund"
+import { isoNow } from "@repo/platform/clock"
+import { D1, first, sql } from "@repo/platform/d1"
+import { unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { judgedPerRun } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
+import type { SendEntry } from "./chain.vibe"
+import { type DepositRow, stateText } from "./codec.vibe"
+import { type StandingRow, standingDepositCounts, standingResolveAction } from "./standingTerms.ts"
+import { parked, resolvable, setDue, setJudgement, unjudged } from "./store.vibe"
+
+schema StandingDbRow {
+  readonly id: string
+  readonly item: string
+  readonly slop_amount: string
+  readonly cancelled_at: string | null
+  readonly paid_network: string | null
+  readonly paid_deposit_id: number | null
+  readonly outcome: string | null
+}
+
+export effect function standingByItem(item: string) {
+  const found = try first(StandingDbRow, sql`SELECT id, item, slop_amount, cancelled_at, paid_network, paid_deposit_id, outcome
+    FROM standing_deposits WHERE item = ${item}`)
+  if (found === undefined) return null
+  return {
+    id: found.id,
+    item: found.item,
+    slopAmount: found.slop_amount,
+    cancelledAt: found.cancelled_at,
+    paidNetwork: found.paid_network,
+    paidDepositId: found.paid_deposit_id,
+    outcome: found.outcome,
+  } satisfies StandingRow
+}
+
+function markStandingPaid(deposit: DepositRow, rowId: string, paidAt: string) {
+  return sql`UPDATE standing_deposits
+      SET paid_network = ${deposit.network}, paid_deposit_id = ${deposit.depositId}, paid_at = ${paidAt}
+    WHERE id = ${rowId} AND cancelled_at IS NULL AND outcome IS NULL
+      AND (paid_deposit_id IS NULL OR (paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId}))`
+}
+
+function setJudgementIfStandingPaid(deposit: DepositRow, rowId: string) {
+  return sql`UPDATE submission_fee_deposits
+      SET accepted = 1, reject_reason = NULL, repository_id = NULL, pull_number = NULL
+    WHERE network = ${deposit.network} AND deposit_id = ${deposit.depositId} AND accepted IS NULL AND tx_hash = ${deposit.txHash}
+      AND EXISTS (SELECT 1 FROM standing_deposits WHERE id = ${rowId} AND paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId})`
+}
+
+function graceOver(deposit: DepositRow, now: number) {
+  return deposit.finalizedAt !== null && now - Date.parse(deposit.finalizedAt) >= unknownItemGraceMs
+}
+
+export effect function judgeStandingDeposits(network: string) {
+  let judged = 0
+  let paid = 0
+  for (const deposit of try unjudged(network, judgedPerRun)) {
+    const now = try Clock.currentTimeMillis
+    const row = try standingByItem(deposit.item)
+    if (row === null && !graceOver(deposit, now)) continue
+    const verdict = standingDepositCounts(network, deposit, row)
+    if (!verdict.accepted) {
+      try (try D1).run(setJudgement(deposit, { accepted: 0, reason: verdict.reason, repositoryId: null, pullNumber: null }))
+      try Effect.logInfo("submission_fee_standing_refused", { network, depositId: deposit.depositId, reason: verdict.reason })
+      judged += 1
+      continue
+    }
+    if (row === null) continue
+    const [marked] = try (try D1).batch([
+      markStandingPaid(deposit, row.id, try isoNow()),
+      setJudgementIfStandingPaid(deposit, row.id),
+    ])
+    if ((marked?.changes ?? 0) !== 1) continue
+    try Effect.logInfo("submission_fee_standing_paid", { network, depositId: deposit.depositId, standingId: row.id })
+    judged += 1
+    paid += 1
+  }
+  return { judged, paid }
+}
+
+export effect function planStandingResolutions(network: string) {
+  const held = try parked(network)
+  const entries: SendEntry[] = []
+  for (const deposit of try resolvable(network)) {
+    const row = deposit.accepted === 1 ? try standingByItem(deposit.item) : null
+    const action = standingResolveAction(network, { ...deposit, state: stateText(deposit.state) }, row)
+    if (action === null) continue
+    const nextState = action === "refund" ? "refund_due" : "kept_due"
+    if (deposit.state === "Open") try (try D1).run(setDue(network, deposit.depositId, nextState))
+    if (!held.has(deposit.depositId)) entries.push({ id: deposit.depositId, refund: action === "refund" })
+  }
+  return entries.sort((left, right) => left.id - right.id)
+}

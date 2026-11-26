@@ -7,12 +7,13 @@ import { RegistryManifests, type SlopRate, SubmissionFeeRates, SubmissionFeeSett
 import type { FeePull } from "@repo/ports/slopbot"
 import { type StoredFeeSetting, feeSettingAbsent, feeSettingOn } from "../../gen/backend__submissionFeeSettings.effect.vibe"
 import { defaultMinor } from "../../gen/backend__submissionFeeTerms.effect.vibe"
-import { type Event, type FeeExemption, type FeeFacts, type FeeGate, type FeeMode, apply, askStands, feeStep, settingAmount, settingOn } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { type Event, type FeeExemption, type FeeFacts, type FeeGate, type FeeMode, apply, askInFlight, askStands, feeStep, settingAmount, settingOn } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
 import { absentOn404 } from "../context/load.vibe"
 import { addLabels, removeLabel } from "../publish/labels.vibe"
 import { type ScopedItem, requireScope } from "../publish/scope.vibe"
-import { type FeeReleaseWhy, feeMarker, feeNeededComment, feeReleasedComment, feeWays } from "./comments.ts"
+import { type FeeReleaseWhy, feeCoveredComment, feeMarker, feeNeededComment, feeReleasedComment, feeWays } from "./comments.ts"
 import { askItem, itemByPull, releaseItem } from "./items.vibe"
+import { type StandingAuthor, coverByStandingDeposit, coverFinished, hasStandingCover, recordStandingCoverGate, standingCoverReason, standingDepositCoveredLabel } from "./standing.vibe"
 import { type GateRow, type PullRef, SubmissionFeeMode, askLeaseMillis, claimAsk, feeNeededLabel, gateModel, gateRow, handBackLease, keepGate, markAsked, recordOnly, secondsOf } from "./store.vibe"
 
 export error SubmissionFeeGateError { reason: string }
@@ -29,6 +30,8 @@ export interface FeeAsk {
   readonly target: FeeTarget
   readonly exemption: FeeExemption
   readonly mayAsk: boolean
+  readonly author?: StandingAuthor | null
+  readonly openedAt?: string | null
 }
 
 schema FeePullLabel { readonly name: string }
@@ -201,6 +204,17 @@ export effect function releaseExemptFee(target: FeeTarget) {
   return true
 }
 
+effect function finishStandingCover(target: FeeTarget, gate: GateRow | undefined, model: FeeGate, facts: FeeFacts, at: string) {
+  if (gate !== undefined && askStands(model)) {
+    const exemptFacts: FeeFacts = { ...facts, exemption: "Exempt" }
+    try releaseFee(target, gate, model, standingCoverReason, at, (commentId) => ({ type: "release", facts: exemptFacts, commentId }))
+  } else {
+    const commentId = try writeFeeComment(target, gate?.comment_id ?? null, feeCoveredComment())
+    try recordStandingCoverGate(target.pull, commentId, at)
+  }
+  try addLabels(scopedOf(target), [standingDepositCoveredLabel])
+}
+
 export effect function gateSubmissionFee(ask: FeeAsk) {
   const { mode } = try SubmissionFeeMode
   if (mode === "FeeOff" || publishedWays().length === 0) return false
@@ -212,6 +226,21 @@ export effect function gateSubmissionFee(ask: FeeAsk) {
   if (mode === "FeeLive" && item !== null && item.paidAt !== null) return false
   const facts = try feeFacts(ask, mode)
   const model = gateModel(gate, item, nowMillis)
+  if (mode === "FeeLive" && ask.exemption !== "Exempt") {
+    if (try hasStandingCover(pull)) {
+      if (askInFlight(model)) return true
+      if (!coverFinished(gate)) try finishStandingCover(ask.target, gate, model, facts, at)
+      return false
+    }
+    const firstSight = gate === undefined || gate.state === "recorded" || gate.state === "released"
+    if (
+      (askStands(model) || (firstSight && ask.mayAsk && settingOn(facts))) &&
+      (try coverByStandingDeposit(pull, ask.target.projectId, ask.author, ask.openedAt, nowMillis, at))
+    ) {
+      try finishStandingCover(ask.target, gate, model, facts, at)
+      return false
+    }
+  }
   const step = feeStep(model, facts)
   if (step === "FeeRecords") {
     try stepped(model, { type: "record", facts })

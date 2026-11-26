@@ -43,7 +43,6 @@ schema ReceiptEvent { case_revision: number; at: string }
 const releaseLimit = 3
 const outcomeLimit = 500
 const sweepMs = 30_000
-const sweep = { nextAt: 0 }
 
 const outcomeNames: Readonly<Partial<Record<DepositOutcome, string>>> = { RefundDue: "refund_due", KeptDue: "kept_due" }
 const reasonNames: Readonly<Record<DepositReason, string | null>> = { NoReason: null, Responded: "responded", Silent: "silent", TurnedOff: "turned-off", SpamClose: "spam", DuplicateClose: "duplicate", OutOfScopeClose: "out-of-scope" }
@@ -152,8 +151,11 @@ effect function backgroundSweep() {
 }
 
 export effect function depositSweep() {
+  const { nextSweepAt } = try ReportDepositSettings
   const nowMs = try Clock.currentTimeMillis
-  if (nowMs < sweep.nextAt) return
-  sweep.nextAt = nowMs + sweepMs
+  if (nextSweepAt !== undefined) {
+    const due = try Ref.modify(nextSweepAt, (nextAt) => (nowMs < nextAt ? [false, nextAt] as const : [true, nowMs + sweepMs] as const))
+    if (!due) return
+  }
   try later(backgroundSweep())
 }

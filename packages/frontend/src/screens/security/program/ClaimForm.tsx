@@ -62,14 +62,15 @@ export type ClaimFormProps = {
   onCreated: (created: unknown) => void;
 };
 
-/** Links a report already filed privately on GitHub for a maintainer to verify; a retry keeps the request key. */
 export function ClaimForm({ runtime, owner, projects, onCreated }: ClaimFormProps) {
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [selectedProjectId, setProjectId] = useState("");
   const [advisory, setAdvisory] = useState("");
   const [key, setKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const projectId = projects.some((project) => project.id === selectedProjectId) ? selectedProjectId : (projects[0]?.id ?? "");
   const submit = () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     void run(runtime, linkReport(owner, projectId, advisory, key)).then((done) => {

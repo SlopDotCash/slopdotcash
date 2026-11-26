@@ -1,4 +1,4 @@
-name: Escrow contracts
+name: Escrow and submission deposit contracts
 
 on:
   pull_request:
@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   contracts:
-    name: EVM and Solana escrow checks
+    name: EVM and Solana contract checks
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -79,14 +79,27 @@ jobs:
               --tools-version v1.52 -- --locked
           cp packages/contracts/solana/docker-target/deploy/slop_escrow.so \
             "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
-      - name: Bind the program artifact to its source and build
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/packages/contracts/solana,target=/workdir" \
+            --workdir /workdir \
+            --env CARGO_TARGET_DIR=/workdir/docker-target \
+            "$SLOP_SOLANA_BUILD_IMAGE" \
+            cargo build-sbf --manifest-path programs/slop-submission-deposits/Cargo.toml \
+              --tools-version v1.52 -- --locked
+          cp packages/contracts/solana/docker-target/deploy/slop_submission_deposits.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_submission_deposits.so"
+      - name: Bind the program artifacts to their source and build
         run: |
           set -euo pipefail
           output="$RUNNER_TEMP/solana-verifiable"
           head -c 4 "$output/slop_escrow.so" | od -An -tx1 | tr -d ' \n' | grep -qx '7f454c46' \
-            || { echo "::error::The program build did not produce an ELF artifact"; exit 1; }
+            || { echo "::error::The escrow program build did not produce an ELF artifact"; exit 1; }
+          head -c 4 "$output/slop_submission_deposits.so" | od -An -tx1 | tr -d ' \n' | grep -qx '7f454c46' \
+            || { echo "::error::The submission deposit program build did not produce an ELF artifact"; exit 1; }
           digest="$(sha256sum "$output/slop_escrow.so" | cut -d ' ' -f 1)"
           size="$(stat -c %s "$output/slop_escrow.so")"
+          deposits_digest="$(sha256sum "$output/slop_submission_deposits.so" | cut -d ' ' -f 1)"
+          deposits_size="$(stat -c %s "$output/slop_submission_deposits.so")"
           jq -n \
             --arg sourceCommit "$(git rev-parse HEAD)" \
             --arg solanaSourceTree "$(git rev-parse HEAD:packages/contracts/solana)" \
@@ -102,8 +115,19 @@ jobs:
               toolchain: ($toolchain | split("\n") | map(select(. != ""))), file: "slop_escrow.so", sha256: $sha256,
               sizeBytes: $sizeBytes, workflowRun: $workflowRun, workflowAttempt: $workflowAttempt}' \
             > "$output/manifest.json"
-          printf '%s  slop_escrow.so\n' "$digest" > "$output/SHA256SUMS"
+          jq \
+            --arg sha256 "$deposits_digest" \
+            --argjson sizeBytes "$deposits_size" \
+            '. + {
+              command: "cargo build-sbf --manifest-path programs/slop-submission-deposits/Cargo.toml --tools-version v1.52 -- --locked",
+              file: "slop_submission_deposits.so",
+              sha256: $sha256,
+              sizeBytes: $sizeBytes
+            }' "$output/manifest.json" \
+            > "$output/slop-submission-deposits.manifest.json"
+          printf '%s  slop_escrow.so\n%s  slop_submission_deposits.so\n' "$digest" "$deposits_digest" > "$output/SHA256SUMS"
           cat "$output/manifest.json"
+          cat "$output/slop-submission-deposits.manifest.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}

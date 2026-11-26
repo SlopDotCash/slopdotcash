@@ -1,0 +1,38 @@
+name: Ready auto-merge
+on:
+  workflow_dispatch:
+permissions: {}
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+concurrency:
+  group: slop-ready-auto-merge
+  cancel-in-progress: false
+jobs:
+  merge:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'SlopDotCash/slopdotcash' &&
+      vars.SLOPBOT_AUTO_MERGE == 'on'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: ready-auto-merge
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/slopbot
+      - name: Merge ready pull requests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SLOPBOT_AUTO_MERGE: ${{ vars.SLOPBOT_AUTO_MERGE }}
+        run: node apps/slopbot/dist/programs/main.js ready-auto-merge

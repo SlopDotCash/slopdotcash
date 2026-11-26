@@ -263,20 +263,41 @@ export function HowItWorksPage() {
                 When an owner locks a month in the project vault, that month&apos;s pool is locked in the vault until it is paid out: the vault contract refuses to withdraw it, and it can be paid even if the owner turns automatic payment off. The owner can still lower an individual contributor&apos;s amount before the cutoff, with a public reason. A locked month that is never reserved for payout can be released back to the owner&apos;s free funds from the 4th of the second month after it, by a transaction anyone can send; the project&apos;s manage page offers it. Without a lock, Slop&apos;s pages refuse that withdrawal but the contract does not. Slop&apos;s upgrade key can still change the vault contract.
               </p>
             </Answer>
+            <Answer question="Is there a standing deposit for regular contributors?">
+              <p>
+                Yes. A contributor can post one refundable SLOP deposit on Robinhood Chain worth $10 at Slop&apos;s published SLOP rate. While it stands, Slopbot does not ask the per pull request submission fee on a project that accepts standing deposits once you have had a pull request merged there.{" "}
+                <a className={link} href="/deposit">
+                  Standing deposit
+                </a>
+              </p>
+            </Answer>
+            <Answer question="Where can I see public payout receipts?">
+              <p>
+                Every month in which a project sends money from its vault to outside contributors has a public receipt naming each recipient and transaction on{" "}
+                <a className={link} href="/receipts">
+                  Receipts
+                </a>
+                , and the full monthly history lives on the{" "}
+                <a className={link} href="/record">
+                  public record
+                </a>
+                .
+              </p>
+            </Answer>
             <Answer question="Is there a referral program?">
               <p>
                 Yes. You can refer a project today: sign in on slop.cash once, then send its maintainer <code className="font-mono">slop.cash/r/</code> followed by your GitHub login. The referral is recorded when the project lists. A referrer receives SLOP only after a project they brought in has paid its contributors.{" "}
-                <ExternalLink className={link} href="https://record.slop.cash/referrals">
+                <a className={link} href="/referrals">
                   Referral terms
-                </ExternalLink>
+                </a>
               </p>
             </Answer>
             <Answer question="Does Slop buy back SLOP?">
               <p>
                 The buyback is configured live since 12 November 2026. Half of eligible fee income funds SLOP purchases on Robinhood Chain once minimum order sizes are met. Half of the SLOP acquired is allocated to burning. The first verified bridge fill, purchase and burn are still pending. Funding comes from fees, not the treasury, and nothing is guaranteed.{" "}
-                <ExternalLink className={link} href="https://record.slop.cash/buyback">
+                <a className={link} href="/buyback">
                   How the buyback works
-                </ExternalLink>
+                </a>
               </p>
             </Answer>
           </div>

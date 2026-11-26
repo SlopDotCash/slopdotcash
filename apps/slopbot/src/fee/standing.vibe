@@ -1,0 +1,227 @@
+// spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import { RegistryManifests } from "@repo/ports/backend"
+import { activeInstallation } from "../installation/store.vibe"
+import { type PullRef, type GateRow, keepGate } from "./store.vibe"
+import {
+  coverReading,
+  standingCoverBatch,
+  standingCoverReason,
+  standingDepositBatch,
+  standingDepositCoveredLabel,
+  standingDepositCovers,
+  standingDepositDue,
+  standingDepositOpenCap,
+  standingDepositsAccepted,
+  standingMergedCacheMs,
+  standingRefundReason,
+} from "./standingRules.ts"
+
+export { standingCoverReason, standingDepositCoveredLabel }
+
+export interface StandingAuthor {
+  readonly id: number
+  readonly login: string
+}
+
+schema CoverState = "watch" | "pending" | "clear" | "strike"
+schema FoundRow { readonly ok: number }
+schema CountRow { readonly n: number }
+schema ActiveDepositRow {
+  readonly id: string
+  readonly paid_at: string
+  readonly withdraw_requested_at: string | null
+  readonly outcome: string | null
+  readonly cancelled_at: string | null
+}
+schema WatchedCoverRow {
+  readonly repository_id: number
+  readonly pull_number: number
+  readonly installation_id: number
+  readonly owner: string
+  readonly repo: string
+  readonly window_start: string
+  readonly state: CoverState
+  readonly strike_seen_at: string | null
+}
+schema DepositOutcomeRow {
+  readonly id: string
+  readonly paid_at: string
+  readonly withdraw_requested_at: string | null
+  readonly outcome: string | null
+}
+schema DepositCoverSummary {
+  readonly repository_id: number
+  readonly pull_number: number
+  readonly state: CoverState
+  readonly strike_seen_at: string | null
+}
+schema CoverPullLabel { readonly name: string }
+schema CoverPullRead {
+  readonly number: number
+  readonly state: string
+  readonly merged?: boolean
+  readonly closed_at?: string | null
+  readonly labels?: ReadonlyArray<CoverPullLabel>
+}
+schema SearchIssuesRead { readonly total_count?: number }
+schema ManifestRepo { readonly githubUrl?: string }
+schema ManifestShape { readonly id: string; readonly repositories: ReadonlyArray<ManifestRepo> }
+
+const loginPattern = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/u
+const repositoryPathPattern = /^\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/u
+const dayMs = 24 * 60 * 60 * 1000
+
+export function coverFinished(gate: GateRow | undefined) {
+  return gate?.state === "released" && gate.reason === standingCoverReason
+}
+
+export effect function hasStandingCover(pull: Pick<PullRef, "repositoryId" | "number">) {
+  const found: typeof FoundRow.Type | undefined = try first(FoundRow, sql`SELECT 1 AS ok FROM standing_deposit_covers WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.number}`)
+  return found !== undefined
+}
+
+effect function mergedOnProject(projectId: string, repositories: ReadonlyArray<typeof ManifestRepo.Type>, author: StandingAuthor, nowMillis: number, at: string) {
+  const cutoff = try isoAt(nowMillis - standingMergedCacheMs)
+  const cached: typeof FoundRow.Type | undefined = try first(FoundRow, sql`SELECT 1 AS ok FROM standing_deposit_merged_authors WHERE project_id = ${projectId} AND github_id = ${author.id} AND checked_at > ${cutoff}`)
+  if (cached !== undefined) return true
+  if (!loginPattern.test(author.login)) return false
+  const repos: string[] = []
+  for (const repository of repositories) {
+    if (repository.githubUrl === undefined) return false
+    const parsed = URL.parse(repository.githubUrl)
+    const matched = parsed === null ? null : repositoryPathPattern.exec(parsed.pathname)
+    if (matched === null) return false
+    repos.push(`repo:${matched[1]}/${matched[2]}`)
+  }
+  if (repos.length === 0) return false
+  const github = try GitHub
+  const query = encodeURIComponent(`is:pr is:merged author:${author.login} ${repos.join(" ")}`)
+  const found = github.json(`/search/issues?per_page=1&q=${query}`, SearchIssuesRead) catch () => undefined
+  const total = found?.total_count
+  if (total === undefined || !Number.isSafeInteger(total) || total <= 0) return false
+  try (try D1).run(sql`INSERT INTO standing_deposit_merged_authors (project_id, github_id, checked_at) VALUES (${projectId}, ${author.id}, ${at})
+    ON CONFLICT(project_id, github_id) DO UPDATE SET checked_at = excluded.checked_at`)
+  return true
+}
+
+export effect function coverByStandingDeposit(
+  pull: PullRef,
+  projectId: string,
+  author: StandingAuthor | null | undefined,
+  openedAt: string | null | undefined,
+  nowMillis: number,
+  at: string,
+) {
+  if (author === null || author === undefined || !Number.isSafeInteger(author.id) || author.id <= 0) return false
+  const registered = try (try RegistryManifests).project(projectId)
+  if (registered === undefined) return false
+  const manifestJson = Effect.try(() => JSON.parse(registered.manifest) as unknown) catch () => undefined
+  const manifest = manifestJson === undefined ? undefined : Option.getOrUndefined(Schema.decodeUnknownOption(ManifestShape)(manifestJson))
+  if (manifest === undefined || manifest.id !== projectId) return false
+  const deposit: typeof ActiveDepositRow.Type | undefined = try first(ActiveDepositRow, sql`SELECT id, paid_at, withdraw_requested_at, outcome, cancelled_at FROM standing_deposits
+    WHERE github_id = ${author.id} AND paid_at IS NOT NULL AND outcome IS NULL AND cancelled_at IS NULL
+    ORDER BY round DESC LIMIT 1`)
+  if (deposit === undefined) return false
+  const open: typeof CountRow.Type | undefined = try first(CountRow, sql`SELECT COUNT(*) AS n FROM standing_deposit_covers WHERE deposit_id = ${deposit.id} AND pr_open = 1`)
+  const facts = {
+    deposit: {
+      paidAt: deposit.paid_at,
+      withdrawRequestedAt: deposit.withdraw_requested_at,
+      outcome: deposit.outcome,
+      cancelledAt: deposit.cancelled_at,
+    },
+    accepted: standingDepositsAccepted(manifestJson),
+    openCovered: open?.n ?? Number.NaN,
+    openedAt: openedAt ?? "",
+  }
+  if (!standingDepositCovers({ ...facts, mergedOnProject: true })) return false
+  if (!(try mergedOnProject(projectId, manifest.repositories, author, nowMillis, at))) return false
+  if (!standingDepositCovers({ ...facts, mergedOnProject: true })) return false
+  const openedMillis = millisOf(openedAt ?? "")
+  const paidMillis = millisOf(deposit.paid_at)
+  const openedIso = try isoAt(openedMillis)
+  const windowStart = try isoAt(Math.max(openedMillis, paidMillis))
+  const nextCheckAt = try isoAt(nowMillis + dayMs)
+  const changes = try (try D1).run(sql`INSERT OR IGNORE INTO standing_deposit_covers
+      (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo,
+       opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+    SELECT ${pull.repositoryId}, ${pull.number}, d.id, d.github_id, ${projectId}, ${pull.installationId}, ${pull.owner}, ${pull.repo},
+      ${openedIso}, ${windowStart}, ${at}, 'watch', 1, NULL, ${nextCheckAt}, ${at}
+    FROM standing_deposits d
+    WHERE d.id = ${deposit.id} AND d.paid_at IS NOT NULL AND d.outcome IS NULL AND d.cancelled_at IS NULL
+      AND (SELECT COUNT(*) FROM standing_deposit_covers c WHERE c.deposit_id = d.id AND c.pr_open = 1) < ${standingDepositOpenCap}`)
+  if (changes === 1) return true
+  return try hasStandingCover(pull)
+}
+
+export effect function recordStandingCoverGate(pull: PullRef, commentId: number, at: string) {
+  try keepGate(pull, { state: "released", reason: standingCoverReason, commentId, nextCheckAt: null }, at)
+}
+
+effect function readCoverPull(cover: typeof WatchedCoverRow.Type) {
+  const active = activeInstallation(cover.installation_id) catch () => false
+  if (!active) return undefined
+  const app = try GitHubApp
+  provide app.asInstallation(String(cover.installation_id)) {
+    const found = (try GitHub).json(`/repos/${cover.owner}/${cover.repo}/pulls/${cover.pull_number}`, CoverPullRead) catch () => undefined
+    return found !== undefined && found.number === cover.pull_number ? found : undefined
+  }
+}
+
+effect function readCovers(nowMillis: number, at: string) {
+  const due = try rows(WatchedCoverRow, sql`SELECT repository_id, pull_number, installation_id, owner, repo, window_start, state, strike_seen_at
+    FROM standing_deposit_covers
+    WHERE state IN ('watch', 'pending', 'clear') AND next_check_at IS NOT NULL AND next_check_at <= ${at}
+    ORDER BY next_check_at, updated_at LIMIT ${standingCoverBatch}`)
+  let read = 0
+  for (const cover of due) {
+    const pull = try readCoverPull(cover)
+    if (pull === undefined) {
+      try (try D1).run(sql`UPDATE standing_deposit_covers SET updated_at = ${at} WHERE repository_id = ${cover.repository_id} AND pull_number = ${cover.pull_number}`)
+      continue
+    }
+    const reading = coverReading(cover, pull, nowMillis)
+    try (try D1).run(sql`UPDATE standing_deposit_covers
+      SET state = ${reading.state}, pr_open = ${reading.prOpen}, strike_seen_at = ${reading.strikeSeenAt}, next_check_at = ${reading.nextCheckAt}, updated_at = ${at}
+      WHERE repository_id = ${cover.repository_id} AND pull_number = ${cover.pull_number} AND state = ${cover.state}`)
+    read += 1
+  }
+  return read
+}
+
+effect function decideDeposits(nowMillis: number, at: string) {
+  const deposits = try rows(DepositOutcomeRow, sql`SELECT id, paid_at, withdraw_requested_at, outcome FROM standing_deposits
+    WHERE paid_at IS NOT NULL AND outcome IS NULL AND cancelled_at IS NULL
+    ORDER BY paid_at LIMIT ${standingDepositBatch}`)
+  let decided = 0
+  for (const deposit of deposits) {
+    const covers = try rows(DepositCoverSummary, sql`SELECT repository_id, pull_number, state, strike_seen_at FROM standing_deposit_covers
+      WHERE deposit_id = ${deposit.id} ORDER BY strike_seen_at IS NULL, strike_seen_at, covered_at`)
+    const due = standingDepositDue(
+      { paidAt: deposit.paid_at, withdrawRequestedAt: deposit.withdraw_requested_at, outcome: deposit.outcome },
+      covers.map((cover) => cover.state),
+      nowMillis,
+    )
+    if (due === null) continue
+    const strike = due === "kept_due" ? covers.find((cover) => cover.state === "strike") : undefined
+    if (due === "kept_due" && strike === undefined) continue
+    const reason = due === "kept_due" ? "strike" : standingRefundReason(deposit.paid_at, deposit.withdraw_requested_at)
+    const changes = try (try D1).run(sql`UPDATE standing_deposits
+      SET outcome = ${due}, outcome_reason = ${reason}, outcome_at = ${at}, strike_repository_id = ${strike?.repository_id ?? null}, strike_pull_number = ${strike?.pull_number ?? null}
+      WHERE id = ${deposit.id} AND paid_at IS NOT NULL AND outcome IS NULL AND cancelled_at IS NULL`)
+    if (changes === 1) decided += 1
+  }
+  return decided
+}
+
+export effect function checkStandingDeposits() {
+  const nowMillis = try Clock.currentTimeMillis
+  const at = try isoAt(nowMillis)
+  const read = try readCovers(nowMillis, at)
+  const decided = try decideDeposits(nowMillis, at)
+  return { read, decided }
+}

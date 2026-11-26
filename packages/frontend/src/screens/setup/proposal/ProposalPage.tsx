@@ -5,6 +5,7 @@ import { Exit } from "effect";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { useNow } from "../../../app/hooks.ts";
 import type { PageProps } from "../../../app/pages.ts";
 import type { PageRuntime, SessionShown } from "../../../app/runtime.vibe";
 import { useAddress } from "../../../app/useAddress.ts";
@@ -124,7 +125,8 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
   const step = saved.step;
   const facts = branchesOf(p, lookup);
   const shownFor = (field: ProposalField) => shownError(saved, errors, field);
-  const { manifest, bounty } = draftManifest({ proposal: p, actor, valid, now: new Date().toISOString() });
+  const nowMs = useNow();
+  const { manifest, bounty } = draftManifest({ proposal: p, actor, valid, now: new Date(nowMs).toISOString() });
 
   const update = (change: (current: Wizard) => Wizard) => store.update(change);
   const change = (field: Exclude<ProposalField, "repository">, value: string) => update((current) => withField(current, field, value, branchesOf(current.proposal, lookup)));

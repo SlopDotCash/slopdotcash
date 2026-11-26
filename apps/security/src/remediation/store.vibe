@@ -77,7 +77,14 @@ function folded(r: Remediation, event: EventRow, digests: Map<string, number>): 
     case "Resolved": return { ...r, stage, verifiedPatch: digest, patchReviewer: by, verifiedPatches: r.verifiedPatches.includes(digest) ? r.verifiedPatches : [...r.verifiedPatches, digest], revision }
     case "MitigationVerified": return { ...r, stage, mitigatedDigest: digest, revision }
     case "Reopened": return { ...r, stage, verifiedPatch: 0, patchReviewer: 0, mitigatedDigest: 0, revision }
-    default: return { ...r, stage, revision }
+    case "NotStarted":
+    case "Investigating":
+    case "Fixing":
+      return { ...r, stage, revision }
+    default: {
+      const _exhaustive: never = stage
+      return _exhaustive
+    }
   }
 }
 

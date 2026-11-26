@@ -5,7 +5,7 @@ import { d1 } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
 import { byCron, worker } from "@repo/platform/worker"
-import { ReferralAttributionsLive } from "@repo/backend/ports"
+import { ReferralAttributionsLive, WalletsLive } from "@repo/backend/ports"
 import { type ReferralVars, referralProgram } from "../referrals/config.vibe"
 import { type PosterVars, referralDeployment } from "../referrals/distributor.vibe"
 import { referralCrons } from "../referrals/jobs.vibe"
@@ -18,7 +18,7 @@ export interface Env extends ReferralVars, PosterVars, RoleVars {
 
 function services(env: Env) {
   const base = Layer.mergeAll(d1(env.REFERRAL_DB), webCrypto, outbound, rolesFrom(env))
-  const ports = Layer.provide(ReferralAttributionsLive, base)
+  const ports = Layer.provide(Layer.mergeAll(ReferralAttributionsLive, WalletsLive), base)
   const poster = env.REFERRAL_ACCRUAL_MODE?.trim() === "Posting" ? rootPosterKey(env.REFERRAL_POSTER_KEY) : rootPosterKey(undefined)
   return Layer.mergeAll(base, ports, referralProgram(env), referralDeployment(env), poster)
 }

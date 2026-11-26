@@ -5,6 +5,7 @@ import { Exit } from "effect";
 import { Check, CloudCheck, CloudOff, Lock, Settings2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { pageShellClass } from "../../../app/PageShell.tsx";
 import { NotFoundHead } from "../../../app/notFoundHead.ts";
 import { type PageProps, signInPurposes } from "../../../app/pages.ts";
 import { Chip } from "../../admin/parts.tsx";
@@ -22,7 +23,7 @@ import { projectOf } from "../../projects/project.schema.ts";
 import type { PoolFundingIndex } from "../../../reads/funding.vibe";
 import { projectReads, projectRuntime, type ShownRead } from "../../projects/reads.vibe";
 import { projectFunding } from "../../projects/summary.ts";
-import { useOnce } from "../../security/program/hooks.ts";
+import { useNow, useOnce } from "../../../app/hooks.ts";
 import { focusField } from "../fields/ProjectFields.tsx";
 import { failureMessage, useRun } from "../proposal/run.ts";
 import { SetupStatusPanel } from "../status/SetupStatusPanel.tsx";
@@ -51,7 +52,7 @@ import {
 } from "./revision.ts";
 import { type Addition, UpdateForm } from "./UpdateForm.tsx";
 
-const page = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8";
+const page = pageShellClass("lg", "6");
 const fieldIds: Readonly<Record<string, string>> = { monthlyAmount: "monthlyPool", tokenAddress: "rewardAssetAddress", tokenSymbol: "rewardAssetSymbol" };
 
 type Submission = { readonly status: "idle" | "publishing" } | { readonly status: "failed"; readonly message: string; readonly staleRevision: boolean } | { readonly status: "published"; readonly revision: number; readonly vaultSetup: boolean };
@@ -105,6 +106,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const inFlight = useRef(false);
   const lookups = useRef(0);
   const branch = useIntegrationBranch(runtime);
+  const nowMs = useNow();
   const current = published !== undefined && published.revision >= base.revision ? published : base;
   const managed = managedOf(current.revision, current.manifest);
   if (managed === undefined)
@@ -115,7 +117,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     );
   const { manifest } = managed;
   if (removal.status === "removed") return <ProjectRemoved name={manifest.name} />;
-  const review = reviewOf(managed, edit, new Date(), branch.change);
+  const review = reviewOf(managed, edit, new Date(nowMs), branch.change);
   const valid = Object.keys(review.errors).length === 0;
   const publishing = submission.status === "publishing";
   const shown = (field: string) => (attempted ? review.errors[field] : undefined);
@@ -321,9 +323,10 @@ function PooledEscrow({ runtime, project, manifest, onVaultRegistered }: { runti
 }
 
 function CurrentPool({ runtime, project, manifest, pool, onVaultRegistered }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; pool: ShownRead<PoolFundingIndex>; onVaultRegistered: () => void }) {
+  const nowMs = useNow();
   const read = useShownRead(pool, "all");
   const shown = projectOf(manifest);
-  const facts = shown !== undefined && read.status === "Current" ? projectFunding({ project: shown, read: { status: read.status, vaults: read.value?.get(shown.id) }, networkPays, nowMs: Date.now() }).facts : undefined;
+  const facts = shown !== undefined && read.status === "Current" ? projectFunding({ project: shown, read: { status: read.status, vaults: read.value?.get(shown.id) }, networkPays, nowMs }).facts : undefined;
   return <EscrowFunding runtime={runtime} project={project} pool={facts} onVaultRegistered={onVaultRegistered} />;
 }
 

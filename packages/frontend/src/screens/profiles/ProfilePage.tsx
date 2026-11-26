@@ -18,7 +18,7 @@ import type { Shown } from "../home/listing.ts";
 import { useShownRead } from "../projects/hooks.ts";
 import { formatMonth, projectName } from "../projects/index.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "../projects/reads.vibe";
-import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
+import { retryOnce, type Settled, useMounted, useNow, useOnce } from "../../app/hooks.ts";
 import { nextBoundary, useBoundary } from "../cycles/boundary.ts";
 import { pointsText } from "../cycles/labels.ts";
 import { useStandingHistory } from "../points/hooks.ts";
@@ -292,7 +292,7 @@ function Snapshot({ props, section, sectionReads, reads, boot, product, tier, fo
     () => (snapshot === undefined ? undefined : snapshotStandings(snapshot, repositoryRegistry(boot), projectTerms(boot), cycles.value?.cycles ?? [])),
     [snapshot, repositoryRegistry, projectTerms, boot, cycles.value],
   );
-  const nowMs = Date.now();
+  const nowMs = useNow();
   useBoundary(section, nextBoundary(nowMs, (cycles.value?.cycles ?? []).map((cycle) => (cycle.state === "review" && cycle.reviewEndsAt ? Date.parse(cycle.reviewEndsAt) : undefined))));
   if (snapshot === undefined) return <Unverified login={route.login} status={boardStatus(work)} onRetry={onRetry} />;
   const status = boardStatus(work);
@@ -322,7 +322,18 @@ function Sections({ props, section, contributor }: { props: ProfilePageProps; se
   const login = props.route.login;
   if (registry.status === "running" || sectionReads.status === "running" || reads.status === "running" || site.status === "running") return <Unverified login={login} status="Loading" />;
   if (registry.status === "failed" || sectionReads.status === "failed" || reads.status === "failed" || site.status === "failed" || registry.value.error !== undefined) {
-    return <Unverified login={login} status="Failed" onRetry={() => location.reload()} />;
+    return (
+      <Unverified
+        login={login}
+        status="Failed"
+        onRetry={() => {
+          retryOnce(section, "registry");
+          retryOnce(section, "reads");
+          retryOnce(contributor, "reads");
+          retryOnce(contributor, "origin");
+        }}
+      />
+    );
   }
   return (
     <Snapshot

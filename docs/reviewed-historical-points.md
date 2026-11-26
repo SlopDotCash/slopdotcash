@@ -61,6 +61,14 @@ transport. It verifies a complete readback and rechecks the live checkpoints
 before it writes `receipt.json`. The Actions artifact contains the sanitized
 receipt with transport sizes and digests. The bundle stays in encrypted storage.
 
+When the project is expected to have no active assessments in the selected scope,
+set `require_no_active_assessments=true` on the read-only replay to use the
+separate catalog queue. The protected workflow still reads and reconciles the
+complete catalog and repository census, verifies the Points and registry
+checkpoints, and stages the same qualified handoff. If active assessments
+require value replay, the run stops before starting the collector. Use the
+normal replay for that scope.
+
 An authorized operator downloads `receipt.json` from the exact successful
 canonical main replay run and attempt. With the existing private packet account
 credentials and encryption key provisioned in the environment, use
@@ -83,7 +91,7 @@ The packet contains the complete reviewed source audit, the exact optional value
 
 The normal rolling scoring boundary stays unchanged. This workflow uses the existing Points SQL writer and D1 batch triggers. It checks the current registry and enforcement state. It captures both assessment journal heads before checking the selected value records. The final batch insert requires the exact prior Points checkpoint and refuses any intervening assessment for this project or repository. Existing SQL financial guards reject protected award changes. A lost import response is reconciled through the existing batch and public-checkpoint readback. A repeat of the same published candidate reports success without rebuilding it.
 
-Each project needs a freshly reviewed packet when its public baseline or registry revision advances. The packet's producer and reviewer are recorded identities, and the reviewer must currently hold owner authority. The private packet is not uploaded as an Actions artifact. Logs publish only the project ID, revision counts, candidate digest and execution mode.
+Each project needs a freshly reviewed packet when its public baseline or registry revision advances. The packet's producer and reviewer are recorded identities, and the reviewer must currently hold owner authority. The private packet is not uploaded as an Actions artifact. Publication logs report the project ID, revision counts, candidate digest and execution mode. Replay failures report a fixed phase and any applicable closed-source check code. Exception text and per-source evidence stay private.
 
 Importing an assessment does not itself publish historical Points. Complete that journal import first, then construct the packet using the actual deployed record digests and current full Points checkpoint. The October allocation workflow runs after the corrected checkpoint is verified publicly and privately.
 

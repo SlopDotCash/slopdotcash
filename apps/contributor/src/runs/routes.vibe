@@ -9,9 +9,9 @@ import { type Reply, beginPut as probedPut, maxTraceBytes, serverRuntime } from 
 import { getPrivateRequestIntake, postRuns, postRunsByIdEvents, postRunsByIdFinalize, postRunsByIdTraceIntents, putTraceUploadsByCapability } from "../client/refusals.vibe"
 import { createRunRoute, eventRoute, finalizeRoute, privateIntakeRoute, traceApiOrigins, traceIntentRoute, traceUploadRoute } from "../client/traces.vibe"
 import { writerRole } from "../session/bearer.ts"
-import { type RunRow, StoredEventKind, StoredSource, contentTypeOf } from "../traces/codec.vibe"
+import { type RunRow, StoredEventKind, StoredSource, TraceTermsVersion, contentTypeOf } from "../traces/codec.vibe"
 import { bannedOf } from "../traces/facts.vibe"
-import { type Settled, appendEvent, attachPut, beginPut, capability, createIntent, createRun, finalize, inspect, writeBytes } from "../traces/store.vibe"
+import { type Settled, appendEvent, attachPut, beginPut, capability, createIntent, createRun, finalize, inspect, stampTermsVersion, writeBytes } from "../traces/store.vibe"
 import { type Row, type Stated, bare, header, offHost, refused, settledOr, traceJson } from "./answers.vibe"
 import { uploadCapability } from "./capability.vibe"
 import { declaredDigest, exactClient, exactClientVersion, exactModel, exactProvider, traceContentType, validCapability, validGitSha, validGithubUrl, validIdempotencyKey, validIdentifier, validIsoTimestamp, validRepository, validSha256 } from "./validation.ts"
@@ -21,6 +21,7 @@ type Fields = Readonly<Record<string, unknown>>
 const jsonLimitBytes = 65536
 const isEventKind = Schema.is(StoredEventKind)
 const isSource = Schema.is(StoredSource)
+const isTraceTermsVersion = Schema.is(TraceTermsVersion)
 
 effect function jsonFields() {
   const fields: Fields = try strictBody(Schema.Record(Schema.String, Schema.Unknown), jsonLimitBytes)
@@ -122,6 +123,18 @@ effect function intended(input: Admission<"bearer">) {
   if (typeof declared !== "string") throw refused(rows.invalidRequestInvalidContentType)
   const contentType = traceContentType(declared)
   if (contentType === undefined) throw refused(rows.unsupportedMediaType)
+  const rawTerms = fields.termsVersion
+  const termsVersion = rawTerms === undefined ? "private-trace-v1" : rawTerms
+  if (rawTerms === null || !isTraceTermsVersion(termsVersion)) throw refused(rows.invalidRequestInvalidTermsVersion)
+  const stamped = try stampTermsVersion(runId, actor.githubId, termsVersion)
+  if (stamped === "conflict") {
+    if (try bannedOf(actor.githubId)) throw refused(rows.participationBanned)
+    const current = try inspect({ run: { runId }, owner: actor.githubId, digests: [], puts: [] })
+    const run = current.rows.run
+    if (run === undefined || run.github_user_id !== actor.githubId) throw refused(rows.notFoundRunNotFound)
+    if (run.state === "finalized") throw refused(rows.runFinalized)
+    throw refused(rows.traceTermsConflict)
+  }
   const capabilityText = try uploadCapability({ actor: actor.githubId, runId, key, digest })
   const settled = try settledOr(createIntent({ run: { runId }, by, key, digest, byteCount, contentType, tokenHash: try sha256Hex(capabilityText) }), rows.idempotencyConflictIdempotencyKeyWasReused)
   const refusal = refusalOf({

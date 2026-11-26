@@ -18,7 +18,7 @@ import { ProjectStandings } from "../points/index.ts";
 import { FundedMeter } from "../cycles/CycleAllocation.tsx";
 import { copyText } from "../home/prompt.vibe";
 import type { NetworkPays } from "../public/funding.ts";
-import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
+import { retryOnce, type Settled, useMounted, useNow, useOnce } from "../../app/hooks.ts";
 import { managementAccess } from "../security/settings/runtime.vibe";
 import { FundsAndAwards } from "./FundsAndAwards.tsx";
 import { useShownRead } from "./hooks.ts";
@@ -72,15 +72,14 @@ export function ProjectNotFound() {
   );
 }
 
-/** The project registry could not be read: no project page can be trusted without it. */
-export function ProjectsUnavailable({ message }: { message: string }) {
+export function ProjectsUnavailable({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <main className={pageClass}>
       <PageHeader title="Projects are unavailable" />
       <Alert
         variant="destructive"
         action={
-          <Button variant="outline" size="sm" onClick={() => location.reload()}>
+          <Button variant="outline" size="sm" onClick={onRetry ?? (() => location.reload())}>
             Try again
           </Button>
         }
@@ -100,24 +99,23 @@ export function ProjectsUnavailable({ message }: { message: string }) {
   );
 }
 
-function PoolSummary({ project, boot, reads, networkPays }: Pick<Found, "project" | "boot" | "reads" | "networkPays">) {
+function PoolSummary({ project, boot, reads, networkPays, nowMs }: Pick<Found, "project" | "boot" | "reads" | "networkPays"> & { nowMs: number }) {
   const pool = useShownRead(reads.pool, "all");
   const read = { status: pool.status, vaults: pool.value?.get(project.id) };
-  const funding = projectFunding({ project, read, networkPays, nowMs: Date.now() });
+  const funding = projectFunding({ project, read, networkPays, nowMs });
   const record = findProject(boot, project.id);
-  const shareNotice = record === undefined ? null : (maintainerShareLines(record, new Date())?.notice ?? null);
+  const shareNotice = record === undefined ? null : (maintainerShareLines(record, new Date(nowMs))?.notice ?? null);
   return <RewardSummary project={project} funding={funding} promise={projectPromiseOf({ project, funding, read, networkPays })} shareNotice={shareNotice} />;
 }
 
-function MergeLine({ project, reads }: Pick<Found, "project" | "reads">) {
+function MergeLine({ project, reads, nowMs }: Pick<Found, "project" | "reads"> & { nowMs: number }) {
   const merge = useShownRead(reads.merge, "all");
-  return <MergeActivity project={project} merge={merge} nowMs={Date.now()} />;
+  return <MergeActivity project={project} merge={merge} nowMs={nowMs} />;
 }
 
-function Install({ runtime, project, reads, networkPays }: Pick<Found, "runtime" | "project" | "reads" | "networkPays">) {
+function Install({ runtime, project, reads, networkPays, nowMs }: Pick<Found, "runtime" | "project" | "reads" | "networkPays"> & { nowMs: number }) {
   const discovery = useShownRead(reads.discovery, "all");
   const merge = useShownRead(reads.merge, "all");
-  const nowMs = Date.now();
   return (
     <InstallPanel
       key={project.id}
@@ -149,7 +147,7 @@ function SuggestedWork(props: Pick<Found, "project" | "boot" | "reads" | "reposi
   return <WorkRead key={attempt} {...props} force={attempt > 0} onRetry={() => setAttempt((count) => count + 1)} />;
 }
 
-function History({ runtime, project, reads, networkPays }: Pick<Found, "runtime" | "project" | "reads" | "networkPays">) {
+function History({ runtime, project, reads, networkPays, nowMs }: Pick<Found, "runtime" | "project" | "reads" | "networkPays"> & { nowMs: number }) {
   const cycles = useShownRead(reads.cycles, "index");
   const direct = useShownRead(reads.direct, `project:${project.id}`);
   const listed = cycles.value?.cycles ?? [];
@@ -161,7 +159,7 @@ function History({ runtime, project, reads, networkPays }: Pick<Found, "runtime"
         project={{ id: project.id, slug: project.slug, name: project.name, externalPrize }}
         cycles={{ ...cycles, value: cycles.value === undefined ? undefined : projectCycles(listed, project.id) }}
         direct={direct}
-        nowMs={Date.now()}
+        nowMs={nowMs}
       />
     </>
   );
@@ -181,6 +179,7 @@ function ProjectBountyFunding({ runtime, project }: { runtime: PageRuntime; proj
 }
 
 function BountyOverview({ runtime, project, boot, reads, networkPays }: Pick<Found, "runtime" | "project" | "boot" | "reads" | "networkPays">) {
+  const nowMs = useNow();
   const bounty = bountyProjectOf(project.record);
   if (bounty === undefined) return <ProjectsUnavailable message="This project's security bounty terms could not be read." />;
   return (
@@ -190,7 +189,7 @@ function BountyOverview({ runtime, project, boot, reads, networkPays }: Pick<Fou
         header={
           <>
             <ProjectHeader project={project} />
-            <PoolSummary project={project} boot={boot} reads={reads} networkPays={networkPays} />
+            <PoolSummary project={project} boot={boot} reads={reads} networkPays={networkPays} nowMs={nowMs} />
             <ProjectLinks record={project.record} />
           </>
         }
@@ -204,6 +203,7 @@ function BountyOverview({ runtime, project, boot, reads, networkPays }: Pick<Fou
 
 function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntime }) {
   const { runtime, project, boot, reads, networkPays, repositoryRegistry } = found;
+  const nowMs = useNow();
   const active = project.status === "active";
   const successor = project.participation?.state === "archived" ? projectName(boot, project.participation.successorProjectId) : undefined;
   const budget = project.reward.reviewBudget;
@@ -211,18 +211,18 @@ function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntim
     <main className={pageClass}>
       <section className="flex flex-col gap-4">
         <ProjectHeader project={project} />
-        <PoolSummary project={project} boot={boot} reads={reads} networkPays={networkPays} />
+        <PoolSummary project={project} boot={boot} reads={reads} networkPays={networkPays} nowMs={nowMs} />
         <ProjectLinks record={project.record} />
-        {active ? <MergeLine project={project} reads={reads} /> : null}
+        {active ? <MergeLine project={project} reads={reads} nowMs={nowMs} /> : null}
         {budget && reviewBudgetShown(budget.fundingState === "committed") ? (
           <p>
             <FundedMeter label="Reviews" fundedMinor={budget.committedMinor} funded={formatRewardMinor(budget.committedMinor)} cap={budget.monthlyCapDisplay} />
           </p>
         ) : null}
-        <Participation project={project} successorName={successor} install={<Install runtime={runtime} project={project} reads={reads} networkPays={networkPays} />} />
+        <Participation project={project} successorName={successor} install={<Install runtime={runtime} project={project} reads={reads} networkPays={networkPays} nowMs={nowMs} />} />
       </section>
       {active ? <SuggestedWork section={section} project={project} boot={boot} reads={reads} repositoryRegistry={repositoryRegistry} /> : null}
-      <History runtime={runtime} project={project} reads={reads} networkPays={networkPays} />
+      <History runtime={runtime} project={project} reads={reads} networkPays={networkPays} nowMs={nowMs} />
       <div id="contributors">
         <ProjectStandings runtime={runtime} projectId={project.id} />
       </div>
@@ -233,19 +233,19 @@ function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntim
 function FoundProject({ section, ...found }: Omit<Found, "reads"> & { section: ProjectRuntime }): ReactNode {
   const reads = useOnce(section, "reads", () => projectReads());
   if (reads.status === "running") return <Loading />;
-  if (reads.status === "failed") return <ProjectsUnavailable message={reads.message} />;
+  if (reads.status === "failed") return <ProjectsUnavailable message={reads.message} onRetry={() => retryOnce(section, "reads")} />;
   if (hasBountyOverview(found.project)) return <BountyOverview {...found} reads={reads.value} />;
   return <ProjectOverview section={section} {...found} reads={reads.value} />;
 }
 
-/** `/projects/:id`: the project from the registry, its rewards, how to take part, suggested work, its vault and its payment history. */
 export function ProjectPage({ runtime, route, networkPays, repositoryRegistry }: ProjectPageProps) {
   const section = projectRuntime(runtime);
-  const read = useOnce(section, `project:${route.projectId}`, () => loadProject(route.projectId));
+  const key = `project:${route.projectId}`;
+  const read = useOnce(section, key, () => loadProject(route.projectId));
   if (read.status === "running") return <Loading />;
-  if (read.status === "failed") return <ProjectsUnavailable message={read.message} />;
+  if (read.status === "failed") return <ProjectsUnavailable message={read.message} onRetry={() => retryOnce(section, key)} />;
   if (read.value.kind === "missing") return <ProjectNotFound />;
-  if (read.value.kind === "failed") return <ProjectsUnavailable message={read.value.message} />;
+  if (read.value.kind === "failed") return <ProjectsUnavailable message={read.value.message} onRetry={() => retryOnce(section, key)} />;
   const { project, boot } = read.value;
   return <FoundProject key={project.id} section={section} runtime={runtime} project={project} boot={boot} networkPays={networkPays} repositoryRegistry={repositoryRegistry} />;
 }

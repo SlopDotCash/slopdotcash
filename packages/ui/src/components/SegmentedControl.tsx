@@ -27,7 +27,6 @@ export function SegmentedControl({ options, value, onValueChange, disabled = fal
     <ToggleGroupPrimitive.Root
       type="single"
       value={value}
-      // Radix offers "" when the chosen segment is pressed again; a segmented control keeps one chosen.
       onValueChange={(next) => next && onValueChange(next)}
       className={cn("inline-flex gap-1 rounded-md border border-input bg-background p-1", className)}
       {...props}

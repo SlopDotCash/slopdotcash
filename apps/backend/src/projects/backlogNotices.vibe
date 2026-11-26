@@ -1,0 +1,88 @@
+// spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"
+import { isoAt } from "@repo/platform/clock"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { type BacklogCountRow, type BacklogProjectManifest, backlogOutDetail, backlogPreviewDetail, backlogState, backlogWarningDetail, dormancyNear } from "./backlogRule.ts"
+
+schema BacklogActivityRow {
+  readonly project_id: string
+  readonly observed_at: string
+  readonly waiting_outside: number | null
+  readonly last_merged_at: string | null
+}
+
+export interface BacklogNotice {
+  readonly projectId: string
+  readonly eventKey: string
+  readonly detail: string
+}
+
+export interface BacklogNoticeSummary {
+  readonly attempted: number
+  readonly failed: number
+}
+
+export function backlogNotices(projects: ReadonlyArray<{ readonly projectId: string; readonly manifest: BacklogProjectManifest }>, counts: ReadonlyMap<string, ReadonlyArray<BacklogCountRow>>, nowMs: number): ReadonlyArray<BacklogNotice> {
+  const notices: BacklogNotice[] = []
+  for (const { projectId, manifest } of projects) {
+    const state = backlogState(manifest, counts.get(projectId), nowMs)
+    const key = `backlog-rule:${projectId}`
+    if (!state.started) {
+      if (state.wouldBeOut) {
+        notices.push({ projectId, eventKey: `${key}:preview`, detail: backlogPreviewDetail(state) })
+      }
+    } else if (state.outOfRotation) {
+      notices.push({ projectId, eventKey: `${key}:out:${state.reason}:${state.figures?.lastMergedAt ?? "none"}`, detail: backlogOutDetail(state) })
+    } else if (dormancyNear(state)) {
+      notices.push({ projectId, eventKey: `${key}:warn:${state.figures?.lastMergedAt ?? "none"}`, detail: backlogWarningDetail(state) })
+    }
+  }
+  return notices
+}
+
+effect function readBacklogCounts() {
+  const found = try rows(BacklogActivityRow, sql`SELECT project_id, observed_at, waiting_outside, last_merged_at FROM repository_merge_activity WHERE observed_at IS NOT NULL`)
+  const index = new Map<string, BacklogCountRow[]>()
+  for (const row of found) {
+    const entry: BacklogCountRow = { observedAt: row.observed_at, waitingOutside: row.waiting_outside, lastMergedAt: row.last_merged_at }
+    index.set(row.project_id, [...(index.get(row.project_id) ?? []), entry])
+  }
+  return index
+}
+
+export effect function sendBacklogNotices(projects: ReadonlyArray<{ readonly projectId: string; readonly manifest: BacklogProjectManifest }>, nowMs: number) {
+  const countsOutcome = try exit(readBacklogCounts())
+  if (Exit.isFailure(countsOutcome)) {
+    try Effect.logError("backlog rule notices: merge activity unavailable")
+    return { attempted: 0, failed: 0 } satisfies BacklogNoticeSummary
+  }
+  const at = try isoAt(nowMs)
+  const notices = backlogNotices(projects, countsOutcome.value, nowMs)
+  const db = try D1
+  let failed = 0
+  for (const notice of notices) {
+    const prefix = `backlog-rule:${notice.projectId}:`
+    const write = db.run(sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
+      SELECT ${notice.eventKey}, recipient, 'project_revision', p.id, ${notice.detail}, '/projects/' || p.id || '/manage', ${at}, ${at}
+      FROM projects p
+      JOIN (
+        SELECT DISTINCT recipient FROM (
+          SELECT p2.steward_github_id AS recipient FROM projects p2
+           WHERE p2.id = ${notice.projectId} AND p2.steward_account_type = 'User'
+          UNION
+          SELECT COALESCE(
+            (SELECT a.applicant_github_id FROM project_applications a WHERE a.id = p2.source_application_id),
+            (SELECT r.actor_github_id FROM project_revisions r WHERE r.project_id = p2.id ORDER BY r.revision ASC LIMIT 1)
+          ) AS recipient FROM projects p2
+           WHERE p2.id = ${notice.projectId} AND p2.steward_account_type = 'Organization'
+        ) WHERE recipient IS NOT NULL
+      ) audience
+      WHERE p.id = ${notice.projectId}
+        AND substr(${notice.eventKey}, 1, length(${prefix})) = ${prefix}
+        AND length(recipient) BETWEEN 1 AND 20 AND recipient GLOB '[1-9]*' AND recipient NOT GLOB '*[^0-9]*'
+      ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
+    const outcome = try exit(write)
+    if (Exit.isFailure(outcome)) failed += 1
+  }
+  if (failed > 0) try Effect.logError("backlog rule notices write failures", { failed })
+  return { attempted: notices.length, failed } satisfies BacklogNoticeSummary
+}

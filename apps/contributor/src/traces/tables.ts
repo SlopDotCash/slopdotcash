@@ -7,4 +7,8 @@ export const writes = [
   "trace_uploads",
   "trace_attachment_commits",
   "run_progress_events",
+  "trace_licensing_settings",
+  "trace_licensing_events",
+  "trace_licences",
+  "trace_licence_events",
 ] as const;

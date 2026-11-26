@@ -15,6 +15,7 @@ import { depositAsk } from "../deposit/ask.vibe"
 import { depositHeldOn } from "../deposit/hold.ts"
 import { projectId as projectPattern } from "../intake/availability.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
+import { handleSecurityRead } from "../readKey/routes.vibe"
 import { type ReportingProgram, ReportingPrograms, termsAtReceipt } from "../receipt/program.vibe"
 import { caseEvent, caseInsert } from "../receipt/statements.vibe"
 import { type Body, exactKeys, githubIdPattern, githubLogin, planned, timeField } from "./actions.vibe"
@@ -135,27 +136,31 @@ effect function visibleCases(actor: Actor) {
   const scope = scoped.length === 0 ? sql`` : sql` OR c.project_id IN (SELECT value FROM json_each(${JSON.stringify(scoped)}))`
   const disputes = moderator ? sql` OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'` : sql``
   const candidates = try allRows(CaseRow, sql`SELECT ${caseColumns} FROM security_cases c WHERE (c.reporter_github_id = ${actor.githubId} OR c.id IN (SELECT case_id FROM security_case_members WHERE github_id = ${actor.githubId} AND revoked_at IS NULL)${scope}${disputes}) AND (c.reporter_github_id = ${actor.githubId} OR NOT ${depositHeldOn("c.id")}) ORDER BY c.created_at DESC LIMIT ${listLimit}`)
-  const visible: Observed[] = []
-  for (const candidate of candidates) {
+  const evaluated = try Effect.forEach(candidates, (candidate) => effect {
     const record = try listedRecord(candidate.id)
-    if (record === undefined) continue
+    if (record === undefined) return { kind: "skip" as const }
     const observed = observedAs(record, actor.githubId, actionRows.githubUnavailable) catch effect (error) => {
       if (error instanceof Refused && error.code === actionRows.githubUnavailable.error) return undefined
       throw error
     }
-    if (observed === undefined) {
+    if (observed === undefined) return { kind: "unavailable" as const }
+    if (withheld(observed, actor.githubId)) return { kind: "skip" as const }
+    return { kind: "visible" as const, observed, projectId: record.row.project_id }
+  }, { concurrency: 8 })
+  const visible: Observed[] = []
+  for (const item of evaluated) {
+    if (item.kind === "unavailable") {
       authorityUnavailable = true
       continue
     }
-    if (withheld(observed, actor.githubId)) continue
-    visible.push(observed)
-    if (!observed.roles.has("dispute")) continue
-    const held = roles.get(record.row.project_id) ?? new Set<string>()
+    if (item.kind !== "visible") continue
+    visible.push(item.observed)
+    if (!item.observed.roles.has("dispute")) continue
+    const held = roles.get(item.projectId) ?? new Set<string>()
     held.add("dispute")
-    roles.set(record.row.project_id, held)
+    roles.set(item.projectId, held)
   }
-  const cases: unknown[] = []
-  for (const observed of visible) cases.push(try shownCase(observed, actor, false))
+  const cases = try Effect.forEach(visible, (observed) => shownCase(observed, actor, false), { concurrency: 8 })
   const at = try isoNow()
   if (visible.length > 0) try (try D1).batch(visible.map((observed) => accessLog(observed.record.row.id, actor.githubId, observed.roles, "read", at)))
   return {
@@ -420,8 +425,8 @@ effect function bodyOf(limitKib: number) {
 }
 
 export const caseRoutes = Layer.mergeAll(
-  handleRaw(listCases, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
-  handleRaw(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
+  handleSecurityRead(listCases, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
+  handleSecurityRead(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
   handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => created(input.actor, body))),
   handleRaw(actOnCase, (input) => Effect.flatMap(bodyOf(actOnCase.limitKib), (body) => Effect.map(acted(input.actor, input.params.id ?? "", body), (result) => answer(result)))),
 )

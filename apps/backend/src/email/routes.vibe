@@ -2,7 +2,7 @@
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomToken, sha256Hex } from "@repo/platform/crypto"
 import { ConstraintViolation, first, rows, sql } from "@repo/platform/d1"
-import { type Actor, ActorChanged, Caller, Refused, Unauthenticated, bytesBody, handleRaw, sameOriginWrite } from "@repo/platform/http"
+import { type Actor, ActorChanged, Caller, Refused, Unauthenticated, bytesBody, handleRaw, json, methodNotAllowed, sameOriginWrite } from "@repo/platform/http"
 import { Conflict } from "@repo/platform/stored"
 import { Rejected, mailService, otherAccountsRecent, senderMember } from "../../gen/backend__accounts.effect.vibe"
 import { consentOutcome, requestOutcome } from "../../gen/backend__email.effect.vibe"
@@ -55,8 +55,15 @@ effect function signedIn() {
   }
 }
 
+const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
+
+function isBusyD1(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
+}
+
 effect function emailAnswer<E, R>(program: HttpServerResponse.HttpServerResponse!E!R) {
-  return program catch effect () => {
+  return program catch effect (error) => {
+    if (isBusyD1(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "private, no-store" })
     try Effect.logError("notifications API failure")
     return privateBare(getNotificationsEmail.internalErrorPrivateNoStore)
   }
@@ -103,11 +110,16 @@ effect function preference() {
 function consentRefusal(event: Event, state: Accounts, by: number): Row {
   const rows = postNotificationsEmail
   if (event.type !== "setEmailConsent") return rows.invalidRequestS400
-  switch (consentOutcome(senderMember(state, by).email, event.activity, event.choice, event.suppliedVersion, event.checkedRevision)) {
+  const outcome = consentOutcome(senderMember(state, by).email, event.activity, event.choice, event.suppliedVersion, event.checkedRevision)
+  switch (outcome) {
     case "ConsentInvalid": return rows.invalidRequestS400
     case "VerificationChanged": return rows.verificationChanged
     case "PreferenceChanged": return rows.preferenceChanged
     case "ConsentSaved": return rows.notSignedIn
+    default: {
+      const _exhaustive: never = outcome
+      return _exhaustive
+    }
   }
 }
 
@@ -193,6 +205,10 @@ effect function requestRefused(error: Rejected, githubId: string, requestKey: st
     case "VerificationRateLimited": return try replayedOrLimited(githubId, requestKey, email, activity, security, addressKey)
     case "InvalidEmailRequest": return privateBare(rows.invalidRequestS400)
     case "RequestAccepted": return privateBare(rows.notSignedIn)
+    default: {
+      const _exhaustive: never = outcome
+      return _exhaustive
+    }
   }
 }
 
@@ -277,4 +293,6 @@ export const EmailRoutes = Layer.mergeAll(
   handleRaw(emailVerification, () => emailAnswer(requestVerification())),
   handleRaw(emailVerify, () => emailAnswer(verify())),
   handleRaw(emailUnsubscribe, (input) => emailAnswer(unsubscribe(input.query))),
+  methodNotAllowed([emailPreference, emailConsent], succeed(json({ error: "method_not_allowed" }, 405, { allow: "GET, POST", "cache-control": "private, no-store" }))),
+  methodNotAllowed([emailVerification, emailVerify, emailUnsubscribe], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" }))),
 )

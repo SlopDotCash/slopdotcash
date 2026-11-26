@@ -332,5 +332,9 @@ export effect function forwarded(current: Loaded, event: Event, shell: Shell, le
       const next = readReceipt(f, event.request, event.advisoryRead)
       return try stepped(current, event, ledger, receiptTransition(current.row, f, next, event.advisoryRead.status === "Found", shell.factsOf(event.advisoryRead.facts), at))
     }
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
   }
 }

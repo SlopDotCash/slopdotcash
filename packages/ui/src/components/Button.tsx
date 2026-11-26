@@ -42,7 +42,6 @@ export type ButtonProps = ComponentProps<"button"> &
 export function Button({ variant, size, loading = false, asChild = false, type = "button", disabled = false, className, children, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";
   const { disabled: off, ...state } = controlState(disabled, loading);
-  // The child of `asChild`, a link, has no `disabled`: it leaves the tab order instead.
   const element = asChild ? (off ? { tabIndex: -1 } : {}) : { type, disabled: off };
   return (
     <Comp className={cn(buttonVariants({ variant, size }), className)} {...props} {...state} {...element}>

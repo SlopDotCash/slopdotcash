@@ -117,7 +117,15 @@ function linkAnswer(route: ReferralRoute, origin: string) {
         case "Form": return form(origin, undefined)
         case "FormWithRef": return form(origin, result.login)
         case "LinkUnavailable": return plain(getReferralByCode.thisReferralLinkIs)
+        default: {
+          const _exhaustive: never = result
+          return _exhaustive
+        }
       }
+    }
+    default: {
+      const _exhaustive: never = route
+      return _exhaustive
     }
   }
 }

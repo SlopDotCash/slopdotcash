@@ -3,6 +3,7 @@ import { networkTerms } from "../../gen/backend__submissionFeeTerms.effect.vibe"
 import { resolverMaySign } from "../../gen/fees__submissionFeeSends.effect.vibe"
 import { type ResolveTransaction, type ResolverSigner, ResolverSignRefused } from "../submissionFee/chain.vibe"
 import { SubmissionFeeConfigInvalid } from "../submissionFee/config.vibe"
+import { STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_LEDGER, STANDING_DEPOSIT_NETWORK } from "../submissionFee/standingTerms.ts"
 import { type ResolverKey, resolveManyOf, resolverKey } from "./resolverKey.ts"
 
 export interface ResolverEnv {
@@ -16,10 +17,12 @@ export function resolverSecret(env: ResolverEnv) {
 
 effect function signWith(network: string, key: ResolverKey, transaction: ResolveTransaction) {
   const intent = resolveManyOf(network, transaction)
-  const published = networkTerms(network)
+  const published = network === STANDING_DEPOSIT_LEDGER
+    ? { chainId: networkTerms(STANDING_DEPOSIT_NETWORK).chainId, contract: STANDING_DEPOSIT_CONTRACT.toLowerCase() }
+    : (() => { const terms = networkTerms(network); return { chainId: terms.chainId, contract: terms.contract.toLowerCase() } })()
   if (intent === undefined || !resolverMaySign(
     { chainId: intent.chainId, contract: intent.contract, ids: [...intent.ids], refunds: [...intent.refunds] },
-    { chainId: published.chainId, contract: published.contract.toLowerCase() },
+    published,
   )) throw new ResolverSignRefused({ issue: "The resolver key signs only resolveMany on the published contract" })
   return try tryPromise({ try: () => key.sign(intent), catch: () => new ResolverSignRefused({ issue: "The resolver key could not sign" }) })
 }

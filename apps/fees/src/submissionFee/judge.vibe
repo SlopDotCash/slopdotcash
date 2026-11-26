@@ -9,7 +9,9 @@ import { burnAddress, keptToFor, tokenKind, unknownItemGraceMs } from "../../gen
 import { type DepositFacts, type Party, type Refusal, apply, canJudge, depositVerdict, judgedPerRun } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
 import { type ReportDeposit as ReportModel, type ReportFacts, apply as applyReport, canJudge as canJudgeReport, reportVerdict } from "../../gen/fees__submissionFeeReportDeposits.effect.vibe"
 import { type DepositRow, depositView, paidByOf, reasonText } from "./codec.vibe"
-import { setJudgement, unjudged } from "./store.vibe"
+import { judgeStandingDeposits } from "./standing.vibe"
+import { STANDING_DEPOSIT_LEDGER } from "./standingTerms.ts"
+import { setJudgement, setJudgementIfItemPaid, setJudgementIfReportPaid, unjudged } from "./store.vibe"
 
 interface Judged {
   readonly judged: number
@@ -74,8 +76,11 @@ effect function judgeItem(deposit: DepositRow, item: SubmissionFeeItem | null, r
   if (item === null) return "waiting"
   const items = try SubmissionFeeItems
   const pull = { repositoryId: item.repositoryId, pullNumber: item.pullNumber }
-  if ((try (try D1).run(try items.markPaid(deposit, pull, try isoNow()))) !== 1) return "waiting"
-  try (try D1).run(setJudgement(deposit, { accepted: 1, reason: null, ...pull }))
+  const [marked] = try (try D1).batch([
+    try items.markPaid(deposit, pull, try isoNow()),
+    setJudgementIfItemPaid(deposit, pull),
+  ])
+  if ((marked?.changes ?? 0) !== 1) return "waiting"
   try Effect.logInfo("submission_fee_paid", { network: deposit.network, depositId: deposit.depositId, repositoryId: item.repositoryId, pullNumber: item.pullNumber })
   return "paid"
 }
@@ -118,13 +123,17 @@ effect function judgeReport(deposit: DepositRow, report: ReportDeposit, now: num
     return "refused"
   }
   const reports = try ReportDeposits
-  if ((try (try D1).run(try reports.markPaid(deposit, report.caseId, try isoNow()))) !== 1) return "waiting"
-  try (try D1).run(setJudgement(deposit, { accepted: 1, reason: null, repositoryId: null, pullNumber: null }))
+  const [marked] = try (try D1).batch([
+    try reports.markPaid(deposit, report.caseId, try isoNow()),
+    setJudgementIfReportPaid(deposit, report.caseId),
+  ])
+  if ((marked?.changes ?? 0) !== 1) return "waiting"
   try Effect.logInfo("submission_fee_report_paid", { network: deposit.network, depositId: deposit.depositId })
   return "paid"
 }
 
 export effect function judgeDeposits(network: string) {
+  if (network === STANDING_DEPOSIT_LEDGER) return try judgeStandingDeposits(network)
   const items = try SubmissionFeeItems
   const reports = try ReportDeposits
   const rates = try (try SubmissionFeeRates).all()

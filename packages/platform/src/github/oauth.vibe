@@ -104,6 +104,10 @@ function statusOf(failure: GitHubFailure): number | undefined {
     case "RateLimited": return failure.status
     case "GitHubUnavailable": return failure.status
     case "GitHubMalformed": return undefined
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
   }
 }
 

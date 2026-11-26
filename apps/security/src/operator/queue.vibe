@@ -1,0 +1,163 @@
+// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
+import { operatorBearerAuthorized } from "@repo/platform/crypto"
+import { first, rows, sql } from "@repo/platform/d1"
+import { answered, json } from "@repo/platform/http"
+import { retryForOperator } from "../assessment/routes.vibe"
+import { importGithubReports } from "../cases/receiptCheck.vibe"
+import {
+  SECURITY_QUEUE_PATH,
+  SECURITY_QUEUE_SCHEMA,
+} from "../client/operator.vibe"
+import { depositHeld } from "../deposit/held.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
+import { sendOwnerReminders } from "./reminders.vibe"
+
+export const OPEN_RECEIPT_STATES = ["received", "triaging"] as const
+export const RETRY_ATTEMPT_LIMIT = 4
+export const RETRY_SPACING_MS = 30 * 60 * 1000
+export const DAILY_ATTEMPT_LIMIT = 150
+export const ANALYSIS_STALE_AFTER_MS = 15 * 60 * 1000
+const undecidedAfterMs = 7 * 24 * 60 * 60 * 1000
+const cacheHeaders = { "cache-control": "no-store" }
+
+export service SecurityQueueAccess {
+  authorized(header: string | undefined): boolean!!
+}
+
+export function securityQueueAccess(token: string | undefined) {
+  const secret = token === undefined ? undefined : Redacted.make(token)
+  return Layer.succeed(SecurityQueueAccess, {
+    authorized: (header) => succeed(operatorBearerAuthorized(header, secret)),
+  })
+}
+
+type AttemptState = "running" | "complete" | "failed" | "unavailable"
+
+export type SecurityQueueRun =
+  | { readonly ran: true; readonly state: AttemptState; readonly remainingEligible: number }
+  | { readonly ran: false; readonly reason: "daily-limit" | "none-eligible" | "not-started" }
+
+schema OpenRow {
+  id: string
+  project_id: string
+  created_at: string
+  analyzable: number
+  attempts: number
+  latest_state: "running" | "complete" | "failed" | "unavailable" | null
+  latest_started_at: string | null
+}
+
+schema DailyCount {
+  n: number
+}
+
+effect function openReports() {
+  return try rows(OpenRow, sql`SELECT c.id, c.project_id, c.created_at,
+      (i.case_id IS NULL OR i.review_decision = 'forward'
+        OR (i.review_decision IS NULL AND i.screening_state = 'legitimate')) AS analyzable,
+      (SELECT COUNT(*) FROM security_case_analyses a
+        WHERE a.case_id = c.id AND COALESCE(a.report_version, 1) = COALESCE(i.report_version, 1)) AS attempts,
+      (SELECT a.state FROM security_case_analyses a
+        WHERE a.case_id = c.id AND COALESCE(a.report_version, 1) = COALESCE(i.report_version, 1)
+        ORDER BY a.attempt DESC LIMIT 1) AS latest_state,
+      (SELECT a.started_at FROM security_case_analyses a
+        WHERE a.case_id = c.id AND COALESCE(a.report_version, 1) = COALESCE(i.report_version, 1)
+        ORDER BY a.attempt DESC LIMIT 1) AS latest_started_at
+    FROM security_cases c
+    LEFT JOIN security_submission_intake i ON i.case_id = c.id
+    WHERE c.submission_state = 'verified'
+      AND c.receipt_state IN ('received', 'triaging')
+      AND NOT ${depositHeldOn("c.id")}
+    ORDER BY c.created_at, c.id`)
+}
+
+function failedAttempt(row: OpenRow, nowMs: number): boolean {
+  if (row.latest_state === null || row.latest_started_at === null) return false
+  if (row.latest_state === "failed" || row.latest_state === "unavailable") return true
+  if (row.latest_state !== "running") return false
+  const started = millisOf(row.latest_started_at)
+  return Number.isFinite(started) && nowMs - started > ANALYSIS_STALE_AFTER_MS
+}
+
+function retryEligible(row: OpenRow, nowMs: number): boolean {
+  if (row.analyzable !== 1) return false
+  if (row.latest_state === null) return true
+  if (!failedAttempt(row, nowMs)) return false
+  if (row.attempts >= RETRY_ATTEMPT_LIMIT) return false
+  const started = row.latest_started_at === null ? Number.NaN : millisOf(row.latest_started_at)
+  return Number.isFinite(started) && nowMs - started > RETRY_SPACING_MS
+}
+
+export effect function readSecurityQueue() {
+  const nowMs = try Clock.currentTimeMillis
+  const found = try openReports()
+  const projects = new Map<string, { projectId: string; open: number; withoutAnalysis: number; analysisFailed: number; undecidedOver7Days: number; oldestOpenAt: string }>()
+  for (const row of found) {
+    let entry = projects.get(row.project_id)
+    if (entry === undefined) {
+      entry = {
+        projectId: row.project_id,
+        open: 0,
+        withoutAnalysis: 0,
+        analysisFailed: 0,
+        undecidedOver7Days: 0,
+        oldestOpenAt: row.created_at,
+      }
+      projects.set(row.project_id, entry)
+    }
+    entry.open += 1
+    if (row.analyzable === 1 && row.latest_state === null) entry.withoutAnalysis += 1
+    if (row.analyzable === 1 && failedAttempt(row, nowMs)) entry.analysisFailed += 1
+    if (nowMs - millisOf(row.created_at) > undecidedAfterMs) entry.undecidedOver7Days += 1
+  }
+  return [...projects.values()].sort((left, right) => (left.projectId < right.projectId ? -1 : left.projectId > right.projectId ? 1 : 0))
+}
+
+effect function utcDayStart(nowMs: number) {
+  return `${(try isoAt(nowMs)).slice(0, 10)}T00:00:00.000Z`
+}
+
+export effect function runSecurityQueueRetry() {
+  const nowMs = try Clock.currentTimeMillis
+  const started = try first(DailyCount, sql`SELECT COUNT(*) AS n FROM security_case_analyses WHERE started_at >= ${try utcDayStart(nowMs)}`)
+  if ((started?.n ?? 0) >= DAILY_ATTEMPT_LIMIT) return { ran: false, reason: "daily-limit" } satisfies SecurityQueueRun
+  for (const row of try openReports()) {
+    if (!retryEligible(row, nowMs)) continue
+    if (try depositHeld(row.id)) continue
+    const state = try retryForOperator(row.id)
+    if (state === undefined) return { ran: false, reason: "not-started" } satisfies SecurityQueueRun
+    const afterMs = try Clock.currentTimeMillis
+    const remaining = (try openReports()).filter((entry) => retryEligible(entry, afterMs)).length
+    return { ran: true, state, remainingEligible: remaining } satisfies SecurityQueueRun
+  }
+  return { ran: false, reason: "none-eligible" } satisfies SecurityQueueRun
+}
+
+effect function remindersPass() {
+  const queue = readSecurityQueue() catch effect () => {
+    try Effect.logError("security owner reminders: queue unavailable")
+    return undefined
+  }
+  if (queue !== undefined) try sendOwnerReminders(queue)
+}
+
+effect function answer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (!(try (try SecurityQueueAccess).authorized(request.headers.authorization))) return json({ error: "not_found" }, 404)
+  if (request.method === "GET" || request.method === "HEAD") {
+    const projects = try readSecurityQueue()
+    return json({ schema: SECURITY_QUEUE_SCHEMA, generatedAt: try isoNow(), projects }, 200, cacheHeaders)
+  }
+  if (request.method === "POST") {
+    importGithubReports() catch effect () => {
+      try Effect.logError("security queue: automatic import failed")
+      return undefined
+    }
+    try remindersPass()
+    return json(try runSecurityQueueRetry(), 200, cacheHeaders)
+  }
+  return json({ error: "method_not_allowed" }, 405, cacheHeaders)
+}
+
+export const operatorQueueRoutes = HttpRouter.add("*", SECURITY_QUEUE_PATH, answered(answer()))

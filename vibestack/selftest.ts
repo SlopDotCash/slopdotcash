@@ -19,7 +19,7 @@ import { cacheCredentials, collectGarbage, isActionEntry, withFormalCache, type 
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { heading } from "./parse.ts";
 import { precomputeSimulations, prepareSimulationReceipts } from "./formal.ts";
-import { exec, run as tool, toolCpuSeconds } from "./run.ts";
+import { exec, makeTempDir, removeTempDir, run as tool, toolCpuSeconds } from "./run.ts";
 import { pendingSpecs, showPending, writeLedger } from "./review.ts";
 import { filesUnder, packageScripts, testInputs, testReceipt, writeWhole } from "./util.ts";
 import { profile } from "./testing/profile.ts";
@@ -68,12 +68,12 @@ const keepRuns = (from: string, to: string) => {
 after(() => {
   for (const root of sharing) keepRuns(path.join(root, ".spec-cache"), STORE);
   for (const name of fs.existsSync(STORE) ? fs.readdirSync(STORE) : []) attempt(() => { if (fs.statSync(path.join(STORE, name)).mtimeMs < Date.now() - WEEK) fs.rmSync(path.join(STORE, name), { force: true }); });
-  roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true }));
+  roots.forEach((root) => removeTempDir(root));
 });
 
 /** A scratch project holding the given files. */
 function scratch(files: Record<string, string>): string {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-")));
+  const root = makeTempDir("spec-selftest-", fs.realpathSync(os.tmpdir()));
   roots.push(root);
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });

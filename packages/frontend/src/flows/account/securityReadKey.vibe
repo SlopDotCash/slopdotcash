@@ -1,0 +1,49 @@
+// spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs"
+import { boundedJson } from "../../platform/bounded.vibe"
+
+export const SECURITY_READ_KEY_API = "/api/v1/security-read-key"
+export const SECURITY_READ_KEY_PATTERN = /^slop_sr_[A-Za-z0-9_-]{43}$/u
+export const SECURITY_READ_KEY_NOTICE =
+  "The key reads what your account can read in the Inbox: private reports, cases and their analysis. It cannot decide, pay or change anything. Keep it secret. Creating a new key or revoking stops the old one at once."
+
+schema CreatedSecret {
+  readonly secret: string
+}
+
+export error SecurityReadKeyError {
+  readonly message: string
+}
+
+export effect function createSecurityReadKey(githubId: string) {
+  const response = HttpClient.post(SECURITY_READ_KEY_API, {
+    headers: { "content-type": "application/json", "x-slop-expected-github-id": githubId },
+    body: HttpBody.text("{}", "application/json"),
+  }) catch effect () => {
+    throw new SecurityReadKeyError({ message: "Your key could not be created. Retry." })
+  }
+  const body = boundedJson(response, 4096, "Security read key") catch effect () => {
+    throw new SecurityReadKeyError({ message: "Your key could not be created. Retry." })
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new SecurityReadKeyError({ message: "Your key could not be created. Retry." })
+  }
+  const decoded = Schema.decodeUnknownEffect(CreatedSecret)(body) catch effect () => {
+    throw new SecurityReadKeyError({ message: "The server returned an invalid security read key." })
+  }
+  if (!SECURITY_READ_KEY_PATTERN.test(decoded.secret)) {
+    throw new SecurityReadKeyError({ message: "The server returned an invalid security read key." })
+  }
+  return decoded.secret
+}
+
+export effect function revokeSecurityReadKey(githubId: string) {
+  const response = HttpClient.del(SECURITY_READ_KEY_API, {
+    headers: { "content-type": "application/json", "x-slop-expected-github-id": githubId },
+    body: HttpBody.text("{}", "application/json"),
+  }) catch effect () => {
+    throw new SecurityReadKeyError({ message: "Your key could not be revoked. Retry." })
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new SecurityReadKeyError({ message: "Your key could not be revoked. Retry." })
+  }
+}

@@ -89,11 +89,17 @@ interface Decoded {
   readonly refusal: TextRefusal
 }
 
-effect function decodedPayload(bytes: Uint8Array, deliveryId: string) {
+function isFormEncoded(contentType: string | undefined) {
+  return contentType !== undefined && contentType.split(";", 1)[0]?.trim().toLowerCase() === "application/x-www-form-urlencoded"
+}
+
+effect function decodedPayload(bytes: Uint8Array, deliveryId: string, contentType: string | undefined) {
   if (deliveryId === "") return { strictUtf8: true, jsonObject: true, payload: undefined, refusal: refusals.missingDeliveryId } satisfies Decoded
   const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch () => undefined
   if (text === undefined) return { strictUtf8: false, jsonObject: false, payload: undefined, refusal: refusals.invalidBody } satisfies Decoded
-  const value = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  const jsonText = isFormEncoded(contentType) ? new URLSearchParams(text).get("payload") : text
+  if (jsonText === null) return { strictUtf8: true, jsonObject: false, payload: undefined, refusal: refusals.invalidJSON } satisfies Decoded
+  const value = Effect.try(() => JSON.parse(jsonText) as unknown) catch () => undefined
   if (value === undefined) return { strictUtf8: true, jsonObject: false, payload: undefined, refusal: refusals.invalidJSON } satisfies Decoded
   const payload = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
   return { strictUtf8: true, jsonObject: payload !== undefined, payload, refusal: refusals.invalidPayload } satisfies Decoded
@@ -161,8 +167,12 @@ function queueDelay(settings: WebhookSettings.Shape, eventName: string, payload:
 effect function routed(context: Context, claimed: Webhook, parsed: Parsed, delaySeconds: number) {
   const lookups = try valueLookups(claimed)
   const valued = try durable(context, claimed, { type: "inspectValue", requestId, ...lookups })
-  try queuedReady(parsed)
-  try queuedFee(parsed)
+  queuedReady(parsed) catch effect (error) => {
+    try Effect.logError("slopbot ready side-queue failed", { delivery: context.deliveryId, failure: error._tag })
+  }
+  queuedFee(parsed) catch effect (error) => {
+    try Effect.logError("slopbot fee side-queue failed", { delivery: context.deliveryId, failure: error._tag })
+  }
   if (settled(valued)) return valued
   const job = qualifiedJob(parsed.body) === "NoJob" ? undefined : parsed.job
   const queueLookup = job === undefined ? { registration: unregistered, lookupOk: true } : try looked({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })
@@ -199,7 +209,7 @@ export effect function webhook() {
   if (settled(authenticated)) return replied(authenticated, refusals.invalidSignature)
   const eventName = http.headers["x-github-event"] ?? ""
   const deliveryId = http.headers["x-github-delivery"] ?? ""
-  const decoded = try decodedPayload(read, deliveryId)
+  const decoded = try decodedPayload(read, deliveryId, http.headers["content-type"])
   const parsed = decoded.payload === undefined ? undefined : try parse(eventName, deliveryId, decoded.payload, settings.appUserId)
   const claimable = try stepped(authenticated, { type: "decode", requestId, decodedBytes: bytes, strictUtf8: decoded.strictUtf8, jsonObject: decoded.jsonObject, body: parsed?.body ?? { ...noBody, deliveryId } })
   if (settled(claimable) || parsed === undefined) return replied(claimable, decoded.refusal)

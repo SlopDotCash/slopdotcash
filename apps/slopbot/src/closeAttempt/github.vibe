@@ -22,6 +22,7 @@ export interface CurrentItem {
   readonly issue: typeof IssueRead.Type
   readonly revision: string
   readonly merged: boolean
+  readonly mergedAt: string | null
 }
 
 export error ReopenUnconfirmed { status: number }
@@ -71,8 +72,8 @@ export effect function currentItem(target: ItemTarget) {
   const base = `/repositories/${target.repositoryId}`
   const issue = try absentOn404(github.json(`${base}/issues/${target.number}`, IssueRead))
   if (issue === undefined) return undefined
-  if (target.itemKind !== "pull_request") return { issue, revision: try sha256Hex(`${issue.title}\n${issue.body ?? ""}`), merged: false } satisfies CurrentItem
+  if (target.itemKind !== "pull_request") return { issue, revision: try sha256Hex(`${issue.title}\n${issue.body ?? ""}`), merged: false, mergedAt: null } satisfies CurrentItem
   const pull = try absentOn404(github.json(`${base}/pulls/${target.number}`, PullRead))
   if (pull === undefined) return undefined
-  return { issue, revision: pull.head.sha, merged: pull.merged } satisfies CurrentItem
+  return { issue, revision: pull.head.sha, merged: pull.merged, mergedAt: pull.merged_at ?? null } satisfies CurrentItem
 }

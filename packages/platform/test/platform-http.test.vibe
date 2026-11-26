@@ -2,7 +2,10 @@ import { assert, layer } from "@effect/vitest"
 import * as Base64 from "effect/encoding/Base64"
 import * as Hex from "effect/encoding/Hex"
 import { Response } from "miniflare"
+import { jsonRpc } from "../src/chain/rpc.vibe"
 import { base64url, sha256Hex, utf8, webCrypto } from "../src/crypto.vibe"
+import { DatabaseFailure, databaseTemporarilyUnavailable } from "../src/d1.vibe"
+import { failureShape } from "../src/http.vibe"
 import { signedHeaders } from "../src/signed.vibe"
 import { bundle, startWorker } from "../src/testing.ts"
 
@@ -96,6 +99,8 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       notObject: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: write, body: JSON.stringify(["hello"]) }),
       notUtf8: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: write, body: new Uint8Array([...new TextEncoder().encode("{\"text\":\""), 0xff, ...new TextEncoder().encode("\"}")]) }),
       unauthenticated: try note("hello", { origin: site, "content-type": "application/json" }),
+      unauthenticatedInvalidBody: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: { origin: site, "content-type": "application/json" }, body: "{" }),
+      upperCaseJson: try note("hello", { ...write, "content-type": " Application/JSON ; charset=utf-8 " }),
       saved: try note("hello"),
       closed: try http.ask("/api/v1/fixture/session/close", { method: "POST", headers: write, body: "{}" }),
       closedWithoutJson: try http.ask("/api/v1/fixture/session/close", { method: "POST", headers: { ...signedIn, origin: site } }),
@@ -108,6 +113,9 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       stale: try note("stale"),
       rejected: try note("rejected"),
       github: try note("github"),
+      busyDb: try note("busyDb"),
+      busyLock: try note("busyLock"),
+      dbDefect: try note("dbDefect"),
       refused: try note("refused"),
       unmapped: try note("unmapped"),
       defect: try note("defect"),
@@ -120,13 +128,15 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       malformedActor: refusal(400, "invalid_expected_actor", "Expected GitHub actor is invalid"),
       missingOrigin: refusal(403, "origin_forbidden", "Requests must come from this site"),
       wrongType: refusal(403, "origin_forbidden", "Requests must come from this site"),
-      oversized: refusal(400, "invalid_request", "Request body must be a JSON object"),
+      oversized: refusal(413, "payload_too_large", "Request body exceeds 1024 bytes"),
       extraKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
       missingKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
       notJson: refusal(400, "invalid_request", "Request body must be a JSON object"),
       notObject: refusal(400, "invalid_request", "Request body must be a JSON object"),
       notUtf8: refusal(400, "invalid_request", "Request body must be a JSON object"),
       unauthenticated: refusal(401, "unauthorized", "Sign in with GitHub"),
+      unauthenticatedInvalidBody: refusal(401, "unauthorized", "Sign in with GitHub"),
+      upperCaseJson: { status: 201, headers: { "cache-control": "no-store" }, body: { saved: "hello", by: "7" } },
       saved: { status: 201, headers: { "cache-control": "no-store" }, body: { saved: "hello", by: "7" } },
       closed: { status: 200, headers: { "cache-control": "no-store" }, body: { closed: "7" } },
       closedWithoutJson: refusal(403, "origin_forbidden", "Requests must come from this site"),
@@ -139,6 +149,9 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       stale: refusal(409, "changed_concurrently", "This record changed while saving. Reload and try again."),
       rejected: refusal(409, "note_refused", "This request is not allowed in the current state"),
       github: refusal(503, "github_unavailable", "GitHub could not be checked. Retry."),
+      busyDb: refusal(503, "temporarily_unavailable", "Temporarily unavailable. Try again."),
+      busyLock: refusal(503, "temporarily_unavailable", "Temporarily unavailable. Try again."),
+      dbDefect: refusal(500, "internal_error", "Internal error"),
       refused: refusal(422, "note_invalid", "Notes must not say refused"),
       unmapped: refusal(500, "internal_error", "Internal error"),
       defect: refusal(500, "internal_error", "Internal error"),
@@ -269,6 +282,45 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
           "GET https://upstream.internal/v1/answers/large Bearer relay-assertion",
           "GET https://upstream.internal/v1/answers/refusal Bearer relay-assertion",
         ],
+      }))
+    }
+  })
+
+  it.effect('Busy D1 failures classify as temporarily unavailable, failureShape redacts raw error messages, and JSON-RPC enforces maxBytes while streaming (spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page")', () => effect {
+    const busy = new DatabaseFailure({ operation: "all", message: "D1_OVERLOADED: queued for too long" })
+    const constraint = new DatabaseFailure({ operation: "run", message: "D1_ERROR: UNIQUE constraint failed: secret_user" })
+    const shape = failureShape(constraint)
+    let chunksPulled = 0
+    const streamingClient = Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+      if (request.url.includes("auth-denied")) return HttpClientResponse.fromWeb(request, try orDie(Effect.try(() => new Response("unauthorized", { status: 401 }) as unknown as globalThis.Response)))
+      const chunks = Stream.tap(Stream.make(new Uint8Array(64).fill(97), new Uint8Array(64).fill(98), new Uint8Array(64).fill(99)), () => sync(() => { chunksPulled += 1 }))
+      return HttpClientResponse.fromWeb(request, try orDie(Effect.try(() => new Response(Stream.toReadableStream(chunks), { status: 200 }) as unknown as globalThis.Response)))
+    }))
+    provide streamingClient {
+      const rpc = try jsonRpc({ urls: Redacted.make(["https://rpc.test/stream"]), timeoutMs: 5_000, maxBytes: 100 })
+      const oversized = rpc.call("eth_blockNumber", [], Schema.String) catch (error) => error._tag
+      const deniedRpc = try jsonRpc({ urls: Redacted.make(["https://rpc.test/auth-denied"]), timeoutMs: 5_000, maxBytes: 100 })
+      const denied = deniedRpc.call("eth_blockNumber", [], Schema.String) catch (error) => (error._tag === "RpcUnavailable" ? [error._tag, error.httpStatus] : [error._tag, undefined])
+      try Effect.try(() => assert.deepStrictEqual({
+        busyFlag: busy.temporarilyUnavailable,
+        busyClassified: databaseTemporarilyUnavailable(busy),
+        constraintClassified: databaseTemporarilyUnavailable(constraint),
+        shapeHasTag: shape.includes("DatabaseFailure"),
+        shapeHasCode: shape.includes("D1_ERROR"),
+        shapeRedactsData: !shape.includes("secret_user"),
+        oversized,
+        boundedStreaming: chunksPulled === 2,
+        denied,
+      }, {
+        busyFlag: true,
+        busyClassified: true,
+        constraintClassified: false,
+        shapeHasTag: true,
+        shapeHasCode: true,
+        shapeRedactsData: true,
+        oversized: "RpcMalformed",
+        boundedStreaming: true,
+        denied: ["RpcUnavailable", 401],
       }))
     }
   })

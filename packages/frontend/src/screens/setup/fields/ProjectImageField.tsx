@@ -27,6 +27,7 @@ export function ProjectImageField({ value, onChange, ownerLogin = "" }: ProjectI
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const choose = async (file: File) => {
+    if (busy) return;
     setBusy(true);
     setError("");
     const exit = await Effect.runPromiseExit(projectImageOf(file));

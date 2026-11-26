@@ -1,81 +1,29 @@
 // spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"
-import { Cause, Effect, Exit, type ManagedRuntime } from "effect";
-import { useState, useSyncExternalStore } from "react";
+import { Effect, type ManagedRuntime } from "effect";
+import { useSyncExternalStore } from "react";
+import { type Done, messageOf as baseMessageOf, run as baseRun, type Settled, useAction as useBaseAction, useOnce } from "../../../app/hooks.ts";
 import { type TotalsRuntime, type VaultRuntime, type VaultServices, type VaultTotals, type WalletOffer, followTotals, reloadTotals, watchOffers } from "./funding.vibe";
 import { pageHidden } from "./pageVisibility.ts";
 
-export type Settled<A> = { readonly status: "running" } | { readonly status: "done"; readonly value: A } | { readonly status: "failed"; readonly message: string };
-
-export type Done<A> = { readonly ok: true; readonly value: A } | { readonly ok: false; readonly message: string };
+export type { Done, Settled };
 
 const fallback = "The wallet request failed.";
 
 /** @throws {never} */
-export function messageOf(cause: Cause.Cause<unknown>): string {
-  const error: unknown = Cause.squash(cause);
-  return typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" && error.message !== "" ? error.message : fallback;
+export function messageOf(cause: Parameters<typeof baseMessageOf>[0]): string {
+  return baseMessageOf(cause, fallback);
 }
 
-export async function run<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, work: Effect.Effect<A, E, R>): Promise<Done<A>> {
-  const exit = await runtime.runPromiseExit(work);
-  return Exit.isSuccess(exit) ? { ok: true, value: exit.value } : { ok: false, message: messageOf(exit.cause) };
+export function run<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, work: Effect.Effect<A, E, R>): Promise<Done<A>> {
+  return baseRun(runtime, work, fallback);
 }
 
-interface Entry {
-  shown: Settled<unknown>;
-  started: boolean;
-  readonly listeners: Set<() => void>;
-  readonly subscribe: (notify: () => void) => () => void;
-}
-
-const entries = new WeakMap<object, Map<string, Entry>>();
-
-function entryOf<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string, work: () => Effect.Effect<A, E, R>): Entry {
-  const keyed = entries.get(runtime) ?? new Map<string, Entry>();
-  entries.set(runtime, keyed);
-  const known = keyed.get(key);
-  if (known) return known;
-  const entry: Entry = {
-    shown: { status: "running" },
-    started: false,
-    listeners: new Set(),
-    subscribe: (notify) => {
-      entry.listeners.add(notify);
-      if (!entry.started) {
-        entry.started = true;
-        void run(runtime, work()).then((done) => {
-          entry.shown = done.ok ? { status: "done", value: done.value } : { status: "failed", message: done.message };
-          for (const listener of entry.listeners) listener();
-        });
-      }
-      return () => entry.listeners.delete(notify);
-    },
-  };
-  keyed.set(key, entry);
-  return entry;
-}
-
-/** The answer of `work`, run once on `runtime` for each `key` the first time a component shows it. */
 export function useSettled<A, E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, key: string, work: () => Effect.Effect<A, E, R>): Settled<A> {
-  const entry = entryOf(runtime, key, work);
-  return useSyncExternalStore(entry.subscribe, () => entry.shown, () => entry.shown) as Settled<A>;
+  return useOnce(runtime, key, work);
 }
 
-/** One owner action at a time on a vault: busy while it runs, then its error or its result. */
 export function useAction(runtime: VaultRuntime) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const act = async <A, E>(work: Effect.Effect<A, E, VaultServices>, then?: (value: A) => void) => {
-    setBusy(true);
-    setError("");
-    setNotice("");
-    const done = await run(runtime, work);
-    setBusy(false);
-    if (done.ok) then?.(done.value);
-    else setError(done.message);
-  };
-  return { busy, error, notice, setNotice, act };
+  return useBaseAction<VaultServices>(runtime, fallback);
 }
 
 interface Offers {
@@ -118,7 +66,6 @@ function offersOf(runtime: VaultRuntime): Offers {
   return store;
 }
 
-/** The wallets the browser offers now, in discovery order. */
 export function useWalletOffers(runtime: VaultRuntime): ReadonlyArray<WalletOffer> {
   const store = offersOf(runtime);
   return useSyncExternalStore(store.subscribe, () => store.seen, () => store.seen);
@@ -167,13 +114,11 @@ function totalsOf(runtime: TotalsRuntime, projectId: string): Totals {
   return store;
 }
 
-/** A project's vault totals, read now and again whenever the oldest one turns stale or the reader returns, keeping the last ones shown while a refresh runs. */
 export function useTotals(runtime: TotalsRuntime, projectId: string): VaultTotals | undefined {
   const store = totalsOf(runtime, projectId);
   return useSyncExternalStore(store.subscribe, () => store.shown, () => store.shown);
 }
 
-/** Reads a project's vault totals again now. */
 export function reloadTotalsOf(runtime: TotalsRuntime, projectId: string): void {
   totalsOf(runtime, projectId).reload();
 }
@@ -209,7 +154,6 @@ function visibilityOf<E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, 
   return store;
 }
 
-/** Whether the page is in a hidden tab, told through `tell` once per runtime on each change so the machine's timer stops asking there. */
 export function useTabHidden<E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, tell: (hidden: boolean) => Effect.Effect<unknown, E, R>): boolean {
   const store = visibilityOf(runtime, tell);
   return useSyncExternalStore(store.subscribe, pageHidden, () => false);

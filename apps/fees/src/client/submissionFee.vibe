@@ -106,4 +106,6 @@ export const submissionFeeItemRead = route({ method: "GET", path: "/api/v1/submi
 
 export const reportDepositRead = route({ method: "GET", path: "/api/v1/submission-fee/reports/:caseId", access: "public", limitKib: 1, request: undefined, answer: ReportDepositAnswer, rejected: "not_found", cache: "no-store" })
 
-export const submissionFeeApi: ReadonlyArray<AnyRoute> = [submissionFeeRate, submissionFeeItemRead, reportDepositRead]
+export const submissionFeeSolana = route({ method: "POST", path: "/api/v1/submission-fee/solana", access: "public", limitKib: 2, request: Schema.Unknown, answer: Schema.Unknown, rejected: "not_found", cache: "no-store" })
+
+export const submissionFeeApi: ReadonlyArray<AnyRoute> = [submissionFeeRate, submissionFeeItemRead, reportDepositRead, submissionFeeSolana]

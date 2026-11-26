@@ -5,6 +5,7 @@ export type ReportDepositMode = "off" | "dry_run" | "live"
 
 export service ReportDepositSettings {
   readonly mode: ReportDepositMode
+  readonly nextSweepAt?: Ref.Ref<number>
 }
 
 export const depositModes: Readonly<Record<ReportDepositMode, DepositMode>> = { off: "DepositOff", dry_run: "DepositDryRun", live: "DepositLive" }
@@ -14,5 +15,7 @@ export function reportDepositMode(value: string | undefined): ReportDepositMode 
 }
 
 export function reportDepositSettings(value: string | undefined) {
-  return Layer.succeed(ReportDepositSettings, { mode: reportDepositMode(value) })
+  return Layer.effect(ReportDepositSettings, effect {
+    return { mode: reportDepositMode(value), nextSweepAt: try Ref.make(0) }
+  })
 }

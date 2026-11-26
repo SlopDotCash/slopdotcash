@@ -1,7 +1,5 @@
 import { cn } from "./cn.ts";
 
-// What Dialog, ConfirmDialog and AccountMenu share, so what floats looks alike and stacks above the sticky SiteHeader.
-
 /** The raised surface of a modal or a menu. */
 export const popover = "z-modal rounded-md border border-border bg-popover text-popover-foreground shadow-panel";
 

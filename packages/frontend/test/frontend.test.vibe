@@ -1101,7 +1101,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     const area = try Area
     const session = "frontend-site-session-".padEnd(48, "x")
     try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public) VALUES (?, ?, ?, ?, 0)", "actor", "42", "member", "2026-11-01T00:00:00.000Z")
-    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), "actor", "2099-01-01T00:00:00.000Z")
+    try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), "actor", new Date(Date.now() + 3_600_000).toISOString())
     return { cookie: `__Host-slop_points=${session}`, actorId: "actor", githubId: "42", login: "member" } satisfies Session
   }
 

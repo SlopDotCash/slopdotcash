@@ -8,6 +8,7 @@ import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted } from "../
 import { nonceFloor, solanaSequence } from "../../gen/fees__conversion.effect.vibe"
 import type { Sender } from "../../gen/fees__runtime.effect.vibe"
 import { type Instance, type Journal, networkNames, revertedText, unitsOf } from "../journal/codec.vibe"
+import { verifiedSolanaSend } from "../journal/signedSend.ts"
 import * as W from "../journal/writes.vibe"
 import { errorText } from "../kernels/verified.vibe"
 import { robinhoodUsdg } from "../runtime/pins.ts"
@@ -16,6 +17,7 @@ import { type IncomeEntry, type Leg, type Ledger, type SendRecord, type Terms, d
 
 export error BuybackRefused { event: string; issue: string }
 
+export type { SignedFacts }
 export interface ReceiptFacts extends SettledReceipt { readonly paid?: string }
 
 export interface Facts {
@@ -84,7 +86,11 @@ effect function sameTx(leg: Leg, txId: string, tx: number, event: Event) {
 }
 
 effect function verifiedBytes(leg: Leg, signed: SignedFacts, wallet: string, event: Event) {
-  if (leg.network === "Solana") return try refuse(event, "a Solana bridge send has no check against its signed intent")
+  if (leg.network === "Solana") {
+    const checked = verifiedSolanaSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet })
+    if (checked.kind === "refused") return try refuse(event, checked.issue)
+    return
+  }
   try checkedBytes(signed, wallet, (issue) => refusal(event, issue))
 }
 

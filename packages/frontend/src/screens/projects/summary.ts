@@ -139,7 +139,6 @@ export function mergeIndexValid(index: MergeIndex): boolean {
   );
 }
 
-/** Whether the project is held at its intake cap by the merge activity read; a pending or failed read holds nothing. @throws {never} */
 export function projectHeld(project: Pick<ShownProject, "id" | "status" | "record">, merge: Shown<MergeIndex>, nowMs: number): boolean {
   if (merge.status !== "Current" && merge.status !== "Stale") return false;
   const { active, intakeCap } = slopbotSettings(project);

@@ -1,12 +1,12 @@
 {
   "source": {
     "repository": "SlopDotCash/slopdotcash",
-    "requestedBranch": "develop",
-    "resolvedBranch": "development",
-    "commit": "075f9c61b39659af361bc705d83b98c8d7ff89a9",
+    "requestedBranch": "main",
+    "resolvedBranch": "main",
+    "commit": "eb4f41bee0ac11d835ac8f9d30088ad002a2d1d5",
     "path": "docs/slop-product-requirements.md",
-    "sha256": "54ec89dbbb0e91c24e30415c2b427b818beb2be89e4fae98319c6e21e82cb3d6",
-    "matchingMainCommit": null
+    "sha256": "a70ab9d7a68f8c6de20380096fba995a88313f8ea3055a0848170b172d9ce155",
+    "matchingMainCommit": "eb4f41bee0ac11d835ac8f9d30088ad002a2d1d5"
   },
   "meaning": "Every source subsection is retained. Domain mapping is not transition equivalence or implementation acceptance.",
   "sections": [

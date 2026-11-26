@@ -13,7 +13,7 @@ import { formatDate, formatMonth, projectName, VaultPaymentHistory } from "../pr
 import { type ProjectRuntime, projectReads, projectRuntime } from "../projects/reads.vibe";
 import { contributorReads, contributorRuntime, registryBoot } from "../points/reads.vibe";
 import { useQuery, writeQuery } from "../points/query.ts";
-import { type Settled, useOnce } from "../security/program/hooks.ts";
+import { retryOnce, type Settled, useOnce } from "../../app/hooks.ts";
 import { nextBoundary, staleFrom, useBoundary } from "./boundary.ts";
 import { usdcText } from "./CycleAmountHistory.tsx";
 import { archiveOrder, archiveView, type FilterKey, filterLabels, filterQuery, requestedFilter, selected } from "./filters.ts";
@@ -165,11 +165,11 @@ function bootOf(read: Settled<RegistryBoot>): RegistryBoot | undefined {
   return read.status === "done" && read.value.error === undefined ? read.value : undefined;
 }
 
-/** `/cycles`: every published payment cycle, newest first, filtered by project, month and state; finalized vault payments above them. */
 export function CycleArchivePage({ runtime }: PageProps) {
   const section = projectRuntime(runtime);
+  const contributor = contributorRuntime(runtime);
   const sectionReads = useOnce(section, "reads", () => projectReads());
-  const reads = useOnce(contributorRuntime(runtime), "reads", () => contributorReads());
+  const reads = useOnce(contributor, "reads", () => contributorReads());
   const registry = useOnce(section, "registry", () => registryBoot());
   return (
     <main className={cn(shell, "flex flex-1 flex-col pt-12 pb-16 max-md:pt-8 max-md:pb-12")}>
@@ -177,7 +177,14 @@ export function CycleArchivePage({ runtime }: PageProps) {
         <Loaded runtime={section} section={sectionReads.value} reads={reads.value} boot={bootOf(registry)} />
       ) : (
         <Header>
-          <DataState status={sectionReads.status === "failed" || reads.status === "failed" ? "Failed" : "Loading"} onRetry={() => location.reload()} />
+          <DataState
+            status={sectionReads.status === "failed" || reads.status === "failed" ? "Failed" : "Loading"}
+            onRetry={() => {
+              retryOnce(section, "reads");
+              retryOnce(contributor, "reads");
+              retryOnce(section, "registry");
+            }}
+          />
         </Header>
       )}
     </main>

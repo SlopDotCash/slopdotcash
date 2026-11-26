@@ -15,6 +15,7 @@ import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { burnAddress, robinhoodUsdg, slopToken } from "../runtime/pins.ts"
 import { type PoolInstance, type SendRecord, assetToken, closedUnlanded } from "./codec.vibe"
 import { burnTransfers } from "./burnTransfers.ts"
+import { providerErrorLog } from "../kernels/providerFailure.ts"
 import { big, signedFacts as signedSend, tagOf } from "../buyback/send.vibe"
 import { type Facts, type QuoteFacts, type SignedFacts, PoolRefused, closeApproval, failPreparation, journalApproval, loseApproval, poolOf, send, sendFloors, settleApproval, settleClosed } from "./store.vibe"
 
@@ -318,7 +319,7 @@ effect function burnLeg(running: Running) {
 }
 
 effect function attempt<E, R>(leg: string, program: void!E!R) {
-  program catch effect (error) => { try Effect.logWarning("fee_buyback_error", { network: "Robinhood", leg, error: tagOf(error) }) }
+  program catch effect (error) => { try Effect.logWarning("fee_buyback_error", { network: "Robinhood", leg, ...providerErrorLog(error, "evm-rpc", tagOf(error)) }) }
 }
 
 export effect function robinhoodPool(instance: PoolInstance, settings: PoolSettings) {

@@ -64,6 +64,6 @@ export effect function runPayments(run: PaymentsRun) {
   try isolated("commitments", runMonthlyCommitments(run.networks, synced.deployments, run.executors), failures)
   try isolated("dispatch", dispatched(vaults, run.executors), failures)
   if (run.securityNetworks.length > 0) try isolated("security", runSecurityPayments(run.securityNetworks, run.executors), failures)
-  try recordRegistryDeposits(synced.deployments, "ordinary")
+  try isolated("deposits", recordRegistryDeposits(synced.deployments, "ordinary"), failures)
   try reported("payments", failures)
 }

@@ -38,7 +38,8 @@ export interface Change {
 }
 
 function ids(deliveries: NonEmpty<Numbered>) {
-  return list(deliveries.map((delivery) => delivery.deliveryId) as unknown as NonEmpty<string>)
+  const [firstDelivery, ...restDeliveries] = deliveries
+  return list([firstDelivery.deliveryId, ...restDeliveries.map((delivery) => delivery.deliveryId)])
 }
 
 export function installationVersion(installationId: number, deliveries: NonEmpty<Numbered>): Statement {

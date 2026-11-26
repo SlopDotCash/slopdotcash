@@ -8,18 +8,10 @@ export service EdgeCache {
 
 const keyPrefix = "/__slop-cache"
 
-function parsedUrl(url: string): URL | undefined {
-  try {
-    return new URL(url)
-  } catch {
-    return undefined
-  }
-}
-
 export function cacheKey(url: string, generation: number): string {
-  const parsed = parsedUrl(url)
+  const parsed = URL.parse(url)
   const scope = `${keyPrefix}/g${generation}`
-  return parsed === undefined ? `https://cache.invalid${scope}/${encodeURIComponent(url)}` : `${parsed.origin}${scope}${parsed.pathname}${parsed.search}`
+  return parsed === null ? `https://cache.invalid${scope}/${encodeURIComponent(url)}` : `${parsed.origin}${scope}${parsed.pathname}${parsed.search}`
 }
 
 function cacheable(response: HttpServerResponse.HttpServerResponse, maxAgeSeconds: number): HttpServerResponse.HttpServerResponse {

@@ -2,6 +2,7 @@
 import type { FeeNetwork } from "../../gen/backend__submissionFeeTerms.ts"
 import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"
 import { decimal } from "../evm/abi.ts"
+import { STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_LEDGER, STANDING_DEPOSIT_NETWORK, STANDING_DEPOSIT_START_BLOCK, standingDepositDeployed } from "./standingTerms.ts"
 
 export error SubmissionFeeConfigInvalid { issue: string }
 
@@ -116,7 +117,18 @@ export effect function parseConfig(env: SubmissionFeeEnv, terms: ReadonlyArray<F
   const unset: string[] = []
   for (const network of [...terms].sort((left, right) => (left.network < right.network ? -1 : left.network > right.network ? 1 : 0))) {
     if (network.contract === "" && network.startBlock === 0) unset.push(network.network)
-    else networks.push(try served(network, env, gas))
+    else {
+      const configured = try served(network, env, gas)
+      networks.push(configured)
+      if (network.network === STANDING_DEPOSIT_NETWORK && standingDepositDeployed(STANDING_DEPOSIT_CONTRACT, STANDING_DEPOSIT_START_BLOCK)) {
+        networks.push({
+          ...configured,
+          network: STANDING_DEPOSIT_LEDGER,
+          contract: STANDING_DEPOSIT_CONTRACT.toLowerCase(),
+          startBlock: STANDING_DEPOSIT_START_BLOCK,
+        })
+      }
+    }
   }
   return {
     mode,

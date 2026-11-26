@@ -1,0 +1,29 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export const SECURITY_READ_KEY_API = "/api/v1/security-read-key"
+export const SECURITY_READ_KEY_PREFIX = "slop_sr_"
+export const SECURITY_READ_KEY_PATTERN = /^slop_sr_[A-Za-z0-9_-]{43}$/u
+export const SECURITY_READ_KEY_ROUTES = ["security-cases", "security-submissions"] as const
+export const SECURITY_READ_KEY_NOTICE =
+  "The key reads what your account can read in the Inbox: private reports, cases and their analysis. It cannot decide, pay or change anything. Keep it secret. Creating a new key or revoking stops the old one at once."
+
+export schema SecurityReadKeyInfo {
+  createdAt: string
+  lastUsedAt: string | null
+}
+
+export schema SecurityReadKeyStatus {
+  key: SecurityReadKeyInfo | null
+}
+
+export schema SecurityReadKeyCreated {
+  key: SecurityReadKeyInfo | null
+  secret: string
+}
+
+export const readSecurityReadKey = route({ method: "GET", path: SECURITY_READ_KEY_API, access: "session", limitKib: 1, request: undefined, answer: SecurityReadKeyStatus, rejected: "not_found", cache: "no-store" })
+export const createSecurityReadKey = route({ method: "POST", path: SECURITY_READ_KEY_API, access: "sessionWrite", limitKib: 1, request: undefined, answer: SecurityReadKeyCreated, rejected: "not_found", cache: "no-store", status: 201 })
+export const deleteSecurityReadKey = route({ method: "DELETE", path: SECURITY_READ_KEY_API, access: "sessionWrite", limitKib: 1, request: undefined, answer: SecurityReadKeyStatus, rejected: "not_found", cache: "no-store" })
+
+export const readKeyApi: ReadonlyArray<AnyRoute> = [readSecurityReadKey, createSecurityReadKey, deleteSecurityReadKey]

@@ -1,4 +1,4 @@
-import { type ComponentProps, type RefObject, useEffect, useReducer, useRef } from "react";
+import { type ComponentProps, type RefObject, useReducer, useRef } from "react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type Event, type Pages, enabled, initial, step } from "../../gen/ui__pagination.ts";
 import { cn } from "../lib/cn.ts";
@@ -40,26 +40,32 @@ export function Pagination({
 }: PaginationProps) {
   const backRef = useRef<HTMLButtonElement>(null);
   const forwardRef = useRef<HTMLButtonElement>(null);
-  const refocusRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    refocusRef.current?.focus();
-    refocusRef.current = null;
-  });
+  const pendingFocusRef = useRef<"back" | "forward" | null>(null);
   if (state.pages === 1) return null;
-  // A move to the first or last page disables its own button (spec/ui/controls.md), so focus goes to the other one,
-  // which can always move back, and the person stays in the list. Of two pages, the other is still disabled until the
-  // owner applies the move, so focus follows once it renders.
-  const move = (event: PageEvent, other: RefObject<HTMLButtonElement | null>) => {
+  const move = (event: PageEvent, target: "back" | "forward", other: RefObject<HTMLButtonElement | null>) => {
     if (!enabled(state, event)) return;
     if (!enabled(step(state, event), event)) {
       other.current?.focus();
-      if (document.activeElement !== other.current) refocusRef.current = other.current;
+      if (document.activeElement !== other.current) pendingFocusRef.current = target;
     }
     onSend(event);
   };
   return (
     <nav aria-label={label} className={cn("flex items-center justify-center gap-4", className)} {...props}>
-      <Button variant="outline" size="icon" aria-label={backLabel} ref={backRef} disabled={!enabled(state, { type: "back" })} onClick={() => move({ type: "back" }, forwardRef)}>
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={backLabel}
+        ref={(node) => {
+          backRef.current = node;
+          if (node !== null && !node.disabled && pendingFocusRef.current === "back") {
+            pendingFocusRef.current = null;
+            node.focus();
+          }
+        }}
+        disabled={!enabled(state, { type: "back" })}
+        onClick={() => move({ type: "back" }, "forward", forwardRef)}
+      >
         <ArrowLeft aria-hidden />
       </Button>
       <span role="status" className="font-mono text-sm text-muted-foreground tabular-nums">
@@ -68,7 +74,20 @@ export function Pagination({
           {state.page} / {state.pages}
         </span>
       </span>
-      <Button variant="outline" size="icon" aria-label={forwardLabel} ref={forwardRef} disabled={!enabled(state, { type: "forward" })} onClick={() => move({ type: "forward" }, backRef)}>
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={forwardLabel}
+        ref={(node) => {
+          forwardRef.current = node;
+          if (node !== null && !node.disabled && pendingFocusRef.current === "forward") {
+            pendingFocusRef.current = null;
+            node.focus();
+          }
+        }}
+        disabled={!enabled(state, { type: "forward" })}
+        onClick={() => move({ type: "forward" }, "back", backRef)}
+      >
         <ArrowRight aria-hidden />
       </Button>
     </nav>

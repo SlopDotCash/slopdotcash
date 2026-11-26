@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { LIB_FILE } from "../prove.ts";
-import { bin, exec } from "../run.ts";
+import { bin, exec, makeTempDir, removeTempDir } from "../run.ts";
 import { scanSpec } from "../scan.ts";
 import { filesUnder } from "../util.ts";
 import { exampleCheckKeys } from "./examples.ts";
@@ -149,8 +149,8 @@ describe("the documents name what exists", () => {
   test("tasks wait for the root's gen where needed; selftest edits keep the CLI build cached, and Studio only reacts to its inputs", async (context) => {
     const scripts = { build: "true", typecheck: "true", test: 'node -p "process.env.QUINT_HOME"', "test:browser": "true" };
     const turbo = bin("turbo", project);
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "spec-docs-selftest-")));
-    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const root = makeTempDir("spec-docs-selftest-", fs.realpathSync(os.tmpdir()));
+    context.after(() => removeTempDir(root));
     fs.mkdirSync(path.join(root, "spec/kit"), { recursive: true });
     fs.mkdirSync(path.join(root, "packages/kit"), { recursive: true });
     fs.writeFileSync(path.join(root, "spec/kit/index.md"), "# Kit\n");

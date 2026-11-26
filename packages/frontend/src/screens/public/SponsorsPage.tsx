@@ -152,6 +152,16 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
               Cycle archive
             </a>
           </li>
+          <li>
+            <a className={recordLink} href="/record">
+              Public record
+            </a>
+          </li>
+          <li>
+            <a className={recordLink} href="/receipts">
+              Receipts
+            </a>
+          </li>
         </ul>
       </section>
     </main>

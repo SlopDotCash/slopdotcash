@@ -17,7 +17,7 @@ import { projectOf } from "../screens/projects/project.schema.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime } from "../screens/projects/reads.vibe";
 import { useShownRead } from "../screens/projects/hooks.ts";
 import { type LiveFootprint, SponsorsPage } from "../screens/public/index.ts";
-import { type Settled, useMounted, useOnce } from "../screens/security/program/hooks.ts";
+import { retryOnce, type Settled, useMounted, useNow, useOnce } from "./hooks.ts";
 import type { PageProps } from "./pages.ts";
 import type { PageRuntime } from "./runtime.vibe";
 
@@ -41,9 +41,8 @@ function registryStatus(boot: RegistryBoot): ReadStatus {
   return boot.error !== undefined ? "Failed" : boot.freshness.tag === "RegistryStale" ? "Stale" : "Current";
 }
 
-function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>): Listing {
+function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>, nowMs: number): Listing {
   const pool = useShownRead(reads.pool, "all");
-  const nowMs = Date.now();
   const now = new Date(nowMs);
   const shown = listedProjects(boot).flatMap((record) => {
     const project = projectOf(record);
@@ -73,8 +72,7 @@ function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>):
   };
 }
 
-function useMergeLine(merge: Shown<MergeIndex>): MergeLine {
-  const nowMs = Date.now();
+function useMergeLine(merge: Shown<MergeIndex>, nowMs: number): MergeLine {
   return (project) => (merge.status === "Current" || merge.status === "Stale" ? mergeActivityCardLine(merge.value?.get(project.id), nowMs) : null);
 }
 
@@ -86,22 +84,34 @@ function useSection(runtime: PageRuntime): { readonly section: ProjectRuntime; r
 type ListedProps = { runtime: PageRuntime; reads: Reads; boot: RegistryBoot };
 
 function HomeMerged({ runtime, reads, boot }: ListedProps) {
-  const { projects, funding } = useListing(reads, boot, useShownRead(reads.merge, "all"));
+  const nowMs = useNow();
+  const merge = useShownRead(reads.merge, "all");
+  const { projects, funding } = useListing(reads, boot, merge, nowMs);
   return <HomePage runtime={runtime} projects={projects} funding={funding} />;
 }
 
 function HomeListed({ runtime, reads, boot }: ListedProps) {
-  const { projects, funding, needsMerge } = useListing(reads, boot, unmerged);
+  const nowMs = useNow();
+  const { projects, funding, needsMerge } = useListing(reads, boot, unmerged, nowMs);
   return needsMerge ? <HomeMerged runtime={runtime} reads={reads} boot={boot} /> : <HomePage runtime={runtime} projects={projects} funding={funding} />;
 }
 
-const failedRead: Shown<never> = { status: "Failed", value: undefined, onRetry: () => location.reload() };
+function retrySection(section: ProjectRuntime): Shown<never> {
+  return {
+    status: "Failed",
+    value: undefined,
+    onRetry: () => {
+      retryOnce(section, "reads");
+      retryOnce(section, "registry");
+    },
+  };
+}
 
 /** `/`: the home page over the project registry, this month's pool funding and owner promises, and the merge activity once some project has an intake cap or is out of rotation. */
 export function HomeRoute({ runtime }: PageProps) {
-  const { reads, boot } = useSection(runtime);
+  const { section, reads, boot } = useSection(runtime);
   if (reads.status === "done" && boot.status === "done") return <HomeListed runtime={runtime} reads={reads.value} boot={boot.value} />;
-  const projects = reads.status === "failed" || boot.status === "failed" ? failedRead : unread;
+  const projects = reads.status === "failed" || boot.status === "failed" ? retrySection(section) : unread;
   return <HomePage runtime={runtime} projects={projects} funding="PoolLoading" />;
 }
 
@@ -119,18 +129,18 @@ function liveOf(work: Settled<Effect.Success<ReturnType<typeof loadWork>>>): Sho
 const noMergeLine: MergeLine = () => null;
 
 function SponsorsListed({ runtime, section, reads, boot }: ListedProps & { section: ProjectRuntime }) {
+  const nowMs = useNow();
   const merge = useShownRead(reads.merge, "all");
-  const { projects } = useListing(reads, boot, merge);
-  const mergeLine = useMergeLine(merge);
+  const { projects } = useListing(reads, boot, merge, nowMs);
+  const mergeLine = useMergeLine(merge, nowMs);
   const whoBuilds = useOnce(section, "who-builds", () => whoBuildsFigures());
   const work = useMounted(section, () => loadWork(boot, repositoryRegistryOf, false));
   return <SponsorsPage runtime={runtime} projects={projects} mergeLine={mergeLine} networkPays={networkPays} whoBuilds={whoBuilds.status === "done" ? whoBuilds.value : undefined} live={liveOf(work)} />;
 }
 
-/** `/sponsors`: funded and fundable projects, how sponsorship works, and the audience report with the live footprint. */
 export function SponsorsRoute({ runtime }: PageProps) {
   const { section, reads, boot } = useSection(runtime);
   if (reads.status === "done" && boot.status === "done") return <SponsorsListed runtime={runtime} section={section} reads={reads.value} boot={boot.value} />;
-  const projects = reads.status === "failed" || boot.status === "failed" ? failedRead : unread;
+  const projects = reads.status === "failed" || boot.status === "failed" ? retrySection(section) : unread;
   return <SponsorsPage runtime={runtime} projects={projects} mergeLine={noMergeLine} networkPays={networkPays} whoBuilds={undefined} live={unread} />;
 }

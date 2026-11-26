@@ -79,11 +79,16 @@ effect function answer() {
   const method = methodOf(request.method)
   const path = pathOf(new URL(request.originalUrl).pathname)
   const registered = try registry(method, path)
-  switch (publicRead(method, path, registered !== undefined)) {
+  const outcome = publicRead(method, path, registered !== undefined)
+  switch (outcome) {
     case "Listed": return listed(method, path, registered ?? [])
     case "MethodNotAllowed": return refusal(getReferralsProjects.otherMethods.methodNotAllowed)
     case "NotFound": return refusal(getReferralsProjects.notFoundPublicMaxAge300)
     case "Unavailable": return refusal(getReferralsProjects.internalErrorInternalError)
+    default: {
+      const _exhaustive: never = outcome
+      return _exhaustive
+    }
   }
 }
 

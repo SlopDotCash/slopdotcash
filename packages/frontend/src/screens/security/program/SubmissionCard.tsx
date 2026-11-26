@@ -7,7 +7,7 @@ import type { DetailHeadings } from "../../../flows/security/details.vibe";
 import type { ReportDraft } from "../../../flows/security/private.vibe";
 import { reportDepositStatus } from "../../../projections/reportDeposit.ts";
 import { DepositLine } from "./DepositLine.tsx";
-import { run, useMounted, useOnce } from "./hooks.ts";
+import { run, useMounted, useNow, useOnce } from "../../../app/hooks.ts";
 import { ReportFields } from "./ReportFields.tsx";
 import { type ProgramRuntime, type SubmissionRequest, actOnSubmission, keepReportText, reconcileDue, storeReportText, submissionOpened } from "./runtime.vibe";
 import { type CaseSummary, deliverable, githubSubmissionStatus, reportNeedsAction, reportReference, sendsFromTab, submissionStatus, utc } from "./summary.ts";
@@ -240,7 +240,7 @@ function Opened(props: SubmissionEntryProps & { headings: DetailHeadings; kept: 
         setDraft(next);
         void run(section, storeReportText(submission, next));
       }}
-      nowMs={Date.now()}
+      nowMs={useNow()}
       busy={acting.busy}
       error={acting.error}
       needsGrant={acting.needsGrant}

@@ -2,6 +2,7 @@
 import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
 import { jsonRpc } from "@repo/platform/chain/rpc"
 import { D1 } from "@repo/platform/d1"
+import type { Journal } from "@repo/platform/journal"
 import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
 import type { KeeperMode } from "../../gen/settlement__keeperLifecycle.effect.vibe"
 import type { Chain } from "../../gen/settlement__keeperRpc.effect.vibe"
@@ -81,7 +82,9 @@ function evidenceText(event: FinalizedPaymentEvent) {
   return JSON.stringify({ ...event, blockNumber: event.blockNumber.toString(), gross: event.gross.toString(), net: event.net.toString(), fee: event.fee.toString() })
 }
 
-function keeperIndexer(target: PaymentDeployment, scope: string, scan: ScanMachine.Shape, services: Context.Context<any>, classify: (error: unknown) => ClassifiedError) {
+type IndexerServices = D1 | Journal | Experimental.Crypto.Crypto | HttpClient.HttpClient
+
+function keeperIndexer(target: PaymentDeployment, scope: string, scan: ScanMachine.Shape, services: Context.Context<IndexerServices>, classify: (error: unknown) => ClassifiedError) {
   return {
     index: (event) => Effect.mapError(Effect.provide(effect {
       try scan.send({ type: "beginReceipt" })
@@ -189,7 +192,7 @@ effect function serveDeployment(scope: KeeperScope, deployment: EvmDeployment, l
   const awardScope = `${deployment.projectId}:${deployment.vault}`
   const item = { projectId: deployment.projectId, vault: deployment.vault }
   const scan = try scanSession()
-  const services = try Effect.context<D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient>()
+  const services = try Effect.context<IndexerServices>()
   const rpcUrls = Redacted.make([Redacted.value(config.rpcUrl)])
   const context = { ...scope, deployment } satisfies SendContext
   const execute = mode === "Execute"
@@ -233,7 +236,7 @@ effect function serveSolanaDeployment(scope: SolanaScope, deployment: SolanaDepl
   const awardScope = `${deployment.projectId}:${deployment.vault}`
   const item = { projectId: deployment.projectId, vault: deployment.vault }
   const scan = try scanSession()
-  const services = try Effect.context<D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient>()
+  const services = try Effect.context<IndexerServices>()
   const rpcUrls = solanaUrls(config)
   const execute = mode === "Execute"
   const work = effect {

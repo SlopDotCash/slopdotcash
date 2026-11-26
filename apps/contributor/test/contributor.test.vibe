@@ -97,7 +97,7 @@ module node {
 }
 import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles, urlPath } from node
 
-const frozenTemplateSha256 = "c332043b6d4a25583221f9718a7fcab8efe2098c2c60ce3162176840c9ee6258"
+const frozenTemplateSha256 = "3d97b2c55cb56bb40502eb9ac13a75ff3d67b6aa8cc4b0bf0b745ab23caed2e4"
 const pinnedCommit = "8660a61214a6427a4e66c540c7dc73d50cc7790b"
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
 const encoder = new TextEncoder()
@@ -923,10 +923,12 @@ const carriedOutputs: Readonly<Record<string, string>> = {
   "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
   "protocol/private-trace-v2.md": "70a886b5dbbdfaf69fafe5d9b3210e8a8eff7bfd4f2e31705fcec0ec2e436dfa",
   "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
-  "skill-templates/skills/project-contributor-template/SKILL.md": "c322132f525b38dee2e611f1ee1c57833c20215ecc3f8cb4a1485da7378ce2ce",
+  "skill-templates/skills/project-contributor-template/SKILL.md": "b2d6bd0d9fe25e8777eaee7de89401e1b6fb738eece46dc0899885cbadc16c21",
   "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
+  "skill-templates/skills/project-contributor-template/references/session-log.md": "0da3dd3a52e050df6d0399be72456c34a48980ec9ce954da6e02148a55d2bb00",
   "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "2a7b22d80fcfeb838b3dcf993eaf541fb4b252fbf63f599f7932b8251d70254a",
-  "skill-templates/skills/project-contributor-template/scripts/run-receipt.mjs": "a887a6ffb39c6aff7074a87680f5c36c820c60dfccdc5f3a9ddb0d29486721e9",
+  "skill-templates/skills/project-contributor-template/scripts/run-receipt.mjs": "e4688dd4441ea5f044ae3d7f58060b7be9d8af99c783ed6466824d516db33c1c",
+  "skill-templates/skills/project-contributor-template/scripts/session-export.mjs": "a3392569e3ed418b708ab50866197ebd68480f70c00aaaf19fd25ad80a0da608",
   "skill-templates/skills/project-contributor-template/scripts/skill-authority.d.mts": "cbb5b0466305c37007951b25c7d1fcdc0557de690ff93e2d8db59ed4e1b0d8f0",
   "skill-templates/skills/project-contributor-template/scripts/skill-authority.mjs": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
   "skill-templates/skills/project-contributor-template/scripts/terms-preflight.mjs": "1e9b2d54ccf2c6eb8f336094d56b7c29a7213804c2e3f524ee811614fe5afd99",

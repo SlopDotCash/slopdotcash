@@ -32,6 +32,11 @@ interface Refusal {
 const hoursPerDay = 24
 const servedCache = { "cache-control": cacheControl(mergeActivity.cache) }
 const decodeWanted = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(WantedIssue)))
+const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
+
+function isBusyD1(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
+}
 
 function refused(row: Refusal) {
   return json(row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }, row.status, { "cache-control": row.headers["cache-control"] })
@@ -77,13 +82,17 @@ export effect function mergeActivityAnswer() {
 effect function answer() {
   const method = (try HttpServerRequest.HttpServerRequest).method
   if (method !== "GET" && method !== "HEAD") return refused(getMergeActivity.otherMethods.methodNotAllowed)
-  const body = mergeActivityAnswer() catch effect (error) => {
-    try Effect.logError("merge activity API failure", error._tag)
-    return undefined
+  const outcome = try exit(mergeActivityAnswer())
+  if (Exit.isFailure(outcome)) {
+    const failure = Cause.findErrorOption(outcome.cause)
+    if (Option.isSome(failure) && isBusyD1(failure.value)) {
+      return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "no-store" })
+    }
+    try Effect.logError("merge activity API failure", Option.isSome(failure) ? failure.value._tag : "defect")
+    return refused(getMergeActivity.internalError)
   }
-  if (body === undefined) return refused(getMergeActivity.internalError)
   if (method === "HEAD") return HttpServerResponse.empty({ status: 200, headers: { ...fixedHeaders, ...servedCache, "content-type": "application/json; charset=utf-8" } })
-  return json(body, 200, servedCache)
+  return json(outcome.value, 200, servedCache)
 }
 
 export const MergeActivityRoutes = HttpRouter.add("*", mergeActivity.path, answered(answer()))

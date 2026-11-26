@@ -2,9 +2,6 @@
 import { RecoveryAnswer, type RecoveryRequest } from "../client/operator.vibe"
 import { BindingRecovery, RecoveryRefused, RecoveryUnavailable } from "./operatorReconcile.vibe"
 
-// The production attester of each EVM network serves its binding recovery entrypoint to the site worker; the release
-// binds it under these names (operations release publisher, attesterBindings). The attester decides the winner from
-// finalized evidence; the site only forwards the audited request.
 export interface RecoveryEntrypoint {
   reconcile(request: RecoveryRequest): Promise<unknown>
 }

@@ -8,7 +8,7 @@ import { type FlagChoice, type FlagFacts, type RepoRead, Rejected, flagChoice, f
 import { getRepoRequests, postRepoRequests as rows } from "../client/refusals.vibe"
 import { type MyRepoRequest, type RepoRequestAnswer, type RepoRequestBoard, flagRepoRequest, repoRequestBoard, repoRequestsPath, validRepoPath } from "../client/repoRequests.vibe"
 import { sessionMember } from "../session.vibe"
-import { listedProject, mergedWork, readRepository } from "./facts.vibe"
+import { listedProject, listedProjects, mergedWork, readRepository } from "./facts.vibe"
 import { accountFlags, activeByName, activeCount, activeFlags, board, send } from "./store.vibe"
 
 interface Row {
@@ -122,11 +122,17 @@ effect function decided() {
 }
 
 const flagWrite = { ...flagRepoRequest, access: "public" as const, request: undefined }
+const busyD1Pattern = /D1_OVERLOADED|D1_RESET_DO|queued for too long|network connection lost|exceeded timeout|to be reset|transient issue|long-running import|currently importing/iu
+
+function isBusyD1(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "DatabaseFailure" && "message" in error && typeof error.message === "string" && busyD1Pattern.test(error.message)
+}
 
 effect function written() {
   if (!(try sameOriginWrite())) throw refused(rows.originForbidden)
   const answer = decided() catch effect (error) => {
     if (error instanceof Refused) throw error
+    if (isBusyD1(error)) throw new Refused({ status: 503, code: "temporarily_unavailable", message: "Temporarily unavailable. Try again.", headers: privateAnswer })
     try Effect.logError("repo requests API failure")
     throw refused(rows.internalError)
   }
@@ -134,10 +140,11 @@ effect function written() {
 }
 
 effect function mineOf(githubId: string) {
+  const flags = activeFlags(try accountFlags(githubId))
+  const listed = try listedProjects(flags)
   const mine: MyRepoRequest[] = []
-  for (const each of activeFlags(try accountFlags(githubId))) {
-    const listedAs = try listedProject(each.repoId, each.fullName)
-    mine.push({ repo: each.fullName, expiresAt: try isoAt(each.expiresAt), listedAs: listedAs ?? null })
+  for (const each of flags) {
+    mine.push({ repo: each.fullName, expiresAt: try isoAt(each.expiresAt), listedAs: listed.get(each.repoId) ?? null })
   }
   return mine
 }
@@ -151,7 +158,8 @@ effect function boardRead() {
 }
 
 effect function boardAnswer() {
-  return boardRead() catch effect () => {
+  return boardRead() catch effect (error) => {
+    if (isBusyD1(error)) return json({ error: "temporarily_unavailable", message: "Temporarily unavailable. Try again." }, 503, { "cache-control": "no-store" })
     try Effect.logError("repo requests read failure")
     return rowAnswer(getRepoRequests.internalError)
   }

@@ -6,6 +6,7 @@ import { ghsaPattern, markerLine } from "../forwarding/advisories.vibe"
 
 export interface PrivateReport {
   readonly ghsa: string
+  readonly state: string | null
   readonly createdAt: string
   readonly author: { readonly githubId: string; readonly login: string }
   readonly report: AnalysisReport
@@ -45,6 +46,7 @@ export function privateReportOf(value: unknown): PrivateReport | undefined {
   const description = typeof advisory.description === "string" ? advisory.description : ""
   return {
     ghsa,
+    state: typeof advisory.state === "string" ? advisory.state : null,
     createdAt: new Date(created).toISOString(),
     author: { githubId: String(id), login },
     report: {

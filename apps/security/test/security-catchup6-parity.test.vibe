@@ -1,0 +1,285 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"
+import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { noticePorts } from "@repo/operations/live"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Request as WorkerRequest } from "miniflare"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { caseRoutes } from "../src/cases/routes.vibe"
+import { SECURITY_READ_KEY_PATTERN } from "../src/client/readKey.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { submissionReadRoutes } from "../src/intake/list.vibe"
+import { operatorQueueRoutes, securityQueueAccess } from "../src/operator/queue.vibe"
+import { ownerReminderKey } from "../src/operator/reminders.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { readKeyRoutes } from "../src/readKey/routes.vibe"
+import { ReportingPrograms, reportingProgramsLive } from "../src/receipt/program.vibe"
+import { routineRoutes, routineSettings } from "../src/routine/routes.vibe"
+import { type World, digest, maintainer, origin, reporter, rows, started as startedWorld } from "./support/intake/harness.ts"
+
+type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+service Parity {
+  readonly world: World
+  readonly fake: ProviderFake
+  readonly github: GitHubFake
+  readonly clock: SettableClock
+  readonly pending: Array<Promise<unknown>>
+  readonly handler: WebHandler
+}
+
+const project = "intake-fixture"
+const admin = "801"
+const operatorToken = "operator-security-queue-secret-token-0123456789"
+const minute = 60_000
+const day = 24 * 60 * minute
+
+const fixture: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900",
+  stewardAccount: "UserSteward",
+  listing: { fromApplication: false },
+  repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => succeed(projectId === project ? fixture : undefined),
+    byRepository: () => succeed(undefined),
+    byPath: () => succeed(undefined),
+    active: () => succeed([fixture]),
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+    fence: () => succeed(sql`1`),
+  } satisfies Registry.Shape),
+  Layer.succeed(Authority, {
+    repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+  } satisfies Authority.Shape),
+  Layer.succeed(Restrictions, {
+    account: () => succeed({ banned: false }),
+    project: () => succeed({ restricted: false }),
+    fence: () => succeed(sql`SELECT 1`),
+    unbanned: () => succeed(sql`1`),
+  } satisfies Restrictions.Shape),
+)
+
+const Started = Layer.effect(Parity, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  try promise(() => world.db.batch([
+    world.db.prepare("CREATE TABLE IF NOT EXISTS security_advisory_states (repository TEXT NOT NULL, ghsa TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('triage', 'draft', 'published', 'closed')), changed_at TEXT NOT NULL, PRIMARY KEY (repository, ghsa))"),
+    world.db.prepare("CREATE TABLE IF NOT EXISTS security_read_keys (key_sha256 TEXT PRIMARY KEY CHECK (length(key_sha256) = 64), github_id TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT, last_used_at TEXT)"),
+    world.db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS security_read_key_in_use ON security_read_keys(github_id) WHERE revoked_at IS NULL"),
+  ]))
+  const fake = providerFake({ holdMs: 5 })
+  const clock = settableClock(Date.parse("2026-11-26T12:00:00.000Z"))
+  const github = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+  try orDie(Effect.try(() => {
+    github.world.addOrg({ id: 5000, login: "slop-test" })
+    github.world.addUser({ id: Number(reporter), login: `member-${reporter}` })
+    github.world.addUser({ id: Number(maintainer), login: "maintainer" })
+    github.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
+    github.world.addInstallation({ id: 4401, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
+  }))
+  const viaFake: Fetcher = {
+    fetch: (sent) => fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]>,
+  }
+  const viaGitHub: Fetcher = {
+    fetch: (sent) => Promise.resolve(github.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]>,
+  }
+  const base = Layer.mergeAll(
+    d1(world.db),
+    webCrypto,
+    clock.layer,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: admin, PROJECT_MODERATOR_GITHUB_IDS: admin }),
+    ports,
+    intakeSettings({ mode: "on", automatic: false }),
+    routineSettings("live"),
+    reportDepositSettings("off"),
+    securityQueueAccess(operatorToken),
+  )
+  const reporting = Layer.provide(
+    Layer.effect(ReportingPrograms, effect {
+      const inner = try ReportingPrograms
+      return {
+        current: (id) => (id === project ? inner.current(id) : succeed(undefined)),
+        atReceipt: (read) => inner.atReceipt(read),
+        unbanned: (githubId) => inner.unbanned(githubId),
+      } satisfies ReportingPrograms.Shape
+    }),
+    reportingProgramsLive,
+  )
+  const app = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.merge(outboundVia(viaGitHub), webCrypto))
+  const route = Layer.provide(privateRoute({ apiKey: "surplus-parity-key" }), Layer.merge(outboundVia(viaFake), webCrypto))
+  const shell = Layer.provideMerge(Layer.mergeAll(reporting, app, outboundVia(viaGitHub), route, noticePorts, CallerLive), base)
+  const routes = Layer.mergeAll(caseRoutes, submissionReadRoutes, readKeyRoutes, operatorQueueRoutes, routineRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shell), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return { world, fake, github, clock, pending: [], handler: web.handler as WebHandler }
+})
+
+const cookies = new Map<string, string>()
+
+async function sessionCookie(world: World, githubId: string, nowMs: number): Promise<string> {
+  const known = cookies.get(githubId)
+  if (known !== undefined) return known
+  const token = `p${githubId.padStart(20, "0")}${String(cookies.size + 1).padStart(8, "0")}${"z".repeat(35)}`
+  await world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date(nowMs).toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(nowMs + 30 * day).toISOString()),
+  ])
+  const cookie = `__Host-slop_points=${token}`
+  cookies.set(githubId, cookie)
+  return cookie
+}
+
+effect function call(
+  parity: Parity.Shape,
+  method: string,
+  path: string,
+  options: { readonly actor?: string; readonly bearer?: string; readonly body?: unknown } = {},
+) {
+  const headers: Record<string, string> = {}
+  const actor = options.actor
+  if (actor !== undefined) headers.cookie = try promise(() => sessionCookie(parity.world, actor, parity.clock.now()))
+  if (options.bearer !== undefined) headers.authorization = `Bearer ${options.bearer}`
+  if (method !== "GET" && method !== "HEAD") {
+    headers.origin = origin
+    headers["content-type"] = "application/json"
+  }
+  const init = options.body === undefined ? { method, headers } : { method, headers, body: JSON.stringify(options.body) }
+  const execution: ExecutionContext = { waitUntil: (work) => { parity.pending.push(work) } }
+  const response = try promise(() => parity.handler(new WorkerRequest(`${origin}${path}`, init) as unknown as globalThis.Request, Context.make(Execution, { context: execution })))
+  while (parity.pending.length > 0) try promise(() => Promise.allSettled(parity.pending.splice(0)))
+  const text = try promise(() => response.text())
+  const body: unknown = text === "" ? null : Effect.try(() => JSON.parse(text)) catch () => text
+  return { status: response.status, body }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "120 seconds" })("security parity features", (it) => {
+  it.effect("Security read keys manage personal Bearer read access on cases and submissions only", () => effect {
+    const parity = try Parity
+    const initial = try call(parity, "GET", "/api/v1/security-read-key", { actor: maintainer })
+    const created = try call(parity, "POST", "/api/v1/security-read-key", { actor: maintainer, body: {} })
+    const createdBody = created.body as { readonly key: { readonly createdAt: string; readonly lastUsedAt: string | null } | null; readonly secret: string }
+    const wrongMethod = try call(parity, "PUT", "/api/v1/security-read-key", { actor: maintainer, body: {} })
+    try same(
+      { initial: [initial.status, initial.body], createdStatus: created.status, pattern: SECURITY_READ_KEY_PATTERN.test(createdBody.secret), wrongMethod: wrongMethod.status },
+      { initial: [200, { key: null }], createdStatus: 201, pattern: true, wrongMethod: 405 },
+    )
+
+    const casesRead = try call(parity, "GET", "/api/v1/security-cases", { bearer: createdBody.secret })
+    const subsRead = try call(parity, "GET", "/api/v1/security-submissions", { bearer: createdBody.secret })
+    const writeBlocked = try call(parity, "POST", "/api/v1/security-cases", { bearer: createdBody.secret, body: { mode: "import", projectId: project } })
+    const mintBlocked = try call(parity, "POST", "/api/v1/security-read-key", { bearer: createdBody.secret, body: {} })
+    const afterUse = try call(parity, "GET", "/api/v1/security-read-key", { actor: maintainer })
+    const afterUseBody = afterUse.body as { readonly key: { readonly lastUsedAt: string | null } | null }
+    try same(
+      { cases: casesRead.status, subs: subsRead.status, writeBlocked: writeBlocked.status, mintBlocked: mintBlocked.status, used: afterUseBody.key?.lastUsedAt !== null },
+      { cases: 200, subs: 200, writeBlocked: 401, mintBlocked: 401, used: true },
+    )
+
+    const revoked = try call(parity, "DELETE", "/api/v1/security-read-key", { actor: maintainer })
+    const afterRevoke = try call(parity, "GET", "/api/v1/security-cases", { bearer: createdBody.secret })
+    try same(
+      { revoked: [revoked.status, revoked.body], afterRevoke: afterRevoke.status },
+      { revoked: [200, { key: null }], afterRevoke: 401 },
+    )
+  })
+
+  it.effect("Operator security queue imports GitHub advisories with state sync, sends weekly reminders, and retries analyses", () => effect {
+    const parity = try Parity
+    const ghsa = try orDie(Effect.try(() => parity.github.world.addAdvisory("slop-test/intake", {
+      author: `member-${reporter}`,
+      summary: "Unbounded fee withdrawal in vault",
+      description: "Repro steps with synthetic test.",
+    }).ghsaId))
+    let calls = 0
+    parity.fake.reply(
+      () => {
+        calls += 1
+        return calls === 1
+      },
+      { text: "not valid json" },
+    )
+    parity.fake.reply(
+      () => true,
+      {
+        text: JSON.stringify({
+          summary: "Unbounded withdrawal",
+          severity: "high",
+          potentialLoss: "likely",
+          duplicateCaseIds: [],
+          rootCauseKey: "vault-withdrawal",
+          remediation: "Check caller ownership",
+        }),
+      },
+    )
+
+    const hidden = try call(parity, "GET", "/api/v1/operator/security-queue")
+    const badMethod = try call(parity, "PUT", "/api/v1/operator/security-queue", { bearer: operatorToken })
+    const post = try call(parity, "POST", "/api/v1/operator/security-queue", { bearer: operatorToken })
+    const listed = try call(parity, "GET", "/api/v1/security-cases", { actor: maintainer })
+    const listedBody = listed.body as { readonly cases: ReadonlyArray<{ readonly id: string; readonly advisory: { readonly ghsa: string; readonly githubState: string | null } | null }> }
+    const importedCase = listedBody.cases.find((item) => item.advisory?.ghsa === ghsa)
+    const createdAt = new Date(parity.clock.now()).toISOString()
+    parity.clock.set(parity.clock.now() + 8 * day)
+    const queue = try call(parity, "GET", "/api/v1/operator/security-queue", { bearer: operatorToken })
+    const queueBody = queue.body as { readonly schema: string; readonly projects: ReadonlyArray<{ readonly projectId: string; readonly open: number; readonly analysisFailed: number; readonly undecidedOver7Days: number }> }
+    const retryPost = try call(parity, "POST", "/api/v1/operator/security-queue", { bearer: operatorToken })
+    const retryBody = retryPost.body as { readonly ran: boolean; readonly state?: string; readonly remainingEligible?: number }
+    const repeatPost = try call(parity, "POST", "/api/v1/operator/security-queue", { bearer: operatorToken })
+    const repeatBody = repeatPost.body as { readonly ran: boolean; readonly reason?: string }
+    const reminderRows = try promise(() => rows(parity.world, "SELECT event_key, recipient_github_id FROM notifications WHERE event_key = ?", ownerReminderKey(project, parity.clock.now())))
+    const badRoutine = try call(parity, "POST", "/api/v1/security-routine", { actor: admin, body: { action: "stop" } })
+
+    try same(
+      {
+        hidden: hidden.status,
+        badMethod: badMethod.status,
+        firstPost: post.status,
+        queueSchema: queueBody.schema,
+        queueEntry: queueBody.projects.find((entry) => entry.projectId === project),
+        retry: [retryPost.status, retryBody.ran, retryBody.state, retryBody.remainingEligible],
+        repeat: [repeatPost.status, repeatBody.ran, repeatBody.reason],
+        githubState: importedCase?.advisory?.githubState,
+        reminders: reminderRows,
+        badRoutine: badRoutine.status,
+      },
+      {
+        hidden: 404,
+        badMethod: 405,
+        firstPost: 200,
+        queueSchema: "slop-security-queue-v1",
+        queueEntry: { projectId: project, open: 1, withoutAnalysis: 0, analysisFailed: 1, undecidedOver7Days: 1, oldestOpenAt: createdAt },
+        retry: [200, true, "complete", 0],
+        repeat: [200, false, "none-eligible"],
+        githubState: "triage",
+        reminders: [{ event_key: ownerReminderKey(project, parity.clock.now()), recipient_github_id: maintainer }],
+        badRoutine: 400,
+      },
+    )
+  })
+})

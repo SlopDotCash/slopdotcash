@@ -4,7 +4,7 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
 import { EvmRpc, type Hex, evmRpc, keccak } from "@repo/platform/chain/evm"
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
 import { type ServiceNetwork, type Stack, attesterTransactionAllowed, gasCeilingValid, reviewedActivation, stackMaySign } from "../../gen/settlement__signer.effect.vibe"
-import { type EvmAddress, decodeAddress, escrowGetter, evmAddress } from "../chain/evm/abi.ts"
+import { type EvmAddress, bytes32, decodeAddress, escrowGetter, evmAddress } from "../chain/evm/abi.ts"
 import { type SignedType2, type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
 import { parseBaseUnits, parseNativeCostLimit, toAmount } from "../kernels/amounts.ts"
 import { MAX_FEE_PER_GAS, gasWithMargin, sendFees } from "../kernels/attesterLimits.ts"
@@ -307,7 +307,16 @@ export effect function attesterAccount(deployment: Deployment) {
       const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(hash.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => new SignerUnavailable({ reason: "Signing failed" }) })
       const recovery = signature[0]
       if (recovery !== 0 && recovery !== 1) throw new SignerUnavailable({ reason: "Signing failed" })
-      return try Effect.try({ try: () => signedType2(request, { r: `0x${bytesToHex(signature.slice(1, 33))}` as never, s: `0x${bytesToHex(signature.slice(33, 65))}` as never, yParity: recovery }), catch: () => new SignerUnavailable({ reason: "Signing failed" }) })
+      const raw = try Effect.try({
+        try: () => {
+          const r = bytes32(`0x${bytesToHex(signature.slice(1, 33))}`)
+          const s = bytes32(`0x${bytesToHex(signature.slice(33, 65))}`)
+          return r === undefined || s === undefined ? undefined : signedType2(request, { r, s, yParity: recovery })
+        },
+        catch: () => new SignerUnavailable({ reason: "Signing failed" }),
+      })
+      if (raw === undefined) throw new SignerUnavailable({ reason: "Signing failed" })
+      return raw
     },
   } satisfies AttesterAccount
 }

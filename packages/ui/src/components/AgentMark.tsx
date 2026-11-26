@@ -1,8 +1,6 @@
 import type { ComponentProps } from "react";
 import { cn } from "../lib/cn.ts";
 
-// The marks the Slop app shipped beside "Open in" (development src/agent-logos): each is a mask over the current text
-// color, so a mark takes the role its link has and needs no literal color. One literal URL each, which Vite bundles.
 const marks = {
   Cursor: new URL("../assets/agent-logos/cursor.svg", import.meta.url).href,
   Claude: new URL("../assets/agent-logos/claude.svg", import.meta.url).href,

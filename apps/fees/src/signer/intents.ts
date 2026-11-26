@@ -107,6 +107,9 @@ export interface SolanaDlnOrder {
   readonly receiver: Address;
   readonly orderNonce: bigint;
   readonly orderId: Hex;
+  readonly raw: Uint8Array;
+  readonly lastValidBlockHeight: number;
+  readonly nativeFee: bigint;
 }
 
 export type SolanaIntent = SolanaClaim | JupiterSwap | SolanaDlnOrder;

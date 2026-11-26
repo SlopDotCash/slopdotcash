@@ -3,6 +3,7 @@ import type { NotificationsPage } from "@repo/operations/client";
 import { Alert, Button, PageHeader, Spinner } from "@repo/ui";
 import { ChevronLeft, ChevronRight, Inbox as InboxIcon, Settings } from "lucide-react";
 import { Suspense, lazy } from "react";
+import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageProps } from "../../app/pages.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { SignInPanel } from "../../app/SignInPanel.tsx";
@@ -107,7 +108,7 @@ export function InboxPage({ runtime, payment }: PageProps & { payment?: PaymentS
   const section = inboxRuntime(runtime);
   const view = useView(section, watchInbox);
   return (
-    <main className="mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-12">
+    <main className={pageShellClass("md", "8", "py-12")}>
       <PageHeader icon={<InboxIcon className="size-6" />} title="Inbox" actions={<HeaderActions view={view} />} />
       <InboxEmailLink runtime={runtime} />
       <InboxBody runtime={runtime} section={section} view={view} payment={payment} />

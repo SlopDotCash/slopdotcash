@@ -1,6 +1,7 @@
 // spec/slopbot/appeals.md, "Only the author opens an appeal of a recorded finding, once per revision"; spec/slopbot/appeals.md, "A verified maintainer reopen of the revision resolves the appeal as upheld, even after escalation"; spec/slopbot/webhookDelivery.md, "A downstream reopen decision rechecks the exact retained source"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"
-import { isoAt } from "@repo/platform/clock"
+import { isoAt, millisOf } from "@repo/platform/clock"
 import { type ItemState, type ReopenObservation, type ReopenSource, type Webhook, reopenDecision } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+import { githubClosedAt } from "../closeAttempt/github.vibe"
 import { activePenalty, reversePenalty } from "../closeAttempt/penalty.vibe"
 import { reconcileConfirmedReopen } from "../closeAttempt/reopen.vibe"
 import { type Context, advance, delivery } from "../ingress/store.vibe"
@@ -98,7 +99,10 @@ effect function reopenEvidence(session: AppealSession, job: AppealJob, retained:
   if (retained === undefined || retained.source.node === "") return "reopen source unavailable; no decision"
   const source = jobSourceOf(job, retained.source)
   if (!sameSource(source, retained.source)) return "reopen source unavailable; no decision"
-  const itemState = itemStateOf(session)
+  const mergedAt = session.current.merged ? try githubClosedAt(session.current.mergedAt) : undefined
+  const mergedAfterReopen = job.senderId !== issue.user.id && mergedAt !== undefined && millisOf(mergedAt) >= retained.source.occurred
+  const rawState = itemStateOf(session)
+  const itemState: ItemState = rawState === "ClosedByOther" && mergedAfterReopen ? "ClosedUnknown" : rawState
   if (retained.source.node !== issue.node_id || itemState === "ClosedByOther") return "reopen source changed; no decision"
   if (reversalOnly(session) && !hasDebit) return "project is retired; no review"
   const author = job.senderId === issue.user.id

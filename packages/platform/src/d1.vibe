@@ -11,7 +11,23 @@ export interface Outcome {
   readonly changes: number
 }
 
-export error DatabaseFailure { operation: string; message: string }
+const d1CodePrefix = /^D1_[A-Z_]+/u
+const temporarilyUnavailableDetail = /overloaded|queued for too long|network connection lost|exceeded timeout|to be reset|D1_RESET_DO|reset because its code was updated|transient issue|long-running import|currently importing|database is locked: SQLITE_BUSY/iu
+
+export function isTemporarilyUnavailableMessage(message: string): boolean {
+  return d1CodePrefix.test(message) && temporarilyUnavailableDetail.test(message)
+}
+
+export function databaseTemporarilyUnavailable(caught: unknown): boolean {
+  const message = caught instanceof Error ? caught.message : typeof caught === "object" && caught !== null && "message" in caught && typeof caught.message === "string" ? caught.message : undefined
+  return message !== undefined && isTemporarilyUnavailableMessage(message)
+}
+
+export error DatabaseFailure {
+  operation: string
+  message: string
+  get temporarilyUnavailable(): boolean { return isTemporarilyUnavailableMessage(this.message) }
+}
 export error ConstraintViolation { message: string }
 export error RowMismatch { text: string; issue: string }
 

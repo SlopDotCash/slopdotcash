@@ -8,6 +8,8 @@ import { type ReportDeposit as ReportModel, canMarkDue as canMarkReportDue, repo
 import type { SendEntry } from "./chain.vibe"
 import { type DepositRow, depositView, dueOutcome, paidByOf, refusalOf, stateText } from "./codec.vibe"
 import { reportNetwork } from "./judge.vibe"
+import { planStandingResolutions } from "./standing.vibe"
+import { STANDING_DEPOSIT_LEDGER } from "./standingTerms.ts"
 import { parked, resolvable, setDue } from "./store.vibe"
 
 interface PaidRow {
@@ -51,6 +53,7 @@ function dueOf(deposit: DepositRow, item: PaidRow | null, report: PaidRow | null
 }
 
 export effect function planResolutions(network: string) {
+  if (network === STANDING_DEPOSIT_LEDGER) return try planStandingResolutions(network)
   const items = try SubmissionFeeItems
   const reports = try ReportDeposits
   const held = try parked(network)

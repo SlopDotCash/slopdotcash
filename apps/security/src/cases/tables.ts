@@ -1,2 +1,2 @@
 // spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
-export const caseTables = ["security_case_members", "security_case_access_log", "security_appeal_triages"] as const;
+export const caseTables = ["security_case_members", "security_case_access_log", "security_appeal_triages", "security_advisory_states"] as const;

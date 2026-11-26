@@ -11,6 +11,7 @@ import { githubNumber } from "../privacy/reads.vibe"
 import { routineProofNextAction } from "../routine/reasons.ts"
 import type { CaseRole } from "../receipt/statements.vibe"
 import { sharesOf } from "../terms/receipt.vibe"
+import { advisoryStates } from "./advisoryStates.vibe"
 import { type CaseRecord, type EventRow, detailOf } from "./rows.vibe"
 import { type Observed, reporterKinds } from "./store.vibe"
 import { triageMayStart, triageView } from "./triage.vibe"
@@ -172,9 +173,15 @@ export effect function caseView(observed: Observed, viewerGithubId: string, incl
     }
   }
   const forwarded = row.advisory_ghsa !== null ? undefined : try first(Forwarded, sql`SELECT repository, advisory_ghsa FROM security_submissions WHERE case_id = ${row.id} AND state = 'receipt-verified' AND advisory_ghsa IS NOT NULL`)
-  const advisory = row.advisory_ghsa !== null
-    ? { repository: row.advisory_repository, ghsa: row.advisory_ghsa, url: `https://github.com/${row.advisory_repository}/security/advisories/${row.advisory_ghsa}` }
-    : forwarded === undefined ? null : { repository: forwarded.repository, ghsa: forwarded.advisory_ghsa, url: `https://github.com/${forwarded.repository}/security/advisories/${forwarded.advisory_ghsa}` }
+  const identity = row.advisory_ghsa !== null
+    ? { repository: row.advisory_repository, ghsa: row.advisory_ghsa }
+    : forwarded === undefined ? null : { repository: forwarded.repository, ghsa: forwarded.advisory_ghsa }
+  const githubState = identity === null
+    ? null
+    : (try advisoryStates([identity])).get(`${identity.repository}/${identity.ghsa}`) ?? null
+  const advisory = identity === null
+    ? null
+    : { repository: identity.repository, ghsa: identity.ghsa, url: `https://github.com/${identity.repository}/security/advisories/${identity.ghsa}`, githubState }
   const shared = {
     ...base,
     advisory,

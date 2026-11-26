@@ -33,7 +33,7 @@ export function SubmittedPayments({ solana, values, busy, error, stale, onValue,
     <section aria-label="Submitted payment recovery" className="flex flex-col gap-4">
       <p>Unverified payments</p>
       {values.map((value, index) => (
-        <Field key={index} label={`Transaction ${solana ? "signature" : "hash"} ${index + 1}`}>
+        <Field key={`tx-slot-${solana ? "sol" : "evm"}-${index + 1}`} label={`Transaction ${solana ? "signature" : "hash"} ${index + 1}`}>
           <Input value={value} spellCheck={false} disabled={busy} onChange={(event) => onValue(index, event.target.value)} />
         </Field>
       ))}

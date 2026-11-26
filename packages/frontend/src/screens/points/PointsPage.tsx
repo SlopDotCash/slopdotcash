@@ -7,7 +7,7 @@ import type { RegistryBoot } from "../../reads/registry.vibe";
 import { useShownRead } from "../projects/hooks.ts";
 import { projectRuntime } from "../projects/reads.vibe";
 import { ContributionPointTiers } from "../public/index.ts";
-import { type Settled, useOnce } from "../security/program/hooks.ts";
+import { retryOnce, type Settled, useOnce } from "../../app/hooks.ts";
 import { People, type PeopleMembers, panelClass } from "./People.tsx";
 import { stewardsOf } from "./peopleRows.ts";
 import { useQuery } from "./query.ts";
@@ -82,7 +82,7 @@ export function PointsPage({ runtime }: PageProps) {
       {reads.status === "running" ? (
         <DataState status="Loading" />
       ) : reads.status === "failed" ? (
-        <DataState status="Failed" onRetry={() => location.reload()} retryLabel="Retry contributors" />
+        <DataState status="Failed" onRetry={() => retryOnce(section, "reads")} retryLabel="Retry contributors" />
       ) : (
         <Members section={section} reads={reads.value} boot={bootOf(registry)} />
       )}

@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
+import { Check } from "lucide-react";
 import { cn, focusRing, inactive, target } from "../lib/cn.ts";
 
 export type CheckboxProps = Omit<ComponentProps<typeof CheckboxPrimitive.Root>, "children"> & {
@@ -22,9 +23,7 @@ export function Checkbox({ invalid = false, className, ...props }: CheckboxProps
       {...props}
     >
       <CheckboxPrimitive.Indicator>
-        <svg aria-hidden viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5">
-          <path d="m3 8.5 3.5 3.5 6.5-8" />
-        </svg>
+        <Check aria-hidden className="size-3.5" strokeWidth={2.5} />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   );

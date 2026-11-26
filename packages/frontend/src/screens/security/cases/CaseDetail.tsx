@@ -105,7 +105,23 @@ function WalletLink() {
   );
 }
 
+const advisoryStateLabels: Readonly<Record<string, string>> = {
+  triage: "Open, in triage",
+  draft: "Open, draft",
+  published: "Published",
+  closed: "Closed",
+};
+
+const closingReceipts = new Set(["duplicate", "out-of-scope", "rejected"]);
+
 function Receipt({ record }: { record: SecurityCase }) {
+  const advisoryState = record.advisory?.state ? advisoryStateLabels[record.advisory.state] : undefined;
+  const closeOnGithub =
+    record.advisory !== null &&
+    record.advisory !== undefined &&
+    (record.advisory.state === "triage" || record.advisory.state === "draft") &&
+    closingReceipts.has(record.receiptState ?? "") &&
+    record.viewerRoles.some((role) => role === "owner" || role === "triager" || role === "maintainer");
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <Status presentation={submissionPresentation(record)} />
@@ -116,9 +132,17 @@ function Receipt({ record }: { record: SecurityCase }) {
         </span>
       ) : null}
       {record.advisory ? (
-        <ExternalLink href={record.advisory.url} label="GitHub advisory" className="inline-flex text-primary">
-          <GitBranch aria-hidden className="size-4" />
-        </ExternalLink>
+        <>
+          <ExternalLink href={record.advisory.url} label="GitHub advisory" className="inline-flex text-primary">
+            <GitBranch aria-hidden className="size-4" />
+          </ExternalLink>
+          {advisoryState ? <span className="text-xs text-muted-foreground">GitHub: {advisoryState}</span> : null}
+          {closeOnGithub ? (
+            <ExternalLink href={record.advisory.url} className="text-xs text-primary underline underline-offset-4">
+              Close on GitHub
+            </ExternalLink>
+          ) : null}
+        </>
       ) : null}
     </span>
   );
@@ -128,6 +152,7 @@ function VerifyFoundPayment({ transactionIds, onSend, onStart }: { transactionId
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<Sent>({ key: null, error: null });
   const verify = () => {
+    if (busy) return;
     onStart?.();
     setBusy(true);
     void onSend("verify-payment", { confirmation: true, transactionIds }, sent.key).then((answer) => {

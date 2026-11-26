@@ -1,0 +1,70 @@
+// spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
+import { boundedJson } from "../../platform/bounded.vibe"
+
+export const REFERRAL_CLAIMS_API = "/api/v1/referrals/me"
+
+const ReferralProgramSchema = Schema.Struct({
+  network: Schema.Literals(["robinhood-mainnet", "robinhood-testnet"]),
+  chainId: Schema.Number,
+  distributor: Schema.String,
+  token: Schema.String,
+  decimals: Schema.Number,
+  codeHash: Schema.String,
+})
+
+const ReferralClaimSchema = Schema.Struct({
+  period: Schema.String,
+  epoch: Schema.Number,
+  root: Schema.String,
+  cumulativeBase: Schema.String,
+  proof: Schema.Array(Schema.String),
+})
+
+const ReferralAccountSchema = Schema.Struct({
+  enabled: Schema.Literal(true),
+  status: Schema.Literals(["ready", "stale", "unknown"]),
+  program: Schema.NullOr(ReferralProgramSchema),
+  observedAt: Schema.NullOr(Schema.String),
+  finalizedAt: Schema.NullOr(Schema.String),
+  wallet: Schema.NullOr(Schema.String),
+  accruedBase: Schema.String,
+  claimedBase: Schema.NullOr(Schema.String),
+  claimableBase: Schema.NullOr(Schema.String),
+  pendingBase: Schema.NullOr(Schema.String),
+  paused: Schema.Boolean,
+  ended: Schema.Boolean,
+  latestVoided: Schema.Boolean,
+  pendingUntil: Schema.NullOr(Schema.String),
+  claim: Schema.NullOr(ReferralClaimSchema),
+})
+
+const ReferralResponseSchema = Schema.Union([
+  Schema.Struct({ enabled: Schema.Literal(false) }),
+  ReferralAccountSchema,
+])
+
+export type ReferralProgram = Schema.Schema.Type<typeof ReferralProgramSchema>
+export type ReferralClaim = Schema.Schema.Type<typeof ReferralClaimSchema>
+export type ReferralAccount = Schema.Schema.Type<typeof ReferralAccountSchema>
+export type ReferralResponse = Schema.Schema.Type<typeof ReferralResponseSchema>
+
+export error ReferralClaimsError {
+  readonly message: string
+}
+
+export effect function loadReferralClaims(githubId: string) {
+  const response = HttpClient.get(REFERRAL_CLAIMS_API, {
+    headers: { "x-slop-expected-github-id": githubId },
+  }) catch effect () => {
+    throw new ReferralClaimsError({ message: "Referral rewards could not be loaded. Retry." })
+  }
+  const body = boundedJson(response, 65_536, "Referral rewards") catch effect () => {
+    throw new ReferralClaimsError({ message: "Referral rewards could not be read. Retry." })
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new ReferralClaimsError({ message: "Referral rewards could not be loaded. Retry." })
+  }
+  return Schema.decodeUnknownEffect(ReferralResponseSchema)(body) catch effect () => {
+    throw new ReferralClaimsError({ message: "Referral rewards could not be verified. Retry." })
+  }
+}

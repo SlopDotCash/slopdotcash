@@ -16,6 +16,8 @@ export interface SignedFacts {
   readonly maximumWei: string
   readonly intentHash: string
   readonly limits: NativeLimits
+  readonly blockhashSlot?: number | null
+  readonly accountProof?: string | null
 }
 
 export interface ReceiptFacts { readonly landedTxId: string; readonly actualWei: string; readonly blockHash: string }
@@ -87,8 +89,8 @@ export function reservation(network: W.NetworkName, gasId: string, wallet: strin
     perTransactionWei: signed.limits.perTransaction.toString(),
     perDayWei: signed.limits.perDay.toString(),
     createdAt: now,
-    blockhashSlot: null,
-    accountProof: null,
+    blockhashSlot: signed.blockhashSlot ?? null,
+    accountProof: signed.accountProof ?? null,
     purpose: "fees",
   }
 }

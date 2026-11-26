@@ -117,7 +117,7 @@ effect function monthly<EE extends { readonly _tag: string }, ER, SE extends { r
   const served: ReadonlySet<string> = new Set([network])
   const report = try publishMonthlyAuthorizations(served, now, attesters)
   failures.push(...report.failures)
-  try recordRegistryDeposits(synced.deployments, "ordinary")
+  try isolated("deposits", recordRegistryDeposits(synced.deployments, "ordinary"), failures)
   if (failures.length > 0) throw new AttesterRunFailed({ failures })
 }
 

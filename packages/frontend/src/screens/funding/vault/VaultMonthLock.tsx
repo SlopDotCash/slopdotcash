@@ -12,6 +12,7 @@ import type { FundingVault } from "../../../kernels/poolFunding.ts";
 import { familyOf } from "../../../wallets/owner/commitments.vibe";
 import { monthName, releaseDay, siteMonth } from "../../../wallets/owner/monthLockPeriods.ts";
 import { type Connection, vaultRuntime } from "./funding.vibe";
+import { useNow } from "../../../app/hooks.ts";
 import { useAction } from "./hooks.ts";
 import { type LockReview, connectCard, readCard, releaseCard, reviewCard, sendCard, sendsDeposit, watchCard } from "./monthLock.vibe";
 import type { FundingDeployment, FundingProject } from "./project.schema.ts";
@@ -70,12 +71,12 @@ function noticeOf(state: MonthLock, releasing: number | undefined): string {
   return texts[state.notice];
 }
 
-/** The owner locks this month and the next ones in a vault with month locks; a lapsed lock is released by any connected wallet. */
 export function VaultMonthLock({ project, deployment, period, row, free, decimals, wallet, monthlyMinor, onLocked }: VaultMonthLockProps) {
   const runtime = vaultRuntime(project, deployment, period);
   const lock = useMachine(runtime);
+  const nowSeconds = Math.floor(useNow() / 1000);
   const readKey = [row.openPledgedGross ?? "none", free ?? "none", ...(row.pledges ?? []).map((pledge) => `${pledge.period}:${pledge.amount}:${pledge.open}`)].join(",");
-  useFollowed(runtime, `lock-read:${readKey}`, () => readCard(row, free, Math.floor(Date.now() / 1000)));
+  useFollowed(runtime, `lock-read:${readKey}`, () => readCard(row, free, nowSeconds));
   useFollowed(runtime, `lock-connect:${wallet?.address ?? ""}`, () => (wallet === undefined ? Effect.void : connectCard(wallet)));
   const { busy, error, act } = useAction(runtime);
   const open = (row.pledges ?? []).filter((pledge) => pledge.open);
@@ -92,7 +93,6 @@ export function VaultMonthLock({ project, deployment, period, row, free, decimal
   const owner = wallet !== undefined && (solana ? wallet.address === deployment.owner : wallet.address.toLowerCase() === deployment.owner.toLowerCase());
   const checking = state.phase === "LockAwaiting" || state.phase === "LockChecking";
   const formatted = (value: bigint) => formatAssetAmount(value, { network: deployment.network, assetAddress: deployment.asset, assetDecimals: decimals });
-  const nowSeconds = Math.floor(Date.now() / 1000);
   const refusal = refusalOf(state.refusal, review);
   const notice = noticeOf(state, releasing);
   const watch = (connection: Connection) => runtime.runFork(watchCard(connection, Effect.sync(onLocked)));

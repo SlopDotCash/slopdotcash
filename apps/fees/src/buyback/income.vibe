@@ -23,7 +23,7 @@ export interface IncomeQuery {
 
 schema IncomeRow { id: string; kind: "conversion" | "claim"; amount_out: string; finalized_at: string; tx_id: string | null; landed_tx_id: string | null }
 
-const escrowNetworks: Readonly<Record<Network, string | undefined>> = { Base: "base-mainnet", Ethereum: undefined, Robinhood: "robinhood-mainnet", Solana: undefined }
+const escrowNetworks: Readonly<Record<Network, string | undefined>> = { Base: "base-mainnet", Ethereum: undefined, Robinhood: "robinhood-mainnet", Solana: "solana-mainnet" }
 
 function same(network: Network, column: Statement, value: string): Statement {
   return network === "Solana" ? sql`${column} = ${value}` : sql`lower(${column}) = lower(${value})`
@@ -49,7 +49,9 @@ export effect function incomeEvidence(query: IncomeQuery, booked: ReadonlyArray<
   const escrow = escrowNetworks[network]
   for (const fee of kept) {
     const chainTime = fee.chainTime - offset
-    if (escrow !== undefined && fee.deposit.startsWith(`${escrow}:`) && fee.token.toLowerCase() === usdc.toLowerCase() && fee.keptTo.toLowerCase() === wallet.toLowerCase() && fee.amount > 0n && chainTime >= buybackStart)
+    const tokenMatches = network === "Solana" ? fee.token === usdc : fee.token.toLowerCase() === usdc.toLowerCase()
+    const walletMatches = network === "Solana" ? fee.keptTo === wallet : fee.keptTo.toLowerCase() === wallet.toLowerCase()
+    if (escrow !== undefined && fee.deposit.startsWith(`${escrow}:`) && tokenMatches && walletMatches && fee.amount > 0n && chainTime >= buybackStart)
       entries.push({ kind: "KeptSubmissionFee", text: fee.deposit, amount: amountOf(fee.amount), chainTime })
   }
   return entries.sort(earlier)

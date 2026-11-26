@@ -17,7 +17,6 @@ export type InstallPanelProps = {
   listing: ListingFacts;
   /** Whether the merge activity read shows the project held at its intake cap or out of rotation under the backlog rule. */
   held: boolean;
-  /** The origin the page was reached at, which the prompt names the skill by. */
   origin: string;
   /** Writes the prompt to the clipboard; a rejection is reported as a failed copy. */
   onCopy: (text: string) => Promise<void>;
@@ -67,7 +66,6 @@ function ClearanceState({ project, clearance, listing, held }: Pick<InstallPanel
   }
 }
 
-/** The project's agent setup: its own prompt once discovery lists it as cleared, else the generic prompt, which picks only cleared projects. */
 export function InstallPanel({ project, clearance, listing, held, origin, onCopy }: InstallPanelProps) {
   const ready = clearance === "ready";
   return (
