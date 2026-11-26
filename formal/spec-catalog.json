@@ -34953,7 +34953,7 @@
     },
     {
       "path": "spec/slopbot/readyLabel.md",
-      "sha256": "fd9217427c343e9ea833a7971175e138dbc0beaba38d5c3cb5346c7764722e05",
+      "sha256": "b7c4b9a70c0ee81eae46415613d544cf7b4275e6dfa1719f5c8388793bac629c",
       "module": "slopbot__readyLabel",
       "stories": [
         {
