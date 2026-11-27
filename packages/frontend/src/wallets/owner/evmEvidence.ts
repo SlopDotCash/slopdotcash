@@ -195,8 +195,9 @@ export function batchReport(reported: unknown, scope?: BatchReceiptScope): Batch
     const chain = typeof reply.chainId === "string" && /^0x[0-9a-fA-F]{1,64}$/u.test(reply.chainId) ? BigInt(reply.chainId) : undefined;
     if (modern && (reply.version !== "2.0.0" || reply.id !== scope.reference || chain !== scope.chainId
       || (kind === "landed" && reply.atomic !== true))) return { kind: "unrecognized" };
+    if (kind === "notSent" && Array.isArray(receipts) && receipts.length > 0) return { kind: "unrecognized" };
     if (Array.isArray(receipts) && receipts.length > 1) {
-      if (!modern || receipts.length > scope.maxReceipts || kind === "notSent") return { kind: "unrecognized" };
+      if (!modern || receipts.length > scope.maxReceipts) return { kind: "unrecognized" };
       if (kind !== "landed") return { kind };
       const hashes: string[] = [];
       for (const receipt of receipts) {

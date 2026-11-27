@@ -122,7 +122,7 @@ type Pledges = Map<number, { amount: bigint; open: boolean }>;
 type LockBatchReport =
   | "multiple" | "sameBlock" | "reversedIndex" | "stale" | "conflictingHead" | "duplicate" | "wrongMembership"
   | "wrongChain" | "wrongReference" | "wrongDeposit" | "wrongPledge"
-  | "legacySingleton" | "modernSingleton" | "wrongSingletonChain" | "nonAtomicSingleton";
+  | "legacySingleton" | "modernSingleton" | "wrongSingletonChain" | "nonAtomicSingleton" | "notSentWithReceipt";
 
 const monthAfter = (period: number, months: number) => {
   const index = Math.floor(period / 100) * 12 + (period % 100) - 1 + months;
@@ -136,7 +136,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
   let finalized = options.lockBatch === "conflictingHead" ? 10n : 0n;
   let lockBatch: { readonly id: string; readonly entries: ReadonlyArray<Mined> } | undefined;
   const singleton = options.lockBatch === "legacySingleton" || options.lockBatch === "modernSingleton"
-    || options.lockBatch === "wrongSingletonChain" || options.lockBatch === "nonAtomicSingleton";
+    || options.lockBatch === "wrongSingletonChain" || options.lockBatch === "nonAtomicSingleton" || options.lockBatch === "notSentWithReceipt";
   const blockHash = (block: bigint) => hash(block.toString(16).slice(-1));
   const vaultOf = (to: string) => [nativeVault, tokenVault].find((vault) => vault.vault === to.toLowerCase());
   const read = (to: string, data: string): string => {
@@ -249,7 +249,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
           version: "2.0.0",
           id: options.lockBatch === "wrongReference" ? `0x${"f".repeat(128)}` : lockBatch.id,
           chainId: options.lockBatch === "wrongChain" || options.lockBatch === "wrongSingletonChain" ? "0x1" : reportChain,
-          status: options.failReceipts === true ? 500 : 200,
+          status: options.lockBatch === "notSentWithReceipt" ? 400 : options.failReceipts === true ? 500 : 200,
           atomic: options.lockBatch !== "nonAtomicSingleton",
           receipts: entries.map((entry) => ({
             transactionHash: entry.hash,
@@ -892,7 +892,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
 
   it.each([
     "conflictingHead", "duplicate", "reversedIndex", "stale", "wrongChain", "wrongReference", "wrongDeposit", "wrongPledge", "wrongMembership",
-    "wrongSingletonChain", "nonAtomicSingleton",
+    "wrongSingletonChain", "nonAtomicSingleton", "notSentWithReceipt",
   ] as const)("a lock batch with %s evidence stays pending", async (shape) => {
     expect(await batched(shape)).toMatchObject({ phase: "LockChecking", reloads: 0, batches: 1, transactions: 0 });
   });
