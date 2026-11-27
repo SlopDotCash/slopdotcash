@@ -2223,14 +2223,14 @@ import { seededGithub, slopbotFake } from fakes
     provide d1(db) {
       try (try D1).batch([
         ...revisions.map((row, sequence) => sql`INSERT INTO points_staging (batch_id, sequence, payload) VALUES (${digest}, ${sequence}, ${revisionText(row)})`),
-        sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${digest}, ${generatedAt}, '[]', ${revisions.length})`,
+        sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${digest}, ${generatedAt}, ${JSON.stringify([{ repository: "acme/widgets", from: "2026-10-01T00:00:00.000Z", to: generatedAt, digest: "c".repeat(64) }])}, ${revisions.length})`,
       ])
     }
   }
 
   effect function registered(projectId: string, revision: number, reward: object) {
     const { db } = try Bench
-    const manifest = JSON.stringify({ id: projectId, status: "active", reward })
+    const manifest = JSON.stringify({ id: projectId, status: "active", reward, repositories: [{ id: `acme/${projectId}`, githubUrl: `https://github.com/acme/${projectId}`, displayName: projectId, description: "", integrationBranch: "main" }] })
     const digest = try sha256Hex(manifest)
     provide d1(db) {
       try (try D1).batch([
@@ -2337,7 +2337,7 @@ import { seededGithub, slopbotFake } from fakes
         digest: true,
         stable: true,
         open: undefined,
-        unregistered: [],
+        unregistered: undefined,
       })
     })
     it.effect(`Import reviewed evaluation awards once, recover the retirement incident once and recognize a paid monthly-pool recipient once (spec/points/evaluations.md, "Story: Import reviewed evaluation awards once and recover the retirement incident"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"; spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"; spec/points/journal.md, "An evaluated award comes only from an admitted reviewed manifest"; spec/points/journal.md, "An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/points/journal.md, "Payout recognition is appended once per recipient, project and cycle")`, () => effect {
@@ -6749,7 +6749,6 @@ import { seededGithub, slopbotFake } from fakes
   const root = new URL("..", import.meta.url).pathname
   const secret = "s".repeat(40)
   const origin = "http://localhost:8788"
-  const emptyDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
   const Composed = areaLayer({
     root,
@@ -6799,7 +6798,7 @@ import { seededGithub, slopbotFake } from fakes
         unpublished: [503, "points_not_published"],
         beforeBatch: { found: false, sha256: "", weights: [] },
         journal: [200, { schemaVersion: "1", ruleVersion: pointsRule, generatedAt: "2026-11-02T00:00:00.000Z", coverage: [], revisions: [], batch: "a".repeat(64), next: null, total: 0 }],
-        afterBatch: { found: true, sha256: emptyDigest, weights: [] },
+        afterBatch: { found: false, sha256: "", weights: [] },
         disputes: [401, "not_signed_in"],
         wrongToken: [404, { error: "not_found" }, "private-trace-v1-opaque-hmac-v1"],
         listed: [200, "slop-protected-point-months-v1", [{ projectId: "alpha", period: "2026-10" }], [], "no-store"],
