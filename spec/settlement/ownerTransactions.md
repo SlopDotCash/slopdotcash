@@ -104,7 +104,8 @@ pure def recover(r: OwnerRequest): OwnerRequest = r
 ### Only the exact finalized submitted transaction completes the request
 
 A failed or expired blockhash fails the request without moving funds; a new
-review creates a new request.
+review creates a new request. A request has zero submissions while draft or
+reviewed and exactly one once pending, finalized or failed.
 
 ```quint
 pure def canCheckResult(r: OwnerRequest, result: CheckResult): bool =
@@ -114,6 +115,7 @@ pure def checkResult(r: OwnerRequest, result: CheckResult): OwnerRequest =
   else if (result.expired or (result.finalized and not(result.succeeded))) { ...r, phase: Failed }
   else r
 pure def alwaysOneSubmission(r: OwnerRequest): bool = r.submissions <= 1
+  and ((r.phase == Draft or r.phase == Reviewed) implies r.submissions == 0)
   and ((r.phase == Pending or r.phase == Finalized or r.phase == Failed) implies r.submissions == 1 and r.submitted.message == r.message)
 pure def stepPlanFixed(before: OwnerRequest, after: OwnerRequest): bool =
   before.phase != Draft implies after.message == before.message and after.kind == before.kind

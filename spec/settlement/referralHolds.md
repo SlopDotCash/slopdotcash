@@ -51,8 +51,10 @@ pure def projectHeld(h: Holds, project: int): bool = activeHold(h, project).id >
 
 ### Holds keep their identity, reason and single lift for ever
 
+The observed clock is always positive, and each hold keeps a unique positive identifier, valid reason lengths, monotonic timestamps and at most one lift.
+
 ```quint
-pure def alwaysHoldsWellFormed(h: Holds): bool = h.rows.every(r => r.id > 0 and r.project > 0 and r.actor > 0
+pure def alwaysHoldsWellFormed(h: Holds): bool = h.now > 0 and h.rows.every(r => r.id > 0 and r.project > 0 and r.actor > 0
   and validReason(r.reasonLength) and r.createdAt > 0 and r.createdAt <= h.now
   and (r.lifted == validReason(r.liftReasonLength)) and (r.lifted == (r.liftedAt > 0))
   and (r.lifted implies r.liftedAt >= r.createdAt and r.liftedAt <= h.now)
