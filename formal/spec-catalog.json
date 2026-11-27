@@ -14862,18 +14862,18 @@
     },
     {
       "path": "spec/operations/dailyCollection.md",
-      "sha256": "f2729925dfb5c30409175c4374b09bf733b0565ff8dfe351c6118be4202e2341",
+      "sha256": "ae62027bd70bfa0191f353615cc765d8df24efeb183b85e6b191c433d2e09f51",
       "module": "operations__dailyCollection",
       "stories": [
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it",
-          "line": 20
+          "line": 21
         }
       ],
       "rules": [
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A daily tick starts one fresh collection only when none runs",
-          "line": 26,
+          "line": 27,
           "definitions": [
             "DailyCollection",
             "initial",
@@ -14889,7 +14889,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A superseded collection is published by a retained-data release at most three times and never replaces newer data",
-          "line": 65,
+          "line": 66,
           "definitions": [
             "maxPublishAttempts",
             "failedJobReruns",
@@ -14910,7 +14910,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A failed collection with a checkpoint is resumed once, never a resume of a resume",
-          "line": 107,
+          "line": 108,
           "definitions": [
             "resumeQuietMinutes",
             "resumePollMinutes",
@@ -14924,7 +14924,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A follow-up acts only on a completed trusted main release, and publishes before it resumes",
-          "line": 131,
+          "line": 132,
           "definitions": [
             "FollowedRun",
             "ReleaseRead",
@@ -14938,7 +14938,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / Live data older than 48 hours fails the daily run",
-          "line": 163,
+          "line": 164,
           "definitions": [
             "staleLiveMillis",
             "liveDataStale",
@@ -14948,7 +14948,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / Simulation samples cover trusted and untrusted runs and the stale boundary",
-          "line": 177,
+          "line": 178,
           "definitions": [
             "trustedRun",
             "followedValues",
@@ -14970,7 +14970,7 @@
         },
         {
           "target": "../points/retainedFreshness.md",
-          "line": 14
+          "line": 15
         }
       ]
     },
