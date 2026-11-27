@@ -255,6 +255,7 @@ describe("Open every product route at its existing address", () => {
       const near = (position: number) => async () => Math.abs((await site.scrollY()) - position);
       await site.allow("^failed GET /\\S+ net::ERR_ABORTED$");
       await openPayments();
+      await scrollSettled();
 
       const fromBottom = async () => Math.abs((await site.scrollY()) - (await site.scrollEnd()));
       while ((await fromBottom()) >= 2) {
@@ -519,12 +520,13 @@ describe("Find a contributor in the public directory", () => {
   });
 });
 
-function pointsManifest(projectId: string, repositories: ReadonlyArray<RegisteredRepository>) {
+function pointsManifest(projectId: string, repositories: ReadonlyArray<RegisteredRepository>, skillSourcePath?: string) {
   const manifest = manifestOf({ id: projectId, tier: "community", repositoryId: 0 });
   return {
     ...manifest,
     authority: { ...manifest.authority, repositoryNodeId: repositories[0]?.nodeId ?? "" },
     repositories: repositories.map(({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId }) => ({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId })),
+    skill: { ...manifest.skill, ...(skillSourcePath === undefined ? {} : { sourcePath: skillSourcePath }) },
   };
 }
 
@@ -534,9 +536,10 @@ const pullRequestLinks = [["Merged", "is:merged", "merged"], ["Open", "is:open",
 
 async function publishPoints(leaderboard: LeaderboardTransport = "whole") {
   const published = await site.published(leaderboard);
-  const { registered } = published.registry;
+  const { registered, projects: registeredProjects } = published.registry;
   const projectIds = [...new Set(registered.map((repository) => repository.projectId))];
-  await site.serve("/api/v1/projects", 200, { schemaVersion: "1", projects: projectIds.map((id) => pointsManifest(id, registered.filter((repository) => repository.projectId === id))) });
+  const skillPaths = new Map(registeredProjects.map((project) => [project.id, project.skillSourcePath]));
+  await site.serve("/api/v1/projects", 200, { schemaVersion: "1", projects: projectIds.map((id) => pointsManifest(id, registered.filter((repository) => repository.projectId === id), skillPaths.get(id))) });
   const [leader] = published.leaders;
   const [primary] = registered;
   if (leader === undefined || primary === undefined) throw new Error("the published Points fixture has no leader or repository");
@@ -610,7 +613,7 @@ describe("Read a contributor's profile over the published", () => {
     await profileOf(leader);
     const retry = named("button", "Retry points", { within: slopPoints });
     await shown(retry).toMatchObject({ visible: true });
-    await shown({ text: "Could not load", within: slopPoints }).toMatchObject({ visible: true });
+    await shown({ text: "Unavailable", within: slopPoints }).toMatchObject({ visible: true });
     await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
     await shown({ text: "Data last updated", within: slopPoints }).toMatchObject({ count: 0 });
     expect(await readsOf((path) => shardPathPattern.test(path))).toBe(0);

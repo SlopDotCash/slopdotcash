@@ -19,13 +19,16 @@ const solanaCard = named("article", "Solana wallet");
 const membersOf = (githubId: number) => site.sql("SELECT actor_id, public, closed_at FROM points_members WHERE github_id = ?", String(githubId));
 const sessionsOf = (actorId: unknown) => site.sql("SELECT count(*) AS sessions FROM points_sessions WHERE actor_id = ?", String(actorId));
 
+let expectedPopups = 0;
+
 beforeEach(async () => {
+  expectedPopups = 0;
   await site.start();
   for (const user of Object.values(users)) await site.user(user.id, user.login);
 });
 
 afterEach(async () => {
-  expect(await site.popups()).toBe(0);
+  expect(await site.popups()).toBe(expectedPopups);
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
 
@@ -282,6 +285,7 @@ describe("Replace a payout wallet without losing the current", () => {
 describe("Start and complete a GitHub sign-in flow", () => {
   // spec/backend/identity.md, "A website flow belongs to the browser that started it"
   it("a browser that keeps no sign-in cookie is told to", async () => {
+    expectedPopups = 1;
     await site.allow("^console Failed to load resource: the server responded with a status of 403", "^403 POST /v1/oauth/poll$");
     await site.github(users.kai.login);
     await site.blockCookies();

@@ -1,7 +1,10 @@
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { type Role, templatePaths } from "@repo/contributor/render/fields";
+import { acceptedRevisions, guideRendererPaths, rendererSourcePaths, sha256Hex as templateSha, sourceRepository, templateFilePath, templateGroup, templateSha256 } from "@repo/contributor/render/templateIndex";
 import { type Handler, type WorkerOptions, bundle, migrate, startWorker, storage, workerOptions } from "@repo/platform/testing";
 import { type Anvil, anvil, forward } from "@repo/platform/testing/chains";
 import { githubFake } from "@repo/platform/testing/github";
@@ -154,13 +157,72 @@ function notifyOf(verifications: Verification[]): Handler {
   };
 }
 
+function listFiles(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...listFiles(full));
+    else if (entry.isFile()) found.push(full);
+  }
+  return found.sort();
+}
+
+function writeSkillTemplates(outDir: string) {
+  const roles: ReadonlyArray<Role> = ["contributor", "reviewer"];
+  const groups = roles.map((role) => {
+    const root = join(repoRoot, templatePaths[role]);
+    const files = listFiles(root).map((file) => ({ path: file.slice(root.length + 1).split("\\").join("/"), bytes: new Uint8Array(readFileSync(file)) }));
+    const grouped = templateGroup(role, files);
+    if (grouped.kind !== "group") throw new Error(`${templatePaths[role]} is not a bounded template tree`);
+    return { group: grouped.group, files };
+  });
+  const [contributor, reviewer] = groups;
+  if (contributor === undefined || reviewer === undefined) throw new Error("both template groups are required");
+  const sources = rendererSourcePaths.map((path) => ({ path, sha256: templateSha(new Uint8Array(readFileSync(join(repoRoot, path)))) }));
+  const indexText = `${JSON.stringify({
+    schemaVersion: "1",
+    repository: sourceRepository,
+    commit: "0".repeat(40),
+    templateSha256: templateSha256({ contributor: contributor.group, reviewer: reviewer.group, rendererSources: sources, acceptedRevisions }),
+    revisionStatus: "committed",
+    contributor: contributor.group,
+    reviewer: reviewer.group,
+    renderer: { paths: [...guideRendererPaths], sources, revisionStatus: "committed" },
+    acceptedRevisions: [...acceptedRevisions],
+  }, null, 2)}\n`;
+  const files = [{ path: "skill-templates/index.json", bytes: new TextEncoder().encode(indexText) }];
+  for (const { group, files: tree } of groups) {
+    for (const file of tree) files.push({ path: `skill-templates/${templateFilePath(group, { path: file.path, sha256: templateSha(file.bytes) })}`, bytes: file.bytes });
+  }
+  for (const file of files) {
+    const target = join(outDir, file.path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, file.bytes);
+  }
+}
+
 async function builtSite(): Promise<string> {
   const outDir = join(appRoot, ".cache/site");
-  const builder = await createBuilder({ root: appRoot, configFile: join(appRoot, "vite.config.ts"), logLevel: "error", mode: "production", build: { outDir, emptyOutDir: true, sourcemap: false } });
-  const client = builder.environments.client;
-  if (client === undefined) throw new Error("apps/app builds no client");
-  await builder.build(client);
-  return outDir;
+  const prior = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    const builder = await createBuilder({
+      root: appRoot,
+      configFile: join(appRoot, "vite.config.ts"),
+      logLevel: "error",
+      mode: "production",
+      define: { "process.env.NODE_ENV": '"production"' },
+      build: { outDir, emptyOutDir: true, sourcemap: false },
+    });
+    const client = builder.environments.client;
+    if (client === undefined) throw new Error("apps/app builds no client");
+    await builder.build(client);
+    writeSkillTemplates(outDir);
+    return outDir;
+  } finally {
+    if (prior === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prior;
+  }
 }
 
 async function build(): Promise<Built> {
@@ -397,10 +459,11 @@ async function reset(context: BrowserCommandContext) {
 
 async function tab(name: string): Promise<Page> {
   const into = current();
+  const switching = into.current !== name;
   const known = into.tabs.get(name);
   into.current = name;
   if (known !== undefined) {
-    await known.bringToFront();
+    if (switching) await known.bringToFront();
     return known;
   }
   const opened = await into.context.newPage();
@@ -517,20 +580,27 @@ async function read(target: Target): Promise<Shown> {
   if (count === 0) return absent;
   const first = found.first();
   const visible = await first.isVisible();
-  const facts = await first.evaluate((element) => {
-    const active = document.activeElement;
-    const aria = element.getAttribute("aria-checked");
-    const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : null;
-    const checked = aria === "true" ? true : aria === "false" ? false : element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : null;
-    return {
-      text: element instanceof HTMLElement ? element.innerText.trim() : (element.textContent ?? "").trim(),
-      value,
-      disabled: element.matches(":disabled") || element.getAttribute("aria-disabled") === "true",
-      checked,
-      focused: active !== null && (element === active || element.contains(active)),
-      href: element.getAttribute("href"),
-    };
-  });
+  const facts = await first
+    .evaluate(
+      (element) => {
+        const active = document.activeElement;
+        const aria = element.getAttribute("aria-checked");
+        const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : null;
+        const checked = aria === "true" ? true : aria === "false" ? false : element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : null;
+        return {
+          text: element instanceof HTMLElement ? element.innerText.trim() : (element.textContent ?? "").trim(),
+          value,
+          disabled: element.matches(":disabled") || element.getAttribute("aria-disabled") === "true",
+          checked,
+          focused: active !== null && (element === active || element.contains(active)),
+          href: element.getAttribute("href"),
+        };
+      },
+      undefined,
+      { timeout: 1_000 },
+    )
+    .catch(() => null);
+  if (facts === null) return (await found.count()) === 0 ? absent : { ...absent, count, visible };
   return { count, visible, ...facts };
 }
 

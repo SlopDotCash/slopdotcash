@@ -47,18 +47,22 @@ effect function actorCheck(actorId: string) {
   return undefined
 }
 
-function accessLost(failure: CallFailure): Checked<never> | undefined {
+function accessLost(failure: CallFailure, forbiddenMessage?: string): Checked<never> | undefined {
   if (failure._tag === "ActorChanged") return lost(failure.message, true)
-  if (failure._tag === "Refused" && [401, 403, 404, 410].includes(failure.status)) return lost(failure.message, failure.status === 401 || failure.error === "actor_changed")
+  if (failure._tag === "Refused" && [401, 403, 404, 410].includes(failure.status)) {
+    const identityChanged = failure.status === 401 || failure.error === "actor_changed"
+    const message = !identityChanged && failure.status === 403 && forbiddenMessage !== undefined ? forbiddenMessage : failure.message
+    return lost(message, identityChanged)
+  }
   return undefined
 }
 
-effect function settledCheck<A, R>(actorId: string, work: A!CallFailure!R, fallback: string) {
+effect function settledCheck<A, R>(actorId: string, work: A!CallFailure!R, fallback: string, forbiddenMessage?: string) {
   const before = try actorCheck(actorId)
   if (before !== undefined) return before
   const answer = Effect.map(work, (value) => ({ ok: true, value }) as const) catch (failure) => ({ ok: false, failure }) as const
   if (!answer.ok) {
-    const access = accessLost(answer.failure)
+    const access = accessLost(answer.failure, forbiddenMessage)
     if (access !== undefined) return access
     const recheck = try actorCheck(actorId)
     if (recheck !== undefined) return recheck
@@ -69,14 +73,14 @@ effect function settledCheck<A, R>(actorId: string, work: A!CallFailure!R, fallb
   return { kind: "done", value: answer.value } satisfies Checked<A>
 }
 
-effect function checked<A, R>(actorId: string, work: A!CallFailure!R, fallback: string) {
-  const result: Checked<A> = try settledCheck(actorId, work, fallback)
+effect function checked<A, R>(actorId: string, work: A!CallFailure!R, fallback: string, forbiddenMessage?: string) {
+  const result: Checked<A> = try settledCheck(actorId, work, fallback, forbiddenMessage)
   if (result.kind === "lost" && result.identityChanged) try (try BrowserSession).observe("changed")
   return result
 }
 
 export effect function managementAccess(projectId: string, actorId: string) {
-  const read = try checked(actorId, call(setupViewer, { params: { id: projectId } }, { limitBytes: settingsLimitBytes, expectedActor: actorId }), settingsMessages.accessUnchecked)
+  const read = try checked(actorId, call(setupViewer, { params: { id: projectId } }, { limitBytes: settingsLimitBytes, expectedActor: actorId }), settingsMessages.accessUnchecked, settingsMessages.notSteward)
   if (read.kind !== "done") return read
   if (read.value.viewer.githubId !== actorId) {
     try (try BrowserSession).observe("changed")

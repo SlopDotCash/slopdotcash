@@ -30,6 +30,7 @@ const nodeIdOf = (user: User) => `U_kgDO${btoa(String.fromCharCode(...[24, 16, 8
 const person = (user: User) => ({ githubId: String(user.id), githubLogin: user.login });
 const repositoryOf = (projectId: string) => `${users.max.login}/${projectId}`;
 const repositoryIdOf = (projectId: string) => (projectId === vaultKit ? 1201 : 1202);
+const repositoryNodeIdOf = (projectId: string) => `R_kgDO${repositoryIdOf(projectId).toString(36)}`;
 
 function bountyTerms(projectId: string, technical: ReadonlyArray<User>, excludedFindings?: ReadonlyArray<string>) {
   const repository = repositoryOf(projectId);
@@ -40,7 +41,7 @@ function bountyTerms(projectId: string, technical: ReadonlyArray<User>, excluded
     eligibility: "in-scope-security",
     fundingPolicy: "after-approval",
     amount: { currency: "USDC", decimals: 6, grossMinor: "10000000", network: "base" },
-    split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+    split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
     sponsor: { name: "Slop", githubId: null },
     funding: { state: "pledged" },
     capacity: { awards: null, closesAt: null, exhaustionRule: "Each qualifying finding is decided on its own." },
@@ -77,7 +78,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
     listingTier: "community",
     status: "active",
     steward: { displayName: steward.login, kind: "individual", github: { actorId: String(steward.id), nodeId: `U_${steward.login}`, login: steward.login, type: "User", profileUrl: `https://github.com/${steward.login}` }, website: null },
-    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(repositoryIdOf(projectId)), repositoryNodeId: `R_${repositoryIdOf(projectId)}`, proof: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(repositoryIdOf(projectId)), repositoryNodeId: repositoryNodeIdOf(projectId), proof: null },
     terms: {
       revision: "draft-1",
       effectiveAt: "2026-11-01T00:00:00.000Z",
@@ -85,7 +86,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
       retroactive: false,
       receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
       copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
-      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/main/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${"a".repeat(40)}/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
       inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
       assignment: null,
       externalPrize: null,
@@ -93,7 +94,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
     repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Vault tooling.", integrationBranch: "main" }],
     skill: { id: `contribute-to-${projectId}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${projectId}/skill.md` },
     reviewSkill: { id: `review-${projectId}-contributions`, sourcePath: "skills/project-reviewer-template" },
-    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6 },
+    rewardAsset: { network: "ethereum", chainId: "1", cluster: null, kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, verifiedAt: "2026-11-01T00:00:00.000Z" },
     contribution: {
       approvedScope: "Bug fixes and documented features in the vault.",
       contributionGuide: "Branch from main and keep one change per pull request.",
@@ -105,7 +106,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
       maintainerNotes: "",
     },
     reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "0", monthlyCapDisplay: "$0", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
-    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet.", recordsPath: `funding/${projectId}`, addresses: [] },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${projectId}`, addresses: [] },
     modelPolicy: { mode: "open-declared", disclosureRequired: true },
     links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
     securityBounty,
@@ -132,13 +133,23 @@ async function publishRevision(projectId: string, revision: number, terms: Retur
     revision,
     repositoryOf(projectId),
     String(repositoryIdOf(projectId)),
-    `R_${repositoryIdOf(projectId)}`,
+    repositoryNodeIdOf(projectId),
     now,
     now,
   );
 }
 
+async function seedProgramRepo(projectId: string) {
+  const id = repositoryIdOf(projectId);
+  const fullName = repositoryOf(projectId);
+  await site.repository({ id, owner: users.max.login, name: projectId, fork: false, archived: false, license: "MIT", files: { "README.md": `# ${projectId}\n` } });
+  await site.permission(fullName, users.max.login, "admin");
+  await site.installation({ id, account: users.max.login, repositories: [fullName] });
+}
+
 async function seedPrograms() {
+  await seedProgramRepo(vaultKit);
+  await seedProgramRepo(plainKit);
   await publishRevision(vaultKit, 1, bountyTerms(vaultKit, [users.max], ownerLines));
   await publishRevision(plainKit, 1, bountyTerms(plainKit, [users.max]));
 }
@@ -273,10 +284,11 @@ describe("Submit and recover one private report", () => {
     await expect.poll(() => casesOf(vaultKit), { timeout: journeyMs }).toHaveLength(1);
     const [filed] = await casesOf(vaultKit);
     const caseId = String(filed?.id);
+    const reportHeading = named("heading", `${vaultKit} · Case ${caseId.slice(-8)}`);
     const payPath = `/fee/report/${caseId}`;
     const needed = named("link", "Deposit needed: 395 SLOP");
     await site.open("/inbox");
-    await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+    await shown(reportHeading).toMatchObject({ visible: true });
     await shown(named("link", "Deposit needed", { exact: false })).toMatchObject({ count: 0 });
 
     await site.sql(
@@ -337,9 +349,12 @@ describe("Submit and recover one private report", () => {
     await site.click(named("button", "Review report"));
     await site.click(named("button", "Submit private report"));
     await shown(named("heading", "Report received")).toMatchObject({ visible: true });
+    await expect.poll(() => casesOf(vaultKit), { timeout: journeyMs }).toHaveLength(1);
+    const [filed] = await casesOf(vaultKit);
+    const reportHeading = named("heading", `${vaultKit} · Case ${String(filed?.id).slice(-8)}`);
 
     await site.open("/inbox");
-    await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+    await shown(reportHeading).toMatchObject({ visible: true });
     const reads = async () => {
       const sent = await site.sent();
       const count = (path: string) => sent.filter((entry) => entry.method === "GET" && entry.path === path).length;
@@ -349,7 +364,7 @@ describe("Submit and recover one private report", () => {
     for (let round = 1; round <= 3; round += 1) {
       await site.refocus();
       await expect.poll(async () => (await reads()).session, { timeout: journeyMs }).toBeGreaterThanOrEqual(loaded.session + round);
-      await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+      await shown(reportHeading).toMatchObject({ visible: true });
       await shown({ text: "Checking private session…" }).toMatchObject({ count: 0 });
     }
     expect(await reads()).toMatchObject({ cases: loaded.cases, submissions: loaded.submissions });
@@ -393,25 +408,27 @@ describe("Carry one report from durable receipt to a decision", () => {
     const [received] = await casesOf(vaultKit);
     const caseId = String(received?.id);
 
+    const reportHeading = named("heading", `${vaultKit} · Case ${caseId.slice(-8)}`);
     await site.open("/security");
     await shown(named("heading", "Security cases", { level: 1 })).toMatchObject({ visible: true });
-    await site.click(caseButton(caseId));
+    await shown(reportHeading).toMatchObject({ visible: true });
+    await site.click(named("button", "Open case"));
     await expect.poll(async () => (await searchOf()).get("case"), { timeout: journeyMs }).toBe(caseId);
     await shown(named("button", "Back to reports")).toMatchObject({ visible: true });
     await site.click(named("button", "Back to reports"));
     await expect.poll(async () => (await searchOf()).has("case"), { timeout: journeyMs }).toBe(false);
-    await shown(caseButton(caseId)).toMatchObject({ visible: true });
+    await shown(reportHeading).toMatchObject({ visible: true });
     await signOut(users.rae.login);
 
     await signIn(users.out.login, "/security");
-    await shown({ text: "No cases", exact: true }).toMatchObject({ visible: true });
+    await shown({ text: "No reports", exact: true }).toMatchObject({ visible: true });
     expect(await site.leaks(caseId.slice(-8))).toBe(false);
     await signOut(users.out.login);
 
     await signIn(users.max.login, `/security?case=${caseId}`);
     await shown(named("button", "Back to reports")).toMatchObject({ visible: true });
     await shown(named("region", "Case actions")).toMatchObject({ visible: true });
-    await shown(caseButton(caseId)).toMatchObject({ visible: true });
+    await shown(reportHeading).toMatchObject({ visible: true });
 
     const decision = named("form", "Decide");
     const outcome: Target = { label: "Outcome", within: decision };
@@ -483,7 +500,7 @@ describe("Close and reopen an account without losing history", () => {
     expect(await retained()).toEqual(before);
     await site.click(named("button", "Reopen account"));
     await at("/security");
-    await shown(caseButton(caseId)).toMatchObject({ visible: true });
+    await shown(named("heading", `${vaultKit} · Case ${caseId.slice(-8)}`)).toMatchObject({ visible: true });
     expect(await retained()).toEqual(before);
   });
 });
@@ -522,7 +539,10 @@ describe("Decide an award under the terms that accompanied the", () => {
 
     const lines = ["Gas refunds below one cent", "Reports about the retired faucet"];
     await signIn(users.max.login, settings);
+    const scopeGroup: Target = { text: "Scope and testing", exact: true };
     const field = named("textbox", "Also does not qualify");
+    await shown(scopeGroup).toMatchObject({ visible: true });
+    await site.click(scopeGroup);
     await shown(field).toMatchObject({ visible: true, value: "" });
     await site.fill(field, `  ${lines.join("\n\n")}\n`);
     await site.click(named("button", "Review bounty terms"));
@@ -535,6 +555,8 @@ describe("Decide an award under the terms that accompanied the", () => {
     await shown(named("heading", "Also does not qualify for this program")).toMatchObject({ visible: true });
     const scope = (await site.read(named("region", "Scope"))).text;
     expect(lines.every((line) => scope.includes(line))).toBe(true);
+    await shown(scopeGroup).toMatchObject({ visible: true });
+    await site.click(scopeGroup);
     await shown(named("textbox", "Also does not qualify")).toMatchObject({ value: lines.join("\n") });
 
     await site.fill(named("textbox", "Also does not qualify"), "");
@@ -615,10 +637,12 @@ describe("Read, acknowledge and escalate private case notices", () => {
     await site.click(named("button", "Review report"));
     await site.click(named("button", "Submit private report"));
     await shown(named("heading", "Report received")).toMatchObject({ visible: true });
+    await expect.poll(() => submissionsOf(users.rae), { timeout: journeyMs }).toHaveLength(1);
+    const [saved] = await submissionsOf(users.rae);
 
     await site.open("/inbox");
     const received = named("link", "received: Open security cases", { exact: false });
-    await shown(received).toMatchObject({ visible: true, href: expect.stringContaining("/security") as unknown });
+    await shown(received).toMatchObject({ visible: true, href: `/inbox?submission=${String(saved?.id)}` });
     await shown(named("button", "Acknowledge:", { exact: false })).toMatchObject({ count: 0 });
     await site.click(named("button", "Mark as read:", { exact: false }));
     await expect

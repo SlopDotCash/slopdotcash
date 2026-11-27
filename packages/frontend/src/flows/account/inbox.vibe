@@ -227,7 +227,7 @@ export const inboxLayer = Layer.effect(Inbox, effect {
     if (before.busy || before.recipient === null || before.status !== "ready") return before
     const expected = before.recipient
     const mine = try begin()
-    try update((view) => ({ ...view, status: "loading", busy: true, done: undefined, actionError: undefined }))
+    try update((view) => ({ ...view, busy: true, done: undefined, actionError: undefined }))
     const work = effect {
       if (!(try owns(mine, expected))) return
       const wrote = write(expected) catch (failure) => ({ failure })

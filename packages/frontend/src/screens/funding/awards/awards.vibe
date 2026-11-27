@@ -143,40 +143,48 @@ function stopped(message: string) {
   return new AwardsStopped({ message })
 }
 
-effect function accept(view: MonthlyOwnerView) {
+effect function accept(view: MonthlyOwnerView, expectedActor?: string) {
   const { project, period, released, shown } = try AwardsDesk
   if (view.projectId !== project.id || view.period !== period) throw stopped(awardMessages.unverified)
+  if (expectedActor !== undefined && (try SubscriptionRef.get(shown)).actor !== expectedActor) return view
   released.network = deploymentOf(view.deployment)?.network ?? ""
-  try SubscriptionRef.update(shown, (current) => ({ ...current, view }))
+  try SubscriptionRef.update(shown, (current) => (expectedActor !== undefined && current.actor !== expectedActor ? current : { ...current, view }))
   return view
 }
 
 export effect function followAwards(account: number, githubId: string) {
   const { monthly, shown } = try AwardsDesk
-  try SubscriptionRef.set(shown, { view: undefined, actor: account === 0 ? "" : githubId })
+  const actor = account === 0 ? "" : githubId
+  try SubscriptionRef.set(shown, { view: undefined, actor })
   try monthly.follow(account, githubId, false)
   if (account === 0) return undefined
-  return try accept((try monthly.readMonth()).view)
+  return try accept((try monthly.readMonth()).view, actor)
 }
 
 export effect function refreshAwards() {
-  return try accept((try (try AwardsDesk).monthly.readMonth()).view)
+  const { monthly, shown } = try AwardsDesk
+  const actor = (try SubscriptionRef.get(shown)).actor
+  return try accept((try monthly.readMonth()).view, actor)
 }
 
 export effect function saveAllocation(githubUserId: string, grossBase: string, cut: boolean, reason: string) {
-  const { monthly } = try AwardsDesk
+  const { monthly, shown } = try AwardsDesk
+  const actor = (try SubscriptionRef.get(shown)).actor
   try monthly.editDraft(cut, reason)
   const saved = try monthly.save(githubUserId, grossBase, reason)
   if (saved.view === undefined) throw stopped(saved.message ? saved.message : monthlyNotice(saved.state.notice))
-  try accept(saved.view)
+  if ((try SubscriptionRef.get(shown)).actor !== actor) throw stopped("")
+  try accept(saved.view, actor)
   return githubUserId
 }
 
 export effect function finalizeAwards() {
-  const { monthly } = try AwardsDesk
+  const { monthly, shown } = try AwardsDesk
+  const actor = (try SubscriptionRef.get(shown)).actor
   const done = try monthly.finalize()
   if ("message" in done) throw stopped(done.message === "" ? monthlyNotice(done.state.notice) : done.message)
-  return try accept(done.view)
+  if ((try SubscriptionRef.get(shown)).actor !== actor) throw stopped("")
+  return try accept(done.view, actor)
 }
 
 export effect function setAutomatic(automatic: boolean) {

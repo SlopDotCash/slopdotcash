@@ -416,7 +416,7 @@ export function SecurityReports({ runtime, section, owner, list, filter, selecte
         ? { status: "failed", message: read.message }
         : { status: "ready", submissions, authorityUnavailable: read.authorityUnavailable, refreshError: read.error };
   const known = knownCaseIds(submissions, focusId);
-  const showsCases = selected !== null || list.authorityUnavailable === true || list.cases.some((record) => !known.includes(record.id));
+  const showsCases = selected !== null || (read !== null && (list.authorityUnavailable === true || list.cases.some((record) => !known.includes(record.id))));
   const shows = (summary: CaseSummary | undefined) => {
     const record = summary === undefined ? undefined : list.cases.find((entry) => entry.id === summary.id);
     return record === undefined ? filter === "all" : matchesReport(record, filter);

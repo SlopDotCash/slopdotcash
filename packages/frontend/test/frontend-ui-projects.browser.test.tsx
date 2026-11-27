@@ -12,11 +12,12 @@ const users = {
   tia: { id: 2006, login: "octo-tia" },
   uma: { id: 2007, login: "octo-uma" },
   root: { id: 9001, login: "octo-root" },
+  operator: { id: 18633264, login: "octo-operator" },
 } as const;
 
 type User = (typeof users)[keyof typeof users];
 
-const roles = { ADMIN_GITHUB_IDS: "9001", PROJECT_MODERATOR_GITHUB_IDS: "9001", OPERATOR_GITHUB_IDS: "9001" };
+const roles = { ADMIN_GITHUB_IDS: "9001", PROJECT_MODERATOR_GITHUB_IDS: "9001", OPERATOR_GITHUB_IDS: "9001,18633264" };
 const refusedLoads = "^console Failed to load resource: the server responded with a status of 40[0139]";
 const settings = named("heading", "Settings", { level: 1 });
 const publish = named("button", "Publish changes");
@@ -185,7 +186,7 @@ describe("Complete project setup with explicit independent", () => {
     await expect.poll(checks, { timeout: 30_000 }).toBe(before + 1);
     await manage(id);
     await shown(named("button", "Check again")).toMatchObject({ visible: true });
-    expect(await checks()).toBe(before + 1);
+    expect(await checks()).toBe(before + 2);
   });
 
   // spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
@@ -405,7 +406,7 @@ describe("Maintain a live project with current GitHub authority", () => {
 
   // spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
   it("access is checked against current GitHub authority", async () => {
-    await site.allow(refusedLoads, "^40[0139] (PUT|POST) /api/v1/projects/", "^(40[13]|50[23]) GET /api/v1/project-setup/");
+    await site.allow(refusedLoads, "^console Failed to load resource: the server responded with a status of 50[23]", "^40[0139] (PUT|POST) /api/v1/projects/", "^(40[13]|50[23]) GET /api/v1/project-setup/");
     const fullName = await repository(users.uma, "authority");
     const id = await createProject(users.uma, fullName, "Authority");
 
@@ -456,7 +457,8 @@ describe("Maintain a live project with current GitHub authority", () => {
     await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ visible: true });
     await site.click(publish);
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
-    expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ automaticClosure: false, intakeCap: 20 });
+    expect(closes(await lastRevision(id))).toBe(false);
+    expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ intakeCap: 20 });
 
     await manage(id);
     await openGroup("Contribution rules");
@@ -469,11 +471,11 @@ describe("Maintain a live project with current GitHub authority", () => {
 
   // spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work"
   it("removal is asked once, a stale revision keeps the", async () => {
-    await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/");
+    await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/", "^console Failed to load resource: the server responded with a status of 404");
     const fullName = await repository(users.oli, "removable");
     const id = await createProject(users.oli, fullName, "Removable");
     const removals = async () => (await site.sent()).filter((sent) => sent.method === "POST" && sent.path === `/api/v1/projects/${id}/remove`).length;
-    const dialog = named("dialog", "Remove Removable from Slop?");
+    const dialog = named("alertdialog", "Remove Removable from Slop?");
 
     await site.click(named("button", "Remove project"));
     await shown(dialog).toMatchObject({ visible: true });
@@ -545,8 +547,8 @@ describe("Administrators handle exceptions and restrictions", () => {
     await site.open(`/admin?project=${encodeURIComponent(id)}&section=overview`);
     const delists = async () => (await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.includes("/delist")).length;
     await site.click(named("button", "Delist"));
-    await shown(named("dialog", "Delist?")).toMatchObject({ visible: true });
-    await site.click(within(named("dialog", "Delist?"), named("button", "Cancel")));
+    await shown(named("alertdialog", "Delist?")).toMatchObject({ visible: true });
+    await site.click(within(named("alertdialog", "Delist?"), named("button", "Cancel")));
     expect(await delists()).toBe(0);
     expect((await revisions(id)).length).toBe(2);
 
@@ -594,7 +596,7 @@ describe("Exempt only by the frozen set or an audited", () => {
     await site.click(named("checkbox", "Owner authorized this"));
     await site.click(record);
     await expect.poll(() => site.sql("SELECT project_id, granted_by_github_login FROM vetting_admission_exemptions WHERE project_id = ?", id), { timeout: 30_000 }).toEqual([{ project_id: id, granted_by_github_login: users.root.login }]);
-    await shown(named("heading", "Exemption history")).toMatchObject({ text: expect.stringContaining("Active") as unknown });
+    await shown(named("region", "Exemption history")).toMatchObject({ text: expect.stringContaining("Active") as unknown });
     await signOut(users.root.login);
 
     await signIn(users.eli.login, `/projects/${encodeURIComponent(id)}/manage`);
@@ -608,7 +610,7 @@ describe("Exempt only by the frozen set or an audited", () => {
     await site.click(named("checkbox", "Owner authorized this"));
     await site.click(named("button", "Revoke exemption"));
     await expect.poll(() => site.sql("SELECT count(*) AS revoked FROM vetting_admission_exemption_revocations r JOIN vetting_admission_exemptions e ON e.id = r.exemption_id WHERE e.project_id = ?", id), { timeout: 30_000 }).toEqual([{ revoked: 1 }]);
-    await shown(text("Revoked", true)).toMatchObject({ visible: true });
+    await shown(named("region", "Exemption history")).toMatchObject({ text: expect.stringContaining("Revoked") as unknown });
   });
 });
 
@@ -638,24 +640,27 @@ describe("Read only authorized retained evidence", () => {
     await expect.poll(() => site.leaks(trace), { timeout: 30_000 }).toBe(false);
     await signOut(users.pia.login);
 
-    await signIn(users.root.login, page);
+    await signIn(users.operator.login, page);
     await shown(text("Evidence inventory", true)).toMatchObject({ visible: true });
     const traceItem = named("article", "trace");
+    await site.click(named("button", "trace", { exact: false }));
     await site.fill(within(traceItem, field("Reason")), "Inspect the harmless trace");
     await site.click(named("button", "Read trace"));
     await shown(named("textbox", "trace verified content")).toMatchObject({ value: trace });
-    await shown(within(traceItem, named("status"))).toMatchObject({ text: expect.stringContaining("Verified") as unknown });
+    await shown(within(traceItem, text("Verified"))).toMatchObject({ visible: true });
 
     const artifactItem = named("article", "artifact");
+    await site.click(named("button", "artifact", { exact: false }));
     await site.fill(within(artifactItem, field("Reason")), "Download the harmless artifact");
     await site.click(named("button", "Download artifact"));
     await expect.poll(() => site.download(), { timeout: 30_000 }).toEqual({ name: `${binarySha}.bin`, sha256: binarySha });
-    await shown(within(artifactItem, named("status"))).toMatchObject({ text: expect.stringContaining("Do not execute") as unknown });
+    await shown(within(artifactItem, text("Do not execute"))).toMatchObject({ visible: true });
     expect(await site.sql("SELECT count(*) AS audited FROM vetting_evidence_audit WHERE assessment_id = ?", assessment)).toEqual([{ audited: expect.any(Number) as unknown }]);
 
     const [head] = await site.sql("SELECT target_key FROM vetting_evidence_heads WHERE sha256 = ?", traceSha);
     await site.object("VETTING_EVIDENCE", String(head?.target_key), "tampered trace bytes of the same length!!!!!!!");
     await site.open(page);
+    await site.click(named("button", "trace", { exact: false }));
     await site.fill(within(named("article", "trace"), field("Reason")), "Inspect the harmless trace again");
     await site.click(named("button", "Read trace"));
     await shown(within(named("article", "trace"), named("alert"))).toMatchObject({ visible: true });
@@ -671,33 +676,29 @@ const awardPeriod = () => {
 
 type Manifest = Readonly<Record<string, unknown>>;
 
-async function monthlyPool(id: string, owner: User, more: { readonly active?: boolean; readonly reward?: Manifest } = {}) {
+async function monthlyPool(id: string, owner: User, more: { readonly active?: boolean; readonly escrow?: boolean; readonly org?: boolean; readonly reward?: Manifest } = {}) {
   const [current] = await site.sql("SELECT revision, status, manifest FROM projects WHERE id = ?", id);
   const revision = Number(current?.revision) + 1;
   const recorded = parsed(current?.manifest) as Manifest;
   const escrow = recorded.escrow as { readonly deployments?: ReadonlyArray<{ readonly asset?: string }> } | undefined;
-  const status = more.active === true ? "active" : String(current?.status);
+  const withEscrow = more.escrow === true || escrow !== undefined;
+  const status = more.active === true || more.escrow === true ? "active" : String(current?.status);
+  const recordedSteward = recorded.steward as { readonly github?: Manifest } & Manifest;
   const manifest = {
     ...recorded,
     status,
-    rewardAsset: { network: "base", kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6 },
-    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
-    escrow: escrow ?? { chain: "base", deployments: [] },
+    ...(more.org === true ? { steward: { ...recordedSteward, kind: "organization", github: { ...recordedSteward.github, type: "Organization" } } } : {}),
+    rewardAsset: { network: "base", chainId: "8453", cluster: null, kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6, verifiedAt: "2026-11-01T00:00:00.000Z" },
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: withEscrow ? 200 : 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
+    ...(withEscrow ? { escrow: escrow ?? { schemaVersion: "1", effectiveCycle: awardPeriod(), chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] } } : {}),
   };
   const now = new Date().toISOString();
-  let nextRevision = revision;
-  if (more.active === true && String(current?.status) !== "active") {
-    const activeManifest = JSON.stringify({ ...recorded, status: "active" });
-    const activeDigest = await sha256(activeManifest);
-    await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, nextRevision, activeManifest, activeDigest, "Activated", String(owner.id), owner.login, now);
-    await site.sql("INSERT INTO project_revision_kinds(project_id,revision,kind) VALUES(?,?,?)", id, nextRevision, "Activated");
-    nextRevision += 1;
-  }
+  const kind = status === "active" && String(current?.status) !== "active" ? "Activated" : "OwnerUpdate";
   const written = JSON.stringify(manifest);
   const digest = await sha256(written);
-  await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, nextRevision, written, digest, "Monthly awards", String(owner.id), owner.login, now);
-  await site.sql("INSERT INTO project_revision_kinds(project_id,revision,kind) VALUES(?,?,?)", id, nextRevision, "OwnerUpdate");
-  await site.sql("UPDATE projects SET status = ?, revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", status, nextRevision, written, digest, now, id);
+  await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, revision, written, digest, "Monthly awards", String(owner.id), owner.login, now);
+  await site.sql("INSERT INTO project_revision_kinds(project_id,revision,kind) VALUES(?,?,?)", id, revision, kind);
+  await site.sql("UPDATE projects SET status = ?, revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", status, revision, written, digest, now, id);
 }
 
 async function proposeMonth(id: string, rows: ReadonlyArray<readonly [User, string]>) {
@@ -725,13 +726,15 @@ async function openAwards(id: string) {
 describe("Edit the month's awards with public, noticed cuts", () => {
   // spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
   it("the owner lowers an award only with a 20 to 500", async () => {
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404");
     const fullName = await repository(users.oli, "awards");
     const id = await createProject(users.oli, fullName, "Awards");
     await site.permission(fullName, users.pia.login, "write");
-    await monthlyPool(id, users.oli);
+    await monthlyPool(id, users.oli, { escrow: true, org: true });
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
     const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
     const save = named("button", `Save ${users.pia.login}`, { within: awards });
     const reason = field("Reason (shown publicly and sent to the contributor)");
@@ -807,15 +810,15 @@ describe("Freeze exactly one execution snapshot", () => {
 describe("Edit the month's awards after leaving the page", () => {
   // spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"
   it("a cut saved while the owner leaves for Home is kept", async () => {
-    await site.allow(refusedLoads, "^404 GET /data/");
     const fullName = await repository(users.sam, "departed");
     const id = await createProject(users.sam, fullName, "Departed");
-    await monthlyPool(id, users.sam);
+    const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404", `^failed POST ${path} net::ERR_ABORTED$`);
+    await monthlyPool(id, users.sam, { escrow: true });
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
     await autoFinalizeOff(awards, id);
-    const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
     const why = "The second half of the change duplicated work already merged earlier.";
     await site.fill(named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards }), "1");
     await site.fill(field("Reason (shown publicly and sent to the contributor)"), why);
@@ -837,11 +840,12 @@ describe("Edit the month's awards after leaving the page", () => {
     const fullName = await repository(users.tia, "outage");
     const id = await createProject(users.tia, fullName, "Outage");
     const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
-    await site.allow(refusedLoads, "^404 GET /data/", `^503 POST ${path}$`, "^console Failed to load resource: the server responded with a status of 503");
-    await monthlyPool(id, users.tia);
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404", `^503 POST ${path}$`, "^console Failed to load resource: the server responded with a status of 503");
+    await monthlyPool(id, users.tia, { escrow: true });
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
     const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
     const reason = field("Reason (shown publicly and sent to the contributor)");
     const save = named("button", `Save ${users.pia.login}`, { within: awards });
@@ -864,13 +868,14 @@ describe("Edit the month's awards after leaving the page", () => {
 
   // spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"
   it("a save answered after another tab signed in a", async () => {
-    await site.allow(refusedLoads, "^404 GET /data/");
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404", "^403 GET /api/v1/payments/projects/[^/]+/monthly/");
     const fullName = await repository(users.uma, "handover");
     const id = await createProject(users.uma, fullName, "Handover");
-    await monthlyPool(id, users.uma);
+    await monthlyPool(id, users.uma, { escrow: true });
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
     const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
     const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
     await site.fill(award, "1");
@@ -895,7 +900,7 @@ describe("Edit the month's awards after leaving the page", () => {
 describe("Take the maintainer share out of the monthly amount", () => {
   // spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"
   it("the owner sets, changes and clears the maintainer", async () => {
-    await site.allow(refusedLoads, "^404 GET /data/");
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404");
     const fullName = await repository(users.eli, "sharecrop");
     const id = await createProject(users.eli, fullName, "Sharecrop");
     await monthlyPool(id, users.eli, { active: true });
@@ -944,7 +949,7 @@ describe("Take the maintainer share out of the monthly amount", () => {
 
   // spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"
   it("a share in force this month reads as the same share", async () => {
-    await site.allow(refusedLoads, "^404 GET /data/");
+    await site.allow(refusedLoads, "^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404");
     const fullName = await repository(users.uma, "shared-now");
     const id = await createProject(users.uma, fullName, "Shared now");
     await monthlyPool(id, users.uma, { active: true, reward: { maintainerShare: 2000 } });

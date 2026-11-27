@@ -356,9 +356,12 @@ effect function advanced(e: Enforcement, day: number) {
 export effect function replay(start: Start, history: ProjectHistory, today: number) {
   const revisions = try revisionsOf(history)
   const named = try namedRows(history)
+  const grantTimes = history.grants.map((grant) => millisOf(grant.granted_at))
   let state = startOf(start, originalOf(revisions, history.facts?.frozen_at ?? null))
   for (const item of try items(history, revisions, start.creator, named)) {
-    state = try advanced(state, Math.floor(item.at / dayMillis))
+    const calendarDay = Math.floor(item.at / dayMillis)
+    const beforeSameDayGrant = grantTimes.some((grantedAt) => Math.floor(grantedAt / dayMillis) === calendarDay && item.at < grantedAt)
+    state = try advanced(state, beforeSameDayGrant ? calendarDay - 1 : calendarDay)
     state = try item.apply(state)
   }
   state = try advanced(state, today)
