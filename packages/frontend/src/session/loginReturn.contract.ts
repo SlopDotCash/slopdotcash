@@ -1,7 +1,7 @@
 // spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"
 import type { ParsedNext } from "../../gen/frontend__composition.ts";
 import { vectors } from "../kernels/vectors.ts";
-import { parseNext } from "./loginReturn.ts";
+import { isLoginPathname, parseNext } from "./loginReturn.ts";
 
 const origin = "https://slop.cash";
 const foreign: ParsedNext = { tag: "ForeignOrMalformed" };
@@ -16,7 +16,13 @@ export const onlySameOriginPathsSurviveTheLoginReturn = vectors<string, ParsedNe
   ["?next=%2Faccount%23notifications", path("/account#notifications")],
   ["?next=%2Flogin%2F", foreign],
   ["?next=%2Flogin%2F%2F", foreign],
+  ["?next=%2Flogin%2F%2F%2F", foreign],
   ["?next=%2Flogin%2F%3Fnext%3D%252Finbox", foreign],
+  ["?next=%2F%256cogin", foreign],
+  ["?next=%2F%256cogin%2F", foreign],
+  ["?next=%2F%256cogin%2F%3Fnext%3D%252Finbox", foreign],
+  ["?next=%2Fa%2F..%2F%256cogin%2F", foreign],
+  ["?next=%2Flogin-help", path("/login-help")],
   ["?next=%2Flogin", foreign],
   ["?next=%2Flogin%3Fnext%3D%252Finbox", foreign],
   ["?next=%2F%2Fevil.test", foreign],
@@ -27,3 +33,15 @@ export const onlySameOriginPathsSurviveTheLoginReturn = vectors<string, ParsedNe
   ["?next=inbox", foreign],
   ["?next=javascript%3Aalert(1)", foreign],
 ], (search) => parseNext(search, origin));
+
+export const loginPathnamesMatchTheRouter = vectors<string, boolean>([
+  ["/login", true],
+  ["/login/", true],
+  ["/login///", true],
+  ["/%6cogin", true],
+  ["/%6cogin/", true],
+  ["/login/extra", false],
+  ["/login-help", false],
+  ["/%E0%A4%A", false],
+  ["/", false],
+], isLoginPathname);

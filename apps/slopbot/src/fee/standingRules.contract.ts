@@ -16,7 +16,10 @@ export const aCoverWithAnUnreadableWindowStartIsRecheckedDaily = contract({
   input: unreadable,
   run: (windowStart: string) =>
     coverReading({ window_start: windowStart, state: "pending", strike_seen_at: null }, { state: "open", merged: false, closed_at: null, labels: [] }, now),
-  invariant: (_windowStart: string, reading) => reading.state === "watch" && reading.nextCheckAt === new Date(now + dayMs).toISOString(),
+  invariant: (_windowStart: string, reading) =>
+    reading.state === "watch" &&
+    reading.nextCheckAt === new Date(now + dayMs).toISOString() &&
+    reading.unreadableTime === "window_start",
 });
 
 export const aCoverWithAnUnreadableStrikeTimeHealsAndStrikesAfterTheGrace = contract({
@@ -31,8 +34,10 @@ export const aCoverWithAnUnreadableStrikeTimeHealsAndStrikesAfterTheGrace = cont
     first.state === "pending" &&
     first.strikeSeenAt === new Date(now).toISOString() &&
     first.nextCheckAt === new Date(now + graceMs).toISOString() &&
+    first.unreadableTime === "strike_seen_at" &&
     afterGrace.state === "strike" &&
-    afterGrace.nextCheckAt === null,
+    afterGrace.nextCheckAt === null &&
+    afterGrace.unreadableTime === null,
 });
 
 export const readableTimesSchedulePendingGraceAndClampedWatchWindow = contract({
@@ -60,6 +65,8 @@ export const readableTimesSchedulePendingGraceAndClampedWatchWindow = contract({
     pending.state === "pending" &&
     pending.strikeSeenAt === seenIso &&
     pending.nextCheckAt === new Date(seenMs + graceMs).toISOString() &&
+    pending.unreadableTime === null &&
     watch.state === "watch" &&
-    watch.nextCheckAt === new Date(Math.max(now + 60_000, Math.min(now + dayMs, windowEnds + 60_000))).toISOString(),
+    watch.nextCheckAt === new Date(Math.max(now + 60_000, Math.min(now + dayMs, windowEnds + 60_000))).toISOString() &&
+    watch.unreadableTime === null,
 });

@@ -548,18 +548,47 @@ layer(World, { timeout: "240 seconds" })((it) => {
          VALUES (?, ?, 'sd_bad_strike', 9102, ?, ?, 'ada', 'widgets', '2026-11-20T00:00:00.000Z', '2026-11-20T00:00:00.000Z', '2026-11-20T00:00:00.000Z', 'pending', 0, 'not-a-date', ?, '2026-11-20T00:00:00.000Z')`,
       ).bind(repositoryId, badStrikePr, projectId, installationId, iso(tCheck)),
     ]))
-    const firstPass = try at(tCheck, checkStandingDeposits())
+    const UnreadableWarning = Schema.Struct({
+      depositId: Schema.String,
+      repositoryId: Schema.Number,
+      pullNumber: Schema.Number,
+      field: Schema.Literals(["window_start", "strike_seen_at"]),
+    })
+    effect function checkedWithWarnings(millis: number) {
+      const warnings: Array<typeof UnreadableWarning.Type> = []
+      const capture = Logger.layer([Logger.make((options) => {
+        const message: unknown = options.message
+        if (options.logLevel !== "Warn" || !Array.isArray(message) || message[0] !== "slopbot standing cover unreadable time") return
+        const detail = Option.getOrUndefined(Schema.decodeUnknownOption(UnreadableWarning)(message[1]))
+        if (detail !== undefined) warnings.push(detail)
+      })], { mergeWithExisting: true })
+      const value = try Effect.provide(at(millis, checkStandingDeposits()), capture)
+      warnings.sort((left, right) => left.depositId.localeCompare(right.depositId))
+      return { value, warnings }
+    }
+    const firstPass = try checkedWithWarnings(tCheck)
     const coversAfterFirst = (try Effect.promise(() => fees.db.prepare("SELECT deposit_id, state, strike_seen_at, next_check_at FROM standing_deposit_covers WHERE deposit_id IN ('sd_bad_window', 'sd_bad_strike') ORDER BY deposit_id").all())).results
-    const secondPass = try at(tCheck + 48 * hour, checkStandingDeposits())
+    const secondPass = try checkedWithWarnings(tCheck + 48 * hour)
     const coverAfterSecond = (try Effect.promise(() => fees.db.prepare("SELECT state, strike_seen_at, next_check_at FROM standing_deposit_covers WHERE deposit_id = 'sd_bad_strike'").all())).results[0]
     const depositAfterSecond = (try Effect.promise(() => fees.db.prepare("SELECT outcome, outcome_reason, strike_repository_id, strike_pull_number FROM standing_deposits WHERE id = 'sd_bad_strike'").all())).results[0]
     try same({ firstPass, coversAfterFirst, secondPass, coverAfterSecond, depositAfterSecond }, {
-      firstPass: { read: 2, decided: 0 },
+      firstPass: {
+        value: { read: 2, decided: 0 },
+        warnings: [
+          { depositId: "sd_bad_strike", repositoryId, pullNumber: badStrikePr, field: "strike_seen_at" },
+          { depositId: "sd_bad_window", repositoryId, pullNumber: badWindowPr, field: "window_start" },
+        ],
+      },
       coversAfterFirst: [
         { deposit_id: "sd_bad_strike", state: "pending", strike_seen_at: iso(tCheck), next_check_at: iso(tCheck + 48 * hour) },
         { deposit_id: "sd_bad_window", state: "watch", strike_seen_at: null, next_check_at: iso(tCheck + day) },
       ],
-      secondPass: { read: 2, decided: 1 },
+      secondPass: {
+        value: { read: 2, decided: 1 },
+        warnings: [
+          { depositId: "sd_bad_window", repositoryId, pullNumber: badWindowPr, field: "window_start" },
+        ],
+      },
       coverAfterSecond: { state: "strike", strike_seen_at: iso(tCheck), next_check_at: null },
       depositAfterSecond: { outcome: "kept_due", outcome_reason: "strike", strike_repository_id: repositoryId, strike_pull_number: badStrikePr },
     })

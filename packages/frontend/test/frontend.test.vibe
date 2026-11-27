@@ -1639,6 +1639,8 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           const navigated = try browser.navigate("Inbox")
           const foreign = try browser.saveReturn("?next=%2F%2Fevil.test")
           const foreignPath = try browser.returnPath()
+          const encodedLogin = try browser.saveReturn("?next=%2F%256cogin%2F")
+          const encodedLoginPath = try browser.returnPath()
           const saved = try browser.saveReturn("?next=%2Finbox")
           const signedOut = try shape()
           const octo = try signedInAs(world, "octo")
@@ -1665,12 +1667,14 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           const identityCalls = [...new Set(world.identityRequests)]
           const bindings = world.identityCookies()
           try same(
-            { loaded, navigated, foreign, foreignPath, saved, signedOut, octo, asOcto, octoView, received, began, writing, refreshed, keptText, hubot, asHubot, hubotView, lateRows, afterSwitch, erasedText, out, outView, cookie, erased, identityCalls, bindings },
+            { loaded, navigated, foreign, foreignPath, encodedLogin, encodedLoginPath, saved, signedOut, octo, asOcto, octoView, received, began, writing, refreshed, keptText, hubot, asHubot, hubotView, lateRows, afterSwitch, erasedText, out, outView, cookie, erased, identityCalls, bindings },
             {
               loaded: "checking",
               navigated: true,
               foreign: true,
               foreignPath: "/",
+              encodedLogin: true,
+              encodedLoginPath: "/",
               saved: true,
               signedOut: { navigation: [0, "Home", "Inbox", 0], browser: [0, 0, 0, "/inbox"] },
               octo: "octo",

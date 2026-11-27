@@ -10,6 +10,7 @@ import { loadRegistry, type RegistryBoot, type RegistryProject } from "../reads/
 import { settingsShownSignedOut } from "../screens/account/index.ts";
 import { InboxEmailLink } from "../screens/inbox/index.ts";
 import { projectRuntime } from "../screens/projects/reads.vibe";
+import { isLoginPathname } from "../session/loginReturn.ts";
 import { AccountControl, type OwnedProjectLink } from "./AccountControl.tsx";
 import { extraRouteOf, ExtraRoutePage } from "./extraRoutes.tsx";
 import { retryOnce, useOnce } from "./hooks.ts";
@@ -112,7 +113,7 @@ export function PageAccount({ runtime }: { runtime: PageRuntime }) {
     <AccountControl
       view={shown?.view ?? { status: "checking" }}
       loginHref={shown ? loginHrefFor(shown, address) : ""}
-      onLoginPage={pathname === "/login"}
+      onLoginPage={isLoginPathname(pathname)}
       signingOut={signing === "signingOut"}
       signOutFailed={signing === "failed"}
       onSignOut={signOutNow}
