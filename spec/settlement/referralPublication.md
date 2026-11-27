@@ -438,12 +438,39 @@ pure val claimReceiptValues = Set({ actor: 3, wallet: "wallet", cumulative: List
   { actor: 3, wallet: "wrong", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0, 0, 3, 0, 0), receipt: 2, height: 2, finalized: true },
   { actor: 3, wallet: "wallet", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0), receipt: 2, height: 2, finalized: true },
   { actor: 3, wallet: "wallet", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0, 0, 3, 0, 0), receipt: 2, height: 2, finalized: false })
-pure val weight_prepare = 30
-pure val weight_journal = 30
-pure val weight_submit = 30
-pure val weight_finalize = 30
-pure val weight_claim = 30
-pure val weight_voidRoot = 20
-pure val weight_loseObservation = 10
-pure val weight_retransmit = 10
+pure val weight_prepare = 3
+pure val weight_journal = 3
+pure val weight_submit = 3
+pure val weight_finalize = 3
+pure val weight_claim = 3
+pure val weight_voidRoot = 2
+pure val weight_loseObservation = 1
+pure val weight_retransmit = 1
+pure val eval_witness_sometimesUncertain = (
+  ("prepare", reviewedControl, filedLedger, 1, fundedChain, "merkle", true, "poster", R::RobinhoodTestnet, "owner"),
+  ("journal", reviewedControl, 1, 1, fundedChain, "poster", "owner"),
+  ("submit", reviewedControl, "owner"),
+  ("loseObservation", "owner"))
+pure val eval_witness_sometimesClaimed = (
+  ("prepare", reviewedControl, filedLedger, 1, fundedChain, "merkle", true, "poster", R::RobinhoodTestnet, "owner"),
+  ("journal", reviewedControl, 1, 1, fundedChain, "poster", "owner"),
+  ("submit", reviewedControl, "owner"),
+  ("finalize", { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true }, "owner"),
+  ("claim", { actor: 3, wallet: "wallet", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0, 0, 3, 0, 0), receipt: 2, height: 2, finalized: true }, "owner"))
+pure val eval_witness_sometimesVoided = (
+  ("prepare", reviewedControl, filedLedger, 1, fundedChain, "merkle", true, "poster", R::RobinhoodTestnet, "owner"),
+  ("journal", reviewedControl, 1, 1, fundedChain, "poster", "owner"),
+  ("submit", reviewedControl, "owner"),
+  ("finalize", { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true }, "owner"),
+  ("voidRoot", 1, 2, 2, true, "owner"))
+pure val eval_witness_sometimesTestnetPosting = (
+  ("prepare", reviewedControl, filedLedger, 1, fundedChain, "merkle", true, "poster", R::RobinhoodTestnet, "owner"),
+  ("journal", reviewedControl, 1, 1, fundedChain, "poster", "owner"),
+  ("submit", reviewedControl, "owner"),
+  ("finalize", { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true }, "owner"))
+pure val eval_witness_sometimesMainnetAfterActivation = (
+  ("prepare", reviewedControl, filedLedger, 1, fundedChain, "merkle", true, "poster", R::RobinhoodMainnet, "owner"),
+  ("journal", reviewedControl, 1, 1, fundedChain, "poster", "owner"),
+  ("submit", reviewedControl, "owner"),
+  ("finalize", { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true }, "owner"))
 ```

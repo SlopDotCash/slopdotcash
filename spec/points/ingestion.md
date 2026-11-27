@@ -204,4 +204,31 @@ pure val mValues = Set({ total: 6, digest: 9, parts: List({ digest: 1, bytes: 4 
 pure val readValues = Set(List({ digest: 1, bytes: 4, content: 1 }, { digest: 2, bytes: 2, content: 2 }),
   List({ digest: 1, bytes: 4, content: 1 }, { digest: 3, bytes: 2, content: 3 }))
 pure val wholeDigestValues = Set(9, 8)
+pure val eval_witness_sometimesRetriedThenReturned = (
+  ("begin", Get, GitHubApi, OtherPage, true),
+  ("respond", { status: 429, primaryDelay: 0, retryAfter: 1000, secondaryMessage: false }),
+  ("tick", 1000),
+  "retry",
+  ("respond", { status: 200, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
+)
+pure val eval_witness_sometimesSecondAttempt = (
+  ("begin", Get, GitHubApi, OtherPage, true),
+  ("respond", { status: 429, primaryDelay: 0, retryAfter: 1000, secondaryMessage: false }),
+  ("tick", 1000),
+  "retry"
+)
+pure val eval_witness_sometimesPageRetriedThenReturned = (
+  ("begin", Get, GitHubApi, ItemList, true),
+  ("respond", { status: 500, primaryDelay: 0, retryAfter: 0, secondaryMessage: false }),
+  ("tick", 1000),
+  "retry",
+  ("respond", { status: 200, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
+)
+pure val eval_witness_sometimesGatewayRetriedThenReturned = (
+  ("begin", Get, GitHubApi, OtherPage, true),
+  ("respond", { status: 502, primaryDelay: 0, retryAfter: 0, secondaryMessage: false }),
+  ("tick", 1000),
+  "retry",
+  ("respond", { status: 200, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
+)
 ```

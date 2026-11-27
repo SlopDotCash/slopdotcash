@@ -484,8 +484,31 @@ pure val gValues = Set(initial, { ...initial, gate: Recorded, updatedAt: 1793491
   { ...initial, gate: Paid, commentId: 41, labelPaid: true, updatedAt: 1793491200,
     feeItem: { ...askedItem, paid: true, paidAt: 1793491200 } },
   { ...initial, gate: Released, commentId: 41, updatedAt: 1793491200 })
-pure val weight_claimAsk = 6
-pure val weight_confirmAsk = 6
-pure val weight_observePaid = 6
-pure val weight_refreshPaid = 6
+pure val weight_claimAsk = 2
+pure val weight_confirmAsk = 2
+pure val weight_observePaid = 2
+pure val weight_refreshPaid = 2
+pure val eval_witness_sometimesReleasedReviewQueued = (
+  ("claimAsk", liveFacts),
+  ("confirmAsk", 41),
+  ("releaseChecked", { ...liveFacts, feeSetting: S::feeSettingAbsent, settingSince: 0 }, openPull, 41)
+)
+pure val eval_witness_sometimesAskedAgain = (
+  ("claimAsk", liveFacts),
+  ("confirmAsk", 41),
+  ("observePaid", 1793491200),
+  ("refreshPaid", liveFacts, openPull, 41),
+  "observeWithdrawn",
+  ("askAgain", liveFacts, openPull, 41)
+)
+pure val eval_witness_sometimesRefunded = (
+  ("claimAsk", liveFacts),
+  ("confirmAsk", 41),
+  ("observePaid", 1793491200),
+  ("elapse", 1209600),
+  ("refreshPaid", liveFacts, { ...openPull, open: false, closedAt: 1793491300 }, 41),
+  "reopenKept",
+  ("refreshPaid", liveFacts, { ...openPull, open: false, merged: true, closedAt: 1793491300 }, 41),
+  ("observeSettled", Refunded)
+)
 ```

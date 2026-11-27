@@ -97,4 +97,22 @@ pure def sometimesWrongSourceRefused(r: RuntimeReadback): bool =
 pure def sometimesDeploymentDrifted(r: RuntimeReadback): bool =
   r.phase == RuntimeUnavailable and r.calls == maxCalls and not(r.stable)
 pure val cpuMsValues = Set(-1, 0, 1, 300000, 300001)
+pure val eval_witness_sometimesMixedSelectionRefused = ("selectReadback", true, false)
+pure val eval_witness_sometimesWrongSourceRefused = (
+  ("selectReadback", true, true),
+  ("admit", true, true, true),
+  ("readDeployment", true),
+  "refuseCall")
+pure val eval_witness_sometimesDeploymentDrifted = (
+  ("selectReadback", true, true),
+  ("admit", true, true, true),
+  ("readDeployment", true),
+  ("readVersion", true, true, 1, Standard),
+  ("rereadDeployment", true, false))
+pure val eval_witness_sometimesObserved = (
+  ("selectReadback", true, true),
+  ("admit", true, true, true),
+  ("readDeployment", true),
+  ("readVersion", true, true, 1, Standard),
+  ("rereadDeployment", true, true))
 ```

@@ -222,9 +222,42 @@ pure val routingValues = Set(
   { checkedContext: true, eligibleRecipients: false, actingTechnicalApprover: true },
   { checkedContext: true, eligibleRecipients: false, actingTechnicalApprover: false })
 pure val byValues = Set(1, 2)
-pure val weight_claim = 35
-pure val weight_finish = 100
-pure val weight_reviewReport = 20
-pure val weight_replace = 45
-pure val weight_route = 50
+pure val weight_claim = 4
+pure val weight_finish = 10
+pure val weight_reviewReport = 2
+pure val weight_replace = 5
+pure val weight_route = 5
+pure val eval_witness_sometimesLegitimate = (
+  ("claim", 1, 1, true, 1),
+  ("finish", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: Surplus, exclusions: sampleExclusions },
+    Proposal({ phase: Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1))
+pure val eval_witness_sometimesNeedsInformation = (
+  ("claim", 1, 1, true, 1),
+  ("finish", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: true, route: Surplus, exclusions: sampleExclusions },
+    DuplicateEvidence, 1))
+pure val eval_witness_sometimesUnavailable = (
+  ("claim", 1, 1, true, 1),
+  ("finish", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: Surplus, exclusions: sampleExclusions },
+    Incomplete, 1))
+pure val eval_witness_sometimesScreenedWithOwnerExclusions = (
+  ("claim", 1, 1, true, 1),
+  ("finish", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: Surplus, exclusions: sampleExclusions },
+    Proposal({ phase: Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1))
+pure val eval_witness_sometimesRevised = (
+  ("claim", 1, 1, true, 1),
+  ("finish", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: Surplus, exclusions: sampleExclusions },
+    Proposal({ phase: Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("replace", 3, "revised", { isReporter: true, draftOrFailed: true, noAdvisory: true, caseNeedsInformation: false,
+    exactCaseCas: true, allowedCaseState: true, exactObjectStored: true, admitted: true }, 1))
+pure val eval_witness_sometimesRouted = (
+  ("claim", 1, 1, true, 1),
+  ("finish", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: Surplus, exclusions: sampleExclusions },
+    Proposal({ phase: Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("route", 3, { checkedContext: true, eligibleRecipients: true, actingTechnicalApprover: false }, 1))
 ```

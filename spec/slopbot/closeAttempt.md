@@ -364,18 +364,86 @@ pure val closeEventValues = Set({ itemNode: "pr", revision: "head", closedBy: Sl
 pure val recipientValues = Set(18633264, 202660855, 5)
 pure val reopenValues = Set({ itemNode: "pr", revision: "head", actor: 9, role: C::ReopenByMaintainer, at: 50 },
   { itemNode: "pr", revision: "head", actor: 6, role: C::ReopenByOther, at: 50 })
-pure val appellantValues = Set(5)
+pure val appellantValues = Set(5, 6)
 pure val appealOutcomeValues = Set({ itemNode: "pr", revision: "head", verdict: C::AppealUpheld })
 pure val itemStateValues = Set({ seq: 1, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedBySlopbot,
   installation: C::InstallationActive }, { seq: 2, itemNode: "pr", revision: "head", item: C::ItemClosed,
   closedBy: C::ClosedByHuman, installation: C::InstallationActive })
-pure val weight_observeRecheck = 4
-pure val weight_reserveClose = 10
-pure val weight_requestClose = 10
-pure val weight_confirmClose = 8
-pure val weight_rejectClose = 4
-pure val weight_confirmCloseComment = 6
-pure val weight_notifyModerator = 6
-pure val weight_commentBlocked = 6
-pure val weight_reopenOwnClose = 8
+pure val weight_observeRecheck = 2
+pure val weight_reserveClose = 3
+pure val weight_requestClose = 3
+pure val weight_confirmClose = 3
+pure val weight_rejectClose = 2
+pure val weight_confirmCloseComment = 2
+pure val weight_notifyModerator = 2
+pure val weight_commentBlocked = 2
+pure val weight_reopenOwnClose = 3
+pure val eval_refuse_canObserveAuthorAppeal = { appellant: 6 }
+pure val eval_witness_sometimesPendingAfterRequest = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose")
+pure val eval_witness_sometimesPendingAfterLeaseLost = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  ("observeRecheck", { ...freshRecheck, gate: { ...scamGate, seq: 3 }, lease: { ...heldLease, token: 12 } }))
+pure val eval_witness_sometimesBlockedAndCommented = (
+  ("observeRecheck", { ...freshRecheck, gate: { ...scamGate, seq: 3, activation: C::inactive } }),
+  "blockClose",
+  "commentBlocked")
+pure val eval_witness_sometimesCapacityRefusedAndCommented = (
+  ("observeRecheck", freshRecheck),
+  ("blockForCapacity", { repository: 7, itemNode: "pr", revision: "head", observedSeq: 2, leaseToken: 11, reason: CapReached }),
+  "commentBlocked")
+pure val eval_witness_sometimesConfirmedClose = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose",
+  ("confirmClose", { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }),
+  "confirmCloseComment")
+pure val eval_witness_sometimesRejectedThenReserved = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose",
+  ("rejectClose", { attemptId: 1, status: 422 }),
+  ("observeRecheck", { ...freshRecheck, gate: { ...scamGate, seq: 3 } }),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 2, fence: currentFence, leaseToken: 11, observedSeq: 3 }))
+pure val eval_witness_sometimesEveryModeratorNotified = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose",
+  ("confirmClose", { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }),
+  ("notifyModerator", 18633264),
+  ("notifyModerator", 202660855),
+  "addModeratorLabel")
+pure val eval_witness_sometimesReopenedScamCloseNotifiesNoOne = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose",
+  ("observeReopen", { itemNode: "pr", revision: "head", actor: 9, role: C::ReopenByMaintainer, at: 50 }),
+  ("confirmClose", { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }))
+pure val eval_witness_sometimesLateCloseReversed = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose",
+  ("observeReopen", { itemNode: "pr", revision: "head", actor: 9, role: C::ReopenByMaintainer, at: 50 }),
+  ("confirmClose", { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }),
+  ("observeItem", { seq: 1, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedBySlopbot, installation: C::InstallationActive }),
+  "reopenOwnClose")
+pure val eval_witness_sometimesAppealReopened = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose",
+  ("confirmClose", { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }),
+  ("observeAuthorAppeal", 5),
+  ("observeAppealOutcome", { itemNode: "pr", revision: "head", verdict: C::AppealUpheld }),
+  ("observeItem", { seq: 1, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedBySlopbot, installation: C::InstallationActive }),
+  "reopenOwnClose")
+pure val eval_witness_sometimesHumanCloseKept = (
+  ("observeRecheck", freshRecheck),
+  ("reserveClose", { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: currentFence, leaseToken: 11, observedSeq: 2 }),
+  "requestClose",
+  ("confirmClose", { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }),
+  ("observeAppealOutcome", { itemNode: "pr", revision: "head", verdict: C::AppealUpheld }),
+  ("observeItem", { seq: 2, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedByHuman, installation: C::InstallationActive }))
 ```

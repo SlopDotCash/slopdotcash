@@ -723,34 +723,34 @@ pure val approvalValues: Set[RR::ReserveRelease] = Set(approvalSample, { ...appr
   { ...approvalSample, root: "q", reserved: List(8), originalReserve: List(8) })
 pure val receiptValues: Set[RR::ReleaseReceipt] = Set({ attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: true, succeeded: true },
   { attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: false, succeeded: true })
-pure val weight_materialize = 5
+pure val weight_materialize = 2
 pure val weight_deposit = 1
-pure val weight_propose = 5
-pure val weight_autoFreeze = 5
-pure val weight_createObligations = 5
+pure val weight_propose = 2
+pure val weight_autoFreeze = 2
+pure val weight_createObligations = 2
 pure val weight_commitObligation = 1
-pure val weight_admitRoot = 8
+pure val weight_admitRoot = 3
 pure val weight_observeClock = 1
 pure val weight_withdraw = 1
-pure val weight_releaseReserve = 6
+pure val weight_releaseReserve = 2
 pure val weight_upgradeToRelease = 1
-pure val weight_advanceCursor = 4
-pure val weight_advanceZeroRemaining = 4
-pure val weight_deploy = 3
-pure val weight_openMonth = 5
+pure val weight_advanceCursor = 2
+pure val weight_advanceZeroRemaining = 2
+pure val weight_deploy = 2
+pure val weight_openMonth = 2
 pure val weight_observeEligibility = 1
 pure val weight_observeHead = 1
-pure val weight_observeRevision = 5
+pure val weight_observeRevision = 2
 pure val weight_commitManualAward = 1
-pure val weight_observeConflict = 2
-pure val weight_observeExistingAward = 2
-pure val weight_payAward = 2
-pure val weight_observePaid = 2
+pure val weight_observeConflict = 1
+pure val weight_observeExistingAward = 1
+pure val weight_payAward = 1
+pure val weight_observePaid = 1
 pure val weight_adjust = 1
 pure val weight_finalize = 1
 pure val weight_observeSettings = 1
 pure val weight_setMonthly = 1
-pure val weight_noteUnderfunded = 2
+pure val weight_noteUnderfunded = 1
 pure val weight_pledgeMonths = 1
 pure val eval_witness_sometimesCursorPassedLeaf = (
   ("deploy", E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true, "owner"),
@@ -833,4 +833,82 @@ pure val eval_witness_sometimesObligationPaid = (
   ("materialize", leafBase, blockEvent(3), "owner"),
   ("payAward", 1, "w1", 1, blockEvent(4), "owner"),
   ("observePaid", 1, "owner"))
+pure val eval_witness_sometimesManualObligation = (
+  ("deploy", E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true, "owner"),
+  ("openMonth", 202611, "owner"),
+  ("observeEligibility", MO::eligible, "owner"),
+  ("observeRevision", MO::revisionSample, "owner"),
+  ("observeClock", 1796083300, "owner"),
+  ("propose", MO::snapshotSample, List(), MO::revisionSample, "owner"),
+  ("observeClock", 1796342400, "owner"),
+  ("autoFreeze", "owner"),
+  ("deposit", { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1), "owner"),
+  ("observeHead", 1796342440, "owner"),
+  ("observeClock", 1796343100, "owner"),
+  ("createObligations", List(0), List(), "owner"),
+  ("commitObligation", 1, blockEvent(2), "owner"))
+pure val eval_witness_sometimesLeafObligation = (
+  ("deploy", E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true, "owner"),
+  ("openMonth", 202611, "owner"),
+  ("observeEligibility", MO::eligible, "owner"),
+  ("observeRevision", MO::revisionSample, "owner"),
+  ("observeClock", 1796083300, "owner"),
+  ("propose", MO::snapshotSample, List(), MO::revisionSample, "owner"),
+  ("observeClock", 1796342400, "owner"),
+  ("autoFreeze", "owner"),
+  ("deposit", { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1), "owner"),
+  ("observeHead", 1796342440, "owner"),
+  ("observeClock", 1796343100, "owner"),
+  ("createObligations", List(0), List(), "owner"),
+  ("admitRoot", rootSample, blockEvent(2), "owner"),
+  ("materialize", leafBase, blockEvent(3), "owner"))
+pure val eval_witness_sometimesUnderfundedThenDeposit = (
+  ("deploy", E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true, "owner"),
+  ("openMonth", 202611, "owner"),
+  ("observeEligibility", MO::eligible, "owner"),
+  ("observeRevision", MO::revisionSample, "owner"),
+  ("observeClock", 1796083300, "owner"),
+  ("propose", MO::snapshotSample, List(), MO::revisionSample, "owner"),
+  ("observeClock", 1796342400, "owner"),
+  ("autoFreeze", "owner"),
+  ("observeHead", 1796342400, "owner"),
+  ("noteUnderfunded", List(0), List(), "owner"),
+  ("deposit", { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1), "owner"),
+  ("observeHead", 1796342440, "owner"),
+  ("observeClock", 1796343100, "owner"),
+  ("createObligations", List(0), List(), "owner"))
+pure val eval_witness_sometimesFundedWithPledgeHeldBack = (
+  ("deploy", E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true, "owner"),
+  ("openMonth", 202611, "owner"),
+  ("observeEligibility", MO::eligible, "owner"),
+  ("observeRevision", MO::revisionSample, "owner"),
+  ("observeClock", 1796083300, "owner"),
+  ("propose", MO::snapshotSample, List(), MO::revisionSample, "owner"),
+  ("observeClock", 1796342400, "owner"),
+  ("autoFreeze", "owner"),
+  ("deposit", { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1), "owner"),
+  ("pledgeMonths", 202612, 1, List(2), blockEvent(2), "owner"),
+  ("observeHead", 1796342440, "owner"),
+  ("observeClock", 1796343100, "owner"),
+  ("createObligations", List(0), List(), "owner"))
+pure val eval_witness_sometimesConflicted = (
+  ("deploy", E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true, "owner"),
+  ("openMonth", 202611, "owner"),
+  ("observeEligibility", MO::eligible, "owner"),
+  ("observeRevision", MO::revisionSample, "owner"),
+  ("observeClock", 1796083300, "owner"),
+  ("propose", MO::snapshotSample, List(), MO::revisionSample, "owner"),
+  ("observeClock", 1796342400, "owner"),
+  ("autoFreeze", "owner"),
+  ("deposit", { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1), "owner"),
+  ("observeHead", 1796342440, "owner"),
+  ("observeClock", 1796343100, "owner"),
+  ("createObligations", List(0), List(), "owner"),
+  ("commitManualAward", monthKey(1), 2, List(2), blockEvent(2), "owner"),
+  ("observeConflict", 1, "owner"))
+pure val eval_witness_sometimesManualAwardOutsideMonth = (
+  ("deploy", E::baseAsset, E::cleanMint, E::OrdinaryPurpose, 0, List(10), true, "owner"),
+  ("openMonth", 202611, "owner"),
+  ("deposit", { vault: "vault", network: E::Base, token: "usdc", amount: List(12) }, blockEvent(1), "owner"),
+  ("commitManualAward", monthKey(4), 1, List(2), blockEvent(2), "owner"))
 ```

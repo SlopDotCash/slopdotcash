@@ -305,4 +305,20 @@ pure val timeValues = Set(4000, 12000, 16000, 75000, 175000, 181000)
 pure val outputValues = Set({ manifest: 1, receipt: 2, boundManifest: 1, scope: scopeSample, checkedExact: true, ownershipComplete: true, missingMonths: 0 })
 pure val choiceValues = Set({ monthly: false, candidateMonth: false, apply: true,
   authority: { manual: true, onMain: true, repository: 1, head: 2 }, observedMain: 2, registry: 1 })
+pure val eval_witness_sometimesCheckpoint = (
+  ("admit", { authority: { manual: true, onMain: true, repository: 1, head: 2 }, original: scopeSample, restoring: false,
+    artifact: { repository: 1, head: 1, main: true, manual: true, collectorWorkflow: true, ancestorVerified: true, exactBytesVerified: true },
+    replay: { saved: scopeSample, reconstructed: scopeSample, verifiedBaseline: 1, journalPrefix: 1, cutoffSupplied: false, requestedCutoff: 0 },
+    retainedIndex: Set(1).exclude(Set(1)) }),
+  ("request", { key: 1, kind: NewEvidence, canonicalRead: true }),
+  ("request", { key: 1, kind: NewEvidence, canonicalRead: true }),
+  ("request", { key: 1, kind: NewEvidence, canonicalRead: true }),
+  ("request", { key: 1, kind: NewEvidence, canonicalRead: true }),
+  ("reachBudget", { key: 1, kind: NewEvidence, canonicalRead: true }),
+  ("failRead", { number: 1, key: 1 }),
+  ("failRead", { number: 2, key: 1 }),
+  ("failRead", { number: 3, key: 1 }),
+  ("failRead", { number: 4, key: 1 }),
+  "drain"
+)
 ```

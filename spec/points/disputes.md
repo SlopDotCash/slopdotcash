@@ -273,9 +273,14 @@ pure val observedAtValues = Set(0, 300, 600, 1200, 604800)
 pure val availabilityValues = Set(Available, Restricted, NoInstallation)
 pure val confidenceHundredthsValues = Set(40, 95)
 pure val reasonLengthValues = Set(0, 20)
-pure val weight_file = 6
-pure val weight_claim = 6
-pure val weight_startCall = 5
-pure val weight_draft = 5
-pure val weight_release = 2
+pure val weight_file = 2
+pure val weight_claim = 2
+pure val weight_startCall = 2
+pure val weight_draft = 2
+pure val weight_release = 1
+pure val eval_witness_sometimesOverdueEscalated = (
+  ("file", 5, { revision: "r1", recipient: 5, current: true, integrityVerified: true }, 12, "s1"),
+  ("observeTime", slopbotWorker, 604800),
+  ("escalateOverdue", slopbotWorker)
+)
 ```

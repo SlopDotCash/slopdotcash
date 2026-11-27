@@ -377,10 +377,78 @@ pure val factsValues = Set(C::Received, C::NeedsInformation, C::Triaging, C::Con
 pure val nowMsValues = Set(1, 604800000, 604800001, 1209600001)
 pure val noticeValues = Set(noClaimTry, { triedAt: 0, retriedAt: 1 }, { triedAt: 1, retriedAt: 0 }, { triedAt: 604800000, retriedAt: 1 })
 pure val resultValues = Set(OwnersTold, NobodyToTell, TryFailed)
-pure val weight_pay = 6
-pure val weight_advance = 6
-pure val weight_decideOutcome = 8
-pure val weight_recordSent = 4
-pure val weight_routineDecide = 6
-pure val weight_decide = 6
+pure val weight_pay = 2
+pure val weight_advance = 2
+pure val weight_decideOutcome = 3
+pure val weight_recordSent = 2
+pure val weight_routineDecide = 2
+pure val weight_decide = 2
+pure val eval_witness_sometimesAsked = ("receive", -3, false, true)
+pure val eval_witness_sometimesRecordOnly = (
+  ("setMode", -3, DepositDryRun),
+  ("receive", -3, false, true),
+  ("claimScreening", -3))
+pure val eval_witness_sometimesExemptNotAsked = ("receive", -3, true, true)
+pure val eval_witness_sometimesHeld = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("unpay", -4))
+pure val eval_witness_sometimesHeldReportRevised = (
+  ("receive", -3, false, true),
+  ("saveVersion", 1, "revised"))
+pure val eval_witness_sometimesPaidAndScreened = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("claimScreening", -3))
+pure val eval_witness_sometimesReleased = (
+  ("receive", -3, false, true),
+  ("setMode", -3, DepositOff),
+  ("release", -3))
+pure val eval_witness_sometimesReleasedAndScreened = (
+  ("receive", -3, false, true),
+  ("setMode", -3, DepositOff),
+  ("release", -3),
+  ("claimScreening", -3))
+pure val eval_witness_sometimesRefundedAfterResponse = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("reviewReport", 2, S::Forward),
+  ("decideOutcome", -3),
+  ("recordSent", -4, false))
+pure val eval_witness_sometimesSentBackWhenSilent = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("advance", 1209600000, -3),
+  ("decideOutcome", -3))
+pure val eval_witness_sometimesNoProofCloseSentBack = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("advance", 900000, -3),
+  ("routineDecide", -2, C::RoutineNeedsProof),
+  ("advance", 1209600000, -3),
+  ("routineDecide", -2, C::RoutineNoProof),
+  ("decideOutcome", -3))
+pure val eval_witness_sometimesDuplicateKept = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("decide", 2, { finding: C::Duplicate, severity: T::SeverityUnset, loss: T::LossUnset, inScope: true, rootCause: 1, duplicateOf: 9, declareRelated: false, spam: false }),
+  ("advance", 604800000, -3),
+  ("decideOutcome", -3),
+  ("recordSent", -4, true))
+pure val eval_witness_sometimesSpamKept = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("decide", 2, { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: true }),
+  ("advance", 604800000, -3),
+  ("decideOutcome", -3))
+pure val eval_witness_sometimesPaidThenTurnedOffSentBack = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("setMode", -3, DepositOff),
+  ("decideOutcome", -3))
+pure val eval_witness_sometimesReclaimedBeforeAnOutcome = (
+  ("receive", -3, false, true),
+  ("pay", -4),
+  ("recordSent", -4, false))
+pure val eval_refuse_canAdvance = { ms: 0 }
 ```

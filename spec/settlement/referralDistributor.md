@@ -227,11 +227,26 @@ pure val proofRootValues = Set("root", "later", "wrong")
 pure val walletValues = Set("wallet", "wrong")
 pure val destinationValues = Set("owner", "")
 // These weights prioritize complete paths; all invalid values remain in the input sets.
-pure val weight_deploy = 15
-pure val weight_deposit = 20
-pure val weight_postRoot = 25
-pure val weight_claim = 30
-pure val weight_voidLast = 15
-pure val weight_tick = 15
-pure val weight_rescue = 15
+pure val weight_deploy = 2
+pure val weight_deposit = 3
+pure val weight_postRoot = 3
+pure val weight_claim = 4
+pure val weight_voidLast = 2
+pure val weight_tick = 2
+pure val weight_rescue = 2
+pure val eval_witness_sometimesClaimed = (
+  ("deploy", "token", List(1), List(10), 0, "owner", "poster", 1, "owner"),
+  ("deposit", List(10), "token", 1, true, "owner"),
+  ("postRoot", 0, "root", List(10), "poster"),
+  ("claim", "wallet", List(3), "root", true, true, "wallet"))
+pure val eval_witness_sometimesVoided = (
+  ("deploy", "token", List(1), List(10), 0, "owner", "poster", 1, "owner"),
+  ("deposit", List(10), "token", 1, true, "owner"),
+  ("postRoot", 0, "root", List(10), "poster"),
+  ("voidLast", 0, "owner"))
+pure val eval_witness_sometimesRescued = (
+  ("deploy", "token", List(1), List(10), 0, "owner", "poster", 1, "owner"),
+  ("deposit", List(10), "token", 1, true, "owner"),
+  ("tick", 31536001, "owner"),
+  ("rescue", "owner", true, "owner"))
 ```

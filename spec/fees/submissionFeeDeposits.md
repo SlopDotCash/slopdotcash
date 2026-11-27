@@ -324,4 +324,65 @@ pure def sometimesShortDepositRefunded(d: FeeDeposit): bool = d.state == Refunde
 pure def sometimesUnknownItemRefunded(d: FeeDeposit): bool = d.state == Refunded and d.reason == UnknownItem
 pure def sometimesUnlistedTokenReclaimed(d: FeeDeposit): bool = d.state == Reclaimed and d.reason == TokenNotAccepted
 pure def sometimesReclaimRefundsItsItem(d: FeeDeposit): bool = d.state == Reclaimed and d.itemOutcome == RefundedOutcome
+pure val eval_witness_sometimesPaidBeforeFinal = (
+  ("ask", Slopbot),
+  ("deposit", { kind: T::StableToken, keptToMatches: true, amountCovers: true }, Chain),
+  ("confirm", Chain),
+  ("recordConfirmed", Worker),
+  ("judge", Worker))
+pure val eval_witness_sometimesRefundedOnMerge = (
+  ("ask", Slopbot),
+  ("deposit", { kind: T::StableToken, keptToMatches: true, amountCovers: true }, Chain),
+  ("confirm", Chain),
+  ("finalize", Chain),
+  ("recordFinal", Worker),
+  ("judge", Worker),
+  ("decide", RefundDueOutcome, Slopbot),
+  ("markDue", Worker),
+  ("resolve", Chain),
+  ("finalizeEvent", Chain),
+  ("recordResolution", Worker))
+pure val eval_witness_sometimesKeptAsIncome = (
+  ("ask", Slopbot),
+  ("deposit", { kind: T::StableToken, keptToMatches: true, amountCovers: true }, Chain),
+  ("confirm", Chain),
+  ("finalize", Chain),
+  ("recordFinal", Worker),
+  ("judge", Worker),
+  ("decide", KeptDueOutcome, Slopbot),
+  ("markDue", Worker),
+  ("resolve", Chain),
+  ("finalizeEvent", Chain),
+  ("recordResolution", Worker))
+pure val eval_witness_sometimesShortDepositRefunded = (
+  ("ask", Slopbot),
+  ("deposit", { kind: T::StableToken, keptToMatches: true, amountCovers: false }, Chain),
+  ("confirm", Chain),
+  ("finalize", Chain),
+  ("recordFinal", Worker),
+  ("judge", Worker),
+  ("markDue", Worker),
+  ("resolve", Chain),
+  ("finalizeEvent", Chain),
+  ("recordResolution", Worker))
+pure val eval_witness_sometimesUnknownItemRefunded = (
+  ("deposit", { kind: T::StableToken, keptToMatches: true, amountCovers: true }, Chain),
+  ("confirm", Chain),
+  ("finalize", Chain),
+  ("recordFinal", Worker),
+  ("endGrace", Worker),
+  ("judge", Worker),
+  ("markDue", Worker),
+  ("resolve", Chain),
+  ("finalizeEvent", Chain),
+  ("recordResolution", Worker))
+pure val eval_witness_sometimesUnlistedTokenReclaimed = (
+  ("deposit", { kind: T::NoToken, keptToMatches: false, amountCovers: false }, Chain),
+  ("confirm", Chain),
+  ("finalize", Chain),
+  ("recordFinal", Worker),
+  ("judge", Worker),
+  ("reclaim", Chain),
+  ("finalizeEvent", Chain),
+  ("recordResolution", Worker))
 ```

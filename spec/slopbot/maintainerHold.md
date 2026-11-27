@@ -180,10 +180,16 @@ pure val reopenValues = Set({ itemNode: "pr", revision: "head", actor: 9, role: 
   { itemNode: "pr", revision: "head", actor: 5, role: ReopenByAuthor, at: 50 })
 pure val appealOutcomeValues = Set({ itemNode: "pr", revision: "head", verdict: AppealUpheld })
 pure val removalValues = Set({ itemNode: "pr", revision: "head", confirmedRemoval: true })
-pure val weight_notifyMaintainer = 8
-pure val weight_dispatchHold = 8
-pure val weight_labelUncertain = 8
-pure val weight_resolveMaintainerAction = 4
-pure val weight_supersedeHold = 4
-pure val weight_removeUncertainLabel = 6
+pure val weight_notifyMaintainer = 2
+pure val weight_dispatchHold = 2
+pure val weight_labelUncertain = 2
+pure val weight_resolveMaintainerAction = 1
+pure val weight_supersedeHold = 1
+pure val weight_removeUncertainLabel = 2
+pure val eval_witness_sometimesMaintainerActed = (
+  "notifyMaintainer",
+  ("observeTime", 604800),
+  "dispatchHold",
+  ("resolveMaintainerAction", { ...dueObservation, timeline: MaintainerAction })
+)
 ```

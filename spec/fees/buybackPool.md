@@ -377,12 +377,37 @@ pure val burnRequestValues = Set({ tx: 25, quantity: List(3), value: 5000000, ga
   { tx: 25, quantity: List(1), value: 5000000, gasValue: 1000, destination: B::deadAddress, tokenPaused: false },
   { tx: 25, quantity: List(3), value: 5000000, gasValue: 1000, destination: B::deadAddress, tokenPaused: true },
   { tx: 25, quantity: List(3), value: 4000000, gasValue: 1000, destination: B::deadAddress, tokenPaused: false })
-pure val weight_publishWorker = 4
-pure val weight_verifyReadiness = 4
-pure val weight_creditArrival = 5
-pure val weight_beginRun = 5
-pure val weight_purchase = 6
-pure val weight_settlePurchase = 5
-pure val weight_burn = 5
-pure val weight_settleBurn = 5
+pure val weight_publishWorker = 2
+pure val weight_verifyReadiness = 2
+pure val weight_creditArrival = 2
+pure val weight_beginRun = 2
+pure val weight_purchase = 2
+pure val weight_settlePurchase = 2
+pure val weight_burn = 2
+pure val weight_settleBurn = 2
+pure val eval_witness_sometimesOtherAssetPurchased = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("recordRobinhoodFee", { receipt: 3, asset: 2, amount: 100000000, chainTime: B::buybackStart }, R::Worker),
+  ("reserveLocalShare", 2, 50000000, R::Worker),
+  ("beginRun", R::Worker),
+  ("purchase", { route: RouteFound, tx: 24, asset: 2, amountIn: 50000000, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 }, R::Worker)
+)
+pure val eval_witness_sometimesBurnPending = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("beginRun", R::Worker),
+  ("receiveSlopFee", { receipt: 5, quantity: List(4), chainTime: B::buybackStart }, R::Worker),
+  ("decideBurn", { tx: 25, quantity: List(1), value: 4000000, gasValue: 1000, destination: B::deadAddress, tokenPaused: false }, R::Worker)
+)
+pure val eval_witness_sometimesBurnRetried = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("beginRun", R::Worker),
+  ("receiveSlopFee", { receipt: 5, quantity: List(4), chainTime: B::buybackStart }, R::Worker),
+  ("burn", { tx: 25, quantity: List(1), value: 5000000, gasValue: 1000, destination: B::deadAddress, tokenPaused: false }, R::Worker),
+  ("settleBurn", { tx: 25, succeeded: false, finalized: true }, R::Worker)
+)
 ```

@@ -134,4 +134,16 @@ value allowed by their declared types and product rules.
 
 ```quint
 pure val viaValues = Set("", "a", "b")
+pure val eval_witness_sometimesSiblingDetails = (
+  ("authenticate", 1),
+  ("openDetail", 1, 1, 1, true),
+  ("openDetail", 1, 1, 2, true)
+)
+pure val eval_witness_sometimesReportSubmitted = (
+  ("authenticate", 1),
+  ("beginReport", 1),
+  ("editReport", 1, true),
+  "reviewReport",
+  ("submitReport", 1)
+)
 ```

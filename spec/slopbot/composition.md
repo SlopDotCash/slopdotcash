@@ -318,22 +318,60 @@ pure val siblingStatusValues = Set(A::NoSiblingHold)
 pure val itemStateValues = Set({ seq: 1, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedBySlopbot,
   installation: C::InstallationActive }, { seq: 2, itemNode: "pr", revision: "head", item: C::ItemClosed,
   closedBy: C::ClosedByHuman, installation: C::InstallationActive })
-pure val weight_registerRun = 6
-pure val weight_recordOpened = 6
-pure val weight_claimReview = 6
-pure val weight_observeRecheck = 6
-pure val weight_reserveClose = 10
-pure val weight_requestClose = 10
-pure val weight_confirmClose = 10
-pure val weight_notifyModerator = 6
-pure val weight_openAppeal = 8
-pure val weight_draftAppeal = 8
-pure val weight_observeBan = 8
-pure val weight_observeSibling = 8
-pure val weight_escalateAppeal = 8
-pure val weight_decideAppeal = 8
-pure val weight_observeItem = 6
-pure val weight_reopenOwnClose = 8
+pure val weight_registerRun = 2
+pure val weight_recordOpened = 2
+pure val weight_claimReview = 2
+pure val weight_observeRecheck = 2
+pure val weight_reserveClose = 3
+pure val weight_requestClose = 3
+pure val weight_confirmClose = 3
+pure val weight_notifyModerator = 2
+pure val weight_openAppeal = 2
+pure val weight_draftAppeal = 2
+pure val weight_observeBan = 2
+pure val weight_observeSibling = 2
+pure val weight_escalateAppeal = 2
+pure val weight_decideAppeal = 2
+pure val weight_observeItem = 2
+pure val weight_reopenOwnClose = 2
+pure val eval_witness_sometimesParticipationProven = (
+  ("registerRun", 5, "run-a"),
+  ("recordOpened", 5, 1),
+  ("observeRecheck", slopbotWorker, { gate: { ...CA::scamGate, seq: 2 }, fence: CA::currentFence, lease: CA::noLease }))
+pure val eval_witness_sometimesReviewCompletedAfterClose = (
+  ("registerRun", 5, "run-a"),
+  ("recordOpened", 5, 1),
+  ("observeTime", slopbotWorker, 2),
+  ("claimReview", slopbotWorker, 1, 4, R::initial, R::AdvisoryReview),
+  ("observeRecheck", slopbotWorker, { gate: { ...CA::scamGate, seq: 2 }, fence: CA::currentFence, lease: CA::noLease }),
+  ("reserveClose", slopbotWorker, { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: CA::currentFence, leaseToken: 1, observedSeq: 2 }),
+  ("requestClose", slopbotWorker),
+  ("rejectClose", githubWebhook, { attemptId: 1, status: 422 }),
+  ("observeRecheck", slopbotWorker, { gate: { ...CA::scamGate, seq: 3 }, fence: CA::currentFence, lease: CA::noLease }),
+  ("reserveClose", slopbotWorker, { repository: 7, itemNode: "pr", revision: "head", attemptId: 2, fence: CA::currentFence, leaseToken: 1, observedSeq: 3 }),
+  ("requestClose", slopbotWorker),
+  ("confirmClose", githubWebhook, { itemNode: "pr", revision: "head", closedBy: CA::SlopbotApp, closedAt: 100 }),
+  ("confirmCloseComment", slopbotWorker),
+  ("finishReview", slopbotWorker, 1, L::Completed))
+pure val eval_witness_sometimesScamDebitedAndNotified = (
+  ("registerRun", 5, "run-a"),
+  ("recordOpened", 5, 1),
+  ("claimReview", slopbotWorker, 1, 4, R::initial, R::AdvisoryReview),
+  ("observeRecheck", slopbotWorker, { gate: { ...CA::scamGate, seq: 2 }, fence: CA::currentFence, lease: CA::noLease }),
+  ("reserveClose", slopbotWorker, { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: CA::currentFence, leaseToken: 1, observedSeq: 2 }),
+  ("requestClose", slopbotWorker),
+  ("confirmClose", githubWebhook, { itemNode: "pr", revision: "head", closedBy: CA::SlopbotApp, closedAt: 100 }),
+  ("notifyModerator", slopbotWorker, 18633264))
+pure val eval_witness_sometimesReopenReversedDebit = (
+  ("registerRun", 5, "run-a"),
+  ("recordOpened", 5, 1),
+  ("claimReview", slopbotWorker, 1, 4, R::initial, R::AdvisoryReview),
+  ("observeRecheck", slopbotWorker, { gate: { ...CA::scamGate, seq: 2 }, fence: CA::currentFence, lease: CA::noLease }),
+  ("reserveClose", slopbotWorker, { repository: 7, itemNode: "pr", revision: "head", attemptId: 1, fence: CA::currentFence, leaseToken: 1, observedSeq: 2 }),
+  ("requestClose", slopbotWorker),
+  ("confirmClose", githubWebhook, { itemNode: "pr", revision: "head", closedBy: CA::SlopbotApp, closedAt: 100 }),
+  ("retainReopen", githubWebhook, maintainerReopen),
+  ("confirmReopen", slopbotWorker, { source: maintainerReopen, node: "pr", currentRevision: "head", author: 5, itemState: W::ClosedByBot, maintainer: true, existingDebit: true, reversalOnly: false }))
 pure val eval_witness_sometimesDeniedAppealKeepsDebit = (
   ("registerRun", 5, "run-a"),
   ("recordOpened", 5, 1),

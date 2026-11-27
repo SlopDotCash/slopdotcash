@@ -152,4 +152,13 @@ pure val intakeEntriesValues = Set(List(),
   List({ id: 1, record: { fromSlop: true, hasAdvisory: false, intake: IntakeDraft, terminalFailure: false } },
     { id: 2, record: { fromSlop: true, hasAdvisory: false, intake: IntakeFailed, terminalFailure: true } }))
 pure val storedIdsValues = Set(List(), List(1, 2, 3))
+pure val eval_witness_sometimesReceived = (
+  ("open", 1, 1),
+  ("edit", 1, true),
+  "review",
+  ("send", 1),
+  "loseResponse",
+  "retry",
+  ("receiveReceipt", 1, 1, 1, 1, 1)
+)
 ```

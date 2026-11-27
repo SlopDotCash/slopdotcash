@@ -461,4 +461,68 @@ pure val digestValues = Set("", "d1")
 pure val acceptedCommitValues = Set(true, false)
 pure val parentsKnownValues = Set(true, false)
 pure val singleParentValues = Set(true, false)
+pure val eval_witness_sometimesPrimary = (
+  ("observePrimary", 1, User, true),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesCopyFallback = (
+  ("observeCopy", VerifiedCopy({ actor: 2, kind: User }), RD::countedDiscussion),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesSourceFallback = (
+  ("observeSource", 2, User),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesRepaired = (
+  ("observeSource", 2, User),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit",
+  ("repair", 1, User))
+pure val eval_witness_sometimesMergeResolutionCredited = (
+  ("observePrimary", 2, User, true),
+  ("observeAcceptance", true, 1, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesConflictResolved = (
+  ("observePrimary", 1, User, true),
+  ("observePrimary", 2, User, true),
+  ("reread", 2, User, true),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesFollowupRedirected = (
+  ("observePrimary", 2, User, true),
+  ("observeCarry", VerifiedCarry({ original: 1, followup: true, parentEdges: true })),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesCopyCreditsOriginal = (
+  ("observePrimary", 2, User, true),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesMergedOriginalCopyCredited = (
+  ("observePrimary", 2, User, true),
+  ("observeAcceptance", true, 1, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
+pure val eval_witness_sometimesRepairCreditsAccepted = (
+  ("observePrimary", 2, User, true),
+  ("observeAcceptance", false, 0, W::initial),
+  ("recordLines", 1, 0),
+  "attribute",
+  "creditCommit")
 ```

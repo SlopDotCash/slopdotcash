@@ -544,7 +544,7 @@ pure val recordedValues = Set(
     valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 9 },
   { token: 1, kind: Conversion, tx: 14, nonce: 1, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
     valueMicro: 450000000, minimumOutput: 445500000, deadline: 18000000000, wallet: 1 })
-pure val weight_importRecorded = 12
+pure val weight_importRecorded = 2
 ```
 
 ## Story: Reconcile every send from finalized evidence before another starts
@@ -986,30 +986,30 @@ pure val vaultClaimValues = Set(
     fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: -1 },
   { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
     fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 100000000 })
-pure val weight_evaluate = 30
-pure val weight_reserveGas = 40
-pure val weight_sign = 80
-pure val weight_finalizeSend = 20
-pure val weight_acquireLease = 30
-pure val weight_publishWorker = 30
-pure val weight_setReleaseVariable = 20
-pure val weight_verifyReadiness = 30
-pure val weight_receiveFee = 30
-pure val weight_addToken = 2
-pure val weight_setReplacement = 10
-pure val weight_replace = 40
-pure val weight_advanceClock = 2
-pure val weight_broadcastFail = 4
-pure val weight_expireEvm = 12
-pure val weight_settleExpired = 12
-pure val weight_recordScan = 40
-pure val weight_expireSolana = 40
-pure val weight_chooseInstance = 10
-pure val weight_claim = 20
-pure val weight_accrue = 10
-pure val weight_registerVault = 8
-pure val weight_observeBalance = 10
-pure val weight_abandonIntent = 30
+pure val weight_evaluate = 4
+pure val weight_reserveGas = 5
+pure val weight_sign = 8
+pure val weight_finalizeSend = 3
+pure val weight_acquireLease = 4
+pure val weight_publishWorker = 4
+pure val weight_setReleaseVariable = 3
+pure val weight_verifyReadiness = 4
+pure val weight_receiveFee = 4
+pure val weight_addToken = 1
+pure val weight_setReplacement = 2
+pure val weight_replace = 4
+pure val weight_advanceClock = 1
+pure val weight_broadcastFail = 1
+pure val weight_expireEvm = 2
+pure val weight_settleExpired = 2
+pure val weight_recordScan = 4
+pure val weight_expireSolana = 4
+pure val weight_chooseInstance = 2
+pure val weight_claim = 3
+pure val weight_accrue = 2
+pure val weight_registerVault = 2
+pure val weight_observeBalance = 2
+pure val weight_abandonIntent = 3
 pure val eval_witness_sometimesClaimFinalized = (
   ("setReleaseVariable", true, R::Owner),
   ("publishWorker", R::liveAll, R::ReleaseWorkflow),
@@ -1021,4 +1021,201 @@ pure val eval_witness_sometimesClaimFinalized = (
   ("claim", 1, { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
     fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 1000 }, R::Worker),
   ("finalizeSend", 1, 1, { tx: 12, succeeded: true, output: 1000000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker))
+pure val eval_witness_sometimesAccrualFell = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("registerVault", { vault: 7, deployment: 70, token: 1 }, R::ReleaseWorkflow),
+  ("accrue", { vault: 7, recipient: 1, accrued: 1000000000, height: 5, finalized: true, roleFree: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("claim", 1, { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 12, succeeded: true, output: 1000000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker),
+  ("accrue", { vault: 7, recipient: 1, accrued: 0, height: 6, finalized: true, roleFree: true }, R::Worker))
+pure val eval_witness_sometimesDryQuoted = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::Off }, R::ReleaseWorkflow),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker))
+pure val eval_witness_sometimesImportedAboveCeiling = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("importRecorded", 1, { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 100000, fees: { maxFee: 50000, priority: 2000 },
+    amountIn: 500000000, valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 }, R::Worker))
+pure val eval_witness_sometimesImportedSettled = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("importRecorded", 1, { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 },
+    amountIn: 500000000, valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 11, succeeded: true, output: 450000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker))
+pure val eval_witness_sometimesImportedForeignWalletOpen = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("importRecorded", 1, { token: 1, kind: Conversion, tx: 13, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 },
+    amountIn: 500000000, valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 9 }, R::Worker))
+pure val eval_witness_sometimesReverted = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 100000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 11, succeeded: false, output: 0, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker))
+pure val eval_witness_sometimesApprovalFinalized = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 100000000, R::Worker),
+  ("sign", 1, { kind: Approval, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 500000000,
+    allowance: 0, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 11, succeeded: true, output: 0, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 500000000 }, R::Worker))
+pure val eval_witness_sometimesOverrunHolds = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 55000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 11, succeeded: true, output: 450000000, actualNative: 60000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker))
+pure val eval_witness_sometimesExpiredEvmNonceHeld = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 100000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("expireEvm", 1, 1, { finalizedTime: 9000000001, included: false }, R::Worker))
+pure val eval_witness_sometimesExpiredLateRevertCharged = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 100000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("expireEvm", 1, 1, { finalizedTime: 9000000001, included: false }, R::Worker),
+  ("settleExpired", 1, 1, { tx: 11, succeeded: false, output: 0, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker))
+pure val eval_witness_sometimesSolanaExpiryProven = (
+  ("chooseInstance", R::Solana, R::Worker),
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 5000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 5000000, priority: 2 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("recordScan", 1, { tx: 11, operator: 1, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 },
+    complete: true, blockhashSlot: 40, runId: 1 }, R::Worker),
+  ("recordScan", 1, { tx: 11, operator: 2, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 },
+    complete: true, blockhashSlot: 40, runId: 1 }, R::Worker),
+  ("expireSolana", 1, 1, { tx: 11, a: { operator: 1, invalidBlockhash: true, signatureFound: false, transactionFound: false },
+    b: { operator: 2, invalidBlockhash: true, signatureFound: false, transactionFound: false }, blockhashSlot: 40,
+    coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 } }, R::Worker))
+pure val eval_witness_sometimesReplaced = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("setReplacement", true, R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 55000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("advanceClock", 180000, R::Worker),
+  ("replace", 1, 1, 13, { maxFeeNeeded: 1000000, observedAt: 180000, pricedFeeMicro: 1000 }, R::Worker))
+pure val eval_witness_sometimesRetriedThenConverted = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("setReplacement", true, R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 55000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 100, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("advanceClock", 180000, R::Worker),
+  ("replace", 1, 1, 13, { maxFeeNeeded: 1000000, observedAt: 180000, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 13, succeeded: true, output: 450000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker))
+pure val eval_witness_sometimesRunEnded = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("advanceClock", 3600001, R::Worker),
+  ("acquireLease", 2, Recovery, R::Worker),
+  ("abandonIntent", 2, 1, R::Worker))
+pure val eval_witness_sometimesSharedNonceSequence = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", ProjectToken, R::Worker),
+  ("addToken", ProjectToken, R::Worker),
+  ("receiveFee", { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("receiveFee", { receipt: 3, token: 2, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true }, R::Worker),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 100000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("evaluate", 1, { token: 2, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 1, 100000000, R::Worker),
+  ("sign", 1, { kind: Conversion, tx: 14, nonce: 1, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0,
+    allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker))
+pure val eval_witness_sometimesRotationHoldsLease = (
+  ("chooseInstance", R::Solana, R::Worker),
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("acquireLease", 1, Recovery, R::Worker),
+  ("releaseLease", 1, R::Worker),
+  ("acquireRotationLease", 1, R::ReleaseWorkflow))
 ```

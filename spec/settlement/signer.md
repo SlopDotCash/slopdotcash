@@ -435,4 +435,39 @@ pure val receiptValues = Set({ attempt: 1, reverted: true, block: 5, canonicalBl
   { attempt: 1, reverted: false, block: 5, canonicalBlock: 5, bindingLanded: false },
   { attempt: 2, reverted: true, block: 5, canonicalBlock: 5, bindingLanded: false },
   { attempt: 1, reverted: true, block: 5, canonicalBlock: 5, bindingLanded: true })
+pure val eval_witness_sometimesExpiredBindingCancelled = (
+  ("recordIntent", 1, "account"),
+  ("authorize", 1, { wallet: "wallet", signer: "wallet", intent: 1 }, 5, "account"),
+  ("signBinding", 0, 1, 1, "attester"),
+  ("observeFinalizedTime", 6, "attester"),
+  ("cancelBinding", 0, 2, 0, "attester", "", "attester"),
+  ("finalizeCancellation", 2, 1, "account"))
+pure val eval_witness_sometimesExternalWinnerReconciled = (
+  ("recordIntent", 1, "account"),
+  ("authorize", 1, { wallet: "wallet", signer: "wallet", intent: 1 }, 0, "account"),
+  ("signBinding", 0, 1, 1, "attester"),
+  ("reconcileWinner", { original: 1, winner: 3, reasonLength: 20, audited: true }, winnerSample, "operator"))
+pure val eval_witness_sometimesOldBindingWins = (
+  ("recordIntent", 1, "account"),
+  ("authorize", 1, { wallet: "wallet", signer: "wallet", intent: 1 }, 0, "account"),
+  ("signBinding", 0, 1, 1, "attester"),
+  ("recordIntent", 2, "account"),
+  ("cancelBinding", 0, 2, 0, "attester", "", "attester"),
+  ("finalizeBinding", 1, 1, "account"))
+pure val eval_witness_sometimesCancellationWins = (
+  ("recordIntent", 1, "account"),
+  ("authorize", 1, { wallet: "wallet", signer: "wallet", intent: 1 }, 0, "account"),
+  ("signBinding", 0, 1, 1, "attester"),
+  ("recordIntent", 2, "account"),
+  ("cancelBinding", 0, 2, 0, "attester", "", "attester"),
+  ("finalizeCancellation", 2, 1, "account"))
+pure val eval_witness_sometimesRetiredThenRebound = (
+  ("recordIntent", 1, "account"),
+  ("authorize", 1, { wallet: "wallet", signer: "wallet", intent: 1 }, 0, "account"),
+  ("signBinding", 0, 1, 1, "attester"),
+  ("retireReverted", { attempt: 1, reverted: true, block: 5, canonicalBlock: 5, bindingLanded: false }, "account"),
+  ("recordIntent", 2, "account"),
+  ("authorize", 1, { wallet: "wallet", signer: "wallet", intent: 2 }, 0, "account"),
+  ("signBinding", 1, 2, 1, "attester"),
+  ("finalizeBinding", 2, 6, "account"))
 ```

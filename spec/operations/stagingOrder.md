@@ -112,4 +112,34 @@ pure val delayValues = Set(0, 30000, 100000)
 pure val elapsedValues = Set(10000, 60000, 120000)
 pure val weight_readHistory = 6
 pure val weight_finish = 4
+pure val eval_witness_sometimesAllowedFirstPass = (
+  ("begin", 2, 90000),
+  ("inspect", true),
+  ("readHistory", 2, true, false),
+  "finish")
+pure val eval_witness_sometimesNonReleaseSkipped = (
+  ("begin", 2, 90000),
+  ("inspect", true),
+  ("readHistory", 3, false, true),
+  ("readHistory", 2, true, false),
+  "finish")
+pure val eval_witness_sometimesWaitingForQuota = (
+  ("begin", 2, 90000),
+  ("inspect", true),
+  ("failRead", 429, true, 30000))
+pure val eval_witness_sometimesAllowedAfterRetry = (
+  ("begin", 2, 90000),
+  ("inspect", true),
+  ("failRead", 429, true, 30000),
+  ("advanceClock", 60000),
+  "resume",
+  ("inspect", true),
+  ("readHistory", 2, true, false),
+  "finish")
+pure val eval_witness_sometimesRetriedThenRefused = (
+  ("begin", 2, 90000),
+  ("inspect", true),
+  ("failRead", 429, true, 30000),
+  ("advanceClock", 120000),
+  "expire")
 ```

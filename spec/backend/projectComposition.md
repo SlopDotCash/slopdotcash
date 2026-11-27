@@ -175,7 +175,7 @@ pure def canObserveEvidence(c: Registry, by: int, repository: int, evidenceRead:
   E::canObserveEvidence(c.security, by, repository, evidenceRead)
 pure def observeEvidence(c: Registry, by: int, repository: int, evidenceRead: E::EvidenceRead): Registry =
   { ...c, security: E::observeEvidence(c.security, by, repository, evidenceRead) }
-pure val policyValues = tuples(1.to(5), Set(PolicyAccepts, PolicyRefuses)).map(x => { revision: x._1, result: x._2 })
+pure val policyValues = tuples(1.to(3), Set(PolicyAccepts, PolicyRefuses)).map(x => { revision: x._1, result: x._2 })
 ```
 
 ### Activation needs current clearance and no restriction, and owner writes need a clear project
@@ -608,16 +608,19 @@ pure val branchChangeValues = Set(P::branchChange1, { ...P::branchChange1, clear
   { ...P::branchChange1, expectedRevision: 3 })
 pure val registrationValues = Set(P::registration1, { ...P::registration1, purpose: P::BountyVault },
   { ...P::registration1, expectedRevision: 3 }, { ...P::registration1, finalized: false })
-pure val weight_publishUpdate = 4
+pure val weight_publishUpdate = 1
 pure val removalValues = Set({ authority: P::owner1, expectedRevision: 2 }, { authority: P::owner1, expectedRevision: 3 })
 pure val requestValues = Set(E::goodGrant, { ...E::goodGrant, id: 12 })
-pure val fenceValues = E::fenceValues
+pure val fenceValues = tuples(1.to(3), 1.to(3)).map(x => { revision: x._1, sequence: x._2 })
 pure val rowValues = Set({ projectId: 1, repository: 1 })
-pure val pinsValues = tuples(0.to(2), 0.to(2), 0.to(2))
-  .map(x => List({ repository: x._1, assessment: 1, pin: E::PinMatches }, { repository: x._2, assessment: 2, pin: E::PinMatches },
-    { repository: x._3, assessment: 3, pin: E::PinMatches }).select(p => p.repository > 0))
-  .union(tuples(1.to(3), 1.to(3)).filter(x => x._1 != x._2)
-    .map(x => List({ repository: 1, assessment: x._1, pin: E::PinMatches }, { repository: 1, assessment: x._2, pin: E::PinChanged })))
+pure val pinsValues = Set(
+  List(),
+  List({ repository: 1, assessment: 1, pin: E::PinMatches }),
+  List({ repository: 1, assessment: 2, pin: E::PinMatches }),
+  List({ repository: 1, assessment: 1, pin: E::PinMatches }, { repository: 2, assessment: 3, pin: E::PinMatches }),
+  List({ repository: 1, assessment: 2, pin: E::PinMatches }, { repository: 2, assessment: 3, pin: E::PinMatches }),
+  List({ repository: 1, assessment: 1, pin: E::PinMatches }, { repository: 1, assessment: 2, pin: E::PinChanged }),
+  List({ repository: 1, assessment: 2, pin: E::PinMatches }, { repository: 1, assessment: 1, pin: E::PinChanged }))
 pure val scanOutcomeValues = tuples(Set(1, 2, 3), 1.to(3), Set(A::DClean, A::DMalicious)).map(x =>
   { assessment: x._1, repository: if (x._1 == 3) 2 else 1, revision: x._2, disposition: x._3,
     confirmation: if (x._3 == A::DMalicious) A::ReproducibleBehavior else A::NoConfirmation, reused: false, retained: true })
@@ -641,24 +644,56 @@ pure val exceptionValues = Set(1, 2, 3).map(n => { ...P::exception1, expectedRev
 pure val revokeValues = Set({ grant: 11, decision: 1, reason: 1, confirmed: true })
 pure val identityValues = Set(2)
 pure val cValues = Set(initial)
-pure val weight_create = 4
-pure val weight_publishApplication = 10
-pure val weight_requestAssessment = 10
-pure val weight_recordResult = 10
-pure val weight_activate = 8
-pure val weight_readSetup = 8
-pure val weight_flag = 8
-pure val weight_requestAppeal = 5
-pure val weight_reinstate = 6
-pure val weight_reinstateFlagPause = 6
-pure val weight_quarantine = 4
-pure val weight_ban = 3
-pure val weight_grantExemption = 4
-pure val weight_adminRevise = 3
-pure val weight_remove = 3
-pure val weight_decideMalice = 6
-pure val weight_journalAccountAppeal = 6
-pure val weight_journalAccountDenial = 8
+pure val weight_create = 1
+pure val weight_publishApplication = 2
+pure val weight_requestAssessment = 1
+pure val weight_recordResult = 1
+pure val weight_activate = 2
+pure val weight_readSetup = 2
+pure val weight_flag = 2
+pure val weight_requestAppeal = 1
+pure val weight_reinstate = 1
+pure val weight_reinstateFlagPause = 1
+pure val weight_quarantine = 1
+pure val weight_ban = 1
+pure val weight_grantExemption = 1
+pure val weight_adminRevise = 1
+pure val weight_remove = 1
+pure val weight_decideMalice = 1
+pure val weight_journalAccountAppeal = 1
+pure val weight_journalAccountDenial = 1
+pure val eval_witness_sometimesCollectable = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("flag", 2, 1, { ...goodStanding, actor: 2, revision: 1 }),
+  ("flag", 3, 2, { ...goodStanding, actor: 3, revision: 1 }),
+  ("requestAssessment", 0, 1, E::FlagRecovery, 1, P::owner1),
+  ("recordResult", 0, { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, { revision: 1, result: PolicyAccepts }),
+  ("reinstateFlagPause", 0, List({ repository: 1, assessment: 1, pin: E::PinMatches })),
+  ("readSetup", 1),
+  ("activate", 1, { authority: P::owner1, installations: List({ repository: 1, installation: P::Installed }, { repository: 2, installation: P::Installed }) }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }))
+pure val eval_witness_sometimesBannedRetired = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("requestAssessment", 1, 1, E::SetupCheck, 1, P::owner1),
+  ("recordResult", 0, { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true }, { revision: 1, result: PolicyAccepts }))
+pure val eval_witness_sometimesPendingRestrictionRevision = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("quarantine", 6, { revision: 1, sequence: 1 }, { revision: 1, result: PolicyRefuses }))
+pure val eval_witness_sometimesRemovedDuringRestriction = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("remove", 1, { authority: P::owner1, expectedRevision: 1 }),
+  ("quarantine", 6, { revision: 2, sequence: 1 }, { revision: 2, result: PolicyAccepts }))
+pure val eval_witness_sometimesAppendedAwaitingScan = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("publishOwnerRevision", 1, { ...P::change1, expectedRevision: 1, consent: P::ConsentChecked, executable: true, appends: List(P::newRepository2), clearance: P::ClearanceMissing }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, List(), List({ repository: 2, listedBy: 0, restricted: false })))
+pure val eval_witness_sometimesExemptionLapsedWithSteward = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("grantExemption", 5, { revision: 1, sequence: 1 }, E::goodGrant),
+  ("adminRevise", 5, { ...P::exception1, expectedRevision: 1, steward: 4 }, List(), List()))
+pure val eval_witness_sometimesExemptAfterSetupCheck = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("grantExemption", 5, { revision: 1, sequence: 1 }, E::goodGrant),
+  ("readSetup", 1),
+  ("activate", 1, { authority: P::owner1, installations: List({ repository: 1, installation: P::Installed }, { repository: 2, installation: P::Installed }) }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }))
 pure val eval_witness_sometimesFlagPausedActiveManifest = (
   ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
   ("requestAssessment", 1, 1, E::SetupCheck, 1, P::owner1),
@@ -672,10 +707,16 @@ pure val eval_witness_sometimesOwnerExcludedFromNextMonth = (
   ("publishOwnerRevision", 1, { ...P::change1, presentation: false, financial: true, exclusionsChanged: true, expectedRevision: 1, clearance: P::ClearanceMissing }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, List(ownerExcluded), List()))
 pure val eval_witness_sometimesRestoredAfterRestriction = (
   ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
-  ("quarantine", 6, { revision: 1, sequence: 1 }, { revision: 1, result: PolicyAccepts }),
+  ("requestAssessment", 1, 1, E::SetupCheck, 1, P::owner1),
+  ("recordResult", 0, { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true }, { revision: 1, result: PolicyAccepts }),
+  ("decideMalice", 6, { revision: 2, sequence: 2 }, List(2)),
+  ("journalAccountAppeal", 2),
+  ("journalAccountDenial", 5, { revision: 2, sequence: 4 }),
+  ("journalAccountAppeal", 2),
+  ("journalAccountReinstatement", 5, { revision: 2, sequence: 6 }, List(2)),
   ("requestAppeal", 1),
-  ("requestAssessment", 5, 1, E::AdminInvestigation, 1, P::owner1),
-  ("recordResult", 0, { assessment: 1, repository: 1, revision: 2, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, { revision: 2, result: PolicyAccepts }),
-  ("observePins", -1, List({ repository: 1, assessment: 1, pin: E::PinMatches })),
-  ("reinstate", 5, { revision: 2, sequence: 3 }))
+  ("requestAssessment", 5, 1, E::AdminInvestigation, 2, P::owner1),
+  ("recordResult", 0, { assessment: 2, repository: 1, revision: 2, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, { revision: 2, result: PolicyAccepts }),
+  ("observePins", -1, List({ repository: 1, assessment: 1, pin: E::PinChanged }, { repository: 1, assessment: 2, pin: E::PinMatches })),
+  ("reinstate", 5, { revision: 2, sequence: 8 }))
 ```

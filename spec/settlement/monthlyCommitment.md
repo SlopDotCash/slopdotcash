@@ -517,9 +517,114 @@ pure val legacyValues = Set({ root: "v1", snapshotDigest: "d1", wholeGross: List
 pure val attemptIdValues = Set(1, 2)
 pure val rootValues = Set("r1", "r2")
 pure val byValues = Set("attester", "next", "anyone")
-pure val weight_authorize = 10
+pure val weight_authorize = 3
 pure val weight_observe = 1
-pure val weight_observeFacts = 6
-pure val weight_signEvm = 30
-pure val weight_signSolana = 4
+pure val weight_observeFacts = 2
+pure val weight_signEvm = 6
+pure val weight_signSolana = 2
+pure val eval_witness_sometimesCapRefused = ("authorize", EvmV2, { ...monthSample, cap: List(4) }, "attester")
+pure val eval_witness_sometimesBeforeWindowRefused = (
+  ("authorize", EvmV2, { ...monthSample, period: 202612 }, "attester"),
+  ("refuseSigning", "attester"))
+pure val eval_witness_sometimesAutomaticOffRefused = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", { ...factsAt(1), automaticOn: false }, "attester"),
+  ("refuseSigning", "attester"))
+pure val eval_witness_sometimesRestrictedRefused = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", { ...factsAt(1), restricted: true }, "attester"),
+  ("refuseSigning", "attester"))
+pure val eval_witness_sometimesChainCapRefused = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(4) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("refuseSigning", "attester"))
+pure val eval_witness_sometimesPledgedSignedWithAutomaticOff = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", { ...factsAt(1), automaticOn: false, restricted: true, pledged: true }, "attester"),
+  ("signEvm", 1, "r1", "attester"))
+pure val eval_witness_sometimesReattested = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signEvm", 1, "r1", "attester"),
+  ("observe", { ...emptyView, height: 2, time: 1796342500, sourceSequence: 1, cap: List(8), consumed: List("s1") }, "attester"),
+  ("observeFacts", factsAt(2), "attester"),
+  ("signEvm", 2, "r2", "attester"),
+  ("observe", { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(4) }, "attester"),
+  ("admit", "attester"))
+pure val eval_witness_sometimesLatestAdmittedAfterSourceChange = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signEvm", 1, "r1", "attester"),
+  ("observe", { ...emptyView, height: 2, time: 1796342500, sourceSequence: 1, cap: List(8), consumed: List("s1") }, "attester"),
+  ("observeFacts", factsAt(2), "attester"),
+  ("signEvm", 2, "r2", "attester"),
+  ("observe", { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r2", remaining: List(4) }, "attester"),
+  ("admit", "attester"))
+pure val eval_witness_sometimesSupersededRootHeld = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signEvm", 1, "r1", "attester"),
+  ("observe", { ...emptyView, height: 2, time: 1796342500, sourceSequence: 1, cap: List(8), consumed: List("s1") }, "attester"),
+  ("observeFacts", factsAt(2), "attester"),
+  ("signEvm", 2, "r2", "attester"),
+  ("observe", { ...emptyView, height: 3, time: 1796342600, sourceSequence: 1, cap: List(8), consumed: List("s1"), admittedRoot: "r1", remaining: List(4) }, "attester"),
+  ("holdSuperseded", "attester"))
+pure val eval_witness_sometimesRotationHeld = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signEvm", 1, "r1", "attester"),
+  ("observe", { ...emptyView, height: 2, time: 1796342500, cap: List(8), authority: "next" }, "attester"),
+  ("holdRotated", "attester"))
+pure val eval_witness_sometimesAdmittedAfterRotation = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8), authority: "next" }, "attester"),
+  ("observeFacts", factsAt(1), "next"),
+  ("signEvm", 1, "r1", "next"),
+  ("observe", { ...emptyView, height: 2, time: 1796342500, cap: List(8), authority: "next", admittedRoot: "r1", remaining: List(5) }, "attester"),
+  ("admit", "attester"))
+pure val eval_witness_sometimesCompletedAfterOptOut = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signEvm", 1, "r1", "attester"),
+  ("observe", { ...emptyView, height: 2, time: 1796342500, cap: List(8), admittedRoot: "r1", remaining: List(0), monthlyEnabled: false }, "attester"),
+  ("admit", "attester"),
+  ("complete", "attester"))
+pure val eval_witness_sometimesWindowRefused = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signEvm", 1, "r1", "attester"),
+  ("observe", { ...emptyView, height: 2, time: 1799020800, cap: List(8) }, "attester"),
+  ("closeWindow", "attester"))
+pure val eval_witness_sometimesSolanaRefused = (
+  ("authorize", SolanaV3, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, sourceSequence: 1, cap: List(8), consumed: List("s1") }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signSolana", 1, "r1", "attester"))
+pure val eval_witness_sometimesSolanaAdmitted = (
+  ("authorize", SolanaV3, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8) }, "attester"),
+  ("observeFacts", factsAt(1), "attester"),
+  ("signSolana", 1, "r1", "attester"),
+  ("observe", { ...emptyView, height: 2, time: 1796342500, cap: List(8), admittedRoot: "r1", remaining: List(0) }, "attester"),
+  ("admit", "attester"),
+  ("complete", "attester"))
+pure val eval_witness_sometimesLegacyAdmitted = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("retainLegacy", { root: "v1", snapshotDigest: "d1", wholeGross: List(5), leafCount: 2, signer: "attester" }, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8), admittedRoot: "v1", legacyRoot: true, remaining: List(0) }, "attester"),
+  ("admitLegacy", "attester"))
+pure val eval_witness_sometimesUnknownRoot = (
+  ("authorize", EvmV2, monthSample, "attester"),
+  ("observe", { ...emptyView, height: 1, time: 1796342400, cap: List(8), admittedRoot: "x", remaining: List(5) }, "attester"),
+  ("investigate", "attester"))
 ```

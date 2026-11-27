@@ -273,7 +273,7 @@ pure val evidenceValues = Set(
   { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: false })
 pure val reviewValues = Set("plan", "ethereum-activation", "")
 pure val byValues = Set(RepositoryOwner, Agent)
-pure val weight_approve = 20
+pure val weight_approve = 3
 pure val checksValues = Set(
   { currentAuthority: true, exactPlanAuthorized: true, eligible: true, simulationPassed: true, reconciled: true },
   { currentAuthority: true, exactPlanAuthorized: true, eligible: true, simulationPassed: false, reconciled: true })
@@ -305,16 +305,51 @@ pure val tokenValues = Set(admittedMint, { ...admittedMint, kind: M::Classic }, 
 pure val upgradeValues = Set(
   { deterministicPinnedBuild: true, exactOnChainBytes: true, publicTestnet: true, ownerAuthorized: true },
   { deterministicPinnedBuild: true, exactOnChainBytes: false, publicTestnet: false, ownerAuthorized: true })
-pure val weight_admitPlan = 25
-pure val weight_completeLane = 18
+pure val weight_admitPlan = 3
+pure val weight_completeLane = 2
 pure val weight_stopBeforeAttempt = 1
-pure val weight_resume = 35
-pure val weight_retainHistorical = 85
-pure val weight_retainAttempt = 16
-pure val weight_reconcileAttempt = 70
-pure val weight_missReceipt = 12
-pure val weight_activateLane = 60
-pure val weight_activateEthereum = 36
+pure val weight_resume = 4
+pure val weight_retainHistorical = 9
+pure val weight_retainAttempt = 2
+pure val weight_reconcileAttempt = 7
+pure val weight_missReceipt = 2
+pure val weight_activateLane = 6
+pure val weight_activateEthereum = 4
 pure val priorValues = Set(ControlsRelease, ProgramUpgrade, GasTopUp)
 pure val transactionValues = Set("base-deposit", "solana-payout", "other")
+pure val eval_witness_sometimesRetransmitted = (
+  ("approve", "plan", RepositoryOwner),
+  ("admitPlan", { network: Base, vault: "vault", asset: "USDC", review: "plan", monthlyCap: 1000000000, automatic: false },
+    { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: true }, RepositoryOwner),
+  ("retainAttempt", { key: "deposit", transaction: "base-deposit", kind: Deposit, gasLimit: 1, gross: 10000000, net: 0, fee: 0, actor: 0 },
+    { currentAuthority: true, exactPlanAuthorized: true, eligible: true, simulationPassed: true, reconciled: true }, RepositoryOwner),
+  ("retransmit", "base-deposit", RepositoryOwner))
+pure val eval_witness_sometimesEthereumActive = (
+  ("approve", "plan", RepositoryOwner),
+  ("approve", "ethereum-activation", RepositoryOwner),
+  ("admitPlan", { network: Base, vault: "vault", asset: "USDC", review: "plan", monthlyCap: 1000000000, automatic: false },
+    { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: true }, RepositoryOwner),
+  ("retainHistorical", { key: "deposit", transaction: "base-deposit", kind: Deposit, gasLimit: 1, gross: 10000000, net: 0, fee: 0, actor: 0 },
+    { network: Base, vault: "vault", transaction: "base-deposit", finalized: true, exactOperation: true, succeeded: true, actualGas: 1 }, RepositoryOwner),
+  ("retainHistorical", { key: "payout", transaction: "base-payout", kind: Payout, gasLimit: 1, gross: 1000000, net: 980000, fee: 20000, actor: 18633264 },
+    { network: Base, vault: "vault", transaction: "base-payout", finalized: true, exactOperation: true, succeeded: true, actualGas: 1 }, RepositoryOwner),
+  ("completeLane", true, RepositoryOwner),
+  ("admitPlan", { network: Solana, vault: "vault", asset: "USDC", review: "plan", monthlyCap: 1000000000, automatic: false },
+    { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: true }, RepositoryOwner),
+  ("retainHistorical", { key: "deposit", transaction: "solana-deposit", kind: Deposit, gasLimit: 1, gross: 10000000, net: 0, fee: 0, actor: 0 },
+    { network: Solana, vault: "vault", transaction: "solana-deposit", finalized: true, exactOperation: true, succeeded: true, actualGas: 1 }, RepositoryOwner),
+  ("retainHistorical", { key: "payout", transaction: "solana-payout", kind: Payout, gasLimit: 1, gross: 1000000, net: 980000, fee: 20000, actor: 18633264 },
+    { network: Solana, vault: "vault", transaction: "solana-payout", finalized: true, exactOperation: true, succeeded: true, actualGas: 1 }, RepositoryOwner),
+  ("completeLane", true, RepositoryOwner),
+  ("admitPlan", { network: Robinhood, vault: "vault", asset: "USDG", review: "plan", monthlyCap: 1000000000, automatic: false },
+    { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: true }, RepositoryOwner),
+  ("retainHistorical", { key: "deposit", transaction: "robinhood-deposit", kind: Deposit, gasLimit: 1, gross: 10000000, net: 0, fee: 0, actor: 0 },
+    { network: Robinhood, vault: "vault", transaction: "robinhood-deposit", finalized: true, exactOperation: true, succeeded: true, actualGas: 1 }, RepositoryOwner),
+  ("retainHistorical", { key: "payout", transaction: "robinhood-payout", kind: Payout, gasLimit: 1, gross: 1000000, net: 980000, fee: 20000, actor: 18633264 },
+    { network: Robinhood, vault: "vault", transaction: "robinhood-payout", finalized: true, exactOperation: true, succeeded: true, actualGas: 1 }, RepositoryOwner),
+  ("completeLane", true, RepositoryOwner),
+  ("activateLane", { network: Base, vault: "vault", review: "plan", currentAuthority: true, exactDeployment: true, exactAsset: true, finalized: true }, RepositoryOwner),
+  ("activateLane", { network: Solana, vault: "vault", review: "plan", currentAuthority: true, exactDeployment: true, exactAsset: true, finalized: true }, RepositoryOwner),
+  ("activateLane", { network: Robinhood, vault: "vault", review: "plan", currentAuthority: true, exactDeployment: true, exactAsset: true, finalized: true }, RepositoryOwner),
+  ("activateEthereum", { network: Ethereum, vault: "", review: "ethereum-activation", currentAuthority: true, exactDeployment: true, exactAsset: true, finalized: true }, RepositoryOwner))
 ```

@@ -354,9 +354,47 @@ pure val observationValues = Set(publishable, { ...publishable, threw: true },
 pure val installedValues = Set(true, false)
 pure val leasedValues = Set(true, false)
 pure val oValues = observationValues
-pure val weight_claim = 6
-pure val weight_finish = 8
-pure val weight_record = 3
-pure val weight_claimGroup = 4
-pure val weight_startRun = 2
+pure val weight_claim = 2
+pure val weight_finish = 2
+pure val weight_record = 1
+pure val weight_claimGroup = 2
+pure val weight_startRun = 1
+pure val eval_witness_sometimesPublished = (
+  ("applyInstallation", { delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true }),
+  "startRun",
+  ("record", 1, keyA),
+  ("claim", 1),
+  ("claimGroup", 1, Set(1)),
+  ("finish", 1, 1, publishable)
+)
+pure val eval_witness_sometimesBackedOff = (
+  ("applyInstallation", { delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true }),
+  "startRun",
+  ("record", 1, keyA),
+  ("claim", 1),
+  ("finish", 1, 1, { ...publishable, evidenceComplete: false }),
+  ("elapse", 3600),
+  "startRun",
+  ("claim", 1),
+  ("finish", 1, 2, { ...publishable, evidenceComplete: false })
+)
+pure val eval_witness_sometimesGapKeptThroughRetry = (
+  ("applyInstallation", { delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true }),
+  "startRun",
+  ("record", 1, keyA),
+  ("claim", 1),
+  ("finish", 1, 1, { ...publishable, evidenceComplete: false }),
+  ("elapse", 3600),
+  "startRun",
+  ("claim", 1),
+  ("finish", 1, 2, { ...publishable, threw: true })
+)
+pure val eval_witness_sometimesExhausted = (
+  ("applyInstallation", { delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true }),
+  "startRun",
+  ("record", 1, keyA),
+  ("claim", 1),
+  ("claimGroup", 1, Set(1)),
+  ("finish", 1, 1, { ...publishable, admission: AdmitExhausted })
+)
 ```

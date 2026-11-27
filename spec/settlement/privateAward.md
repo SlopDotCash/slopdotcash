@@ -498,21 +498,49 @@ pure val transferValues = Set(awardResearcher, awardFee)
 pure val pairValues = Set({ researcher: awardResearcher, fee: awardFee })
 pure val weight_deposit = 1
 pure val weight_observeFunds = 1
-pure val weight_receive = 8
-pure val weight_observeRoute = 8
+pure val weight_receive = 1
+pure val weight_observeRoute = 1
 pure val weight_observeAuthority = 1
-pure val weight_decide = 10
-pure val weight_showAmounts = 15
-pure val weight_decideAward = 15
-pure val weight_reconcile = 10
-pure val weight_admitDirect = 100
-pure val weight_observeWallets = 60
-pure val weight_consent = 60
-pure val weight_prepareDirect = 100
-pure val weight_recordPair = 40
-pure val weight_recordTransfer = 40
-pure val weight_recoverDirect = 100
+pure val weight_decide = 1
+pure val weight_showAmounts = 1
+pure val weight_decideAward = 1
+pure val weight_reconcile = 1
+pure val weight_admitDirect = 2
+pure val weight_observeWallets = 2
+pure val weight_consent = 2
+pure val weight_prepareDirect = 2
+pure val weight_recordPair = 1
+pure val weight_recordTransfer = 1
+pure val weight_recoverDirect = 2
 pure val eval_witness_sometimesVaultAwardPaid = (
+  ("deposit", List(4), "asset", 1, true, 1),
+  ("observeFunds", 2, 1),
+  ("observeAuthority", { ...C::staff, epoch: 2, financial: List(), moderators: List(2, 4, 5, 7), relatedParties: List(1) }, 1),
+  ("receive", 1, C::SlopReceived, awardTerms, 1, 1),
+  ("decide", 1, 2, 2, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 2, List(4)),
+  ("decideAward", 1, 2, 2, List(4)),
+  ("showAmounts", 1, 5, 2, List(4)),
+  ("reviewRelated", 1, 5, 2, true),
+  ("updateDelivery", SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }), 1),
+  ("reconcile", awardReceipt(1), 1))
+pure val eval_witness_sometimesPendingWhileShort = (
+  ("observeAuthority", C::staff, 1),
+  ("claim", 2, 1),
+  ("rejectLink", 2, 2, 1),
+  ("receive", 1, C::SlopReceived, awardTerms, 1, 1),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }))
+pure val eval_witness_sometimesShownToPayer = (
+  ("observeAuthority", C::staff, 1),
+  ("observeRoute", { asset: "asset", qualified: true, observedAt: 2 }, 1),
+  ("claim", 1, 1),
+  ("verifyLink", 1, 2, 1, awardTerms),
+  ("decide", 1, 2, 1, 1, { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false }),
+  ("showAmounts", 1, 2, 1, List(4)),
+  ("decideAward", 1, 2, 1, List(4)),
+  ("admitDirect", 1, 5, 1, { ...journalTerms, caseId: 1, finding: 1 }, { network: FR::Base, asset: "asset", feeWallet: "fees" }),
+  ("showAmounts", 1, 5, 1, List(4)))
+pure val eval_witness_sometimesPaidNoticeToReporterAndPayer = (
   ("deposit", List(4), "asset", 1, true, 1),
   ("observeFunds", 2, 1),
   ("observeAuthority", C::staff, 1),
@@ -534,7 +562,9 @@ pure val eval_witness_sometimesDirectAwardPaid = (
   ("consent", DB::reporterOne, 3, true, 1),
   ("showAmounts", 1, 5, 1, List(4)),
   ("prepareDirect", 5, 1, DB::evmIntent, 4, true, true),
-  ("recordPair", { researcher: awardResearcher, fee: awardFee }, 5, 0, 1))
+  ("recordTransfer", awardResearcher, 5, 0, 1),
+  ("recoverDirect", 5, 1, DB::nextFeeIntent, DB::feeRetirement, 6, true),
+  ("recordTransfer", { ...awardFee, nonce: 2, height: 3 }, 7, 1, 1))
 pure val eval_witness_sometimesPaidAfterPayerRevoked = (
   ("observeAuthority", C::staff, 1),
   ("observeRoute", { asset: "asset", qualified: true, observedAt: 2 }, 1),

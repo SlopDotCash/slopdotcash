@@ -200,11 +200,44 @@ pure val revisionValues = Set(1, 2)
 pure val boundValues = Set(0, 3)
 pure val decisionValues = Set(0, 1)
 pure val inventoryValues = Set("", "inv-a")
-pure val weight_record = 12
-pure val weight_review = 12
-pure val weight_addObligation = 8
-pure val weight_bindInventory = 4
-pure val weight_recordCompletion = 8
-pure val weight_approvePhase = 4
+pure val weight_record = 3
+pure val weight_review = 3
+pure val weight_addObligation = 2
+pure val weight_bindInventory = 1
+pure val weight_recordCompletion = 2
+pure val weight_approvePhase = 1
 pure val weight_changeRevision = 1
+pure val eval_witness_sometimesLaterPhase = (
+  ("bindInventory", 1, "inv-a"),
+  ("addObligation", 1, 1, RequirementObligation),
+  ("addObligation", 1, 2, ReleaseGate),
+  ("record", 3, 1, 1, Conformant, 0),
+  ("review", 1, 1),
+  ("record", 3, 2, 1, LiveVerified, 0),
+  ("review", 1, 2),
+  ("recordCompletion", 1),
+  ("approvePhase", 1, 1)
+)
+pure val eval_witness_sometimesDefectBlocksCompletion = (
+  ("bindInventory", 1, "inv-a"),
+  ("addObligation", 1, 1, RequirementObligation),
+  ("addObligation", 1, 2, ReleaseGate),
+  ("record", 3, 1, 1, Conformant, 0),
+  ("review", 1, 1),
+  ("record", 3, 2, 1, LiveVerified, 0),
+  ("review", 1, 2),
+  ("recordCompletion", 1),
+  ("openDefect", 1)
+)
+pure val eval_witness_sometimesStaleCompletion = (
+  ("bindInventory", 1, "inv-a"),
+  ("addObligation", 1, 1, RequirementObligation),
+  ("addObligation", 1, 2, ReleaseGate),
+  ("record", 3, 1, 1, Conformant, 0),
+  ("review", 1, 1),
+  ("record", 3, 2, 1, LiveVerified, 0),
+  ("review", 1, 2),
+  ("recordCompletion", 1),
+  ("changeRevision", 3, 2)
+)
 ```

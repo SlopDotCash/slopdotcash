@@ -841,21 +841,21 @@ pure val releaseValues = Set({ period: 202611, expectedRemaining: List(5), relea
   { period: 202611, expectedRemaining: List(5), releasedGross: List(5), signer: "next" })
 pure val bindingValues = Set({ actor: 1, destination: "w1", version: 1 }, { actor: 2, destination: "w2", version: 1 },
   { actor: 1, destination: "w1", version: 0 })
-pure val weight_deposit = 6
-pure val weight_admitRoot = 8
-pure val weight_materialize = 8
-pure val weight_releaseReserve = 10
-pure val weight_pay = 6
-pure val weight_withdraw = 4
-pure val weight_setMonthly = 2
-pure val weight_claimFees = 2
+pure val weight_deposit = 2
+pure val weight_admitRoot = 3
+pure val weight_materialize = 3
+pure val weight_releaseReserve = 3
+pure val weight_pay = 2
+pure val weight_withdraw = 2
+pure val weight_setMonthly = 1
+pure val weight_claimFees = 1
 pure val weight_observeAuthority = 1
-pure val weight_releaseLeaf = 8
-pure val weight_commitAward = 8
-pure val weight_admitLegacyMonth = 4
-pure val weight_upgradeToRelease = 4
-pure val weight_pledgeMonths = 6
-pure val weight_expirePledge = 6
+pure val weight_releaseLeaf = 3
+pure val weight_commitAward = 3
+pure val weight_admitLegacyMonth = 2
+pure val weight_upgradeToRelease = 2
+pure val weight_pledgeMonths = 2
+pure val weight_expirePledge = 2
 pure val fromPeriodValues = Set(202611, 202612)
 pure val countValues = Set(1, 2, 12, 13)
 pure val amountValues = Set(List(1), List(5), List(8))
@@ -889,4 +889,45 @@ pure val eval_witness_sometimesWithdrawWhilePoolPending = (
   ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 2, time: 1795000100, transaction: "t0b" }, "owner"),
   ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
   ("withdraw", List(4), { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"))
+pure val eval_witness_sometimesDepositWhilePoolPending = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"))
+pure val eval_witness_sometimesLeafAfterOptOut = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("setMonthly", List(0), false, { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"),
+  ("materialize", leafSample, { block: 3, index: 0, time: 1796428800, transaction: "t4" }, "owner"))
+pure val eval_witness_sometimesPartlyMaterialized = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("materialize", leafSample, { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"))
+pure val eval_witness_sometimesReleased = (
+  ("deploy", solanaAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Solana, token: "mint", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("admitRoot", { ...rootAuthorization, network: Solana }, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("releaseLeaf", { ...leafSample, index: 1, source: sampleKey(202611, 2), actor: 0, gross: List(4) }, { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"))
+pure val eval_witness_sometimesPaid = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("admitRoot", rootAuthorization, { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("materialize", leafSample, { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"),
+  ("pay", sampleKey(202611, 1), { actor: 1, destination: "w1", version: 1 }, { block: 3, index: 0, time: 1796428800, transaction: "t4" }, "owner"))
+pure val eval_witness_sometimesWithdrawalFee = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("withdraw", List(4), { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"))
+pure val eval_witness_sometimesFeesClaimed = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("withdraw", List(4), { block: 1, index: 0, time: 1796342400, transaction: "t1" }, "owner"),
+  ("claimFees", "fees", { block: 2, index: 0, time: 1796342500, transaction: "t2" }, "owner"))
+pure val eval_witness_sometimesPledgeExpired = (
+  ("deploy", baseAsset, cleanMint, OrdinaryPurpose, 0, List(8), true, "owner"),
+  ("deposit", { vault: "vault", network: Base, token: "usdc", amount: List(8) }, { block: 0, index: 1, time: 1795000000, transaction: "t0" }, "owner"),
+  ("pledgeMonths", 202611, 1, List(5), { block: 0, index: 2, time: 1795000100, transaction: "t0b" }, "owner"),
+  ("expirePledge", 202611, { block: 5, index: 0, time: 1799020800, transaction: "t6" }, "owner"))
 ```

@@ -299,19 +299,61 @@ pure val sendValues = CV::sendValues.map(x => { ...x, deadline: B::buybackStart 
 pure val receiptValues = CV::receiptValues
 pure val tokenValues = CV::tokenValues
 pure val balanceValues = CV::balanceValues
-pure val weight_receive = 10
-pure val weight_recordCash = 6
-pure val weight_book = 6
-pure val weight_evaluate = 8
-pure val weight_reserveGas = 8
-pure val weight_sign = 10
-pure val weight_finalizeSend = 10
-pure val weight_creditClaim = 8
-pure val weight_creditConversion = 8
-pure val weight_creditDirectFee = 8
-pure val weight_observeKeptFee = 6
-pure val weight_creditKeptFee = 8
-pure val weight_registerVault = 6
-pure val weight_accrue = 6
-pure val weight_claim = 6
+pure val weight_receive = 3
+pure val weight_recordCash = 2
+pure val weight_book = 2
+pure val weight_evaluate = 3
+pure val weight_reserveGas = 3
+pure val weight_sign = 3
+pure val weight_finalizeSend = 3
+pure val weight_creditClaim = 3
+pure val weight_creditConversion = 3
+pure val weight_creditDirectFee = 3
+pure val weight_observeKeptFee = 2
+pure val weight_creditKeptFee = 3
+pure val weight_registerVault = 2
+pure val weight_accrue = 2
+pure val weight_claim = 2
+pure val eval_witness_sometimesDirectFeeReceived = (
+  ("addToken", CV::TargetStable, R::Worker),
+  ("recordCash", J::separatePaid, J::CurrentRead, R::Worker),
+  ("receive", { source: DirectAwardFee, receipt: 4, token: 1, amount: 25, chainTime: B::buybackStart + 1, caseId: 1, reconciled: true }, R::Worker))
+pure val eval_witness_sometimesUsdcFeeIncome = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", CV::TargetStable, R::Worker),
+  ("registerVault", { vault: 7, deployment: 70, token: 1 }, R::ReleaseWorkflow),
+  ("accrue", { vault: 7, recipient: 1, accrued: 1000000000, height: 5, finalized: true, roleFree: true }, R::Worker),
+  ("acquireLease", 1, CV::Recovery, R::Worker),
+  ("claim", 1, { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
+    fees: { maxFee: 50000, priority: 2000 }, blockhashSlot: 0, roleFree: true, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 12, succeeded: true, output: 1000000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker),
+  ("creditClaim", 1, B::buybackStart, R::Worker))
+pure val eval_witness_sometimesConversionIncome = (
+  ("setReleaseVariable", true, R::Owner),
+  ("publishWorker", R::liveAll, R::ReleaseWorkflow),
+  ("verifyReadiness", R::Owner),
+  ("addToken", CV::ProjectToken, R::Worker),
+  ("receive", { source: PayoutFee, receipt: 1, token: 1, amount: 1000000000, chainTime: B::buybackStart, caseId: 0, reconciled: true }, R::Worker),
+  ("acquireLease", 1, CV::Recovery, R::Worker),
+  ("evaluate", 1, { token: 1, route: CV::Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }, R::Worker),
+  ("reserveGas", 1, 0, 100000000, R::Worker),
+  ("sign", 1, { kind: CV::Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, inspection: CV::Inspected,
+    outputToFeeWallet: true, minimumOutput: 445500000, deadline: B::buybackStart + 9000000000, blockhashSlot: 0, toPinnedRouter: true,
+    approvedAmount: 0, allowance: 500000000, pricedFeeMicro: 1000 }, R::Worker),
+  ("finalizeSend", 1, 1, { tx: 11, succeeded: true, output: 450000000, actualNative: 40000000, finalized: true, roleFree: true, allowanceAtBlock: 0 }, R::Worker),
+  ("creditConversion", 1, B::buybackStart, R::Worker))
+pure val eval_witness_sometimesDirectFeeIncome = (
+  ("addToken", CV::TargetStable, R::Worker),
+  ("recordCash", J::separatePaid, J::CurrentRead, R::Worker),
+  ("book", J::separatePaid, J::separateTimes, J::CurrentRead, R::Worker),
+  ("receive", { source: DirectAwardFee, receipt: 4, token: 1, amount: 25, chainTime: B::buybackStart + 1, caseId: 1, reconciled: true }, R::Worker),
+  ("advanceBuybackClock", B::buybackStart + 1, R::Worker),
+  ("creditDirectFee", 4, B::buybackStart + 1, R::Worker))
+pure val eval_witness_sometimesKeptFeeIncome = (
+  ("addToken", CV::TargetStable, R::Worker),
+  ("observeKeptFee", { deposit: 7, token: 1, amount: 2000000, toFeeWallet: true, accepted: true, finalized: true, resolved: true, chainTime: B::buybackStart + 1 }, R::Worker),
+  ("advanceBuybackClock", B::buybackStart + 1, R::Worker),
+  ("creditKeptFee", 7, B::buybackStart + 1, R::Worker))
 ```

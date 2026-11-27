@@ -374,25 +374,127 @@ pure val decisionValues = Set({ finding: C::Rejected, severity: T::SeverityUnset
 pure val attemptValues = Set(1)
 pure val completeValues = Set(true)
 pure val elapsedMsValues = Set(1000)
-pure val weight_begin = 10
-pure val weight_verifyObject = 10
-pure val weight_commitReceipt = 10
-pure val weight_observeAuthority = 6
-pure val weight_claimScreening = 10
-pure val weight_finishScreening = 10
-pure val weight_route = 10
-pure val weight_claimSend = 20
-pure val weight_recordClaimRead = 30
-pure val weight_startPost = 30
-pure val weight_recordPostResult = 30
-pure val weight_recordCreated = 15
-pure val weight_markInterrupted = 10
-pure val weight_reconcileCopies = 30
-pure val weight_readReceipt = 30
-pure val weight_expireVerification = 10
-pure val weight_finishTriage = 10
+pure val weight_begin = 2
+pure val weight_verifyObject = 2
+pure val weight_commitReceipt = 2
+pure val weight_observeAuthority = 1
+pure val weight_claimScreening = 2
+pure val weight_finishScreening = 2
+pure val weight_route = 2
+pure val weight_claimSend = 2
+pure val weight_recordClaimRead = 3
+pure val weight_startPost = 3
+pure val weight_recordPostResult = 3
+pure val weight_recordCreated = 2
+pure val weight_markInterrupted = 1
+pure val weight_reconcileCopies = 3
+pure val weight_readReceipt = 3
+pure val weight_expireVerification = 1
+pure val weight_finishTriage = 2
 pure val eval_witness_sometimesReceiptQueued = (
   ("begin", 1, "report", 1, 1, 1, 2, 1),
   ("verifyObject", 1, 1),
   ("commitReceipt", 2, 1))
+pure val eval_witness_sometimesOwnersNotified = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("claimScreening", 1, 2, 1),
+  ("finishScreening", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions },
+    S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("route", 3, 1))
+pure val eval_witness_sometimesOutageAfterReceipt = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAvailability", I::Unavailable, 1))
+pure val eval_witness_sometimesRevisedBodyRetained = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("claimScreening", 1, 2, 1),
+  ("finishScreening", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions },
+    S::Proposal({ phase: S::Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("replace", 1, 3, "revision", 2))
+pure val eval_witness_sometimesTriageWithContext = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("decide", 2, 1, { finding: C::Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0,
+    duplicateOf: 0, declareRelated: false, spam: false }),
+  ("appeal", 1),
+  ("startTriage", 2, 1),
+  ("finishTriage", 3, 1, C::Drafted({ returnCase: false, confidencePercent: 95, exclusions: offerExclusions }), 1))
+pure val eval_witness_sometimesAssessedWithContext = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("observeAuthority", C::staff, 1),
+  ("claimScreening", 1, 2, 1),
+  ("finishScreening", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions },
+    S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("observeQualified", 1),
+  ("startAssessment", 2, 1),
+  ("finishAssessment", 1, true, 1000, 1))
+pure val eval_witness_sometimesSubmittedWithDuplicates = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("claimScreening", 1, 2, 1),
+  ("finishScreening", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions },
+    S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("claimSend", { id: 1, revision: 1, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant }, 1000000, 1),
+  ("recordClaimRead", { requestId: 1, changedOne: true, rowPresent: true, observedRevision: 2, observedPhase: F::Submitting }, 1),
+  ("startPost", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, 1),
+  ("recordPostResult", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, F::CopyUnknown, 1),
+  ("reconcileCopies", { id: 1, revision: 3, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant },
+    { ...F::baseListing, copies: List(F::lateCopy, F::earlyCopy) }, 1300000, 1))
+pure val eval_witness_sometimesReopenedAfterEmptyListing = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("claimScreening", 1, 2, 1),
+  ("finishScreening", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions },
+    S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("claimSend", { id: 1, revision: 1, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant }, 1000000, 1),
+  ("recordClaimRead", { requestId: 1, changedOne: true, rowPresent: true, observedRevision: 2, observedPhase: F::Submitting }, 1),
+  ("startPost", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, 1),
+  ("recordPostResult", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, F::CopyUnknown, 1),
+  ("reconcileCopies", { id: 1, revision: 3, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant },
+    F::baseListing, 1300000, 1))
+pure val eval_witness_sometimesReceiptVerified = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("claimScreening", 1, 2, 1),
+  ("finishScreening", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions },
+    S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("claimSend", { id: 1, revision: 1, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant }, 1000000, 1),
+  ("recordClaimRead", { requestId: 1, changedOne: true, rowPresent: true, observedRevision: 2, observedPhase: F::Submitting }, 1),
+  ("startPost", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, 1),
+  ("recordCreated", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, F::earlyCopy, F::baseListing, 1),
+  ("readReceipt", { id: 1, revision: 3, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant }, F::earlyReceipt, 1))
+pure val eval_witness_sometimesUnverifiableKeepsCase = (
+  ("begin", 1, "report", 1, 1, 1, 2, 1),
+  ("verifyObject", 1, 1),
+  ("commitReceipt", 2, 1),
+  ("claimScreening", 1, 2, 1),
+  ("finishScreening", { revision: 2, version: 1, digest: "original" },
+    { exactVersionLoaded: true, duplicateEvidence: false, route: S::Surplus, exclusions: offerExclusions },
+    S::Proposal({ phase: S::Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }), 1),
+  ("claimSend", { id: 1, revision: 1, actor: 1, session: 1, checkedAtSeconds: 10, grant: F::capturedGrant }, 1000000, 1),
+  ("recordClaimRead", { requestId: 1, changedOne: true, rowPresent: true, observedRevision: 2, observedPhase: F::Submitting }, 1),
+  ("startPost", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, 1),
+  ("recordCreated", { revision: 2, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" }, F::earlyCopy, F::baseListing, 1),
+  ("expireVerification", 87400001, 1))
+pure val eval_witness_sometimesDirectReceived = (
+  ("receiveDirect", githubFirstReceipt, { ghsa: 3, repository: 1, reporter: 1 }, 1))
 ```

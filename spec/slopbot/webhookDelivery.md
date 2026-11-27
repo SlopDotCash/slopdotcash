@@ -340,14 +340,14 @@ pure val committedValues = Set(true, false)
 pure def alwaysInstallationFlagMatchesChange(w: Webhook): bool =
   w.installationProcessed implies (w.firstEvent == Installation and w.install.processed.includes(w.installDelivery)
     and w.installDelivery > 0)
-pure val weight_receive = 4
-pure val weight_authenticate = 4
-pure val weight_decode = 4
-pure val weight_claim = 4
-pure val weight_inspectValue = 4
-pure val weight_inspectQueue = 4
-pure val weight_bindReopen = 4
-pure val weight_send = 4
+pure val weight_receive = 1
+pure val weight_authenticate = 1
+pure val weight_decode = 1
+pure val weight_claim = 1
+pure val weight_inspectValue = 1
+pure val weight_inspectQueue = 1
+pure val weight_bindReopen = 1
+pure val weight_send = 1
 pure val eval_witness_sometimesReopenRetained = (
   ("receive", 1, bodyBytes, true),
   ("authenticate", 1, bodyBytes, true),
@@ -379,7 +379,9 @@ pure val eval_witness_sometimesValued = (
   ("authenticate", 1, bodyBytes, true),
   ("decode", 1, bodyBytes, true, true, valueBody),
   ("claim", 1),
-  ("inspectValue", 1, activeRegistry, activeRegistry, true))
+  ("inspectValue", 1, activeRegistry, activeRegistry, true),
+  ("inspectQueue", 1, activeRegistry, true),
+  ("complete", 1, true))
 pure val eval_witness_sometimesValuedReceiptKeptAfterFailure = (
   ("receive", 1, bodyBytes, true),
   ("authenticate", 1, bodyBytes, true),
