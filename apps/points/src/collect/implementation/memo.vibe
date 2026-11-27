@@ -56,7 +56,7 @@ type Row = Readonly<Record<string, unknown>>
 
 export const implementationMemoFormat = "slop-accepted-implementation-memo-v3"
 export const implementationMemoFile = "accepted-implementation-memo.json"
-export const implementationMemoRulesDigest = "a6e8a460e501b3074afc68dbf6664f2588320f40f43ef7b9a44ca77bef46ae1b"
+export const implementationMemoRulesDigest = "87a4ff517cd3359f2f0c420b7ec86da862d903de1ca335a5a50eec104f71753d"
 export const implementationMemoRulesSources: ReadonlyArray<RulesSource> = [
   { path: "apps/points/src/collect/implementation/native.vibe" },
   { path: "apps/points/src/collect/implementation/previous.vibe" },

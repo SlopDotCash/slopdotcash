@@ -17566,7 +17566,7 @@
     },
     {
       "path": "spec/points/authorship.md",
-      "sha256": "a60e9a28975368306f84d499ab68b09f209c827e6776ab531437a687a64c6d67",
+      "sha256": "7638fda2b5b4c853eaea828595393bcb9369ac40265eadbd9e90cbaeacc7cee2",
       "module": "points__authorship",
       "stories": [
         {
@@ -17762,7 +17762,7 @@
         },
         {
           "heading": "Story: Hold fresh implementation credit the census cannot prove / Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review",
-          "line": 408,
+          "line": 410,
           "definitions": [
             "ownsAcceptedOrdinaryCommit",
             "usesEarlierOwners",
@@ -20790,7 +20790,7 @@
     },
     {
       "path": "spec/points/reviewedHistory.md",
-      "sha256": "7b959fbde1742b3b3604a297f97b9bb26c3399a3350b9ae45514e10487280bb9",
+      "sha256": "759385bcefec00fe66afe29c695dcf436f05e92b4925fa93387e83feea3820cd",
       "module": "points__reviewedHistory",
       "stories": [
         {
@@ -20941,6 +20941,7 @@
             "lawIdenticalChangeNeedsOneEarlierRewardedSource",
             "lawSurvivingCarrierNeedsPinnedTip",
             "lawCarriedMergeEdgeNeedsTheEarlierHeadSecond",
+            "lawEmptyMergePreservesEarlierRecipientShares",
             "changeValues",
             "edgeValues",
             "lawUncoveredClaimRefused",
@@ -20952,7 +20953,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A historical replay scores only the pinned project's one repository",
-          "line": 515,
+          "line": 530,
           "definitions": [
             "HistoricalScope",
             "HistoricalInput",
@@ -20989,7 +20990,7 @@
         },
         {
           "target": "./authorship.md",
-          "line": 527
+          "line": 542
         }
       ]
     },

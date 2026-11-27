@@ -98,6 +98,7 @@ type PulledSource = Pick<CorrectionSource, "sourceId" | "sourceUrl" | "headSha" 
 interface IdenticalFlags {
   readonly sharedMerge: boolean
   readonly emptySquash: boolean
+  readonly emptyMerge: boolean
   readonly surviving: boolean
   readonly carried: boolean
 }
@@ -405,7 +406,7 @@ export effect function verifyHistoricalDuplicateAcceptanceOrder(packet: Retireme
 }
 
 function identicalKind(proof: IdenticalAcceptedChange): IdenticalFlags {
-  return { sharedMerge: proof.earlierMergeSha === proof.mergeSha, emptySquash: proof.emptySquash === true, surviving: proof.survivingCarrier === true, carried: proof.carriedAcceptance === true }
+  return { sharedMerge: proof.earlierMergeSha === proof.mergeSha, emptySquash: proof.emptySquash === true, emptyMerge: proof.emptyMerge === true, surviving: proof.survivingCarrier === true, carried: proof.carriedAcceptance === true }
 }
 
 function sameRepository(repository: PublicRepository, other: PublicRepository | null | undefined) {
@@ -426,8 +427,8 @@ effect function identicalPull(packet: RetirementScope, root: string, repository:
   const audit = packet.sourceAudit.sources.find((row) => row.id === source.sourceId)
   if (audit === undefined) throw refusal("Identical change is outside the reviewed census")
   const pull = try found(`${root}/pulls/${audit.number}`, ReviewedPull)
-  const strict = kind.emptySquash || kind.sharedMerge || kind.surviving || kind.carried
-  if (pull === undefined || ((kind.surviving || kind.carried) && !sameRepository(repository, pull.base.repo)) || pull.node_id !== source.sourceId || pull.number !== audit.number ||
+  const strict = kind.emptySquash || kind.emptyMerge || kind.sharedMerge || kind.surviving || kind.carried
+  if (pull === undefined || ((kind.surviving || kind.carried || kind.emptyMerge) && !sameRepository(repository, pull.base.repo)) || pull.node_id !== source.sourceId || pull.number !== audit.number ||
     pull.head.sha !== source.headSha || !shaPattern.test(pull.head.sha) || !shaPattern.test(pull.base.sha) || pull.merge_commit_sha !== mergeSha || pull.merged_at === null ||
     iso(pull.merged_at) !== source.occurredAt || pull.commits !== source.commitCount ||
     (strict && (pull.state !== "closed" || pull.html_url !== source.sourceUrl || pull.user?.node_id !== source.author?.id || pull.user?.type !== source.author?.kind))) {
@@ -500,13 +501,46 @@ effect function verifyEmptySquash(directory: string, plan: IdenticalPlan) {
     throw refusal("Earlier squash does not match the complete submitted change")
   }
   if (!(try isAncestor(directory, proof.earlierMergeSha, laterParent))) throw refusal("Earlier accepted squash is absent from the later base")
+  try verifyRetainedPaths(directory, plan, earlierParent, laterParent, "Later squash base does not retain all earlier accepted paths")
+}
+
+effect function verifyRetainedPaths(directory: string, plan: IdenticalPlan, earlierParent: string, laterParent: string, retained: string) {
+  const { proof } = plan
   const listed = lossyText(try publicGitBytes(directory, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", earlierParent, proof.earlierMergeSha, "--"], nativeFailed, diffLimit))
   const paths = listed.split("\0")
   const last = paths.pop()
-  const retained = "Later squash base does not retain all earlier accepted paths"
   if (last !== "" || paths.length === 0 || paths.some((path) => path === "" || path.includes("�")) || new Set(paths).size !== paths.length ||
     [plan.earlier, plan.later].some(({ pull }) => pull.changed_files !== paths.length)) throw refusal(retained)
-  if ((try diffDigest(directory, proof.earlierMergeSha, laterParent, paths)) !== empty) throw refusal(retained)
+  if ((try diffDigest(directory, proof.earlierMergeSha, laterParent, paths)) !== sha256Of("")) throw refusal(retained)
+}
+
+effect function emptyMergeParent(directory: string, source: CheckedPull) {
+  const { pull, mergeSha } = source
+  const [accepted, parent, head, ...extra] = (try publicGit(directory, ["rev-list", "--parents", "-n", "1", mergeSha], nativeFailed)).split(" ")
+  if (accepted !== mergeSha || parent === undefined || !shaPattern.test(parent) || head !== pull.head.sha || parent === head || extra.length > 0 ||
+    !(try matchesRange(directory, pull.head.sha, pull.base.sha, source.source))) throw refusal("Empty merge needs the complete two-parent submitted acceptance")
+  return parent
+}
+
+effect function verifyEmptyMerge(directory: string, plan: IdenticalPlan) {
+  const { proof, earlier, later } = plan
+  const earlierParent = try emptyMergeParent(directory, earlier)
+  const laterParent = try emptyMergeParent(directory, later)
+  const [tree = "", parentTree] = (try publicGit(directory, ["rev-parse", `${proof.mergeSha}^{tree}`, `${laterParent}^{tree}`], nativeFailed)).split("\n")
+  if (!shaPattern.test(tree) || tree !== parentTree) throw refusal("Accepted merge changes its first-parent tree")
+  if (later.pull.base.sha !== earlierParent || proof.diffSha256 === sha256Of("") ||
+    (try diffDigest(directory, earlierParent, proof.earlierMergeSha)) !== proof.diffSha256 ||
+    (try diffDigest(directory, earlier.pull.base.sha, earlier.source.headSha)) !== proof.diffSha256 ||
+    (try diffDigest(directory, later.pull.base.sha, later.source.headSha)) !== proof.diffSha256) {
+    throw refusal("Earlier merge does not match both complete submitted changes")
+  }
+  if (laterParent !== proof.earlierMergeSha) {
+    const absent = "Earlier accepted merge is absent from the later first-parent history"
+    if (!(try isAncestor(directory, proof.earlierMergeSha, laterParent))) throw refusal(absent)
+    const edges = (try publicGit(directory, ["rev-list", "--parents", "--first-parent", "--exclude-first-parent-only", laterParent, `^${proof.earlierMergeSha}`], nativeFailed, rangeLimit)).split("\n")
+    if (edges.at(-1)?.split(" ")[1] !== proof.earlierMergeSha) throw refusal(absent)
+  }
+  try verifyRetainedPaths(directory, plan, earlierParent, laterParent, "Later merge base does not retain all earlier accepted paths")
 }
 
 effect function verifyAcceptedChanges(directory: string, repository: PublicRepository, plan: IdenticalPlan) {
@@ -567,6 +601,7 @@ effect function verifyNative(directory: string, repository: PublicRepository, pl
     }
   }
   if (kind.emptySquash) try verifyEmptySquash(directory, plan)
+  else if (kind.emptyMerge) try verifyEmptyMerge(directory, plan)
   else try verifyAcceptedChanges(directory, repository, plan)
 }
 
@@ -590,7 +625,8 @@ effect function identicalPlan(packet: RetirementScope, root: string, repository:
     (kind.sharedMerge && (kind.emptySquash || earlier.sourceId === source.sourceId || earlier.headSha !== source.headSha)) || !digestPattern.test(proof.diffSha256) ||
     (proof.survivingCarrier !== undefined && (!kind.surviving || kind.emptySquash || kind.sharedMerge)) ||
     (proof.carriedAcceptance !== undefined && (!kind.carried || kind.emptySquash || kind.sharedMerge || kind.surviving || !matchesCarriedAcceptance(source, earlier, proof.earlierMergeSha))) ||
-    (proof.emptySquash !== undefined && proof.emptySquash !== true)) {
+    (proof.emptySquash !== undefined && proof.emptySquash !== true) ||
+    (proof.emptyMerge !== undefined && (!kind.emptyMerge || kind.sharedMerge || kind.emptySquash || kind.surviving || kind.carried))) {
     throw refusal("Reviewed identical change identity is invalid")
   }
   const earlierPull: CheckedPull = { source: earlier, mergeSha: proof.earlierMergeSha, pull: try identicalPull(packet, root, repository, kind, earlier, proof.earlierMergeSha) }

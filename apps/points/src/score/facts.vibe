@@ -125,7 +125,13 @@ export interface ReviewValue {
   readonly outcome: string
 }
 
-export interface MergedPull {
+export interface AcceptanceMarkers {
+  readonly emptyAcceptanceMarker?: boolean
+  readonly acceptedOrdinaryCommitOid?: string
+  readonly acceptedLineCountsDiffer?: true
+}
+
+export interface MergedPull extends AcceptanceMarkers {
   readonly id: string
   readonly number: number
   readonly repository: string
@@ -143,8 +149,6 @@ export interface MergedPull {
   readonly externalPrize: boolean
   readonly traceUpload: boolean
   readonly automatedReviews: ReadonlyArray<AutomatedReview>
-  readonly emptyAcceptanceMarker?: boolean
-  readonly acceptedOrdinaryCommitOid?: string
   readonly valueActorIds?: ReadonlyArray<string>
 }
 

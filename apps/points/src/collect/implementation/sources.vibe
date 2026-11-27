@@ -1,4 +1,5 @@
 // spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+import type { AcceptanceMarkers } from "../../score/facts.vibe"
 import { type MergedOutcome, MergedRecordInvalid, arrayAt, commitSha, recordAt } from "../merged/wire.vibe"
 
 export interface AcceptedImplementationSource {
@@ -11,11 +12,6 @@ export interface AcceptedImplementationSource {
 }
 
 export type Acceptance = AcceptedImplementationSource | "ineligible" | null
-
-export interface AcceptanceMarkers {
-  readonly acceptedOrdinaryCommitOid?: string
-  readonly emptyAcceptanceMarker?: boolean
-}
 
 export interface CurrentAcceptance {
   readonly outcome: MergedOutcome
@@ -40,6 +36,8 @@ export const implementationSourcesQuery = `
         deletions
         mergeCommit {
           oid
+          additions
+          deletions
           tree { oid }
           parents(first: 2) { totalCount nodes { oid tree { oid } } }
         }
@@ -110,28 +108,37 @@ export effect function currentAcceptance(value: unknown, outcome: MergedOutcome,
   if (absent(value)) return none
   const node = try recordAt(value, path)
   if (node.id !== outcome.id || absent(node.mergeCommit) || absent(node.commits)) return none
-  const acceptance = try readImplementationAcceptance(outcome.id, outcome.headRefOid, node.mergeCommit, path)
+  const merge = try recordAt(node.mergeCommit, `${path}.mergeCommit`)
+  const acceptance = try readImplementationAcceptance(outcome.id, outcome.headRefOid, merge, path)
   if (acceptance === null || acceptance === "ineligible") return none
   const commits = try recordAt(node.commits, `${path}.commits`)
   const totalCount = commits.totalCount
   if (!safeCount(totalCount)) return none
   const changed = acceptance.mergeTreeSha !== acceptance.firstParentTreeSha
+  if (!changed && acceptance.mergeParentShas.length === 2 && totalCount > 0) {
+    return { outcome, markers: { emptyAcceptanceMarker: true }, implementationSource: undefined } satisfies CurrentAcceptance
+  }
   const separateOrdinaryCommit = acceptance.mergeParentShas.length === 1 && acceptance.mergeSha !== outcome.headRefOid
   const ordinary = changed && separateOrdinaryCommit && totalCount > 0 ? { acceptedOrdinaryCommitOid: acceptance.mergeSha } : {}
+  const countsDiffer = changed && acceptance.mergeParentShas.length === 2 && node.headRefOid === outcome.headRefOid &&
+    node.additions === outcome.additions && node.deletions === outcome.deletions && safeCount(merge.additions) && safeCount(merge.deletions) &&
+    (merge.additions !== outcome.additions || merge.deletions !== outcome.deletions)
+  const markers: AcceptanceMarkers = countsDiffer ? { ...ordinary, acceptedLineCountsDiffer: true } : ordinary
+  const current: CurrentAcceptance = { ...none, markers }
   const page = absent(commits.pageInfo) ? undefined : try recordAt(commits.pageInfo, `${path}.commits.pageInfo`)
   const nodes = Array.isArray(commits.nodes) ? commits.nodes : []
   const edge = nodes.length === 1 && !absent(nodes[0]) ? try recordAt(nodes[0], `${path}.commits.nodes[0]`) : undefined
   const commit = edge === undefined || absent(edge.commit) ? undefined : try recordAt(edge.commit, `${path}.commits.nodes[0].commit`)
   const parentsOf = commit === undefined || absent(commit.parents) ? undefined : try recordAt(commit.parents, `${path}.commits.nodes[0].commit.parents`)
   const single = totalCount === 1 && page?.hasNextPage === false && commit !== undefined && typeof commit.oid === "string" && commit.oid.toLowerCase() === outcome.headRefOid && parentsOf?.totalCount === 1
-  if (!single) return { outcome, markers: ordinary, implementationSource: undefined } satisfies CurrentAcceptance
+  if (!single) return current
   if (changed) {
     const changedFiles = node.changedFiles
     const implementationSource = typeof changedFiles === "number" && Number.isSafeInteger(changedFiles) && changedFiles > 0 ? { source: acceptance, changedFiles } : undefined
-    return { outcome, markers: ordinary, implementationSource } satisfies CurrentAcceptance
+    return { ...current, implementationSource } satisfies CurrentAcceptance
   }
   const empty = outcome.additions + outcome.deletions > 0 && separateOrdinaryCommit ? { emptyAcceptanceMarker: true } : {}
-  return { outcome, markers: { ...ordinary, ...empty }, implementationSource: undefined } satisfies CurrentAcceptance
+  return { ...current, markers: { ...markers, ...empty } } satisfies CurrentAcceptance
 }
 
 export function implementationSourcesByShape(current: ReadonlyArray<CurrentAcceptance>) {
