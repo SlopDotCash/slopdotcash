@@ -27503,7 +27503,7 @@
     },
     {
       "path": "spec/settlement/keeperLifecycle.md",
-      "sha256": "f3949c59e7ce04bfe31b6f8a0f016c09d4ad2264ad28c965c3c4ebad5a55344f",
+      "sha256": "cce741c5c64b3f9f14fe80e42be542026222f0d4ec6275b0ced7657801e96c24",
       "module": "settlement__keeperLifecycle",
       "stories": [
         {
@@ -27607,7 +27607,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / A send becomes replaceable only after ten minutes unmined and while the base fee exceeds its max fee",
-          "line": 203,
+          "line": 208,
           "definitions": [
             "replacementWaitSeconds",
             "replacementDue",
@@ -27617,7 +27617,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block",
-          "line": 220,
+          "line": 225,
           "definitions": [
             "extraFeeReserved",
             "extraFeeValues"
@@ -27625,7 +27625,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Core completion and per-request result delivery have independent lifetimes",
-          "line": 238,
+          "line": 243,
           "definitions": [
             "canItemFailure",
             "itemFailure",
@@ -27642,7 +27642,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Restart abandons only ephemeral work and unresolved callers from that instance",
-          "line": 270,
+          "line": 275,
           "definitions": [
             "canRestart",
             "restart",
@@ -29838,7 +29838,7 @@
     },
     {
       "path": "spec/settlement/ownerTransactions.md",
-      "sha256": "cc85d2fb424854de75773c291291fef7df18d4d42db7e0abd6a2f48857fc9dd2",
+      "sha256": "c78a5c1d333664872ddaf895fc16f3d7cd911294c9b0f13eaea282d94b198475",
       "module": "settlement__ownerTransactions",
       "stories": [
         {
@@ -29894,7 +29894,7 @@
         },
         {
           "heading": "Story: Review, sign elsewhere, and check exactly once / Simulation samples",
-          "line": 129,
+          "line": 131,
           "definitions": [
             "kindValues",
             "factsSample",
@@ -31220,7 +31220,7 @@
     },
     {
       "path": "spec/settlement/referralHolds.md",
-      "sha256": "a91c3ae061e49d28f0356c09b7c43b76caff427ef7c3a65855c5aec03604ef2a",
+      "sha256": "3dc9b5b1158352e28dcd23759555801b27a670c65e689a5647051064aa6abdc2",
       "module": "settlement__referralHolds",
       "stories": [
         {
@@ -31260,7 +31260,7 @@
         },
         {
           "heading": "Story: Hold a project's later accruals with a public reason / Simulation samples",
-          "line": 67,
+          "line": 69,
           "definitions": [
             "byValues",
             "idValues",
@@ -31905,7 +31905,7 @@
     },
     {
       "path": "spec/settlement/signer.md",
-      "sha256": "1027c95ba73519a33b65fd8ba5bb93a9eb13096bfb53340c9ee1f5b5e657fff8",
+      "sha256": "b86d0d7c19d8ab436da26514e74dd2418ec6540482eefc571140f7a93491dde5",
       "module": "settlement__signer",
       "stories": [
         {
@@ -31914,7 +31914,7 @@
         },
         {
           "heading": "Story: Restrict every service operation",
-          "line": 211
+          "line": 213
         }
       ],
       "rules": [
@@ -32009,7 +32009,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Each service key permits only its named operations and none can pay, withdraw or upgrade",
-          "line": 213,
+          "line": 215,
           "definitions": [
             "Operation",
             "Signer",
@@ -32024,7 +32024,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Every attester EVM transaction stays under its deployment gas ceiling, a 10 gwei fee cap and its frozen native-cost cap",
-          "line": 247,
+          "line": 249,
           "definitions": [
             "AttesterTransaction",
             "attesterFeeCap",
@@ -32036,7 +32036,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / A cancellation is one 21,000-gas transaction whose fee rises by at least one eighth and stays under 10 gwei",
-          "line": 279,
+          "line": 281,
           "definitions": [
             "CancellationFees",
             "cancellationGas",
@@ -32052,7 +32052,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / One binding consent spends at most one nonce per vault and actor",
-          "line": 314,
+          "line": 316,
           "definitions": [
             "ConsentBudget",
             "consentHistoryBound",
@@ -32067,7 +32067,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Each attester run tries at most ten bindings, least recently checked first, then by first reserved obligation, actor and claim",
-          "line": 346,
+          "line": 348,
           "definitions": [
             "BindingCandidate",
             "CandidateOrder",
@@ -32079,7 +32079,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester",
-          "line": 375,
+          "line": 377,
           "definitions": [
             "Stack",
             "ServiceNetwork",
@@ -32098,7 +32098,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 417,
+          "line": 419,
           "definitions": [
             "actorValues",
             "attemptValues",

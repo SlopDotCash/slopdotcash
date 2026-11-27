@@ -162,7 +162,9 @@ and the shared [fee replacement](./feeReplacement.md) step from the original
 and latest fees; every attempt keeps the same nonce. Every replaced attempt
 remains retained because any one of them may be the finalized winner; exactly
 one finalized outcome settles the nonce. A new UTC day resets the day's
-spending but never releases an uncertain hold.
+spending but never releases an uncertain hold. A staged attempt carries the
+staged bytes and a non-negative priority fee at most its maximum fee before
+commit.
 
 ```quint
 pure def latestAttempt(k: Lifecycle): SendAttempt = k.journal.attempts.nthOr(k.journal.attempts.length() - 1, noAttempt)
@@ -187,6 +189,9 @@ pure def alwaysAttemptsBounded(k: Lifecycle): bool =
   k.journal.attempts.every(a => a.bytes > 0 and a.priorityFee >= 0 and a.priorityFee <= a.maxFee
     and a.maxFee <= originalAttempt(k).maxFee * 3 and k.journal.attempts.select(o => o.bytes == a.bytes).length() == 1)
     and (k.journal.signedBytes > 0 implies originalAttempt(k).bytes == k.journal.signedBytes)
+    and (k.liveRun.stagedBytes > 0 implies
+      k.liveRun.staged.bytes == k.liveRun.stagedBytes and k.liveRun.staged.priorityFee >= 0
+        and k.liveRun.staged.priorityFee <= k.liveRun.staged.maxFee)
 pure def alwaysOneFinalizedOutcome(k: Lifecycle): bool = (k.journal.winner > 0) == k.journal.gasSettled
   and (k.journal.winner > 0 implies k.journal.attempts.some(a => a.bytes == k.journal.winner))
 pure def alwaysHoldOnlyWhileUncertain(k: Lifecycle): bool = (k.journal.held > 0) implies k.journal.gasHeld

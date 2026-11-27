@@ -52,3 +52,86 @@ lemma CompletedRecords(v: EvmDeposits, slot: int, by_: string)
   ensures var local_0 := runOf(v, slot); completePage(v, slot, by_).cursor == (if (local_0.toBlock > v.cursor) then local_0.toBlock else v.cursor)
 {
 }
+
+lemma FundersTotalAppend(testnets: seq<bool>, staging: bool, next: bool)
+  ensures fundersTotal(testnets + [next], staging) == (if (staging || !(next)) then fundersTotal(testnets, staging) + 1 else fundersTotal(testnets, staging))
+{
+  ProofLib.FoldLeftAppend((n: int, testnet: bool) => (if (staging || !(testnet)) then (n + 1) else n), 0, testnets, next);
+}
+
+lemma lawProductionLeavesTestnetsOut_ensures(testnets: seq<bool>)
+  ensures (lawProductionLeavesTestnetsOut(testnets) == true)
+{
+  FundersTotalAppend(testnets, false, true);
+}
+
+lemma FilterSingleton(names: seq<string>, login: string)
+  ensures ProofLib.Filter((set_x: string) => !((set_x in names)), [login]) == (if login in names then [] else [login])
+{
+  var p := (set_x: string) => !((set_x in names));
+  ProofLib.FilterCons(p, [login]);
+  ProofLib.FilterNil(p, [login][1..]);
+}
+
+lemma NamingLoginsFilter(depositSolana: bool, depositor: string, regs: seq<Registrant>)
+  ensures namingLogins(depositSolana, depositor, regs) == Std.Collections.Seq.FoldLeft((names: seq<string>, reg: Registrant) => (if (countedRegistrant(reg) && holdsDeposit(depositSolana, depositor, reg)) then (names + ProofLib.Filter((set_x: string) => !((set_x in names)), [reg.login])) else names), [], regs)
+{
+  var f := (names: seq<string>, reg: Registrant) => (if (countedRegistrant(reg) && holdsDeposit(depositSolana, depositor, reg)) then (names + Std.Collections.Seq.Filter((set_x: string) => !((set_x in names)), [reg.login])) else names);
+  var g := (names: seq<string>, reg: Registrant) => (if (countedRegistrant(reg) && holdsDeposit(depositSolana, depositor, reg)) then (names + ProofLib.Filter((set_x: string) => !((set_x in names)), [reg.login])) else names);
+  ProofLib.FoldLeftPointwise(f, g, [], regs, regs);
+}
+
+lemma NamingLoginsAppend(depositSolana: bool, depositor: string, regs: seq<Registrant>, next: Registrant)
+  ensures namingLogins(depositSolana, depositor, regs + [next]) == (var cur := namingLogins(depositSolana, depositor, regs); if (countedRegistrant(next) && holdsDeposit(depositSolana, depositor, next)) then (cur + (if next.login in cur then [] else [next.login])) else cur)
+{
+  NamingLoginsFilter(depositSolana, depositor, regs);
+  NamingLoginsFilter(depositSolana, depositor, regs + [next]);
+  var g := (names: seq<string>, reg: Registrant) => (if (countedRegistrant(reg) && holdsDeposit(depositSolana, depositor, reg)) then (names + ProofLib.Filter((set_x: string) => !((set_x in names)), [reg.login])) else names);
+  ProofLib.FoldLeftAppend(g, [], regs, next);
+  FilterSingleton(namingLogins(depositSolana, depositor, regs), next.login);
+}
+
+lemma DepositorLoginFoldAppend(depositSolana: bool, depositor: string, regs: seq<Registrant>, next: Registrant)
+  ensures Std.Collections.Seq.FoldLeft((name: string, reg: Registrant) => (if (countedRegistrant(reg) && holdsDeposit(depositSolana, depositor, reg)) then reg.login else name), "", regs + [next]) == (if (countedRegistrant(next) && holdsDeposit(depositSolana, depositor, next)) then next.login else Std.Collections.Seq.FoldLeft((name: string, reg: Registrant) => (if (countedRegistrant(reg) && holdsDeposit(depositSolana, depositor, reg)) then reg.login else name), "", regs))
+{
+  ProofLib.FoldLeftAppend((name: string, reg: Registrant) => (if (countedRegistrant(reg) && holdsDeposit(depositSolana, depositor, reg)) then reg.login else name), "", regs, next);
+}
+
+lemma lawUnsignedRegistrationNamesNobody_ensures(reg: Registrant)
+  ensures (lawUnsignedRegistrationNamesNobody(reg) == true)
+{
+  if !reg.walletSigned {
+    assert [] + [reg] == [reg];
+    NamingLoginsAppend(reg.solana, reg.address, [], reg);
+    assert namingLogins(reg.solana, reg.address, []) == [];
+    assert namingLogins(reg.solana, reg.address, [reg]) == [];
+  }
+}
+
+lemma lawUncountedRegistrationHidesNobody_ensures(reg: Registrant, other: Registrant)
+  ensures (lawUncountedRegistrationHidesNobody(reg, other) == true)
+{
+  if countedRegistrant(reg) && !countedRegistrant(other) {
+    assert [] + [reg] == [reg];
+    assert [reg] + [other] == [reg, other];
+    NamingLoginsAppend(reg.solana, reg.address, [], reg);
+    assert namingLogins(reg.solana, reg.address, []) == [];
+    NamingLoginsAppend(reg.solana, reg.address, [reg], other);
+    assert namingLogins(reg.solana, reg.address, [reg, other]) == [reg.login];
+    DepositorLoginFoldAppend(reg.solana, reg.address, [], reg);
+    DepositorLoginFoldAppend(reg.solana, reg.address, [reg], other);
+  }
+}
+
+lemma lawTwoSignedAccountsNameNobody_ensures(reg: Registrant, other: Registrant)
+  ensures (lawTwoSignedAccountsNameNobody(reg, other) == true)
+{
+  if countedRegistrant(reg) && countedRegistrant(other) && holdsDeposit(reg.solana, reg.address, other) && reg.login != other.login {
+    assert [] + [reg] == [reg];
+    assert [reg] + [other] == [reg, other];
+    NamingLoginsAppend(reg.solana, reg.address, [], reg);
+    assert namingLogins(reg.solana, reg.address, []) == [];
+    NamingLoginsAppend(reg.solana, reg.address, [reg], other);
+    assert namingLogins(reg.solana, reg.address, [reg, other]) == [reg.login, other.login];
+  }
+}

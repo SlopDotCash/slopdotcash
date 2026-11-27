@@ -190,6 +190,8 @@ pure def retireReverted(b: Binding, receipt: FinalizedOutcome): Binding =
 
 ### Both possible winners stay retained
 
+Intent numbers start at zero and never decrease, and every phase after unbound carries a positive intent.
+
 ```quint
 pure def alwaysCanonicalRetained(b: Binding): bool = (b.phase == Bound or b.phase == Cancelled) implies
   b.finalizedHeight > 0 and (b.canonical == b.bindingAttempt or b.canonical == b.cancellationAttempt)
@@ -202,7 +204,7 @@ pure def stepIntentsGrow(before: Binding, after: Binding): bool = after.latestIn
 pure def alwaysUnsignedHasNoAttempt(b: Binding): bool =
   (b.phase == Unbound or b.phase == Authorized) implies
     b.bindingAttempt == 0 and b.signedAuthority == 0 and b.cancellationAttempt == 0
-pure def alwaysIntentKnown(b: Binding): bool = b.intent <= b.latestIntent and (b.phase != Unbound implies b.intent > 0)
+pure def alwaysIntentKnown(b: Binding): bool = b.intent >= 0 and b.intent <= b.latestIntent and (b.phase != Unbound implies b.intent > 0)
 pure def sometimesOldBindingWins(b: Binding): bool = b.phase == Bound and b.cancellationAttempt > 0
 pure def sometimesCancellationWins(b: Binding): bool = b.phase == Cancelled
 pure def sometimesRetiredThenRebound(b: Binding): bool = b.phase == Bound and b.retired.length() > 0
