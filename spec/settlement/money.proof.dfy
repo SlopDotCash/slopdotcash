@@ -1185,19 +1185,31 @@ lemma AmountValueSubtract(a: seq<int>, b: seq<int>)
     var vh := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(hi));
     assert 0 <= vl && 0 <= vh;
     assert vb == vl + wa * vh;
-    if vh > 0 { assert wa * vh >= wa; }
+    if vh > 0 {
+      assert wa * (vh - 1) >= 0;
+      assert wa * vh >= wa;
+    }
     assert vh == 0;
   }
   var f := (acc: SubtractFold, ignored: int) => SubtractFold((acc.index + 1), (if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then 1 else 0), (acc.digits + [(if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) + 1000) else (((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow))]));
   var result := Std.Collections.Seq.FoldLeft(f, SubtractFold(0, 0, []), a);
   SubtractSuffixValue(a, b, a, SubtractFold(0, 0, []));
   assert a[0..] == a && b[if 0 < |b| then 0 else |b|..] == b;
+  assert result.digits[0..] == result.digits;
   assert result.digits == subtractAmounts(a, b) && |result.digits| == |a|;
   lawSubtractionValid_ensures(a, b);
   AmountValueConsRange(result.digits);
   PowerLengthOnly(result.digits, a, 1);
-  assert Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(result.digits)) < wa;
+  var vr := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(result.digits));
+  assert 0 <= vr < wa;
+  assert vr - result.borrow * wa == va - vb;
+  if result.borrow != 0 {
+    assert result.borrow == 1;
+    assert result.borrow * wa == wa;
+    assert false;
+  }
   assert result.borrow == 0;
+  assert result.borrow * wa == 0;
 }
 
 lemma lawNumericOrderTotal_ensures(a: seq<int>, b: seq<int>)
@@ -1599,9 +1611,11 @@ lemma CandidateFitsFloor(digit: int, bit: int, expected: int, base: int, amount:
 {
   var candidate := digit+bit;
   if candidate <= expected {
+    assert (expected - candidate) * base >= 0;
     assert candidate*base <= expected*base;
   } else {
     assert expected+1 <= candidate;
+    assert (candidate - (expected + 1)) * base >= 0;
     assert (expected+1)*base <= candidate*base;
   }
 }
