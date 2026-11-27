@@ -17,7 +17,8 @@ belong to the [project bounty machine](./bounty.md).
 
 The program issues the terms at the receipt time. A program paused or
 closed after receipt leaves the case's frozen terms unchanged. Nothing is
-screened, assessed, decided or forwarded before the atomic receipt.
+screened, assessed, triaged, decided or forwarded before the atomic receipt, and
+screening exclusions remain unset with no shown or recorded assessment attempts.
 
 ```quint
 import money as M from "../settlement/money"
@@ -29,10 +30,10 @@ import cases as C from "./cases"
 import assessment as A from "./assessment"
 import forwarding as F from "./forwarding"
 type Journey = { program: P::Program, intake: I::Intake, screening: S::Screening, privateCase: C::PrivateCase,
-  assessment: A::Assessment, forwarding: F::Forwarding, reportingReady: bool }
+  assessment: A::Assessment, assessmentAttempts: List[int], forwarding: F::Forwarding, reportingReady: bool }
 pure val openProgram: P::Program = { ...P::initial, project: "umia", offer: P::standardOffer, revision: 1, publishedAt: 1, revisions: List(1) }
 pure val initial: Journey = { program: openProgram, intake: I::initial, screening: S::initial, privateCase: C::initial,
-  assessment: A::initial, forwarding: F::initial, reportingReady: true }
+  assessment: A::initial, assessmentAttempts: List(), forwarding: F::initial, reportingReady: true }
 pure def received(r: Journey): bool = r.intake.phase == I::Received
 pure def canBegin(r: Journey, key: int, digest: int, reporter: int, repository: int, projectRevision: int, nowMs: int): bool =
   I::canBegin(r.intake, key, digest, reporter, repository, projectRevision, nowMs) and reporter == r.privateCase.reporter
@@ -56,7 +57,9 @@ pure def observeAuthority(r: Journey, snapshot: C::Authority): Journey =
   { ...r, privateCase: C::observeAuthority(r.privateCase, snapshot), assessment: A::observeAuthority(r.assessment, snapshot) }
 pure def alwaysNothingBeforeReceipt(r: Journey): bool = not(received(r)) implies r.privateCase.submission == C::NotReceived
   and r.screening.revision == 1 and r.screening.version == 1 and r.screening.phase == S::Queued and r.screening.review == S::PendingReview
-  and r.forwarding.attempt == 0 and r.assessment.count == 0 and r.assessment.qualifiedVersion == 0 and r.assessment.reportVersion == 1
+  and r.screening.exclusions == T::noExclusions and r.forwarding.attempt == 0 and r.assessment.count == 0
+  and r.assessment.shown == 0 and r.assessmentAttempts.length() == 0 and r.assessment.qualifiedVersion == 0
+  and r.assessment.reportVersion == 1 and r.privateCase.triage.state == C::NoTriage
 pure def alwaysCaseHoldsReceiptTerms(r: Journey): bool = received(r) implies r.privateCase.submission == C::Verified
   and r.privateCase.terms == r.intake.terms and r.privateCase.terms.receivedAt == r.intake.receivedAt
 pure def sometimesPaidCase(r: Journey): bool = r.privateCase.submission == C::Verified and r.privateCase.terms.paidTerms
@@ -133,8 +136,9 @@ pure def sometimesRevisedThenDecided(r: Journey): bool = r.screening.version > 1
 ### The maintainer assessment starts only for a qualified current version
 
 The automatic assessment receives the exclusion context of the case's
-receipt-time terms. Screening, the assessment and appeal triage keep the
-context they ran with as advice.
+receipt-time terms and records each started attempt id; only a started attempt
+finishes. Screening, every recorded assessment attempt and appeal triage keep
+the context they ran with as advice.
 
 ```quint
 pure def canObserveQualified(r: Journey): bool = received(r) and S::qualified(r.screening)
@@ -142,8 +146,10 @@ pure def canObserveQualified(r: Journey): bool = received(r) and S::qualified(r.
 pure def observeQualified(r: Journey): Journey = { ...r, assessment: A::observeQualified(r.assessment, r.screening.version) }
 pure def canStartAssessment(r: Journey, nowMs: int): bool = A::canStartAutomatic(r.assessment, nowMs, T::receiptExclusions(r.privateCase.terms))
 pure def startAssessment(r: Journey, nowMs: int): Journey =
-  { ...r, assessment: A::startAutomatic(r.assessment, nowMs, T::receiptExclusions(r.privateCase.terms)) }
-pure def canFinishAssessment(r: Journey, attempt: int, complete: bool, elapsedMs: int): bool = A::canFinish(r.assessment, attempt, complete, elapsedMs)
+  { ...r, assessment: A::startAutomatic(r.assessment, nowMs, T::receiptExclusions(r.privateCase.terms)),
+    assessmentAttempts: r.assessmentAttempts.append(r.assessment.count + 1) }
+pure def canFinishAssessment(r: Journey, attempt: int, complete: bool, elapsedMs: int): bool =
+  A::canFinish(r.assessment, attempt, complete, elapsedMs) and r.assessmentAttempts.includes(attempt)
 pure def finishAssessment(r: Journey, attempt: int, complete: bool, elapsedMs: int): Journey =
   { ...r, assessment: A::finish(r.assessment, attempt, complete, elapsedMs) }
 pure def alwaysQualifiedVersionNotAhead(r: Journey): bool = r.assessment.qualifiedVersion <= r.screening.version
@@ -152,6 +158,7 @@ pure def alwaysAdviceUsesReceiptExclusions(r: Journey): bool =
   (r.screening.exclusions == T::noExclusions or r.screening.exclusions == context)
   and (r.assessment.count > 0 implies A::latest(r.assessment).exclusions == context)
   and (r.assessment.shown > 0 implies r.assessment.attempts.getOr(r.assessment.shown, A::noAttempt).exclusions == context)
+  and r.assessmentAttempts.every(k => r.assessment.attempts.getOr(k, A::noAttempt).exclusions == context)
   and C::alwaysTriageUsesReceiptExclusions(r.privateCase)
 pure def sometimesAssessmentShown(r: Journey): bool = r.assessment.shown > 0
 ```

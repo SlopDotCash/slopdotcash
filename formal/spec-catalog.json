@@ -5603,7 +5603,7 @@
     },
     {
       "path": "spec/contributor/lockPublication.md",
-      "sha256": "ecde9625186e4cd060a708ce39812263292a662bbdd39be3bc728f5f1af69925",
+      "sha256": "e0fb092f4e4adeb32248fe2383c4921f854d8142a9aa7582ec577264f9c12202",
       "module": "contributor__lockPublication",
       "stories": [
         {
@@ -7243,7 +7243,7 @@
     },
     {
       "path": "spec/contributor/traceServer.md",
-      "sha256": "5a26ceeaf4b6830592d3b2e773cc18a5ff15de032a831a3de3604194ff19c3b6",
+      "sha256": "b6b645c5b8480ff48f31d3e0b48a07e1e646242a80491c44baece3218915153d",
       "module": "contributor__traceServer",
       "stories": [
         {
@@ -7353,7 +7353,7 @@
         },
         {
           "heading": "Story: Keep one permanent exact trace for a run without letting a ban or race attach new bytes / A reserved upload is eventually stored or failed, and a stored one attached or failed",
-          "line": 266,
+          "line": 267,
           "definitions": [
             "pendingPut",
             "leadsToPutSettled",
@@ -7363,7 +7363,7 @@
         },
         {
           "heading": "Story: Keep one permanent exact trace for a run without letting a ban or race attach new bytes / Finalization needs an attached trace and freezes the run",
-          "line": 279,
+          "line": 280,
           "definitions": [
             "canFinalize",
             "finalize",
@@ -7372,7 +7372,7 @@
         },
         {
           "heading": "Story: Keep one permanent exact trace for a run without letting a ban or race attach new bytes / Progress events are the owner's agent-source records, idempotent by key and refused once finalized",
-          "line": 296,
+          "line": 297,
           "definitions": [
             "canAppendEvent",
             "appendEvent",
@@ -7382,7 +7382,7 @@
         },
         {
           "heading": "Story: Keep one permanent exact trace for a run without letting a ban or race attach new bytes / A banned owner starts nothing new and a different actor changes nothing",
-          "line": 325,
+          "line": 326,
           "definitions": [
             "stepBannedAddsNothing",
             "lawOtherActorAddsNoIntent",
@@ -7392,7 +7392,7 @@
         },
         {
           "heading": "Story: Keep one permanent exact trace for a run without letting a ban or race attach new bytes / The author's own pull_request_opened event is the only closure run evidence",
-          "line": 339,
+          "line": 340,
           "definitions": [
             "recordedSkillRun",
             "consistentRun",
@@ -7414,7 +7414,7 @@
         },
         {
           "heading": "Story: Keep one permanent exact trace for a run without letting a ban or race attach new bytes / Simulation samples cover both actors, both keys, both digests and the boundaries",
-          "line": 372,
+          "line": 373,
           "definitions": [
             "byValues",
             "actorValues",
@@ -23617,7 +23617,7 @@
     },
     {
       "path": "spec/security/journey.md",
-      "sha256": "d12d98c31d1ce997d105d1da13921bf1236f046c1efd6100c5076385e6ba6070",
+      "sha256": "26adcccd96e129bd70da9f10e20160691efe3a3987f7789aaa52a7166fcdc0e0",
       "module": "security__journey",
       "stories": [
         {
@@ -23653,7 +23653,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / Screening, human routing review and owner notification use the live records",
-          "line": 68,
+          "line": 71,
           "definitions": [
             "canClaimScreening",
             "claimScreening",
@@ -23670,7 +23670,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / A reporter revision needs the forwarding draft, the open case and admission, and advances every version together",
-          "line": 94,
+          "line": 97,
           "definitions": [
             "revisionEvidence",
             "canReplace",
@@ -23686,7 +23686,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / The maintainer assessment starts only for a qualified current version",
-          "line": 133,
+          "line": 136,
           "definitions": [
             "canObserveQualified",
             "observeQualified",
@@ -23701,7 +23701,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / Forwarding sends only the current qualified version with the reporter's grant",
-          "line": 159,
+          "line": 166,
           "definitions": [
             "sendGate",
             "canObserveReadiness",
@@ -23723,7 +23723,7 @@
         },
         {
           "heading": "Story: Carry one report from durable receipt to a decision and optional forwarding / Simulation samples",
-          "line": 191,
+          "line": 198,
           "definitions": [
             "keyValues",
             "digestValues",
@@ -25223,7 +25223,7 @@
     },
     {
       "path": "spec/security/vettingComposition.md",
-      "sha256": "5b7f76e56727af28932c0d1b3a7afbdf1f4465583577907c4567792d44fee5f9",
+      "sha256": "dcaf7a0a8f0e22a32ad7205e0d12c3a0b861c64aa80c089f27987a3adf023431",
       "module": "security__vettingComposition",
       "stories": [
         {
@@ -25250,7 +25250,7 @@
         },
         {
           "heading": "Story: Only a qualified clean scan of the exact repository identity clears it / A reused clean scan never lifts a flag pause",
-          "line": 67,
+          "line": 72,
           "definitions": [
             "canReinstateFlagPause",
             "reinstateFlagPause",
@@ -25260,7 +25260,7 @@
         },
         {
           "heading": "Story: Only a qualified clean scan of the exact repository identity clears it / Requests, flags and the registry mirror run under enforcement's own guards",
-          "line": 94,
+          "line": 99,
           "definitions": [
             "canObserveRevision",
             "observeRevision",
@@ -25274,7 +25274,7 @@
         },
         {
           "heading": "Story: Only a qualified clean scan of the exact repository identity clears it / Reachable outcomes",
-          "line": 115,
+          "line": 120,
           "definitions": [
             "sometimesClearedByScan",
             "sometimesUnreadableEvidenceUnverified",
@@ -25324,7 +25324,7 @@
         },
         {
           "target": "./enforcement.md",
-          "line": 71
+          "line": 76
         }
       ]
     },
