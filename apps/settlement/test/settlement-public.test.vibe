@@ -237,6 +237,7 @@ const Started = Layer.effect(Public, effect {
   const site = (tier: Tier, database: D1Database = reads, cache: Layer.Layer<EdgeCache> = noEdgeCache) => worker({
     services: (_env: object) => Layer.mergeAll(
       d1(database),
+      webCrypto,
       cache,
       clock.layer,
       Layer.succeed(DeploymentTier, { tier }),
