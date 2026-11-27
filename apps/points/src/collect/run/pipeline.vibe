@@ -35,7 +35,7 @@ export error AssemblyRefused { message: string }
 export const collectUsage = "Usage: collect <registry.json> [--cutoff YYYY-MM-DDTHH:mm:ss.sssZ]"
 const exactInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const dayMs = 24 * 60 * 60 * 1000
-const verificationWindowDays = 35
+export const verificationWindowDays = 35
 
 export interface CollectOptions {
   readonly registryPath: string
@@ -121,7 +121,7 @@ function closedCensusOutcome(pull: PullRequestRecord): CensusOutcome {
   return { id: pull.id, url: pull.url, number: pull.number, headRefOid: pull.headRefOid, updatedAt: pull.updatedAt, mergedAt: null, closedAt: pull.closedAt }
 }
 
-export function unavailableById(sources: ReadonlyArray<UnavailableSource>) {
+function unavailableById(sources: ReadonlyArray<UnavailableSource>) {
   const merged = new Map<string, UnavailableSource>()
   for (const source of sources) merged.set(source.nodeId, { ...merged.get(source.nodeId), ...source })
   return [...merged.values()].sort((left, right) => left.nodeId.localeCompare(right.nodeId))
@@ -249,6 +249,52 @@ export effect function valueInputs(work: MergedWork<OpenCollection>, recollectio
   return { value, held }
 }
 
+export effect function collectSourceMetadata(
+  work: MergedWork<OpenCollection>,
+  held: ReadonlyArray<UnavailableSource>,
+  heldWorkUnits: ValueInputsRead["heldWorkUnits"],
+  cutoff: string,
+  verificationFromMs: number,
+) {
+  const openIssues = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.issues.values()]))
+  const openPullRequests = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.pullRequests.values()]))
+  const graphql = try Graphql
+  const rateLimit = try graphql.rateLimit()
+  const generatedAt = try isoAt(try Clock.currentTimeMillis)
+  const verificationWindowFrom = try isoAt(verificationFromMs)
+  const unavailableSources = unavailableById([...work.unavailableSources, ...held])
+  const detailed = work.mergedPullRequests.filter((pull) => work.plan.detailEligibleIds.has(pull.id))
+  const latestPreflightUpdate = work.collections.length === 0
+    ? cutoff
+    : work.collections.map((collection) => collection.preflight.updatedAt).reduce((latest, current) => (millisOf(current) > millisOf(latest) ? current : latest))
+  const source: CollectionSource = {
+    provider: "github-graphql",
+    fetchedAt: generatedAt,
+    cutoffAt: cutoff,
+    repositoryId: work.collections[0]?.preflight.id ?? null,
+    repositories: work.collections.map((collection) => ({ id: collection.target.id, repositoryId: collection.preflight.id })),
+    requestCount: try graphql.requestCount(),
+    searchSliceCount: work.searchSliceCount,
+    unavailableSources,
+    heldWorkUnits,
+    rateLimit,
+    counts: {
+      unavailableSources: unavailableSources.length,
+      unavailableMergedPullRequests: unavailableSources.filter((unavailable) => unavailable.unavailableInMergedCensus === true).length,
+      heldWorkUnits: heldWorkUnits.length,
+      mergedPullRequests: work.outcomes.length,
+      detailedMergedPullRequests: detailed.length,
+      closedIssues: work.closedIssueCount,
+      detailedClosedIssues: work.closedIssues.length,
+      resolvedIssues: 0,
+      openIssues: openIssues.length,
+      openPullRequests: openPullRequests.length,
+    },
+    verificationWindow: { days: verificationWindowDays, from: verificationWindowFrom, to: cutoff },
+  }
+  return { openIssues, openPullRequests, generatedAt, verificationWindowFrom, latestPreflightUpdate, source }
+}
+
 effect function generation(request: CollectRequest, bounds: WindowBounds, registry: RepositoryRegistry, recollection: Recollection) {
   const registered = try fetchRegistry(request.registryOrigin ?? defaultRegistryOrigin)
   const targets = try collectedTargets(registered)
@@ -280,42 +326,7 @@ effect function generation(request: CollectRequest, bounds: WindowBounds, regist
   const root = request.dataRoot ?? "."
   const reviewHistory = try acceptedReviewHistory(root)
   const evaluated = try evaluatedContributions(root)
-  const openIssues = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.issues.values()]))
-  const openPullRequests = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.pullRequests.values()]))
-  const graphql = try Graphql
-  const rateLimit = try graphql.rateLimit()
-  const generatedAt = try isoAt(try Clock.currentTimeMillis)
-  const verificationWindowFrom = try isoAt(verificationFromMs)
-  const unavailableSources = unavailableById([...work.unavailableSources, ...held])
-  const detailed = work.mergedPullRequests.filter((pull) => work.plan.detailEligibleIds.has(pull.id))
-  const latestPreflightUpdate = work.collections.length === 0
-    ? cutoff
-    : work.collections.map((collection) => collection.preflight.updatedAt).reduce((latest, current) => (millisOf(current) > millisOf(latest) ? current : latest))
-  const source: CollectionSource = {
-    provider: "github-graphql",
-    fetchedAt: generatedAt,
-    cutoffAt: cutoff,
-    repositoryId: work.collections[0]?.preflight.id ?? null,
-    repositories: work.collections.map((collection) => ({ id: collection.target.id, repositoryId: collection.preflight.id })),
-    requestCount: try graphql.requestCount(),
-    searchSliceCount: work.searchSliceCount,
-    unavailableSources,
-    heldWorkUnits: value.heldWorkUnits,
-    rateLimit,
-    counts: {
-      unavailableSources: unavailableSources.length,
-      unavailableMergedPullRequests: unavailableSources.filter((unavailable) => unavailable.unavailableInMergedCensus === true).length,
-      heldWorkUnits: value.heldWorkUnits.length,
-      mergedPullRequests: work.outcomes.length,
-      detailedMergedPullRequests: detailed.length,
-      closedIssues: work.closedIssueCount,
-      detailedClosedIssues: work.closedIssues.length,
-      resolvedIssues: 0,
-      openIssues: openIssues.length,
-      openPullRequests: openPullRequests.length,
-    },
-    verificationWindow: { days: verificationWindowDays, from: verificationWindowFrom, to: cutoff },
-  }
+  const { openIssues, openPullRequests, generatedAt, verificationWindowFrom, latestPreflightUpdate, source } = try collectSourceMetadata(work, held, value.heldWorkUnits, cutoff, verificationFromMs)
   const collection: Collection = {
     bounds,
     generatedAt,
