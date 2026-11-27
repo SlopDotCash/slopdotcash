@@ -56,9 +56,8 @@ export function RoutePage({ runtime, route, frame }: { runtime: PageRuntime; rou
 function Gated({ kind, runtime, frame, children }: { kind: PageKind; runtime: PageRuntime; frame: Frame; children: ReactNode }) {
   const section = projectRuntime(runtime);
   const boot = useOnce(section, "registry", () => loadRegistry());
-  if (boot.status !== "done") return children;
   return (
-    <RegistryGate kind={kind} freshness={boot.value.freshness} frame={frame} runtime={runtime} onRetry={() => retryOnce(section, "registry")}>
+    <RegistryGate kind={kind} freshness={boot.status === "done" ? boot.value.freshness : { tag: "RegistryCurrent" }} frame={frame} runtime={runtime} onRetry={() => retryOnce(section, "registry")}>
       {children}
     </RegistryGate>
   );
