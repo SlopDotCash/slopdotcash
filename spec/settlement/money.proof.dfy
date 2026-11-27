@@ -1404,6 +1404,44 @@ lemma PaddedValueZero(xs: seq<int>)
   }
 }
 
+lemma ProductFoldStepAlgebra(prior: int, shift: int, digit: int, base: int, tail: int)
+  ensures (prior + shift * (digit * base)) + (1000 * shift) * base * tail == prior + shift * base * (digit + 1000 * tail)
+{
+  calc {
+    (prior + shift * (digit * base)) + (1000 * shift) * base * tail;
+    == prior + (shift * base) * digit + (shift * base) * (1000 * tail);
+    == prior + (shift * base) * (digit + 1000 * tail);
+  }
+}
+
+lemma ProductFoldStep(a: seq<int>, current: ProductFold, digit: int)
+  requires validAmount(a) && validAmount(current.product)
+  requires forall z :: z in current.prefix ==> z == 0
+  requires 0 <= digit < 1000
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var w := (n: int, d: int) => 1000*n;
+    var next := ProductFold((current.prefix + [0]), addAmounts(current.product, (current.prefix + multiplySmall(a, digit))));
+    validAmount(next.product) && (forall z :: z in next.prefix ==> z == 0) &&
+    Std.Collections.Seq.FoldLeft(w, 1, next.prefix) == 1000 * Std.Collections.Seq.FoldLeft(w, 1, current.prefix) &&
+    Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(next.product)) ==
+      Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(current.product)) +
+      Std.Collections.Seq.FoldLeft(w, 1, current.prefix) * (digit * Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a)))
+{
+  var w := (n: int, d: int) => 1000*n;
+  var scale := multiplySmall(a, digit);
+  var shifted := current.prefix + scale;
+  lawMultiplySmallValid_ensures(a, digit);
+  forall d | d in shifted ensures 0 <= d < 1000 { if d in current.prefix { assert d == 0; } else { assert d in scale; } }
+  assert validAmount(shifted);
+  lawAdditionValid_ensures(current.product, shifted);
+  assert forall z :: z in current.prefix + [0] ==> z in current.prefix || z == 0;
+  AmountValueAdd(current.product, shifted);
+  AmountValueConcat(current.prefix, scale);
+  PaddedValueZero(current.prefix);
+  AmountValueMultiplySmall(a, digit);
+  ProofLib.FoldLeftAppend(w, 1, current.prefix, 0);
+}
+
 lemma AmountValueProductFold(a: seq<int>, work: seq<int>, current: ProductFold)
   requires validAmount(a) && validAmount(current.product)
   requires forall z :: z in current.prefix ==> z == 0
@@ -1416,43 +1454,33 @@ lemma AmountValueProductFold(a: seq<int>, work: seq<int>, current: ProductFold)
         Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a)) * Std.Collections.Seq.FoldLeft(h,0,reverseAmount(work))
   decreases |work|
 {
+  var h := (n: int, d: int) => 1000*n+d;
+  var w := (n: int, d: int) => 1000*n;
+  var f := (acc: ProductFold, digit: int) => ProductFold((acc.prefix + [0]), addAmounts(acc.product, (acc.prefix + multiplySmall(a, digit))));
   if |work| > 0 {
-    var f := (acc: ProductFold, digit: int) => ProductFold((acc.prefix + [0]), addAmounts(acc.product, (acc.prefix + multiplySmall(a, digit))));
-    var h := (n: int, d: int) => 1000*n+d;
-    var w := (n: int, d: int) => 1000*n;
     var digit := work[0];
     var rest := work[1..];
     assert digit in work;
     assert forall d :: d in rest ==> d in work;
     var next := f(current, digit);
-    var scale := multiplySmall(a,digit);
-    var shifted := current.prefix + scale;
-    lawMultiplySmallValid_ensures(a,digit);
-    forall d | d in shifted ensures 0 <= d < 1000 { if d in current.prefix { assert d == 0; } else { assert d in scale; } }
-    assert validAmount(shifted);
-    lawAdditionValid_ensures(current.product,shifted);
-    assert next.product == addAmounts(current.product,shifted) && validAmount(next.product);
-    assert forall d :: d in next.prefix ==> d in current.prefix || d == 0;
+    ProductFoldStep(a, current, digit);
     AmountValueProductFold(a, rest, next);
-    AmountValueAdd(current.product,shifted);
-    AmountValueConcat(current.prefix,scale);
-    PaddedValueZero(current.prefix);
-    AmountValueMultiplySmall(a,digit);
-    ProofLib.FoldLeftAppend(w,1,current.prefix,0);
     assert work == [digit] + rest;
-    AmountValueCons(digit,rest);
-    var result := Std.Collections.Seq.FoldLeft(f,current,work);
-    assert result == Std.Collections.Seq.FoldLeft(f,next,rest);
-    var shift := Std.Collections.Seq.FoldLeft(w,1,current.prefix);
-    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a));
-    var tail := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(rest));
-    var prior := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.product));
-    calc {
-      Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.product));
-      == prior + shift*digit*base + (1000*shift)*base*tail;
-      == prior + shift*base*(digit+1000*tail);
-      == prior + shift*base*Std.Collections.Seq.FoldLeft(h,0,reverseAmount(work));
-    }
+    AmountValueCons(digit, rest);
+    var result := Std.Collections.Seq.FoldLeft(f, current, work);
+    assert result == Std.Collections.Seq.FoldLeft(f, next, rest);
+    var shift := Std.Collections.Seq.FoldLeft(w, 1, current.prefix);
+    var base := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a));
+    var tail := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(rest));
+    var prior := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(current.product));
+    var nextVal := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(next.product));
+    assert nextVal == prior + shift * (digit * base);
+    assert Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(result.product)) == nextVal + (1000 * shift) * base * tail;
+    assert Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(work)) == digit + 1000 * tail;
+    ProductFoldStepAlgebra(prior, shift, digit, base, tail);
+  } else {
+    assert work == [] && reverseAmount([]) == [];
+    assert Std.Collections.Seq.FoldLeft(h, 0, []) == 0;
   }
 }
 
@@ -1513,6 +1541,38 @@ lemma QuotientCandidateFloor(digit: int, bit: int, partial: seq<int>, divisor: s
   }
 }
 
+lemma QuotientDivisionBounds(amount: int, base: int)
+  requires base > 0 && 0 <= amount < 1000 * base
+  ensures 0 <= amount / base < 1000
+  ensures (amount / base) * base <= amount < (amount / base + 1) * base
+{
+}
+
+lemma QuotientBitsFloor(partial: seq<int>, divisor: seq<int>, expected: int, digit: int, bits: seq<int>)
+  requires validAmount(partial) && validAmount(divisor)
+  requires var h := (n: int, d: int) => 1000*n+d;
+    var amount := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(partial));
+    var base := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(divisor));
+    base > 0 && expected * base <= amount < (expected + 1) * base
+  requires 0 <= expected < 1000 && 0 <= digit <= expected
+  requires |bits| > 0 ==> bits[0] > 0 && expected < digit + 2 * bits[0]
+  requires |bits| == 0 ==> expected < digit + 1
+  requires forall i :: 0 <= i < |bits| - 1 ==> bits[i] == 2 * bits[i + 1]
+  requires |bits| > 0 ==> bits[|bits| - 1] == 1
+  ensures Std.Collections.Seq.FoldLeft((digit: int, bit: int) => quotientCandidate(digit, bit, partial, divisor), digit, bits) == expected
+  decreases |bits|
+{
+  if |bits| > 0 {
+    var next := quotientCandidate(digit, bits[0], partial, divisor);
+    QuotientCandidateFloor(digit, bits[0], partial, divisor, expected);
+    if |bits| > 1 {
+      assert bits[1..][0] == bits[1] && bits[0] == 2 * bits[1];
+      assert bits[1..][|bits[1..]| - 1] == bits[|bits| - 1];
+    }
+    QuotientBitsFloor(partial, divisor, expected, next, bits[1..]);
+  }
+}
+
 lemma QuotientFloor(partial: seq<int>, divisor: seq<int>)
   requires validAmount(partial) && validAmount(divisor)
   requires var h := (n: int, d: int) => 1000*n+d;
@@ -1525,55 +1585,12 @@ lemma QuotientFloor(partial: seq<int>, divisor: seq<int>)
     quotientDigit(partial,divisor) * base <= amount < (quotientDigit(partial,divisor)+1)*base
 {
   var h := (n: int, d: int) => 1000*n+d;
-  var f := (digit: int, bit: int) => quotientCandidate(digit, bit, partial, divisor);
   var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
   var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+  QuotientDivisionBounds(amount, base);
   var expected := amount / base;
-  assert expected*base <= amount < (expected+1)*base;
-  assert 0 <= expected < 1000;
-  QuotientCandidateFloor(0,512,partial,divisor,expected);
-  var b512 := f(0,512);
-  QuotientCandidateFloor(b512,256,partial,divisor,expected);
-  var b256 := f(b512,256);
-  QuotientCandidateFloor(b256,128,partial,divisor,expected);
-  var b128 := f(b256,128);
-  QuotientCandidateFloor(b128,64,partial,divisor,expected);
-  var b64 := f(b128,64);
-  QuotientCandidateFloor(b64,32,partial,divisor,expected);
-  var b32 := f(b64,32);
-  QuotientCandidateFloor(b32,16,partial,divisor,expected);
-  var b16 := f(b32,16);
-  QuotientCandidateFloor(b16,8,partial,divisor,expected);
-  var b8 := f(b16,8);
-  QuotientCandidateFloor(b8,4,partial,divisor,expected);
-  var b4 := f(b8,4);
-  QuotientCandidateFloor(b4,2,partial,divisor,expected);
-  var b2 := f(b4,2);
-  QuotientCandidateFloor(b2,1,partial,divisor,expected);
-  assert f(b2,1) == expected;
   assert quotientBits == [512,256,128,64,32,16,8,4,2,1];
-  QuotientFixedFold(f, 0, b512, b256, b128, b64, b32, b16, b8, b4, b2);
-}
-
-lemma QuotientFixedFold(f: (int,int) -> int, initial: int, b512: int, b256: int, b128: int, b64: int,
-  b32: int, b16: int, b8: int, b4: int, b2: int)
-  requires b512 == f(initial,512) && b256 == f(b512,256) && b128 == f(b256,128) && b64 == f(b128,64)
-  requires b32 == f(b64,32) && b16 == f(b32,16) && b8 == f(b16,8) && b4 == f(b8,4) && b2 == f(b4,2)
-  ensures Std.Collections.Seq.FoldLeft(f,initial,[512,256,128,64,32,16,8,4,2,1]) == f(b2,1)
-{
-  calc {
-    Std.Collections.Seq.FoldLeft(f,initial,[512,256,128,64,32,16,8,4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b512,[256,128,64,32,16,8,4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b256,[128,64,32,16,8,4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b128,[64,32,16,8,4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b64,[32,16,8,4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b32,[16,8,4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b16,[8,4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b8,[4,2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b4,[2,1]);
-    == Std.Collections.Seq.FoldLeft(f,b2,[1]);
-    == f(b2,1);
-  }
+  QuotientBitsFloor(partial, divisor, expected, 0, quotientBits);
 }
 
 lemma CandidateFitsFloor(digit: int, bit: int, expected: int, base: int, amount: int)
