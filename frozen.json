@@ -22,7 +22,7 @@
   "files": {
     ".gitattributes": "89becada47ee5b34de41abf68548072164432a5c0161d813b405146ee2c0e7b8",
     "apps/app/public/404.html": "d27ecea8bba41c6d4c4fc4f1b7d43cc4a6fd7e2265dd2eb006ae21a4c4282612",
-    "apps/app/public/_headers": "f0811282f2c005f5d11c77eec11f91dd56d2edbd1fc615fec98627fc5bee3894",
+    "apps/app/public/_headers": "46d4e2fb4115b2012e2a47841d8030db847d3a3e242756d1c044ccda30452918",
     "apps/app/public/_redirects": "7b5a1b10e8bf7b0dadfcd2ce7a51dd4ae0d6f1dc4a9685c0c7132542bebb135e",
     "apps/app/public/_routes.json": "1b0c95354baaf7eac93e19ca8f55935d654e82e89ec7005cb2e692768f708506",
     "apps/app/public/contributor-allocation.json": "741e037035f774e0f48c2a6e932224eb2d18060f480ec853cc29ac4cfeffb747",
