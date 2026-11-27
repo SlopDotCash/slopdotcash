@@ -110,9 +110,7 @@ export const reportCompose = Layer.effect(ReportCompose, effect {
     }
     const outcome = try submitReport(now.slot)
     try settled({ ...now, error: null }, outcome)
-    const after = held
-    if (outcome.kind !== "received" || after === undefined) return undefined
-    return try receipt(after, outcome.submissionId)
+    return undefined
   }
 
   try browser.onAccountChange(() => effect {

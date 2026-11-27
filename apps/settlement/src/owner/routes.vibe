@@ -1,14 +1,14 @@
 // spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"
 import { RpcMalformed, RpcRefused, RpcUnavailable, WrongChain } from "@repo/platform/chain/rpc"
 import { type Address, type Blockhash, GenesisPinMissing, address, isBlockhash, solanaRpc } from "@repo/platform/chain/solana"
-import { Caller, Refused, handle, sameOriginWrite } from "@repo/platform/http"
+import { Caller, Refused, body, handleRaw, json, sameOriginWrite } from "@repo/platform/http"
 import type { Refusal } from "@repo/platform/route"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { lockMonthCounts } from "../../gen/settlement__monthPledges.effect.vibe"
 import { Rejected, reviewAllowed } from "../../gen/settlement__ownerTransactions.effect.vibe"
 import type { ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
-import { type MonthlySettingAction, paymentsSolanaMonthlyCommitment } from "../client/monthly.vibe"
-import { type FundingAction, type MonthLockAction, paymentsSolanaFunding, paymentsSolanaMonthLock } from "../client/owner.vibe"
+import { MonthlySettingAction, paymentsSolanaMonthlyCommitment } from "../client/monthly.vibe"
+import { FundingAction, MonthLockAction, paymentsSolanaFunding, paymentsSolanaMonthLock } from "../client/owner.vibe"
 import { postPaymentsProjectsByIdSolanaFunding as parity, postPaymentsProjectsByIdSolanaMonthLock as lockParity, postPaymentsProjectsByIdSolanaMonthlyCommitment as settingParity } from "../client/refusals.vibe"
 import { MAX_BASE_UNITS, parseBaseUnits, parseDecimalAmount } from "../kernels/amounts.ts"
 import { type NetworkKey, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
@@ -324,9 +324,25 @@ effect function answerSetting(projectId: string, body: MonthlySettingAction) {
   }
 }
 
+const privateNoStore = { "cache-control": "private, no-store" }
+
+effect function ownerBody<S extends Schema.Constraint>(schema: S, origin: Refusal, invalid: Refusal) {
+  if (!(try sameOriginWrite())) throw refusedWith(origin)
+  return body(schema, 4, invalid) catch effect () => { throw refusedWith(invalid) }
+}
+
 export const ownerRoutes = Layer.mergeAll(
-  handle(paymentsSolanaFunding, (input) => answer(input.params.id ?? "", input.body)),
-  handle(paymentsSolanaMonthLock, (input) => answerLock(input.params.id ?? "", input.body)),
-  handle(paymentsSolanaMonthlyCommitment, (input) => answerSetting(input.params.id ?? "", input.body)),
+  handleRaw(paymentsSolanaFunding, (input) => effect {
+    const parsed = try ownerBody(FundingAction, refusals.origin, refusals.invalidAction)
+    return json(try answer(input.params.id ?? "", parsed), 200, privateNoStore)
+  }),
+  handleRaw(paymentsSolanaMonthLock, (input) => effect {
+    const parsed = try ownerBody(MonthLockAction, lockRefusals.origin, lockRefusals.invalid)
+    return json(try answerLock(input.params.id ?? "", parsed), 200, privateNoStore)
+  }),
+  handleRaw(paymentsSolanaMonthlyCommitment, (input) => effect {
+    const parsed = try ownerBody(MonthlySettingAction, settingRefusals.origin, settingRefusals.invalid)
+    return json(try answerSetting(input.params.id ?? "", parsed), 200, privateNoStore)
+  }),
 )
 

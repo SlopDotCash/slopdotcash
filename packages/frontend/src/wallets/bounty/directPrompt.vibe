@@ -116,7 +116,7 @@ export effect function directPromptOver(storage: SlotStorage | undefined, key: s
   }
 
   effect function keep(next: Prompt) {
-    if (next.opened) {
+    if ((try Ref.get(local)).opened && next.opened) {
       const read = journalNow(next.scope.payer)
       const journal: Record<string, JournalEntry> = read.kind === "read" ? { ...read.journal } : {}
       let changed = false

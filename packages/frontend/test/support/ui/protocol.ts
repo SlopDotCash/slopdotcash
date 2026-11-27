@@ -3,9 +3,11 @@ import type { RepositoryRegistry } from "@repo/points/client";
 
 export type Role =
   | "alert"
+  | "alertdialog"
   | "article"
   | "button"
   | "checkbox"
+  | "combobox"
   | "dialog"
   | "form"
   | "group"

@@ -122,7 +122,7 @@ export function modelRead(checked: Checked, actor: number, repository: number): 
 
 schema MemberLogin { login: string }
 schema RegisteredManifest { manifest: string }
-schema ListedEntry { githubUrl?: string; githubId?: string }
+schema ListedEntry { id?: string; githubUrl?: string; githubId?: string }
 schema ListedAuthority { repositoryId: string | number }
 schema Listed { authority: ListedAuthority; repositories: ReadonlyArray<ListedEntry> }
 
@@ -133,13 +133,16 @@ export function currentPath(githubUrl: string | undefined): string | undefined {
 }
 
 effect function registeredPath(repositoryId: string) {
-  const row = try first(RegisteredManifest, sql`SELECT p.manifest FROM project_repositories r JOIN projects p ON p.id = r.project_id WHERE r.repository_key = ${`github:${repositoryId}`}`)
+  const row = (try first(RegisteredManifest, sql`SELECT p.manifest FROM project_repositories r JOIN projects p ON p.id = r.project_id WHERE r.repository_key = ${`github:${repositoryId}`}`))
+    ?? (try first(RegisteredManifest, sql`SELECT manifest FROM projects WHERE CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) = ${repositoryId} OR EXISTS (SELECT 1 FROM json_each(manifest, '$.repositories') listed WHERE CAST(json_extract(listed.value, '$.githubId') AS TEXT) = ${repositoryId}) LIMIT 1`))
   if (row === undefined) return undefined
   const parsed = Effect.try(() => JSON.parse(row.manifest) as unknown) catch () => undefined
   const manifest = parsed === undefined ? undefined : Schema.decodeUnknownEffect(Listed)(parsed) catch () => undefined
   if (manifest === undefined) return undefined
   const index = String(manifest.authority.repositoryId) === repositoryId ? 0 : manifest.repositories.findIndex((entry, at) => at > 0 && entry.githubId === repositoryId)
-  return index < 0 ? undefined : currentPath(manifest.repositories[index]?.githubUrl)
+  if (index < 0) return undefined
+  const entry = manifest.repositories[index]
+  return currentPath(entry?.githubUrl) ?? entry?.id
 }
 
 function unavailable(read: { readonly actorGithubId: string; readonly repositoryId: string }): PortRead {
@@ -147,7 +150,8 @@ function unavailable(read: { readonly actorGithubId: string; readonly repository
 }
 
 effect function portRead(read: { readonly actorGithubId: string; readonly repositoryId: string }) {
-  const member = first(MemberLogin, sql`SELECT login FROM points_members WHERE github_id = ${read.actorGithubId}`) catch () => undefined
+  const member = (first(MemberLogin, sql`SELECT login FROM points_members WHERE github_id = ${read.actorGithubId}`) catch () => undefined)
+    ?? (first(MemberLogin, sql`SELECT actor_github_login AS login FROM project_revisions WHERE actor_github_id = ${read.actorGithubId} ORDER BY created_at DESC LIMIT 1`) catch () => undefined)
   const path = registeredPath(read.repositoryId) catch () => undefined
   if (member === undefined || path === undefined) return unavailable(read)
   const checked = try checkAuthority({ path, githubId: read.repositoryId }, { githubId: read.actorGithubId, login: member.login })

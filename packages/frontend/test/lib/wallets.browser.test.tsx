@@ -226,8 +226,9 @@ function started(fetch: typeof globalThis.fetch) {
 
 const tagOf = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) => Effect.match(effect, { onFailure: (error) => error._tag, onSuccess: () => "ok" });
 
-describe('Choose a wallet without a lookalike taking its place (spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change")', () => {
-  it("a conflicting reannouncement blocks every provider object it names under every identifier, before any request reaches either provider, and a legacy provider is offered once", async () => {
+describe('Choose a wallet without a lookalike taking its place', () => {
+  // spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"
+  it("conflicting reannouncement blocks all named providers and legacy is offered once", async () => {
     const legacy = Object.assign(evmWallet(async () => "0x"), { isMetaMask: true });
     const page = window as unknown as { ethereum?: unknown };
     page.ethereum = legacy;
@@ -275,8 +276,9 @@ describe('Choose a wallet without a lookalike taking its place (spec/frontend/wa
   });
 });
 
-describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/frontend/walletAttempt.md, "Story: Ask the wallet once per saved attempt and keep an uncertain one"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only")', () => {
-  it("a saved request is sent once, a decline clears it, an uncertain send keeps it, and each account sees only its own slot", async () => {
+describe('Ask the wallet once per saved attempt and keep an uncertain one', () => {
+  // spec/frontend/walletAttempt.md, "Story: Ask the wallet once per saved attempt and keep an uncertain one"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"
+  it("saved request sends once, decline clears, uncertain keeps, accounts stay isolated", async () => {
     const replies: Array<() => Promise<unknown>> = [
       async () => `0x${hex64("a")}`,
       async () => Promise.reject(Object.assign(new Error("User rejected"), { code: 4001 })),
@@ -373,7 +375,8 @@ describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/
   });
 });
 
-describe(`Sign exactly the binding the server prepared (spec/frontend/walletConsent.md, "Story: Sign exactly the binding the server prepared"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature")`, () => {
+describe(`Sign exactly the binding the server prepared`, () => {
+  // spec/frontend/walletConsent.md, "Story: Sign exactly the binding the server prepared"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"
   it("an EVM wallet is confirmed on each EVM chain and then binds a reserved payment, every request naming the expected account", async () => {
     const backend = fakeBackend(undefined);
     const runtime = started(backend.fetch);
@@ -483,7 +486,7 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
     });
   });
 
-  it("a Solana wallet completes the attester's half-signed binding, and a wallet that changes the transaction is refused before anything is submitted", async () => {
+  it("Solana wallet completes half-signed binding and refuses altered transactions", async () => {
     const attester = await ed25519Pair();
     const run = async (tamper: boolean) => {
       const owner = await ed25519Pair();

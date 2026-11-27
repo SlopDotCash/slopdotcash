@@ -195,7 +195,13 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   };
 
   const reload = (
-    <Button variant="link" onClick={onReload}>
+    <Button
+      variant="link"
+      onClick={() => {
+        setRemoval({ status: "idle" });
+        onReload();
+      }}
+    >
       Reload
     </Button>
   );
@@ -259,6 +265,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
             {publishing ? "Publishing…" : "Publish changes"}
           </Button>
           <RemoveProject
+            key={managed.revision}
             name={manifest.name}
             disabled={publishing}
             remove={remove}

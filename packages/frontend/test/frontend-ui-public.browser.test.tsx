@@ -164,8 +164,10 @@ afterEach(async () => {
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
 
-describe('Open every product route at its existing address (spec/frontend/navigation.md, "Story: Open every product route at its existing address"; spec/app/index.md, "Story: Open a page by its address")', () => {
-  it('each public address opens its one page with one main and one named heading (spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/app/index.md, "Every opening shows a page"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes")', async () => {
+describe('Open every product route at its existing address', () => {
+  // spec/frontend/navigation.md, "Story: Open every product route at its existing address"; spec/app/index.md, "Story: Open a page by its address"
+  it('each public address opens its one page with one main and one named heading', async () => {
+    // spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/app/index.md, "Every opening shows a page"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"
     const pages: ReadonlyArray<readonly [string, string]> = [
       ["/how-it-works", "How Slop works"],
       ["/sponsors", "Fund a project"],
@@ -182,7 +184,8 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     await accessible();
   });
 
-  it('a signed-out private destination keeps its address and shows sign-in in place without a private read (spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account")', async () => {
+  it('a signed-out private destination keeps its address and shows sign-in in place without a private read', async () => {
+    // spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"
     const privatePages: ReadonlyArray<readonly [string, string, string | undefined]> = [
       ["/account", "Settings", undefined],
       ["/inbox", "Inbox", undefined],
@@ -200,10 +203,13 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     expect(privateReads).toEqual([]);
   });
 
-  it('an old address opens the page that replaced it and keeps its query and fragment (spec/app/index.md, "An old address opens the page that replaced it"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication")', async () => {
+  it('an old address opens the page that replaced it and keeps its query and fragment', async () => {
+    // spec/app/index.md, "An old address opens the page that replaced it"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"
     await site.allow("^404 GET /api/v1/projects/nobody$", "^404 GET /api/v1/projects/nobody/");
-    await opened("/wallet", "Settings");
-    await shown(named("link", "Sign in with GitHub")).toMatchObject({ href: loginPath("/wallet") });
+    expect((await site.open("/wallet")).status).toBe(200);
+    await at("/account#wallets");
+    await shown(heading("Settings")).toMatchObject({ visible: true });
+    await shown(named("link", "Sign in with GitHub")).toMatchObject({ href: loginPath("/account#wallets") });
 
     await site.open("/verification");
     await at("/how-it-works");
@@ -214,16 +220,17 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     await shown(projects).toMatchObject({ visible: true });
 
     await site.open("/projects/nobody/funding?x=1#monthly-awards");
-    await at("/projects/nobody/funding?x=1#monthly-awards");
+    await at("/projects/nobody?x=1#monthly-awards");
     await shown(heading("Project not found")).toMatchObject({ visible: true });
 
     await site.open("/projects/nobody/awards");
-    await at("/projects/nobody/awards");
+    await at("/projects/nobody#monthly-awards");
     await shown(heading("Project not found")).toMatchObject({ visible: true });
     expect((await site.layout()).mains).toBe(1);
   });
 
-  it('a fragment link aligns its section to the top, a wheel hands the page back to the reader, and a fragment opened while the page renders is aligned once it appears (spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over")', async () => {
+  it('fragment link aligns section, wheel releases alignment, late fragment aligns once rendered', async () => {
+    // spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over"
     await openPayments();
 
     const aligned = await scrollSettled();
@@ -240,7 +247,8 @@ describe('Open every product route at its existing address (spec/frontend/naviga
   });
 
   for (const late of [false, true])
-    it(`Back and Forward restore the fragment reading position after ${late ? "a destination that renders late" : "immediate navigation"} (spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over")`, async () => {
+    it(`Back and Forward restore the fragment reading position after ${late ? "a destination that renders late" : "immediate navigation"}`, async () => {
+      // spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over"
       const sessionRead = "/api/v1/project-session";
       const sessionReads = async () => (await site.sent()).filter((sent) => sent.method === "GET" && sent.path === sessionRead).length;
       const near = (position: number) => async () => Math.abs((await site.scrollY()) - position);
@@ -286,7 +294,8 @@ describe('Open every product route at its existing address (spec/frontend/naviga
       await accessible();
     });
 
-  it('an address that names no route kind, or does not decode, is the not-found page (spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown")', async () => {
+  it('an address that names no route kind, or does not decode, is the not-found page', async () => {
+    // spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown"
     await site.allow("^404 GET /nope$");
     expect((await site.open("/nope")).status).toBe(404);
     await shown(heading("Page not found")).toMatchObject({ visible: true });
@@ -299,8 +308,10 @@ describe('Open every product route at its existing address (spec/frontend/naviga
   });
 });
 
-describe('Start contribution or private reporting when discovery is unavailable (spec/frontend/presentation.md, "Story: Start contribution or private reporting when discovery is unavailable"; spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => {
-  it('while the registry read is stalled Home keeps its heading and agent setup and shows no projects while it loads, then says there are none (spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+describe('Start contribution or private reporting when discovery is unavailable', () => {
+  // spec/frontend/presentation.md, "Story: Start contribution or private reporting when discovery is unavailable"; spec/frontend/requests.md, "Story: Read current data without losing the last good result"
+  it('stalled registry keeps Home heading and setup, hides projects while loading, then shows empty', async () => {
+    // spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
     await site.hold("GET", "/api/v1/projects");
     expect((await site.open("/")).status).toBe(200);
     await shown(contributorHeading).toMatchObject({ visible: true });
@@ -315,8 +326,10 @@ describe('Start contribution or private reporting when discovery is unavailable 
   });
 });
 
-describe('Pick a project from the Featured and Community sections (spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections")', () => {
-  it('every listed project is one card in its own tier section, Featured before Community, each Community card in registry order, a configured month reads Configured and Not vaulted without a promise label, and a pool with no amount this month is left out (spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month\'s configured amount is positive"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "An owner\'s honor-system promise shows this month\'s amount as promised, never as vault-backed")', async () => {
+describe('Pick a project from the Featured and Community sections', () => {
+  // spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections"
+  it('Featured before Community in registry order, Configured/Not vaulted tags, zero pools omitted', async () => {
+    // spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
     for (const project of [...listed, unpaid]) await list(project);
     expect((await site.open("/")).status).toBe(200);
     const featured = named("region", "Featured", { within: projects });
@@ -342,8 +355,10 @@ describe('Pick a project from the Featured and Community sections (spec/frontend
   });
 });
 
-describe('Pick a project from the Featured and Community sections, ten Community rows to a page (spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections")', () => {
-  it('Community shows ten rows to a page in registry order, the next page shows the rest, a description longer than 500 characters is cut at 500, and Home has no leaderboard (spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page")', async () => {
+describe('Pick a project from the Featured and Community sections, ten Community rows to a page', () => {
+  // spec/frontend/poolListing.md, "Story: Pick a project from the Featured and Community sections"
+  it('Community paginates 10 per page, trims >500 char descriptions, and Home has no leaderboard', async () => {
+    // spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"
     const long = `${"Reproducible builds for every release ".repeat(14)}and more.`;
     const first = pool("j4-a01", 1420, "100000000", "$100", { description: long });
     const many: ReadonlyArray<Listed> = [first, ...Array.from({ length: 11 }, (_, index) => pool(`j4-a${String(index + 2).padStart(2, "0")}`, 1421 + index, "100000000", "$100"))];
@@ -369,8 +384,10 @@ describe('Pick a project from the Featured and Community sections, ten Community
   });
 });
 
-describe('Choose the contributor or maintainer journey on Home (spec/frontend/presentation.md, "Story: Choose the contributor or maintainer journey on Home"; spec/ui/copy.md, "Story: Copy a value and know whether it worked")', () => {
-  it('the switch sets the heading, the prompt and the address together, and a copy answer does not carry across journeys (spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent\'s skill address together"; spec/ui/copy.md, "Copying starts from ready and reports the browser\'s answer"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt")', async () => {
+describe('Choose the contributor or maintainer journey on Home', () => {
+  // spec/frontend/presentation.md, "Story: Choose the contributor or maintainer journey on Home"; spec/ui/copy.md, "Story: Copy a value and know whether it worked"
+  it('the switch sets the heading, the prompt and the address together, and a copy answer does not carry across journeys', async () => {
+    // spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together"; spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"; spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
     expect((await site.open("/")).status).toBe(200);
     await shown(named("button", "Contributor")).toMatchObject({ visible: true });
     await shown(prompt).toMatchObject({ text: "Read https://slop.cash/contribute/SKILL.md and follow it." });
@@ -382,11 +399,11 @@ describe('Choose the contributor or maintainer journey on Home (spec/frontend/pr
     if (answered === "Copied") await expect.poll(copyOutcome, { timeout: journeyMs }).toBe("Ready");
     else {
       expect(answered).toBe("CopyFailed");
-      await site.click(named("button", "Copy agent prompt"));
+      await site.click(named("button", "Select text — Copy agent prompt"));
       await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     }
 
-    await site.click(named("button", "Copy agent prompt"));
+    await site.click(named("button", answered === "CopyFailed" ? "Select text — Copy agent prompt" : "Copy agent prompt"));
     await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     await site.click(named("button", "Maintainer"));
     await at("/?audience=maintainer");
@@ -405,7 +422,8 @@ describe('Choose the contributor or maintainer journey on Home (spec/frontend/pr
     await shown(projects).toMatchObject({ visible: true });
   });
 
-  it('the campaign keeps one whole accessible heading with reduced motion and on a narrow screen (spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes")', async () => {
+  it('the campaign keeps one whole accessible heading with reduced motion and on a narrow screen', async () => {
+    // spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"
     expect((await site.open("/")).status).toBe(200);
     await site.view(1280, 900, true);
     await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
@@ -414,7 +432,8 @@ describe('Choose the contributor or maintainer journey on Home (spec/frontend/pr
     await accessible();
   });
 
-  it('with motion the campaign deletes its action and types the next one without changing its accessible name or height, and reduced motion puts the whole heading back (spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion")', async () => {
+  it('motion cycles campaign verb keeping name and height, reduced motion restores full heading', async () => {
+    // spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"
     await site.view(1280, 900, false);
     expect((await site.open("/")).status).toBe(200);
     const visible = async () => (await textOf(contributorHeading)).replace(/\s+/gu, " ");
@@ -441,8 +460,10 @@ const directory = Array.from({ length: 26 }, (_, index) => {
   return { actorId: `U_cdir${number}`, githubId: String(4_200_001 + index), login: `cdir-${number}` };
 });
 
-describe('Find a contributor in the public directory (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/ui/pagination.md, "Story: Move through pages without leaving the list")', () => {
-  it('Contributors lists the public members matching ?q in login order, 24 to a page, with no Points figures or ranking, and keeps the Points rules behind Rules (spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/ui/pagination.md, "The page stays within the pages that exist"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication")', async () => {
+describe('Find a contributor in the public directory', () => {
+  // spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/ui/pagination.md, "Story: Move through pages without leaving the list"
+  it('Contributors filters ?q in login order, 24/page, no Points figures, rules behind Rules', async () => {
+    // spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/ui/pagination.md, "The page stays within the pages that exist"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"
     for (const member of directory) await site.sql("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,'2026-11-01T00:00:00.000Z',1)", member.actorId, member.githubId, member.login);
     const people = named("region", "People");
     const person = (login: string) => named("link", login, { within: people });
@@ -479,12 +500,13 @@ describe('Find a contributor in the public directory (spec/backend/accounts.md, 
   });
 });
 
-function pointsManifest(projectId: string, repositories: ReadonlyArray<RegisteredRepository>) {
+function pointsManifest(projectId: string, repositories: ReadonlyArray<RegisteredRepository>, skillSourcePath: string) {
   const manifest = manifestOf({ id: projectId, tier: "community", repositoryId: 0 });
   return {
     ...manifest,
     authority: { ...manifest.authority, repositoryNodeId: repositories[0]?.nodeId ?? "" },
     repositories: repositories.map(({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId }) => ({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId })),
+    skill: { ...manifest.skill, sourcePath: skillSourcePath },
   };
 }
 
@@ -494,9 +516,10 @@ const pullRequestLinks = [["Merged", "is:merged", "merged"], ["Open", "is:open",
 
 async function publishPoints(leaderboard: LeaderboardTransport = "whole") {
   const published = await site.published(leaderboard);
-  const { registered } = published.registry;
+  const { registered, projects } = published.registry;
+  const skillByProject = new Map(projects.map((project) => [project.id, project.skillSourcePath] as const));
   const projectIds = [...new Set(registered.map((repository) => repository.projectId))];
-  await site.serve("/api/v1/projects", 200, { schemaVersion: "1", projects: projectIds.map((id) => pointsManifest(id, registered.filter((repository) => repository.projectId === id))) });
+  await site.serve("/api/v1/projects", 200, { schemaVersion: "1", projects: projectIds.map((id) => pointsManifest(id, registered.filter((repository) => repository.projectId === id), skillByProject.get(id) ?? `skills/contribute-to-${id}`)) });
   const [leader] = published.leaders;
   const [primary] = registered;
   if (leader === undefined || primary === undefined) throw new Error("the published Points fixture has no leader or repository");
@@ -528,8 +551,10 @@ async function profileOf(leader: PublishedActor) {
   await shown(heading(leader.login)).toMatchObject({ visible: true });
 }
 
-describe('Read a contributor\'s profile over the published Points record (spec/frontend/views.md, "Story: Read a contributor\'s profile"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal")', () => {
-  it('a contributor\'s address shows who they are and their pull requests from the published snapshot, census and journal without a Points figure, a contributor only the census names keeps the same record at 320 px with 200% text, and a login no record names is not found (spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login")', async () => {
+describe('Read a contributor\'s profile over the published Points record', () => {
+  // spec/frontend/views.md, "Story: Read a contributor's profile"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
+  it('profile combines snapshot/census/journal without Points, holds at 320px/200%, 404s unknown', async () => {
+    // spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"
     const { leader } = await publishPoints();
     await profileOf(leader);
     await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true, href: `https://github.com/${leader.login}` });
@@ -560,14 +585,15 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
     await site.restore();
   });
 
-  it('a Points journal that cannot load keeps the confirmed contributor and offers Retry points without a stale notice, and Retry reads the journal once more and clears the notice (spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times")', async () => {
+  it('failed journal keeps contributor, offers Retry points without stale notice, clears on retry', async () => {
+    // spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"
     const { leader } = await publishPoints();
     await site.allow(`^503 GET ${pointsIndexPath}$`, "^console Failed to load resource: the server responded with a status of 503");
     await site.fail("GET", pointsIndexPath, 503, "Points temporarily unavailable");
     await profileOf(leader);
     const retry = named("button", "Retry points", { within: slopPoints });
     await shown(retry).toMatchObject({ visible: true });
-    await shown({ text: "Could not load", within: slopPoints }).toMatchObject({ visible: true });
+    await shown({ text: "Unavailable", within: slopPoints }).toMatchObject({ visible: true });
     await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
     await shown({ text: "Data last updated", within: slopPoints }).toMatchObject({ count: 0 });
     expect(await readsOf((path) => shardPathPattern.test(path))).toBe(0);
@@ -583,7 +609,8 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
   });
 
   for (const corrupted of [false, true])
-    it(`a profile reads a leaderboard published in parts ${corrupted ? "and refuses the generation when a part does not match its digest, showing no record until Retry reads matching parts" : "as one generation"} (spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted")`, async () => {
+    it(`profile reads parted leaderboard ${corrupted ? "and refuses bad digest until Retry succeeds" : "as one generation"}`, async () => {
+      // spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"
       const { leader, parts } = await publishPoints("parts");
       const [first] = parts;
       expect(first).toBeDefined();
@@ -608,7 +635,8 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
       await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
     });
 
-  it('a contributor renamed since an archived cycle keeps that cycle on the current profile, which opens the cycle and shows the same record again on Back (spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login")', async () => {
+  it('renamed contributor keeps archived cycle on profile and restores it on Back', async () => {
+    // spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"
     const { leader, primary } = await publishPoints();
     const [paid] = paidCycle.contributors;
     expect(paid).toBeDefined();
@@ -651,8 +679,10 @@ describe('Read a contributor\'s profile over the published Points record (spec/f
 const configuredPool = pool("j4-pool-set", 1440, "500000000", "$500");
 const promisedPool = pool("j4-pool-promise", 1441, "250000000", "$250", { reward: { honorSystem: true } });
 
-describe('Show a monthly amount only while the vault holds it (spec/frontend/projections.md, "Story: Show a monthly amount only while the vault holds it")', () => {
-  it('Home and /sponsors tag a configured pool Configured and an owner\'s honor-system promise Promised, each beside Not vaulted, and only the promised project\'s page keeps the month as a promise (spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month\'s configured amount is positive"; spec/frontend/projections.md, "An owner\'s honor-system promise shows this month\'s amount as promised, never as vault-backed")', async () => {
+describe('Show a monthly amount only while the vault holds it', () => {
+  // spec/frontend/projections.md, "Story: Show a monthly amount only while the vault holds it"
+  it('Home and /sponsors distinguish Configured vs Promised beside Not vaulted', async () => {
+    // spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
     for (const project of [configuredPool, promisedPool]) await list(project);
     expect((await site.open("/")).status).toBe(200);
     const community = named("region", "Community", { within: projects });
@@ -681,7 +711,8 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
     await shown({ text: promiseNoticeText, exact: true }).toMatchObject({ count: 0 });
   });
 
-  it('a pool whose registered vault held this month\'s amount at the month start and still holds it is tagged Vaulted on Home and in the vault on /sponsors, never Not vaulted (spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes")', async () => {
+  it('funded registered vault tags Vaulted on Home and in-vault on /sponsors', async () => {
+    // spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
     const funded = pool("j4-pool-vaulted", 1444, "50000000", "$50", { reward: { chain: "base" } });
     await list(funded);
     const deployed = await site.vault({ projectId: funded.id });
@@ -731,8 +762,10 @@ async function observed(project: Listed, openOutside: number, wanted: ReadonlyAr
   );
 }
 
-describe('Pause new contributors while the review queue is full (spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full"; spec/frontend/views.md, "Story: Read a project\'s rewards and activity at a glance")', () => {
-  it('a project at its intake cap is left out of Home and /sponsors and its page says why and lists its wanted issue, while one below its cap is listed as before (spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before")', async () => {
+describe('Pause new contributors while the review queue is full', () => {
+  // spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full"; spec/frontend/views.md, "Story: Read a project's rewards and activity at a glance"
+  it('capped project leaves Home and /sponsors, explains cap and wanted issue on its page', async () => {
+    // spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"
     for (const project of [capped, belowCap]) await list(project);
     await observed(capped, 2, [wantedIssue]);
     await observed(belowCap, 2, null);
@@ -753,8 +786,10 @@ describe('Pause new contributors while the review queue is full (spec/backend/in
   });
 });
 
-describe('Backlog rule on Home and /sponsors (spec/backend/backlogRule.md, "Story: Keep the lists to projects whose maintainers are keeping up")', () => {
-  it('hides an over-limit project on Home and /sponsors even with no intake cap (spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why")', async () => {
+describe('Backlog rule on Home and /sponsors', () => {
+  // spec/backend/backlogRule.md, "Story: Keep the lists to projects whose maintainers are keeping up"
+  it('hides an over-limit project on Home and /sponsors even with no intake cap', async () => {
+    // spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why"
     for (const project of [backlog, activeNoCap]) await list(project);
     await site.clock("2026-12-02T00:00:00.000Z");
     await observed(backlog, 0, null, 50, "2026-12-02T00:00:00.000Z");
@@ -775,8 +810,10 @@ describe('Backlog rule on Home and /sponsors (spec/backend/backlogRule.md, "Stor
 });
 
 
-describe('Keep browsing on the last published registry when the live read fails (spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails")', () => {
-  it('/sponsors whose live registry read times out with no published copy keeps the header and footer and offers Try again, which opens the page once the read answers (spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+describe('Keep browsing on the last published registry when the live read fails', () => {
+  // spec/frontend/registry.md, "Story: Keep browsing on the last published registry when the live read fails"
+  it('/sponsors timeout keeps chrome and recovers via Try again', async () => {
+    // spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
     await site.allow("^failed GET /api/v1/projects ");
     await site.hold("GET", "/api/v1/projects");
     expect((await site.open("/sponsors")).status).toBe(200);
@@ -795,7 +832,8 @@ describe('Keep browsing on the last published registry when the live read fails 
     await at("/sponsors");
   });
 
-  it('a failed live registry read lists the last published projects under a stale label with their sync time, a project page keeps the label, the manage page asks for current data, an account page shows no label, and Try again clears it once the live read answers (spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+  it('failed live read falls back to stale registry across public/manage/account and recovers', async () => {
+    // spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
     const cached = pool("j4-cached", 1445, "75000000", "$75");
     await list(cached);
     const syncedAt = "2026-10-16T12:00:00.000Z";
@@ -835,8 +873,10 @@ describe('Keep browsing on the last published registry when the live read fails 
   });
 });
 
-describe('Every part reads the same published fee terms (spec/backend/submissionFeeTerms.md, "Story: Every part reads the same published fee terms"; spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded")', () => {
-  it('How it works answers whether maintainers are paid, whether opening a pull request costs a fee and whether a security report needs a deposit (spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days")', async () => {
+describe('Every part reads the same published fee terms', () => {
+  // spec/backend/submissionFeeTerms.md, "Story: Every part reads the same published fee terms"; spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded"
+  it('How it works explains maintainer pay, PR fee and security report deposit', async () => {
+    // spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
     await opened("/how-it-works#faq", "How Slop works");
     const faq = named("region", "Questions");
     for (const question of ["Can maintainers be paid?", "Is there a fee to open a pull request?", "Is there a deposit to file a security report?"])
@@ -864,8 +904,10 @@ const recipient = { id: 2183, login: "octo-alloc" } as const;
 const allocation = named("region", "Contributor allocation");
 const allocationPath = "/contributor-allocation.json";
 
-describe('See my contributor allocation on Payouts (spec/frontend/projections.md, "Story: See my contributor allocation on Payouts")', () => {
-  it('a timed-out read is Allocation unavailable with Retry, and Retry shows only the signed-in account\'s row, awaiting a wallet, with where to add it, and from the deadline the same row is Unclaimed with no wallet link (spec/frontend/projections.md, "Payouts shows only the signed-in account\'s allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it")', async () => {
+describe('See my contributor allocation on Payouts', () => {
+  // spec/frontend/projections.md, "Story: See my contributor allocation on Payouts"
+  it('Payouts timeout offers Retry, shows signed-in awaiting-wallet row, then Unclaimed after deadline', async () => {
+    // spec/frontend/projections.md, "Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it"
     await site.clock(new Date().toISOString());
     await site.user(recipient.id, recipient.login);
     await site.allow(`^failed GET ${allocationPath} `);
@@ -893,8 +935,10 @@ describe('See my contributor allocation on Payouts (spec/frontend/projections.md
   });
 });
 
-describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Story: Lock months from the owner\'s wallet")', () => {
-  it('How it works answers whether the owner can take this month\'s pool back (spec/frontend/projections.md, "Slop\'s pages refuse a withdrawal below the promised amount")', async () => {
+describe('Lock months from the owner\'s wallet', () => {
+  // spec/frontend/monthLock.md, "Story: Lock months from the owner's wallet"
+  it('How it works answers whether the owner can take this month\'s pool back', async () => {
+    // spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"
     await opened("/how-it-works", "How Slop works");
     await shown(named("heading", "Can the owner take this month's pool back?", { level: 3 })).toMatchObject({ visible: true });
     await shown({ text: "the vault contract refuses to withdraw it" }).toMatchObject({ visible: true });
@@ -1087,8 +1131,9 @@ const shownPage = (pay: FeePay) => Effect.gen(function* () {
   return { page: state.page, dueWays: state.dueWays, due: shown.record?.due.map((way) => way.symbol) ?? [], withheld: shown.record?.slopWithheld ?? false, paid: shown.record?.paid?.depositId ?? 0, refused: shown.message !== "" };
 });
 
-describe('Pay a refundable deposit for a pull request or a private report from any wallet (spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown")', () => {
-  it("a switched-off build offers nothing and still shows a recorded deposit, an unlisted repository, a bad address and an unasked record each say so, and a record off the published terms or rate offers nothing while an unread rate withholds only SLOP", async () => {
+describe('Pay a refundable deposit for a pull request or a private report from any wallet', () => {
+  // spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"
+  it("switched-off, unlisted, bad, unasked, off-terms and unread-rate records render accurately", async () => {
     const opened = async (address: PayAddress, held: Partial<Api>, switches?: { submissionFee: boolean; reportDeposit: boolean }) => {
       const runtime = started(api(held).fetch, switches);
       return runtime.runPromise(Effect.flatMap(openPayPage(address, sessionSlots()), shownPage));
@@ -1134,7 +1179,8 @@ describe('Pay a refundable deposit for a pull request or a private report from a
   });
 });
 
-describe('Pay from a wallet and follow the deposit to final (spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding")', () => {
+describe('Pay from a wallet and follow the deposit to final', () => {
+  // spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"
   const separately = (address: PayAddress, held: Partial<Api>, item: string, recorded: (api: Api) => void) => async () => {
     const key = feeDepositKey(item);
     const chain = fakeChain({ atomic: false });
@@ -1182,7 +1228,7 @@ describe('Pay from a wallet and follow the deposit to final (spec/frontend/feePa
     });
   };
 
-  it("a wallet on another chain switches, approves the exact amount, deposits exactly the published call into the fee contract and is followed to final for a pull request", separately(pullAddress, { item: pullRecord([stableWay()]) }, pullItem, (served) => {
+  it("other-chain wallet switches, approves, deposits exact PR fee and tracks to finality", separately(pullAddress, { item: pullRecord([stableWay()]) }, pullItem, (served) => {
     served.item = pullRecord([], { paid: paid("base-mainnet", usdc.address, stableMinor, true) });
   }));
 
@@ -1190,7 +1236,7 @@ describe('Pay from a wallet and follow the deposit to final (spec/frontend/feePa
     served.report = reportRecord([], { paid: paid("robinhood-mainnet", slop.address, reportAmount, true) });
   }));
 
-  it("an unclear wallet answer is kept until the payer says nothing was sent, which clears the saved request, and the wallet can then be disconnected", async () => {
+  it("unclear fee answer persists until marked unsent, then clears and allows disconnect", async () => {
     const chain = fakeChain({ atomic: false, unclear: true });
     const key = feeDepositKey(pullItem);
     chain.watch(key);

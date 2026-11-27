@@ -45,6 +45,11 @@ export interface Route<B, A, X extends Access = Access> {
   readonly cors?: Cors
   readonly corsCredentials?: true
   readonly corsHeaders?: ReadonlyArray<string>
+  readonly strictCorsOrigin?: true
+  readonly corsRefusal?: Refusal
+  readonly originRefusal?: Refusal
+  readonly refusalHeaders?: Readonly<Record<string, string>>
+  readonly jsonContentType?: "application/json"
   readonly invalid?: Refusal
   readonly actorMismatch?: Refusal
   readonly unauthenticated?: Refusal

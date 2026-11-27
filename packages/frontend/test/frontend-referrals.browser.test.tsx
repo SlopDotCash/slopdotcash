@@ -176,7 +176,8 @@ afterAll(() => {
   environment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
 });
 
-describe(`Edit and save the current account's referral name (spec/frontend/referralSettings.md, "Story: Edit and save the current account's referral name"; spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")`, () => {
+describe(`Edit and save the current account's referral name`, () => {
+  // spec/frontend/referralSettings.md, "Story: Edit and save the current account's referral name"; spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
   it("a member names their referral link, sees refusals, and reads the saved link back after a reload", async () => {
     const member: Account = { githubId: "900000098", login: "link-test", code: null };
     const backend = fakeBackend([member]);
@@ -260,7 +261,8 @@ describe(`Edit and save the current account's referral name (spec/frontend/refer
   });
 });
 
-describe(`See requested repos, flag one, renew or withdraw it (spec/frontend/requestedRepos.md, "Story: See requested repos, flag one, renew or withdraw it"; spec/frontend/requestedRepos.md, "A board read keeps a ready board on screen and a failed one offers Try again"; spec/frontend/requestedRepos.md, "One flag, renew or withdraw is in flight per lifetime, a success reloads the board and a refusal changes nothing else")`, () => {
+describe(`See requested repos, flag one, renew or withdraw it`, () => {
+  // spec/frontend/requestedRepos.md, "Story: See requested repos, flag one, renew or withdraw it"; spec/frontend/requestedRepos.md, "A board read keeps a ready board on screen and a failed one offers Try again"; spec/frontend/requestedRepos.md, "One flag, renew or withdraw is in flight per lifetime, a success reloads the board and a refusal changes nothing else"
   it("a member flags a repo from a link, sees the count, copies a pitch with their link, renews and withdraws", async () => {
     const member: Account = { githubId: "900000098", login: "link-test", code: "DrewBuilds" };
     const backend = fakeBackend([member], new Map([["acme/widgets", 2]]));
@@ -268,13 +270,13 @@ describe(`See requested repos, flag one, renew or withdraw it (spec/frontend/req
     await openRequested(backend, "?flag=acme/widgets");
 
     await expect.element(page.getByRole("heading", { name: "Requested repos", level: 1 })).toBeVisible();
-    await expect.element(flagRegion()).toHaveTextContent("Flag acme/widgets as a repo you'd work on?");
+    await expect.element(flagRegion()).toMatchTextContent("Flag acme/widgets as a repo you'd work on?");
     await expect.poll(boardRows).toEqual([["acme/widgets", "2"]]);
 
     await userEvent.click(flagRegion().getByRole("button", { name: "Flag", exact: true }));
     await expect.poll(doneText).toBe("Flagged acme/widgets until Feb 20, 2027.");
     await expect.poll(boardRows).toEqual([["acme/widgets", "3"]]);
-    await expect.element(yourFlags()).toHaveTextContent("acme/widgets · Counts until Feb 20, 2027");
+    await expect.element(yourFlags()).toMatchTextContent("acme/widgets · Counts until Feb 20, 2027");
 
     await userEvent.click(page.getByRole("button", { name: "Copy pitch for acme/widgets", exact: true }));
     await expect.element(page.getByText("Copied.", { exact: true })).toBeVisible();
@@ -288,7 +290,7 @@ describe(`See requested repos, flag one, renew or withdraw it (spec/frontend/req
 
     await userEvent.click(yourFlags().getByRole("button", { name: "Withdraw acme/widgets", exact: true }));
     await expect.poll(doneText).toBe("Withdrawn your flag on acme/widgets.");
-    await expect.element(yourFlags()).toHaveTextContent("You have not flagged a repo.");
+    await expect.element(yourFlags()).toMatchTextContent("You have not flagged a repo.");
     await expect.poll(boardRows).toEqual([["acme/widgets", "2"]]);
 
     await visit("");
@@ -319,7 +321,7 @@ describe(`See requested repos, flag one, renew or withdraw it (spec/frontend/req
     const copied = recordClipboard();
     await openRequested(backend, "?flag=acme/widgets");
 
-    await expect.element(flagRegion()).toHaveTextContent("Sign in to flag acme/widgets as a repo you'd work on.");
+    await expect.element(flagRegion()).toMatchTextContent("Sign in to flag acme/widgets as a repo you'd work on.");
     await expect.element(flagRegion().getByRole("link", { name: "Sign in with GitHub", exact: true })).toBeVisible();
     await expect.poll(boardRows).toEqual([["acme/widgets", "1"]]);
     await expect.element(yourFlags()).not.toBeInTheDocument();

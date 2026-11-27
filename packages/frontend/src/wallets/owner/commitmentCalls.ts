@@ -6,11 +6,21 @@ import type { MonthlySetting } from "./ownerDecisions.ts";
 
 export type { MonthlySetting };
 
+export interface DeploymentUpgrade {
+  readonly vaultImplementation: string;
+  readonly vaultImplementationCodeSha256: string;
+}
+
 export interface Deployment {
   readonly network: string;
   readonly vault: string;
   readonly owner: string;
   readonly asset: string;
+  readonly codeSha256?: string | undefined;
+  readonly factory?: string | undefined;
+  readonly feeRecipient?: string | undefined;
+  readonly bindingDelaySeconds?: string | undefined;
+  readonly evmUpgrade?: DeploymentUpgrade | undefined;
 }
 
 export interface CommitmentCall {

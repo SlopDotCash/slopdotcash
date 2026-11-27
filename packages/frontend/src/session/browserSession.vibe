@@ -102,12 +102,12 @@ export const browserSession = Layer.effect(BrowserSession, effect {
     observe,
     signOut: effect () => {
       try call(pointsSignOut, { body: {} }, { limitBytes: signOutLimitBytes })
+      try session.clear()
       try settled(0, undefined, false)
-      try observe("changed")
     },
     sessionEnded: effect () => {
+      try session.clear()
       try settled(0, undefined, true)
-      try observe("changed")
     },
     navigate: (destination: Page) => route({ type: "navigate", destination }),
     compose: (event: DraftEvent) => compose(event),

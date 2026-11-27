@@ -2,7 +2,7 @@
 import { isoAt } from "@repo/platform/clock"
 import { randomId, randomToken, utf8 } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
-import { type Actor, Caller, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
+import { type Actor, Caller, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
 import { Authority, Registry, Restrictions } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { Rejected as CaseRejected, apply as applyCase, githubReceiptService, initial as noCase } from "../../gen/security__cases.effect.vibe"
@@ -585,10 +585,24 @@ effect function verifySubmission(actor: Actor, id: string) {
   return try answer(try directVerified(app, row, grant))
 }
 
+effect function forwardingActor(route: typeof authorizeForwarding) {
+  if (!(try sameOriginWrite())) throw refused(sendRows.originForbidden)
+  try configured()
+  return try (try Caller).current(route)
+}
+
 export const forwardingRoutes = Layer.mergeAll(
-  handleRaw(authorizeForwarding, (input) => authorizeSubmission(input.actor, input.params.id ?? "")),
+  handleRaw({ ...authorizeForwarding, access: "public" }, (input) => effect {
+    return try authorizeSubmission(try forwardingActor(authorizeForwarding), input.params.id ?? "")
+  }),
   handleRaw(forwardingCallback, () => authorizationCallback()),
-  handleRaw(sendForwarding, (input) => sendSubmission(input.actor, input.params.id ?? "")),
-  handleRaw(reconcileForwarding, (input) => reconcileSubmission(input.actor, input.params.id ?? "")),
-  handleRaw(verifyForwarding, (input) => verifySubmission(input.actor, input.params.id ?? "")),
+  handleRaw({ ...sendForwarding, access: "public" }, (input) => effect {
+    return try sendSubmission(try forwardingActor(sendForwarding), input.params.id ?? "")
+  }),
+  handleRaw({ ...reconcileForwarding, access: "public" }, (input) => effect {
+    return try reconcileSubmission(try forwardingActor(reconcileForwarding), input.params.id ?? "")
+  }),
+  handleRaw({ ...verifyForwarding, access: "public" }, (input) => effect {
+    return try verifySubmission(try forwardingActor(verifyForwarding), input.params.id ?? "")
+  }),
 )

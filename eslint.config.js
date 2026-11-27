@@ -344,7 +344,6 @@ const commented = {
   "packages/ui/src/components/CopyButton.meta.tsx": 2,
   "packages/ui/src/components/DataState.meta.tsx": 6,
   "packages/ui/src/components/Dialog.meta.tsx": 1,
-  "packages/ui/src/components/Dialog.tsx": 1,
   "packages/ui/src/components/ExternalLink.meta.tsx": 3,
   "packages/ui/src/components/FileField.meta.tsx": 1,
   "packages/ui/src/components/Identity.meta.tsx": 3,

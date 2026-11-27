@@ -44,7 +44,7 @@ const permissionNames: Readonly<Record<Exclude<GrantedPermission, "PermissionUnk
 }
 
 function refusal(row: { readonly status: number; readonly error: string }) {
-  return json({ error: row.error }, row.status, noStore)
+  return HttpServerResponse.jsonUnsafe({ error: row.error }, { status: row.status, headers: noStore, contentType: "application/json" })
 }
 
 function answered(decided: AccessAnswer, gathered: Gathered, includeRepository: boolean) {

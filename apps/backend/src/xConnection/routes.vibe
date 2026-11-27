@@ -6,7 +6,7 @@ import { handleRaw } from "@repo/platform/http"
 import { Rejected, xCallback } from "../../gen/backend__accounts.effect.vibe"
 import { AccountSettings, type XClient, pointsAnswer, pointsJson } from "../accounts/routes/admission.vibe"
 import { boundedObject, keysOf } from "../accounts/routes/membership.vibe"
-import { bare } from "../accounts/routes/refusals.vibe"
+import { type Row } from "../accounts/routes/refusals.vibe"
 import { type Facts, noFacts } from "../accounts/store/codec.vibe"
 import { type Intent, type Sender, send } from "../accounts/store/store.vibe"
 import { xCallbackRoute, xDisconnect, xMe, xProfile, xStart, xVisibility } from "../client/accounts.vibe"
@@ -68,6 +68,10 @@ effect function xSession() {
   const hash = try sha256Hex(token)
   const row = try first(SessionRow, sql`SELECT actor_id FROM points_sessions WHERE token_hash = ${hash} AND expires_at > ${try isoNow()}`)
   return row === undefined ? undefined : { actor: row.actor_id, sender: { kind: "session", hash } satisfies Sender }
+}
+
+function bare(row: Row) {
+  return HttpServerResponse.jsonUnsafe({ error: row.error }, { status: row.status, headers: { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" }, contentType: "application/json" })
 }
 
 function signedOut() {

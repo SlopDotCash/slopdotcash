@@ -128,7 +128,7 @@ const deployment = Layer.succeed(Deployment, {
 const onSite = Layer.effect(HttpClient.HttpClient, Effect.map(HttpClient.HttpClient, (client) => HttpClient.mapRequest(client, (request) => (request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, site) : request))));
 
 function page(fetch: typeof globalThis.fetch) {
-  const platform = Layer.mergeAll(deployment, sessionStore, localStore, locks, webCrypto, Layer.provide(onSite, FetchHttpClient.layer), Layer.succeed(FetchHttpClient.Fetch, fetch));
+  const platform = Layer.mergeAll(deployment, sessionStore, localStore, locks, webCrypto, Layer.provide(onSite, Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, fetch))));
   const runtime = ManagedRuntime.make(Layer.mergeAll(walletChoiceServices, Layer.provideMerge(sessionServices, platform)));
   cleanups.push(() => void runtime.dispose());
   return runtime;
@@ -147,15 +147,18 @@ const walletId = walletNamed("Payer wallet");
 const failureOf = <A, E extends { readonly _tag: string; readonly message?: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.match(effect, { onFailure: (error) => `${error._tag}: ${error.message ?? ""}`, onSuccess: () => "succeeded" });
 
-describe('Make wallet outcomes recoverable without repeating an uncertain send (spec/frontend/directBountyPrompt.md, "Story: Make wallet outcomes recoverable without repeating an uncertain send"; spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Verification candidates merge atomically with current storage"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request")', () => {
-  it("the payer sends both legs once, an uncertain second leg survives a reload and blocks a resend, and verification sends both hashes for the exact request", async () => {
+describe('Make wallet outcomes recoverable without repeating an uncertain send', () => {
+  // spec/frontend/directBountyPrompt.md, "Story: Make wallet outcomes recoverable without repeating an uncertain send"; spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Verification candidates merge atomically with current storage"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"
+  it("payer sends both legs once, uncertain second leg survives reload, verification checks both", async () => {
     const wallet = fakeWallet([firstNonce + 1n]);
     const backend = fakeSite(wallet);
     const key = directKey(caseId, 0, false, owner);
 
     const first = page(backend.fetch);
     const sending = await first.runPromise(Effect.gen(function* () {
-      yield* (yield* BrowserSession).observe("load");
+      const browser = yield* BrowserSession;
+      yield* browser.navigate("SecurityCases");
+      yield* browser.observe("load");
       announce("5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", wallet.provider);
       const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
       const { form, authority } = yield* openCasePayment(bountyStorage(), seen);
@@ -174,7 +177,9 @@ describe('Make wallet outcomes recoverable without repeating an uncertain send (
 
     const reloaded = page(backend.fetch);
     const recovered = await reloaded.runPromise(Effect.gen(function* () {
-      yield* (yield* BrowserSession).observe("load");
+      const browser = yield* BrowserSession;
+      yield* browser.navigate("SecurityCases");
+      yield* browser.observe("load");
       announce("6b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", wallet.provider);
       const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
       const { form, authority } = yield* openCasePayment(bountyStorage(), seen);
@@ -325,14 +330,17 @@ function savedSolana() {
 }
 
 const solanaOpened = Effect.gen(function* () {
-  yield* (yield* BrowserSession).observe("load");
+  const browser = yield* BrowserSession;
+  yield* browser.navigate("SecurityCases");
+  yield* browser.observe("load");
   const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
   const { form, authority } = yield* openCaseSolanaPayment(bountyStorage(), seen);
   const connection = yield* connectSolanaPayer(yield* walletNamed("Payer Solana"), form.payer, authority);
   return { form, authority, connection };
 });
 
-describe('Send each prepared message at most once and recover it after expiry (spec/frontend/solanaBountyPrompt.md, "Story: Send each prepared message at most once and recover it after expiry"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt")', () => {
+describe('Send each prepared message at most once and recover it after expiry', () => {
+  // spec/frontend/solanaBountyPrompt.md, "Story: Send each prepared message at most once and recover it after expiry"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
   it("a signature typed beside the saved one is stored as the candidate and is the one the case verifies", async () => {
     const payer = await solanaPayer();
     const wallet = solanaWallet(payer, () => undefined);
@@ -379,7 +387,7 @@ describe('Send each prepared message at most once and recover it after expiry (s
     expect(backend.actions).toEqual([{ action: "verify-payment", transactionIds: [wallet.sent[0]], signatures: undefined }]);
   });
 
-  it("an expired payment whose history scan is incomplete returns to the expired form, and the next check signs nothing new and finds the payment", async () => {
+  it("incomplete history scan returns to expired form and next check finds payment without resending", async () => {
     const payer = await solanaPayer();
     const wallet = solanaWallet(payer, () => undefined);
     const backend = solanaSite(payer, { verify: "expire", recover: ["history-check", "payment-found"] });

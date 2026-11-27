@@ -120,13 +120,14 @@ export schema PublicAccountBan { githubId: string; bannedAt: string }
 export schema PublicAccountBans { schemaVersion: "slop-account-bans:v1"; bans: ReadonlyArray<PublicAccountBan> }
 
 const publicProjectCache = { browserSeconds: 0, edgeSeconds: 30 } as const
+const projectContract = { "x-slop-project-api-contract": "project-registry-v1" }
 
-export const adminProjects = route({ method: "GET", path: "/api/v1/admin/projects", access: "session", limitKib: 1, request: undefined, answer: AdminProjects, rejected: "forbidden", cache: "no-store" })
-export const adminManifest = route({ method: "PUT", path: "/api/v1/admin/projects/:id/manifest", access: "sessionWrite", limitKib: 64, request: AdminRevisionRequest, answer: AdminRevised, rejected: "rejected", cache: "no-store" })
-export const enforcementPreview = route({ method: "POST", path: "/api/v1/admin/projects/:id/enforcement-preview", access: "sessionWrite", limitKib: 64, request: EnforcementRequest, answer: Previewed, rejected: "rejected", cache: "no-store" })
-export const enforcementDecision = route({ method: "POST", path: "/api/v1/admin/projects/:id/enforcement", access: "sessionWrite", limitKib: 64, request: EnforcementRequest, answer: Decided, rejected: "rejected", cache: "no-store" })
-export const projectAppeals = route({ method: "POST", path: "/api/v1/project-appeals", access: "sessionWrite", limitKib: 64, request: AppealRequest, answer: Decided, rejected: "rejected", cache: "no-store" })
-export const accountAppeals = route({ method: "GET", path: "/api/v1/project-appeals", access: "session", limitKib: 1, request: undefined, answer: AccountAppeals, rejected: "not_found", cache: "no-store" })
-export const accountBans = route({ method: "GET", path: "/api/v1/project-account-bans", access: "public", limitKib: 1, request: undefined, answer: PublicAccountBans, rejected: "not_found", cache: publicProjectCache, cors: ["*"] })
+export const adminProjects = route({ method: "GET", path: "/api/v1/admin/projects", access: "session", limitKib: 1, request: undefined, answer: AdminProjects, rejected: "forbidden", cache: "no-store", refusalHeaders: projectContract })
+export const adminManifest = route({ method: "PUT", path: "/api/v1/admin/projects/:id/manifest", access: "sessionWrite", limitKib: 64, request: AdminRevisionRequest, answer: AdminRevised, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const enforcementPreview = route({ method: "POST", path: "/api/v1/admin/projects/:id/enforcement-preview", access: "sessionWrite", limitKib: 64, request: EnforcementRequest, answer: Previewed, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const enforcementDecision = route({ method: "POST", path: "/api/v1/admin/projects/:id/enforcement", access: "sessionWrite", limitKib: 64, request: EnforcementRequest, answer: Decided, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const projectAppeals = route({ method: "POST", path: "/api/v1/project-appeals", access: "sessionWrite", limitKib: 64, request: AppealRequest, answer: Decided, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const accountAppeals = route({ method: "GET", path: "/api/v1/project-appeals", access: "session", limitKib: 1, request: undefined, answer: AccountAppeals, rejected: "not_found", cache: "no-store", refusalHeaders: projectContract })
+export const accountBans = route({ method: "GET", path: "/api/v1/project-account-bans", access: "public", limitKib: 1, request: undefined, answer: PublicAccountBans, rejected: "not_found", cache: publicProjectCache, cors: ["*"], refusalHeaders: projectContract })
 
 export const api: ReadonlyArray<AnyRoute> = [adminProjects, adminManifest, enforcementPreview, enforcementDecision, projectAppeals, accountAppeals, accountBans]

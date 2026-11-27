@@ -7,6 +7,7 @@ import {
   notifyPostV1ActivityNotificationsEligibility,
   notifyPostV1ActivityNotificationsReconcile,
   notifyPostV1EmailCapabilities,
+  notifyPostV1EmailUnsubscribe,
   notifyPostV1EmailVerification,
   notifyPostV1SecurityNotificationsDispatch,
   notifyPostV1SecurityNotificationsReconcile,
@@ -42,11 +43,12 @@ const activityDispatchPath: Internal = { path: "/v1/activity-notifications/dispa
 const activityReconcilePath: Internal = { path: "/v1/activity-notifications/reconcile", limitKib: 8 }
 const emailCapabilitiesPath: Internal = { path: "/v1/email/capabilities", limitKib: 2 }
 const emailVerificationPath: Internal = { path: "/v1/email/verification", limitKib: 2 }
+const emailUnsubscribePath: Internal = { path: "/v1/email/unsubscribe", limitKib: 2 }
 const projectApplicationsPath: Internal = { path: projectApplicationNoticePath, limitKib: 8 }
 const slopbotSpendPath: Internal = { path: slopbotSpendNoticePath, limitKib: 8 }
 const slopbotFailurePath: Internal = { path: slopbotFailureNoticePath, limitKib: 8 }
 
-const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, projectApplicationsPath, slopbotSpendPath, slopbotFailurePath]
+const internals = [securityDispatchPath, securityReconcilePath, activityEligibilityPath, activityDispatchPath, activityReconcilePath, emailCapabilitiesPath, emailVerificationPath, emailUnsubscribePath, projectApplicationsPath, slopbotSpendPath, slopbotFailurePath]
 
 export const notifyApi: ReadonlyArray<AnyRoute> = internals.flatMap((internal) => [descriptor("POST", internal.path, internal.limitKib), ...otherMethods.map((method) => descriptor(method, internal.path, 1))])
 
@@ -140,6 +142,16 @@ effect function capabilities() {
   return plainJson({ enrollmentAvailable: enrollmentOpen((try NotifySettings).activity) })
 }
 
+effect function unsubscribed() {
+  const settings = try NotifySettings
+  const body: unknown = try jsonBody(2)
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return answer(notifyPostV1EmailUnsubscribe.status400)
+  const record = body as Readonly<Record<string, unknown>>
+  if (Object.keys(record).join() !== "token" || typeof record.token !== "string") return answer(notifyPostV1EmailUnsubscribe.status400)
+  if (!enrollmentOpen(settings.activity)) return answer(notifyPostV1EmailUnsubscribe.status503)
+  return answer(notifyPostV1EmailUnsubscribe.status409)
+}
+
 effect function securityPilot() {
   return (try NotifySettings).security
 }
@@ -185,6 +197,7 @@ export const notifyRoutes = Layer.mergeAll(
   }),
   served(emailCapabilitiesPath, verification.status500, notifyPostV1EmailCapabilities.otherMethods.status405, () => capabilities()),
   served(emailVerificationPath, verification.status500, verification.otherMethods.status405, () => verified()),
+  served(emailUnsubscribePath, notifyPostV1EmailUnsubscribe.status500, notifyPostV1EmailUnsubscribe.otherMethods.status405, () => unsubscribed()),
   served(projectApplicationsPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("application")),
   served(slopbotSpendPath, notifyPostV1SlopbotSpend.serviceMisconfigured, notifyPostV1SlopbotSpend.otherMethods.methodNotAllowedNoStore, () => adminNotice("spend")),
   served(slopbotFailurePath, notifyPostV1SlopbotFailure.serviceMisconfigured, notifyPostV1SlopbotFailure.otherMethods.methodNotAllowedNoStore, () => adminNotice("failure")),

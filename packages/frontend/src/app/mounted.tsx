@@ -4,6 +4,7 @@ import { type ReactNode, useRef, useState } from "react";
 import type { Route } from "../../gen/app.ts";
 import { privatePage, signInShownInPlace } from "../../gen/frontend__navigation.ts";
 import { useMachine } from "../../gen/frontend__navigation.react.ts";
+import { registryBlocked, registryPolicy } from "../../gen/frontend__registry.ts";
 import { pageOf } from "../../gen/frontend__routes.ts";
 import { alignFragments } from "../platform/fragment.vibe";
 import { loadRegistry, type RegistryBoot, type RegistryProject } from "../reads/registry.vibe";
@@ -35,26 +36,54 @@ export function RoutePage({ runtime, route, frame }: { runtime: PageRuntime; rou
   }
   if (kind && !privatePage(pageOf(kind))) return <Gated kind={kind} Page={pages[kind]} runtime={runtime} route={route} frame={frame} />;
   if (state === undefined || shown === undefined) return frame();
-  if (signInShownInPlace(state) && !(kind === "Account" && settingsShownSignedOut(address))) {
+  if (kind) {
+    return (
+      <PrivateRoute kind={kind} runtime={runtime} route={route} frame={frame} signedOutInPlace={signInShownInPlace(state) && !(kind === "Account" && settingsShownSignedOut(address))} shown={shown} address={address} />
+    );
+  }
+  return frame();
+}
+
+function PrivateRoute({
+  kind,
+  runtime,
+  route,
+  frame,
+  signedOutInPlace,
+  shown,
+  address,
+}: {
+  kind: PageKind;
+  runtime: PageRuntime;
+  route: Route;
+  frame: Frame;
+  signedOutInPlace: boolean;
+  shown: NonNullable<ReturnType<typeof useSession>>;
+  address: string;
+}) {
+  const section = projectRuntime(runtime);
+  const boot = useOnce(section, "registry", () => loadRegistry());
+  if (boot.status === "done" && registryBlocked(registryPolicy(pageOf(kind)), boot.value.freshness)) {
+    return <RegistryGate kind={kind} freshness={boot.value.freshness} frame={frame} onRetry={() => retryOnce(section, "registry")} />;
+  }
+  if (signedOutInPlace) {
     const view = shown.view.status === "signedIn" ? { status: "checking" as const } : shown.view;
     return frame(
       <>
         {kind === "Inbox" ? <InboxEmailLink runtime={runtime} /> : null}
-        <SignInPanel view={view} href={loginHrefFor(shown, address)} purpose={kind && signInPurposes[kind]} />
+        <SignInPanel view={view} href={loginHrefFor(shown, address)} purpose={signInPurposes[kind]} />
       </>,
     );
   }
-  return kind ? <Gated kind={kind} Page={pages[kind]} runtime={runtime} route={route} frame={frame} /> : frame();
+  return <Gated kind={kind} Page={pages[kind]} runtime={runtime} route={route} frame={frame} />;
 }
 
 function Gated({ kind, Page, runtime, route, frame }: { kind: PageKind; Page: RegisteredPage; runtime: PageRuntime; route: Route; frame: Frame }) {
   const section = projectRuntime(runtime);
   const boot = useOnce(section, "registry", () => loadRegistry());
-  const page = <Page runtime={runtime} route={route} />;
-  if (boot.status !== "done") return page;
   return (
-    <RegistryGate kind={kind} freshness={boot.value.freshness} frame={frame} onRetry={() => retryOnce(section, "registry")}>
-      {page}
+    <RegistryGate kind={kind} freshness={boot.status === "done" ? boot.value.freshness : { tag: "RegistryCurrent" }} frame={frame} onRetry={() => retryOnce(section, "registry")}>
+      <Page runtime={runtime} route={route} />
     </RegistryGate>
   );
 }

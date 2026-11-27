@@ -77,6 +77,8 @@ export const monthlyReserveRelease = route({
   answer: ReleaseAnswer,
   rejected: "release_held",
   cache: "private",
+  refusalHeaders: { "cache-control": "private, no-store" },
+  originRefusal: { status: 403, code: "origin_forbidden", message: "" },
   invalid: refusal(rows.invalidReleaseReview),
   unauthenticated: refusal(rows.notSignedIn),
   sessionExpired: refusal(rows.sessionExpired),

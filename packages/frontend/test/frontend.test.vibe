@@ -950,7 +950,7 @@ service LateReadsBrowser { readonly world: LateReadsWorld }
 service ComposedBrowser { readonly world: ComposedWorld }
 
 effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+  try sync(() => assert.deepStrictEqual(actual, expected))
 }
 
 const deployment = Layer.succeed(Deployment, {
@@ -1585,7 +1585,6 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       provide page(world, stores) {
         const browser = try BrowserSession
         const erased: Array<number> = []
-        try stores.session.values.set("slop-report-compose:1", "private report text")
         try scoped(effect {
           try browser.onAccountChange((actorId) => effect {
             erased.push(actorId)
@@ -1603,6 +1602,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           const lifetime = try browser.lifetime()
           const received = try browser.acceptPrivate(lifetime, 3, true)
           const began = try browser.compose({ type: "beginReport", projectId: 1 })
+          try stores.session.values.set("slop-report-compose:1", "private report text")
           const writing = try shape()
           try browser.observe("revalidate")
           const refreshed = try shape()
@@ -1658,16 +1658,14 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       const { world } = try Browser
       const stores = try tab()
       const opened = <A, E, R>(steps: A!E!R) => onPage(world, stores, steps)
-      const octoCookie = try opened(effect {
+      try opened(effect {
         try signedInAs(world, "octo")
         const request = { email: "octo@example.test", enabled: true, idempotencyKey: "octo-request-0001", securityEnabled: true }
         try call(emailVerification, { body: request }, { limitBytes: 4096, expectedActor: "7" })
-        const cookie = world.cookie()
         try (try BrowserSession).signOut()
-        return cookie
       })
       const token = world.sent.find((mail) => mail.githubId === "7")?.token ?? ""
-      const first = try opened(effect {
+      const { first, octoCookie } = try opened(effect {
         const link = try EmailLink
         const actions = try EmailActions
         try (try BrowserSession).observe("load")
@@ -1677,7 +1675,10 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const storedBefore = try storedAction(stores)
         try signedInAs(world, "octo")
         const afterSignIn = try actions.get()
-        return { captured, signedOutCheck, beforeSignIn: [beforeSignIn.kind, beforeSignIn.tokenValid, beforeSignIn.signedIn, beforeSignIn.boundActor], stored: storedBefore?.kind, afterSignIn: [afterSignIn.signedIn, afterSignIn.generation] }
+        return {
+          first: { captured, signedOutCheck, beforeSignIn: [beforeSignIn.kind, beforeSignIn.tokenValid, beforeSignIn.signedIn, beforeSignIn.boundActor], stored: storedBefore?.kind, afterSignIn: [afterSignIn.signedIn, afterSignIn.generation] },
+          octoCookie: world.cookie(),
+        }
       })
       const reloaded = try opened(effect {
         const link = try EmailLink
@@ -2274,11 +2275,11 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       const slop = projects[0]
       const pinnedPositive = {
         ...slop,
-        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), monthlyCapUsd: 0, cycleCaps: { [month]: 500 } } },
+        reward: { ...(slop.reward as Record<string, unknown>), monthlyCapMinor: "0", cycleCaps: [{ cycleId: month, monthlyCapMinor: "500000000" }] },
       }
       const pinnedZero = {
         ...slop,
-        raw: { ...(slop.raw as Record<string, unknown>), reward: { ...((slop.raw as Record<string, unknown>).reward as Record<string, unknown>), cycleCaps: { [month]: 0 } } },
+        reward: { ...(slop.reward as Record<string, unknown>), cycleCaps: [{ cycleId: month, monthlyCapMinor: "0" }] },
       }
       try same(try orDie(Effect.try(() => [...projects.map((project) => [project.id, publishedShare(project, now)]), ["pinnedPositive", publishedShare(pinnedPositive, now)], ["pinnedZero", publishedShare(pinnedZero, now)]])), [
         ["slop", { tag: "ChangingShare", thisMonth: 0, fromNext: 2000, fromPeriod: 202612 }],
@@ -2940,7 +2941,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const reason = try (try D1).all(sql`SELECT reason FROM project_revisions WHERE project_id = ${id} AND revision = 3`)
         const application = "app_journey00001"
         const text = JSON.stringify(try manifest("journey-pending", "other", otherId))
-        try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification) VALUES (${application}, 'journey-pending', ${`member-${stewardId}/other`}, ${text}, ${try sha256Hex(text)}, 'Accepted pull requests with tests.', ${steward}, ${`member-${stewardId}`}, '2026-11-02T00:00:00.000Z', 'pending', 'sent')`)
+        try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at) VALUES (${application}, 'journey-pending', ${`member-${stewardId}/other`}, ${text}, ${try sha256Hex(text)}, 'Accepted pull requests with tests.', ${steward}, ${`member-${stewardId}`}, '2026-11-02T00:00:00.000Z', 'pending', 'sent', '2026-11-02T00:00:00.000Z')`)
         const cancelled = (try cancelProjectApplication(application, steward)).status
         try same({
           owned: owned.includes(`member-${stewardId}/tool`),
@@ -2969,7 +2970,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           checked: ["ready", "none", 2, "active"],
           revised: [3, ["headline"]],
           stale: ["Refused", 409, "stale_revision"],
-          reason: [{ reason: "Clearer headline" }],
+          reason: [{ reason: `Owner update by @member-${stewardId}: presentation (headline) published. Clearer headline` }],
           cancelled: "cancelled",
           unexpected: [],
         })

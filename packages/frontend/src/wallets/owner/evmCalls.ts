@@ -100,6 +100,34 @@ export function releaseCall(vault: string, period: number): Call {
   return { to: vault, data: expirePledgeCalldata(period), value: "0x0" };
 }
 
+export interface RecordedVaultReview {
+  readonly codeSha256?: string | undefined;
+  readonly factory?: string | undefined;
+  readonly feeRecipient?: string | undefined;
+  readonly bindingDelaySeconds?: string | undefined;
+  readonly evmUpgrade?: { readonly vaultImplementation: string; readonly vaultImplementationCodeSha256: string } | undefined;
+}
+
+/** @throws {never} */
+export function recordedVaultReviewOf(deployment: RecordedVaultReview, purpose: VaultPurpose): VaultReview | undefined {
+  if (
+    deployment.codeSha256 === undefined ||
+    deployment.factory === undefined ||
+    deployment.feeRecipient === undefined ||
+    deployment.bindingDelaySeconds === undefined ||
+    !/^(?:0|[1-9][0-9]*)$/u.test(deployment.bindingDelaySeconds)
+  )
+    return undefined;
+  return {
+    codeSha256: deployment.codeSha256,
+    implementation: deployment.evmUpgrade === undefined ? undefined : { address: deployment.evmUpgrade.vaultImplementation, codeSha256: deployment.evmUpgrade.vaultImplementationCodeSha256 },
+    factory: deployment.factory,
+    feeRecipient: deployment.feeRecipient,
+    bindingDelaySeconds: BigInt(deployment.bindingDelaySeconds),
+    purpose,
+  };
+}
+
 /** @throws {never} */
 export function reviewedVaultOf(network: string, purpose: VaultPurpose): VaultReview | undefined {
   const factory = isNetworkKey(network) ? reviewedFactory(network) : undefined;

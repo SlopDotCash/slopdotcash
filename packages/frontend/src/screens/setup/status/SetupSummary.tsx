@@ -80,7 +80,7 @@ export function SetupSummary({ projectId, view: { setup, busy, error }, onCheck,
                 </a>
               </Button>
             ) : null}
-            {setup.nextAction.kind === "request_scan" ? (
+            {setup.nextAction.kind === "request_scan" || setup.nextAction.kind === "retry_scan" ? (
               <Button loading={busy} onClick={() => onCheck(true)}>
                 {busy ? "Requesting…" : "Rescan"}
               </Button>

@@ -138,13 +138,15 @@ export schema TraceLicencesPostAnswer {
   readonly licensed: number
 }
 
-export const authSession = route({ method: "POST", path: "/api/v1/auth/session", access: "public", limitKib: 1, request: undefined, answer: SessionIssued, rejected: "unauthorized", cache: "no-store", cors: traceBrowserOrigins, corsHeaders: ["x-slop-identity-assertion", "content-type"] })
-export const createRunRoute = route({ method: "POST", path: "/api/v1/runs", access: "bearer", limitKib: 64, request: RunFields, answer: RunCreated, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
-export const traceIntentRoute = route({ method: "POST", path: "/api/v1/runs/:runId/trace-intents", access: "bearer", limitKib: 64, request: IntentFields, answer: IntentIssued, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
-export const finalizeRoute = route({ method: "POST", path: "/api/v1/runs/:runId/finalize", access: "bearer", limitKib: 1, request: undefined, answer: RunFinalized, rejected: "finalize_conflict", cache: "no-store" })
-export const eventRoute = route({ method: "POST", path: "/api/v1/runs/:runId/events", access: "bearer", limitKib: 64, request: EventFields, answer: EventRecorded, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
-export const traceUploadRoute = route({ method: "PUT", path: "/api/v1/trace-uploads/:capability", access: "public", limitKib: 8192, request: undefined, answer: TraceStored, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
-export const privateIntakeRoute = route({ method: "GET", path: "/api/v1/private-request-intake", access: "public", limitKib: 1, request: undefined, answer: IntakeObserved, rejected: "private_intake_unavailable", cache: "no-store" })
+const traceCorsRefusal = { status: 403, code: "origin_not_allowed", message: "" } as const
+
+export const authSession = route({ method: "POST", path: "/api/v1/auth/session", access: "public", limitKib: 1, request: undefined, answer: SessionIssued, rejected: "unauthorized", cache: "no-store", cors: traceBrowserOrigins, corsHeaders: ["x-slop-identity-assertion", "content-type"], strictCorsOrigin: true, corsRefusal: traceCorsRefusal, refusalHeaders: traceApiContract })
+export const createRunRoute = route({ method: "POST", path: "/api/v1/runs", access: "bearer", limitKib: 64, request: RunFields, answer: RunCreated, rejected: "idempotency_conflict", cache: "no-store", status: 201, refusalHeaders: traceApiContract })
+export const traceIntentRoute = route({ method: "POST", path: "/api/v1/runs/:runId/trace-intents", access: "bearer", limitKib: 64, request: IntentFields, answer: IntentIssued, rejected: "idempotency_conflict", cache: "no-store", status: 201, refusalHeaders: traceApiContract })
+export const finalizeRoute = route({ method: "POST", path: "/api/v1/runs/:runId/finalize", access: "bearer", limitKib: 1, request: undefined, answer: RunFinalized, rejected: "finalize_conflict", cache: "no-store", refusalHeaders: traceApiContract })
+export const eventRoute = route({ method: "POST", path: "/api/v1/runs/:runId/events", access: "bearer", limitKib: 64, request: EventFields, answer: EventRecorded, rejected: "idempotency_conflict", cache: "no-store", status: 201, refusalHeaders: traceApiContract })
+export const traceUploadRoute = route({ method: "PUT", path: "/api/v1/trace-uploads/:capability", access: "public", limitKib: 8192, request: undefined, answer: TraceStored, rejected: "idempotency_conflict", cache: "no-store", status: 201, refusalHeaders: traceApiContract })
+export const privateIntakeRoute = route({ method: "GET", path: "/api/v1/private-request-intake", access: "public", limitKib: 1, request: undefined, answer: IntakeObserved, rejected: "private_intake_unavailable", cache: "no-store", refusalHeaders: traceApiContract })
 export const tracesMeRoute = route({ method: "GET", path: "/api/v1/traces/me", access: "session", limitKib: 1, request: undefined, answer: TracesMeAnswer, rejected: "account_closed", cache: "no-store" })
 export const traceLicensingRoute = route({ method: "PUT", path: "/api/v1/traces/licensing", access: "sessionWrite", limitKib: 80, request: undefined, answer: TraceLicensingPutAnswer, rejected: "setting_changed", cache: "no-store" })
 export const traceLicencesRoute = route({ method: "POST", path: "/api/v1/traces/licences", access: "sessionWrite", limitKib: 80, request: undefined, answer: TraceLicencesPostAnswer, rejected: "count_changed", cache: "no-store" })

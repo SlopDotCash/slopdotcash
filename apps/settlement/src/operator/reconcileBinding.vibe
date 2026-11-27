@@ -1,7 +1,7 @@
 // spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
 import { randomId } from "@repo/platform/crypto"
 import { D1 } from "@repo/platform/d1"
-import { handle, refuse } from "@repo/platform/http"
+import { Caller, body, handleRaw, json, refuse } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { Audit } from "@repo/ports/security"
 import { RecoveryAnswer, type RecoveryRequest, reconcileBindingRoute } from "../client/operator.vibe"
@@ -95,14 +95,18 @@ effect function refusedOutcome(base: AuditBase) {
   throw refusal(answers.recoveryPendingOrRejected)
 }
 
-export const ReconcileBindingRoutes = handle(reconcileBindingRoute, (input) => effect {
-  if ((try HttpServerRequest.HttpServerRequest).headers.authorization !== undefined) throw refusal(answers.forbidden)
-  if (!(try (try Roles).has(input.actor.githubId, "operator"))) throw refusal(answers.forbiddenOperatorAccessIsRequired)
-  const { scope, reason, ...binding } = input.body
+export const ReconcileBindingRoutes = handleRaw({ ...reconcileBindingRoute, access: "public" }, () => effect {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (request.headers.origin !== new URL(request.originalUrl).origin) throw refuse(403, "origin_not_allowed", "Same-origin access is required")
+  if (request.headers.authorization !== undefined) throw refusal(answers.forbidden)
+  const actor = try (try Caller).current(reconcileBindingRoute)
+  if (!(try (try Roles).has(actor.githubId, "operator"))) throw refusal(answers.forbiddenOperatorAccessIsRequired)
+  const parsed = try body(Schema.Record(Schema.String, Schema.Unknown), 64)
+  const { scope, reason, ...binding } = parsed
   if ((scope !== "ordinary" && scope !== "security-bounty") || !isRecoveryInput(binding) || !reasonAccepted(reason)) throw refusal(answers.invalidRequestAnExactBindingWinner)
   const requestId = try randomId()
   const base = {
-    actorGithubId: input.actor.githubId,
+    actorGithubId: actor.githubId,
     target: `binding:${binding.originalTransactionId.toLowerCase()}`,
     requestId,
     details: { scope, reason, network: binding.network, vault: binding.vault, winnerTransactionId: binding.winnerTransactionId },
@@ -113,5 +117,5 @@ export const ReconcileBindingRoutes = handle(reconcileBindingRoute, (input) => e
     default: try refusedOutcome(base);
   }
   try audited(base, "wallet_binding.reconciled", { state: answer.state })
-  return answer
+  return json(answer, 200, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" })
 })

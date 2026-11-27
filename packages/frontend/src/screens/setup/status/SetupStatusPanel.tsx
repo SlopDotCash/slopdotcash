@@ -38,9 +38,10 @@ function ActorSetup({ runtime, projectId, actorId, generation = "initial", initi
       onSetup?.(next.setup);
     });
   const follow = () => {
-    const resumed = startedRef.current.has(key);
+    const started = startedRef.current.has(key);
+    const resumed = started && (latestRef.current.busy || latestRef.current.setup === null);
     startedRef.current.add(key);
-    return followSetup({ projectId, actorId, requestScan: attempt.requestScan && !resumed, initial: latestRef.current.setup, checkFirst: resumed || attempt.count > 0 || initial === undefined }, show);
+    return followSetup({ projectId, actorId, requestScan: attempt.requestScan && !started, initial: latestRef.current.setup, checkFirst: resumed || (!started && (attempt.count > 0 || initial === undefined)) }, show);
   };
   const run = useRun(runtime, key, follow, setupUnfinished);
   const shown: SetupView = run?.status === "failed" ? { ...view, busy: false, error: run.message } : view;

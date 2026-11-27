@@ -72,14 +72,18 @@ function EnrollmentForm({ initial, busy, blocked, editing, onEdit, onRequest, on
         <Input type="email" autoComplete="email" required maxLength={254} disabled={busy} value={draft.email} onChange={(event) => change({ ...draft, email: event.target.value })} />
       </Field>
       <fieldset aria-label="After verification" disabled={busy} className="flex flex-col gap-2">
-        <Label>
-          <Checkbox checked={draft.enabled} onCheckedChange={(checked) => change({ ...draft, enabled: checked === true })} />
-          Activity
-        </Label>
-        <Label>
-          <Checkbox checked={draft.securityEnabled} onCheckedChange={(checked) => change({ ...draft, securityEnabled: checked === true })} />
-          Security
-        </Label>
+        <div className="flex items-center gap-2">
+          <Checkbox id="email-enroll-activity" aria-labelledby="email-enroll-activity-label" checked={draft.enabled} onCheckedChange={(checked) => change({ ...draft, enabled: checked === true })} />
+          <Label id="email-enroll-activity-label" htmlFor="email-enroll-activity">
+            Activity
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox id="email-enroll-security" aria-labelledby="email-enroll-security-label" checked={draft.securityEnabled} onCheckedChange={(checked) => change({ ...draft, securityEnabled: checked === true })} />
+          <Label id="email-enroll-security-label" htmlFor="email-enroll-security">
+            Security
+          </Label>
+        </div>
       </fieldset>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" variant="secondary" loading={busy} disabled={blocked}>

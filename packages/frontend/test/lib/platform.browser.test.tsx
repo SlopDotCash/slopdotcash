@@ -39,11 +39,12 @@ afterEach(() => {
   }
 });
 
-describe('Read current data without losing the last good result (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', () => {
+describe('Read current data without losing the last good result', () => {
+  // spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
   it("a public read keeps an oversized, unreadable or malformed body apart from data within its limit", async () => {
     const declaredOver = served(["{}"], { "content-length": "11" });
     const invalidLength = served(["{}"], { "content-length": "1e3" });
-    const streamedOver = served(["1234", "5678", "9012"]);
+    const streamedOver = served(["1234", "5678", "9012", "3456"]);
     const notJson = served(["{not json"]);
     const within = served(['{"rows":', "[1,2]}"], { "content-length": "14" });
     const results = {
@@ -65,7 +66,8 @@ describe('Read current data without losing the last good result (spec/frontend/r
   });
 });
 
-describe('Resume an authorized destination after signing in (spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination")', () => {
+describe('Resume an authorized destination after signing in', () => {
+  // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"
   it("a page outside the product origins sends sign-in to the production site and keeps the requested page", async () => {
     const runtime = ManagedRuntime.make(deployment);
     const seen = await runtime.runPromise(Effect.gen(function* () {
@@ -89,7 +91,8 @@ describe('Resume an authorized destination after signing in (spec/frontend/navig
   });
 });
 
-describe('Keep a project setup draft per browser document (spec/frontend/projectDrafts.md, "Story: Keep a project setup draft per browser document"; spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable")', () => {
+describe('Keep a project setup draft per browser document', () => {
+  // spec/frontend/projectDrafts.md, "Story: Keep a project setup draft per browser document"; spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable"
   it("a slot lock stays with the document that claimed it, writes take turns, and a page without Web Locks is told so", async () => {
     const slot = `${storageKeys.projectDraft.key}fixture:slot:1`;
     const runtime = ManagedRuntime.make(locks);

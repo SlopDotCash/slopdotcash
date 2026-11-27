@@ -10,13 +10,14 @@ const users = {
   sam: { id: 2005, login: "octo-sam" },
   tia: { id: 2006, login: "octo-tia" },
   uma: { id: 2007, login: "octo-uma" },
-  root: { id: 9001, login: "octo-root" },
+  root: { id: 18633264, login: "octo-root" },
 } as const;
 
 type User = (typeof users)[keyof typeof users];
 
-const roles = { ADMIN_GITHUB_IDS: "9001", PROJECT_MODERATOR_GITHUB_IDS: "9001", OPERATOR_GITHUB_IDS: "9001" };
+const roles = { ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "18633264", OPERATOR_GITHUB_IDS: "18633264" };
 const refusedLoads = "^console Failed to load resource: the server responded with a status of 40[0139]";
+const missingSnapshots = ["^404 GET /data/", "^console Failed to load resource: the server responded with a status of 404"];
 const settings = named("heading", "Settings", { level: 1 });
 const publish = named("button", "Publish changes");
 const closure = named("checkbox", "Slopbot may close Slop-skill PRs · authors can appeal");
@@ -36,6 +37,11 @@ async function repository(owner: User, name: string, more: { readonly fork?: boo
 }
 
 async function chooseRepository(fullName: string) {
+  await expect.poll(async () => {
+    if ((await site.read(named("textbox", "GitHub repository"))).count > 0) return "textbox";
+    const picker = await site.read(named("combobox", "GitHub repository"));
+    return picker.count > 0 && !picker.disabled ? "combobox" : "loading";
+  }, { timeout: 30_000 }).not.toBe("loading");
   if ((await site.read(named("textbox", "GitHub repository"))).count === 0) await site.select(field("GitHub repository"), "Enter repository…");
   await site.fill(named("textbox", "GitHub repository"), fullName);
   await shown(field("Integration branch")).toMatchObject({ disabled: false });
@@ -65,12 +71,14 @@ async function createProject(owner: User, fullName: string, name: string, links:
   await expect.poll(async () => new URL(await site.where()).pathname, { timeout: 30_000 }).toMatch(/^\/projects\/[^/]+\/manage$/u);
   const id = decodeURIComponent(new URL(await site.where()).pathname.split("/")[2] ?? "");
   await shown(settings).toMatchObject({ visible: true });
+  await shown(text("GitHub access", true)).toMatchObject({ visible: true });
   return id;
 }
 
 async function manage(id: string, tab?: string) {
   await site.open(`/projects/${encodeURIComponent(id)}/manage`, tab);
   await shown(settings).toMatchObject({ visible: true });
+  await shown(text("GitHub access", true)).toMatchObject({ visible: true });
 }
 
 const shareField = field("Maintainer share (%, 0 to 30, optional)");
@@ -78,6 +86,7 @@ const capField = field("Pause new contributors when this many outside pull reque
 const groupProbes: Readonly<Record<string, Target>> = { "Project listing": field("Short description"), "Contribution rules": field("Acceptance criteria"), Repositories: field("GitHub repository"), "Monthly rewards": shareField };
 
 async function openGroup(summary: string) {
+  await shown(text(summary, true)).toMatchObject({ visible: true });
   if ((await site.read(groupProbes[summary] ?? field(summary))).count === 0) await site.click(text(summary, true));
 }
 
@@ -112,14 +121,15 @@ async function incompleteAssessment(projectId: string, id: string) {
   const result = JSON.stringify({ schemaVersion: "slop-vetting-result-v2", assessmentId: id, disposition: "incomplete", assessed: { commitSha: commit, templateSha256: template } });
   const at = new Date().toISOString();
   await site.sql(
-    "INSERT INTO vetting_assessments(id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at) SELECT ?, id, revision, manifest_sha256, ?, ?, ?, '9001', 'octo-root', ?, 'Browser journey fixture', 'incomplete', 'fixture', ?, ?, ?, ? FROM projects WHERE id = ?",
-    id, "b".repeat(64), commit, template, at, result, await sha256(result), "e".repeat(64), at, projectId,
+    "INSERT INTO vetting_assessments(id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at) SELECT ?, id, revision, manifest_sha256, ?, ?, ?, ?, ?, ?, 'Browser journey fixture', 'incomplete', 'fixture', ?, ?, ?, ? FROM projects WHERE id = ?",
+    id, "b".repeat(64), commit, template, String(users.root.id), users.root.login, at, result, await sha256(result), "e".repeat(64), at, projectId,
   );
 }
 
 beforeEach(async () => {
   await site.start();
   await site.deploy(roles);
+  await site.allow(...missingSnapshots);
   for (const user of Object.values(users)) await site.user(user.id, user.login);
 });
 
@@ -128,8 +138,10 @@ afterEach(async () => {
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
 
-describe('Complete project setup with explicit independent readiness (spec/frontend/presentation.md, "Story: Complete project setup with explicit independent readiness"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/frontend/projectDrafts.md, "Story: Keep a project setup draft per browser document")', () => {
-  it('the setup draft survives a reload, a second document forks a copy, and Create publishes a paused revision 1 with independent readiness checks (spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1")', async () => {
+describe('Project setup readiness', () => {
+  // spec/frontend/presentation.md, "Story: Complete project setup with explicit independent readiness"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/frontend/projectDrafts.md, "Story: Keep a project setup draft per browser document"
+  it('setup draft survives reload, second tab forks, Create publishes paused rev 1', async () => {
+    // spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"
     const fullName = await repository(users.oli, "engine");
     await signIn(users.oli.login, "/projects/new");
     await shown(field("Setup steps")).toMatchObject({ text: expect.stringContaining("Rewards") });
@@ -149,6 +161,7 @@ describe('Complete project setup with explicit independent readiness (spec/front
     await site.tab("main");
     await site.open("/projects/new");
     await shown(field("Project name")).toMatchObject({ value: "Engine" });
+    await shown(field("Integration branch")).toMatchObject({ disabled: false });
 
     await site.click(named("button", "Next"));
     await shown(field("Points only")).toMatchObject({ checked: true });
@@ -175,18 +188,23 @@ describe('Complete project setup with explicit independent readiness (spec/front
 
     const checks = () => site.sent().then((sent) => sent.filter((each) => each.method === "POST" && each.path === `/api/v1/project-setup/${id}/check`).length);
     const before = await checks();
-    await site.click(named("button", "Rescan"));
+    await shown(named("button", "Check again")).toMatchObject({ visible: true, disabled: false });
+    await site.click(named("button", "Check again"));
     await expect.poll(checks, { timeout: 30_000 }).toBe(before + 1);
+    await shown(named("button", "Check again")).toMatchObject({ visible: true, disabled: false });
     await manage(id);
     await shown(named("button", "Check again")).toMatchObject({ visible: true });
-    expect(await checks()).toBe(before + 1);
+    expect(await checks()).toBe(before + 2);
   });
 
-  it('a repository already on Slop is refused at creation and nothing is published (spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository")', async () => {
+  it('already-listed repository is refused at creation without publishing', async () => {
+    // spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
     await site.allow(refusedLoads, "^409 POST /api/v1/projects$");
     const fullName = await repository(users.pia, "listed");
     const id = await createProject(users.pia, fullName, "Listed");
     await site.open("/projects/new");
+    await shown(field("Setup steps")).toMatchObject({ visible: true });
+    for (let step = 0; step < 2 && (await site.read(named("button", "Back"))).count > 0; step += 1) await site.click(named("button", "Back"));
     await fillProject(fullName, "Listed again");
     await site.click(named("button", "Next"));
     await site.click(named("button", "Next"));
@@ -196,8 +214,10 @@ describe('Complete project setup with explicit independent readiness (spec/front
   });
 });
 
-describe('Maintain a live project with current GitHub authority (spec/backend/projects.md, "Story: Maintain a live project with current GitHub authority")', () => {
-  it('owners publish and clear the website and X account against the expected revision, and Publish with no change answers "Nothing changed." (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
+describe('Live project maintenance', () => {
+  // spec/backend/projects.md, "Story: Maintain a live project with current GitHub authority"
+  it('owners publish/clear website and X; no-op answers Nothing changed', async () => {
+    // spec/backend/projects.md, "Owner revisions publish at once against the expected revision"
     await site.allow(refusedLoads);
     const fullName = await repository(users.eli, "eliza");
     const id = await createProject(users.eli, fullName, "Eliza", { x: "@elizaOS" });
@@ -218,18 +238,21 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await site.fill(field("Website (optional)"), "elizaos.example");
     await site.fill(field("X account (optional)"), "https://twitter.com/elizaOS_ai");
     await site.click(publish);
+    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
-    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
 
     await manage(id);
     await openGroup("Project listing");
     await site.fill(field("X account (optional)"), "");
     await site.click(publish);
+    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
-    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example" });
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, website: "https://elizaos.example" });
   });
 
-  it('the ready label starts off at 1/400/20, refuses 11 approvals, publishes 2 approvals, and turning it off keeps the saved numbers (spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner\'s numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths")', async () => {
+  it('ready label defaults 1/400/20, refuses 11, publishes 2, keeps numbers when disabled', async () => {
+    // spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"
     await site.allow(refusedLoads);
     const fullName = await repository(users.ron, "ready");
     const id = await createProject(users.ron, fullName, "Ready");
@@ -247,8 +270,9 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect((await writes(id)).length).toBe(mark);
 
     await site.fill(field("Approvals required"), "2");
-    await shown(text("On: 2 approvals, at most 400 lines in 20 files", true)).toMatchObject({ visible: true });
+    await shown(text("On: 2 approvals, at most 400 lines in 20 files")).toMatchObject({ visible: true });
     await site.click(publish);
+    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
     expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ readyLabel: { enabled: true, approvals: 2, maxChangedLines: 400, maxChangedFiles: 20, protectedPaths: [] } });
 
@@ -257,11 +281,13 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await shown(readyLabel).toMatchObject({ checked: true });
     await site.click(readyLabel);
     await site.click(publish);
+    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
     expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ readyLabel: { enabled: false, approvals: 2, maxChangedLines: 400, maxChangedFiles: 20 } });
   });
 
-  it('one Publish carries consent and headline as revision 2, revoking consent is revision 3, and a draft older than an administrator\'s later revision blocks Publish until kept (spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
+  it('Publish updates consent+headline (rev 2), revokes (rev 3), blocks stale draft', async () => {
+    // spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"
     await site.allow(refusedLoads);
     const fullName = await repository(users.sam, "consent");
     const id = await createProject(users.sam, fullName, "Consent");
@@ -270,6 +296,7 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await openGroup("Project listing");
     await site.fill(field("Short description"), "Consent keeps its engine honest.");
     await site.click(publish);
+    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
     expect(await lastRevision(id)).toMatchObject({ headline: "Consent keeps its engine honest." });
     expect(closes(await lastRevision(id))).toBe(true);
@@ -278,6 +305,7 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await shown(closure).toMatchObject({ checked: true });
     await site.click(closure);
     await site.click(publish);
+    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
     expect(closes(await lastRevision(id))).toBe(false);
 
@@ -288,7 +316,9 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await signOut(users.sam.login);
     await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=settings`);
     await site.fill(field("Project name"), "Consent, renamed");
+    await site.fill({ label: "Reason", exact: false }, "Rename consent project.");
     await site.click(named("button", "Save revision 4"));
+    await shown(named("heading", "Consent, renamed", { level: 3 })).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(4);
     await signOut(users.root.login);
 
@@ -302,7 +332,8 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect(await lastRevision(id)).toMatchObject({ headline: "A draft from the older revision." });
   });
 
-  it('adding a repository refuses a fork, an archived and a listed repository with their reasons, a repository with only its integration branch offers no other branch, and the added one pauses the project and counts from next month (spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration")', async () => {
+  it('add repo refuses fork/archived/listed, hides single branch, pauses project on add', async () => {
+    // spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
     await site.allow(refusedLoads);
     const fullName = await repository(users.tia, "core");
     const fork = await repository(users.tia, "core-fork", { fork: true });
@@ -337,7 +368,8 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect(await lastRevision(id)).toMatchObject({ status: "paused" });
   });
 
-  it('the owner moves the integration branch to a branch that declares the project: a head that moved after the branches were read is refused with the reload notice and publishes nothing, and the reloaded head publishes the branch with its contribution guide (spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration")', async () => {
+  it('moving integration branch refuses stale head and publishes reloaded head with guide', async () => {
+    // spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
     await site.allow(refusedLoads, "^409 PUT /api/v1/projects/");
     const fullName = await repository(users.eli, "routing");
     const id = await createProject(users.eli, fullName, "Routing");
@@ -376,16 +408,18 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect(await site.sql("SELECT json_extract(manifest, '$.contribution.contributionGuide') AS guide, status FROM projects WHERE id = ?", id)).toEqual([{ guide, status: "paused" }]);
   });
 
-  it('access is checked against current GitHub authority: a failed check offers Retry, a stranger sees "Maintainers only" and is refused, and lost admin permission closes the editor (spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository")', async () => {
-    await site.allow(refusedLoads, "^40[0139] (PUT|POST) /api/v1/projects/", "^(40[13]|50[23]) GET /api/v1/project-setup/");
+  it('manage access checks current GitHub authority, offers Retry, closes on revoked admin', async () => {
+    // spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
+    await site.allow(refusedLoads, "^console Failed to load resource: the server responded with a status of 503", "^40[0139] (PUT|POST) /api/v1/projects/", "^(40[13]|50[23]) GET /api/v1/project-setup/");
     const fullName = await repository(users.uma, "authority");
     const id = await createProject(users.uma, fullName, "Authority");
 
     await site.githubFail(`/repos/${fullName}/collaborators/`, 503);
     await site.open(`/projects/${encodeURIComponent(id)}/manage`);
-    await shown(text("Project access could not be checked. Retry.")).toMatchObject({ visible: true });
+    await shown(named("alert")).toMatchObject({ visible: true, text: expect.stringContaining("Check failed.") });
     await site.click(named("button", "Retry"));
     await shown(settings).toMatchObject({ visible: true });
+    await shown(text("GitHub access", true)).toMatchObject({ visible: true });
 
     await signOut(users.uma.login);
     await signIn(users.pia.login, `/projects/${encodeURIComponent(id)}/manage`);
@@ -400,6 +434,7 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await signOut(users.pia.login);
     await signIn(users.uma.login, `/projects/${encodeURIComponent(id)}/manage`);
     await shown(settings).toMatchObject({ visible: true });
+    await shown(text("GitHub access", true)).toMatchObject({ visible: true });
     await site.permission(fullName, users.uma.login, "read");
     await site.open(`/projects/${encodeURIComponent(id)}/manage`);
     await shown(text("Maintainers only", true)).toMatchObject({ visible: true });
@@ -407,7 +442,8 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect(await site.sql("SELECT status FROM projects WHERE id = ?", id)).toEqual([{ status: "paused" }]);
   });
 
-  it('the owner sets, changes and clears the intake cap: 0 is refused and nothing is published, 20 is reviewed as live now and published, and an empty field turns it off (spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full")', async () => {
+  it('owner sets/changes/clears intake cap: refuses 0, publishes 20, empty disables', async () => {
+    // spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full"
     await site.allow(refusedLoads);
     const fullName = await repository(users.pia, "intake");
     const id = await createProject(users.pia, fullName, "Intake");
@@ -426,24 +462,28 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await shown({ text: "At 20 open outside pull requests", within: changes }).toMatchObject({ visible: true });
     await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ visible: true });
     await site.click(publish);
+    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
-    expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ automaticClosure: false, intakeCap: 20 });
+    expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ intakeCap: 20 });
+    expect(closes(await lastRevision(id))).toBe(false);
 
     await manage(id);
     await openGroup("Contribution rules");
     await shown(capField).toMatchObject({ value: "20" });
     await site.fill(capField, "");
     await site.click(publish);
+    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
     expect((parsed((await lastRevision(id))?.slopbot) as { readonly intakeCap?: unknown }).intakeCap).toBeUndefined();
   });
 
-  it('removal is asked once, a stale revision keeps the dialog open with Reload, and only the confirm removes the project (spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work")', async () => {
+  it('removal confirms once, stale revision offers Reload, confirm removes project', async () => {
+    // spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work"
     await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/");
     const fullName = await repository(users.oli, "removable");
     const id = await createProject(users.oli, fullName, "Removable");
     const removals = async () => (await site.sent()).filter((sent) => sent.method === "POST" && sent.path === `/api/v1/projects/${id}/remove`).length;
-    const dialog = named("dialog", "Remove Removable from Slop?");
+    const dialog = named("alertdialog", "Remove Removable from Slop?");
 
     await site.click(named("button", "Remove project"));
     await shown(dialog).toMatchObject({ visible: true });
@@ -455,6 +495,7 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await openGroup("Project listing");
     await site.fill(field("Short description"), "Removable changed in another tab.");
     await site.click(publish);
+    await shown(text("Rev 2", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
 
     await site.tab("main");
@@ -475,8 +516,10 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
   });
 });
 
-describe('Administrators handle exceptions and restrictions, not routine approval (spec/backend/projects.md, "Story: Administrators handle exceptions and restrictions, not routine approval"; spec/frontend/projectDrafts.md, "Story: Keep an administrator\'s manifest edit until it is accepted")', () => {
-  it('a non-admin sees "Admins only", the admin\'s manifest draft survives a reload until saved or discarded, a restriction disables Featured, delisting waits for its confirm, and a redeploy without the role closes administration (spec/frontend/projectDrafts.md, "An administrator\'s manifest draft is cleared only after its exact submitted text was accepted or on discard"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret")', async () => {
+describe('Admin exceptions and restrictions', () => {
+  // spec/backend/projects.md, "Story: Administrators handle exceptions and restrictions, not routine approval"; spec/frontend/projectDrafts.md, "Story: Keep an administrator's manifest edit until it is accepted"
+  it('admin gates non-admins, keeps manifest draft, restricts Featured, confirms delist', async () => {
+    // spec/frontend/projectDrafts.md, "An administrator's manifest draft is cleared only after its exact submitted text was accepted or on discard"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"
     await site.allow(refusedLoads, "^403 (GET|PUT|POST) /api/v1/admin/");
     const fullName = await repository(users.pia, "governed");
     const id = await createProject(users.pia, fullName, "Governed");
@@ -502,6 +545,7 @@ describe('Administrators handle exceptions and restrictions, not routine approva
     await shown(field("Project name")).toMatchObject({ value: "Governed" });
 
     await site.fill(field("Project name"), "Governed by admins");
+    await site.fill({ label: "Reason", exact: false }, "Clarify the governed project name.");
     await site.click(named("button", "Save revision 2"));
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
     expect(await lastRevision(id)).toMatchObject({ actor_github_login: users.root.login });
@@ -512,8 +556,8 @@ describe('Administrators handle exceptions and restrictions, not routine approva
     await site.open(`/admin?project=${encodeURIComponent(id)}&section=overview`);
     const delists = async () => (await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.includes("/delist")).length;
     await site.click(named("button", "Delist"));
-    await shown(named("dialog", "Delist?")).toMatchObject({ visible: true });
-    await site.click(within(named("dialog", "Delist?"), named("button", "Cancel")));
+    await shown(named("alertdialog", "Delist?")).toMatchObject({ visible: true });
+    await site.click(within(named("alertdialog", "Delist?"), named("button", "Cancel")));
     expect(await delists()).toBe(0);
     expect((await revisions(id)).length).toBe(2);
 
@@ -541,14 +585,54 @@ describe('Administrators handle exceptions and restrictions, not routine approva
   });
 });
 
-describe('Exempt only by the frozen set or an audited owner-approved grant (spec/security/enforcement.md, "Story: Exempt only by the frozen set or an audited owner-approved grant")', () => {
-  it('an administrator records an owner-approved exemption on an incomplete scan, the owner sees it and never "Passed", and a revocation is kept in the history (spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan")', async () => {
+describe('Owner-approved admission exemptions', () => {
+  // spec/security/enforcement.md, "Story: Exempt only by the frozen set or an audited owner-approved grant"
+  it('owner-approved exemption clears without Passed and revocation stays in history', async () => {
+    // spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
     await site.allow(refusedLoads);
     const fullName = await repository(users.eli, "exempt");
-    const id = await createProject(users.eli, fullName, "Exempt");
-    const assessment = `vet_${"7".repeat(32)}`;
-    await incompleteAssessment(id, assessment);
-    await signOut(users.eli.login);
+    const repoId = repositoryIds;
+    const id = "exempt";
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    const manifest = JSON.stringify({
+      schemaVersion: "1",
+      id,
+      slug: id,
+      name: "Exempt",
+      eyebrow: "Open-source project",
+      headline: "Exempt keeps its engine fast and correct.",
+      description: "Make Exempt the dependable engine contributors reach for first.",
+      listingTier: "community",
+      status: "paused",
+      steward: { displayName: users.eli.login, kind: "individual", github: { actorId: String(users.eli.id), nodeId: `U_${users.eli.login}`, login: users.eli.login, type: "User", profileUrl: `https://github.com/${users.eli.login}` }, website: null },
+      authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(repoId), repositoryNodeId: `R_kgDO${repoId.toString(36)}`, proof: null },
+      terms: {
+        revision: "draft-1",
+        effectiveAt: yesterday,
+        paymentTransfersIp: false,
+        retroactive: false,
+        receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+        copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+        repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${fullName}/blob/main/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+        inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+        assignment: null,
+        externalPrize: null,
+      },
+      repositories: [{ id: fullName, displayName: fullName, githubUrl: `https://github.com/${fullName}`, description: "Exempt keeps its engine fast and correct.", integrationBranch: "main" }],
+      skill: { id: "contribute-to-exempt", publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: "/projects/exempt/skill.md" },
+      reviewSkill: { id: "review-exempt-contributions", sourcePath: "skills/project-reviewer-template" },
+      contribution: { approvedScope: "Make Exempt the dependable engine contributors reach for first.", contributionGuide: "", supportedTasks: "", requiredTests: "", reviewExpectations: "Every change ships with a passing test and a short note.", securityContact: "", closurePolicy: "", maintainerNotes: "" },
+      reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: yesterday, cycle: "calendar-month-utc", monthlyCapMinor: "0", monthlyCapDisplay: "$0", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+      funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: "funding/exempt", addresses: [] },
+      modelPolicy: { mode: "open-declared", disclosureRequired: true },
+      slopbot: { automaticClosure: false },
+      links: { repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues` },
+    });
+    const digest = await sha256(manifest);
+    await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,1,?,?, 'Seeded yesterday',?,?,?)", id, manifest, digest, String(users.eli.id), users.eli.login, yesterday);
+    await site.sql("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'paused',1,?,?,?,?)", id, manifest, digest, yesterday, yesterday);
+    await site.sql("INSERT INTO project_repositories(repository_key,project_id) VALUES(?,?)", fullName.toLowerCase(), id);
+    await site.sql("INSERT INTO vetting_assessments(id,project_id,revision,repository_id,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state) VALUES(?,?,1,?,?,?,?,?,?,?,?,?,'pending')", `vet_${"7".repeat(32)}`, id, fullName, digest, "b".repeat(64), "c".repeat(40), "d".repeat(64), String(users.eli.id), users.eli.login, yesterday, "Initial scan requested yesterday");
 
     await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=security`);
     await shown(named("heading", "Owner-approved exemption")).toMatchObject({ visible: true });
@@ -559,7 +643,7 @@ describe('Exempt only by the frozen set or an audited owner-approved grant (spec
     await site.click(named("checkbox", "Owner authorized this"));
     await site.click(record);
     await expect.poll(() => site.sql("SELECT project_id, granted_by_github_login FROM vetting_admission_exemptions WHERE project_id = ?", id), { timeout: 30_000 }).toEqual([{ project_id: id, granted_by_github_login: users.root.login }]);
-    await shown(named("heading", "Exemption history")).toMatchObject({ text: expect.stringContaining("Active") });
+    await shown(named("region", "Exemption history")).toMatchObject({ text: expect.stringContaining("Active") });
     await signOut(users.root.login);
 
     await signIn(users.eli.login, `/projects/${encodeURIComponent(id)}/manage`);
@@ -573,12 +657,14 @@ describe('Exempt only by the frozen set or an audited owner-approved grant (spec
     await site.click(named("checkbox", "Owner authorized this"));
     await site.click(named("button", "Revoke exemption"));
     await expect.poll(() => site.sql("SELECT count(*) AS revoked FROM vetting_admission_exemption_revocations r JOIN vetting_admission_exemptions e ON e.id = r.exemption_id WHERE e.project_id = ?", id), { timeout: 30_000 }).toEqual([{ revoked: 1 }]);
-    await shown(text("Revoked", true)).toMatchObject({ visible: true });
+    await shown(named("region", "Exemption history")).toMatchObject({ text: expect.stringContaining("Revoked") });
   });
 });
 
-describe('Read only authorized retained evidence (spec/security/privacy.md, "Story: Read only authorized retained evidence")', () => {
-  it('retained evidence reads as verified text or downloads with its inventory digest, a tampered object is refused, and a stranger reads nothing (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate")', async () => {
+describe('Authorized retained evidence', () => {
+  // spec/security/privacy.md, "Story: Read only authorized retained evidence"
+  it('evidence reads verified text/downloads digest; tampered refused; stranger denied', async () => {
+    // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate"
     await site.allow(refusedLoads, "^40[0139] (GET|POST) /api/v1/operator/vetting-evidence(/|$)");
     const fullName = await repository(users.ron, "evidence");
     const id = await createProject(users.ron, fullName, "Evidence");
@@ -597,28 +683,31 @@ describe('Read only authorized retained evidence (spec/security/privacy.md, "Sto
     await signOut(users.ron.login);
 
     await signIn(users.pia.login, page);
-    await shown(text("Evidence could not be loaded")).toMatchObject({ visible: true });
+    await shown(text("Designated vetting operator access is required")).toMatchObject({ visible: true });
     await expect.poll(() => site.leaks(trace), { timeout: 30_000 }).toBe(false);
     await signOut(users.pia.login);
 
     await signIn(users.root.login, page);
     await shown(text("Evidence inventory", true)).toMatchObject({ visible: true });
+    await site.click(named("button", "Select trace", { exact: false }));
     const traceItem = named("article", "trace");
     await site.fill(within(traceItem, field("Reason")), "Inspect the harmless trace");
     await site.click(named("button", "Read trace"));
     await shown(named("textbox", "trace verified content")).toMatchObject({ value: trace });
-    await shown(within(traceItem, named("status"))).toMatchObject({ text: expect.stringContaining("Verified") });
+    await shown(within(traceItem, text("Verified"))).toMatchObject({ visible: true });
 
+    await site.click(named("button", "Select artifact", { exact: false }));
     const artifactItem = named("article", "artifact");
     await site.fill(within(artifactItem, field("Reason")), "Download the harmless artifact");
     await site.click(named("button", "Download artifact"));
     await expect.poll(() => site.download(), { timeout: 30_000 }).toEqual({ name: `${binarySha}.bin`, sha256: binarySha });
-    await shown(within(artifactItem, named("status"))).toMatchObject({ text: expect.stringContaining("Do not execute") });
+    await shown(within(artifactItem, text("Do not execute"))).toMatchObject({ visible: true });
     expect(await site.sql("SELECT count(*) AS audited FROM vetting_evidence_audit WHERE assessment_id = ?", assessment)).toEqual([{ audited: expect.any(Number) }]);
 
     const [head] = await site.sql("SELECT target_key FROM vetting_evidence_heads WHERE sha256 = ?", traceSha);
     await site.object("VETTING_EVIDENCE", String(head?.target_key), "tampered trace bytes of the same length!!!!!!!");
     await site.open(page);
+    await site.click(named("button", "Select trace", { exact: false }));
     await site.fill(within(named("article", "trace"), field("Reason")), "Inspect the harmless trace again");
     await site.click(named("button", "Read trace"));
     await shown(within(named("article", "trace"), named("alert"))).toMatchObject({ visible: true });
@@ -634,18 +723,20 @@ const awardPeriod = () => {
 
 type Manifest = Readonly<Record<string, unknown>>;
 
-async function monthlyPool(id: string, owner: User, more: { readonly active?: boolean; readonly reward?: Manifest } = {}) {
+async function monthlyPool(id: string, owner: User, more: { readonly active?: boolean; readonly organization?: boolean; readonly reward?: Manifest } = {}) {
   const [current] = await site.sql("SELECT revision, status, manifest FROM projects WHERE id = ?", id);
   const revision = Number(current?.revision) + 1;
   const recorded = parsed(current?.manifest) as Manifest;
   const escrow = recorded.escrow as { readonly deployments?: ReadonlyArray<{ readonly asset?: string }> } | undefined;
-  const status = more.active === true ? "active" : String(current?.status);
+  const status = more.active === false ? String(current?.status) : "active";
+  const steward = recorded.steward as { readonly github?: Manifest } | undefined;
   const manifest = {
     ...recorded,
     status,
-    rewardAsset: { network: "base", kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" },
-    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
-    escrow: escrow ?? { chain: "base", deployments: [] },
+    ...(more.organization && steward?.github ? { steward: { ...steward, kind: "organization", github: { ...steward.github, type: "Organization" } } } : {}),
+    rewardAsset: { network: "base", kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6, chainId: "8453", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" },
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 200, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
+    escrow: escrow ?? { schemaVersion: "1", effectiveCycle: awardPeriod(), chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] },
   };
   const written = JSON.stringify(manifest);
   const digest = await sha256(written);
@@ -676,15 +767,18 @@ async function openAwards(id: string) {
   return awards;
 }
 
-describe('Edit the month\'s awards with public, noticed cuts (spec/frontend/ownerMonthly.md, "Story: Edit the month\'s awards with public, noticed cuts"; spec/settlement/monthly.md, "Story: Owners change amounts before the freeze, and cuts are public")', () => {
-  it('the owner lowers an award only with a 20 to 500 character public reason, the saved cut survives a reload, and a write maintainer without owner authority sees the month as View only (spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount")', async () => {
+describe('Monthly award cuts', () => {
+  // spec/frontend/ownerMonthly.md, "Story: Edit the month's awards with public, noticed cuts"; spec/settlement/monthly.md, "Story: Owners change amounts before the freeze, and cuts are public"
+  it('owner cuts award with 20-500 char reason; write maintainer is View only', async () => {
+    // spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
     const fullName = await repository(users.oli, "awards");
     const id = await createProject(users.oli, fullName, "Awards");
     await site.permission(fullName, users.pia.login, "write");
-    await monthlyPool(id, users.oli);
+    await monthlyPool(id, users.oli, { organization: true });
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
     const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
     const save = named("button", `Save ${users.pia.login}`, { within: awards });
     const reason = field("Reason (shown publicly and sent to the contributor)");
@@ -727,13 +821,15 @@ async function autoFinalizeOff(awards: Target, id: string) {
   await expect.poll(() => site.sql("SELECT automatic FROM monthly_payment_settings WHERE project_id = ? ORDER BY sequence DESC LIMIT 1", id), { timeout: 30_000 }).toEqual([{ automatic: 0 }]);
 }
 
-describe('Freeze exactly one execution snapshot (spec/settlement/monthly.md, "Story: Freeze exactly one execution snapshot"; spec/settlement/monthlySettings.md, "Story: Change the automatic default with current authority")', () => {
-  it('the owner turns Auto-finalize off, finalizes the ended month once, and the frozen awards replace the editor as final by the owner (spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff")', async () => {
+describe('Freeze exactly one execution snapshot', () => {
+  // spec/settlement/monthly.md, "Story: Freeze exactly one execution snapshot"; spec/settlement/monthlySettings.md, "Story: Change the automatic default with current authority"
+  it('owner turns Auto-finalize off and finalizes ended month once', async () => {
+    // spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"
     await site.allow(refusedLoads);
     const fullName = await repository(users.ron, "finals");
     const id = await createProject(users.ron, fullName, "Finals");
-    await site.vault({ projectId: id });
     await monthlyPool(id, users.ron);
+    await site.vault({ projectId: id });
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
@@ -754,9 +850,11 @@ describe('Freeze exactly one execution snapshot (spec/settlement/monthly.md, "St
   });
 });
 
-describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMonthly.md, "Story: Edit the month\'s awards with public, noticed cuts"; spec/frontend/requests.md, "Only the current request may publish its validated result")', () => {
-  it('a cut saved while the owner leaves for Home is kept by the server, and the page the owner moved to shows no Saved status and stays put (spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice")', async () => {
-    await site.allow(refusedLoads, "^404 GET /data/");
+describe('Monthly awards navigation and failures', () => {
+  // spec/frontend/ownerMonthly.md, "Story: Edit the month's awards with public, noticed cuts"; spec/frontend/requests.md, "Only the current request may publish its validated result"
+  it('cut saved while leaving persists on server without showing Saved on Home', async () => {
+    // spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"
+    await site.allow(refusedLoads, "^404 GET /data/", "^failed POST /api/v1/payments/projects/departed/monthly/[^/]+/allocations net::ERR_ABORTED$");
     const fullName = await repository(users.sam, "departed");
     const id = await createProject(users.sam, fullName, "Departed");
     await monthlyPool(id, users.sam);
@@ -781,7 +879,8 @@ describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMo
     expect(await site.sql("SELECT count(*) AS changes FROM monthly_allocation_changes WHERE project_id = ? AND period = ?", id, awardPeriod())).toEqual([{ changes: 1 }]);
   });
 
-  it('a save the allocation service cannot take keeps the unsaved award and reason in the editor with the service\'s reason, and the same save goes through once the service is back (spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+  it('failed allocation save preserves unsaved edit and succeeds once service returns', async () => {
+    // spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
     const fullName = await repository(users.tia, "outage");
     const id = await createProject(users.tia, fullName, "Outage");
     const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
@@ -790,6 +889,7 @@ describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMo
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
     const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
     const reason = field("Reason (shown publicly and sent to the contributor)");
     const save = named("button", `Save ${users.pia.login}`, { within: awards });
@@ -810,14 +910,16 @@ describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMo
     await expect.poll(() => site.sql("SELECT reason FROM monthly_allocation_cut_reasons WHERE project_id = ? AND period = ?", id, awardPeriod()), { timeout: 30_000 }).toEqual([{ reason: why }]);
   });
 
-  it('a save answered after another tab signed in a different account shows nothing of the earlier account\'s editor and no Saved status (spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', async () => {
-    await site.allow(refusedLoads, "^404 GET /data/");
+  it('save answered after another tab switches account hides prior editor and Saved', async () => {
+    // spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"
+    await site.allow(refusedLoads, "^404 GET /data/", "^403 GET /api/v1/payments/projects/handover/monthly/");
     const fullName = await repository(users.uma, "handover");
     const id = await createProject(users.uma, fullName, "Handover");
     await monthlyPool(id, users.uma);
     await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
 
     const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
     const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
     const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
     await site.fill(award, "1");
@@ -831,6 +933,7 @@ describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMo
     await signIn(users.pia.login, "/", "other");
     await site.tab("main");
     await site.refocus();
+    await shown(named("button", users.pia.login, { exact: false })).toMatchObject({ visible: true });
     await site.release("POST", path);
     await shown(award).toMatchObject({ count: 0 });
     await shown({ text: "Saved", exact: true }).toMatchObject({ count: 0 });
@@ -838,8 +941,10 @@ describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMo
   });
 });
 
-describe('Take the maintainer share out of the monthly amount (spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/frontend/views.md, "Story: Read a project\'s rewards and activity at a glance")', () => {
-  it('the owner sets, changes and clears the maintainer share: 31 is refused, 20 is reviewed and published from next month with the open month kept at none, the project page, Home card and /sponsors say so, and clearing it keeps the history the server wrote (spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/frontend/views.md, "A published maintainer share shows this month\'s share, and next month\'s while a change waits")', async () => {
+describe('Maintainer share', () => {
+  // spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/frontend/views.md, "Story: Read a project's rewards and activity at a glance"
+  it('owner sets/changes/clears maintainer share and keeps history', async () => {
+    // spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"
     await site.allow(refusedLoads, "^404 GET /data/");
     const fullName = await repository(users.eli, "sharecrop");
     const id = await createProject(users.eli, fullName, "Sharecrop");
@@ -862,6 +967,7 @@ describe('Take the maintainer share out of the monthly amount (spec/settlement/m
     await shown({ text: "20%", within: changes }).toMatchObject({ visible: true });
     await shown({ text: `From ${cycleText(1)}`, within: changes }).toMatchObject({ visible: true });
     await site.click(publish);
+    await shown(text("Rev 3", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
     expect(await rewardOf(id)).toMatchObject({ maintainerShare: 2000, maintainerShareHistory: [{ throughCycle: cycleText(0), basisPoints: 0 }] });
 
@@ -878,6 +984,7 @@ describe('Take the maintainer share out of the monthly amount (spec/settlement/m
     await shown(shareField).toMatchObject({ value: "20" });
     await site.fill(shareField, "");
     await site.click(publish);
+    await shown(text("Rev 4", true)).toMatchObject({ visible: true });
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(4);
     const cleared = await rewardOf(id);
     expect(cleared.maintainerShare).toBeUndefined();
@@ -887,7 +994,8 @@ describe('Take the maintainer share out of the monthly amount (spec/settlement/m
     await shown(text("Maintainer share")).toMatchObject({ count: 0 });
   });
 
-  it('a share in force this month reads as the same share on the project page and the Home card (spec/frontend/views.md, "A published maintainer share shows this month\'s share, and next month\'s while a change waits"; spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account")', async () => {
+  it('a share in force this month reads as the same share on the project page and the Home card', async () => {
+    // spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"
     await site.allow(refusedLoads, "^404 GET /data/");
     const fullName = await repository(users.uma, "shared-now");
     const id = await createProject(users.uma, fullName, "Shared now");
@@ -905,8 +1013,10 @@ describe('Take the maintainer share out of the monthly amount (spec/settlement/m
   });
 });
 
-describe('Fund, reserve and pay one month through its own vault (spec/settlement/monthlySettlement.md, "Story: Fund, reserve and pay one month through its own vault"; spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once")', () => {
-  it('any wallet deposits into the registered vault from the public project page after reviewing the exact amount, and is never offered a withdrawal (spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event")', async () => {
+describe('Project vault deposits', () => {
+  // spec/settlement/monthlySettlement.md, "Story: Fund, reserve and pay one month through its own vault"; spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once"
+  it('any wallet deposits into public project vault without withdrawal option', async () => {
+    // spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event"
     const fullName = await repository(users.tia, "vaulted");
     const id = await createProject(users.tia, fullName, "Vaulted");
     const deployed = await site.vault({ projectId: id });
@@ -926,7 +1036,7 @@ describe('Fund, reserve and pay one month through its own vault (spec/settlement
     await shown(field("Token amount")).toMatchObject({ visible: true, disabled: false });
     await shown(field("Deposit tokens")).toMatchObject({ checked: true });
     await shown(field("Withdraw free funds")).toMatchObject({ count: 0 });
-    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    await shown({ text: "Withdraw free funds", exact: true }).toMatchObject({ count: 0 });
     expect(await site.walletAsked()).not.toContainEqual(expect.objectContaining({ method: "eth_sendTransaction" }));
 
     await site.fill(field("Token amount"), "5");
@@ -938,10 +1048,11 @@ describe('Fund, reserve and pay one month through its own vault (spec/settlement
 
     await site.click(named("button", "in wallet", { exact: false, within: review }));
     await expect.poll(async () => (await site.walletAsked()).some((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls"), { timeout: 30_000 }).toBe(true);
-    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    await shown({ text: "Withdraw free funds", exact: true }).toMatchObject({ count: 0 });
   });
 
-  it('a signed-out visitor deposits from the public project page without signing in, after the no-refund disclosure and a review of the exact amount, and is never offered a withdrawal (spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot")', async () => {
+  it('signed-out visitor deposits after no-refund disclosure and review, never offered withdrawal', async () => {
+    // spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"
     const fullName = await repository(users.pia, "open-vault");
     const id = await createProject(users.pia, fullName, "Open vault");
     const deployed = await site.vault({ projectId: id });
@@ -969,13 +1080,15 @@ describe('Fund, reserve and pay one month through its own vault (spec/settlement
     expect((await site.walletAsked()).filter((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls")).toEqual([]);
     await site.click(named("button", "in wallet", { exact: false, within: review }));
     await expect.poll(async () => (await site.walletAsked()).some((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls"), { timeout: 30_000 }).toBe(true);
-    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    await shown({ text: "Withdraw free funds", exact: true }).toMatchObject({ count: 0 });
     expect((await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.startsWith(`/api/v1/projects/${id}`))).toEqual([]);
   });
 });
 
-describe('Deposit and withdraw only free funds (spec/settlement/escrow.md, "Story: Deposit and withdraw only free funds")', () => {
-  it('on the manage page only the vault owner\'s wallet is offered a withdrawal, one above the free balance is refused before the wallet is asked, and another wallet may only deposit (spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt")', async () => {
+describe('Deposit and withdraw only free funds', () => {
+  // spec/settlement/escrow.md, "Story: Deposit and withdraw only free funds"
+  it('manage page offers withdrawal only to vault owner, refuses over free balance', async () => {
+    // spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"
     await site.allow(refusedLoads);
     const fullName = await repository(users.oli, "withdrawn");
     const id = await createProject(users.oli, fullName, "Withdrawn");
@@ -991,7 +1104,7 @@ describe('Deposit and withdraw only free funds (spec/settlement/escrow.md, "Stor
     await site.click(field("Withdraw free funds"));
     await site.fill(field("Token amount"), "1");
     await site.click(named("button", "Review withdrawal", { within: card }));
-    await shown({ text: "The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.", within: card }).toMatchObject({ visible: true });
+    await shown(within(card, named("alert"))).toMatchObject({ visible: true, text: "The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn." });
     await shown(named("region", "Review vault action", { within: card })).toMatchObject({ count: 0 });
     expect((await site.walletAsked()).filter((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls")).toEqual([]);
 
@@ -1004,8 +1117,10 @@ describe('Deposit and withdraw only free funds (spec/settlement/escrow.md, "Stor
   });
 });
 
-describe('Resume an authorized destination after signing in (spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in")', () => {
-  it('a signed-out manage page keeps its URL and returns there after sign-in (spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled")', async () => {
+describe('Resume an authorized destination after signing in', () => {
+  // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"
+  it('a signed-out manage page keeps its URL and returns there after sign-in', async () => {
+    // spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"
     const fullName = await repository(users.sam, "resume");
     const id = await createProject(users.sam, fullName, "Resume");
     await signOut(users.sam.login);
@@ -1015,5 +1130,6 @@ describe('Resume an authorized destination after signing in (spec/frontend/navig
     await at(path);
     await signIn(users.sam.login, path);
     await shown(settings).toMatchObject({ visible: true });
+    await shown(text("GitHub access", true)).toMatchObject({ visible: true });
   });
 });

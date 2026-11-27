@@ -2,7 +2,7 @@
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { randomId, randomToken, sha256Hex } from "@repo/platform/crypto"
 import { ConstraintViolation } from "@repo/platform/d1"
-import { type Actor, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
+import { type Actor, Caller, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
 import { Registry, Restrictions } from "@repo/ports/backend"
 import { Rejected as CaseRejected, mayReadBody } from "../../gen/security__cases.effect.vibe"
 import type { Intake } from "../../gen/security__intake.ts"
@@ -107,11 +107,18 @@ effect function reportingRepository(id: string) {
   return { project, program, repository: index + 1 }
 }
 
-effect function create(actor: Actor) {
+effect function create() {
   const body = try requestObject(submitReport.limitKib, createRows.invalidRequestRequestBodyMustBe)
   const settings = try IntakeSettings
-  if (!Object.hasOwn(body, "report") && body.origin === "slop") throw refused(createRows.reportRequired)
-  if (!Object.hasOwn(body, "report")) return try directCreated(actor, body)
+  if (!Object.hasOwn(body, "report") && body.origin === "slop") {
+    try (try Caller).current(submitReport)
+    throw refused(createRows.reportRequired)
+  }
+  if (!Object.hasOwn(body, "report")) {
+    if (!settings.automatic) throw refused(createRows.notFoundSubmissionNotFound)
+    return try directCreated(try (try Caller).current(submitReport), body)
+  }
+  const actor = try (try Caller).current(submitReport)
   if (!settings.stored) throw refused(createRows.intakeUnavailable)
   if (!exactKeys(body, ["projectId", "idempotencyKey", "origin", "report"], ["expectedReporterGithubId"])) throw refused(createRows.invalidRequestRequestBodyHasUnexpected)
   if (body.expectedReporterGithubId !== undefined && body.expectedReporterGithubId !== actor.githubId) throw refused(createRows.reporterChanged)
@@ -247,7 +254,7 @@ effect function revise(actor: Actor, id: string) {
 }
 
 export const intakeRoutes = Layer.mergeAll(
-  handleRaw(submitReport, (input) => create(input.actor)),
+  handleRaw({ ...submitReport, access: "public" }, () => create()),
   handleRaw(reviseReport, (input) => revise(input.actor, input.params.id ?? "")),
   handleRaw(intakeReadiness, (input) => cachedReadiness(input.params.id ?? "")),
 )

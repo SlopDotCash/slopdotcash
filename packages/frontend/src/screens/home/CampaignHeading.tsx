@@ -5,7 +5,7 @@ import { animatedHeading } from "./campaign.ts";
 import { useCampaignFrame, useMotion } from "./useCampaign.ts";
 
 function Caret() {
-  return <span className="ml-[0.04em] inline-block h-[0.78em] w-[0.055em] translate-y-[0.04em] animate-caret bg-current motion-reduce:hidden" />;
+  return <span className="ml-[0.04em] inline-block h-[0.78em] w-[0.055em] translate-y-[0.04em] animate-caret bg-current motion-reduce:invisible motion-reduce:animate-none" />;
 }
 
 export type CampaignHeadingProps = {

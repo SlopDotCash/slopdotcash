@@ -78,9 +78,16 @@ export schema SolanaBindCompleted {
   readonly transactionId: string
 }
 
-export const bindChallenge = route({ method: "POST", path: "/api/v1/payments/wallets/bind-challenge", access: "sessionWrite", limitKib: 4, request: ConsentFields, answer: BindingChallenge, rejected: "claim_not_current", cache: "private" })
-export const bindAuthorize = route({ method: "POST", path: "/api/v1/payments/wallets/bind-authorize", access: "sessionWrite", limitKib: 4, request: ConsentFields, answer: BindingAuthorized, rejected: "wallet_signature_required", cache: "private" })
-export const solanaBindPrepare = route({ method: "POST", path: "/api/v1/payments/wallets/solana-bind/prepare", access: "sessionWrite", limitKib: 4, request: SolanaBindFields, answer: SolanaBindPrepared, rejected: "binding_not_ready", cache: "private" })
-export const solanaBindComplete = route({ method: "POST", path: "/api/v1/payments/wallets/solana-bind/complete", access: "sessionWrite", limitKib: 4, request: SolanaBindFields, answer: SolanaBindCompleted, rejected: "binding_pending_or_rejected", cache: "private" })
+const paymentPrivate = {
+  refusalHeaders: { "cache-control": "private, no-store" },
+  originRefusal: { status: 403, code: "origin_forbidden", message: "" },
+  unauthenticated: { status: 401, code: "not_signed_in", message: "" },
+  sessionExpired: { status: 401, code: "session_expired", message: "" },
+} as const
+
+export const bindChallenge = route({ method: "POST", path: "/api/v1/payments/wallets/bind-challenge", access: "sessionWrite", limitKib: 4, request: ConsentFields, answer: BindingChallenge, rejected: "claim_not_current", cache: "private", ...paymentPrivate })
+export const bindAuthorize = route({ method: "POST", path: "/api/v1/payments/wallets/bind-authorize", access: "sessionWrite", limitKib: 4, request: ConsentFields, answer: BindingAuthorized, rejected: "wallet_signature_required", cache: "private", ...paymentPrivate })
+export const solanaBindPrepare = route({ method: "POST", path: "/api/v1/payments/wallets/solana-bind/prepare", access: "sessionWrite", limitKib: 4, request: SolanaBindFields, answer: SolanaBindPrepared, rejected: "binding_not_ready", cache: "private", ...paymentPrivate })
+export const solanaBindComplete = route({ method: "POST", path: "/api/v1/payments/wallets/solana-bind/complete", access: "sessionWrite", limitKib: 4, request: SolanaBindFields, answer: SolanaBindCompleted, rejected: "binding_pending_or_rejected", cache: "private", ...paymentPrivate })
 
 export const api: ReadonlyArray<AnyRoute> = [bindChallenge, bindAuthorize, solanaBindPrepare, solanaBindComplete]

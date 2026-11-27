@@ -52,16 +52,15 @@ export const signInAttempt = Layer.effect(SignInAttempt, effect {
   }
 
   effect function joined(mine: number, reopen: boolean, target: SignInWindow) {
-    let authorized = false
     const authorize = (url: string) => sync(() => {
-      authorized = true
       showAuthorization(target, url)
     })
     try ensuring(Effect.provideContext(effect {
       const member = signIn({ reopen, sameTab: target.kind === "sameTab", authorize }) catch (error) => ({ error })
+      try sync(() => { closeSignInWindow(target) })
       try settle(mine, reopen, "error" in member ? { error: member.error } : { joined: true })
     }, context), sync(() => {
-      if (!authorized) closeSignInWindow(target)
+      closeSignInWindow(target)
     }))
   }
 

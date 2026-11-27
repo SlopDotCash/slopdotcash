@@ -64,7 +64,7 @@ const pendingFrame = "{\"status\":\"pending\"}\n"
 type Terminal = typeof ImportTerminalFrame.Type
 
 function respond(status: number, body: unknown) {
-  return json(body, status, privateNoStore)
+  return HttpServerResponse.jsonUnsafe(body, { status, headers: { "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", ...privateNoStore }, contentType: "application/json" })
 }
 
 function refused(row: RefusalRow) {

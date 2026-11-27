@@ -86,11 +86,12 @@ export schema MergeActivityAnswer {
 }
 
 const listCache = { browserSeconds: 0, edgeSeconds: 30 } as const
+const projectContract = { "x-slop-project-api-contract": "project-registry-v1" }
 
-export const publicProjects = route({ method: "GET", path: "/api/v1/projects", access: "public", limitKib: 1, request: undefined, answer: ProjectList, rejected: "not_found", cache: listCache, cors: ["*"] })
-export const publicRevisions = route({ method: "GET", path: "/api/v1/project-revisions", access: "public", limitKib: 1, request: undefined, answer: RevisionList, rejected: "not_found", cache: listCache, cors: ["*"] })
-export const publicProject = route({ method: "GET", path: "/api/v1/projects/:id", access: "public", limitKib: 1, request: undefined, answer: ProjectDetail, rejected: "not_found", cache: "no-store", cors: ["*"] })
-export const revisionReceipt = route({ method: "GET", path: "/api/v1/project-revisions/:id/:revision", access: "public", limitKib: 1, request: undefined, answer: RevisionReceipt, rejected: "not_found", cache: { browserSeconds: 31536000, immutable: true } })
+export const publicProjects = route({ method: "GET", path: "/api/v1/projects", access: "public", limitKib: 1, request: undefined, answer: ProjectList, rejected: "not_found", cache: listCache, cors: ["*"], refusalHeaders: projectContract })
+export const publicRevisions = route({ method: "GET", path: "/api/v1/project-revisions", access: "public", limitKib: 1, request: undefined, answer: RevisionList, rejected: "not_found", cache: listCache, cors: ["*"], refusalHeaders: projectContract })
+export const publicProject = route({ method: "GET", path: "/api/v1/projects/:id", access: "public", limitKib: 1, request: undefined, answer: ProjectDetail, rejected: "not_found", cache: "no-store", cors: ["*"], refusalHeaders: projectContract })
+export const revisionReceipt = route({ method: "GET", path: "/api/v1/project-revisions/:id/:revision", access: "public", limitKib: 1, request: undefined, answer: RevisionReceipt, rejected: "not_found", cache: { browserSeconds: 31536000, immutable: true }, refusalHeaders: projectContract })
 
 export const mergeActivity = route({ method: "GET", path: "/api/v1/merge-activity", access: "public", limitKib: 1, request: undefined, answer: MergeActivityAnswer, rejected: "not_found", cache: { browserSeconds: 300 } })
 

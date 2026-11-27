@@ -19,7 +19,7 @@ export schema ReferredProjects {
   readonly projects: ReadonlyArray<ReferredProject>
 }
 
-export const chooseCode = route({ method: "POST", path: "/api/v1/referrals/code", access: "sessionWrite", limitKib: 1, request: CodeFields, answer: ChosenCode, rejected: "code_taken", cache: "private" })
+export const chooseCode = route({ method: "POST", path: "/api/v1/referrals/code", access: "sessionWrite", limitKib: 1, request: CodeFields, answer: ChosenCode, rejected: "code_taken", cache: "private", originRefusal: { status: 403, code: "origin_forbidden", message: "" }, refusalHeaders: { "cache-control": "private, no-store" } })
 export const referredProjects = route({ method: "GET", path: "/api/v1/referrals/projects", access: "public", limitKib: 1, request: undefined, answer: ReferredProjects, rejected: "not_found", cache: { browserSeconds: 300 } })
 
 export const api: ReadonlyArray<AnyRoute> = [chooseCode, referredProjects]

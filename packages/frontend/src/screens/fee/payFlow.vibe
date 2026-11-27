@@ -305,7 +305,7 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
       const { record, ratesRead, shown: fresh } = read.checked
       if (canObserveRecord(state, record, ratesRead, reader)) try sent({ type: "observeRecord", record, ratesRead }, reader)
       const after = try machine.get()
-      try update((current) => after.page === "Failed" ? { ...current, record: undefined, message: said.refused, refreshFailed: false } : { ...current, record: fresh, message: "", refreshFailed: false })
+      try update((current) => after.page === "Failed" ? { ...current, record: undefined, message: said.refused, refreshFailed: false } : { ...current, record: after.page === "SwitchedOff" ? { ...fresh, due: [] } : fresh, message: "", refreshFailed: false })
     } else {
       if (canReadFails(state, reader)) try sent({ type: "readFails" }, reader)
       const after = try machine.get()

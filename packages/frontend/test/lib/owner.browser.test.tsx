@@ -6,7 +6,7 @@ import { EVENT_TOPICS } from "@repo/settlement/chain/evm/events";
 import { vaultKey } from "@repo/settlement/chain/evm/factories";
 import { pledgeMonthInstructions } from "@repo/settlement/chain/solana/instructions";
 import { compileLegacy } from "@repo/settlement/chain/solana/transactions";
-import { toAmount } from "@repo/settlement/kernels/amounts";
+import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
 import { type Period, isPeriod, periodContaining } from "@repo/settlement/kernels/calendar";
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
@@ -203,7 +203,12 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
       }
       if (method === "wallet_sendCalls") {
         const calls = (first as unknown as { calls: Array<{ to: string; data: string }> }).calls;
-        const last = calls.map(mine).at(-1);
+        const entries = calls.map(mine);
+        const last = entries.at(-1);
+        if (last !== undefined) {
+          const merged = entries.flatMap((entry) => entry.logs);
+          mined[mined.length - 1] = { ...last, logs: merged };
+        }
         return { id: `batch-${last?.hash ?? ""}` };
       }
       if (method === "wallet_getCallsStatus") return { status: 200, receipts: [{ transactionHash: String(params[0]).slice(6) }] };
@@ -281,8 +286,10 @@ const connected = Effect.gen(function* () {
   return yield* connectEvm(id, false);
 });
 
-describe('Create and register the vault without asking the wallet twice (spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => {
-  it('the owner deposits into the registered vault once, the slot is saved before the prompt, an included transfer counts nothing, a sign-out and the same account signing in again on the page bring back the request and its automatic check, and only the finalized exact deposit clears the slot (spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', async () => {
+describe('Create and register the vault without asking the wallet twice', () => {
+  // spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+  it('owner deposits once, slot saves pre-prompt, sign-out/in restores check, finalized clears', async () => {
+    // spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"
     const chain = fakeChain({ atomic: false, send: "mine" });
     const runtime = started();
     const { page, check, ...result } = await runtime.runPromise(Effect.gen(function* () {
@@ -346,7 +353,8 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
     expect(result).toEqual({ unclear: "VaultUncertain", otherPhase: "Idle", nonePhase: "Idle", samePhase: "Unclear", resend: "VaultRefused", afterConfirm: ["Reviewed", null], sends: 1 });
   });
 
-  it(`a withdrawal whose gas estimate the vault refuses as locked funds says so in plain words, saves nothing and asks the wallet nothing (spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them")`, async () => {
+  it(`withdrawal refused by gas estimate as locked funds reports cleanly and asks nothing`, async () => {
+    // spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
     const refusal = Object.assign(new Error("Internal JSON-RPC error."), { code: -32603, data: { code: 3, message: "execution reverted", data: PLEDGED_FUNDS_SELECTOR } });
     const chain = fakeChain({ atomic: false, send: "mine", estimateReverts: { call: selector("withdrawUnused"), error: refusal } });
     const runtime = started();
@@ -363,8 +371,9 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
   });
 });
 
-describe('Offer one atomic request only on a wallet that already supports it (spec/frontend/batchedDeposit.md, "Story: Offer one atomic request only on a wallet that already supports it"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")', () => {
-  it("an atomic wallet approves and deposits in one request, a reload resumes the saved reference without a second request, and only the finalized deposit event verifies it", async () => {
+describe('Offer one atomic request only on a wallet that already supports it', () => {
+  // spec/frontend/batchedDeposit.md, "Story: Offer one atomic request only on a wallet that already supports it"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"
+  it("atomic wallet approves and deposits once, reload resumes, finalized event verifies", async () => {
     const chain = fakeChain({ atomic: true, send: "mine" });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -395,7 +404,8 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
     expect(result).toEqual({ capability: true, phases: ["WalletReference", "WalletReference", "HashKnown", "HashKnown", "Verified"], sameReference: true, again: "BatchStopped", savedIntent: true, cleared: null, batches: 1 });
   });
 
-  it('a separate approval included in a canonical block that is not final lets the owner review the deposit against the live allowance, and the deposit counts only at its finalized event (spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', async () => {
+  it('included separate approval unlocks deposit review, finalized event counts deposit', async () => {
+    // spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
     const options = { atomic: false, send: "mine" as const, approved: false };
     const chain = fakeChain(options);
     const runtime = started();
@@ -440,7 +450,8 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
     expect(result).toEqual({ approvalNeeded: false, batch: false, sent: true, calls: [[tokenVault.vault, selector("deposit")]], batches: 0 });
   });
 
-  it('a signed-out visitor\'s atomic wallet gets one approve-and-deposit request saved under the tab\'s slot for no account, and each review before sending decides the capability again (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt")', async () => {
+  it('signed-out atomic wallet saves under tab slot and re-checks capability on review', async () => {
+    // spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"
     const options = { atomic: true, send: "mine" as const, approved: false, wallet: otherAccount.address };
     const chain = fakeChain(options);
     const deployment: FundingDeployment = { network: "base-mainnet", vault: tokenVault.vault, asset: tokenVault.asset, owner };
@@ -482,8 +493,9 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
   });
 });
 
-describe('Retain an uncertain deposit through replacement and finality (spec/frontend/provisionalVault.md, "Story: Retain an uncertain deposit through replacement and finality"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', () => {
-  it("the owner deposits into a provisional vault once, a reload resumes the saved transaction without a new prompt, and the deposit counts only once creation and deposit are final", async () => {
+describe('Retain an uncertain deposit through replacement and finality', () => {
+  // spec/frontend/provisionalVault.md, "Story: Retain an uncertain deposit through replacement and finality"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+  it("provisional vault deposit resumes on reload and counts once creation and deposit finalize", async () => {
     const chain = fakeChain({ atomic: false, send: "mine", approved: true });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -534,7 +546,7 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       return page;
     });
 
-  it("a token deposit with no allowance on a wallet that cannot batch opens the exact approval first, saved under the provisional key before the wallet is asked, and opens the deposit prompt only once the approval read settles", async () => {
+  it("non-batch token deposit saves provisional approval first and opens deposit after approval", async () => {
     const options = { atomic: false, send: "mine" as const, approved: false };
     const chain = fakeChain(options);
     const savedAtPrompt: unknown[] = [];
@@ -572,7 +584,8 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
     });
   });
 
-  it(`an atomic wallet approves and deposits into the provisional vault with one request, a reload resumes it without a second request, and the deposit counts only once creation and deposit are final (spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent")`, async () => {
+  it(`atomic provisional approve+deposit resumes on reload and counts once finalized`, async () => {
+    // spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"
     const chain = fakeChain({ atomic: true, send: "mine" });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -611,7 +624,7 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
     });
   });
 
-  it("an unclear wallet answer keeps the unsent provisional request, and after a reload the owner's clear removes it so the deposit is reviewed again", async () => {
+  it("unclear provisional answer survives reload until cleared for fresh review", async () => {
     const chain = fakeChain({ atomic: false, send: "unclear", approved: true });
     const runtime = started();
     const result = await runtime.runPromise(Effect.gen(function* () {
@@ -637,7 +650,8 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
     });
   });
 
-  it(`a provisional deposit the wallet sent moves to the registered vault's own request slot when that vault's page loads, and the provisional slot is removed (spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner")`, async () => {
+  it(`sent provisional deposit migrates to registered vault slot on page load`, async () => {
+    // spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"
     const chain = fakeChain({ atomic: false, send: "mine", approved: true });
     const runtime = started();
     const sent = await runtime.runPromise(Effect.gen(function* () {
@@ -692,8 +706,9 @@ const cardState = Effect.flatMap(lockMachine(), (lock) => lock.get());
 const evmCard = Effect.map(connected, (evm): LockConnection => ({ family: "evm", address: evm.address, evm }));
 const tagOf = <A, E extends { readonly _tag: string }, R>(work: Effect.Effect<A, E, R>) => Effect.match(work, { onFailure: (error) => error._tag, onSuccess: () => "done" });
 
-describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Story: Lock months from the owner\'s wallet"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/monthLock.md, "A review runs the lock refusals against the card\'s own read, and only the owner\'s accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"; spec/frontend/monthLock.md, "A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault\'s current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it")', () => {
-  it("a vault without pledge support shows no card, and the owner locks three months from the vault's month with one exact pledgeMonths transaction that shows only after the reloaded finalized read", async () => {
+describe('Lock months from the owner\'s wallet', () => {
+  // spec/frontend/monthLock.md, "Story: Lock months from the owner's wallet"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/monthLock.md, "A review runs the lock refusals against the card's own read, and only the owner's accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"; spec/frontend/monthLock.md, "A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"
+  it("non-pledge vault hides card; owner locks 3 months with pledgeMonths shown after finality", async () => {
     const pledges: Pledges = new Map();
     const chain = fakeChain({ atomic: false, send: "mine", pledges, current });
     const unsupported = cardRuntime({ owner, evm: nativeVault, solana: undefined });
@@ -726,7 +741,8 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     });
   }, 20_000);
 
-  it(`a count other than 1, 3, 6 or 12, an amount below the monthly amount, a lowered month, short free funds and a deposit the wallet cannot batch are refused in that order and nothing is sent (spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount")`, async () => {
+  it(`lock review refuses bad count, low amount, lowered month, short funds and unbatchable deposit in order`, async () => {
+    // spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"
     const pledges: Pledges = new Map([[current, { amount: 3n * ether, open: true }]]);
     const chain = fakeChain({ atomic: false, send: "mine", pledges, current });
     const runtime = cardRuntime({ owner, evm: nativeVault, solana: undefined });
@@ -748,7 +764,8 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     });
   });
 
-  it(`a deposit and lock go to the wallet as one request, an included batch keeps checking until its finalized deposit, and a failed receipt locks nothing (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")`, async () => {
+  it(`batched deposit and lock sends once, waits for finality, and failed receipt locks nothing`, async () => {
+    // spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"
     const batched = async (failReceipts: boolean, uuid: string) => {
       const pledges: Pledges = new Map();
       const chain = fakeChain({ atomic: true, send: "mine", pledges, current, failReceipts });
@@ -771,7 +788,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     };
     const shared = { deposit: 3_000_000n, last: pledgeMonthsCalldata(current, 1, 2_000_000n), batches: 1, transactions: 0 };
     expect(await batched(false, "4d5e6f7a-8b9c-4dae-8f01-3b4c5d6e7f8a")).toMatchObject({ ...shared, included: "LockChecking", phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }] });
-    expect(await batched(true, "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f")).toEqual({ ...shared, included: undefined, phase: "LockFailed", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [] });
+    expect(await batched(true, "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f")).toEqual({ ...shared, included: undefined, phase: "LockIdle", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [] });
   }, 40_000);
 
   it("a lapsed month is released with expirePledge by a connected wallet that is not the owner's, whose own lock review is refused", async () => {
@@ -801,7 +818,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     });
   }, 20_000);
 
-  it("the Solana lock review rebuilds the prepared message from the reviewed months and sends it through the wallet, and a prepared transaction that differs is refused before the wallet is asked", async () => {
+  it("Solana lock review rebuilds and sends matching message and refuses altered transaction", async () => {
     const pair = async () => {
       const keys = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
       const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey));
@@ -817,7 +834,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     const unsigned = new Uint8Array(65 + compiled.bytes.length);
     unsigned[0] = 1;
     unsigned.set(compiled.bytes, 65);
-    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signAndSendTransaction"] };
+    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signAndSendTransaction", "solana:signMessage"] };
     const signed: Uint8Array[] = [];
     const solanaWallet = {
       version: "1.0.0",
@@ -827,6 +844,7 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
       accounts: [account],
       features: {
         "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+        "solana:signMessage": { version: "1.0.0", signMessage: async () => [] },
         "solana:signAndSendTransaction": {
           version: "1.0.0",
           supportedTransactionVersions: ["legacy"],
@@ -840,8 +858,8 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
     cleanups.push(getWallets().register(solanaWallet));
     const run = async (wire: Uint8Array) => {
       const asked: unknown[] = [];
-      const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body));
+      const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(await new Request(input, init).text());
         asked.push(body);
         const answer = body.step === "check"
           ? { status: "finalized" }
@@ -880,8 +898,9 @@ describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Sto
   }, 20_000);
 });
 
-describe('Withdraw only funds the month\'s promise or locks leave free (spec/frontend/vaultLocks.md, "Story: Withdraw only funds the month\'s promise or locks leave free"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop\'s own guard applies only to a vault without them"; spec/frontend/ownerVault.md, "A withdrawal that would break the month\'s promise is refused on Slop\'s pages"; spec/frontend/projections.md, "Slop\'s pages refuse a withdrawal below the promised amount"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold")', () => {
-  it("an upgraded vault with 700 free and 500 locked lets a 200 withdrawal through, refuses 201 with the locked-funds text before the wallet is asked, and skips the page's promise guard", async () => {
+describe('Withdraw only funds the month\'s promise or locks leave free', () => {
+  // spec/frontend/vaultLocks.md, "Story: Withdraw only funds the month's promise or locks leave free"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"
+  it("upgraded vault allows 200 withdrawal, refuses 201 as locked funds, skips promise guard", async () => {
     const promisePool: PoolFacts = { ...quietPool, monthlyPool: true, amount: toAmount(1000n), freeNow: toAmount(700n) };
     const locks = { cachedSupport: true, walletRead: true, freeKnown: true, free: toAmount(700n), locked: toAmount(500n) };
     const runtime = started();
@@ -895,7 +914,7 @@ describe('Withdraw only funds the month\'s promise or locks leave free (spec/fro
     expect(result).toEqual({ allowed: ["Quiet", "Reviewed"], refused: lockedFundsText, saved: null });
   });
 
-  it("with two vaults, a withdrawal that would leave this vault's freshly reviewed free balance below the owed amount is refused before the wallet is asked although the pool's cached total covers it, and a review without a free balance skips the page's guard", async () => {
+  it("two-vault withdrawal checks fresh vault free balance over cached total and skips guard when unread", async () => {
     const pool: PoolFacts = { ...quietPool, monthlyPool: true, amount: toAmount(1000n), freeNow: toAmount(5000n) };
     const reviewed = { cachedSupport: false, walletRead: false, freeKnown: true, free: toAmount(1100n), locked: toAmount(0n) };
     const runtime = started();
@@ -915,7 +934,8 @@ describe('Withdraw only funds the month\'s promise or locks leave free (spec/fro
   });
 });
 
-describe('Check registration and transfers automatically without retiring the owner (spec/frontend/ownerVault.md, "Story: Check registration and transfers automatically without retiring the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', () => {
+describe('Check registration and transfers automatically without retiring the owner', () => {
+  // spec/frontend/ownerVault.md, "Story: Check registration and transfers automatically without retiring the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
   it("in a hidden tab a saved transfer is not checked automatically and spends none of its automatic asks", async () => {
     const chain = fakeChain({ atomic: false, send: "mine" });
     const runtime = started();
@@ -980,8 +1000,9 @@ describe('Check registration and transfers automatically without retiring the ow
   });
 });
 
-describe('Close ASI\'s November month early from its owner awards (spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change")', () => {
-  it("after the cutoff November is the closeout project's last reachable month and other projects stop at October, its fixed allocations are never edited or saved, and Finalize sends the sequence it read and freezes the month", async () => {
+describe('Close ASI\'s November month early from its owner awards', () => {
+  // spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
+  it("after cutoff closeout project reaches November, locks fixed allocations, and Finalize freezes it", async () => {
     const monthPath = "/api/v1/payments/projects/asi/monthly/2026-11";
     const allocation = { githubUserId: "1", login: "fixture-contributor", grossBase: "150000000", proposedGrossBase: "150000000", sourceDigest: "c".repeat(64) };
     const view = {
@@ -1032,7 +1053,8 @@ describe('Close ASI\'s November month early from its owner awards (spec/frontend
   });
 });
 
-describe('Let anyone fund a project from its public page and see who funded (spec/frontend/projections.md, "Story: Let anyone fund a project from its public page and see who funded"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration")', () => {
+describe('Let anyone fund a project from its public page and see who funded', () => {
+  // spec/frontend/projections.md, "Story: Let anyone fund a project from its public page and see who funded"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"
   const period = "2026-11";
   const deployment: FundingDeployment = { network: "base-mainnet", vault: nativeVault.vault, asset: nativeVault.asset, owner };
   const project: FundingProject = { id: "public-funding", slug: "public-funding", reward: { kind: "monthly-pool", monthlyCapMinor: "250000000" }, escrow: { chain: "base", deployments: [deployment] } };
@@ -1047,7 +1069,7 @@ describe('Let anyone fund a project from its public page and see who funded (spe
   const walletId = Effect.map(Effect.flatMap(WalletChoice, (choice) => choice.current()), (offers) => offers.find((offer) => offer.name === "Owner wallet")?.id ?? 0);
   const refusal = <A, E extends { readonly message: string }, R>(work: Effect.Effect<A, E, R>) => Effect.match(work, { onFailure: (error) => error.message, onSuccess: () => "sent" });
 
-  it("a visitor's wallet and the owner's wallet are each offered only a deposit, and a withdrawal is refused before the wallet is asked", async () => {
+  it("visitor and owner wallets are offered only deposit and withdrawal is refused pre-wallet", async () => {
     const visit = async (wallet: string, uuid: string) => {
       const chain = fakeChain({ atomic: false, send: "mine", wallet });
       const runtime = publicPage();
@@ -1063,7 +1085,7 @@ describe('Let anyone fund a project from its public page and see who funded (spe
     expect(await visit(account.address, "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d")).toEqual(shown);
   });
 
-  it("a withdrawal saved on the manage page in the same tab reopens the public form, is checked and never sent again, and once it settles the form offers a deposit", async () => {
+  it("saved manage withdrawal reopens public form without resend and restores deposit once settled", async () => {
     const chain = fakeChain({ atomic: false, send: "unclear" });
     const keys = fundingKeys(project.id, deployment, period);
     const manage = started();
@@ -1099,18 +1121,19 @@ describe('Let anyone fund a project from its public page and see who funded (spe
     });
   });
 
-  it("free funds of 253 USDC against 250 a month cover one month, less than 250 covers less than one, and a vault with no free balance on record shows nothing", () => {
+  it("253 USDC covers 1 month of 250, under 250 covers <1, and missing balance shows nothing", () => {
     const now = periodContaining(nowSeconds());
-    const covered = (freeBalance: string | null) => publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance }], () => true, now);
-    expect([covered("253000000"), covered("249999999"), covered(null), publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance: "253000000" }], () => false, now)]).toEqual([
-      { tag: "Covers", months: toAmount(1n) },
-      { tag: "Covers", months: toAmount(0n) },
+    const shown = (coverage: ReturnType<typeof publicCoverage>) => (coverage.tag === "Covers" ? { tag: coverage.tag, months: fromAmount(coverage.months) } : coverage);
+    const covered = (freeBalance: string | null) => shown(publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance }], () => true, now));
+    expect([covered("253000000"), covered("249999999"), covered(null), shown(publicCoverage(lockProject, [{ ...usdcSnapshot, freeBalance: "253000000" }], () => false, now))]).toEqual([
+      { tag: "Covers", months: 1n },
+      { tag: "Covers", months: 0n },
       { tag: "NoCoverage" },
       { tag: "NoCoverage" },
     ]);
   });
 
-  it("a failed funders read offers Retry and never an empty list, a reply naming another project is refused, and only a reply naming this project lists its deposits", async () => {
+  it("failed funders read offers Retry, wrong project is refused, matching project lists deposits", async () => {
     const row = { id: "d1", projectId: "slop", network: "base-mainnet", chain: "base", vault: usdcSnapshot.vault, depositor: otherAccount.address, githubLogin: null, amountBase: "253000000", assetAddress: usdcSnapshot.assetAddress, assetDecimals: 6, transactionId: hash("d"), depositedAt: "2026-11-20T12:00:00.000Z" };
     const replies = [
       new Response(JSON.stringify({ error: "unavailable", message: "Unavailable" }), { status: 503, headers: { "content-type": "application/json" } }),
@@ -1173,7 +1196,8 @@ describe('Let anyone fund a project from its public page and see who funded (spe
     }).toEqual({ fund: 0, disclosure: false, form: null, deposits: true });
   });
 
-  it(`a batched deposit and lock into a native-ETH vault sends the deposit with a value equal to its gross amount (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path")`, async () => {
+  it(`a batched deposit and lock into a native-ETH vault sends the deposit with a value equal to its gross amount`, async () => {
+    // spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"
     const pledges: Pledges = new Map();
     const chain = fakeChain({ atomic: true, send: "mine", pledges, current });
     const runtime = cardRuntime({ owner, evm: nativeVault, solana: undefined });
@@ -1201,17 +1225,19 @@ interface Asked {
 function replying(replies: Array<{ readonly status?: number; readonly body: unknown }>) {
   const asked: Asked[] = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : String(input), location.origin);
-    const text = input instanceof Request ? await input.clone().text() : typeof init?.body === "string" ? init.body : "";
-    asked.push({ method: (input instanceof Request ? input.method : init?.method) ?? "GET", path: url.pathname, query: url.search, body: text === "" ? undefined : JSON.parse(text) });
+    const request = new Request(input, init);
+    const url = new URL(request.url, location.origin);
+    const text = await request.text();
+    asked.push({ method: request.method, path: url.pathname, query: url.search, body: text === "" ? undefined : JSON.parse(text) });
     const reply = replies.shift() ?? { status: 500, body: { error: "unexpected", message: "Unexpected" } };
     return new Response(JSON.stringify(reply.body), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
   };
   return { asked, fetch: Layer.succeed(FetchHttpClient.Fetch, fetch as typeof globalThis.fetch) };
 }
 
-describe('Sign the owner\'s monthly transactions from a saved attempt (spec/frontend/ownerMonthly.md, "Story: Sign the owner\'s monthly transactions from a saved attempt"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve")', () => {
-  it("a held reserve says why and opens nothing, an approved one is reviewed, and its saved release clears only when the server finds it finalized", async () => {
+describe('Sign the owner\'s monthly transactions from a saved attempt', () => {
+  // spec/frontend/ownerMonthly.md, "Story: Sign the owner's monthly transactions from a saved attempt"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
+  it("held reserve explains why, approved one reviews, saved release clears only when finalized", async () => {
     const vault = "0x5e1f0000000000000000000000000000000000aa";
     const ready = {
       status: "ready",
@@ -1234,9 +1260,10 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
       const plan = { kind: "evmRelease" as const, planId: ready.planId, call: { kind: "evmCall" as const, from: "0x0000000000000000000000000000000000000b0b", chainId: quantity(BigInt(chainId)), to: vault, data: "0x01", value: "0x0" } };
       yield* monthly.submit("Release", (beforePrompt) => Effect.as(beforePrompt(plan), hash("e")));
       const pending = yield* checkSavedRelease();
+      const pendingPhase = (yield* monthly.machine.get()).release.phase;
       const kept = sessionStorage.length > 0;
       const finalized = yield* checkSavedRelease();
-      return { held, approved: approved.kind, pending: [pending.status, (yield* monthly.machine.get()).release.phase, kept], finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
+      return { held, approved: approved.kind, pending: [pending.status, pendingPhase, kept], finalized: [finalized.status, (yield* monthly.machine.get()).release.phase] };
     }));
     expect({ ...result, checks: asked.slice(3).map((entry) => entry.body) }).toEqual({
       held: { kind: "held", message: "Total correct. Nothing to release." },
@@ -1247,7 +1274,8 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
     });
   });
 
-  it('a release the wallet sends while browser storage refuses to record its hash comes back with the hash marked not kept (spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt")', async () => {
+  it('a release the wallet sends while browser storage refuses to record its hash comes back with the hash marked not kept', async () => {
+    // spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"
     const deployment = deploymentOf(frozenMonth.deployment);
     const period = parsePeriod(frozenMonth.period);
     if (deployment === undefined || period === undefined) throw new Error("the frozen month names its vault and period");
@@ -1283,7 +1311,8 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
     });
   });
 
-  it('a reserve release and an EVM automatic-payment setting development saved before the cut-over resume as the signed-in owner\'s saved attempts and clear once their own hash is found finalized, without asking the wallet (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', async () => {
+  it('pre-cutover release and auto-payment attempts resume for owner and clear when finalized', async () => {
+    // spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
     const deployment = deploymentOf(frozenMonth.deployment);
     if (deployment === undefined) throw new Error("the frozen month names its vault");
     const releaseKey = `slop:monthly-release:v1:${lockProject.id}:${frozenMonth.period}:${deployment.network}`;
@@ -1339,8 +1368,9 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
   });
 });
 
-describe('Read the private bounty vault\'s funds under current authority (spec/frontend/ownerMonthly.md, "Story: Read the private bounty vault\'s funds under current authority"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot")', () => {
-  it("a failed private read shows an error and no balance, and the next read shows the finalized snapshot's funds to the current owner", async () => {
+describe('Read the private bounty vault\'s funds under current authority', () => {
+  // spec/frontend/ownerMonthly.md, "Story: Read the private bounty vault's funds under current authority"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
+  it("failed private read shows error without balance and next read shows finalized funds", async () => {
     const funds = { currency: "USDC", decimals: 6, network: "base", freeMinor: "5000000", snapshotAt: "2026-11-20T12:00:00.000Z", availableMinor: "5000000", assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", deploymentNetwork: "base-mainnet" };
     const { asked, fetch } = replying([{ status: 503, body: { error: "unavailable", message: "Unavailable" } }, { body: { revision: 3, canSetup: true, networks: ["base-mainnet"], funds } }]);
     const runtime = ManagedRuntime.make(Layer.provide(bountyFundsServices("slop"), fetch));
@@ -1359,8 +1389,9 @@ describe('Read the private bounty vault\'s funds under current authority (spec/f
   });
 });
 
-describe('Create and register the vault from the setup review (spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', () => {
-  it("a review whose factory call differs from the project's terms is refused, the matching one is saved before the wallet, and the creation registers only on the server's registered answer", async () => {
+describe('Create and register the vault from the setup review', () => {
+  // spec/frontend/ownerVault.md, "Story: Create and register the vault without asking the wallet twice"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
+  it("mismatched factory call is refused, matching saves pre-wallet and registers on server answer", async () => {
     const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
     const creation = creationOf({ owner, projectDigest: registryProjectDigest("slop"), asset: usdc, bounty: false, monthlyCap: 250_000_000n, automatic: true });
     if (creation === undefined) throw new Error("no creation");
@@ -1402,7 +1433,8 @@ describe('Create and register the vault from the setup review (spec/frontend/own
   const developmentCreation = (transaction: string) => JSON.stringify({ version: 1, input: { network: "base-mainnet", claimId: "c1", automatic: true, expectedRevision: 7 }, review: { owner, asset: usdc, capDisplay: "250 USDC", payoutPolicy: "ordinary" }, hash: transaction });
   const registerBody = { step: "register", expectedRevision: 7, network: "base-mainnet", claimId: "c1", automatic: true, payoutPolicy: "ordinary", transactionId: hash("c") };
 
-  it('a creation request development saved before the cut-over resumes as the signed-in owner\'s pending creation and registers from its hash without asking the wallet (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', async () => {
+  it('pre-cutover creation request resumes for owner and registers from hash without wallet prompt', async () => {
+    // spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
     const terms = setupTerms("legacy-setup");
     const key = setupKey(terms.projectId, terms.purpose);
     sessionStorage.setItem(key, developmentCreation(hash("c")));
@@ -1424,7 +1456,8 @@ describe('Create and register the vault from the setup review (spec/frontend/own
     });
   });
 
-  it('a creation the wallet sends while browser storage refuses to record its hash is reported as sent but not kept in storage (spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', async () => {
+  it('a creation the wallet sends while browser storage refuses to record its hash is reported as sent but not kept in storage', async () => {
+    // spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
     const creation = creationOf({ owner, projectDigest: registryProjectDigest("kept-setup"), asset: usdc, bounty: false, monthlyCap: 250_000_000n, automatic: true });
     if (creation === undefined) throw new Error("no creation");
     const review = { payoutPolicy: "ordinary", family: "evm", network: "base-mainnet", owner, asset: usdc, cap: "250000000", capDisplay: "250 USDC", automatic: true, chainId: "8453", existingVault: null, transaction: { from: owner, to: factory, data: createVaultCalldata(creation), value: "0x0" } };
@@ -1444,7 +1477,8 @@ describe('Create and register the vault from the setup review (spec/frontend/own
     expect({ ...sent, mined: chain.mined.map((entry) => [entry.to, entry.input]) }).toEqual({ hash: chain.mined[0]?.hash, kept: "storage", mined: [[factory, createVaultCalldata(creation)]] });
   });
 
-  it('a pending creation whose registration answer names the included vault shows the provisional deposit form under it (spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt")', async () => {
+  it('a pending creation whose registration answer names the included vault shows the provisional deposit form under it', async () => {
+    // spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"
     const terms = setupTerms("provisional-setup");
     sessionStorage.setItem(setupKey(terms.projectId, terms.purpose), developmentCreation(hash("c")));
     const provisional = { network: "base-mainnet", vault: tokenVault.vault, owner, asset: usdc, deploymentTransaction: hash("c") };

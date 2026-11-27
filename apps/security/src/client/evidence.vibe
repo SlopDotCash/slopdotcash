@@ -61,21 +61,22 @@ export const Overview = Schema.Struct({ runs: Schema.Array(RunView), policy: Evi
 
 const service = "/api/v1/vetting/evidence"
 const operator = "/api/v1/operator/vetting-evidence"
+const securityRefusals = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
 
-export const registerEvidence = route({ method: "POST", path: `${service}/:assessment/:run`, access: "service", limitKib: 1024, request: undefined, answer: Registered, rejected: "evidence_conflict", cache: "private" })
-export const uploadEvidence = route({ method: "PUT", path: `${service}/:assessment/:run/:sha`, access: "service", limitKib: 8192, request: undefined, answer: Uploaded, rejected: "evidence_conflict", cache: "private" })
-export const uploadEvidenceChunk = route({ method: "PUT", path: `${service}/:assessment/:run/:sha/chunks/:index`, access: "service", limitKib: 8192, request: undefined, answer: ChunkUploaded, rejected: "evidence_conflict", cache: "private" })
-export const finalizeEvidence = route({ method: "POST", path: `${service}/:assessment/:run/:sha/finalize`, access: "service", limitKib: 1, request: undefined, answer: Finalized, rejected: "evidence_conflict", cache: "private" })
-export const evidenceOverview = route({ method: "GET", path: operator, access: "session", limitKib: 1, request: undefined, answer: Overview, rejected: "forbidden", cache: "private" })
-export const closeEvidenceCase = route({ method: "POST", path: `${operator}/:assessment/close`, access: "sessionWrite", limitKib: 64, request: Reason, answer: Closed, rejected: "case_not_exception", cache: "private" })
-export const grantEvidenceRead = route({ method: "POST", path: `${operator}/:assessment/:run/:sha/grant`, access: "sessionWrite", limitKib: 64, request: Reason, answer: Granted, rejected: "grant_invalid", cache: "private", status: 201 })
-export const grantEvidenceDownload = route({ method: "POST", path: `${operator}/:assessment/:run/:sha/download-grant`, access: "sessionWrite", limitKib: 64, request: Reason, answer: DownloadGranted, rejected: "grant_invalid", cache: "private", status: 201 })
-export const readEvidenceBody = route({ method: "GET", path: `${operator}/:assessment/:run/:sha/body`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "grant_invalid", cache: "private" })
-export const downloadEvidence = route({ method: "GET", path: `${operator}/:assessment/:run/:sha/download`, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "grant_invalid", cache: "private" })
+export const registerEvidence = route({ method: "POST", path: `${service}/:assessment/:run`, access: "service", limitKib: 1024, request: undefined, answer: Registered, rejected: "evidence_conflict", cache: "private", refusalHeaders: securityRefusals })
+export const uploadEvidence = route({ method: "PUT", path: `${service}/:assessment/:run/:sha`, access: "service", limitKib: 8192, request: undefined, answer: Uploaded, rejected: "evidence_conflict", cache: "private", refusalHeaders: securityRefusals })
+export const uploadEvidenceChunk = route({ method: "PUT", path: `${service}/:assessment/:run/:sha/chunks/:index`, access: "service", limitKib: 8192, request: undefined, answer: ChunkUploaded, rejected: "evidence_conflict", cache: "private", refusalHeaders: securityRefusals })
+export const finalizeEvidence = route({ method: "POST", path: `${service}/:assessment/:run/:sha/finalize`, access: "service", limitKib: 1, request: undefined, answer: Finalized, rejected: "evidence_conflict", cache: "private", refusalHeaders: securityRefusals })
+export const evidenceOverview = route({ method: "GET", path: operator, access: "session", limitKib: 1, request: undefined, answer: Overview, rejected: "forbidden", cache: "private", refusalHeaders: securityRefusals })
+export const closeEvidenceCase = route({ method: "POST", path: `${operator}/:assessment/close`, access: "sessionWrite", limitKib: 64, request: Reason, answer: Closed, rejected: "case_not_exception", cache: "private", refusalHeaders: securityRefusals })
+export const grantEvidenceRead = route({ method: "POST", path: `${operator}/:assessment/:run/:sha/grant`, access: "sessionWrite", limitKib: 64, request: Reason, answer: Granted, rejected: "grant_invalid", cache: "private", status: 201, refusalHeaders: securityRefusals })
+export const grantEvidenceDownload = route({ method: "POST", path: `${operator}/:assessment/:run/:sha/download-grant`, access: "sessionWrite", limitKib: 64, request: Reason, answer: DownloadGranted, rejected: "grant_invalid", cache: "private", status: 201, refusalHeaders: securityRefusals })
+export const readEvidenceBody = route({ method: "GET", path: `${operator}/:assessment/:run/:sha/body`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "grant_invalid", cache: "private", refusalHeaders: securityRefusals })
+export const downloadEvidence = route({ method: "GET", path: `${operator}/:assessment/:run/:sha/download`, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "grant_invalid", cache: "private", refusalHeaders: securityRefusals })
 
 const downloadPath = `${operator}/:assessment/:run/:sha/download` as const
 export const downloadOtherMethods = (["POST", "PUT", "DELETE"] as const).map((method) =>
-  route({ method, path: downloadPath, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "no-store" }))
+  route({ method, path: downloadPath, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "no-store", refusalHeaders: securityRefusals }))
 
 export const evidenceApi: ReadonlyArray<AnyRoute> = [
   registerEvidence,

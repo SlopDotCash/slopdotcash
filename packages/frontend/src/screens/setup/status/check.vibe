@@ -27,7 +27,10 @@ export interface SetupFollow {
 export error SetupLost { message: string }
 
 effect function requireSetupActor(actorId: string) {
-  const current = (try Session).current() catch effect () => { throw new SetupLost({ message: setupIdentityUnavailable }) }
+  const session = try Session
+  const shown = try session.view()
+  if (shown.status === "signedOut" || (shown.status === "signedIn" && shown.session.githubId !== actorId)) throw new SetupLost({ message: setupAccountChanged })
+  const current = session.current() catch effect () => { throw new SetupLost({ message: setupIdentityUnavailable }) }
   if (current?.githubId !== actorId) throw new SetupLost({ message: setupAccountChanged })
 }
 

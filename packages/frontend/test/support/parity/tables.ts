@@ -290,20 +290,28 @@ function withoutNonces(text: string): string {
   return text.replace(/nonce-[A-Za-z0-9+/=_-]+/gu, "nonce-").replace(/nonce="[^"]*"/gu, 'nonce=""');
 }
 
+function normalizedBody(replay: ReplayCase, text: string): string {
+  const clean = withoutNonces(text);
+  return replay.route === "GET /v1/oauth/callback @worker:slop-identity" ? clean.replace(/<style>[\s\S]*?<\/style>/u, "<style></style>") : clean;
+}
+
 /** @throws {never} */
 export function replayDifference(replay: ReplayCase, seen: Seen): ReadonlyArray<string> {
   const expected = replay.response;
   return [
     ...expected.status === seen.status ? [] : [`status ${seen.status}, recorded ${expected.status}`],
     ...Object.entries(expected.headers).flatMap(([name, value]) => seen.headers[name] === value ? [] : [`${name} ${seen.headers[name] ?? "absent"}, recorded ${value}`]),
-    ...withoutNonces(expected.body) === withoutNonces(seen.text) ? [] : [`body ${seen.text.slice(0, 300)}, recorded ${expected.body.slice(0, 300)}`],
+    ...normalizedBody(replay, expected.body) === normalizedBody(replay, seen.text) ? [] : [`body ${seen.text.slice(0, 300)}, recorded ${expected.body.slice(0, 300)}`],
   ];
 }
+
+const pointsProtectionToken = successors.pages.kind === "worker" ? successors.pages.bindings.vars?.POINTS_PROTECTION_TOKEN ?? "" : "";
 
 /** @throws {TypeError} */
 export function replayRequest(replay: ReplayCase): Probe {
   const url = new URL(replay.request.url);
-  return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers: replay.request.headers, ...replay.request.body == null ? {} : { body: replay.request.body } };
+  const headers = Object.fromEntries(Object.entries(replay.request.headers).map(([name, value]) => [name, pointsProtectionToken === "" ? value : value.replace("<POINTS_PROTECTION_TOKEN>", pointsProtectionToken)]));
+  return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers, ...replay.request.body == null ? {} : { body: replay.request.body } };
 }
 
 function rowOrigin(row: Row, successor: WorkerSuccessor): string {

@@ -294,5 +294,16 @@ export const EmailRoutes = Layer.mergeAll(
   handleRaw(emailVerify, () => emailAnswer(verify())),
   handleRaw(emailUnsubscribe, (input) => emailAnswer(unsubscribe(input.query))),
   methodNotAllowed([emailPreference, emailConsent], succeed(json({ error: "method_not_allowed" }, 405, { allow: "GET, POST", "cache-control": "private, no-store" }))),
-  methodNotAllowed([emailVerification, emailVerify, emailUnsubscribe], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" }))),
+  HttpRouter.add("GET", emailVerification.path, emailAnswer(effect {
+    const signed = try signedIn()
+    if (signed.kind === "refused") return signed.response
+    return json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" })
+  })),
+  HttpRouter.add("GET", emailVerify.path, emailAnswer(effect {
+    const signed = try signedIn()
+    if (signed.kind === "refused") return signed.response
+    return json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" })
+  })),
+  methodNotAllowed([emailUnsubscribe], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" }))),
+  HttpRouter.addAll([emailVerification.path, emailVerify.path].flatMap((path) => (["PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"] as const).map((method) => HttpRouter.route(method, path, succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" })))))),
 )

@@ -59,7 +59,7 @@ export const staleAfterMs = 1_800_000
 
 export const vaultEdgeSeconds = 60
 
-export const projectTotals = route({ method: "GET", path: "/api/v1/payments/projects/:id/totals", access: "public", limitKib: 1, request: undefined, answer: ProjectTotals, rejected: "rejected", cache: "private" })
+export const projectTotals = route({ method: "GET", path: "/api/v1/payments/projects/:id/totals", access: "public", limitKib: 1, request: undefined, answer: ProjectTotals, rejected: "rejected", cache: "private", refusalHeaders: { "cache-control": "private, no-store" } })
 
 export const projectVault = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault", access: "public", limitKib: 1, request: undefined, answer: ProjectVault, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds } })
 

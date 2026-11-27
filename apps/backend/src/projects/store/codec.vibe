@@ -105,7 +105,10 @@ export function assetIdentity(network: string, address: string): string {
 }
 
 export function assetOf(manifest: Manifest): RewardAsset {
-  if (manifest.rewardAsset !== undefined) return { identity: assetIdentity(manifest.rewardAsset.network, manifest.rewardAsset.address), decimals: manifest.rewardAsset.decimals }
+  if (manifest.rewardAsset !== undefined) {
+    const listed = listedStablecoins[manifest.rewardAsset.network.toLowerCase()] ?? listedStablecoins.base
+    return { identity: assetIdentity(manifest.rewardAsset.network, manifest.rewardAsset.address), decimals: manifest.rewardAsset.decimals ?? listed.decimals }
+  }
   const network = manifest.reward.chain ?? "base"
   const listed = listedStablecoins[network] ?? listedStablecoins.base
   return { identity: assetIdentity(network, listed.address), decimals: listed.decimals }

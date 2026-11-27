@@ -21,7 +21,11 @@ export const buttonVariants = cva(
         inverse: "border-0 bg-foreground text-background hover:bg-foreground/90",
         ghost: "hover:bg-accent hover:text-accent-foreground",
       },
-      size: { sm: "h-10 px-4.5 text-control max-md:px-3 max-md:text-sm", md: "h-12 px-5.5", icon: "size-12" },
+      size: {
+        sm: "h-10 px-4.5 text-control max-md:px-3 max-md:text-sm max-sm:h-auto max-sm:min-h-10 max-sm:max-w-full max-sm:py-2 max-sm:whitespace-normal",
+        md: "h-12 px-5.5 max-sm:h-auto max-sm:min-h-12 max-sm:max-w-full max-sm:py-2 max-sm:whitespace-normal",
+        icon: "size-12",
+      },
     },
     compoundVariants: [{ variant: "link", class: "h-auto border-0 px-0 font-medium" }],
     defaultVariants: { variant: "primary", size: "md" },

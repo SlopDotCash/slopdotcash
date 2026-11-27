@@ -31,8 +31,7 @@ export const DialogFooter = CardFooter;
 export function DialogContent({ closeLabel = "Close", className, children, ...props }: DialogContentProps) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className={overlay} />
-      {/* A `DialogDescription`, when there is one, describes the panel all the same. */}
+      <div aria-hidden="true" className={overlay} />
       <DialogPrimitive.Content aria-describedby={undefined} className={cn(panel, className)} {...props}>
         {children}
         <DialogPrimitive.Close aria-label={closeLabel} className={cn(focusRing, target, "absolute top-4 right-4 rounded-sm text-muted-foreground hover:text-foreground")}>

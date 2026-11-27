@@ -1,7 +1,7 @@
 // spec/frontend/navigation.md, "Administration sections and project selection are parameters of the one Administration page"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"
 import { Alert, Button, CopyButton, cn, ExternalLink, StatusIcon, type StatusProps } from "@repo/ui";
 import { Effect, Exit } from "effect";
-import type { MouseEvent, ReactNode } from "react";
+import { type MouseEvent, type ReactNode, useId } from "react";
 import { pageShellClass } from "../../app/PageShell.tsx";
 import type { PageRuntime, PageServices } from "../../app/runtime.vibe";
 import { navigateWithin } from "../../app/useAddress.ts";
@@ -125,9 +125,10 @@ export function Reference({ value }: { value: string }) {
 }
 
 export function Subsection({ title, icon, children }: { title: ReactNode; icon?: ReactNode; children: ReactNode }) {
+  const headingId = useId();
   return (
-    <section className="flex flex-col gap-3">
-      <h4 className="flex items-center gap-2 text-sm font-semibold text-foreground [&_svg]:size-4">
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <h4 id={headingId} className="flex items-center gap-2 text-sm font-semibold text-foreground [&_svg]:size-4">
         {icon}
         {title}
       </h4>

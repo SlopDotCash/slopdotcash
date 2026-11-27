@@ -10,9 +10,9 @@ import { edgeCache } from "@repo/platform/cache"
 import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { outbound } from "@repo/platform/http"
+import { json, outbound } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
-import { type Area, type Execution, area, later, pages, unmatchedApi } from "@repo/platform/worker"
+import { type Area, type Execution, area, later, pages } from "@repo/platform/worker"
 import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, protectedMonthsAccess } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
@@ -142,7 +142,71 @@ const payments = area({
   provides: Layer.mergeAll(DirectRoutesLive, DirectPaymentsLive),
 })
 
-const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, payments, savedCreations, fees, unmatchedApi], "closed")
+const securityHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+const privateHeaders = { "cache-control": "private, no-store" }
+const projectHeaders = { "x-slop-project-api-contract": "project-registry-v1" }
+const traceHeaders = { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }
+const plainNoStore = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" }
+
+function isSecurityPath(path: string) {
+  return path.startsWith("/api/v1/security-")
+    || path.startsWith("/api/v1/vetting/evidence")
+    || path.startsWith("/api/v1/operator/vetting-evidence")
+}
+
+function isVettingOriginPath(path: string) {
+  return path === "/api/v1/admin/vetting"
+    || path.startsWith("/api/v1/admin/vetting/")
+    || path.startsWith("/api/v1/project-flags/")
+}
+
+function isShortEvidencePath(path: string) {
+  for (const prefix of ["/api/v1/operator/vetting-evidence/", "/api/v1/vetting/evidence/"]) {
+    if (path.startsWith(prefix)) {
+      const parts = path.slice(prefix.length).split("/").filter((part) => part !== "")
+      return parts.length === 2
+    }
+  }
+  return false
+}
+
+effect function unmatchedAnswer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const path = URL.parse(request.originalUrl)?.pathname ?? ""
+  const method = request.method.toUpperCase()
+  const readMethod = method === "GET" || method === "HEAD" || method === "OPTIONS"
+  if (path === "/api/v1/pool-funding" && !readMethod) return json({ error: "method_not_allowed" }, 405, { "cache-control": "public, max-age=60, s-maxage=60" })
+  if (projectRoute(request.originalUrl) && !readMethod) return json({ error: "origin_forbidden", message: "Requests must come from this site" }, 403, projectHeaders)
+  if (isVettingOriginPath(path) && !readMethod) return json({ error: "origin_forbidden", message: "Requests must come from this site" }, 403)
+  if (path.startsWith("/api/v1/payments/")) {
+    if (!readMethod) return json({ error: "origin_forbidden" }, 403, privateHeaders)
+    return json({ error: "not_signed_in" }, 401, privateHeaders)
+  }
+  if (path.startsWith("/api/v1/points/")) {
+    const xPath = path.startsWith("/api/v1/points/x/")
+    if (!readMethod) return json({ error: "origin_forbidden" }, 403)
+    if (path === "/api/v1/points/join") return json({ error: "not_found" }, 404, traceHeaders)
+    if (xPath) return HttpServerResponse.jsonUnsafe({ error: "not_signed_in" }, { status: 401, headers: plainNoStore, contentType: "application/json" })
+    return json({ error: "not_signed_in" }, 401)
+  }
+  if (isSecurityPath(path)) {
+    if (!readMethod) return json({ error: "origin_forbidden", message: "Requests must come from this site" }, 403, securityHeaders)
+    if (path.startsWith("/api/v1/security-submissions/")) return json({ error: "not_found", message: "Submission not found" }, 404, securityHeaders)
+    if (path.startsWith("/api/v1/security-cases/")) return json({ error: "not_found" }, 404, privateHeaders)
+    if (isShortEvidencePath(path)) return json({ error: "not_found", message: "Evidence route not found" }, 404, securityHeaders)
+    if (path.startsWith("/api/v1/operator/vetting-evidence/") || path.startsWith("/api/v1/vetting/evidence/")) return json({ error: "not_found" }, 404, securityHeaders)
+  }
+  return json({ error: "not_found" }, 404, traceHeaders)
+}
+
+const fallbackApi = area({
+  name: "unmatchedApi",
+  api: [],
+  routes: HttpRouter.add("*", "/api/v1/*", unmatchedAnswer()),
+  provides: Layer.empty,
+})
+
+const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, payments, savedCreations, fees, fallbackApi], "closed")
 
 const site = pages({ areas: composition.areas, services, assets: "DOCUMENTS" })
 

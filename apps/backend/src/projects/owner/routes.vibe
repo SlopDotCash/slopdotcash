@@ -694,12 +694,9 @@ effect function owned(actor: Actor) {
 }
 
 effect function repository(owner: string, name: string) {
-  const key = cacheKey(`${try originOf()}/api/v1/project-github/repository-node-v2/${owner.toLowerCase()}/${name.toLowerCase()}`, 0)
-  return try cachedLookup(key, () => effect {
-    const path = `${owner}/${name}`
-    if (!validRepositoryPath(path)) throw refusal(putProjectsById.invalidRequestEnterTheRepositoryAs)
-    return json({ repository: try lookupRepository(path) }, 200, { ...contract, "cache-control": "public, max-age=0, s-maxage=300" })
-  })
+  const path = `${owner}/${name}`
+  if (!validRepositoryPath(path)) throw refusal(putProjectsById.invalidRequestEnterTheRepositoryAs)
+  return answer({ repository: try lookupRepository(path) })
 }
 
 export const OwnerProjectRoutes = Layer.mergeAll(

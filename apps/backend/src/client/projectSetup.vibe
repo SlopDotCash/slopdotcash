@@ -121,16 +121,18 @@ export schema RepositoryLookup {
 }
 export schema RepositoryFacts { readonly repository: RepositoryLookup }
 
-export const createProject = route({ method: "POST", path: "/api/v1/projects", access: "sessionWrite", limitKib: 128, request: CreateRequest, answer: Created, rejected: "registry_conflict", cache: "no-store", status: 201 })
-export const reviseProject = route({ method: "PUT", path: "/api/v1/projects/:id", access: "sessionWrite", limitKib: 128, request: ReviseRequest, answer: Revised, rejected: "stale_revision", cache: "no-store" })
-export const removeProject = route({ method: "POST", path: "/api/v1/projects/:id/remove", access: "sessionWrite", limitKib: 1, request: RemoveRequest, answer: Removed, rejected: "stale_revision", cache: "no-store" })
-export const listSetup = route({ method: "GET", path: "/api/v1/project-setup", access: "session", limitKib: 0, request: undefined, answer: SetupList, rejected: "rejected", cache: "no-store" })
-export const setupViewer = route({ method: "GET", path: "/api/v1/project-setup/:id", access: "session", limitKib: 0, request: undefined, answer: SetupViewer, rejected: "rejected", cache: "no-store" })
-export const checkSetup = route({ method: "POST", path: "/api/v1/project-setup/:id/check", access: "sessionWrite", limitKib: 1, request: CheckRequest, answer: Checked, rejected: "rejected", cache: "no-store" })
-export const myApplications = route({ method: "GET", path: "/api/v1/project-applications/mine", access: "session", limitKib: 0, request: undefined, answer: MyApplications, rejected: "rejected", cache: "no-store" })
-export const publishApplication = route({ method: "POST", path: "/api/v1/project-applications/:id/publish", access: "sessionWrite", limitKib: 1, request: EmptyRequest, answer: Schema.Union([Created, Revised]), rejected: "registry_conflict", cache: "no-store", status: 201 })
-export const cancelApplication = route({ method: "POST", path: "/api/v1/project-applications/:id/cancel", access: "sessionWrite", limitKib: 1, request: EmptyRequest, answer: Cancelled, rejected: "application_decided", cache: "no-store" })
-export const ownedRepositories = route({ method: "GET", path: "/api/v1/project-github/owned-repositories", access: "session", limitKib: 0, request: undefined, answer: OwnedRepositories, rejected: "rejected", cache: { scope: "private", browserSeconds: 300 } })
-export const repositoryFacts = route({ method: "GET", path: "/api/v1/project-github/repositories/:owner/:name", access: "session", limitKib: 0, request: undefined, answer: RepositoryFacts, rejected: "rejected", cache: { scope: "private", browserSeconds: 300 } })
+const projectContract = { "x-slop-project-api-contract": "project-registry-v1" }
+
+export const createProject = route({ method: "POST", path: "/api/v1/projects", access: "sessionWrite", limitKib: 128, request: CreateRequest, answer: Created, rejected: "registry_conflict", cache: "no-store", status: 201, refusalHeaders: projectContract })
+export const reviseProject = route({ method: "PUT", path: "/api/v1/projects/:id", access: "sessionWrite", limitKib: 128, request: ReviseRequest, answer: Revised, rejected: "stale_revision", cache: "no-store", refusalHeaders: projectContract })
+export const removeProject = route({ method: "POST", path: "/api/v1/projects/:id/remove", access: "sessionWrite", limitKib: 1, request: RemoveRequest, answer: Removed, rejected: "stale_revision", cache: "no-store", refusalHeaders: projectContract })
+export const listSetup = route({ method: "GET", path: "/api/v1/project-setup", access: "session", limitKib: 0, request: undefined, answer: SetupList, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const setupViewer = route({ method: "GET", path: "/api/v1/project-setup/:id", access: "session", limitKib: 0, request: undefined, answer: SetupViewer, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const checkSetup = route({ method: "POST", path: "/api/v1/project-setup/:id/check", access: "sessionWrite", limitKib: 1, request: CheckRequest, answer: Checked, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const myApplications = route({ method: "GET", path: "/api/v1/project-applications/mine", access: "session", limitKib: 0, request: undefined, answer: MyApplications, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
+export const publishApplication = route({ method: "POST", path: "/api/v1/project-applications/:id/publish", access: "sessionWrite", limitKib: 1, request: EmptyRequest, answer: Schema.Union([Created, Revised]), rejected: "registry_conflict", cache: "no-store", status: 201, refusalHeaders: projectContract })
+export const cancelApplication = route({ method: "POST", path: "/api/v1/project-applications/:id/cancel", access: "sessionWrite", limitKib: 1, request: EmptyRequest, answer: Cancelled, rejected: "application_decided", cache: "no-store", refusalHeaders: projectContract })
+export const ownedRepositories = route({ method: "GET", path: "/api/v1/project-github/owned-repositories", access: "session", limitKib: 0, request: undefined, answer: OwnedRepositories, rejected: "rejected", cache: { scope: "private", browserSeconds: 300 }, refusalHeaders: projectContract })
+export const repositoryFacts = route({ method: "GET", path: "/api/v1/project-github/repositories/:owner/:name", access: "session", limitKib: 0, request: undefined, answer: RepositoryFacts, rejected: "rejected", cache: "no-store", refusalHeaders: projectContract })
 
 export const api: ReadonlyArray<AnyRoute> = [createProject, reviseProject, removeProject, listSetup, setupViewer, checkSetup, myApplications, publishApplication, cancelApplication, ownedRepositories, repositoryFacts]

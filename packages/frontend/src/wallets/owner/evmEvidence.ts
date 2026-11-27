@@ -158,8 +158,13 @@ export function batchReport(reported: unknown): BatchReport {
 
 /** @throws {never} */
 export function failureCode(error: object): number | undefined {
-  const code: unknown = "code" in error ? error.code : undefined;
-  return typeof code === "number" ? code : undefined;
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && typeof current === "object" && current !== null; depth++) {
+    const code: unknown = "code" in current ? current.code : undefined;
+    if (typeof code === "number") return code;
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return undefined;
 }
 
 /** @throws {never} */

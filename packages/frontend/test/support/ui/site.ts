@@ -1,6 +1,8 @@
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
 import type * as PointsTestingModule from "@repo/points/testing";
+import { execFileSync } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Handler, type WorkerOptions, bundle, migrate, startWorker, storage, workerOptions } from "@repo/platform/testing";
@@ -16,7 +18,7 @@ import { encodeFunctionData, parseAbi } from "viem";
 import { createBuilder } from "vite";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
 import { feeNetworks } from "@repo/backend/client";
-import { escrowStack, word } from "@repo/settlement/testing/evm";
+import { FEE_RECIPIENT, escrowStack, word } from "@repo/settlement/testing/evm";
 import type { Answered, Box, Bucket, Deployed, Diagnostics, Downloaded, Layout, LeaderboardTransport, Method, Op, Published, Result, Roles, Row, Sent, Shown, Target, VaultPurpose, Verification } from "./protocol.ts";
 import { enlargeText } from "./textSize.ts";
 import { type Wallets, homeChainId, injectWallets } from "./wallets.ts";
@@ -90,6 +92,7 @@ interface Session {
   restore: (() => Promise<void>) | undefined;
   wallets: Wallets | undefined;
   clocked: boolean;
+  navigating: boolean;
   downloaded: Promise<Downloaded> | undefined;
 }
 
@@ -128,11 +131,25 @@ function notifyOf(verifications: Verification[]): Handler {
 
 async function builtSite(): Promise<string> {
   const outDir = join(appRoot, ".cache/site");
-  const builder = await createBuilder({ root: appRoot, configFile: join(appRoot, "vite.config.ts"), logLevel: "error", mode: "production", build: { outDir, emptyOutDir: true, sourcemap: false } });
-  const client = builder.environments.client;
-  if (client === undefined) throw new Error("apps/app builds no client");
-  await builder.build(client);
-  return outDir;
+  const contributorRoot = join(repoRoot, "apps/contributor");
+  const contributorProgram = join(contributorRoot, "dist/programs/main.js");
+  const priorNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    if (!existsSync(contributorProgram)) {
+      const contributorBuilder = await createBuilder({ root: contributorRoot, configFile: join(contributorRoot, "vite.config.ts"), logLevel: "error", mode: "production" });
+      await contributorBuilder.buildApp();
+    }
+    const builder = await createBuilder({ root: appRoot, configFile: join(appRoot, "vite.config.ts"), logLevel: "error", mode: "production", build: { outDir, emptyOutDir: true, sourcemap: false } });
+    const client = builder.environments.client;
+    if (client === undefined) throw new Error("apps/app builds no client");
+    await builder.build(client);
+    execFileSync(process.execPath, [contributorProgram, "site", "--out", outDir], { cwd: repoRoot, stdio: "pipe" });
+    return outDir;
+  } finally {
+    if (priorNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = priorNodeEnv;
+  }
 }
 
 async function build(): Promise<Built> {
@@ -164,7 +181,7 @@ async function open({ assets, script, identityScript, slopbotScript }: Built): P
       ...roles,
       SLOP_ENVIRONMENT: "production",
       PUBLIC_SITE_URL: site,
-      PAYMENT_NETWORKS: "[]",
+      PAYMENT_NETWORKS: JSON.stringify([vaultNetwork]),
       MONTHLY_PAYMENT_SCHEDULE: '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}',
       SLOP_PRIVATE_INTAKE_MODE: "on",
       SECURITY_REPORT_DEPOSIT: "live",
@@ -331,7 +348,9 @@ function watch(opened: BrowserContext, into: Session) {
   });
   opened.on("weberror", (error) => into.console.push(`pageerror ${error.error().message}`));
   opened.on("requestfailed", (request) => {
-    if (request.url().startsWith(site)) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${request.failure()?.errorText ?? ""}`);
+    const errorText = request.failure()?.errorText ?? "";
+    if (request.method() === "GET" && errorText === "net::ERR_ABORTED") return;
+    if (request.url().startsWith(site)) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${errorText}`);
   });
   opened.on("response", (response) => {
     if (response.url().startsWith(site) && response.status() >= 400) into.failed.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
@@ -357,7 +376,7 @@ async function reset(context: BrowserCommandContext) {
   const browser: Browser | null = context.context.browser();
   if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
   const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), canned: new Map(), chains: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, clocked: false, downloaded: undefined };
+  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), canned: new Map(), chains: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, clocked: false, navigating: false, downloaded: undefined };
   session = made;
   watch(opened, made);
   await opened.route("**/*", routed);
@@ -366,9 +385,10 @@ async function reset(context: BrowserCommandContext) {
 async function tab(name: string): Promise<Page> {
   const into = current();
   const known = into.tabs.get(name);
+  const switching = into.current !== name;
   into.current = name;
   if (known !== undefined) {
-    await known.bringToFront();
+    if (switching) await known.bringToFront();
     return known;
   }
   const opened = await into.context.newPage();
@@ -408,14 +428,28 @@ type Fields = Readonly<Record<string, unknown>>;
 const fieldsOf = (value: unknown): Fields | undefined => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Fields) : undefined);
 
 function registered(manifest: Fields, deployment: Fields, purpose: VaultPurpose, now: string): Fields {
-  if (purpose === "ordinary") return { ...manifest, escrow: { ...fieldsOf(manifest.escrow), chain: "base", deployments: [deployment] } };
+  if (purpose === "ordinary") {
+    return {
+      ...manifest,
+      escrow: {
+        schemaVersion: "1",
+        effectiveCycle: now.slice(0, 7),
+        chain: "base",
+        feeBasisPoints: 200,
+        withdrawalFeeBasisPoints: 200,
+        feeMode: "deduct-from-gross",
+        ...fieldsOf(manifest.escrow),
+        deployments: [deployment],
+      },
+    };
+  }
   const program = fieldsOf(manifest.securityBounty);
   const amount = fieldsOf(program?.amount);
   if (amount?.network !== vaultNetwork || amount.currency !== "USDC") throw new Error(`site: the project has no USDC bounty on ${vaultNetwork}`);
   const settlement = fieldsOf(program?.settlement) ?? {};
   return {
     ...manifest,
-    securityBounty: { ...program, settlement: { schemaVersion: "1", effectiveCycle: now.slice(0, 7), chain: vaultNetwork, feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...settlement, deployments: [deployment] } },
+    securityBounty: { ...program, settlement: { schemaVersion: "1", effectiveCycle: now.slice(0, 7), chain: "base", feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...settlement, deployments: [deployment] } },
   };
 }
 
@@ -435,11 +469,24 @@ async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed
     );
     await stack.send(depositor.address, stack.dollar, encodeFunctionData({ abi: mintAbi, functionName: "mint", args: [depositor.address, depositorFunds] }));
     const block = await stack.head();
+    chain.setFinalized(block);
+    const codeDigest = async (at: string) => sha256(Buffer.from(String(await chain.rpc("eth_getCode", [at, "latest"])).slice(2), "hex"));
+    const [codeSha256, vaultImplementationCodeSha256] = await Promise.all([codeDigest(created), codeDigest(stack.implementation)]);
     const [record] = await started.rows("SELECT revision, manifest FROM projects WHERE id = ?", [projectId]);
     const [author] = await started.rows("SELECT actor_github_id, actor_github_login FROM project_revisions WHERE project_id = ? ORDER BY revision LIMIT 1", [projectId]);
     if (record === undefined || author === undefined) throw new Error(`site: no project ${projectId}`);
     const recorded = fieldsOf(JSON.parse(String(record.manifest))) ?? {};
-    const deployment = { network: vaultNetwork, vault: created, asset: stack.dollar, owner: ownerAddress };
+    const deployment = {
+      network: vaultNetwork,
+      vault: created,
+      asset: stack.dollar,
+      owner: ownerAddress,
+      factory: stack.factory,
+      feeRecipient: FEE_RECIPIENT,
+      bindingDelaySeconds: "0",
+      codeSha256,
+      evmUpgrade: { vaultImplementation: stack.implementation, vaultImplementationCodeSha256 },
+    };
     const now = new Date().toISOString();
     const active = { ...recorded, status: "active" };
     const revisions = [
@@ -504,10 +551,13 @@ async function read(target: Target): Promise<Shown> {
 
 function layout(): Promise<Layout> {
   return page().evaluate(() => {
-    const shown = (element: Element) => element instanceof HTMLElement && element.offsetParent !== null && getComputedStyle(element).visibility !== "hidden";
+    const shown = (element: Element) => element instanceof HTMLElement && element.getAttribute("aria-hidden") !== "true" && element.offsetParent !== null && getComputedStyle(element).visibility !== "hidden";
     const named = (element: Element) => {
       const labelled = (element.getAttribute("aria-labelledby") ?? "").split(/\s+/u).filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? "").join("");
-      const labels = element instanceof HTMLInputElement ? [...(element.labels ?? [])].map((label) => label.textContent ?? "").join("") : "";
+      const labels =
+        element instanceof HTMLInputElement || element instanceof HTMLButtonElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement
+          ? [...(element.labels ?? [])].map((label) => label.textContent ?? "").join("")
+          : "";
       const images = [...element.querySelectorAll("img[alt], [role=img][aria-label]")].map((image) => image.getAttribute("alt") ?? image.getAttribute("aria-label") ?? "").join("");
       return [element.getAttribute("aria-label"), labelled, labels, element.getAttribute("title"), element.textContent, images].some((text) => (text ?? "").trim() !== "");
     };
@@ -560,7 +610,7 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
     }
     case "repository": {
       const { id, owner, name, fork, archived, license, files } = op.setup;
-      backend().github.world.addRepo({ id, owner, name, fork, archived, license: { spdx: license }, files });
+      backend().github.world.addRepo({ id, owner, name, description: `${name} repository for Slop journeys.`, fork, archived, license: { spdx: license }, files });
       return null;
     }
     case "permission":
@@ -602,8 +652,14 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return null;
     case "open": {
       const opened = await tab(op.tab ?? current().current);
-      const loaded = await opened.goto(`${site}${op.path}`, { waitUntil: "load" });
-      return { status: loaded?.status() ?? 0, headers: loaded?.headers() ?? {} };
+      const target = `${site}${op.path}`;
+      current().navigating = true;
+      try {
+        const loaded = opened.url() === target ? await opened.reload({ waitUntil: "load" }) : await opened.goto(target, { waitUntil: "load" });
+        return { status: loaded?.status() ?? 0, headers: loaded?.headers() ?? {} };
+      } finally {
+        current().navigating = false;
+      }
     }
     case "tab":
       await tab(op.tab);
@@ -697,10 +753,12 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return backend().rows(op.text, op.params);
     case "popups":
       return current().context.pages().filter((opened) => ![...current().tabs.values()].includes(opened)).length;
-    case "view":
-      await page().setViewportSize({ width: op.width, height: op.height });
-      await page().emulateMedia({ reducedMotion: op.reducedMotion ? "reduce" : "no-preference" });
+    case "view": {
+      const opened = await tab(current().current);
+      await opened.setViewportSize({ width: op.width, height: op.height });
+      await opened.emulateMedia({ reducedMotion: op.reducedMotion ? "reduce" : "no-preference" });
       return null;
+    }
     case "enlarge":
       await current().restore?.();
       current().restore = await enlargeText(locate(page(), op.target).first());

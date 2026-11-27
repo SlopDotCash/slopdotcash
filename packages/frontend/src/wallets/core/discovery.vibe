@@ -26,7 +26,7 @@ export const changedMessage = "The wallet account or network changed. Connect an
 
 export error WalletUntrusted { message: string }
 export error WalletDeclined { message: string }
-export error WalletFailed { message: string }
+export error WalletFailed { message: string; cause?: unknown }
 export error WalletChanged { message: string }
 
 export type WalletError = WalletUntrusted | WalletDeclined | WalletFailed | WalletChanged

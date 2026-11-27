@@ -40,7 +40,7 @@ function bountyTerms(projectId: string, technical: ReadonlyArray<User>, excluded
     eligibility: "in-scope-security",
     fundingPolicy: "after-approval",
     amount: { currency: "USDC", decimals: 6, grossMinor: "10000000", network: "base" },
-    split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+    split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
     sponsor: { name: "Slop", githubId: null },
     funding: { state: "pledged" },
     capacity: { awards: null, closesAt: null, exhaustionRule: "Each qualifying finding is decided on its own." },
@@ -77,7 +77,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
     listingTier: "community",
     status: "active",
     steward: { displayName: steward.login, kind: "individual", github: { actorId: String(steward.id), nodeId: `U_${steward.login}`, login: steward.login, type: "User", profileUrl: `https://github.com/${steward.login}` }, website: null },
-    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(repositoryIdOf(projectId)), repositoryNodeId: `R_${repositoryIdOf(projectId)}`, proof: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(repositoryIdOf(projectId)), repositoryNodeId: `R_kgDO${repositoryIdOf(projectId).toString(36)}`, proof: null },
     terms: {
       revision: "draft-1",
       effectiveAt: "2026-11-01T00:00:00.000Z",
@@ -85,7 +85,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
       retroactive: false,
       receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
       copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
-      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/main/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${"a".repeat(40)}/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
       inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
       assignment: null,
       externalPrize: null,
@@ -93,7 +93,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
     repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Vault tooling.", integrationBranch: "main" }],
     skill: { id: `contribute-to-${projectId}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${projectId}/skill.md` },
     reviewSkill: { id: `review-${projectId}-contributions`, sourcePath: "skills/project-reviewer-template" },
-    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC" },
+    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" },
     contribution: {
       approvedScope: "Bug fixes and documented features in the vault.",
       contributionGuide: "Branch from main and keep one change per pull request.",
@@ -105,7 +105,7 @@ function manifestOf(projectId: string, securityBounty: ReturnType<typeof bountyT
       maintainerNotes: "",
     },
     reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "0", monthlyCapDisplay: "$0", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
-    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet.", recordsPath: `funding/${projectId}`, addresses: [] },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${projectId}`, addresses: [] },
     modelPolicy: { mode: "open-declared", disclosureRequired: true },
     links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
     securityBounty,
@@ -131,13 +131,20 @@ async function publishRevision(projectId: string, revision: number, terms: Retur
     revision,
     repositoryOf(projectId),
     String(repositoryIdOf(projectId)),
-    `R_${repositoryIdOf(projectId)}`,
+    `R_kgDO${repositoryIdOf(projectId).toString(36)}`,
     now,
     now,
   );
 }
 
 async function seedPrograms() {
+  for (const projectId of [vaultKit, plainKit]) {
+    const id = repositoryIdOf(projectId);
+    const fullName = repositoryOf(projectId);
+    await site.repository({ id, owner: users.max.login, name: projectId, fork: false, archived: false, license: "MIT", files: { "README.md": `# ${projectId}\n`, "CONTRIBUTING.md": "Open a pull request against main.\n" } });
+    await site.permission(fullName, users.max.login, "admin");
+    await site.installation({ id, account: users.max.login, repositories: [fullName] });
+  }
   await publishRevision(vaultKit, 1, bountyTerms(vaultKit, [users.max], ownerLines));
   await publishRevision(plainKit, 1, bountyTerms(plainKit, [users.max]));
 }
@@ -148,6 +155,7 @@ const descriptionField = named("textbox", "Description");
 const submissionsOf = (user: User) => site.sql("SELECT id, project_id, idempotency_key FROM security_submissions WHERE reporter_github_id = ?", String(user.id));
 const casesOf = (projectId: string) => site.sql("SELECT id FROM security_cases WHERE project_id = ? ORDER BY id", projectId);
 const caseButton = (caseId: string) => named("button", `Case ${caseId.slice(-8)}`, { exact: false });
+const reportCard = (caseId: string) => named("article", `Case ${caseId.slice(-8)}`, { exact: false });
 const searchOf = async () => new URL(await site.where()).searchParams;
 
 async function writeReport(summary: string, description: string) {
@@ -171,8 +179,10 @@ afterEach(async () => {
   expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
 });
 
-describe('Recover a report draft and an uncertain submission (spec/frontend/drafts.md, "Story: Recover a report draft and an uncertain submission"; spec/security/intake.md, "Story: Submit and recover one private report")', () => {
-  it('a written report survives a reload, is reviewed and edited, and one send creates one receipt and one case (spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms")', async () => {
+describe('Recover a report draft and an uncertain submission', () => {
+  // spec/frontend/drafts.md, "Story: Recover a report draft and an uncertain submission"; spec/security/intake.md, "Story: Submit and recover one private report"
+  it('a written report survives a reload, is reviewed and edited, and one send creates one receipt and one case', async () => {
+    // spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"
     const summary = "Vault withdraw skips the share check";
     const description = "At commit 0000000, withdraw() trusts the caller's share count; the attached test drains the vault.";
     await site.open(programPath(vaultKit));
@@ -201,7 +211,8 @@ describe('Recover a report draft and an uncertain submission (spec/frontend/draf
     expect(await sentCount("POST", "/api/v1/security-submissions")).toBe(1);
   });
 
-  it('a send whose answer is lost is recovered after a reload by retrying the same report under the same key (spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/drafts.md, "A reviewed or submitted draft retains its account, project and content identity"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key")', async () => {
+  it('a send whose answer is lost is recovered after a reload by retrying the same report under the same key', async () => {
+    // spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/drafts.md, "A reviewed or submitted draft retains its account, project and content identity"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
     await site.allow("^console Failed to load resource", "^failed POST /api/v1/security-submissions ");
     const summary = "Oracle price is read before the update";
     await signIn(users.sam.login, programPath(vaultKit));
@@ -227,13 +238,15 @@ describe('Recover a report draft and an uncertain submission (spec/frontend/draf
   });
 });
 
-describe('Submit and recover one private report (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded")', () => {
+describe('Submit and recover one private report', () => {
+  // spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded"
   const proofField = named("group", "Proof of concept");
   const proofInput: Target = { label: "Proof of concept" };
   const patch = "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,3 @@\n+function testWithdrawRounding() public {\n+  vault.withdraw(1);\n+}\n";
   const textFile = (name: string, text: string, mimeType = "text/plain") => ({ name, mimeType, bytes: [...new TextEncoder().encode(text)] });
 
-  it('the form states the refundable deposit before filing, loads the description from a file, refuses a binary or wrong-ending proof while keeping the chosen one, sends the proof with the report, and the Inbox follows the deposit from needed, through its pay page where a connected wallet can be put back and a request the wallet left unclear is cleared as not sent, to recorded (spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item")', async () => {
+  it('form states deposit, validates proof files, sends proof, and Inbox follows deposit to recorded', async () => {
+    // spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"
     const summary = "Withdrawal rounds shares in the wrong direction";
     const description = "At commit abc, withdraw() rounds shares down. The attached test repeats a synthetic withdrawal.";
     await site.wallets({ evm: { name: "Anvil Wallet" } });
@@ -270,7 +283,7 @@ describe('Submit and recover one private report (spec/security/intake.md, "Story
     const payPath = `/fee/report/${caseId}`;
     const needed = named("link", "Deposit needed: 395 SLOP");
     await site.open("/inbox");
-    await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+    await shown(reportCard(caseId)).toMatchObject({ visible: true });
     await shown(named("link", "Deposit needed", { exact: false })).toMatchObject({ count: 0 });
 
     await site.sql(
@@ -323,16 +336,20 @@ describe('Submit and recover one private report (spec/security/intake.md, "Story
     await shown({ text: "Deposit recorded, to be sent back", exact: true }).toMatchObject({ visible: true });
   });
 
-  it('three tab returns keep the reporter\'s reports on the Inbox and re-read only the session (spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/requests.md, "Only the current request may publish its validated result")', async () => {
+  it('three tab returns keep the reporter\'s reports on the Inbox and re-read only the session', async () => {
+    // spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/requests.md, "Only the current request may publish its validated result"
     const summary = "Share price moves on a donated deposit";
     await signIn(users.rae.login, programPath(vaultKit));
     await writeReport(summary, "A direct token transfer to the vault changes the share price, which the attached test turns into a loss.");
     await site.click(named("button", "Review report"));
     await site.click(named("button", "Submit private report"));
     await shown(named("heading", "Report received")).toMatchObject({ visible: true });
+    await expect.poll(() => casesOf(vaultKit), { timeout: journeyMs }).toHaveLength(1);
+    const [filed] = await casesOf(vaultKit);
+    const caseId = String(filed?.id);
 
     await site.open("/inbox");
-    await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+    await shown(reportCard(caseId)).toMatchObject({ visible: true });
     const reads = async () => {
       const sent = await site.sent();
       const count = (path: string) => sent.filter((entry) => entry.method === "GET" && entry.path === path).length;
@@ -342,15 +359,17 @@ describe('Submit and recover one private report (spec/security/intake.md, "Story
     for (let round = 1; round <= 3; round += 1) {
       await site.refocus();
       await expect.poll(async () => (await reads()).session, { timeout: journeyMs }).toBeGreaterThanOrEqual(loaded.session + round);
-      await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+      await shown(reportCard(caseId)).toMatchObject({ visible: true });
       await shown({ text: "Checking private session…" }).toMatchObject({ count: 0 });
     }
     expect(await reads()).toMatchObject({ cases: loaded.cases, submissions: loaded.submissions });
   });
 });
 
-describe('Change accounts without disclosing the prior account\'s draft (spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account\'s draft")', () => {
-  it('signing out erases the report draft, and neither the next account nor the returning one sees it (spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor")', async () => {
+describe('Change accounts without disclosing the prior account\'s draft', () => {
+  // spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account's draft"
+  it('signing out erases the report draft, and neither the next account nor the returning one sees it', async () => {
+    // spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"
     await site.allow(...expectedFailures);
     const summary = "Private draft that must not survive sign-out";
     await signIn(users.rae.login, programPath(plainKit));
@@ -370,8 +389,10 @@ describe('Change accounts without disclosing the prior account\'s draft (spec/fr
   });
 });
 
-describe('Carry one report from durable receipt to a decision and optional forwarding (spec/security/journey.md, "Story: Carry one report from durable receipt to a decision and optional forwarding"; spec/security/cases.md, "Story: Obtain a human decision on every report the routine pass leaves open")', () => {
-  it('the reporter and the current maintainer each see the case, an outsider sees none, the maintainer may mark a rejection as spam and the mark is sent with the decision, and a maintainer whose role is revoked loses the case (spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days")', async () => {
+describe('Carry one report from receipt to decision', () => {
+  // spec/security/journey.md, "Story: Carry one report from durable receipt to a decision and optional forwarding"; spec/security/cases.md, "Story: Obtain a human decision on every report the routine pass leaves open"
+  it('reporter and maintainer see case, outsider sees none, spam mark sends, revoked role loses access', async () => {
+    // spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
     await site.allow(...expectedFailures);
     await signIn(users.rae.login, programPath(vaultKit));
     await writeReport("Share rounding lets a deposit mint for free", "Depositing one wei rounds the share price down to zero at the attached commit.");
@@ -384,23 +405,23 @@ describe('Carry one report from durable receipt to a decision and optional forwa
 
     await site.open("/security");
     await shown(named("heading", "Security cases", { level: 1 })).toMatchObject({ visible: true });
-    await site.click(caseButton(caseId));
+    await site.click(named("button", "Open case", { within: reportCard(caseId) }));
     await expect.poll(async () => (await searchOf()).get("case"), { timeout: journeyMs }).toBe(caseId);
     await shown(named("button", "Back to reports")).toMatchObject({ visible: true });
     await site.click(named("button", "Back to reports"));
     await expect.poll(async () => (await searchOf()).has("case"), { timeout: journeyMs }).toBe(false);
-    await shown(caseButton(caseId)).toMatchObject({ visible: true });
+    await shown(reportCard(caseId)).toMatchObject({ visible: true });
     await signOut(users.rae.login);
 
     await signIn(users.out.login, "/security");
-    await shown({ text: "No cases", exact: true }).toMatchObject({ visible: true });
+    await shown({ text: "No reports", exact: true }).toMatchObject({ visible: true });
     expect(await site.leaks(caseId.slice(-8))).toBe(false);
     await signOut(users.out.login);
 
     await signIn(users.max.login, `/security?case=${caseId}`);
     await shown(named("button", "Back to reports")).toMatchObject({ visible: true });
     await shown(named("region", "Case actions")).toMatchObject({ visible: true });
-    await shown(caseButton(caseId)).toMatchObject({ visible: true });
+    await shown(reportCard(caseId)).toMatchObject({ visible: true });
 
     const decision = named("form", "Decide");
     const outcome: Target = { label: "Outcome", within: decision };
@@ -424,13 +445,16 @@ describe('Carry one report from durable receipt to a decision and optional forwa
     await publishRevision(vaultKit, 2, bountyTerms(vaultKit, [users.fin], ownerLines));
     await site.open("/security");
     await shown(named("heading", "Security cases", { level: 1 })).toMatchObject({ visible: true });
-    await expect.poll(() => site.read(caseButton(caseId)), { timeout: journeyMs }).toMatchObject({ count: 0 });
+    await expect.poll(() => site.read(reportCard(caseId)), { timeout: journeyMs }).toMatchObject({ count: 0 });
+    await shown(caseButton(caseId)).toMatchObject({ count: 0 });
     await shown(named("region", "Case actions")).toMatchObject({ count: 0 });
   });
 });
 
-describe('Close and reopen an account without losing history (spec/backend/accounts.md, "Story: Close and reopen an account without losing history")', () => {
-  it('closing a reporter who holds an unpaid award and a private case keeps both, reads neither while closed, and only an explicit reopen shows the case again (spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/settlement/payment.md, "An approved obligation retains its immutable amount and purpose")', async () => {
+describe('Close and reopen an account without losing history', () => {
+  // spec/backend/accounts.md, "Story: Close and reopen an account without losing history"
+  it('closing keeps unpaid award and private case unread until explicit reopen', async () => {
+    // spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/settlement/payment.md, "An approved obligation retains its immutable amount and purpose"
     await site.allow("^console Failed to load resource: the server responded with a status of 40[139]", "^40[13] (GET|POST) /api/v1/", "^409 POST /api/v1/points/join$");
     await signIn(users.rae.login, programPath(vaultKit));
     await writeReport("Withdraw queue skips a paused vault", "Withdrawals queued while the vault is paused bypass the share check at the attached commit.");
@@ -470,13 +494,15 @@ describe('Close and reopen an account without losing history (spec/backend/accou
     expect(await retained()).toEqual(before);
     await site.click(named("button", "Reopen account"));
     await at("/security");
-    await shown(caseButton(caseId)).toMatchObject({ visible: true });
+    await shown(reportCard(caseId)).toMatchObject({ visible: true });
     expect(await retained()).toEqual(before);
   });
 });
 
-describe('Decide an award under the terms that accompanied the report (spec/security/terms.md, "Story: Decide an award under the terms that accompanied the report")', () => {
-  it('the published program lists the ten defaults with the routine-decision notice, then the owner lines only when the terms carry them (spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner")', async () => {
+describe('Decide an award under the terms that accompanied the report', () => {
+  // spec/security/terms.md, "Story: Decide an award under the terms that accompanied the report"
+  it('published program lists ten defaults with routine notice, plus owner lines when present', async () => {
+    // spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner"
     await site.open(programPath(vaultKit));
     const scope = named("region", "Scope");
     await shown(named("heading", "Does not qualify", { within: scope })).toMatchObject({ visible: true });
@@ -494,7 +520,8 @@ describe('Decide an award under the terms that accompanied the report (spec/secu
     expect(SECURITY_DEFAULT_EXCLUSIONS.every((line) => plain.includes(line))).toBe(true);
   });
 
-  it('only the steward manages the bounty, and the owner lines it publishes are stored trimmed and shown on the page and in the editor (spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled")', async () => {
+  it('only steward manages bounty and published owner lines are stored trimmed and displayed', async () => {
+    // spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"
     await site.allow(...expectedFailures);
     const settings = `${programPath(plainKit)}#security-settings`;
     await signIn(users.out.login, settings);
@@ -506,6 +533,7 @@ describe('Decide an award under the terms that accompanied the report (spec/secu
 
     const lines = ["Gas refunds below one cent", "Reports about the retired faucet"];
     await signIn(users.max.login, settings);
+    await site.click({ text: "Scope and testing", exact: true });
     const field = named("textbox", "Also does not qualify");
     await shown(field).toMatchObject({ visible: true, value: "" });
     await site.fill(field, `  ${lines.join("\n\n")}\n`);
@@ -519,6 +547,7 @@ describe('Decide an award under the terms that accompanied the report (spec/secu
     await shown(named("heading", "Also does not qualify for this program")).toMatchObject({ visible: true });
     const scope = (await site.read(named("region", "Scope"))).text;
     expect(lines.every((line) => scope.includes(line))).toBe(true);
+    await site.click({ text: "Scope and testing", exact: true });
     await shown(named("textbox", "Also does not qualify")).toMatchObject({ value: lines.join("\n") });
 
     await site.fill(named("textbox", "Also does not qualify"), "");
@@ -546,8 +575,10 @@ async function seedNotices(user: User, count: number) {
 const unreadOf = (user: User) => site.sql("SELECT count(*) AS unread FROM notifications WHERE recipient_github_id = ? AND read_at IS NULL", String(user.id));
 const noticeLink = (subject: string) => named("link", `${subject} settings changed: Open project`);
 
-describe('Read, acknowledge and escalate private case notices (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices")', () => {
-  it('the Inbox pages notices, marks one or a whole page read, asks no acknowledgment of other notices and shows nothing of another account (spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route")', async () => {
+describe('Read, acknowledge and escalate private case notices', () => {
+  // spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"
+  it('Inbox pages notices, marks read, omits unneeded acknowledgments and isolates accounts', async () => {
+    // spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"
     await site.allow(...expectedFailures);
     await seedNotices(users.rae, 101);
     await signIn(users.rae.login, "/inbox");
@@ -589,7 +620,8 @@ describe('Read, acknowledge and escalate private case notices (spec/operations/n
     expect(await unreadOf(users.rae)).toEqual([{ unread: 1 }]);
   });
 
-  it('a report receipt reaches the reporter\'s Inbox as a received notice that asks for no acknowledgment (spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', async () => {
+  it('a report receipt reaches the reporter\'s Inbox as a received notice that asks for no acknowledgment', async () => {
+    // spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"
     await site.allow(...expectedFailures);
     await signIn(users.rae.login, programPath(vaultKit));
     await writeReport("Fee rounding moves dust to the owner", "The withdrawal fee rounds up on every leg, which the attached test sums to a loss.");
@@ -599,7 +631,7 @@ describe('Read, acknowledge and escalate private case notices (spec/operations/n
 
     await site.open("/inbox");
     const received = named("link", "received: Open security cases", { exact: false });
-    await shown(received).toMatchObject({ visible: true, href: expect.stringContaining("/security") });
+    await shown(received).toMatchObject({ visible: true, href: expect.stringContaining("/inbox?submission=") });
     await shown(named("button", "Acknowledge:", { exact: false })).toMatchObject({ count: 0 });
     await site.click(named("button", "Mark as read:", { exact: false }));
     await expect
@@ -608,8 +640,10 @@ describe('Read, acknowledge and escalate private case notices (spec/operations/n
   });
 });
 
-describe('The author appeals and Slopbot triages first (spec/slopbot/appeals.md, "Story: The author appeals and Slopbot triages first"; spec/slopbot/appeals.md, "Story: The draft is accepted or rejected, and escalated appeals go to a moderator")', () => {
-  it('an escalated contribution appeal opens from the moderator Inbox, is marked read, and shows its resolution (spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', async () => {
+describe('The author appeals and Slopbot triages first', () => {
+  // spec/slopbot/appeals.md, "Story: The author appeals and Slopbot triages first"; spec/slopbot/appeals.md, "Story: The draft is accepted or rejected, and escalated appeals go to a moderator"
+  it('escalated appeal opens from moderator Inbox, marks read, and shows resolution', async () => {
+    // spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"
     await site.allow(...expectedFailures);
     const key = "appeal:browser-journey:revision";
     const at = new Date().toISOString();
@@ -634,6 +668,7 @@ describe('The author appeals and Slopbot triages first (spec/slopbot/appeals.md,
     await site.click(named("button", "Mark as read: Appeal to decide", { exact: false }));
     await shown(named("img", "Unread")).toMatchObject({ count: 0 });
     await shown(named("button", "Mark as read: Appeal to decide", { exact: false })).toMatchObject({ count: 0 });
+    await expect.poll(() => site.sql("SELECT read_at FROM notifications WHERE event_key = ?", `slopbot-${key}`), { timeout: journeyMs }).toEqual([{ read_at: expect.any(String) }]);
 
     await site.sql("UPDATE slopbot_appeals SET resolved_at = ?, resolution = 'denied', resolved_by = 'moderator' WHERE appeal_key = ?", new Date().toISOString(), key);
     await site.open("/inbox");
@@ -669,8 +704,10 @@ async function seedAward(user: User, amount: number) {
 
 const disputesOf = (revisionId: string) => site.sql("SELECT appeal_key, appellant_github_id, statement, resolution, resolved_by, resolver_github_id FROM points_disputes WHERE revision_id = ?", revisionId);
 
-describe('A recipient disputes their own current Points record privately (spec/points/disputes.md, "Story: A recipient disputes their own current Points record privately")', () => {
-  it('the recipient files one review with a reason from the Inbox, and a moderator other than the recipient decides it once it escalates (spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason")', async () => {
+describe('A recipient disputes their own current Points record privately', () => {
+  // spec/points/disputes.md, "Story: A recipient disputes their own current Points record privately"
+  it('recipient files review from Inbox and another moderator decides once escalated', async () => {
+    // spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"
     await site.allow(...expectedFailures);
     const revisionId = await seedAward(users.rae, 40);
     const statement = "This pull request fixed the vault test suite; the score missed the second commit.";

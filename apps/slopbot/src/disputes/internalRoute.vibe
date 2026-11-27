@@ -24,7 +24,7 @@ export const pointsDisputeTriage = route({
 
 function invalid() {
   const row = slopbotPostV1PointsDisputes.invalidRequestS400
-  return json({ error: row.error }, row.status, row.headers)
+  return HttpServerResponse.jsonUnsafe({ error: row.error }, { status: row.status, contentType: "application/json" })
 }
 
 effect function requestedKey() {

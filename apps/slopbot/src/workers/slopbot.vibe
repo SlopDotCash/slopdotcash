@@ -100,7 +100,7 @@ export const HistoricalValuePublisher = entrypoint(publisherLayer, publisherMeth
 
 export default worker({
   services,
-  routes: Layer.mergeAll(ingressRoutes, feedRoutes, repositoryAccessRoutes, pointsDisputeRoutes),
+  routes: Layer.mergeAll(ingressRoutes, feedRoutes, repositoryAccessRoutes, pointsDisputeRoutes, HttpRouter.add("*", "*", HttpServerResponse.text("not found", { status: 404, contentType: "text/plain;charset=UTF-8" }))),
   scheduled,
   queue: (message) => settle(message, dispatchJob),
 })

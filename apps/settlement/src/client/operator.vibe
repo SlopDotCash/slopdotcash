@@ -49,6 +49,9 @@ export const reconcileBindingRoute = route({
   answer: RecoveryAnswer,
   rejected: "recovery_pending_or_rejected",
   cache: "no-store",
+  refusalHeaders: { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" },
+  originRefusal: { status: 403, code: "origin_not_allowed", message: "Same-origin access is required" },
+  unauthenticated: { status: 401, code: "unauthorized", message: "Authentication failed" },
 })
 
 export const reservedAwardsRoute = route({

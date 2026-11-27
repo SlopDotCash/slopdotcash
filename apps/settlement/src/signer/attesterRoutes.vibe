@@ -28,10 +28,10 @@ const projectPattern = /^[a-z0-9][a-z0-9-]*$/u
 const periodPattern = /^[2-9][0-9]{3}-(0[1-9]|1[0-2])$/u
 const digestPattern = /^[a-f0-9]{64}$/u
 
-const notFound = HttpServerResponse.text("Not found", { status: attesterPostV1Pay.notFoundV2.status })
+const notFound = HttpServerResponse.text("Not found", { status: attesterPostV1Pay.notFoundV2.status, contentType: "text/plain;charset=UTF-8" })
 
 function refusedWith(row: { readonly status: number; readonly error: string }) {
-  return json({ error: row.error }, row.status)
+  return HttpServerResponse.jsonUnsafe({ error: row.error }, { status: row.status, headers: { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" }, contentType: "application/json" })
 }
 
 const pendingOrRejected = refusedWith(attesterPostV1BindDestinations.executionPendingOrRejected)
@@ -151,7 +151,11 @@ effect function served(env: AttesterObjectEnv) {
   const request = try HttpServerRequest.HttpServerRequest
   const url = new URL(request.url, "https://attester.internal")
   if (request.method !== "POST") return notFound
-  if (url.pathname === "/v1/reconcile-binding") return try reconcile(env, try pinnedScopes(env))
+  if (url.pathname === "/v1/reconcile-binding") {
+    return effect {
+      return try reconcile(env, try pinnedScopes(env))
+    } catch effect (error) => try recoveryRefusal(error)
+  }
   const { scope, path } = scopeOfPath(url.pathname)
   const scopes = try pinnedScopes(env)
   if (!scopes.some((pinned) => pinned.kind === scope.kind)) return notFound
