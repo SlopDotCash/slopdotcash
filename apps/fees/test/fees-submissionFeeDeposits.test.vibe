@@ -378,8 +378,11 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     try write(sql`UPDATE standing_deposits SET outcome = 'refund_due', outcome_reason = 'withdrawn', outcome_at = '2026-11-25T00:00:00.000Z' WHERE id = 'sd_withdrawn_row'`)
     try write(sql`UPDATE standing_deposits SET outcome = 'kept_due', outcome_reason = 'strike', outcome_at = '2026-11-25T00:00:00.000Z', strike_repository_id = 900, strike_pull_number = 1 WHERE id = 'sd_strike_row_1'`)
     const decided = try runOn(standingNetwork)
-    ledger.resolutions = [{ id: 1n, refunded: true, block: 34, token: slop, to: payer, amount: due }, { id: 3n, refunded: false, block: 35, token: slop, to: burn, amount: due }]
+    ledger.resolutions = [{ id: 1n, refunded: true, block: 34, token: slop, to: burn, amount: due }]
     heads(ledger, 40, 36)
+    const unproven = try Effect.flip(runOn(standingNetwork))
+    const afterUnproven = try standingSeen()
+    ledger.resolutions = [{ id: 1n, refunded: true, block: 34, token: slop, to: payer, amount: due }, { id: 3n, refunded: false, block: 35, token: slop, to: burn, amount: due }]
     const resolved = try runOn(standingNetwork)
     const settled = try standingSeen()
     const blockTime = (block: number) => new Date((1_800_000_000 + block * 2) * 1000).toISOString()
@@ -392,6 +395,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       reorganised: [reorganised.deposits.map((row) => row.deposit_id), paidBy(reorganised)],
       paidAgain: [paidAgain.deposits[1], paidBy(paidAgain)],
       decided: decided.planned,
+      unproven: [unproven._tag, "issue" in unproven ? unproven.issue : undefined, afterUnproven.deposits.map((row) => row.state), afterUnproven.rows.map((row) => row.outcome)],
       resolved: resolved.scanned.resolved,
       settled: [settled.deposits.map((row) => row.state), settled.rows],
     }, {
@@ -402,6 +406,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       reorganised: [[1], [null, 1]],
       paidAgain: [{ deposit_id: 3, accepted: 1, reject_reason: null, state: "open" }, [3, 1]],
       decided: [{ id: 1, refund: true }, { id: 3, refund: false }],
+      unproven: ["SubmissionFeeRefused", "Resolved receipt does not prove the transfer", ["refund_due", "kept_due"], ["kept_due", "refund_due"]],
       resolved: 2,
       settled: [["refunded", "kept"], [
         { id: "sd_strike_row_1", paid_deposit_id: 3, outcome: "kept", outcome_at: blockTime(35) },

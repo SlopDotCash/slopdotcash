@@ -9,7 +9,7 @@ import { type DepositedEvent, type SubmissionFeeChain, SubmissionFeeRefused } fr
 import { observedOf } from "./codec.vibe"
 import type { NetworkConfig } from "./config.vibe"
 import { standingFinalOutcome, unpayStandingWithoutDeposit } from "./standing.vibe"
-import { STANDING_DEPOSIT_LEDGER } from "./standingTerms.ts"
+import { STANDING_DEPOSIT_LEDGER, chainOf } from "./standingTerms.ts"
 import { type Resolution, advanceCursor, cursor, recordResolution, removeMissing, removeReorganised, storedDeposit, upsertDeposit } from "./store.vibe"
 
 interface Scanned {
@@ -88,7 +88,7 @@ effect function finalizedPage(network: NetworkConfig, chain: SubmissionFeeChain,
     const stored = pending === undefined ? try storedDeposit(network.network, event.depositId) : null
     const source: Source | null = pending ?? (stored !== null && stored.finalizedAt !== null ? stored : null)
     if (source === null) throw refused("Resolved event for an unknown deposit")
-    if (tokenKind(network.network, source.token.toLowerCase()) !== "NoToken")
+    if (tokenKind(chainOf(network.network), source.token.toLowerCase()) !== "NoToken")
       try chain.assertResolvedTransfer(event, { token: source.token, recipient: event.refunded ? source.payer : source.keptTo, amount: source.amount })
     resolutions.push({ depositId: event.depositId, state: event.refunded ? "refunded" : "kept", txHash: event.txHash, at })
   }

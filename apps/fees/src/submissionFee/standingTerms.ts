@@ -43,7 +43,8 @@ function sameAddress(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
 }
 
-function chainOf(network: string): string {
+/** @throws {never} */
+export function chainOf(network: string): string {
   return network === STANDING_DEPOSIT_LEDGER ? STANDING_DEPOSIT_NETWORK : network;
 }
 
