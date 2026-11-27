@@ -206,6 +206,7 @@ export function parseHunks(patch: string, added: boolean): ParsedHunks {
         marker = true;
         previous = "";
       } else {
+        if (line.length === 0) return refusedHunks;
         const tag = line.slice(0, 1);
         if ((tag !== " " && tag !== "+" && tag !== "-") || (marker && tag === " ")) return refusedHunks;
         if (
@@ -268,11 +269,13 @@ export function sameHunks(left: Hunk[], right: Hunk[]): boolean {
 /** @throws {never} */
 export function lineStarts(source: string): number[] {
   //@ ensures \result.length >= 1
+  //@ ensures forall(k, 0 <= k && k < \result.length ==> 0 <= \result[k] && \result[k] <= source.length)
   const starts: number[] = [0];
   let i = 0;
   while (i < source.length) {
     //@ invariant 0 <= i && i <= source.length
     //@ invariant starts.length >= 1
+    //@ invariant forall(k, 0 <= k && k < starts.length ==> 0 <= starts[k] && starts[k] <= source.length)
     //@ decreases source.length - i
     if (source.charCodeAt(i) === 10) starts.push(i + 1);
     i = i + 1;
@@ -291,6 +294,7 @@ export function hasSubmittedPostimages(source: string, hunks: Hunk[]): boolean {
     const line = hunk.newStart - 1;
     if (hunk.after.length === 0 || line < 0 || line >= starts.length) return false;
     const start = starts[line];
+    if (start + hunk.after.length > source.length) return false;
     if (source.slice(start, start + hunk.after.length) !== hunk.after) return false;
     if (!endsWithNewline(hunk.after) && start + hunk.after.length !== source.length) return false;
     i = i + 1;

@@ -153,18 +153,45 @@ export function coverageText(entry: Coverage): string {
     + ",\"digest\":" + quoted(entry.digest) + "}";
 }
 
+function coverageListText(entries: readonly Coverage[]): string {
+  let out = "";
+  let i = 0;
+  while (i < entries.length) {
+    //@ invariant 0 <= i && i <= entries.length
+    //@ decreases entries.length - i
+    if (i > 0) out = out + ",";
+    out = out + coverageText(entries[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function revisionListText(revisions: readonly Revision[]): string {
+  let out = "";
+  let i = 0;
+  while (i < revisions.length) {
+    //@ invariant 0 <= i && i <= revisions.length
+    //@ decreases revisions.length - i
+    if (i > 0) out = out + ",";
+    out = out + revisionText(revisions[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
 /** @throws {never} */
 export function journalText(journal: Journal): string {
   return "{\"schemaVersion\":" + quoted(journal.schemaVersion)
     + ",\"ruleVersion\":" + quoted(journal.ruleVersion)
     + ",\"generatedAt\":" + quoted(journal.generatedAt)
-    + ",\"coverage\":[" + journal.coverage.map((entry) => coverageText(entry)).join(",")
-    + "],\"revisions\":[" + journal.revisions.map((revision) => revisionText(revision)).join(",") + "]}";
+    + ",\"coverage\":[" + coverageListText(journal.coverage)
+    + "],\"revisions\":[" + revisionListText(journal.revisions) + "]}";
 }
 
 /** @throws {never} */
 export function keyText(parts: KeyParts): string {
   const unit = parts.workUnitId;
-  const tail = unit === undefined ? "" : "," + quoted(unit);
+  let tail = "";
+  if (unit !== undefined) tail = "," + quoted(unit);
   return "[" + quoted(parts.projectId) + "," + quoted(parts.actorId) + "," + quoted(parts.category) + "," + quoted(parts.sourceId) + tail + "]";
 }

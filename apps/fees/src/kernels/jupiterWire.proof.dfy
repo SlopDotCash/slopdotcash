@@ -35,6 +35,15 @@ lemma LittleEndianRoundTrip(value: int, width: int)
   }
 }
 
+lemma DivMod256(b: int, r: int)
+  requires 0 <= b <= 255 && 0 <= r
+  ensures (b + 256 * r) % 256 == b
+  ensures (b + 256 * r) / 256 == r
+  ensures JSRem(b + 256 * r, 256) == b
+  ensures JSTruncDiv(b + 256 * r, 256) == r
+{
+}
+
 lemma LittleEndianBytesOfRead(data: seq<int>, at: int, width: int)
   requires 0 <= at && 0 <= width && at + width <= |data|
   requires forall i :: 0 <= i < |data| ==> 0 <= data[i] <= 255
@@ -48,11 +57,8 @@ lemma LittleEndianBytesOfRead(data: seq<int>, at: int, width: int)
     var value := littleEndian(data, at, width);
     assert value == data[at] + 256 * rest;
     assert byteSpan(width) == 256 * byteSpan(width - 1);
-    assert value % 256 == data[at];
-    assert value / 256 == rest;
-    assert JSRem(value, 256) == value % 256;
-    assert JSTruncDiv(value, 256) == value / 256;
-    assert littleEndianBytes(value, width) == [value % 256] + littleEndianBytes(value / 256, width - 1);
+    DivMod256(data[at], rest);
+    assert littleEndianBytes(value, width) == [data[at]] + littleEndianBytes(rest, width - 1);
     assert data[at .. at + width] == [data[at]] + data[at + 1 .. at + width];
   }
 }
@@ -106,8 +112,13 @@ lemma SubSlice(data: seq<int>, data2: seq<int>, at: int, at2: int, length: int, 
   requires data2[at2 .. at2 + length] == data[at .. at + length]
   ensures data2[at2 + x .. at2 + y] == data[at + x .. at + y]
 {
-  assert data2[at2 + x .. at2 + y] == data2[at2 .. at2 + length][x .. y];
-  assert data[at + x .. at + y] == data[at .. at + length][x .. y];
+  var s1 := data2[at2 + x .. at2 + y];
+  var s2 := data[at + x .. at + y];
+  forall j | 0 <= j < y - x
+    ensures s1[j] == s2[j]
+  {
+    assert data2[at2 .. at2 + length][x + j] == data[at .. at + length][x + j];
+  }
 }
 
 lemma PrefixLocal(data: seq<int>, data2: seq<int>, at: int, at2: int, length: int)
@@ -145,6 +156,8 @@ lemma EncodeAppend(table: WireTable, a: seq<WireNode>, b: seq<WireNode>)
   ensures encodeNodes(table, a + b) == encodeNodes(table, a) + encodeNodes(table, b)
   decreases |a|
 {
+  hide *;
+  reveal encodeNodes;
   forall k: int | 0 <= k < |a + b|
     ensures 0 <= (a + b)[k].shape < |table.shapes| && 0 <= (a + b)[k].number
   {
@@ -160,9 +173,6 @@ lemma EncodeAppend(table: WireTable, a: seq<WireNode>, b: seq<WireNode>)
     assert (a + b)[0] == a[0];
     assert (a + b)[1..] == a[1..] + b;
     EncodeAppend(table, a[1..], b);
-    assert encodeNodes(table, a + b) == nodeBytes(table, a[0]) + (encodeNodes(table, a[1..]) + encodeNodes(table, b));
-    assert encodeNodes(table, a) == nodeBytes(table, a[0]) + encodeNodes(table, a[1..]);
-    assert nodeBytes(table, a[0]) + (encodeNodes(table, a[1..]) + encodeNodes(table, b)) == (nodeBytes(table, a[0]) + encodeNodes(table, a[1..])) + encodeNodes(table, b);
   }
 }
 
@@ -182,6 +192,7 @@ lemma ReadFacts(data: seq<int>, table: WireTable, shape: int, at: nat, nodes: in
   requires forall i: int :: ((0 <= i) ==> (i < |data|) ==> ((0 <= data[i]) && (data[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires 0 <= shape < |table.shapes|
   requires 0 <= depth <= maximumDepth + 1
@@ -294,6 +305,7 @@ lemma ItemsFacts(data: seq<int>, table: WireTable, repeated: bool, child: int, f
   requires forall i: int :: ((0 <= i) ==> (i < |data|) ==> ((0 <= data[i]) && (data[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires repeated ==> 0 <= child < |table.shapes|
   requires !repeated ==> 0 <= first && first + count <= |table.members|
@@ -335,6 +347,7 @@ lemma ReadLocal(data: seq<int>, data2: seq<int>, table: WireTable, shape: int, a
   requires forall i: int :: ((0 <= i) ==> (i < |data2|) ==> ((0 <= data2[i]) && (data2[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires 0 <= shape < |table.shapes|
   requires 0 <= depth <= maximumDepth + 1
@@ -344,11 +357,12 @@ lemma ReadLocal(data: seq<int>, data2: seq<int>, table: WireTable, shape: int, a
   ensures var r := readShape(data, table, shape, at, nodes, depth); readShape(data2, table, shape, at2, nodes, depth) == WireRead(0, at2 + (r.at - at), r.nodes, r.node, r.items)
   decreases (maximumDepth + 1 - depth) * 258
 {
+  hide *;
+  reveal readShape, withNode, refusal, unsignedShape, boolShape, bytesShape, optionShape, vecShape, arrayShape, structShape, enumShape, maximumNodes, maximumDepth, maximumCollection, boundsExceeded, truncated, collectionTooLarge, invalidBool, invalidOption, unknownVariant;
   var r := readShape(data, table, shape, at, nodes, depth);
   var length := r.at - at;
   var n := nodes + 1;
   var s := table.shapes[shape];
-  assert shapeWellFormed(s, |table.shapes|, |table.members|);
   assert n <= maximumNodes && depth <= maximumDepth;
   if s.kind == unsignedShape {
     assert r.at == at + s.width;
@@ -393,7 +407,6 @@ lemma ReadLocal(data: seq<int>, data2: seq<int>, table: WireTable, shape: int, a
       assert s.kind == enumShape && data[at] < s.count;
       var variant := table.shapes[table.members[s.first + data[at]]];
       assert variant.kind == structShape;
-      assert shapeWellFormed(variant, |table.shapes|, |table.members|);
       var w := readItems(data, table, false, 0, variant.first, variant.count, 0, at + 1, n, depth + 1);
       assert r == withNode(WireNode(shape, data[at], []), w);
       ItemsFacts(data, table, false, 0, variant.first, variant.count, 0, at + 1, n, depth + 1);
@@ -409,6 +422,7 @@ lemma ItemsLocal(data: seq<int>, data2: seq<int>, table: WireTable, repeated: bo
   requires forall i: int :: ((0 <= i) ==> (i < |data2|) ==> ((0 <= data2[i]) && (data2[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires repeated ==> 0 <= child < |table.shapes|
   requires !repeated ==> 0 <= first && first + count <= |table.members|
@@ -420,6 +434,8 @@ lemma ItemsLocal(data: seq<int>, data2: seq<int>, table: WireTable, repeated: bo
   ensures var w := readItems(data, table, repeated, child, first, count, i, at, nodes, depth); readItems(data2, table, repeated, child, first, count, i, at2, nodes, depth) == WireItems(0, at2 + (w.at - at), w.nodes, w.items)
   decreases (maximumDepth + 1 - depth) * 258 + count - i + 1
 {
+  hide *;
+  reveal readItems;
   if i < count {
     var w := readItems(data, table, repeated, child, first, count, i, at, nodes, depth);
     var sh := if repeated then child else table.members[first + i];
@@ -442,6 +458,7 @@ lemma DecodeEncode(data: seq<int>, data2: seq<int>, table: WireTable, shape: int
   requires forall i: int :: ((0 <= i) ==> (i < |data2|) ==> ((0 <= data2[i]) && (data2[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires 0 <= shape < |table.shapes|
   requires 0 <= depth <= maximumDepth + 1
@@ -461,10 +478,11 @@ lemma DecodeEncode(data: seq<int>, data2: seq<int>, table: WireTable, shape: int
   }
 }
 
-lemma FieldsFacts(data: seq<int>, table: WireTable, first: int, count: int, plan: int, i: int, at: nat, nodes: int)
+lemma FieldsBounds(data: seq<int>, table: WireTable, first: int, count: int, plan: int, i: int, at: nat, nodes: int)
   requires forall i: int :: ((0 <= i) ==> (i < |data|) ==> ((0 <= data[i]) && (data[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires 0 <= first && first + count <= |table.members| && 0 <= i <= count
   requires at <= |data|
@@ -473,31 +491,38 @@ lemma FieldsFacts(data: seq<int>, table: WireTable, first: int, count: int, plan
   ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> |f.fields| == count - i
   ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 && i < count ==> f.fields[0].start == at && f.fields[|f.fields| - 1].end == f.at
   ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> forall k: int :: 0 <= k < |f.fields| ==> at <= f.fields[k].start <= f.fields[k].end <= f.at && (k + 1 < |f.fields| ==> f.fields[k].end == f.fields[k + 1].start)
-  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> forall k: int :: 0 <= k < |f.fields| && table.shapes[table.members[first + i + k]].kind == unsignedShape ==> f.fields[k].end == f.fields[k].start + table.shapes[table.members[first + i + k]].width && f.fields[k].value == littleEndian(data, f.fields[k].start, table.shapes[table.members[first + i + k]].width)
-  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> forall k: int :: 0 <= k < |f.fields| && table.shapes[table.members[first + i + k]].kind == vecShape ==> f.fields[k].start + 4 <= f.fields[k].end && f.fields[k].value == lengthPrefix(data, f.fields[k].start)
-  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 && i <= plan < count ==> f.plan == f.fields[plan - i].value
   decreases count - i
 {
+  hide *;
+  reveal readFields, maximumDepth;
   var f := readFields(data, table, first, count, plan, i, at, nodes);
   if i < count {
     var sh := table.members[first + i];
     var field := readShape(data, table, sh, at, nodes, 0);
     ReadFacts(data, table, sh, at, nodes, 0);
-    assert shapeWellFormed(table.shapes[sh], |table.shapes|, |table.members|);
     if field.error == 0 {
       var rest := readFields(data, table, first, count, plan, i + 1, field.at, field.nodes);
-      FieldsFacts(data, table, first, count, plan, i + 1, field.at, field.nodes);
+      FieldsBounds(data, table, first, count, plan, i + 1, field.at, field.nodes);
       var head := WireField(at, field.at, field.node.number);
       assert f == WireFields(rest.error, rest.at, rest.nodes, (if i == plan then field.node.number else rest.plan), [head] + rest.fields);
       if f.error == 0 {
         assert f.fields[0] == head;
-        forall k: int | 0 < k < |f.fields|
-          ensures f.fields[k] == rest.fields[k - 1]
-          ensures table.members[first + i + k] == table.members[first + (i + 1) + (k - 1)]
-        {
+        if i + 1 < count {
+          assert f.fields[|f.fields| - 1] == rest.fields[|rest.fields| - 1];
         }
-        if i < plan < count {
-          assert f.fields[plan - i] == rest.fields[plan - (i + 1)];
+        forall k: int | 0 <= k < |f.fields|
+          ensures at <= f.fields[k].start <= f.fields[k].end <= f.at && (k + 1 < |f.fields| ==> f.fields[k].end == f.fields[k + 1].start)
+        {
+          if k == 0 {
+            if 1 < |f.fields| {
+              assert f.fields[1] == rest.fields[0];
+            }
+          } else {
+            assert f.fields[k] == rest.fields[k - 1];
+            if k + 1 < |f.fields| {
+              assert f.fields[k + 1] == rest.fields[k];
+            }
+          }
         }
       }
     }
@@ -506,10 +531,69 @@ lemma FieldsFacts(data: seq<int>, table: WireTable, first: int, count: int, plan
   }
 }
 
+lemma FieldsValues(data: seq<int>, table: WireTable, first: int, count: int, plan: int, i: int, at: nat, nodes: int)
+  requires forall i: int :: ((0 <= i) ==> (i < |data|) ==> ((0 <= data[i]) && (data[i] <= 255)))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
+  requires 0 <= first && first + count <= |table.members| && 0 <= i <= count
+  requires at <= |data|
+  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> |f.fields| == count - i
+  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> forall k: int :: 0 <= k < |f.fields| ==> at <= f.fields[k].start <= f.fields[k].end <= |data|
+  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> forall k: int :: 0 <= k < |f.fields| && table.shapes[table.members[first + i + k]].kind == unsignedShape ==> f.fields[k].end == f.fields[k].start + table.shapes[table.members[first + i + k]].width && f.fields[k].value == littleEndian(data, f.fields[k].start, table.shapes[table.members[first + i + k]].width)
+  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 ==> forall k: int :: 0 <= k < |f.fields| && table.shapes[table.members[first + i + k]].kind == vecShape ==> f.fields[k].start + 4 <= f.fields[k].end && f.fields[k].value == lengthPrefix(data, f.fields[k].start)
+  ensures var f := readFields(data, table, first, count, plan, i, at, nodes); f.error == 0 && i <= plan < count ==> f.plan == f.fields[plan - i].value
+  decreases count - i
+{
+  hide *;
+  reveal readFields, maximumDepth;
+  FieldsBounds(data, table, first, count, plan, i, at, nodes);
+  var f := readFields(data, table, first, count, plan, i, at, nodes);
+  if i < count {
+    var sh := table.members[first + i];
+    var field := readShape(data, table, sh, at, nodes, 0);
+    ReadFacts(data, table, sh, at, nodes, 0);
+    if field.error == 0 {
+      var rest := readFields(data, table, first, count, plan, i + 1, field.at, field.nodes);
+      FieldsValues(data, table, first, count, plan, i + 1, field.at, field.nodes);
+      var head := WireField(at, field.at, field.node.number);
+      assert f == WireFields(rest.error, rest.at, rest.nodes, (if i == plan then field.node.number else rest.plan), [head] + rest.fields);
+      if f.error == 0 {
+        assert f.fields[0] == head;
+        forall k: int | 0 <= k < |f.fields| && table.shapes[table.members[first + i + k]].kind == unsignedShape
+          ensures f.fields[k].end == f.fields[k].start + table.shapes[table.members[first + i + k]].width && f.fields[k].value == littleEndian(data, f.fields[k].start, table.shapes[table.members[first + i + k]].width)
+        {
+          if k == 0 {
+            assert table.members[first + i + 0] == sh;
+          } else {
+            assert f.fields[k] == rest.fields[k - 1];
+            assert first + i + k == first + (i + 1) + (k - 1);
+          }
+        }
+        forall k: int | 0 <= k < |f.fields| && table.shapes[table.members[first + i + k]].kind == vecShape
+          ensures f.fields[k].start + 4 <= f.fields[k].end && f.fields[k].value == lengthPrefix(data, f.fields[k].start)
+        {
+          if k == 0 {
+            assert table.members[first + i + 0] == sh;
+          } else {
+            assert f.fields[k] == rest.fields[k - 1];
+            assert first + i + k == first + (i + 1) + (k - 1);
+          }
+        }
+        if i < plan < count {
+          assert f.fields[plan - i] == rest.fields[plan - (i + 1)];
+        }
+      }
+    }
+  }
+}
+
 lemma DecodeLayoutFacts(data: seq<int>, table: WireTable, layout: int)
   requires forall i: int :: ((0 <= i) ==> (i < |data|) ==> ((0 <= data[i]) && (data[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires forall l: int :: ((0 <= l) ==> (l < |table.layouts|) ==> (((((((|table.layouts[l].discriminator| == discriminatorBytes) && (0 <= table.layouts[l].args)) && (table.layouts[l].args < |table.shapes|)) && (table.shapes[table.layouts[l].args].kind == structShape)) && (0 <= table.layouts[l].routePlan)) && (table.layouts[l].routePlan < table.shapes[table.layouts[l].args].count)) && (table.shapes[table.members[(table.shapes[table.layouts[l].args].first + table.layouts[l].routePlan)]].kind == vecShape)))
   requires discriminatorBytes <= |data| && 0 <= layout
@@ -524,6 +608,8 @@ lemma DecodeLayoutFacts(data: seq<int>, table: WireTable, layout: int)
   ensures var d := decodeLayout(data, table, layout); d.route? ==> d.fields[table.layouts[d.layout].routePlan].value != 0
   decreases |table.layouts| - layout
 {
+  hide *;
+  reveal decodeLayout, fieldShape;
   if layout < |table.layouts| {
     if !prefixEquals(data, table.layouts[layout].discriminator, discriminatorBytes) {
       DecodeLayoutFacts(data, table, layout + 1);
@@ -531,8 +617,8 @@ lemma DecodeLayoutFacts(data: seq<int>, table: WireTable, layout: int)
       var args := table.shapes[table.layouts[layout].args];
       var plan := table.layouts[layout].routePlan;
       assert args.kind == structShape && 0 <= plan < args.count;
-      assert shapeWellFormed(args, |table.shapes|, |table.members|);
-      FieldsFacts(data, table, args.first, args.count, plan, 0, discriminatorBytes, 0);
+      FieldsBounds(data, table, args.first, args.count, plan, 0, discriminatorBytes, 0);
+      FieldsValues(data, table, args.first, args.count, plan, 0, discriminatorBytes, 0);
       var read := readFields(data, table, args.first, args.count, plan, 0, discriminatorBytes, 0);
       var d := decodeLayout(data, table, layout);
       if d.route? {
@@ -551,6 +637,7 @@ lemma readShape_ensures(data: seq<int>, table: WireTable, shape: int, at: nat, n
   requires forall i: int :: ((0 <= i) ==> (i < |data|) ==> ((0 <= data[i]) && (data[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires (0 <= shape)
   requires (shape < |table.shapes|)
@@ -578,6 +665,7 @@ lemma decodeJupiter_ensures(data: seq<int>, table: WireTable)
   requires forall i: int :: ((0 <= i) ==> (i < |data|) ==> ((0 <= data[i]) && (data[i] <= 255)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.members|) ==> ((0 <= table.members[i]) && (table.members[i] < |table.shapes|)))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> shapeWellFormed(table.shapes[i], |table.shapes|, |table.members|))
+  requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (((((((table.shapes[i].kind == unsignedShape) ==> ((1 <= table.shapes[i].width) && (table.shapes[i].width <= 16))) && (((table.shapes[i].kind == optionShape) || (table.shapes[i].kind == vecShape)) ==> ((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)))) && ((table.shapes[i].kind == arrayShape) ==> ((((0 <= table.shapes[i].child) && (table.shapes[i].child < |table.shapes|)) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)))) && ((table.shapes[i].kind == structShape) ==> ((((0 <= table.shapes[i].first) && (0 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((table.shapes[i].kind == enumShape) ==> ((((0 <= table.shapes[i].first) && (1 <= table.shapes[i].count)) && (table.shapes[i].count <= maximumCollection)) && ((table.shapes[i].first + table.shapes[i].count) <= |table.members|)))) && ((((((((table.shapes[i].kind == unsignedShape) || (table.shapes[i].kind == boolShape)) || (table.shapes[i].kind == bytesShape)) || (table.shapes[i].kind == optionShape)) || (table.shapes[i].kind == vecShape)) || (table.shapes[i].kind == arrayShape)) || (table.shapes[i].kind == structShape)) || (table.shapes[i].kind == enumShape))))
   requires forall i: int :: ((0 <= i) ==> (i < |table.shapes|) ==> (table.shapes[i].kind == enumShape) ==> forall k: int :: ((table.shapes[i].first <= k) ==> (k < (table.shapes[i].first + table.shapes[i].count)) ==> (table.shapes[table.members[k]].kind == structShape)))
   requires forall l: int :: ((0 <= l) ==> (l < |table.layouts|) ==> (((((((|table.layouts[l].discriminator| == discriminatorBytes) && (0 <= table.layouts[l].args)) && (table.layouts[l].args < |table.shapes|)) && (table.shapes[table.layouts[l].args].kind == structShape)) && (0 <= table.layouts[l].routePlan)) && (table.layouts[l].routePlan < table.shapes[table.layouts[l].args].count)) && (table.shapes[table.members[(table.shapes[table.layouts[l].args].first + table.layouts[l].routePlan)]].kind == vecShape)))
   ensures (decodeJupiter(data, table).refused? ==> ((((((((((decodeJupiter(data, table).error == sizeRefused) || (decodeJupiter(data, table).error == unknownInstruction)) || (decodeJupiter(data, table).error == truncated)) || (decodeJupiter(data, table).error == collectionTooLarge)) || (decodeJupiter(data, table).error == boundsExceeded)) || (decodeJupiter(data, table).error == invalidBool)) || (decodeJupiter(data, table).error == invalidOption)) || (decodeJupiter(data, table).error == unknownVariant)) || (decodeJupiter(data, table).error == trailingBytes)) || (decodeJupiter(data, table).error == emptyRoute)))
@@ -587,8 +675,8 @@ lemma decodeJupiter_ensures(data: seq<int>, table: WireTable)
   ensures (decodeJupiter(data, table).route? ==> (|decodeJupiter(data, table).fields| == table.shapes[table.layouts[decodeJupiter(data, table).layout].args].count))
   ensures (decodeJupiter(data, table).route? ==> ((decodeJupiter(data, table).fields[0].start == discriminatorBytes) && (decodeJupiter(data, table).fields[(|decodeJupiter(data, table).fields| - 1)].end == |data|)))
   ensures (decodeJupiter(data, table).route? ==> forall k: int :: ((0 <= k) ==> (k < |decodeJupiter(data, table).fields|) ==> ((((discriminatorBytes <= decodeJupiter(data, table).fields[k].start) && (decodeJupiter(data, table).fields[k].start <= decodeJupiter(data, table).fields[k].end)) && (decodeJupiter(data, table).fields[k].end <= |data|)) && (((k + 1) < |decodeJupiter(data, table).fields|) ==> (decodeJupiter(data, table).fields[k].end == decodeJupiter(data, table).fields[(k + 1)].start)))))
-  ensures (decodeJupiter(data, table).route? ==> forall k: int :: ((0 <= k) ==> (k < |decodeJupiter(data, table).fields|) ==> (fieldShape(table, decodeJupiter(data, table).layout, k).kind == unsignedShape) ==> ((decodeJupiter(data, table).fields[k].end == (decodeJupiter(data, table).fields[k].start + fieldShape(table, decodeJupiter(data, table).layout, k).width)) && (decodeJupiter(data, table).fields[k].value == littleEndian(data, decodeJupiter(data, table).fields[k].start, fieldShape(table, decodeJupiter(data, table).layout, k).width)))))
-  ensures (decodeJupiter(data, table).route? ==> forall k: int :: ((0 <= k) ==> (k < |decodeJupiter(data, table).fields|) ==> (fieldShape(table, decodeJupiter(data, table).layout, k).kind == vecShape) ==> (((decodeJupiter(data, table).fields[k].start + 4) <= decodeJupiter(data, table).fields[k].end) && (decodeJupiter(data, table).fields[k].value == lengthPrefix(data, decodeJupiter(data, table).fields[k].start)))))
+  ensures (decodeJupiter(data, table).route? ==> forall k: int :: ((0 <= k) ==> (k < |decodeJupiter(data, table).fields|) ==> (fieldShape(table, decodeJupiter(data, table).layout, k).kind == unsignedShape) ==> ((((0 <= decodeJupiter(data, table).fields[k].start) && (decodeJupiter(data, table).fields[k].end == (decodeJupiter(data, table).fields[k].start + fieldShape(table, decodeJupiter(data, table).layout, k).width))) && (decodeJupiter(data, table).fields[k].end <= |data|)) && (decodeJupiter(data, table).fields[k].value == littleEndian(data, decodeJupiter(data, table).fields[k].start, fieldShape(table, decodeJupiter(data, table).layout, k).width)))))
+  ensures (decodeJupiter(data, table).route? ==> forall k: int :: ((0 <= k) ==> (k < |decodeJupiter(data, table).fields|) ==> (fieldShape(table, decodeJupiter(data, table).layout, k).kind == vecShape) ==> ((((0 <= decodeJupiter(data, table).fields[k].start) && ((decodeJupiter(data, table).fields[k].start + 4) <= decodeJupiter(data, table).fields[k].end)) && (decodeJupiter(data, table).fields[k].end <= |data|)) && (decodeJupiter(data, table).fields[k].value == lengthPrefix(data, decodeJupiter(data, table).fields[k].start)))))
   ensures (decodeJupiter(data, table).route? ==> (decodeJupiter(data, table).fields[table.layouts[decodeJupiter(data, table).layout].routePlan].value != 0))
 {
   if discriminatorBytes <= |data| && |data| <= maximumInstructionBytes {

@@ -17,7 +17,7 @@ export function scoreTierThirds(tier: ScoreTier): number {
 /** @throws {never} */
 //@ pure
 export function valueTierThirds(tier: ValueTier): number {
-  return tier === "none" ? 0 : scoreTierThirds(tier);
+  return tier === "none" ? 0 : tier === "micro" ? 1 : tier === "small" ? 3 : tier === "medium" ? 9 : tier === "large" ? 24 : tier === "xl" ? 45 : 75;
 }
 
 /** @throws {never} */
@@ -51,8 +51,13 @@ export function valueTierBand(tier: ValueTier): number {
   //@ ensures \result >= 0 && \result <= 5
   //@ ensures sizePoints(\result) >= 10
   //@ ensures tier !== "none" ==> sizePoints(\result) === 10 * valueTierThirds(tier)
-  if (tier === "none") return 0;
-  return scoreTierBand(tier);
+  return tier === "none" ? 0
+    : tier === "micro" ? 0
+    : tier === "small" ? 1
+    : tier === "medium" ? 2
+    : tier === "large" ? 3
+    : tier === "xl" ? 4
+    : 5;
 }
 
 /** @throws {never} */

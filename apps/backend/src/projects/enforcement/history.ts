@@ -268,8 +268,10 @@ function accountBoundary(records: HistoryRow[], account: string): number {
     //@ assert records.slice(0, i + 1)[i] === record
     let closes = false;
     if (record.action === "ban") closes = record.bannedAccounts.includes(account);
-    else if (record.action === "deny_reinstatement") closes = openProjectAppeals(records, false, record.sequence).length === 0;
-    else if (record.action === "reinstate_accounts") closes = record.reinstatedAccounts.includes(account);
+    else if (record.action === "deny_reinstatement") {
+      const appeals = openProjectAppeals(records, false, record.sequence);
+      closes = appeals.length === 0;
+    } else if (record.action === "reinstate_accounts") closes = record.reinstatedAccounts.includes(account);
     //@ assert closes === closesAccountAppeal(record, records, account)
     if (closes) return record.sequence;
     i = i - 1;
@@ -329,7 +331,10 @@ export function effectiveAppeal(records: HistoryRow[], activeAccounts: string[])
   //@ ensures \result === effectiveAppealOf(records, activeAccounts)
   const episode = foldRestriction(records);
   if (episode.appeal === "requested") return "requested";
-  if (episode.state !== "clear" && openProjectAppeals(records, false, 0).length > 0) return "requested";
+  if (episode.state !== "clear") {
+    const appeals = openProjectAppeals(records, false, 0);
+    if (appeals.length > 0) return "requested";
+  }
   let i = 0;
   while (i < activeAccounts.length) {
     //@ invariant 0 <= i && i <= activeAccounts.length

@@ -90,7 +90,9 @@ export function withoutMarkup(text: string): string {
 /** @throws {never} */
 export function substantiveLength(body: string): number {
   //@ ensures \result >= 0
-  return withoutMarkup(withoutHtmlComments(body)).trim().length;
+  const uncommented = withoutHtmlComments(body);
+  const cleaned = withoutMarkup(uncommented);
+  return cleaned.trim().length;
 }
 
 /** @throws {never} */
@@ -116,8 +118,16 @@ export function sameReviewActor(left: ReviewActor, right: ReviewActor): boolean 
 }
 
 /** @throws {never} */
+//@ pure
+export function isNonBotReviewActor(actor: ReviewActor | null): boolean {
+  if (actor === null) return false;
+  return actor.kind !== "Bot";
+}
+
+/** @throws {never} */
 export function reviewExclusionReason(review: ReviewFacts, pull: PullFacts): ReviewExclusion {
-  //@ ensures \result === "qualifies" ==> review.author !== null && review.author.kind !== "Bot"
+  //@ ensures \result === "qualifies" ==> review.author !== null
+  //@ ensures \result === "qualifies" ==> isNonBotReviewActor(review.author)
   //@ ensures \result === "qualifies" ==> 0 <= review.submittedAt && review.submittedAt <= pull.mergedAt
   //@ ensures \result === "qualifies" ==> review.state === "APPROVED" || review.state === "CHANGES_REQUESTED"
   const reviewer = review.author;

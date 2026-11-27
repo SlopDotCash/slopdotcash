@@ -4,7 +4,7 @@ import { Result, Schema } from "effect";
 import type { Attempt } from "../../../gen/frontend__walletAttempt.ts";
 import { webStorage } from "../../platform/webStorage.ts";
 import type { SlotStorage } from "../core/slots.ts";
-import { type Saved, directAttempt, savedOf, solanaAttempt as savedSolanaAttempt } from "./attempts.ts";
+import { type SavedAttempt, directAttempt, savedOf, solanaAttempt as savedSolanaAttempt } from "./attempts.ts";
 import { DirectTransaction, EvmHash, HistorySignature, Journal, type JournalEntry, Nonce, Quantity, SolanaRecord, SolanaSignature } from "./records.schema.ts";
 
 export type { DirectTransaction, HistorySignature, Journal, JournalEntry, SolanaRecord } from "./records.schema.ts";
@@ -109,7 +109,7 @@ export function legacyIdentity(slot: string): string {
   return `${legacyPrefix}${slot}`;
 }
 
-function savedEntry(entry: JournalEntry): Saved {
+function savedEntry(entry: JournalEntry): SavedAttempt {
   return { identity: entry.requestId ?? "", hash: entry.hash ?? "", candidate: entry.candidate ?? "" };
 }
 

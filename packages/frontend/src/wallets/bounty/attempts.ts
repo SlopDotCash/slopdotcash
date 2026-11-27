@@ -2,14 +2,14 @@
 // spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"
 import type { Attempt } from "../../../gen/frontend__walletAttempt.ts";
 
-export interface Saved {
+export interface SavedAttempt {
   readonly identity: string;
   readonly hash: string;
   readonly candidate: string;
 }
 
 //@ pure
-export function directAttempt(saved: Saved, bytesId: string, fallback: string): Attempt {
+export function directAttempt(saved: SavedAttempt, bytesId: string, fallback: string): Attempt {
   //@ requires fallback !== ""
   //@ ensures \result.bytesId === bytesId && \result.hash === saved.hash
   //@ ensures saved.identity !== "" ==> \result.identity === saved.identity && \result.candidate === saved.candidate
@@ -22,7 +22,7 @@ export function directAttempt(saved: Saved, bytesId: string, fallback: string): 
 }
 
 //@ pure
-export function solanaAttempt(saved: Saved, bytesId: string, fallback: string): Attempt {
+export function solanaAttempt(saved: SavedAttempt, bytesId: string, fallback: string): Attempt {
   //@ requires fallback !== ""
   //@ ensures \result.bytesId === bytesId && \result.hash === saved.hash && \result.candidate === saved.candidate
   //@ ensures saved.identity !== "" ==> \result.identity === saved.identity
@@ -31,7 +31,7 @@ export function solanaAttempt(saved: Saved, bytesId: string, fallback: string): 
 }
 
 //@ pure
-export function savedOf(attempt: Attempt, fallback: string): Saved {
+export function savedOf(attempt: Attempt, fallback: string): SavedAttempt {
   //@ requires fallback !== ""
   //@ ensures \result.hash === attempt.hash && \result.candidate === attempt.candidate
   //@ ensures attempt.identity !== fallback ==> \result.identity === attempt.identity
