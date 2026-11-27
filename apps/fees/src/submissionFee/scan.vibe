@@ -8,6 +8,8 @@ import { confirmedPagesPerRun, finalizedPagesPerRun } from "../../gen/fees__subm
 import { type DepositedEvent, type SubmissionFeeChain, SubmissionFeeRefused } from "./chain.vibe"
 import { observedOf } from "./codec.vibe"
 import type { NetworkConfig } from "./config.vibe"
+import { standingFinalOutcome, unpayStandingWithoutDeposit } from "./standing.vibe"
+import { STANDING_DEPOSIT_LEDGER } from "./standingTerms.ts"
 import { type Resolution, advanceCursor, cursor, recordResolution, removeMissing, removeReorganised, storedDeposit, upsertDeposit } from "./store.vibe"
 
 interface Scanned {
@@ -59,7 +61,12 @@ effect function resolutionWrites(network: string, resolution: Resolution) {
   const reports = try ReportDeposits
   const deposit = { network, depositId: resolution.depositId }
   const outcome = resolution.state === "kept" ? "kept" : "refunded"
-  return [recordResolution(network, resolution), try items.finalOutcome(deposit, outcome, resolution.at), try reports.finalOutcome(deposit, outcome, resolution.at)]
+  const standing = network === STANDING_DEPOSIT_LEDGER ? [standingFinalOutcome(deposit, outcome, resolution.at)] : []
+  return [recordResolution(network, resolution), try items.finalOutcome(deposit, outcome, resolution.at), try reports.finalOutcome(deposit, outcome, resolution.at), ...standing]
+}
+
+function standingWrites(network: string) {
+  return network === STANDING_DEPOSIT_LEDGER ? [unpayStandingWithoutDeposit(network)] : []
 }
 
 effect function finalizedPage(network: NetworkConfig, chain: SubmissionFeeChain, from: number, to: number) {
@@ -89,7 +96,7 @@ effect function finalizedPage(network: NetworkConfig, chain: SubmissionFeeChain,
   const statements: Statement[] = [...(try depositWrites(try withTimes(network.network, chain, [...seen.values()]), finalizedAt))]
   for (const resolution of resolutions) statements.push(...(try resolutionWrites(network.network, resolution)))
   statements.push(...(try goneWrites({ kind: "Reorganised", network: network.network, throughBlock: to })))
-  statements.push(removeReorganised(network.network, to), advanceCursor(network.network, to + 1))
+  statements.push(removeReorganised(network.network, to), ...standingWrites(network.network), advanceCursor(network.network, to + 1))
   try (try D1).batch(statements)
   return { recorded: seen.size, resolved: resolutions.length }
 }
@@ -113,7 +120,7 @@ effect function confirmedWindow(network: NetworkConfig, chain: SubmissionFeeChai
     statements.push(...(try goneWrites({ kind: "Missing", network: network.network, fromBlock: start, toBlock: through, seen })))
     statements.push(removeMissing(network.network, start, through, seen))
   }
-  if (statements.length > 0) try (try D1).batch(statements)
+  if (statements.length > 0) try (try D1).batch([...statements, ...standingWrites(network.network)])
   return found.length
 }
 

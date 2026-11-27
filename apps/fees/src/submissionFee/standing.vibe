@@ -1,6 +1,7 @@
 // spec/fees/submissionFeeStandingDeposits.md, "A standing deposit pays its row only as burned SLOP on the standing ledger"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
 import { isoNow } from "@repo/platform/clock"
 import { D1, first, sql } from "@repo/platform/d1"
+import type { FeeDeposit, FinalOutcome } from "@repo/ports/slopbot"
 import { unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
 import { judgedPerRun } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
 import type { SendEntry } from "./chain.vibe"
@@ -45,6 +46,19 @@ function setJudgementIfStandingPaid(deposit: DepositRow, rowId: string) {
       SET accepted = 1, reject_reason = NULL, repository_id = NULL, pull_number = NULL
     WHERE network = ${deposit.network} AND deposit_id = ${deposit.depositId} AND accepted IS NULL AND tx_hash = ${deposit.txHash}
       AND EXISTS (SELECT 1 FROM standing_deposits WHERE id = ${rowId} AND paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId})`
+}
+
+export function standingFinalOutcome(deposit: FeeDeposit, outcome: FinalOutcome, at: string) {
+  return sql`UPDATE standing_deposits SET outcome = ${outcome}, outcome_at = ${at}
+    WHERE paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId}
+      AND (outcome IS NULL OR outcome IN ('refund_due', 'kept_due'))`
+}
+
+export function unpayStandingWithoutDeposit(network: string) {
+  return sql`UPDATE standing_deposits SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL
+    WHERE paid_network = ${network} AND outcome IS NULL
+      AND NOT EXISTS (SELECT 1 FROM submission_fee_deposits d
+        WHERE d.network = standing_deposits.paid_network AND d.deposit_id = standing_deposits.paid_deposit_id AND d.accepted = 1)`
 }
 
 function graceOver(deposit: DepositRow, now: number) {
