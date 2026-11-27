@@ -1,6 +1,6 @@
 // spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"
 import { type AnyRoute, route } from "@repo/platform/route"
-import { postPaymentsProjectsByIdSolanaMonthLock } from "./refusals.vibe"
+import { postPaymentsProjectsByIdSolanaFunding, postPaymentsProjectsByIdSolanaMonthLock } from "./refusals.vibe"
 
 export schema FundingAction {
   readonly step: string
@@ -39,6 +39,8 @@ export schema FundingChecked {
 
 export schema FundingAnswer = FundingReviewed | FundingChecked
 
+const { status: invalidFundingStatus, error: invalidFundingCode, headers: invalidFundingHeaders } = postPaymentsProjectsByIdSolanaFunding.invalidFundingAction
+
 export const paymentsSolanaFunding = route({
   method: "POST",
   path: "/api/v1/payments/projects/:id/solana-funding",
@@ -48,6 +50,7 @@ export const paymentsSolanaFunding = route({
   answer: FundingAnswer,
   rejected: "funding_action_rejected",
   cache: "private",
+  invalidBody: { status: invalidFundingStatus, code: invalidFundingCode, message: "", headers: invalidFundingHeaders },
 })
 
 export schema MonthLockAction {

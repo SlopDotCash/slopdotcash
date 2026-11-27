@@ -391,7 +391,11 @@ export function handle<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (
     const credential = try credentialOf(route, true)
     const admitted = try admissionOf(route, credential)
     let decoded: unknown = undefined
-    if (route.request !== undefined) decoded = try body(route.request, route.limitKib, route.invalid)
+    if (route.request !== undefined) {
+      decoded = body(route.request, route.limitKib, route.invalid) catch effect (error) => {
+        throw route.invalidBody === undefined ? error : refusedBy(route.invalidBody)
+      }
+    }
     const answer = try f({ ...admitted, body: decoded as B })
     const encoded = try orDie(Schema.encodeUnknownEffect(route.answer)(answer))
     return json(encoded, route.status ?? 200, { "cache-control": cacheControl(route.cache) })

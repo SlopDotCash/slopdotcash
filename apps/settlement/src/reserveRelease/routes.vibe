@@ -7,6 +7,7 @@ import { type Registry, type RegistryManifests } from "@repo/ports/backend"
 import { type ReleaseAnswer, ReleaseReview, monthlyReserveRelease } from "../client/reserveRelease.vibe"
 import { postPaymentsProjectsByIdMonthlyByPeriodReserveRelease as rows } from "../client/refusals.vibe"
 import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { monthlyOwnerWrongMethods } from "../monthly/http.vibe"
 import { authorize, periodOf, refused, unchanged } from "../monthly/owner.vibe"
 import { servedDeploymentOf } from "../monthly/store.vibe"
 import { registryDeployments } from "../vault/deployments.vibe"
@@ -128,7 +129,10 @@ effect function unavailable<A, E, R>(program: A!E!R) {
   }
 }
 
-export const reserveReleaseRoutes = handle(monthlyReserveRelease, (input) => unavailable(effect {
-  const review = try reviewOf(input.body)
-  return try releaseReserve(input.params.id ?? "", input.params.period ?? "", input.actor, review)
-}))
+export const reserveReleaseRoutes = Layer.merge(
+  handle(monthlyReserveRelease, (input) => unavailable(effect {
+    const review = try reviewOf(input.body)
+    return try releaseReserve(input.params.id ?? "", input.params.period ?? "", input.actor, review)
+  }), refused(rows.originForbiddenPrivateNoStore)),
+  monthlyOwnerWrongMethods([monthlyReserveRelease]),
+)

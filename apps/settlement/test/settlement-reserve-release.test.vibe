@@ -31,6 +31,8 @@ service Release {
 interface Answer {
   readonly status: number
   readonly body: unknown
+  readonly cache: string | null
+  readonly contentType: string | null
 }
 
 const context: ExecutionContext = { waitUntil: () => undefined }
@@ -219,13 +221,23 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     const approvals: ApprovalRequest[] = []
     const site = try siteOf(approvals)
     const env = {}
-    const ask = (body: unknown, as: string) => effect {
-      const headers = { origin: "https://slop.test", "content-type": "application/json", "x-test-actor": as }
-      const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects/${wrong.projectId}/monthly/2026-11/reserve-release`, { method: "POST", headers, body: JSON.stringify(body) })))
+    const ask = (body: unknown, as?: string, options: { readonly method?: string; readonly origin?: string; readonly contentType?: string } = {}) => effect {
+      const method = options.method ?? "POST"
+      const headers = { origin: options.origin ?? "https://slop.test", "content-type": options.contentType ?? "application/json", ...as === undefined ? {} : { "x-test-actor": as } }
+      const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects/${wrong.projectId}/monthly/2026-11/reserve-release`, { method, headers, body: method === "GET" ? undefined : JSON.stringify(body) })))
       const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
-      return { status: response.status, body: try promise(() => response.json()) } satisfies Answer
+      return { status: response.status, body: try promise(() => response.json()), cache: response.headers.get("cache-control"), contentType: response.headers.get("content-type") } satisfies Answer
     }
     const review = { network: releaseNetwork, manifestSha256: wrong.manifestSha256 }
+    const refused = [
+      try ask({}, steward, { origin: "https://other.test" }),
+      try ask({}, steward, { contentType: "application/x-www-form-urlencoded" }),
+      try ask(undefined, undefined, { method: "GET" }),
+      try ask(undefined, steward, { method: "GET" }),
+    ]
+    const refusal = (status: number, error: string) => ({ status, body: { error }, cache: "private, no-store", contentType: "application/json; charset=utf-8" })
+    try same(refused, [refusal(403, "origin_forbidden"), refusal(403, "origin_forbidden"), refusal(401, "not_signed_in"), refusal(404, "not_found")])
+    try same(approvals, [])
     const malformed = [
       try ask({ ...review, amount: "10" }, steward),
       try ask({ ...review, planId: "A".repeat(64), transactionId: "0x1" }, steward),

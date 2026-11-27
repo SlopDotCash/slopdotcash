@@ -1,8 +1,9 @@
 // spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
-import { Caller, Refused, SessionExpired, Unauthenticated, handle, methodNotAllowed } from "@repo/platform/http"
+import { Refused, handle } from "@repo/platform/http"
 import { monthlyAllocations, monthlyCommitment, monthlyCuts, monthlyFinalize, monthlySettings, monthlySolanaCommitment, monthlyView } from "../client/monthly.vibe"
 import { getPaymentsProjectsByIdMonthlyByPeriod as viewRows } from "../client/refusals.vibe"
 import { evmCommitmentPlan, solanaCommitment } from "./commitmentPlans.vibe"
+import { monthlyOwnerWrongMethods } from "./http.vibe"
 import { changeAllocation, finalizeMonth, ownerView, publicCuts, refused, setMonthlyAutomatic } from "./owner.vibe"
 
 effect function unavailable<A, E, R>(program: A!E!R) {
@@ -16,18 +17,6 @@ effect function unavailable<A, E, R>(program: A!E!R) {
 const monthlyWrites = [monthlyAllocations, monthlyFinalize, monthlySettings, monthlyCommitment, monthlySolanaCommitment]
 const originForbidden = refused(viewRows.originForbiddenPrivateNoStore)
 
-const wrongMonthlyMethod = effect {
-  const request = try HttpServerRequest.HttpServerRequest
-  if (request.method !== "GET") throw refused(viewRows.originForbiddenPrivateNoStore)
-  const caller = try Caller
-  caller.current(monthlyView) catch effect (error) => match (error) {
-    when Unauthenticated: throw refused(viewRows.notSignedIn);
-    when SessionExpired: throw refused(viewRows.sessionExpired);
-    default: throw error;
-  }
-  throw refused(viewRows.notFoundPrivateNoStore)
-}
-
 export const monthlyRoutes = Layer.mergeAll(
   handle(monthlyView, (input) => unavailable(ownerView(input.params.id ?? "", input.params.period ?? "", input.actor))),
   handle(monthlyAllocations, (input) => unavailable(changeAllocation(input.params.id ?? "", input.params.period ?? "", input.actor, input.body)), originForbidden),
@@ -35,6 +24,6 @@ export const monthlyRoutes = Layer.mergeAll(
   handle(monthlySettings, (input) => unavailable(setMonthlyAutomatic(input.params.id ?? "", input.actor, input.body.automatic)), originForbidden),
   handle(monthlyCommitment, (input) => unavailable(evmCommitmentPlan(input.params.id ?? "", input.params.period ?? "", input.actor, input.body)), originForbidden),
   handle(monthlySolanaCommitment, (input) => unavailable(solanaCommitment(input.params.id ?? "", input.params.period ?? "", input.actor, input.body)), originForbidden),
-  methodNotAllowed(monthlyWrites, wrongMonthlyMethod),
+  monthlyOwnerWrongMethods(monthlyWrites),
   handle(monthlyCuts, (input) => unavailable(publicCuts(input.params.id ?? "", input.params.period ?? ""))),
 )

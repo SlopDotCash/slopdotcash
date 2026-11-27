@@ -314,7 +314,7 @@ export const paymentsSolanaMonthlyCommitment = route({
   answer: MonthlySettingAnswered,
   rejected: settingRows.monthlySettingRejected.error,
   cache: "private",
-  invalid: refusal(settingRows.invalidMonthlySetting),
+  invalidBody: refusal(settingRows.invalidMonthlySetting),
 })
 
 export const monthlyApi: ReadonlyArray<AnyRoute> = [monthlyView, monthlyAllocations, monthlyFinalize, monthlySettings, monthlyCommitment, monthlySolanaCommitment, monthlyCuts, paymentsSolanaMonthlyCommitment]

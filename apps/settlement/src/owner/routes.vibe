@@ -12,6 +12,7 @@ import { type FundingAction, type MonthLockAction, paymentsSolanaFunding, paymen
 import { postPaymentsProjectsByIdSolanaFunding as parity, postPaymentsProjectsByIdSolanaMonthLock as lockParity, postPaymentsProjectsByIdSolanaMonthlyCommitment as settingParity } from "../client/refusals.vibe"
 import { MAX_BASE_UNITS, parseBaseUnits, parseDecimalAmount } from "../kernels/amounts.ts"
 import { type NetworkKey, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { monthlyOwnerWrongMethods } from "../monthly/http.vibe"
 import { registryDeployments } from "../vault/deployments.vibe"
 import { DeploymentMismatch } from "../vault/evmTotals.vibe"
 import type { SolanaDeployment } from "../vault/policy.vibe"
@@ -325,5 +326,6 @@ export const ownerRoutes = Layer.mergeAll(
   handle(paymentsSolanaFunding, (input) => answer(input.params.id ?? "", input.body), refusals.origin),
   handle(paymentsSolanaMonthLock, (input) => answerLock(input.params.id ?? "", input.body), lockRefusals.origin),
   handle(paymentsSolanaMonthlyCommitment, (input) => answerSetting(input.params.id ?? "", input.body), settingRefusals.origin),
+  monthlyOwnerWrongMethods([paymentsSolanaFunding, paymentsSolanaMonthlyCommitment]),
 )
 

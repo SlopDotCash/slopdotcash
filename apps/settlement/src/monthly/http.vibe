@@ -1,0 +1,22 @@
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
+import { Caller, SessionExpired, Unauthenticated, methodNotAllowed } from "@repo/platform/http"
+import type { AnyRoute } from "@repo/platform/route"
+import { monthlyView } from "../client/monthly.vibe"
+import { getPaymentsProjectsByIdMonthlyByPeriod as rows } from "../client/refusals.vibe"
+import { refused } from "./owner.vibe"
+
+const wrongMethod = effect {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (request.method !== "GET") throw refused(rows.originForbiddenPrivateNoStore)
+  const caller = try Caller
+  caller.current(monthlyView) catch effect (error) => match (error) {
+    when Unauthenticated: throw refused(rows.notSignedIn);
+    when SessionExpired: throw refused(rows.sessionExpired);
+    default: throw error;
+  }
+  throw refused(rows.notFoundPrivateNoStore)
+}
+
+export function monthlyOwnerWrongMethods(routes: ReadonlyArray<AnyRoute>) {
+  return methodNotAllowed(routes, wrongMethod)
+}
