@@ -8,7 +8,7 @@ import { recheck, sendConfigOf } from "./parked.vibe"
 import { planResolutions } from "./plan.vibe"
 import { ratePass } from "./rate.vibe"
 import { scan } from "./scan.vibe"
-import { type SendOutcome, reconcile, send } from "./sends.vibe"
+import { type SendOutcome, reconcile, send, siblingInFlight } from "./sends.vibe"
 import { SOLANA_SUBMISSION_FEE_NETWORK } from "./solanaProgram.ts"
 import { type SolanaDeploymentInput, type SolanaRunResult, type SolanaSubmissionFeeEnv, parseSolanaMode, runSolanaSubmissionFee } from "./solanaWorker.vibe"
 import { failureReason, labelled, message, step } from "./steps.vibe"
@@ -45,7 +45,7 @@ export type DepositRun =
       readonly solana?: SolanaRunResult | NetworkFailure
     }
 
-effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: ResolverSigner | null) {
+effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: ResolverSigner | null, siblings: ReadonlyArray<string>) {
   const unread: NetworkResult = { network: network.network, status: "ran", finalizedThrough: null, recorded: 0, resolved: 0, judged: 0, paid: 0, send: "none", parked: 0, released: 0 }
   const connected = step("chain", submissionFeeChain({ network, signer })) catch effect (error) => {
     if (error._tag === "WrongChain") return null
@@ -63,7 +63,8 @@ effect function runNetwork(network: NetworkConfig, config: SendConfig, signer: R
   }
   const released = try step("recheck", recheck(network.network, config, chain))
   if (try step("reconcile", reconcile(network, config, chain))) return { ...ran, released, send: "in_flight" } satisfies NetworkResult
-  const sent = try step("send", send(network, config, chain, try step("plan", planResolutions(network.network))))
+  if (try step("reconcile", siblingInFlight(siblings))) return { ...ran, released, send: "sibling_in_flight" } satisfies NetworkResult
+  const sent = try step("send", send(network, config, chain, try step("plan", planResolutions(network.network)), siblings))
   return { ...ran, ...sent, released } satisfies NetworkResult
 }
 
@@ -85,7 +86,8 @@ export effect function depositPass(env: SubmissionFeeWorkerEnv, terms: ReadonlyA
     for (const network of config.networks) {
       const ran = effect {
         const signer = secret === undefined ? null : try signers.evm(network.network, secret)
-        return try runNetwork(network, sendConfigOf(config.mode === "live" ? "live" : "dry_run", signer !== null, network.gas), signer)
+        const siblings = config.networks.filter((other) => other.network !== network.network && other.chainId === network.chainId).map((other) => other.network)
+        return try runNetwork(network, sendConfigOf(config.mode === "live" ? "live" : "dry_run", signer !== null, network.gas), signer, siblings)
       }
       const result = ran catch effect (error) => {
         return { network: network.network, error: message(error), reason: failureReason(error) } satisfies NetworkFailure
