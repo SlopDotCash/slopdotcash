@@ -16,6 +16,7 @@ import { type AnalysisReport, type PriorCase, analysisMessage, analysisPrompt, a
 import { type ReceiptScope, receiptManifest, receiptScope, scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { backgroundBudgetMs, ownerBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
 import { depositHeld } from "../deposit/held.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { advisoryReport } from "../receipt/github.vibe"
 import { parseReport } from "../intake/report.vibe"
 import { StoredIntake, screeningOf } from "../intake/rows.vibe"
@@ -263,6 +264,7 @@ export effect function priorCases(projectId: string, caseId: string | null) {
       ORDER BY a.attempt DESC LIMIT 1) AS summary
      FROM security_cases c
     WHERE c.project_id = ${projectId} AND c.id <> ${caseId ?? ""} AND c.submission_state = 'verified'
+      AND NOT ${depositHeldOn("c.id")}
     ORDER BY c.received_at DESC LIMIT ${priorCaseLimit}`)
   return found.map((row) => ({ id: row.id, rootCauseKey: row.root_cause_key, summary: row.summary }) satisfies PriorCase)
 }

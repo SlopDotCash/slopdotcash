@@ -17514,7 +17514,7 @@
     },
     {
       "path": "spec/points/assessmentAudit.md",
-      "sha256": "9340cc14c40f4f33d853dbf527e06d4b1ca3a9fa76090bf30cdec9fbdf626d36",
+      "sha256": "da9b1c6298fd2637d98efebfa5bc64a00d1035456adf89875cb4cc21858720ad",
       "module": "points__assessmentAudit",
       "stories": [
         {
@@ -17601,7 +17601,7 @@
         },
         {
           "heading": "Story: Audit the assessments of a historical scope before owner review / A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback",
-          "line": 208,
+          "line": 211,
           "definitions": [
             "canStageReview",
             "stageReview",

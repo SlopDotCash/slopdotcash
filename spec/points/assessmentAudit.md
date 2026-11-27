@@ -157,10 +157,13 @@ confirmation that the public source is missing, the unavailable-source hold
 over the whole assessment, and no change to any award of that group,
 independent corrections in the packet included (#3240,
 `assertRemovedMergeGroupsPreserved`). Slop's branch cutover preserves its
-former lineage at the pinned `develop-old` tip. For that exact repository,
-an exact GitHub 404 reading `development` or comparing the merge to the
-registered `develop` tip permits a separate ancestry check against the
-verified archive tip. Any binding that does not match is
+former lineage at a pinned commit of `develop-old`. For that exact
+repository, an exact GitHub 404 reading `development` or comparing the merge
+to the registered `develop` tip permits a separate ancestry check against
+that pinned commit while `develop-old` still contains it: the branch tip is
+the pinned commit or descends from it. The merge is compared with the pinned
+commit, never with a later tip, so a merge made on `develop-old` after the
+pinned commit is not in that lineage. Any binding that does not match is
 recorded as rejected: the receipt is then incomplete and nothing is staged.
 
 ```quint

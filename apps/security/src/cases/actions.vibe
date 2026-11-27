@@ -1,4 +1,4 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"; spec/security/routineDecisions.md, "The reporter appeals a routine close once, to the owner, and the pass never reads the report again"; spec/security/terms.md, "A finding qualifies only under its frozen eligibility class"; spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"; spec/security/routineDecisions.md, "The reporter appeals a routine close once, to the owner, and the pass never reads the report again"; spec/security/terms.md, "A finding qualifies only under its frozen eligibility class"; spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"
 import { millisOf } from "@repo/platform/clock"
 import { first, sql } from "@repo/platform/d1"
 import { type Actor, refuse } from "@repo/platform/http"
@@ -7,6 +7,7 @@ import type { Json } from "@repo/ports/backend"
 import type { Decision, Event, PrivateCase, ProjectClearance, Receipt } from "../../gen/security__cases.ts"
 import { Rejected, apply, committed as holdsAward, reporterRelated, routineAppealable, routineReturned } from "../../gen/security__cases.effect.vibe"
 import { postSecurityCasesByIdActions as rows } from "../client/refusals.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { githubNumber } from "../privacy/reads.vibe"
 import { githubAccountIdentity } from "../receipt/github.vibe"
 import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
@@ -46,7 +47,7 @@ const unmetParticipation: Refusal = { status: 409, error: "participation_banned"
 
 schema Found { found: number }
 schema Analysis { state: string; advisory_digest: string | null }
-schema Original { project_id: string; submission_state: string }
+schema Original { project_id: string; submission_state: string; deposit_held: number }
 
 export effect function exactKeys(body: Body, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
   const allowed = new Set([...required, ...optional])
@@ -237,8 +238,8 @@ effect function decide(plan: Plan) {
   let duplicateOf: string | null = null
   if (outcome === "duplicate") {
     duplicateOf = try stringField(body, "duplicateOf", casePattern, rows.invalidRequestInvalidDuplicateOf)
-    const original = try first(Original, sql`SELECT project_id, submission_state FROM security_cases WHERE id = ${duplicateOf}`)
-    if (original === undefined || original.project_id !== row.project_id || duplicateOf === row.id || original.submission_state !== "verified") throw refused(rows.invalidDuplicate)
+    const original = try first(Original, sql`SELECT project_id, submission_state, ${depositHeldOn("security_cases.id")} AS deposit_held FROM security_cases WHERE id = ${duplicateOf}`)
+    if (original === undefined || original.project_id !== row.project_id || duplicateOf === row.id || original.submission_state !== "verified" || original.deposit_held === 1) throw refused(rows.invalidDuplicate)
   } else if (body.duplicateOf !== undefined) throw refused(rows.invalidRequestDuplicateOfAppliesOnlyTo)
   if ((outcome === "confirmed" || outcome === "duplicate") && rootCauseKey === null) throw refused(rows.invalidRequestRecordTheRootCause)
   if (outcome === "confirmed" && observed.record.frozen !== undefined && rootCauseKey !== null) try rootCauseFree(row.project_id, row.id, rootCauseKey)
