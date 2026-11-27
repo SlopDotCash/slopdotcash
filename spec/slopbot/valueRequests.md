@@ -267,7 +267,8 @@ A source ID stands for the permanent repository and pull request pair, so
 changed content and different inference keys still contend. If any wanted
 source belongs to another live claim's group, nothing is written. An
 expired or finished claim no longer blocks. Every provider call and
-publication rechecks both the request claim and the exact group.
+publication rechecks both the request claim and the exact group. The clock
+stays positive and the monotonic claim token counter stays non-negative.
 
 ```quint
 pure def tokenLive(v: ValueRequests, token: int): bool =
@@ -297,7 +298,7 @@ pure def alwaysRowsMatchState(v: ValueRequests): bool =
     and (d.state == Unread implies d.code == NoOutcome and d.token == 0 and d.attempts == 0 and d.incompleteSince == 0)
     and (resolving(d.code) implies d.incompleteSince == 0))
 pure def alwaysRunWithinLimits(v: ValueRequests): bool =
-  v.runClaims >= 0 and v.runClaims <= runRequests and v.runStartedAt >= 0 and v.runStartedAt <= v.now
+  v.now > 0 and v.lastToken >= 0 and v.runClaims >= 0 and v.runClaims <= runRequests and v.runStartedAt >= 0 and v.runStartedAt <= v.now
 pure def alwaysParkedChecksAreUnique(v: ValueRequests): bool =
   v.parkedChecks.every(c => c.checkedAt > 0 and c.checkedAt <= v.now
     and v.parkedChecks.select(o => o.target == c.target).length() == 1)

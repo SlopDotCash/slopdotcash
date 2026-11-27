@@ -37082,7 +37082,7 @@
     },
     {
       "path": "spec/slopbot/valueInference.md",
-      "sha256": "9e33fc73ecfaa5569874d229e1a037fda0ac79fb29f3ffd6b01659b38ce0338e",
+      "sha256": "e0b5229ee8d115938708a145a9d2f30a66f39d564c767c9b371e98f7487f273c",
       "module": "slopbot__valueInference",
       "stories": [
         {
@@ -37095,11 +37095,11 @@
         },
         {
           "heading": "Story: Retain only a proposal the collected evidence supports",
-          "line": 296
+          "line": 298
         },
         {
           "heading": "Story: Publish under the current exact authority",
-          "line": 453
+          "line": 455
         }
       ],
       "rules": [
@@ -37216,7 +37216,7 @@
         },
         {
           "heading": "Story: Retain only a proposal the collected evidence supports / A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence",
-          "line": 302,
+          "line": 304,
           "definitions": [
             "ProposalStatus",
             "ProposalTier",
@@ -37263,7 +37263,7 @@
         },
         {
           "heading": "Story: Publish under the current exact authority / A retained inference survives stale publication without another charge",
-          "line": 455,
+          "line": 457,
           "definitions": [
             "canCaptureFence",
             "captureFence",
@@ -37347,29 +37347,29 @@
         },
         {
           "target": "./spendAlerts.md",
-          "line": 247
+          "line": 248
         },
         {
           "target": "./assessmentInbox.md",
-          "line": 255
+          "line": 256
         },
         {
           "target": "./workUnits.md",
-          "line": 311
+          "line": 313
         },
         {
           "target": "../points/allocation.md",
-          "line": 328
+          "line": 330
         },
         {
           "target": "./workUnits.md",
-          "line": 335
+          "line": 337
         }
       ]
     },
     {
       "path": "spec/slopbot/valueRequests.md",
-      "sha256": "5a5439391327aa81a5026b0a572af37a40b6fa487e1d91e94a5e70f2f7acc601",
+      "sha256": "e65cb5fce92761358b4edb999cde13f633afdf2a2058365298f128ed821a30a1",
       "module": "slopbot__valueRequests",
       "stories": [
         {
@@ -37500,7 +37500,7 @@
         },
         {
           "heading": "Story: Lease every source of a group or none / Samples cover siblings, renamed sources, contention and every outcome",
-          "line": 329,
+          "line": 330,
           "definitions": [
             "keyA",
             "keyValues",

@@ -239,6 +239,7 @@ pure def sometimesOrbioAfterADenial(v: ValueInference): bool =
 
 Each charged, budget-denied or unknown call remains tied to its attempt. Saved usage
 precedes result retention, and the earliest valid retained result wins.
+Every recorded valid call and any retained result carry a size band from 0 to 5.
 A completed failed result and an unfinished charged attempt remain distinct.
 Only all-known actual usage can settle a numeric hold. A provider charge
 above the reserved maximum stays unresolved. Unknown costs retain the
@@ -290,7 +291,8 @@ pure def alwaysInterruptedCallKeepsItsSlot(v: ValueInference): bool =
 pure def alwaysCallsAreFree(v: ValueInference): bool =
   v.attempts.every(a => a.allCalls.every(c => c.customerCharge == 0))
 pure def alwaysRetainedBandIsValid(v: ValueInference): bool =
-  v.retained != noRetained implies v.retained.sizeBand >= 0 and v.retained.sizeBand <= 5
+  (v.retained != noRetained implies v.retained.sizeBand >= 0 and v.retained.sizeBand <= 5)
+    and v.attempts.every(a => a.allCalls.every(c => c.result == ValidResult implies c.sizeBand >= 0 and c.sizeBand <= 5))
 ```
 
 ## Story: Retain only a proposal the collected evidence supports
