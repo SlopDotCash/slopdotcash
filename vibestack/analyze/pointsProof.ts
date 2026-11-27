@@ -29,10 +29,10 @@ const decodeTypedProof = Schema.decodeUnknownSync(Schema.Struct({
     requires: Schema.Array(Schema.Unknown),
     ensures: Schema.Array(Schema.Unknown),
   })),
-  dafny: Schema.Struct({
-    emittedNames: Schema.Record(Schema.String, Schema.String),
-    error: Schema.optionalKey(Schema.Never),
-  }),
+  dafny: Schema.Union([
+    Schema.Struct({ emittedNames: Schema.Record(Schema.String, Schema.String), error: Schema.optionalKey(Schema.Never) }),
+    Schema.Struct({ error: Schema.String, emittedNames: Schema.optionalKey(Schema.Never) }),
+  ]),
 }));
 
 const decodeProjection = Schema.decodeUnknownSync(Schema.Struct({
@@ -98,9 +98,7 @@ function projectionNames(root: string, source: SrcFile, info: TypedProof, local:
   const names = new Set<string>();
   const add = (name: string) => {
     const fn = named.get(name);
-    if (!fn?.exported || !Object.hasOwn(info.dafny.emittedNames, name) || !info.dafny.emittedNames[name]) {
-      throw new Error("Proof has no emitted export " + name);
-    }
+    if (!fn?.exported) throw new Error("Proof has no typed export " + name);
     names.add(name);
   };
 
@@ -122,6 +120,13 @@ function projectionNames(root: string, source: SrcFile, info: TypedProof, local:
     for (const name of calls) {
       if (name !== fn.name && local.get(name)) add(name);
     }
+  }
+  // Emission evidence is required for each export the analyzer will treat as used.
+  if (names.size === 0) return [];
+  const { emittedNames, error } = info.dafny;
+  if (emittedNames === undefined) throw new Error("LemmaScript emission failed: " + error);
+  for (const name of names) {
+    if (!Object.hasOwn(emittedNames, name) || !emittedNames[name]) throw new Error("Proof has no emitted export " + name);
   }
   return [...names].sort();
 }
@@ -170,7 +175,7 @@ async function projectProof(root: string, { source, unit }: SourceUnit): Promise
     }
     if (warnings.length) process.stderr.write(result.stderr);
     const projection = { ...key, names: projectionNames(root, source, info, local) };
-    store(memory, receipt, projection, { program, began });
+    if (info.dafny.emittedNames !== undefined) store(memory, receipt, projection, { program, began });
     return projection;
   });
 }
