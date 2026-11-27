@@ -226,7 +226,7 @@ destination row, issued capabilities and delivery history remain.
 pure def closeEnrollment(e: Enrollment): Enrollment =
   { ...e, verifications: e.verifications.listMap(v => if (not(v.consumed)) { ...v, cancelled: true } else v),
     preference: if (e.preference.stored) { ...e.preference, activity: false, security: false, version: 0,
-      revision: e.preference.revision + 1 } else e.preference }
+      revision: e.preference.revision + 1 } else { ...e.preference, activity: false, security: false, version: 0 } }
 pure def wellFormed(e: Enrollment, now: int): bool =
   e.actor > 0 and e.pilotVersion >= 0 and e.destination.version >= 0
     and e.verifications.every(v => v.id > 0 and v.tokenDigest == v.id and v.requestKey > 0 and v.address != ""
