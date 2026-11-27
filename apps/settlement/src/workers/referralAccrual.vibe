@@ -9,6 +9,7 @@ import { ReferralAttributionsLive, RestrictionsLive, WalletsLive } from "@repo/b
 import { noticePorts } from "@repo/operations/live"
 import { contributorAudience } from "@repo/points/live"
 import { EnforcementRowsLive } from "@repo/security/live"
+import { referralAccrualAnyAny } from "../client/refusals.vibe"
 import { type ReferralVars, referralProgram } from "../referrals/config.vibe"
 import { type PosterVars, referralDeployment } from "../referrals/distributor.vibe"
 import { referralCrons } from "../referrals/jobs.vibe"
@@ -27,8 +28,10 @@ function services(env: Env) {
   return Layer.mergeAll(base, ports, referralProgram(env), referralDeployment(env), poster)
 }
 
+const missing = referralAccrualAnyAny.notFoundV2
+
 export default worker({
   services,
-  routes: HttpRouter.add("*", "*", HttpServerResponse.text("Not found", { status: 404 })),
+  routes: HttpRouter.add("*", "*", HttpServerResponse.text(missing.text, { status: missing.status, contentType: missing.headers["content-type"] })),
   scheduled: byCron(referralCrons),
 })

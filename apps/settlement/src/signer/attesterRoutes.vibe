@@ -28,7 +28,8 @@ const projectPattern = /^[a-z0-9][a-z0-9-]*$/u
 const periodPattern = /^[2-9][0-9]{3}-(0[1-9]|1[0-2])$/u
 const digestPattern = /^[a-f0-9]{64}$/u
 
-const notFound = HttpServerResponse.text("Not found", { status: attesterPostV1Pay.notFoundV2.status })
+const missing = attesterPostV1Pay.notFoundV2
+const notFound = HttpServerResponse.text(missing.text, { status: missing.status, contentType: missing.headers["content-type"] })
 
 function refusedWith(row: { readonly status: number; readonly error: string }) {
   return json({ error: row.error }, row.status)
