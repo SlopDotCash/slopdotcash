@@ -13,7 +13,12 @@ const root = mkdtempSync(join(tmpdir(), "skill-validation-conformance-"));
 mkdirSync(dirname(join(root, validatorPath)), { recursive: true });
 copyFileSync(new URL(`../../../../${validatorPath}`, import.meta.url), join(root, validatorPath));
 
+const pinnedYaml = "import yaml,sys;sys.exit(0 if yaml.__version__ == '6.0.3' else 1)";
 const pinnedUv: Runtime = { executable: "uv", prefix: ["run", "--with", "PyYAML==6.0.3", "python"], probe: ["--version"] };
+const configuredPython = process.env.SLOP_PYTHON;
+const matchingRuntime: Runtime = configuredPython !== undefined && configuredPython !== ""
+  ? { executable: configuredPython, prefix: [], probe: ["-c", pinnedYaml] }
+  : pinnedUv;
 const absent: Runtime = { executable: join(root, "no-python-here"), prefix: [], probe: ["--version"] };
 
 const header = "---\nname: conformance-skill\ndescription: A skill the conformance driver packages.\n---\n\n# Conformance skill\n";
@@ -51,7 +56,7 @@ function skillDirectory(key: string, event: Extract<Event, { type: "inspect" }>)
 function sent(run: Run, key: string, event: Event) {
   switch (event.type) {
     case "probeRuntime": {
-      const tried = event.matches ? pinnedUv : absent;
+      const tried = event.matches ? matchingRuntime : absent;
       return probeRuntime(run.state, tried, root).pipe(Effect.map((next) => {
         if (next.runtime && !run.state.runtime) run.chosen = tried;
         return next;
