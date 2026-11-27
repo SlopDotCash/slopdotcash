@@ -47,8 +47,8 @@ export function ConfirmDialog({ state, onSend, title, children, confirmLabel, ca
     <AlertDialog.Root open={state.phase !== "Closed"} onOpenChange={(open) => send({ type: open ? "open" : "cancel" })}>
       {trigger ? <AlertDialog.Trigger asChild>{trigger}</AlertDialog.Trigger> : null}
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className={overlay} />
-        <AlertDialog.Content className={panel}>
+        <div aria-hidden="true" className={`${overlay} pointer-events-auto`} />
+        <AlertDialog.Content className={panel} data-confirmation-dialog="">
           <AlertDialog.Title className={heading}>{title}</AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className={description}>{children}</div>

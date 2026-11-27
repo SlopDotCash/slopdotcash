@@ -3,6 +3,7 @@
 // on the design tokens in Chromium.
 import "@repo/design-system/fonts";
 import "@repo/design-system/theme.css";
+import "../styles.css";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
@@ -10,7 +11,7 @@ import { cdp, userEvent } from "vitest/browser";
 import { type ControlKind, type Focus, heightPx, type Motion, moves, type Shown, showsRing, targetPx } from "../gen/ui.ts";
 import {
   Button, Checkbox, ConfirmDialog, CopyButton, Dialog, DialogContent, DialogTitle, Disclosure, FileField, Identity, Input, NavTab, NavTabs, Pagination,
-  Progress, RadioGroup, SegmentedControl, Select, SiteFooter, Skeleton, Spinner, Switch, Table, TableHead, TableHeader, TableRow, Textarea,
+  Progress, RadioGroup, SegmentedControl, Select, SiteFooter, Skeleton, Spinner, Switch, Table, TableHead, TableHeader, TableRow, Textarea, useConfirmation,
 } from "../src/index.ts";
 
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -44,6 +45,48 @@ afterEach(async () => {
 afterAll(() => { environment.IS_REACT_ACT_ENVIRONMENT = previous; });
 
 const nothing = () => {};
+
+function RemovalConfirmation() {
+  const [state, send] = useConfirmation();
+  return (
+    <div className="min-h-[200vh]">
+      <ConfirmDialog state={state} onSend={send} title="Remove this project?" confirmLabel="Remove" reason="In flight." trigger={<Button>Remove project</Button>}>
+        Its listing goes.
+      </ConfirmDialog>
+    </div>
+  );
+}
+
+it('locks the page with external styles and keeps confirmation modal (spec/ui/confirmation.md, "Only an explicit confirm starts the work")', async () => {
+  const host = await show(<RemovalConfirmation />);
+  const trigger = host.querySelector("button")!;
+  const dialog = () => document.querySelector('[role="alertdialog"]');
+  const scroll = () => getComputedStyle(document.documentElement).overflowY;
+  const before = { styles: document.head.querySelectorAll("style").length, scroll: scroll() };
+  const keys = (input: string) => act(() => userEvent.keyboard(input));
+
+  trigger.focus();
+  await keys("{Enter}");
+  await expect.poll(() => document.activeElement?.textContent).toBe("Cancel");
+  expect(dialog()).not.toBeNull();
+  expect(document.head.querySelectorAll("style")).toHaveLength(before.styles);
+  expect(scroll()).toBe("hidden");
+
+  await keys("{Tab}");
+  await expect.poll(() => document.activeElement?.textContent).toBe("Remove");
+  await keys("{Tab}");
+  await expect.poll(() => document.activeElement?.textContent).toBe("Cancel");
+  const backdrop = document.elementFromPoint(8, 8)!;
+  expect(backdrop.getAttribute("aria-hidden")).toBe("true");
+  await act(() => userEvent.click(backdrop, { position: { x: 8, y: 8 } }));
+  expect(dialog()).not.toBeNull();
+
+  await keys("{Escape}");
+  await expect.poll(() => document.activeElement).toBe(trigger);
+  expect(dialog()).toBeNull();
+  expect(scroll()).toBe(before.scroll);
+});
+
 /** The primitive of each kind (spec/ui/index.md, "Each control kind has one primitive"), as a page would show it. */
 const samples: Record<ControlKind, ReactNode> = {
   Action: <Button size="sm">Save</Button>,
