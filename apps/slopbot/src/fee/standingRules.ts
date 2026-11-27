@@ -133,7 +133,11 @@ export function coverReading(
   const windowEnds = Date.parse(cover.window_start) + standingDepositStrikeWindowDays * dayMs;
   const closedAt = Date.parse(pull.closed_at ?? "");
   const marked = closed && keepMarked && Number.isFinite(closedAt) && Number.isFinite(windowEnds) && closedAt <= windowEnds;
-  const strikeSeenAt = marked ? (cover.strike_seen_at ?? new Date(nowMillis).toISOString()) : null;
+  const strikeSeenAt = marked
+    ? (cover.strike_seen_at !== null && Number.isFinite(Date.parse(cover.strike_seen_at))
+      ? cover.strike_seen_at
+      : new Date(nowMillis).toISOString())
+    : null;
   const prOpen: 0 | 1 = open ? 1 : 0;
   if (cover.state === "clear") {
     return {
