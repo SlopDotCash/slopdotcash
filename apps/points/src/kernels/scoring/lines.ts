@@ -36,7 +36,8 @@ export function commitActorKind(actor: CommitActor): ActorKind {
 /** @throws {never} */
 //@ pure
 export function isCreditEligibleCommitAuthor(actor: CommitActor | null): boolean {
-  return actor !== null && actor.kind !== "Bot" && !isAgentAccount(actor.id);
+  if (actor === null) return false;
+  return actor.kind !== "Bot" && !isAgentAccount(actor.id);
 }
 
 /** @throws {never} */
@@ -104,10 +105,10 @@ export function sortCredited(actors: CommitActor[], sourceId: string): CommitAct
 
 /** @throws {never} */
 export function implementationCreditActors(sourceAuthor: CommitActor | null, commitAuthors: (CommitActor | null)[]): CommitActor[] {
-  const fallback = sourceAuthor !== null && isCreditEligibleCommitAuthor(sourceAuthor) ? sourceAuthor : null;
+  const fallback: CommitActor | null = isCreditEligibleCommitAuthor(sourceAuthor) ? sourceAuthor : null;
   let actors: CommitActor[] = [];
   for (const author of commitAuthors) {
-    const credited = author !== null && isCreditEligibleCommitAuthor(author) ? author : fallback;
+    const credited: CommitActor | null = isCreditEligibleCommitAuthor(author) ? author : fallback;
     if (credited !== null) actors = withActor(actors, credited);
   }
   if (commitAuthors.length === 0 && fallback !== null) actors = withActor(actors, fallback);

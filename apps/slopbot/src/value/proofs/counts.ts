@@ -99,7 +99,7 @@ export function myersCounts(beforeText: string, afterText: string): LineCounts {
       }
       furthest[slot] = x;
       if (x >= n && y >= m) {
-        const deletions = (distance + n - m) / 2;
+        const deletions = Math.floor((distance + n - m) / 2);
         const additions = distance - deletions;
         if (deletions < 0 || additions < 0) return unresolved;
         return { complete: true, additions: additions, deletions: deletions };

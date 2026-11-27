@@ -133,13 +133,19 @@ export function assessEvidence(sources: TextSource[], artifacts: VerifiedArtifac
   const findings: EvidenceFinding[] = [];
   const categories: EvidenceCategory[] = [];
   let total = 0;
-  for (const category of findingOrder) {
+  let i = 0;
+  while (i < findingOrder.length) {
+    //@ invariant 0 <= i && i <= findingOrder.length
+    //@ invariant total >= 0
+    //@ decreases findingOrder.length - i
+    const category = findingOrder[i];
     const ids = categorySourceIds(claims, category);
     if (ids.length > 0) {
       findings.push({ category: category, points: evidenceWeight(category), sourceIds: ids });
       categories.push(category);
       total = total + evidenceWeight(category);
     }
+    i = i + 1;
   }
   return { points: Math.min(evidencePointCap, total), maxPoints: evidencePointCap, categories: categories, findings: findings };
 }
@@ -183,7 +189,8 @@ export function claimedEarlier(kept: VerifiedArtifact[], artifact: VerifiedArtif
 /** @throws {never} */
 export function selectUniqueVerifiedEvidence(artifacts: RankedArtifact[]): VerifiedArtifact[] {
   const kept: VerifiedArtifact[] = [];
-  for (const ranked of sortRanked(artifacts)) {
+  const sorted = sortRanked(artifacts);
+  for (const ranked of sorted) {
     if (!claimedEarlier(kept, ranked.artifact)) kept.push(ranked.artifact);
   }
   return kept;

@@ -26,7 +26,7 @@ export function backtickRunEndingAt(value: string, end: number): number {
   if (end === 0) {
     return 0;
   }
-  if (value.slice(end - 1, end) === "`") {
+  if (value.charCodeAt(end - 1) === 96) {
     return backtickRunEndingAt(value, end - 1) + 1;
   }
   return 0;
@@ -37,7 +37,7 @@ export function backtickRunEndingAt(value: string, end: number): number {
 export function longestBacktickRun(value: string, end: number): number {
   //@ requires 0 <= end && end <= value.length
   //@ ensures \result >= 0
-  //@ ensures \result === 0 <==> forall(j, (0 <= j && j < end) ==> value.slice(j, j + 1) !== "`")
+  //@ ensures \result === 0 <==> forall(j, (0 <= j && j < end) ==> value.charCodeAt(j) !== 96)
   //@ decreases end
   if (end === 0) {
     return 0;

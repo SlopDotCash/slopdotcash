@@ -179,7 +179,7 @@ export function leakWordEnd(label: string, start: number, stem: string): number 
 /** @throws {never} */
 export function securityWordEndsAt(label: string, start: number, end: number): boolean {
   //@ requires 0 <= start && start <= label.length
-  return end >= 0 && (end === label.length || isSecuritySeparator(label.charCodeAt(end)));
+  return end >= 0 && end <= label.length && (end === label.length || isSecuritySeparator(label.charCodeAt(end)));
 }
 
 /** @throws {never} */
@@ -445,7 +445,8 @@ export function isClaimLine(line: string, review: boolean): boolean {
 
 /** @throws {never} */
 export function hasClaimLine(body: string, review: boolean): boolean {
-  for (const line of markdownLines(body)) {
+  const lines = markdownLines(body);
+  for (const line of lines) {
     if (isClaimLine(line, review)) return true;
   }
   return false;
@@ -487,7 +488,8 @@ export function hasClaimLabel(labels: string[], review: boolean): boolean {
 export function hasCreditedAssignee(item: GitHubItem): boolean {
   for (const actor of item.assignees) {
     const author = item.author;
-    const isAuthor = item.kind === "PullRequestItem" && author !== null && sameActor(actor, author);
+    let isAuthor = false;
+    if (item.kind === "PullRequestItem" && author !== null) isAuthor = sameActor(actor, author);
     if (actor.kind !== "Bot" && !isAuthor) return true;
   }
   return false;
@@ -499,10 +501,18 @@ export function claimCommentOf(item: GitHubItem, comment: Comment): ClaimComment
   //@ ensures comment.author === null ==> !\result.trustedAssociation
   const author = comment.author;
   const itemAuthor = item.author;
+  let botAuthor = false;
+  let trustedAssociation = false;
+  let byItemAuthor = false;
+  if (author !== null) {
+    botAuthor = author.kind === "Bot";
+    trustedAssociation = isTrustedClaimAssociation(comment.association);
+    if (itemAuthor !== null) byItemAuthor = sameActor(author, itemAuthor);
+  }
   return {
-    botAuthor: author !== null && author.kind === "Bot",
-    trustedAssociation: author !== null && isTrustedClaimAssociation(comment.association),
-    byItemAuthor: author !== null && itemAuthor !== null && sameActor(author, itemAuthor),
+    botAuthor: botAuthor,
+    trustedAssociation: trustedAssociation,
+    byItemAuthor: byItemAuthor,
     claimLine: hasClaimLine(comment.body, item.kind === "PullRequestItem"),
     createdAt: comment.createdAt,
   };

@@ -37,6 +37,7 @@ export function textLineCount(text: string): number {
   while (i < text.length) {
     //@ invariant 0 <= i && i <= text.length
     //@ invariant count >= 0
+    //@ invariant text.length === 0 ==> count === 0
     //@ decreases text.length - i
     if (text.charCodeAt(i) === 10) count = count + 1;
     i = i + 1;
@@ -57,7 +58,7 @@ export function decimal(value: number): string {
     //@ decreases rest
     const digit = rest % 10;
     text = digits.slice(digit, digit + 1) + text;
-    rest = (rest - digit) / 10;
+    rest = Math.floor((rest - digit) / 10);
   }
   return text;
 }

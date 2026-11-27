@@ -8,7 +8,6 @@ export interface EvmRecoveryPlan {
 }
 
 /** @throws {never} */
-//@ pure
 export function spentLeg(nonces: readonly bigint[], paid: readonly boolean[], finalized: bigint): number {
   //@ requires paid.length === nonces.length
   //@ ensures -1 <= \result && \result < nonces.length
@@ -30,7 +29,6 @@ export function spentLeg(nonces: readonly bigint[], paid: readonly boolean[], fi
 }
 
 /** @throws {never} */
-//@ pure
 export function lowerPending(nonces: readonly bigint[], paid: readonly boolean[], finalized: bigint, selected: number): boolean {
   //@ requires paid.length === nonces.length
   //@ requires 0 <= selected && selected < nonces.length
@@ -54,9 +52,10 @@ export function planEvmRecovery(nonces: readonly bigint[], paid: readonly boolea
   const spent = spentLeg(nonces, paid, finalized);
   const legIndex = spent < 0 && !researcherPaid && targetChanged ? 0 : spent;
   if (legIndex < 0 || legIndex >= nonces.length || nonces[legIndex] < 0n) return { legIndex, consumed: false, blockedByLower: false };
+  const blockedByLower = lowerPending(nonces, paid, finalized, legIndex);
   return {
     legIndex,
     consumed: !paid[legIndex] && nonces[legIndex] < finalized,
-    blockedByLower: lowerPending(nonces, paid, finalized, legIndex),
+    blockedByLower,
   };
 }

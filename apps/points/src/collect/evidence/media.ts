@@ -755,7 +755,10 @@ export function clusterHasPayload(bytes: Uint8Array, cluster: Element): boolean 
     //@ invariant 0 <= i && i <= children.elements.length
     //@ decreases children.elements.length - i
     const child = children.elements[i];
-    if (child.id === simpleBlockId && child.availableEnd - child.payloadStart >= 256 && ebmlVint(bytes, child.payloadStart).ok) return true;
+    if (child.id === simpleBlockId && child.availableEnd - child.payloadStart >= 256) {
+      const vint = ebmlVint(bytes, child.payloadStart);
+      if (vint.ok) return true;
+    }
     if (child.id === blockGroupId) {
       const block = firstElement(ebmlChildren(bytes, child.payloadStart, child.availableEnd), blockId);
       if (block.ok && block.availableEnd - block.payloadStart >= 256) return true;

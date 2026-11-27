@@ -11,6 +11,7 @@ lemma backtickRunIsBounded(value: string, end: int)
 
 lemma fenceOutrunsEveryRun(value: string, end: int)
   requires 0 <= end && end <= |value|
+  ensures backtickRunEndingAt(value, end) >= 0
   ensures fenceWidth(backtickRunEndingAt(value, end)) > backtickRunEndingAt(value, end)
   ensures fenceWidth(backtickRunEndingAt(value, end)) >= 3
 {

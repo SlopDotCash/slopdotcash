@@ -284,6 +284,7 @@ export function fencedRecordEnd(body: string, at: number, name: string): number 
 export function recordLine(body: string, at: number, name: string): string {
   //@ requires 0 <= at && at <= body.length
   const open = skipFenceIndent(body, at);
+  if (!body.startsWith("```" + name, open)) return "";
   const content = newlineEnd(body, skipBlanks(body, open + 3 + name.length));
   if (content < 0) return "";
   let end = content;

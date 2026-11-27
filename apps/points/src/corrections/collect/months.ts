@@ -57,6 +57,32 @@ export function cutoffBefore(through: number): number {
   return through - cutoffMillis;
 }
 
+function nextMonthStartFrom(at: number): number {
+  //@ requires at >= 0
+  //@ ensures \result === nextMonthStart(at)
+  //@ ensures \result > at
+  //@ ensures \result - 2678400000 <= at
+  let year = 1970;
+  let month = 1;
+  let start = 0;
+  while (start <= at) {
+    //@ invariant 0 <= year && 1 <= month && month <= 12 && 0 <= start && start <= at
+    //@ invariant monthStartAfter(at, year, month, start) === nextMonthStart(at)
+    //@ decreases at - start
+    const days = monthDays(year, month);
+    const next = start + days * 86400000;
+    if (next > at) return next;
+    if (month === 12) {
+      year = year + 1;
+      month = 1;
+    } else {
+      month = month + 1;
+    }
+    start = next;
+  }
+  return start;
+}
+
 /** @throws {never} */
 export function censusParts(start: number, end: number): MonthPart[] {
   //@ requires 0 <= start && start < end
@@ -78,7 +104,7 @@ export function censusParts(start: number, end: number): MonthPart[] {
     //@ invariant forall(k, 0 <= k && k < parts.length ==> parts[k].to === (nextMonthStart(parts[k].from) < end ? nextMonthStart(parts[k].from) : end))
     //@ invariant forall(k, 0 < k && k < parts.length ==> parts[k].from === parts[k - 1].to)
     //@ decreases end - from
-    const next = nextMonthStart(from);
+    const next = nextMonthStartFrom(from);
     const to = next < end ? next : end;
     parts.push({ from: from, to: to });
     from = to;

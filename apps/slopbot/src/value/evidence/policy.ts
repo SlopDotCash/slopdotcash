@@ -63,12 +63,20 @@ export function sourceMatchesPolicy(names: string[], expectedNodeId: string | nu
 }
 
 /** @throws {never} */
+//@ pure
+export function samePolicyFacts(recorded: PolicyFacts | null, registered: PolicyFacts): boolean {
+  if (recorded === null) return false;
+  return recorded.id === registered.id && recorded.projectId === registered.projectId &&
+    recorded.integrationBranch === registered.integrationBranch && recorded.expectedNodeId === registered.expectedNodeId;
+}
+
+/** @throws {never} */
 export function recordMatchesRegistration(recorded: PolicyFacts | null, registered: PolicyFacts, names: string[], repository: string, repositoryNodeId: string): boolean {
-  //@ ensures \result ==> recorded !== null && recorded.id === registered.id && recorded.projectId === registered.projectId && recorded.integrationBranch === registered.integrationBranch && recorded.expectedNodeId === registered.expectedNodeId
+  //@ ensures \result ==> recorded !== null
+  //@ ensures \result ==> samePolicyFacts(recorded, registered)
   //@ ensures \result ==> registered.expectedNodeId === null || registered.expectedNodeId === repositoryNodeId
-  return recorded !== null && recorded.id === registered.id && recorded.projectId === registered.projectId &&
-    recorded.integrationBranch === registered.integrationBranch && recorded.expectedNodeId === registered.expectedNodeId &&
-    sourceMatchesPolicy(names, registered.expectedNodeId, repository, repositoryNodeId);
+  if (!samePolicyFacts(recorded, registered)) return false;
+  return sourceMatchesPolicy(names, registered.expectedNodeId, repository, repositoryNodeId);
 }
 
 /** @throws {never} */
@@ -166,6 +174,19 @@ export function declarationOf(line: string): string | null {
 }
 
 /** @throws {never} */
+//@ pure
+export function isNullOrNonEmpty(value: string | null): boolean {
+  if (value === null) return true;
+  return value.length > 0;
+}
+
+/** @throws {never} */
+//@ pure
+export function closesFence(open: Fence, fence: Fence): boolean {
+  return fence.marker === open.marker && fence.run >= open.run && fence.bare;
+}
+
+/** @throws {never} */
 export function declaredIntegrationBranch(source: string): string | null {
   //@ ensures \result !== null ==> \result.length > 0
   const text = withoutHtmlComments(source);
@@ -176,7 +197,7 @@ export function declaredIntegrationBranch(source: string): string | null {
   let i = 0;
   while (i <= text.length) {
     //@ invariant 0 <= start && start <= i && i <= text.length + 1
-    //@ invariant found === null || found.length > 0
+    //@ invariant isNullOrNonEmpty(found)
     //@ decreases text.length + 1 - i
     if (i === text.length || text.charCodeAt(i) === 10) {
       const end = i > start && i < text.length && text.charCodeAt(i - 1) === 13 ? i - 1 : i;
@@ -184,7 +205,7 @@ export function declaredIntegrationBranch(source: string): string | null {
       const fence = fenceOf(line);
       if (fence !== null) {
         if (open === null) open = fence;
-        else if (fence.marker === open.marker && fence.run >= open.run && fence.bare) open = null;
+        else if (closesFence(open, fence)) open = null;
       } else if (open === null) {
         const branch = declarationOf(line);
         if (branch !== null) {
