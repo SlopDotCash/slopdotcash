@@ -2,8 +2,8 @@
 import { boundedBytes } from "../browser.vibe"
 
 export error NotFound { path: string }
-export error GitHubRefused { status: RefusalStatus; path: string; message: string; remaining: number | null; resetAt: number | null; retryAfterSeconds: number | null }
-export error RateLimited { status: number; path: string; message: string; remaining: number | null; observedResetAt: number | null; observedRetryAfterSeconds: number | null; primaryDelay: number; retryAfter: number; wait?: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
+export error GitHubRefused { status: RefusalStatus; path: string; message: string; remaining: number | null; resetAt: number | null; retryAfterSeconds: number | null; requestId?: string }
+export error RateLimited { status: number; path: string; message: string; remaining: number | null; observedResetAt: number | null; observedRetryAfterSeconds: number | null; primaryDelay: number; retryAfter: number; wait?: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean; requestId?: string }
 export error GitHubUnavailable { status?: number; path: string }
 export error GitHubMalformed { path: string; issue: string }
 
@@ -22,6 +22,7 @@ export interface RateLimitHints {
 
 const digits = /^\d{1,15}$/u
 const integerHeader = /^\d{1,16}$/u
+const requestIdHeader = /^[A-Za-z0-9:._-]{1,128}$/u
 const refusalMessageLimitBytes = 4096
 const refusalMessageTimeoutMs = 250
 const messageLength = 300
@@ -56,7 +57,13 @@ export effect function refusalMessage(response: HttpClientResponse.HttpClientRes
   return timeout(messageOf(response), Duration.millis(refusalMessageTimeoutMs)) catch () => ""
 }
 
+function requestIdOf(headers: ResponseHeaders): string | undefined {
+  const value = headers["x-github-request-id"]?.trim() ?? ""
+  return requestIdHeader.test(value) ? value : undefined
+}
+
 export function refused(status: RefusalStatus, path: string, headers: ResponseHeaders, message: string): GitHubRefused {
+  const requestId = requestIdOf(headers)
   return new GitHubRefused({
     status,
     path,
@@ -64,6 +71,7 @@ export function refused(status: RefusalStatus, path: string, headers: ResponseHe
     remaining: remainingOf(headers),
     resetAt: integerOf(headers, "x-ratelimit-reset"),
     retryAfterSeconds: integerOf(headers, "retry-after"),
+    ...(requestId === undefined ? {} : { requestId }),
   })
 }
 
@@ -99,6 +107,7 @@ export function rateLimited(status: number, headers: ResponseHeaders, nowMillis:
   const hinted = usableReset(headers) !== undefined || usableRetryAfter(headers) !== undefined
   const reset = headers["x-ratelimit-reset"]?.trim() ?? ""
   const delay = Math.max(hints.primaryDelay, hints.retryAfter)
+  const requestId = requestIdOf(headers)
   return new RateLimited({
     status,
     path,
@@ -110,6 +119,7 @@ export function rateLimited(status: number, headers: ResponseHeaders, nowMillis:
     ...(delay > 0 ? { wait: delay } : status === 429 || secondaryMessage ? { wait: unhintedWait } : {}),
     ...(hinted ? { retryAfterSeconds: Math.min(maxReportedSeconds, Math.ceil(delay / 1_000)) } : {}),
     ...(digits.test(reset) ? { resetAt: Number(reset) * 1_000 } : {}),
+    ...(requestId === undefined ? {} : { requestId }),
     secondary: headers["x-ratelimit-remaining"] !== "0",
   })
 }

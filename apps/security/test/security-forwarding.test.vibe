@@ -1,4 +1,4 @@
-// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
+// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
 import { assert, layer } from "@effect/vitest"
 import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
@@ -14,7 +14,7 @@ import { CallerLive } from "@repo/backend/caller"
 import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
-import { Request as WorkerRequest } from "miniflare"
+import { Headers as WorkerHeaders, Request as WorkerRequest, Response as WorkerResponse } from "miniflare"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { IntakeApp } from "../src/forwarding/grant.vibe"
@@ -40,6 +40,7 @@ interface Shown {
   readonly state: string
   readonly revision: number
   readonly retryAllowed: boolean
+  readonly failureCode: string | null
   readonly caseId: string | null
   readonly advisory: { readonly ghsa: string } | null
 }
@@ -50,6 +51,7 @@ service Forwarding {
   readonly clock: SettableClock
   readonly handler: WebHandler
   readonly pending: Array<Promise<unknown>>
+  readonly warnings: Array<ReadonlyArray<unknown>>
 }
 
 const project = "intake-fixture"
@@ -102,7 +104,7 @@ function ports(clock: SettableClock) {
   )
 }
 
-function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: Array<Promise<unknown>>) {
+function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: Array<Promise<unknown>>, warnings: Array<ReadonlyArray<unknown>>) {
   const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
   const github = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority }), Layer.mergeAll(outboundVia(viaFake), webCrypto, clock.layer))
   const base = Layer.mergeAll(
@@ -120,7 +122,15 @@ function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: 
     Layer.succeed(Execution, { context: { waitUntil: (work) => { pending.push(work) } } satisfies ExecutionContext }),
   )
   const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outboundVia(viaFake), webCrypto))
-  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, github, route, SubmissionFeeRatesLive, ProjectParticipationLive), base)
+  const capture = Logger.layer([Logger.make((options) => {
+    const message: unknown = options.message
+    const parts: ReadonlyArray<unknown> = Array.isArray(message) ? message : [message]
+    if (parts[0] === "security_advisory_post_refused") warnings.push(parts)
+  })], { mergeWithExisting: true })
+  return Layer.mergeAll(
+    Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, github, route, SubmissionFeeRatesLive, ProjectParticipationLive), base),
+    capture,
+  )
 }
 
 const Started = Layer.effect(Forwarding, effect {
@@ -136,9 +146,10 @@ const Started = Layer.effect(Forwarding, effect {
     fake.world.addInstallation({ id: 4402, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
   }))
   const pending: Array<Promise<unknown>> = []
+  const warnings: Array<ReadonlyArray<unknown>> = []
   const routes = Layer.mergeAll(forwardingRoutes, intakeRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
-  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, fake, clock, pending)), { disableLogger: true })), (made) => promise(() => made.dispose()))
-  return { world, fake, clock, handler: web.handler as unknown as WebHandler, pending }
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, fake, clock, pending, warnings)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return { world, fake, clock, handler: web.handler as unknown as WebHandler, pending, warnings }
 })
 
 const sessions = new Map<string, string>()
@@ -226,6 +237,18 @@ effect function consented(forwarding: Forwarding.Shape, id: string) {
 effect function markerOf(forwarding: Forwarding.Shape, id: string) {
   const found = try promise(() => rows(forwarding.world, "SELECT marker FROM security_submissions WHERE id=?", id))
   return String(found[0]?.marker ?? "")
+}
+
+type Alter = Parameters<GitHubFake["alterNext"]>[1]
+type Altered = Awaited<ReturnType<Alter>>
+
+effect function withRequestId(forwarding: Forwarding.Shape, requestId: string) {
+  const alter: Alter = async (response) => {
+    const headers = new WorkerHeaders([...response.headers])
+    headers.set("x-github-request-id", requestId)
+    return new WorkerResponse(new Uint8Array(await response.arrayBuffer()), { status: response.status, headers }) as unknown as Altered
+  }
+  try orDie(Effect.try(() => forwarding.fake.alterNext(reports, alter)))
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
@@ -349,6 +372,48 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       inconclusive: [202, "draft", 2],
       mismatch: [200, "failed", 2],
       failures: [{ state: "draft", failure_code: null, case_id: null }, { state: "failed", failure_code: "author-mismatch", case_id: null }],
+    })
+  })
+
+  it.effect('Refused advisory posts log only the sanitized GitHub request ID without report text or credentials (spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
+    const forwarding = try Forwarding
+    const summary = "Private advisory summary token-leak-check"
+    const id = try submitted(forwarding, "forward-refusal-log-0001", summary)
+    const marker = try markerOf(forwarding, id)
+    const grant = try consented(forwarding, id)
+    const send = `/api/v1/security-submissions/${id}/send`
+    const before = forwarding.warnings.length
+
+    try orDie(Effect.try(() => forwarding.fake.failNext(reports, { status: 403, message: "Resource not accessible by integration PRIVATE-UPSTREAM-BODY" })))
+    try withRequestId(forwarding, " C0A8:1234:56789A:BCDEF0:67213E21 ")
+    const forbidden = try call(forwarding, send, [grant], { expectedRevision: 1 })
+
+    try orDie(Effect.try(() => forwarding.fake.failNext(reports, { status: 422, message: "Validation failed PRIVATE-422-BODY" })))
+    try withRequestId(forwarding, "invalid request id with spaces")
+    const invalid = try call(forwarding, send, [grant], { expectedRevision: 3 })
+
+    try orDie(Effect.try(() => forwarding.fake.failNext(reports, { rateLimit: { secondary: true, retryAfterSeconds: 60 } })))
+    try withRequestId(forwarding, "C0A8:1234:RATE:LIMIT:01")
+    const limited = try call(forwarding, send, [grant], { expectedRevision: 5 })
+
+    const logged = forwarding.warnings.slice(before)
+    const serialized = JSON.stringify(logged)
+    try same({
+      forbidden: [...brief(forbidden), shown(forbidden).failureCode],
+      invalid: [...brief(invalid), shown(invalid).failureCode],
+      limited: [...brief(limited), shown(limited).retryAllowed],
+      logged,
+      leaked: [summary, marker, grant, "PRIVATE-UPSTREAM-BODY", "PRIVATE-422-BODY", "path traversal"].some((secret) => serialized.includes(secret)),
+    }, {
+      forbidden: [200, "failed", 3, "forbidden"],
+      invalid: [200, "failed", 5, "invalid"],
+      limited: [200, "draft", 7, true],
+      logged: [
+        ["security_advisory_post_refused", { repository: "slop-test/intake", status: 403, outcome: "forbidden", requestId: "C0A8:1234:56789A:BCDEF0:67213E21" }],
+        ["security_advisory_post_refused", { repository: "slop-test/intake", status: 422, outcome: "invalid", requestId: null }],
+        ["security_advisory_post_refused", { repository: "slop-test/intake", status: 403, outcome: "rate-limited", requestId: "C0A8:1234:RATE:LIMIT:01" }],
+      ],
+      leaked: false,
     })
   })
 })

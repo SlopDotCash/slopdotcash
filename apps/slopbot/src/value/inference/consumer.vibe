@@ -193,9 +193,34 @@ effect function jointCurrent(joint: WorkUnitEvidence, repositories: ReadonlyArra
 
 export error JointHistoryInvalid { reason: string }
 
+const maxLoggedLimitations = 10
+const maxLimitationLength = 200
+
+type SourceIncompleteStage = "evidence" | "group" | "work_unit"
+
+function sanitizedLimitation(limitation: string) {
+  return limitation.replace(/\p{Cc}+/gu, " ").trim().slice(0, maxLimitationLength)
+}
+
+effect function logSourceIncomplete(job: ValueRequest, stage: SourceIncompleteStage, limitations: ReadonlyArray<string>) {
+  const sanitized = [...new Set(limitations.map(sanitizedLimitation).filter((entry) => entry !== ""))]
+  try Effect.logWarning(JSON.stringify({
+    event: "value_request_source_incomplete",
+    delivery: job.deliveryId,
+    repository: `${job.owner}/${job.repo}`,
+    pull: job.number,
+    stage,
+    limitationCount: sanitized.length,
+    limitations: sanitized.slice(0, maxLoggedLimitations),
+  }))
+}
+
 effect function joint(job: ValueRequest, claim: Claim, registered: Registered, sources: ReadonlyArray<WorkUnitSource>, base: Gathered) {
   const prepared = try prepareWorkUnitEvidence(sources, registered.repositories)
-  if (prepared.limitations.length > 0) return { ...base, groupComplete: false } satisfies Gathered
+  if (prepared.limitations.length > 0) {
+    try logSourceIncomplete(job, "work_unit", prepared.limitations)
+    return { ...base, groupComplete: false } satisfies Gathered
+  }
   const predecessors = try expectedPredecessors(prepared.sources.map(({ evidence }) => [evidence.repositoryNodeId, evidence.pull.node_id] as const))
   if (try jointCurrent(prepared, registered.repositories)) return { ...base, alreadyCurrent: true } satisfies Gathered
   const call = try jointValueCall(prepared)
@@ -264,12 +289,17 @@ effect function gather(job: ValueRequest, claim: Claim) {
     const occurred: Gathered = { ...start, occurredAt: seconds(pull.merged_at ?? pull.closed_at) }
     if (occurred.occurredAt <= 0 || occurred.occurredAt < occurred.valueStart) return { gathered: occurred, sources: [] } satisfies Gathering
     const evidence = try collectEvidence({ repository: repository.id, number: job.number, policy: repository, negotiatedDiff: true })
-    if (evidence.limitations.length > 0 && !noChangePromotionDeferralOnly(evidence) && !nativeMergeDeferralOnly(evidence))
+    if (evidence.limitations.length > 0 && !noChangePromotionDeferralOnly(evidence) && !nativeMergeDeferralOnly(evidence)) {
+      try logSourceIncomplete(job, "evidence", evidence.limitations)
       return { gathered: { ...occurred, evidenceComplete: false }, sources: [] } satisfies Gathering
+    }
     const policy = try loadValuePolicy(evidence.repositoryDatabaseId, evidence.pull.base.sha)
     const startAt = config.settings?.start ?? apiStart * 1000
     const group = try groupOf(claim, registered, job.installationId, { evidence, policy }, startAt)
-    if (group === undefined || group.length === 0) return { gathered: { ...occurred, groupComplete: false }, sources: [] } satisfies Gathering
+    if (group === undefined || group.length === 0) {
+      try logSourceIncomplete(job, "group", [group === undefined ? "Value group collection is incomplete" : "Value group is empty"])
+      return { gathered: { ...occurred, groupComplete: false }, sources: [] } satisfies Gathering
+    }
     const scopes = scopesOf(group)
     if (!(try leaseSources(claim, scopes))) return { gathered: occurred, sources: scopes } satisfies Gathering
     const grouped = (try expectedPredecessors(group.map(({ evidence: source }) => [source.repositoryNodeId, source.pull.node_id] as const))).supersedes.length > 0
