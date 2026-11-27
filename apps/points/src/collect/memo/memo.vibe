@@ -44,7 +44,10 @@ export interface AttributionReferenceDependency {
 
 export type AuthorRow = readonly [sha: string, actorNodeId: string, originalPullRequestId: string, originalPullRequestUrl: string, originalCommitSha: string]
 
-export type AttributionMemoResult = { readonly kind: "none" } | { readonly kind: "authors"; readonly authors: ReadonlyArray<AuthorRow> }
+export type AttributionMemoResult =
+  | { readonly kind: "none" }
+  | { readonly kind: "authors"; readonly authors: ReadonlyArray<AuthorRow> }
+  | { readonly kind: "hold"; readonly limitations: ReadonlyArray<string> }
 
 export interface AttributionMemoFence {
   readonly number: number
@@ -225,6 +228,14 @@ effect function resultAt(value: unknown, path: string) {
   if (result.kind === "none") {
     try exactKeys(result, ["kind"], `${path}.result`)
     return { kind: "none" } satisfies AttributionMemoResult
+  }
+  if (result.kind === "hold") {
+    try exactKeys(result, ["kind", "limitations"], `${path}.result`)
+    const listed = result.limitations
+    if (!Array.isArray(listed) || listed.length === 0) throw invalid(`${path}.result.limitations`)
+    const limitations: string[] = []
+    for (const [index, limitation] of (listed as ReadonlyArray<unknown>).entries()) limitations.push(try text(limitation, `${path}.result.limitations[${index}]`))
+    return { kind: "hold", limitations } satisfies AttributionMemoResult
   }
   if (result.kind !== "authors") throw invalid(`${path}.result.kind`)
   try exactKeys(result, ["kind", "authors"], `${path}.result`)
@@ -469,14 +480,14 @@ export effect function openSession(options: OpenMemoOptions) {
   const outcomeNumber = interner(1)
   const versionNumber = interner(0)
   const resultNumber = interner(0)
-  const attributions: Array<{ readonly outcomeId: number; readonly version: number; readonly result: number; readonly expired: boolean }> = []
+  const attributions: Array<{ readonly outcomeId: number; readonly version: number; readonly result: number; readonly held: boolean; readonly expired: boolean }> = []
   const currentEntries: Array<readonly [string, AttributionMemoEntry]> = []
   let expiredCount = 0
   if (memo !== null) {
     for (const entry of memo.attributions) {
       const computedAt = entry.computedAt ?? memo.lastFullAt
       const expired = options.nowMs - millisOf(computedAt) >= (try attributionRefreshAge(entry.outcomeId))
-      attributions.push({ outcomeId: outcomeNumber(entry.outcomeId), version: versionNumber(versionKey(entry)), result: resultNumber(canonicalJson(entry.result)), expired })
+      attributions.push({ outcomeId: outcomeNumber(entry.outcomeId), version: versionNumber(versionKey(entry)), result: resultNumber(canonicalJson(entry.result)), held: entry.result.kind === "hold", expired })
       if (expired) expiredCount += 1
       else currentEntries.push([entry.outcomeId, entry] as const)
     }
@@ -506,9 +517,16 @@ export effect function openSession(options: OpenMemoOptions) {
   const stats: MemoStats = { reused: 0, live: 0, audited: 0, auditMismatches: 0, fenceMisses: 0 }
   let run = opened
 
+  function liveResult(live: LiveAnswer) {
+    return live.kind === "held" ? undefined : live.kind === "fenced" ? live.entry.result : live.result
+  }
+
   function resultOf(live: LiveAnswer) {
-    if (live.kind === "held") return resultNumber(canonicalJson({ kind: "held" }))
-    return resultNumber(canonicalJson(live.kind === "fenced" ? live.entry.result : live.result))
+    return resultNumber(canonicalJson(liveResult(live) ?? { kind: "held" }))
+  }
+
+  function heldOf(live: LiveAnswer) {
+    return live.kind === "held" || liveResult(live)?.kind === "hold"
   }
 
   function recordedEntry(outcomeId: string, live: LiveAnswer) {
@@ -564,7 +582,7 @@ export effect function openSession(options: OpenMemoOptions) {
     },
     effect audit(outcomeId: string, sample: number, live: LiveAnswer) {
       const before = run
-      run = try machine.send({ type: "audit", outcomeId: outcomeNumber(outcomeId), version: priorVersion(outcomeId), sample, result: resultOf(live), held: live.kind === "held", fenced: live.kind === "fenced" })
+      run = try machine.send({ type: "audit", outcomeId: outcomeNumber(outcomeId), version: priorVersion(outcomeId), sample, result: resultOf(live), held: heldOf(live), fenced: live.kind === "fenced" })
       recordedEntry(outcomeId, live)
       stats.audited += 1
       const differs = run.mismatch && !before.mismatch
@@ -590,7 +608,7 @@ export effect function openSession(options: OpenMemoOptions) {
     effect computeLive(outcomeId: string, live: LiveAnswer) {
       try answering()
       const version = live.kind === "fenced" ? versionNumber(versionKey(live.entry)) : versionNumber(`unfenced\0${outcomeId}`)
-      run = try machine.send({ type: "computeLive", outcomeId: outcomeNumber(outcomeId), version, result: resultOf(live), held: live.kind === "held", fenced: live.kind === "fenced" })
+      run = try machine.send({ type: "computeLive", outcomeId: outcomeNumber(outcomeId), version, result: resultOf(live), held: heldOf(live), fenced: live.kind === "fenced" })
       recordedEntry(outcomeId, live)
     },
     effect snapshotWritten() {

@@ -82,12 +82,20 @@ effect function attributed(reads: Reads, opened: OpenedMemo, cutoffAt: string, c
   }
 }
 
-effect function withAuthors(path: string, into: string, row: AuthorRow) {
+effect function withResult(path: string, into: string, result: Readonly<Record<string, unknown>>) {
   const fs = try FileSystem.FileSystem
   const text = try fs.readFileString(path)
   const file = try Effect.try(() => JSON.parse(text) as { readonly attributions: ReadonlyArray<Readonly<Record<string, unknown>>> })
-  const attributions = file.attributions.map((entry) => ({ ...entry, result: { kind: "authors", authors: [row] } }))
+  const attributions = file.attributions.map((entry) => ({ ...entry, result }))
   try fs.writeFileString(into, `${JSON.stringify({ ...file, attributions })}\n`)
+}
+
+effect function withAuthors(path: string, into: string, row: AuthorRow) {
+  try withResult(path, into, { kind: "authors", authors: [row] })
+}
+
+function heldSources(result: { readonly kind: string; readonly inputs?: { readonly attributionHolds: ReadonlyArray<{ readonly sourceId: string; readonly limitations: ReadonlyArray<string> }> } }) {
+  return (result.inputs?.attributionHolds ?? []).map((hold) => [hold.sourceId, ...hold.limitations])
 }
 
 function stats(reused: number, live: number, audits: number, auditMismatches: number, fenceMisses: number) {
@@ -168,6 +176,25 @@ describe('Reach the same collection with fewer reads (spec/points/collectionMemo
       try Effect.try(() => world.fake.world.renameRepo("grace/tools", "grace/kit"))
       const renamed = try attributed(reads, try memoFrom(`${directory}/referenced.json`, `${directory}/renamed.json`), cutoffAt, { value: [], attribution: [try attributionOutcome(world)] })
       try same({ stats: renamed.stats, discovery: requested(world, discoveryRead) - before }, { stats: stats(0, 1, 0, 0, 1), discovery: 3 })
+    }
+  })
+
+  it.live("a recorded hold is reused with its limitations and no discovery reads, and stays recorded", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectory()
+      const world = try seeded()
+      const reads = widgetsReads(world)
+      const outcome = try attributionOutcome(world)
+      const census = { value: [], attribution: [outcome] } satisfies ValueCensus
+      const cutoffAt = try cutoffWhere(outcome.id, false)
+      const limitation = "Related private PR evidence is withheld"
+      try attributed(reads, try memoFrom("", `${directory}/first.json`), cutoffAt, census)
+      try withResult(`${directory}/first.json`, `${directory}/held.json`, { kind: "hold", limitations: [limitation] })
+
+      const before = requested(world, discoveryRead)
+      const reused = try attributed(reads, try memoFrom(`${directory}/held.json`, `${directory}/reused.json`), cutoffAt, census)
+      try same({ holds: heldSources(reused.result), stats: reused.stats, recorded: reused.recorded, discovery: requested(world, discoveryRead) - before }, { holds: [[outcome.id, limitation]], stats: stats(1, 0, 0, 0, 0), recorded: [outcome.id], discovery: 0 })
     }
   })
 
