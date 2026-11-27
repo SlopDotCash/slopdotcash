@@ -55,12 +55,18 @@ effect function actions(world: World, id: string) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Operator write refusals keep evidence private and leave the grant and closure journals untouched (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
+  it.effect('Evidence route refusals keep evidence private and leave its state untouched (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
     const { world } = try Evidence
     const id = vetting("9")
     const sha = "a".repeat(64)
     const close = `/api/v1/operator/vetting-evidence/${id}/close`
-    const counts = () => promise(() => rows(world, "SELECT (SELECT count(*) FROM vetting_evidence_grants) AS grants, (SELECT count(*) FROM vetting_evidence_case_closures) AS closures, (SELECT count(*) FROM vetting_evidence_audit) AS audits"))
+    const counts = () => promise(() => rows(world, `SELECT
+      (SELECT count(*) FROM vetting_evidence_grants) AS grants,
+      (SELECT count(*) FROM vetting_evidence_case_closures) AS closures,
+      (SELECT count(*) FROM vetting_evidence_audit) AS audits,
+      (SELECT count(*) FROM vetting_evidence_runs) AS runs,
+      (SELECT count(*) FROM vetting_evidence_objects) AS objects,
+      (SELECT count(*) FROM vetting_evidence_completions) AS completions`))
     const before = try counts()
     const forbidden = refusal(403, "origin_forbidden", "Requests must come from this site")
     const unauthorized = refusal(401, "unauthorized", "Sign in with GitHub")
@@ -83,6 +89,21 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }
     const badIdentity = try promise(() => request(world, operatorPath(id, "not-a-digest", "download-grant")))
     try same([shown(badIdentity), badIdentity.headers["cache-control"]], [missing, "private, no-store"])
+    const service = evidencePath(id)
+    const object = `${service}/${sha}`
+    const absent = { status: 404, body: { error: "not_found" } }
+    const reads = [
+      try promise(() => request(world, "/api/v1/operator/vetting-evidence")),
+      try promise(() => request(world, operatorPath(id, sha, "body"))),
+    ]
+    const wrongMethods = [service, object, `${object}/chunks/0`, `${object}/finalize`, `${service}/not-a-digest`]
+    const rejected: Answer[] = []
+    for (const path of wrongMethods) rejected.push(try promise(() => request(world, path, { headers: { origin } })))
+    try same(reads.map(shown), [unauthorized, unauthorized])
+    try same(rejected.map(shown), [missing, absent, absent, absent, missing])
+    for (const answer of [...reads, ...rejected]) {
+      try same([answer.headers["cache-control"], answer.headers["x-robots-tag"], answer.headers["set-cookie"]], ["private, no-store", "noindex", undefined])
+    }
     try same(try counts(), before)
   })
 

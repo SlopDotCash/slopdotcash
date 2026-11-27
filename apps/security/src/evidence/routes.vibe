@@ -20,7 +20,7 @@ const kinds = new Set(["trace", "stdout", "stderr", "network", "artifact", "line
 const contentTypes = ["text/plain", "application/x-ndjson", "application/json", "application/octet-stream"]
 const grantCookie = "__Secure-vetting-read-grant="
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
-const operatorWriteSession = {
+const operatorSession = {
   unauthenticated: { ...admission.unauthenticated, headers: privateHeaders },
   actorMismatch: { ...admission.actorChanged, headers: privateHeaders },
 }
@@ -217,7 +217,7 @@ effect function objectState(row: ObjectRow, current: Run, now: number) {
   return head.size !== row.size_bytes || head.customMetadata?.sha256 !== row.sha256 ? "corrupt" : "stored-unverified"
 }
 
-const overviewRoute = handleRaw(evidenceOverview, (input) => effect {
+const overviewRoute = handleRaw({ ...evidenceOverview, ...operatorSession }, (input) => effect {
   try rejectHead()
   const actor = try operator()
   const assessment = input.query.get("assessmentId")
@@ -255,7 +255,7 @@ const overviewRoute = handleRaw(evidenceOverview, (input) => effect {
   return answer({ runs: listed, policy: evidencePolicy, retentionBoundary })
 })
 
-const closeRoute = handleRawJsonWrite({ ...closeEvidenceCase, ...operatorWriteSession }, (input) => effect {
+const closeRoute = handleRawJsonWrite({ ...closeEvidenceCase, ...operatorSession }, (input) => effect {
   const assessment = input.params.assessment ?? ""
   if (!identity.test(assessment)) throw refused(rows.routeNotFound)
   const actor = try operator()
@@ -286,8 +286,8 @@ effect function grantFor(params: Readonly<Record<string, string>>, download: boo
   return HttpServerResponse.setHeader(answer({ expiresInSeconds: duration }, 201), "set-cookie", `${grantCookie}${token}; Path=${path}; Max-Age=${duration}; Secure; HttpOnly; SameSite=Strict`)
 }
 
-const grantRoute = handleRawJsonWrite({ ...grantEvidenceRead, ...operatorWriteSession }, (input) => grantFor(input.params, false), privateHeaders)
-const downloadGrantRoute = handleRawJsonWrite({ ...grantEvidenceDownload, ...operatorWriteSession }, (input) => grantFor(input.params, true), privateHeaders)
+const grantRoute = handleRawJsonWrite({ ...grantEvidenceRead, ...operatorSession }, (input) => grantFor(input.params, false), privateHeaders)
+const downloadGrantRoute = handleRawJsonWrite({ ...grantEvidenceDownload, ...operatorSession }, (input) => grantFor(input.params, true), privateHeaders)
 
 schema Consumed { reason: string; expires_at: string }
 
@@ -303,7 +303,7 @@ effect function consume(assessment: string, runId: string, sha: string, token: s
   return { actor, reason: grant.reason, access }
 }
 
-const bodyRoute = handleRaw(readEvidenceBody, (input) => effect {
+const bodyRoute = handleRaw({ ...readEvidenceBody, ...operatorSession }, (input) => effect {
   try rejectHead()
   const { assessment, runId, sha } = try objectIdentity(input.params)
   const request = try HttpServerRequest.HttpServerRequest
@@ -429,6 +429,12 @@ effect function unsupportedOperatorWrite() {
   if ((try HttpServerRequest.HttpServerRequest).method !== "GET" && !(try sameOriginWrite())) throw refused(rows.otherMethodOrigin)
 }
 
+effect function missingObjectRoute() {
+  const { assessment, run, sha } = try HttpRouter.params
+  try objectIdentity({ assessment: assessment ?? "", run: run ?? "", sha: sha ?? "" })
+  return answer({ error: "not_found" }, 404)
+}
+
 export const evidenceRoutes = Layer.mergeAll(
   registerRoute,
   uploadRoute,
@@ -441,14 +447,14 @@ export const evidenceRoutes = Layer.mergeAll(
   bodyRoute,
   downloadRoute,
   ...otherMethodRoutes,
+  methodNotAllowed([registerEvidence], effect { throw refused(rows.routeNotFound) }),
+  methodNotAllowed([uploadEvidence, uploadEvidenceChunk, finalizeEvidence], missingObjectRoute()),
   methodNotAllowed([closeEvidenceCase], effect {
     try unsupportedOperatorWrite()
     throw refused(rows.routeNotFound)
   }),
   methodNotAllowed([grantEvidenceRead, grantEvidenceDownload], effect {
     try unsupportedOperatorWrite()
-    const { assessment, run, sha } = try HttpRouter.params
-    try objectIdentity({ assessment: assessment ?? "", run: run ?? "", sha: sha ?? "" })
-    return answer({ error: "not_found" }, 404)
+    return try missingObjectRoute()
   }),
 )
