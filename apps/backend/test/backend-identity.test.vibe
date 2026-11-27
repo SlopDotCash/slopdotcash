@@ -196,6 +196,16 @@ function assertionOf(answer: unknown) {
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Start and complete a GitHub sign-in flow for the web and the installed client (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
     const browser = { origin: site, "cf-connecting-ip": "198.51.100.1" }
+    for (const path of ["/v1/oauth/start", "/v1/oauth/poll"]) {
+      const blocked = try call(`${identity}${path}`, { headers: { origin: identity } })
+      const allowed = try call(`${identity}${path}`, { headers: browser })
+      const noOrigin = try call(`${identity}${path}`)
+      try same([blocked, allowed, noOrigin].map((answer) => [answer.status, answer.body, answer.headers["cache-control"]]), [
+        [403, { error: "origin_forbidden" }, "no-store"],
+        [404, { error: "not_found" }, "no-store"],
+        [404, { error: "not_found" }, "no-store"],
+      ])
+    }
     const web = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
     const waiting = try poll("/v1/oauth/poll", web, "slop-points-web", browser)
     const foreign = try poll("/v1/oauth/poll", { ...web, binding: "" }, "slop-points-web", browser)

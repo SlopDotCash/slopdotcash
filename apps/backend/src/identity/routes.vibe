@@ -8,7 +8,7 @@ import { identityGetV1OauthAuthorize as authorizeRows, identityGetV1OauthCallbac
 import { localFlowOrigin } from "../local/origin.vibe"
 import { LocalRoutes } from "../local/routes.vibe"
 import { IdentitySettings } from "./config.vibe"
-import { bare, browserBound, capabilityShape, flowShape, httpsGate, pollFlow, publicGate, readJson, refusedBy, startFlow } from "./flows.vibe"
+import { bare, browserBound, capabilityShape, flowShape, httpsGate, originGate, pollFlow, publicGate, readJson, refusedBy, startFlow } from "./flows.vibe"
 import { callbackUrl, resolveIdentity } from "./github.vibe"
 import { challengeOf, openVerifier, sameText } from "./pkce.vibe"
 import { audienceOf } from "./projection.vibe"
@@ -143,7 +143,13 @@ effect function consumeAssertion() {
 
 effect function unrouted() {
   const gated = try publicGate()
-  return gated ?? bare(consumeRows.notFoundNoStore)
+  if (gated !== undefined) return gated
+  const { pathname } = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+  if (pathname === oauthStart.path || pathname === oauthPoll.path) {
+    const forbidden = try originGate()
+    if (forbidden !== undefined) return forbidden
+  }
+  return bare(consumeRows.notFoundNoStore)
 }
 
 export const IdentityRoutes = Layer.mergeAll(
