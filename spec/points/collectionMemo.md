@@ -60,7 +60,7 @@ type ModeReason = NoPreviousMemo | FullRequested | RulesChanged | CodeChanged | 
 type MemoPhase = Unopened | Auditing | Answering | SnapshotWritten | MemoWritten | MemoNotWritten | MemoRefused
 type MemoRefusal = NotRefused | UntrustedRun | FutureMemo
 type RunContext = { actions: bool, gitRef: str, eventName: str }
-type PriorAnswer = { outcomeId: int, version: int, result: int, expired: bool }
+type PriorAnswer = { outcomeId: int, version: int, result: int, held: bool, expired: bool }
 type MemoFile = { usable: bool, producedAt: int, lastFullAt: int, sameRules: bool, sameCode: bool, attributions: List[PriorAnswer] }
 type Answer = { outcomeId: int, version: int, result: int, held: bool, reused: bool, audited: bool, recorded: bool }
 type MemoRun = { phase: MemoPhase, refusal: MemoRefusal, mode: CollectionMode, reason: ModeReason, now: int,
@@ -174,10 +174,11 @@ live census fence and every recorded input re-read is unchanged (the same
 candidates, those whose `sample` (the first 32 bits, big-endian, of sha256 of
 `<cutoffAt>` NUL `<outcome id>`) is a multiple of the session's `auditRate`
 (50 when code matches, 10 when code changed without a rules change), is
-recomputed live; one difference, a hold included, discards every reuse of the
-run. A sampled candidate is never reused. A reused answer's authors are read
-live again, and an author no longer eligible for commit credit makes the answer
-live. Every other outcome is computed live.
+recomputed live; one difference in the answer, a hold compared like any other
+answer, discards every reuse of the run. A sampled candidate is never reused. A
+reused hold is a hold again with the same limitations. A reused answer's
+authors are read live again, and an author no longer eligible for commit credit
+makes the answer live. Every other outcome is computed live.
 
 ```quint
 pure def audited(sample: int): bool = sample % auditOneIn == 0
@@ -187,18 +188,20 @@ pure def candidate(r: MemoRun, outcomeId: int, version: int): bool =
   r.mode == IncrementalCollection and r.prior.some(p => p.outcomeId == outcomeId and p.version == version and not(p.expired))
 pure def priorResult(r: MemoRun, outcomeId: int): int =
   r.prior.foldl(-1, (acc, p) => if (p.outcomeId == outcomeId) p.result else acc)
-pure def recordedOf(answers: List[Answer]): List[PriorAnswer] =
-  answers.select(a => a.recorded).listMap(a => { outcomeId: a.outcomeId, version: a.version, result: a.result, expired: false })
+pure def priorHeld(r: MemoRun, outcomeId: int): bool =
+  r.prior.foldl(false, (acc, p) => if (p.outcomeId == outcomeId) p.held else acc)
+pure def priorOf(a: Answer): PriorAnswer =
+  { outcomeId: a.outcomeId, version: a.version, result: a.result, held: a.held, expired: false }
+pure def recordedOf(answers: List[Answer]): List[PriorAnswer] = answers.select(a => a.recorded).listMap(a => priorOf(a))
 pure def withAnswer(a: Answer, r: MemoRun): MemoRun =
-  { ...r, answers: r.answers.append(a),
-    nextMemo: if (a.recorded) r.nextMemo.append({ outcomeId: a.outcomeId, version: a.version, result: a.result, expired: false }) else r.nextMemo }
+  { ...r, answers: r.answers.append(a), nextMemo: if (a.recorded) r.nextMemo.append(priorOf(a)) else r.nextMemo }
 pure def canAudit(r: MemoRun, outcomeId: int, version: int, sample: int, result: int, held: bool, fenced: bool): bool =
   r.phase == Auditing and not(r.mismatch) and auditedAt(sample, r.auditRate) and candidate(r, outcomeId, version) and
   not(answered(r, outcomeId)) and result >= 0
 pure def audit(r: MemoRun, outcomeId: int, version: int, sample: int, result: int, held: bool, fenced: bool): MemoRun =
-  val differs = held or result != priorResult(r, outcomeId)
+  val differs = held != priorHeld(r, outcomeId) or result != priorResult(r, outcomeId)
   val updated = withAnswer({ outcomeId: outcomeId, version: version, result: result, held: held, reused: false,
-    audited: true, recorded: fenced and not(held) }, r)
+    audited: true, recorded: fenced }, r)
   { ...updated, mismatch: r.mismatch or differs }
 pure def canFinishAudit(r: MemoRun): bool = r.phase == Auditing
 pure def finishAudit(r: MemoRun): MemoRun = { ...r, phase: Answering }
@@ -206,14 +209,15 @@ pure def canReuse(r: MemoRun, outcomeId: int, version: int, sample: int): bool =
   r.phase == Answering and not(r.mismatch) and not(auditedAt(sample, r.auditRate)) and candidate(r, outcomeId, version) and
   not(answered(r, outcomeId))
 pure def reuse(r: MemoRun, outcomeId: int, version: int, sample: int): MemoRun =
-  withAnswer({ outcomeId: outcomeId, version: version, result: priorResult(r, outcomeId), held: false, reused: true,
-    audited: false, recorded: true }, r)
+  withAnswer({ outcomeId: outcomeId, version: version, result: priorResult(r, outcomeId), held: priorHeld(r, outcomeId),
+    reused: true, audited: false, recorded: true }, r)
 pure def alwaysPriorDistinct(r: MemoRun): bool =
   r.prior.every(p => p.outcomeId > 0 and p.result >= 0 and r.prior.select(o => o.outcomeId == p.outcomeId).length() == 1)
 pure def alwaysAnswersDistinct(r: MemoRun): bool =
   r.answers.every(a => a.outcomeId > 0 and r.answers.select(o => o.outcomeId == a.outcomeId).length() == 1)
 pure def alwaysReuseWithinFence(r: MemoRun): bool =
-  r.answers.every(a => a.reused implies r.prior.some(p => p.outcomeId == a.outcomeId and p.version == a.version and p.result == a.result and not(p.expired)))
+  r.answers.every(a => a.reused implies r.prior.some(p => p.outcomeId == a.outcomeId and p.version == a.version and
+    p.result == a.result and p.held == a.held and not(p.expired)))
 pure def alwaysAuditsPrecedeReuse(r: MemoRun): bool =
   (r.phase == Auditing or r.mismatch) implies r.answers.every(a => not(a.reused))
 pure def alwaysAuditedIsRecomputed(r: MemoRun): bool = r.answers.every(a => not(a.audited and a.reused))
@@ -221,6 +225,7 @@ pure def lawSampledEveryFiftieth(sample: int): bool = (sample >= 0 and sample < 
 pure def sometimesAuditMismatchDiscardsReuse(r: MemoRun): bool = r.phase == Answering and r.mismatch and r.answers.length() > 1
 pure def sometimesReusedAfterCleanAudit(r: MemoRun): bool =
   r.answers.some(a => a.audited) and r.answers.some(a => a.reused)
+pure def sometimesHoldReused(r: MemoRun): bool = r.answers.some(a => a.held and a.reused)
 pure def sometimesExpiredNotReused(r: MemoRun): bool =
   r.mode == IncrementalCollection and r.prior.some(p => p.expired) and
   r.answers.some(a => not(a.reused) and r.prior.some(p => p.outcomeId == a.outcomeId and p.expired))
@@ -230,12 +235,15 @@ pure def sometimesExpiredNotReused(r: MemoRun): bool =
 
 The next memo holds, for each outcome answered in this pass, the version it
 was answered for: a reused answer as it was recorded, and a live
-computation only when every read it made was fenced (pull objects by node,
-update time, state and URL; their reviews, comments, files and commits;
-exact-commit reads; file reads at a 40-hex ref; public reference queries;
-the one-page incoming timeline) and it is not a hold. A hold, including the
-deferred retained attribution, and an unfenced computation are never
-recorded; the shell counts why (`attributions not recorded for reuse`).
+computation, a hold included, only when every read it made was fenced (pull
+objects by node, update time, state and URL; their reviews, comments, files
+and commits; exact-commit reads; file reads at a 40-hex ref; public reference
+queries; the one-page incoming timeline). A hold whose reads were all fenced
+follows from those reads alone, so it is recorded with its limitations like
+any other answer. The deferred retained attribution follows from the run's
+settings rather than its reads, and the shell treats it as unfenced; an
+unfenced computation is never recorded, and the shell counts why
+(`attributions not recorded for reuse`).
 After a full run `lastFullAt` is the memo's `producedAt`; after an
 incremental run it is the previous one. The memo is written to
 `SLOP_COLLECTION_MEMO_OUT` only after the snapshot itself was written, and a
@@ -247,7 +255,7 @@ pure def canComputeLive(r: MemoRun, outcomeId: int, version: int, result: int, h
   r.phase == Answering and outcomeId > 0 and not(answered(r, outcomeId)) and result >= 0
 pure def computeLive(r: MemoRun, outcomeId: int, version: int, result: int, held: bool, fenced: bool): MemoRun =
   withAnswer({ outcomeId: outcomeId, version: version, result: result, held: held, reused: false, audited: false,
-    recorded: fenced and not(held) }, r)
+    recorded: fenced }, r)
 pure def canWriteSnapshot(r: MemoRun): bool = r.phase == Answering
 pure def writeSnapshot(r: MemoRun): MemoRun = { ...r, phase: SnapshotWritten }
 pure def canWriteMemo(r: MemoRun, producedAt: int): bool = r.phase == SnapshotWritten and producedAt >= r.now
@@ -257,8 +265,7 @@ pure def writeMemo(r: MemoRun, producedAt: int): MemoRun =
 pure def canFailMemoWrite(r: MemoRun): bool = r.phase == SnapshotWritten
 pure def failMemoWrite(r: MemoRun): MemoRun = { ...r, phase: MemoNotWritten }
 pure def alwaysNextMemoIsRecorded(r: MemoRun): bool = r.nextMemo == recordedOf(r.answers)
-pure def alwaysHoldNeverRecorded(r: MemoRun): bool =
-  r.answers.every(a => (a.recorded implies not(a.held)) and (a.reused implies a.recorded))
+pure def alwaysReusedStaysRecorded(r: MemoRun): bool = r.answers.every(a => a.reused implies a.recorded)
 pure def alwaysFullRunRestartsWeek(r: MemoRun): bool =
   r.phase == MemoWritten implies
     (r.writtenLastFullAt == (if (r.mode == FullCollection) r.producedAt else r.lastFullAt) and r.writtenLastFullAt <= r.producedAt)
@@ -269,17 +276,20 @@ pure def stepMemoOnlyAfterSnapshot(before: MemoRun, after: MemoRun): bool =
   (after.phase == MemoWritten and before.phase != MemoWritten) implies before.phase == SnapshotWritten
 pure def sometimesReusedAndWritten(r: MemoRun): bool =
   r.phase == MemoWritten and r.mode == IncrementalCollection and r.answers.some(a => a.reused)
-pure def sometimesHoldNotRecorded(r: MemoRun): bool = r.answers.some(a => a.held) and r.phase == MemoWritten
+pure def sometimesHoldRecorded(r: MemoRun): bool = r.answers.some(a => a.held and a.recorded) and r.phase == MemoWritten
+pure def sometimesUnfencedNotRecorded(r: MemoRun): bool = r.answers.some(a => not(a.recorded)) and r.phase == MemoWritten
 pure def sometimesMemoNotWritten(r: MemoRun): bool = r.phase == MemoNotWritten
 ```
 
-### Simulation samples include a matching, a changed-rules, a changed-code, an expired and a future memo
+### Simulation samples include a matching, a changed-rules, a changed-code, an expired and a future memo, and a held earlier answer
 
 ```quint
 pure val matchingMemo: MemoFile = { usable: true, producedAt: 1000, lastFullAt: 500, sameRules: true, sameCode: true,
-  attributions: List({ outcomeId: 1, version: 0, result: 1, expired: false }, { outcomeId: 2, version: 1, result: 11, expired: false }) }
+  attributions: List({ outcomeId: 1, version: 0, result: 1, held: false, expired: false },
+    { outcomeId: 2, version: 1, result: 11, held: true, expired: false }) }
 pure val expiredMemo: MemoFile = { ...matchingMemo,
-  attributions: List({ outcomeId: 1, version: 0, result: 1, expired: true }, { outcomeId: 2, version: 1, result: 11, expired: false }) }
+  attributions: List({ outcomeId: 1, version: 0, result: 1, held: false, expired: true },
+    { outcomeId: 2, version: 1, result: 11, held: true, expired: false }) }
 pure val trustedRun: RunContext = { actions: true, gitRef: "refs/heads/main", eventName: "push" }
 pure val memoValues = Set(matchingMemo, { ...matchingMemo, sameCode: false }, { ...matchingMemo, sameRules: false },
   expiredMemo, { ...matchingMemo, usable: false, attributions: List() }, { ...matchingMemo, producedAt: 2000 })
@@ -296,7 +306,7 @@ pure val bytesValues = Set(0, 536870912, 536870913)
 pure val eval_witness_sometimesReusedAndWritten = (("openMemo", matchingMemo, trustedRun, false, 1000), "finishAudit",
   ("reuse", 1, 0, 7), "writeSnapshot", ("writeMemo", 1500))
 pure val eval_witness_sometimesReusedAfterCleanAudit = (("openMemo", matchingMemo, trustedRun, false, 1000),
-  ("audit", 2, 1, 0, 11, false, true), "finishAudit", ("reuse", 1, 0, 7))
+  ("audit", 2, 1, 0, 11, true, true), "finishAudit", ("reuse", 1, 0, 7))
 pure val eval_witness_sometimesAuditMismatchDiscardsReuse = (("openMemo", matchingMemo, trustedRun, false, 1000),
   ("audit", 2, 1, 50, 99, false, true), "finishAudit", ("computeLive", 1, 0, 1, false, true))
 pure val eval_witness_sometimesFutureMemoFails = ("openMemo", { ...matchingMemo, producedAt: 2000 }, trustedRun, false, 1500)
@@ -305,8 +315,11 @@ pure val eval_witness_sometimesChangedCodeIncremental = ("openMemo", { ...matchi
 pure val eval_witness_sometimesExpiredNotReused = (("openMemo", expiredMemo, trustedRun, false, 1000), "finishAudit",
   ("computeLive", 1, 0, 1, false, true))
 pure val eval_witness_sometimesUntrustedRunFails = ("openMemo", matchingMemo, { ...trustedRun, eventName: "pull_request" }, false, 1000)
-pure val eval_witness_sometimesHoldNotRecorded = (("openMemo", matchingMemo, trustedRun, false, 1000), "finishAudit",
+pure val eval_witness_sometimesHoldRecorded = (("openMemo", matchingMemo, trustedRun, false, 1000), "finishAudit",
   ("computeLive", 1, 0, 1, true, true), "writeSnapshot", ("writeMemo", 1500))
+pure val eval_witness_sometimesUnfencedNotRecorded = (("openMemo", matchingMemo, trustedRun, false, 1000), "finishAudit",
+  ("computeLive", 1, 0, 1, true, false), "writeSnapshot", ("writeMemo", 1500))
+pure val eval_witness_sometimesHoldReused = (("openMemo", matchingMemo, trustedRun, false, 1000), "finishAudit", ("reuse", 2, 1, 7))
 pure val eval_witness_sometimesMemoNotWritten = (("openMemo", matchingMemo, trustedRun, false, 1000), "finishAudit",
   "writeSnapshot", "failMemoWrite")
 ```
