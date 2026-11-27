@@ -167,6 +167,23 @@ not authorize disclosure.
 
 ## Build and prove
 
+Before you branch, start a measured run so the session record covers the
+work. Run this command by itself, by its installed path, with no `&&`, `;` or
+pipe around it:
+
+```bash
+node <skill-directory>/scripts/run-receipt.mjs start \
+  --provider <exact-provider> --model <exact-model> --client <exact-client> \
+  --lane {{SLOP_PROJECT_ID}} --usage-unavailable
+```
+
+`--usage-unavailable` is for the clients Slop has a usage reader for:
+`claude-code`, `codex` and `grok-build`. For any other client, leave it out;
+the command is then the same without that flag, and it is rejected if you add
+it. It prints a line `slop-run:<run id>`. Keep the run id. The marker line in
+your own session file is how Slop finds where the run began. If `start`
+fails, report it once and carry on; the work never waits on it.
+
 Branch from current `{{SLOP_INTEGRATION_BRANCH}}`. Follow the repository's setup
 and test instructions and `requiredTests`. Reproduce a defect on the base
 revision first. Prove the result with the repository's own tests or a real
@@ -223,10 +240,24 @@ node <skill-directory>/scripts/run-receipt.mjs disclose \
 ```
 
 This reads no usage logs and writes no run state. A signed run receipt
-(`run-receipt.mjs start` and `finish`) is optional. Usage totals never change
+(`run-receipt.mjs finish` after `start`) is optional. Usage totals never change
 score or payment.
 
-After the PR exists, record it with the contributor's own GitHub sign-in:
+After the PR exists, record it and its session record in one step. Run
+`session` by its installed path, with no chaining:
+
+```bash
+node <skill-directory>/scripts/run-receipt.mjs session \
+  --run <run-id> --pull-request <pr-url> \
+  --pull-request-node-id "$(gh pr view <pr-url> --json id --jq .id)" \
+  --provider <exact-provider> --model <exact-model> --client <exact-client> \
+  --client-version <exact-client-version>
+```
+
+Use the same provider, model and client as `start`, and follow **Session
+record** below. Without a run id from `start`, or when **Session record** says
+the PR is not recorded yet, record the PR with the contributor's own GitHub
+sign-in instead:
 
 ```bash
 node <skill-directory>/scripts/run-receipt.mjs opened \
@@ -236,53 +267,20 @@ node <skill-directory>/scripts/run-receipt.mjs opened \
   --client-version <exact-client-version>
 ```
 
-It sends only the PR URL, node ID and declared identity. If it fails, keep the
-PR open, report the failure and do not retry in a loop.
+`opened` sends only the PR URL, node ID and declared identity. If it fails,
+keep the PR open, report the failure and do not retry in a loop.
 
 ## Session record
 
-A session record is optional for the contributor and never changes score,
-rank or payment. It is how the contributor can share the run that produced
-the PR, under `private-trace-v3` at
-`https://slop.cash/protocol/private-trace-v3.md`. It is for contributions
-only; the security report path above stays session-free.
+The session record is on by default. After the PR exists, `session` cleans
+the run's session on this machine, shows the operator a disclosure and, once
+the operator approves the GitHub sign-in, uploads the cleaned file under
+`private-trace-v3` at `https://slop.cash/protocol/private-trace-v3.md` and
+records the PR on the run. One sign-in covers both. Declining takes one flag
+and costs nothing. The record never changes score, rank or payment. It is for
+contributions only; the security report path above stays session-free.
 
-1. Before any work, start a measured run. Run this command by itself, by its
-   installed path, with no `&&`, `;` or pipe around it:
-
-   ```bash
-   node <skill-directory>/scripts/run-receipt.mjs start \
-     --provider <exact-provider> --model <exact-model> --client <exact-client> \
-     --lane {{SLOP_PROJECT_ID}} --usage-unavailable
-   ```
-
-   `--usage-unavailable` is for the clients Slop has a usage reader for:
-   `claude-code`, `codex` and `grok-build`. For any other client, leave it
-   out; the command is then the same without that flag, and it is rejected if
-   you add it.
-
-   It prints a line `slop-run:<run id>`. Keep the run id. The marker line in
-   your own session file is how Slop finds where the run began.
-
-2. Do the work and open the PR as above. Paste the footer from `disclose`.
-
-3. After the PR exists, run `session` by its installed path, again with no
-   chaining, instead of `opened`:
-
-   ```bash
-   node <skill-directory>/scripts/run-receipt.mjs session \
-     --run <run-id> --pull-request <pr-url> \
-     --pull-request-node-id "$(gh pr view <pr-url> --json id --jq .id)" \
-     --provider <exact-provider> --model <exact-model> --client <exact-client> \
-     --client-version <exact-client-version>
-   ```
-
-   Use the same provider, model and client as `start`. It cleans the session
-   on this machine, prints a disclosure, signs in once with the contributor's
-   GitHub account, uploads the cleaned file, and records the PR on the run.
-   One sign-in covers both.
-
-4. `session` prints the disclosure and then starts the GitHub sign-in at
+1. `session` prints the disclosure and then starts the GitHub sign-in at
    once, which prints a browser link and waits. It does not pause in between.
    Show the operator the printed disclosure lines and the sign-in link
    together. The operator reads the cleaned file named in the disclosure (the
@@ -293,11 +291,11 @@ only; the security report path above stays session-free.
    `session --skip` instead. Never open or approve the sign-in link yourself.
    Only your operator does.
 
-5. Claude Code keeps its own session files, and `session` finds them. For
+2. Claude Code keeps its own session files, and `session` finds them. For
    every other client, Codex included, write the log yourself as described in
    `references/session-log.md` and pass `--log <path>`.
 
-6. If `session` prints that the upload was skipped, declined, or found no
+3. If `session` prints that the upload was skipped, declined, or found no
    session record, or prints a failure line ending "the pull request stands",
    the PR is not recorded yet. Run the plain `opened` command above so it is.
    That is a second GitHub sign-in. Only a successful `session` replaces
