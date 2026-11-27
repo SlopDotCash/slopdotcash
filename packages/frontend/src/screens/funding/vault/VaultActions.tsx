@@ -235,7 +235,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
       <CardTitle className="flex items-center gap-2">
         {title} <NetworkName network={deployment.network} />
       </CardTitle>
-      <Disclosure summary="Contract details" defaultOpen={pending !== null || shown !== undefined}>
+      <Disclosure summary="Contract details" defaultOpen={depositOnly || pending !== null || shown !== undefined}>
         <div className="flex flex-col gap-2">
           <Address value={deployment.vault} label="Vault" />
           <Address value={deployment.asset} label="Token" />
@@ -272,7 +272,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
                   legend="Action"
                   value={operation}
                   disabled={busy}
-                  hint={funding !== undefined ? undefined : !isOwner ? "Only the vault owner's wallet can withdraw free funds." : promiseUnread ? fundingMessages.promiseUnread : undefined}
+                  hint={depositOnly || funding !== undefined ? undefined : !isOwner ? "Only the vault owner's wallet can withdraw free funds." : promiseUnread ? fundingMessages.promiseUnread : undefined}
                   options={choices.map((choice) => ({ value: choice, label: choice === "deposit" ? "Deposit tokens" : "Withdraw free funds" }))}
                   onValueChange={(value) => {
                     setChosen(value === "withdraw" ? "withdraw" : "deposit");

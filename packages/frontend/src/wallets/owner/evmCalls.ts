@@ -108,6 +108,59 @@ export function releaseCall(vault: string, period: number): Call {
   return { to: vault, data: expirePledgeCalldata(period), value: "0x0" };
 }
 
+export interface RecordedVaultReview {
+  readonly codeSha256?: string | null | undefined;
+  readonly factory?: string | null | undefined;
+  readonly factoryCodeSha256?: string | null | undefined;
+  readonly registrar?: string | null | undefined;
+  readonly feeRecipient?: string | null | undefined;
+  readonly bindingDelaySeconds?: string | null | undefined;
+  readonly evmUpgrade?:
+    | {
+        readonly vaultImplementation: string;
+        readonly vaultImplementationCodeSha256: string;
+        readonly factoryImplementation: string;
+        readonly factoryImplementationCodeSha256: string;
+      }
+    | null
+    | undefined;
+}
+
+/** @throws {never} */
+export function recordedVaultReviewOf(deployment: RecordedVaultReview, purpose: VaultPurpose): VaultReview | undefined {
+  if (
+    typeof deployment.codeSha256 !== "string" ||
+    typeof deployment.factory !== "string" ||
+    typeof deployment.factoryCodeSha256 !== "string" ||
+    typeof deployment.registrar !== "string" ||
+    typeof deployment.feeRecipient !== "string" ||
+    typeof deployment.bindingDelaySeconds !== "string" ||
+    deployment.evmUpgrade === null ||
+    deployment.evmUpgrade === undefined ||
+    !/^(?:0|[1-9][0-9]*)$/u.test(deployment.bindingDelaySeconds)
+  )
+    return undefined;
+  return {
+    codeSha256: deployment.codeSha256,
+    implementation: {
+      address: deployment.evmUpgrade.vaultImplementation,
+      codeSha256: deployment.evmUpgrade.vaultImplementationCodeSha256,
+    },
+    factory: {
+      address: deployment.factory,
+      codeSha256: deployment.factoryCodeSha256,
+      implementation: {
+        address: deployment.evmUpgrade.factoryImplementation,
+        codeSha256: deployment.evmUpgrade.factoryImplementationCodeSha256,
+      },
+      registrar: deployment.registrar,
+    },
+    feeRecipient: deployment.feeRecipient,
+    bindingDelaySeconds: BigInt(deployment.bindingDelaySeconds),
+    purpose,
+  };
+}
+
 /** @throws {never} */
 export function reviewedVaultOf(network: string, purpose: VaultPurpose): VaultReview | undefined {
   const factory = isNetworkKey(network) ? reviewedFactory(network) : undefined;

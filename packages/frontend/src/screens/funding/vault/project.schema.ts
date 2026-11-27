@@ -7,6 +7,22 @@ export const FundingDeployment = Schema.Struct({
   vault: Schema.String,
   asset: Schema.String,
   owner: Schema.String,
+  codeSha256: Schema.optional(Schema.NullOr(Schema.String)),
+  factory: Schema.optional(Schema.NullOr(Schema.String)),
+  factoryCodeSha256: Schema.optional(Schema.NullOr(Schema.String)),
+  registrar: Schema.optional(Schema.NullOr(Schema.String)),
+  feeRecipient: Schema.optional(Schema.NullOr(Schema.String)),
+  bindingDelaySeconds: Schema.optional(Schema.NullOr(Schema.String)),
+  evmUpgrade: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        vaultImplementation: Schema.String,
+        vaultImplementationCodeSha256: Schema.String,
+        factoryImplementation: Schema.String,
+        factoryImplementationCodeSha256: Schema.String,
+      }),
+    ),
+  ),
   programId: Schema.optional(Schema.NullOr(Schema.String)),
   projectPda: Schema.optional(Schema.NullOr(Schema.String)),
 });
