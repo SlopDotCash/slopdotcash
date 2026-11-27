@@ -359,7 +359,9 @@ function holdKey(method: string, path: string) {
 async function answer(route: Route, into: Session, worker: (request: Request) => Promise<Response>, transform: (url: URL) => URL = (url) => url) {
   const asked = route.request();
   const url = transform(new URL(asked.url()));
-  const headers = Object.fromEntries(Object.entries(await asked.allHeaders()).filter(([name]) => !name.startsWith(":")));
+  const rawHeaders = await asked.allHeaders().catch(() => undefined);
+  if (rawHeaders === undefined || session !== into) return route.abort("aborted").catch(() => undefined);
+  const headers = Object.fromEntries(Object.entries(rawHeaders).filter(([name]) => !name.startsWith(":")));
   const body = asked.postDataBuffer();
   if (url.origin === site) into.sent.push({ method: asked.method(), path: url.pathname, actor: headers["x-slop-expected-github-id"] ?? null });
   const answered = await worker(new Request(url.toString(), { method: asked.method(), headers, redirect: "manual", ...(body === null ? {} : { body: new Uint8Array(body) }) }))
@@ -393,7 +395,9 @@ async function routed(route: Route, into: Session, backendNow: Started) {
   const url = new URL(route.request().url());
   const canned = url.origin === site ? cannedFor(into, route.request().method(), url.pathname) : undefined;
   if (canned !== undefined) {
-    into.sent.push({ method: route.request().method(), path: url.pathname, actor: (await route.request().allHeaders())["x-slop-expected-github-id"] ?? null });
+    const rawHeaders = await route.request().allHeaders().catch(() => undefined);
+    if (rawHeaders === undefined || session !== into) return route.abort("aborted").catch(() => undefined);
+    into.sent.push({ method: route.request().method(), path: url.pathname, actor: rawHeaders["x-slop-expected-github-id"] ?? null });
     const fulfilled = canned.kind === "json" ? { contentType: "application/json", body: JSON.stringify(canned.body) } : { contentType: canned.contentType, body: Buffer.from(canned.bytes) };
     return route.fulfill({ status: canned.status, ...fulfilled }).catch(() => undefined);
   }
@@ -404,10 +408,10 @@ async function routed(route: Route, into: Session, backendNow: Started) {
       next.searchParams.set("login", into.consenting);
       return next;
     });
-  if (url.hostname === "avatars.githubusercontent.com") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: placeholder });
-  if (url.hostname === "static.cloudflareinsights.com") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
+  if (url.hostname === "avatars.githubusercontent.com") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: placeholder }).catch(() => undefined);
+  if (url.hostname === "static.cloudflareinsights.com") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" }).catch(() => undefined);
   into.failed.push(`unexpected ${route.request().method()} ${url.origin}${url.pathname}`);
-  return route.abort("blockedbyclient");
+  return route.abort("blockedbyclient").catch(() => undefined);
 }
 
 async function downloadedOf(download: Download): Promise<Downloaded> {
@@ -438,6 +442,7 @@ export async function close() {
   session = undefined;
   if (previous !== undefined) {
     for (const held of previous.holds.values()) held.release();
+    await previous.context.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
     await previous.context.close();
     for (const chain of previous.chains.values()) await chain.then((started) => started.close(), () => undefined);
   }
