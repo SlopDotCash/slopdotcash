@@ -198,7 +198,8 @@ the claim keeps the destination digest an earlier attempt bound.
 A claim older than five minutes is marked ambiguous, because the process may
 have stopped after the provider accepted; it is never resent automatically.
 Every later step names its attempt, so a stale worker cannot overwrite a
-successor.
+successor. The inbox clock stays positive so every recorded claim time is
+positive.
 
 ```quint
 pure val claimMs = 300000
@@ -220,7 +221,7 @@ pure def owns(n: Notice, attempt: int): bool = n.state == Sending and n.attempts
 pure def retried(i: Inbox, n: Notice): Notice =
   if (n.attempts >= maxAttempts) { ...n, state: Exhausted, prepared: false }
   else { ...n, state: Retrying, prepared: false, nextAt: i.clock + backoffMs(n.attempts - 1) }
-pure def alwaysAttemptBudget(i: Inbox): bool = i.notices.every(n => n.attempts >= 0 and n.attempts <= maxAttempts
+pure def alwaysAttemptBudget(i: Inbox): bool = i.clock > 0 and i.notices.every(n => n.attempts >= 0 and n.attempts <= maxAttempts
   and (n.state == Exhausted implies n.attempts == maxAttempts) and (n.state == Retrying implies n.attempts < maxAttempts)
   and (n.state == Sending implies n.attempts > 0 and n.claimedAt > 0)
   and (n.prepared implies n.state == Sending and n.digest > 0))
@@ -381,8 +382,9 @@ pure val audienceValues = Set(
 
 Evidence names the attempt, the destination digest and a unique reference;
 it is stored append-only. Delivered, bounced and provider-suppressed are
-final. Proof that the provider did not accept an accepted or ambiguous
-attempt retries it after a minute, or exhausts it at the fifth attempt.
+final, and a provider-suppressed notice stays in the suppressed state. Proof
+that the provider did not accept an accepted or ambiguous attempt retries it
+after a minute, or exhausts it at the fifth attempt.
 
 ```quint
 type Finding = DeliveredOutcome | BouncedOutcome | SuppressedOutcome | NotAccepted
@@ -409,7 +411,8 @@ pure def stepEvidenceFresh(before: Inbox, after: Inbox): bool = after.evidence =
   or (after.evidence.length() == before.evidence.length() + 1
     and not(before.evidence.includes(after.evidence.nthOr(before.evidence.length(), 0))))
 pure def alwaysSettledHasDigest(i: Inbox): bool = i.notices.every(n =>
-  (n.state == Delivered or n.state == Bounced or n.providerSuppressed or n.state == ProviderAccepted) implies n.digest > 0)
+  ((n.state == Delivered or n.state == Bounced or n.providerSuppressed or n.state == ProviderAccepted) implies n.digest > 0)
+  and (n.providerSuppressed implies n.state == Suppressed))
 pure def sometimesDelivered(i: Inbox): bool = i.notices.some(n => n.state == Delivered)
 pure def sometimesNotAcceptedRetried(i: Inbox): bool = i.notices.some(n => n.state == Retrying and n.digest > 0)
 pure def sometimesExhausted(i: Inbox): bool = i.notices.some(n => n.state == Exhausted)
@@ -490,7 +493,9 @@ notices, withheld or access-suppressed mail and escalation copies never
 escalate. The backup is the recipient's backup in the current released
 configuration, must itself be a configured recipient, needs current access to
 the case, and receives one generic private notice. A later configuration
-never changes an escalation already made.
+never changes an escalation already made. Primary notices carry keys from 1
+to 999 with `escalationOf` 0, while each escalation copy carries key
+`1000 + parentId`.
 
 ```quint
 pure def failedDelivery(n: Notice): bool = n.state == Ambiguous or n.state == Exhausted or n.state == Bounced
@@ -507,7 +512,9 @@ pure def escalate(i: Inbox, id: int, primaryAccess: AccessCheck, backupAccess: A
   { ...i, notices: setNotice(i, id, { ...n, escalated: true })
     .append(newNotice(i, 1000 + id, SecurityCase, backupOf(i, n.recipient), id)) }
 pure def alwaysEscalationOnce(i: Inbox): bool = i.notices.every(n =>
-  (n.escalationOf > 0 implies n.kind == SecurityCase and n.key == 1000 + n.escalationOf and n.escalationOf < n.id
+  n.escalationOf >= 0
+  and (n.escalationOf == 0 implies n.key > 0 and n.key < 1000)
+  and (n.escalationOf > 0 implies n.kind == SecurityCase and n.key == 1000 + n.escalationOf and n.escalationOf < n.id
     and notice(i, n.escalationOf).escalated and notice(i, n.escalationOf).channel == SecurityOutbox
     and notice(i, n.escalationOf).escalationOf == 0 and n.recipient > 0 and n.recipient != notice(i, n.escalationOf).recipient
     and not(n.escalated))

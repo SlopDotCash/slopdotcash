@@ -16017,7 +16017,7 @@
     },
     {
       "path": "spec/operations/notifications.md",
-      "sha256": "604fc3a6bde07ce8ab8d1d1281407d41ba5efe4ac12d789450a027e12e2dea1d",
+      "sha256": "ea8f04c5286329e772cebb0eddd1f08cb08f2b00818152aa2c8195209e5bcf69",
       "module": "operations__notifications",
       "stories": [
         {
@@ -16034,7 +16034,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices",
-          "line": 461
+          "line": 464
         }
       ],
       "rules": [
@@ -16129,7 +16129,7 @@
         },
         {
           "heading": "Story: Deliver each attempt once and never resend an uncertain one / Preparation rechecks authority, consent and destination before any provider call",
-          "line": 230,
+          "line": 231,
           "definitions": [
             "AccessCheck",
             "ProviderResult",
@@ -16155,7 +16155,7 @@
         },
         {
           "heading": "Story: Deliver each attempt once and never resend an uncertain one / Each notice kind names the role its recipient must still hold when the attempt is prepared",
-          "line": 285,
+          "line": 286,
           "definitions": [
             "AppealSource",
             "NoticeAudience",
@@ -16173,7 +16173,7 @@
         },
         {
           "heading": "Story: Deliver each attempt once and never resend an uncertain one / Only independent provider evidence for the exact attempt and destination settles a send",
-          "line": 380,
+          "line": 381,
           "definitions": [
             "Finding",
             "ProviderEvidence",
@@ -16190,7 +16190,7 @@
         },
         {
           "heading": "Story: Deliver each attempt once and never resend an uncertain one / The Inbox shows one delivery word and never the address, digest, provider reference or attempt count",
-          "line": 418,
+          "line": 421,
           "definitions": [
             "EmailWord",
             "InboxItem",
@@ -16202,7 +16202,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices / Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment",
-          "line": 463,
+          "line": 466,
           "definitions": [
             "canRead",
             "read",
@@ -16213,7 +16213,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices / A failed or overdue case notice escalates once to a backup with current access",
-          "line": 482,
+          "line": 485,
           "definitions": [
             "failedDelivery",
             "overdue",
@@ -16228,7 +16228,7 @@
         },
         {
           "heading": "Story: Read, acknowledge and escalate private case notices / Simulation samples exercise replays, consent changes and conflicting evidence",
-          "line": 530,
+          "line": 537,
           "definitions": [
             "keyValues",
             "kindValues",
@@ -16274,15 +16274,15 @@
         },
         {
           "target": "./payoutAudience.md",
-          "line": 293
+          "line": 294
         },
         {
           "target": "./moderation.md",
-          "line": 309
+          "line": 310
         },
         {
           "target": "./moderation.md",
-          "line": 436
+          "line": 439
         }
       ]
     },
