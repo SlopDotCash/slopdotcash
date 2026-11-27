@@ -281,12 +281,23 @@ effect function unsubscribe(query: URLSearchParams) {
   return privateJson({ enabled: false, securityEnabled: false })
 }
 
+const verificationRead = { ...emailVerification, method: "GET", request: undefined } as const
+const verifyRead = { ...emailVerify, method: "GET", request: undefined } as const
+const verificationMethodRefused = postNotificationsEmailVerification.otherMethods.methodNotAllowedPrivateNoStore
+
+effect function refuseVerificationRead() {
+  const signed = try signedIn()
+  return signed.kind === "refused" ? signed.response : privateBare(verificationMethodRefused)
+}
+
 export const EmailRoutes = Layer.mergeAll(
   handleRaw(emailPreference, () => emailAnswer(preference())),
   handleRaw(emailConsent, () => emailAnswer(saveConsent())),
   handleRaw(emailVerification, () => emailAnswer(requestVerification())),
   handleRaw(emailVerify, () => emailAnswer(verify())),
+  handleRaw(verificationRead, () => emailAnswer(refuseVerificationRead())),
+  handleRaw(verifyRead, () => emailAnswer(refuseVerificationRead())),
   handleRaw(emailUnsubscribe, (input) => emailAnswer(unsubscribe(input.query))),
   methodNotAllowed([emailPreference, emailConsent], succeed(json({ error: "method_not_allowed" }, 405, { allow: "GET, POST", "cache-control": "private, no-store" }))),
-  methodNotAllowed([emailVerification, emailVerify, emailUnsubscribe], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" }))),
+  methodNotAllowed([emailVerification, verificationRead, emailVerify, verifyRead, emailUnsubscribe], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" }))),
 )

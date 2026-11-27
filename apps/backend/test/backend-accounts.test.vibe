@@ -396,6 +396,16 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const request = { email: " nora@example.test ", enabled: true, idempotencyKey: "nora-request-0001", securityEnabled: true }
     const signedOut = shown(try get("/api/v1/notifications/email"))
     const otherActor = shown(try get("/api/v1/notifications/email", nora, { "x-slop-expected-github-id": "11" }))
+    for (const path of ["/api/v1/notifications/email/verification", "/api/v1/notifications/email/verify"]) {
+      const guest = try get(path)
+      const mismatched = try get(path, nora, { "x-slop-expected-github-id": "11" })
+      const member = try get(path, nora)
+      try same([guest, mismatched, member].map((answer) => [shown(answer), answer.headers["cache-control"]]), [
+        [[401, "not_signed_in"], "private, no-store"],
+        [[403, "actor_changed"], "private, no-store"],
+        [[405, "method_not_allowed"], "private, no-store"],
+      ])
+    }
     const initial = fields(try get("/api/v1/notifications/email", nora))
     const requested = try post(at.email, "/api/v1/notifications/email/verification", request, nora)
     const pending = fields(requested).pending as Body | null
