@@ -108,20 +108,19 @@ lemma markAttempt_ensures(e: Execution, key: int, runVaultPledged: bool, automat
   ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepReleasedPermanent(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
   ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepRefusalPermanent(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
 {
+  hide *;
   if inv(e) && canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) {
+    reveal inv, canMarkAttempt, markAttempt, alwaysRunBounded, fresh_;
     var after := markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_);
     KeyIdx(e);
     var r0 :| r0 in e.rows && ((r0.key == key) && r0.phase.Pending?);
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
+    RowFacts(e, r0);
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
     assert after.rows[t] == r0.(lastAttempt := e.now, attempts := (r0.attempts + 1),
       consent := settlement__monthPledges_runConsent(runVaultPledged, automatic), active := active, restricted := restricted);
     AttemptsAfterMark(e, after, key, t);
-    KeysFrame(e, after);
-    OthersFrame(e, after);
-    JournalsFrame(e, after);
-    SubmissionsFrame(e, after);
-    PhasesFrame(e, after);
+    SingleRowFrames(e, after, t);
     forall r | r in after.rows ensures r == after.rows[t] || r in e.rows {
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
@@ -208,20 +207,25 @@ lemma observeFinality_ensures(e: Execution, key: int, landing: Landing, height: 
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepReleasedPermanent(e, observeFinality(e, key, landing, height, by_)))
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepRefusalPermanent(e, observeFinality(e, key, landing, height, by_)))
 {
+  hide *;
   if inv(e) && canObserveFinality(e, key, landing, height, by_) {
+    reveal inv, canObserveFinality, observeFinality, landingFits, alwaysRunBounded, fresh_;
     var after := observeFinality(e, key, landing, height, by_);
     KeyIdx(e);
     var r0 :| r0 in e.rows && ((r0.key == key) && r0.phase.Submitted?);
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
+    RowFacts(e, r0);
     assert landingFits(r0, landing);
     assert !r0.invalidated;
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
+    assert !(exists r :: r in e.rows && ((r.key == key) && r.invalidated)) by {
+      forall r | r in e.rows && r.key == key ensures !r.invalidated {
+        var k :| 0 <= k < |e.rows| && e.rows[k] == r;
+        assert k == t;
+      }
+    }
     assert after.reverts == e.reverts;
-    KeysFrame(e, after);
-    OthersFrame(e, after);
-    JournalsFrame(e, after);
-    SubmissionsFrame(e, after);
-    PhasesFrame(e, after);
+    SingleRowFrames(e, after, t);
     forall r | r in after.rows ensures r == after.rows[t] || r in e.rows {
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
@@ -413,20 +417,19 @@ lemma observeWrongTotal_ensures(e: Execution, key: int, by_: string)
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepReleasedPermanent(e, observeWrongTotal(e, key, by_)))
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepRefusalPermanent(e, observeWrongTotal(e, key, by_)))
 {
+  hide *;
   if inv(e) && canObserveWrongTotal(e, key, by_) {
+    reveal inv, canObserveWrongTotal, observeWrongTotal, alwaysRunBounded, fresh_;
     var after := observeWrongTotal(e, key, by_);
     KeyIdx(e);
     var r0 :| r0 in e.rows && (((r0.key == key) && r0.v2) && (r0.phase.Pending? || r0.phase.Submitted?));
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
+    RowFacts(e, r0);
     assert (settlement__executorJournal_admittedV2(r0.journal, r0.period, r0.root) && !(settlement__money_equalAmounts(v2Total(r0.journal, r0.period, r0.root), r0.total)));
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
     var r1 := r0.(phase := RowPhase.WrongTotal, heldTotal := v2Total(r0.journal, r0.period, r0.root));
     assert after.rows[t] == r1;
-    KeysFrame(e, after);
-    OthersFrame(e, after);
-    JournalsFrame(e, after);
-    SubmissionsFrame(e, after);
-    PhasesFrame(e, after);
+    SingleRowFrames(e, after, t);
     forall r | r in after.rows ensures r == after.rows[t] || r in e.rows {
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
@@ -511,20 +514,19 @@ lemma refuseUnadmitted_ensures(e: Execution, key: int, by_: string)
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepReleasedPermanent(e, refuseUnadmitted(e, key, by_)))
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepRefusalPermanent(e, refuseUnadmitted(e, key, by_)))
 {
+  hide *;
   if inv(e) && canRefuseUnadmitted(e, key, by_) {
+    reveal inv, canRefuseUnadmitted, refuseUnadmitted, alwaysRunBounded, fresh_;
     var after := refuseUnadmitted(e, key, by_);
     KeyIdx(e);
     var r0 :| r0 in e.rows && (((r0.key == key) && r0.phase.Pending?) && !(r0.solana));
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
+    RowFacts(e, r0);
     assert ((!(settlement__executorJournal_admitted(r0.journal, r0.period)) && !(settlement__executorJournal_hasLiveRoot(r0.journal, r0.period))) && (r0.journal.time >= settlement__monthlyCommitment_windowClosesAt(r0.period)));
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
     var r1 := r0.(phase := RowPhase.ClosedUnadmitted);
     assert after.rows[t] == r1;
-    KeysFrame(e, after);
-    OthersFrame(e, after);
-    JournalsFrame(e, after);
-    SubmissionsFrame(e, after);
-    PhasesFrame(e, after);
+    SingleRowFrames(e, after, t);
     forall r | r in after.rows ensures r == after.rows[t] || r in e.rows {
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
@@ -598,11 +600,14 @@ lemma signAttempt_ensures(e: Execution, key: int, sequence: int, tree: Tree, by_
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepReleasedPermanent(e, signAttempt(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepRefusalPermanent(e, signAttempt(e, key, sequence, tree, by_)))
 {
+  hide *;
   if inv(e) && canSignAttempt(e, key, sequence, tree, by_) {
+    reveal inv, canSignAttempt, signAttempt, laterAttempt, alwaysRunBounded, fresh_, admissionFits, monthOnly, settlement__executorJournal_admitted;
     var after := signAttempt(e, key, sequence, tree, by_);
     KeyIdx(e);
     var r0 :| r0 in e.rows && (((r0.key == key) && r0.v2) && (r0.phase.Pending? || r0.phase.Submitted?));
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
+    RowFacts(e, r0);
     assert ((((sequence > r0.latestSequence) && laterAttempt(r0, tree)) && windowOpen(r0.period, e.now)) && !(settlement__executorJournal_admitted(r0.journal, r0.period)));
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
     var r1 := r0.(latest := tree, latestSequence := sequence, latestSource := sourceOf(e, r0.project, r0.network, r0.vault));
@@ -612,12 +617,7 @@ lemma signAttempt_ensures(e: Execution, key: int, sequence: int, tree: Tree, by_
     assert settlement__executorJournal_wellFormed(r0.journal) && monthOnly(r0.journal, r0.period);
     assert forall a :: a in r0.journal.admissions ==> false;
     assert admissionFits(r1, r0.journal);
-    FollowsRefl(r0.journal);
-    KeysFrame(e, after);
-    OthersFrame(e, after);
-    JournalsFrame(e, after);
-    SubmissionsFrame(e, after);
-    PhasesFrame(e, after);
+    SingleRowFrames(e, after, t);
     forall r | r in after.rows ensures r == after.rows[t] || r in e.rows {
       var i :| 0 <= i < |after.rows| && after.rows[i] == r;
       if i != t { assert e.rows[i] in e.rows; }
@@ -1050,6 +1050,52 @@ lemma AttemptsFrame(e: Execution, after: Execution)
 }
 
 // The executor's guard covers every reverting send: an award-recording step of the vault is a step in flight.
+lemma SingleRowFrames(e: Execution, after: Execution, t: int)
+  requires inv(e)
+  requires |after.rows| == |e.rows| && 0 <= t < |e.rows| && after.touched == e.rows[t].key
+  requires forall i :: 0 <= i < |e.rows| && i != t ==> after.rows[i] == e.rows[i]
+  requires after.rows[t].key == e.rows[t].key && after.rows[t].project == e.rows[t].project
+    && after.rows[t].period == e.rows[t].period && after.rows[t].network == e.rows[t].network
+  requires after.rows[t].legacyRoot == e.rows[t].legacyRoot && after.rows[t].v2 == e.rows[t].v2
+    && after.rows[t].sequence == e.rows[t].sequence && after.rows[t].root == e.rows[t].root
+    && after.rows[t].total == e.rows[t].total && after.rows[t].leafCount == e.rows[t].leafCount
+    && after.rows[t].journal == e.rows[t].journal
+  requires after.rows[t].latestSequence == e.rows[t].latestSequence
+    || (settlement__executorJournal_wellFormed(after.rows[t].journal) && monthOnly(after.rows[t].journal, after.rows[t].period) && admissionFits(after.rows[t], after.rows[t].journal))
+  requires !(after.rows[t].phase.Submitted? && e.rows[t].phase.Pending?)
+  requires !e.rows[t].phase.Complete? && !e.rows[t].phase.ClosedUnadmitted? && !e.rows[t].phase.Released? && !e.rows[t].phase.WrongTotal?
+  ensures alwaysOneRowPerMonth(after) && stepOtherRowsUnchanged(e, after)
+  ensures alwaysAdmittedRootIsRowRoot(after) && stepJournalFollows(e, after) && stepAdmittedRootFixed(e, after) && stepSequenceMonotone(e, after)
+  ensures stepNoAdmissionWithoutAdmit(e, after) && stepAdmissionUsesLatestAttempt(e, after) && stepAdmissionNeedsCurrentConsent(e, after)
+  ensures stepCompletionPermanent(e, after) && stepRefusalPermanent(e, after) && stepWrongTotalNeverCompletes(e, after) && stepReleasedPermanent(e, after)
+{
+  hide *;
+  reveal inv, settlement__executorJournal_wellFormed;
+  RowFacts(e, e.rows[t]);
+  FollowsRefl(e.rows[t].journal);
+  KeysFrame(e, after);
+  OthersFrame(e, after);
+  JournalsFrame(e, after);
+  SubmissionsFrame(e, after);
+  PhasesFrame(e, after);
+}
+
+lemma RowFacts(e: Execution, x: Row)
+  requires inv(e) && x in e.rows
+  ensures x.sequence >= 1 && x.sequence <= x.latestSequence && validTree(x.latest) && x.latest.legacyRoot == x.legacyRoot
+    && x.latest.whole == x.wholeGross && x.latest.digest == x.digest
+    && (!(fresh_(x)) || (x.root == x.latest.root && x.total == x.latest.total && x.leafCount == x.latest.count))
+  ensures (!(x.phase.Complete?) || (x.height > 0)) && !(x.invalidated)
+  ensures (x.sentNonce < e.sends) && ((x.sentNonce >= 0) || (x.sentNonce == -1))
+  ensures (!(((x.phase.Complete? && !(x.v2)) && !(x.solana))) || (settlement__executorJournal_admittedLegacy(x.journal, x.period, x.root) && settlement__executorJournal_rootSettled(x.journal, x.period)))
+  ensures (!((x.v2 && x.phase.Complete?)) || (settlement__executorJournal_rootSettled(x.journal, x.period) && (cursorDone(x) || legacyWon(x))))
+  ensures (!((x.phase.WrongTotal? || x.phase.Released?)) || (((x.v2 && settlement__executorJournal_admittedV2(x.journal, x.period, x.root)) && !(settlement__money_equalAmounts(x.heldTotal, x.total))) && (x.heldTotal == v2Total(x.journal, x.period, x.root))))
+  ensures (!(x.phase.Released?) || ((x.height > 0) && (|x.journal.leaves| == 0)))
+  ensures (!(x.phase.ClosedUnadmitted?) || (((!(x.solana) && !(settlement__executorJournal_admitted(x.journal, x.period))) && !(settlement__executorJournal_hasLiveRoot(x.journal, x.period))) && (x.journal.time >= settlement__monthlyCommitment_windowClosesAt(x.period))))
+  ensures settlement__executorJournal_wellFormed(x.journal) && monthOnly(x.journal, x.period) && admissionFits(x, x.journal)
+{
+}
+
 lemma NoReorderRevert(e: Execution, row: Row)
   requires !(revertsIfSent(e, row))
   ensures !(reorderReverts(e, row))

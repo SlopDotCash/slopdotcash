@@ -452,7 +452,8 @@ Each monthly leaf award is this month's source key of one of its
 obligations. The executor's cursor stays within its tree, is keyed to the
 admitted root, moves by at most one leaf, and every leaf it passed on an award
 keeps that award; it passes a leaf without an award only once the admitted
-remainder is zero. A wholly released month never holds a monthly leaf award.
+remainder is zero. A wholly released month never holds a monthly leaf award, and this composition
+never releases individual leaves (`releasedLeaves` stays empty).
 While any of the admitted root is unreserved, its remainder is exactly the
 gross of the month's unreserved obligations, whose sources are all still
 free: the root's leaves are this month's source keys of those obligations,
@@ -478,7 +479,12 @@ they are.
 
 Discovered by the proof: the deposit transition's parameter had the name of
 the transition itself, so the generated proof could not refer to the
-transition; the parameter is now `funds`.
+transition; the parameter is now `funds`. `alwaysChildInvariants` also lists
+all `monthly` closeout rules and all `escrow` release-whole, touched-month,
+released-leaves-admitted, and pledge-coverage rules so the composition
+invariant matches every rule of both child machines as stated above, and
+`alwaysReleasedMonthHasNoLeafAward` records that `releasedLeaves` stays empty
+so `materialize` cannot run after a whole-month release.
 
 ```quint
 pure def obligationMatches(s: MonthlySettlement, actor: int): bool =
@@ -496,15 +502,17 @@ pure def alwaysChildRules(s: MonthlySettlement): bool =
 pure def alwaysChildLifecycle(s: MonthlySettlement): bool =
   E::alwaysUndeployedEmpty(s.escrow) and MO::alwaysNoObligationsBeforeFunding(s.month)
 pure def alwaysChildInvariants(s: MonthlySettlement): bool =
-  MO::alwaysAllocationConserved(s.month) and MO::alwaysCapFromRevision(s.month) and MO::alwaysUnproposedEmpty(s.month)
+  MO::alwaysCloseoutOnlyForTheReviewedMonth(s.month) and MO::alwaysCloseoutUnchanged(s.month)
+    and MO::alwaysAllocationConserved(s.month) and MO::alwaysCapFromRevision(s.month) and MO::alwaysUnproposedEmpty(s.month)
     and MO::alwaysCutsRecorded(s.month) and MO::alwaysPublicCutsCurrent(s.month) and MO::alwaysAutomaticHonoursCutNotice(s.month)
     and MO::alwaysFreezeAfterCutNotice(s.month) and MO::alwaysEveryPayableShareAccounted(s.month) and MO::alwaysBannedHadShares(s.month)
     and MO::alwaysNoObligationsBeforeFunding(s.month) and MO::alwaysCompletedPaid(s.month) and MO::alwaysFrozenRecord(s.month)
     and MO::alwaysObligationsMatchShares(s.month) and MO::alwaysExclusionsFromRevision(s.month)
+    and E::alwaysEvmReleaseWhole(s.escrow) and E::alwaysTouchedMonthsShrink(s.escrow) and E::alwaysReleaseWhole(s.escrow)
     and E::alwaysGrossConserved(s.escrow) and E::alwaysReservedSplit(s.escrow) and E::alwaysPaidSplit(s.escrow)
     and E::alwaysFeesConserved(s.escrow) and E::alwaysValidCounters(s.escrow) and E::alwaysWithdrawalFees(s.escrow)
     and E::alwaysMonths(s.escrow) and E::alwaysBountyVaultHasNoMonths(s.escrow) and E::alwaysUndeployedEmpty(s.escrow)
-    and E::alwaysAwards(s.escrow)
+    and E::alwaysReleasedLeavesAdmitted(s.escrow) and E::alwaysPledgesCovered(s.escrow) and E::alwaysAwards(s.escrow)
 pure def alwaysAdmittedOnlyWhenFunded(s: MonthlySettlement): bool =
   s.escrow.months.length() > 0 implies (s.month.phase == MO::Funded or s.month.phase == MO::Completed)
     and s.escrow.months.every(m => m.period == s.month.period)
@@ -532,7 +540,8 @@ pure def alwaysCursorSourceBacked(s: MonthlySettlement): bool =
   s.cursor.passed.every(actor => chainHolds(s, actor))
     and (s.cursor.position > s.cursor.passed.length() implies not(M::positiveAmount(admittedMonth(s).remaining)))
 pure def alwaysReleasedMonthHasNoLeafAward(s: MonthlySettlement): bool =
-  M::positiveAmount(admittedMonth(s).released) implies not(E::hasAwardOf(s.escrow, E::MonthlyLeaf))
+  s.escrow.releasedLeaves.length() == 0
+    and (M::positiveAmount(admittedMonth(s).released) implies not(E::hasAwardOf(s.escrow, E::MonthlyLeaf)))
 pure def stepCursorMonotoneByOne(before: MonthlySettlement, after: MonthlySettlement): bool =
   after.cursor.position == before.cursor.position or after.cursor.position == before.cursor.position + 1
 pure def stepRootAdmitsOnlyFreeSources(before: MonthlySettlement, via: str, after: MonthlySettlement): bool =

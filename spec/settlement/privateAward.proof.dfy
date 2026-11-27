@@ -62,7 +62,7 @@ lemma observeFunds_ensures(s: PrivateAward, observedAt: int)
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> stepNoticesPermanent(s, observeFunds(s, observedAt)))
 {
   if inv(s) && canObserveFunds(s, observedAt) {
-    BountyFrameKeepsCaseRules(s.bounty, security__bounty_observeFunds(s.bounty, vaultFunds(s, observedAt)));
+    security__bounty_observeFunds_ensures(s.bounty, vaultFunds(s, observedAt));
     settlement__money_lawAdditionValid_ensures(s.settlement.vault.free, s.settlement.vault.reserved);
     ObservedCoverIsVaultFree(s.settlement.vault.free, s.settlement.vault.reserved, s.bounty.reserved);
   }
@@ -93,7 +93,7 @@ lemma advanceClock_ensures(s: PrivateAward, nowMs: int)
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> stepNoticesPermanent(s, advanceClock(s, nowMs)))
 {
   if inv(s) && canAdvanceClock(s, nowMs) {
-    BountyFrameKeepsCaseRules(s.bounty, security__bounty_advanceClock(s.bounty, nowMs));
+    security__bounty_advanceClock_ensures(s.bounty, nowMs);
   }
 }
 
@@ -121,7 +121,7 @@ lemma observeRoute_ensures(s: PrivateAward, route: security__bounty_RouteObserva
   ensures (inv(s) ==> canObserveRoute(s, route) ==> stepNoticesPermanent(s, observeRoute(s, route)))
 {
   if inv(s) && canObserveRoute(s, route) {
-    BountyFrameKeepsCaseRules(s.bounty, security__bounty_observeRoute(s.bounty, route));
+    security__bounty_observeRoute_ensures(s.bounty, route);
   }
 }
 
@@ -150,13 +150,13 @@ lemma receive_ensures(s: PrivateAward, id: int, source: security__cases_ReceiptS
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> stepNoticesPermanent(s, receive(s, id, source, terms, reportVersion)))
 {
   if inv(s) && canReceive(s, id, source, terms, reportVersion) {
+    security__bounty_receive_ensures(s.bounty, id, source, terms, reportVersion);
     var c := caseOf(s, id);
     assert id in security__bounty_caseIds;
     CaseRulesOf(s.bounty, id);
     assert c.revision >= 0;
     assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
     assert s.shown.caseId > 0 ==> s.shown.caseId != id;
-    PutHoldlessCaseKeepsRules(s.bounty, id, security__cases_receive(c, source, terms, security__cases_Historical.NewReceipt, settlement__money_zero, reportVersion));
   }
 }
 
@@ -183,15 +183,54 @@ lemma claim_ensures(s: PrivateAward, id: int, by_: int)
   ensures (inv(s) ==> canClaim(s, id, by_) ==> stepAuthorizationFollowsDisplay(s, "claim", claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> stepNoticesPermanent(s, claim(s, id, by_)))
 {
+  hide *;
   if inv(s) && canClaim(s, id, by_) {
-    var c := caseOf(s, id);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(s.bounty, id);
-    assert c.revision >= 0;
-    assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
-    assert s.shown.caseId > 0 ==> s.shown.caseId != id;
-    PutHoldlessCaseKeepsRules(s.bounty, id, security__cases_claim(c, by_));
+    ClaimPart1(s, id, by_);
+    ClaimPart2(s, id, by_);
   }
+}
+
+lemma ClaimPart1(s: PrivateAward, id: int, by_: int)
+  requires inv(s) && canClaim(s, id, by_)
+  ensures alwaysHoldsKeepCaseRules(claim(s, id, by_))
+  ensures alwaysFundsSnapshotObserved(claim(s, id, by_))
+  ensures alwaysBountyReserveIsVaultReserve(claim(s, id, by_))
+  ensures alwaysBountyCoverIsVaultFree(claim(s, id, by_))
+  ensures alwaysCoverAmountsValid(claim(s, id, by_))
+  ensures alwaysVaultAwardReserved(claim(s, id, by_))
+  ensures alwaysCaseRevisionsCounted(claim(s, id, by_))
+  ensures alwaysVaultTargetMatchesAward(claim(s, id, by_))
+  ensures alwaysNothingAuthorizedBeforeAdmission(claim(s, id, by_))
+  ensures alwaysDirectJournalBound(claim(s, id, by_))
+{
+  security__bounty_claim_ensures(s.bounty, id, by_);
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+}
+
+lemma ClaimPart2(s: PrivateAward, id: int, by_: int)
+  requires inv(s) && canClaim(s, id, by_)
+  ensures alwaysShownAmountsExact(claim(s, id, by_))
+  ensures alwaysCommittedWithinTerms(claim(s, id, by_))
+  ensures alwaysShownCaseReceived(claim(s, id, by_))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(claim(s, id, by_))
+  ensures alwaysCommitmentNotified(claim(s, id, by_))
+  ensures alwaysPaidNoticeOnlyWhenPaid(claim(s, id, by_))
+  ensures alwaysPaidNotified(claim(s, id, by_))
+  ensures stepVaultReservationNeedsCommitment(s, "claim", claim(s, id, by_))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "claim", claim(s, id, by_))
+  ensures stepAuthorizationFollowsDisplay(s, "claim", claim(s, id, by_))
+  ensures stepNoticesPermanent(s, claim(s, id, by_))
+{
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+  assert s.shown.caseId > 0 ==> s.shown.caseId != id;
 }
 
 lemma verifyLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms)
@@ -217,15 +256,54 @@ lemma verifyLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, 
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> stepAuthorizationFollowsDisplay(s, "verifyLink", verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> stepNoticesPermanent(s, verifyLink(s, id, by_, checkedEpoch, terms)))
 {
+  hide *;
   if inv(s) && canVerifyLink(s, id, by_, checkedEpoch, terms) {
-    var c := caseOf(s, id);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(s.bounty, id);
-    assert c.revision >= 0;
-    assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
-    assert s.shown.caseId > 0 ==> s.shown.caseId != id;
-    PutHoldlessCaseKeepsRules(s.bounty, id, security__cases_verifyLink(c, by_, checkedEpoch, terms));
+    VerifyLinkPart1(s, id, by_, checkedEpoch, terms);
+    VerifyLinkPart2(s, id, by_, checkedEpoch, terms);
   }
+}
+
+lemma VerifyLinkPart1(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms)
+  requires inv(s) && canVerifyLink(s, id, by_, checkedEpoch, terms)
+  ensures alwaysHoldsKeepCaseRules(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysFundsSnapshotObserved(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysBountyReserveIsVaultReserve(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysBountyCoverIsVaultFree(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysCoverAmountsValid(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysVaultAwardReserved(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysCaseRevisionsCounted(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysVaultTargetMatchesAward(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysNothingAuthorizedBeforeAdmission(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysDirectJournalBound(verifyLink(s, id, by_, checkedEpoch, terms))
+{
+  security__bounty_verifyLink_ensures(s.bounty, id, by_, checkedEpoch, terms);
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+}
+
+lemma VerifyLinkPart2(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms)
+  requires inv(s) && canVerifyLink(s, id, by_, checkedEpoch, terms)
+  ensures alwaysShownAmountsExact(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysCommittedWithinTerms(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysShownCaseReceived(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysCommitmentNotified(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysPaidNoticeOnlyWhenPaid(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures alwaysPaidNotified(verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures stepVaultReservationNeedsCommitment(s, "verifyLink", verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "verifyLink", verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures stepAuthorizationFollowsDisplay(s, "verifyLink", verifyLink(s, id, by_, checkedEpoch, terms))
+  ensures stepNoticesPermanent(s, verifyLink(s, id, by_, checkedEpoch, terms))
+{
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+  assert s.shown.caseId > 0 ==> s.shown.caseId != id;
 }
 
 lemma rejectLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
@@ -252,13 +330,13 @@ lemma rejectLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> stepNoticesPermanent(s, rejectLink(s, id, by_, checkedEpoch)))
 {
   if inv(s) && canRejectLink(s, id, by_, checkedEpoch) {
+    security__bounty_rejectLink_ensures(s.bounty, id, by_, checkedEpoch);
     var c := caseOf(s, id);
     assert id in security__bounty_caseIds;
     CaseRulesOf(s.bounty, id);
     assert c.revision >= 0;
     assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
     assert s.shown.caseId > 0 ==> s.shown.caseId != id;
-    PutHoldlessCaseKeepsRules(s.bounty, id, security__cases_rejectLink(c, by_, checkedEpoch));
   }
 }
 
@@ -285,15 +363,54 @@ lemma recordAttested_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: i
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> stepAuthorizationFollowsDisplay(s, "recordAttested", recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> stepNoticesPermanent(s, recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
 {
+  hide *;
   if inv(s) && canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) {
-    var c := caseOf(s, id);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(s.bounty, id);
-    assert c.revision >= 0;
-    assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
-    assert s.shown.caseId > 0 ==> s.shown.caseId != id;
-    PutHoldlessCaseKeepsRules(s.bounty, id, security__cases_recordAttested(c, by_, checkedEpoch, terms, confirmed));
+    RecordAttestedPart1(s, id, by_, checkedEpoch, terms, confirmed);
+    RecordAttestedPart2(s, id, by_, checkedEpoch, terms, confirmed);
   }
+}
+
+lemma RecordAttestedPart1(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms, confirmed: bool)
+  requires inv(s) && canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed)
+  ensures alwaysHoldsKeepCaseRules(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysFundsSnapshotObserved(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysBountyReserveIsVaultReserve(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysBountyCoverIsVaultFree(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysCoverAmountsValid(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysVaultAwardReserved(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysCaseRevisionsCounted(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysVaultTargetMatchesAward(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysNothingAuthorizedBeforeAdmission(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysDirectJournalBound(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+{
+  security__bounty_recordAttested_ensures(s.bounty, id, by_, checkedEpoch, terms, confirmed);
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+}
+
+lemma RecordAttestedPart2(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms, confirmed: bool)
+  requires inv(s) && canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed)
+  ensures alwaysShownAmountsExact(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysCommittedWithinTerms(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysShownCaseReceived(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysCommitmentNotified(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysPaidNoticeOnlyWhenPaid(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures alwaysPaidNotified(recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures stepVaultReservationNeedsCommitment(s, "recordAttested", recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "recordAttested", recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures stepAuthorizationFollowsDisplay(s, "recordAttested", recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+  ensures stepNoticesPermanent(s, recordAttested(s, id, by_, checkedEpoch, terms, confirmed))
+{
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+  assert s.shown.caseId > 0 ==> s.shown.caseId != id;
 }
 
 lemma settleClaim_ensures(s: PrivateAward, id: int, by_: int, listed: bool, terms: security__terms_ReceiptTerms)
@@ -319,15 +436,54 @@ lemma settleClaim_ensures(s: PrivateAward, id: int, by_: int, listed: bool, term
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> stepAuthorizationFollowsDisplay(s, "settleClaim", settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> stepNoticesPermanent(s, settleClaim(s, id, by_, listed, terms)))
 {
+  hide *;
   if inv(s) && canSettleClaim(s, id, by_, listed, terms) {
-    var c := caseOf(s, id);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(s.bounty, id);
-    assert c.revision >= 0;
-    assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
-    assert s.shown.caseId > 0 ==> s.shown.caseId != id;
-    PutHoldlessCaseKeepsRules(s.bounty, id, security__cases_settleClaim(c, by_, listed, terms));
+    SettleClaimPart1(s, id, by_, listed, terms);
+    SettleClaimPart2(s, id, by_, listed, terms);
   }
+}
+
+lemma SettleClaimPart1(s: PrivateAward, id: int, by_: int, listed: bool, terms: security__terms_ReceiptTerms)
+  requires inv(s) && canSettleClaim(s, id, by_, listed, terms)
+  ensures alwaysHoldsKeepCaseRules(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysFundsSnapshotObserved(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysBountyReserveIsVaultReserve(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysBountyCoverIsVaultFree(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysCoverAmountsValid(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysVaultAwardReserved(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysCaseRevisionsCounted(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysVaultTargetMatchesAward(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysNothingAuthorizedBeforeAdmission(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysDirectJournalBound(settleClaim(s, id, by_, listed, terms))
+{
+  security__bounty_settleClaim_ensures(s.bounty, id, by_, listed, terms);
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+}
+
+lemma SettleClaimPart2(s: PrivateAward, id: int, by_: int, listed: bool, terms: security__terms_ReceiptTerms)
+  requires inv(s) && canSettleClaim(s, id, by_, listed, terms)
+  ensures alwaysShownAmountsExact(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysCommittedWithinTerms(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysShownCaseReceived(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysCommitmentNotified(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysPaidNoticeOnlyWhenPaid(settleClaim(s, id, by_, listed, terms))
+  ensures alwaysPaidNotified(settleClaim(s, id, by_, listed, terms))
+  ensures stepVaultReservationNeedsCommitment(s, "settleClaim", settleClaim(s, id, by_, listed, terms))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "settleClaim", settleClaim(s, id, by_, listed, terms))
+  ensures stepAuthorizationFollowsDisplay(s, "settleClaim", settleClaim(s, id, by_, listed, terms))
+  ensures stepNoticesPermanent(s, settleClaim(s, id, by_, listed, terms))
+{
+  var c := caseOf(s, id);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, id);
+  assert c.revision >= 0;
+  assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
+  assert s.shown.caseId > 0 ==> s.shown.caseId != id;
 }
 
 // A new snapshot has a later epoch than every case's, so a direct authorization stays within the current epoch.
@@ -355,10 +511,10 @@ lemma observeAuthority_ensures(s: PrivateAward, snapshot: security__cases_Author
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> stepNoticesPermanent(s, observeAuthority(s, snapshot)))
 {
   if inv(s) && canObserveAuthority(s, snapshot) {
+    security__bounty_observeAuthority_ensures(s.bounty, snapshot);
     assert 1 in security__bounty_caseIds && 2 in security__bounty_caseIds;
     assert security__cases_canObserveAuthority(s.bounty.first, snapshot) && security__cases_canObserveAuthority(s.bounty.second, snapshot);
     assert directCaseOf(s).authority.epoch < snapshot.epoch;
-    AuthorityKeepsCaseRules(s.bounty, snapshot);
   }
 }
 
@@ -387,12 +543,12 @@ lemma decide_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, vers
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> stepNoticesPermanent(s, decide(s, id, by_, checkedEpoch, version, decision)))
 {
   if inv(s) && canDecide(s, id, by_, checkedEpoch, version, decision) {
+    security__bounty_decide_ensures(s.bounty, id, by_, checkedEpoch, version, decision);
     var c := caseOf(s, id);
     assert id in security__bounty_caseIds;
     CaseRulesOf(s.bounty, id);
     assert c.revision >= 0;
     assert !security__cases_committed(c) && !c.relatedReview.ReviewPending?;
-    PutHoldlessCaseKeepsRules(s.bounty, id, security__cases_decide(c, by_, checkedEpoch, version, decision));
   }
 }
 
@@ -420,49 +576,116 @@ lemma decideAward_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> stepAuthorizationFollowsDisplay(s, "decideAward", decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> stepNoticesPermanent(s, decideAward(s, id, by_, checkedEpoch, amount)))
 {
+  hide *;
   if inv(s) && canDecideAward(s, id, by_, checkedEpoch, amount) {
-    var b := s.bounty;
-    var c := caseOf(s, id);
-    var clearance := security__bounty_clearanceFor(b, id, amount);
-    var after := security__cases_decideAward(c, by_, checkedEpoch, amount, clearance);
-    var nb := security__bounty_decideAward(b, id, by_, checkedEpoch, amount);
-    assert nb == security__bounty_withHold(id, after, amount, b);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(b, id);
-    assert c.revision >= 0;
-    assert c.receipt.Confirmed? && c.rootCause > 0 && c.commitment.NoCommitment?;
-    assert forall h :: h in b.holds ==> h.caseId != id;
-    if after.commitment.VaultReservation? {
-      assert clearance.rail.VaultRail?;
-      assert security__bounty_fundsFresh(b, c.terms.asset);
-      assert b.funds.observedAt > 0;
-    }
-    assert settlement__money_validAmount(amount);
-    RecordedHoldKeepsMatch(id, after, amount, b);
-    WithHoldGross(id, after, amount, b);
-    OpenVaultGrossValid(b);
-    settlement__money_lawAddCongruence_ensures(b.reserved, security__bounty_openVaultGross(b), amount);
-    settlement__money_lawAddCongruence_ensures(s.settlement.vault.reserved, b.reserved, amount);
-    assert vaultObligation(s, id, amount).vault == s.settlement.vault;
-    assert vaultObligation(s, id, amount).payment.gross == amount;
-    settlement__money_lawAdditionValid_ensures(b.reserved, amount);
-    settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, amount);
-    settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, amount);
-    settlement__money_lawEqualReflexive_ensures(amount);
-    assert lastDecider(security__bounty_caseOf(nb, id)) == by_;
-    if after.commitment.VaultReservation? {
-      assert security__bounty_fundsCover(b, amount);
-      assert !(settlement__money_compareAmounts(b.reserved, b.funds.free) > 0);
-      ReservedCoverStaysVaultFree(b.funds.free, b.reserved, amount, s.settlement.vault.free);
-    }
-    NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
-    PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
-    assert s.vaultCase > 0 ==> s.vaultCase != id;
-    assert s.directCase > 0 ==> s.directCase != id;
-    AwardKeysDiffer(id);
-    assert !operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, id), c.reporter);
-    RecordedHoldKeepsVaultHolds(b, nb, id);
+    DecideAwardPart1a(s, id, by_, checkedEpoch, amount);
+    DecideAwardPart1b(s, id, by_, checkedEpoch, amount);
+    DecideAwardPart1c(s, id, by_, checkedEpoch, amount);
+    DecideAwardPart2(s, id, by_, checkedEpoch, amount);
   }
+}
+
+lemma DecideAwardPart1a(s: PrivateAward, id: int, by_: int, checkedEpoch: int, amount: seq<int>)
+  requires inv(s) && canDecideAward(s, id, by_, checkedEpoch, amount)
+  ensures alwaysHoldsKeepCaseRules(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysFundsSnapshotObserved(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysBountyReserveIsVaultReserve(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysBountyCoverIsVaultFree(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysCoverAmountsValid(decideAward(s, id, by_, checkedEpoch, amount))
+{
+  security__bounty_decideAward_ensures(s.bounty, id, by_, checkedEpoch, amount);
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var clearance := security__bounty_clearanceFor(b, id, amount);
+  var after := security__cases_decideAward(c, by_, checkedEpoch, amount, clearance);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  assert settlement__money_validAmount(amount);
+  settlement__money_lawAddCongruence_ensures(s.settlement.vault.reserved, b.reserved, amount);
+  assert vaultObligation(s, id, amount).vault == s.settlement.vault;
+  assert vaultObligation(s, id, amount).payment.gross == amount;
+  settlement__money_lawAdditionValid_ensures(b.reserved, amount);
+  settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, amount);
+  settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, amount);
+  if after.commitment.VaultReservation? {
+    assert security__bounty_fundsCover(b, amount);
+    assert !(settlement__money_compareAmounts(b.reserved, b.funds.free) > 0);
+    ReservedCoverStaysVaultFree(b.funds.free, b.reserved, amount, s.settlement.vault.free);
+  }
+}
+
+lemma DecideAwardPart1b(s: PrivateAward, id: int, by_: int, checkedEpoch: int, amount: seq<int>)
+  requires inv(s) && canDecideAward(s, id, by_, checkedEpoch, amount)
+  ensures alwaysVaultAwardReserved(decideAward(s, id, by_, checkedEpoch, amount))
+{
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var clearance := security__bounty_clearanceFor(b, id, amount);
+  var after := security__cases_decideAward(c, by_, checkedEpoch, amount, clearance);
+  var nb := security__bounty_decideAward(b, id, by_, checkedEpoch, amount);
+  assert nb == security__bounty_withHold(id, after, amount, b);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  forall x ensures x in nb.holds <==> (x in b.holds && x.caseId != id) || x == security__bounty_holdFor(b, id, after) {
+    ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+  }
+  assert vaultObligation(s, id, amount).vault == s.settlement.vault;
+  assert vaultObligation(s, id, amount).payment.gross == amount;
+  settlement__money_lawEqualReflexive_ensures(amount);
+  assert s.vaultCase > 0 ==> s.vaultCase != id;
+  RecordedHoldKeepsVaultHolds(b, nb, id);
+}
+
+lemma DecideAwardPart1c(s: PrivateAward, id: int, by_: int, checkedEpoch: int, amount: seq<int>)
+  requires inv(s) && canDecideAward(s, id, by_, checkedEpoch, amount)
+  ensures alwaysCaseRevisionsCounted(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysVaultTargetMatchesAward(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysNothingAuthorizedBeforeAdmission(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysDirectJournalBound(decideAward(s, id, by_, checkedEpoch, amount))
+{
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var clearance := security__bounty_clearanceFor(b, id, amount);
+  var after := security__cases_decideAward(c, by_, checkedEpoch, amount, clearance);
+  var nb := security__bounty_decideAward(b, id, by_, checkedEpoch, amount);
+  assert nb == security__bounty_withHold(id, after, amount, b);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  assert c.revision >= 0;
+  assert s.vaultCase > 0 ==> s.vaultCase != id;
+  assert s.directCase > 0 ==> s.directCase != id;
+  forall x ensures x in nb.holds <==> (x in b.holds && x.caseId != id) || x == security__bounty_holdFor(b, id, after) {
+    ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+  }
+}
+
+lemma DecideAwardPart2(s: PrivateAward, id: int, by_: int, checkedEpoch: int, amount: seq<int>)
+  requires inv(s) && canDecideAward(s, id, by_, checkedEpoch, amount)
+  ensures alwaysShownAmountsExact(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysCommittedWithinTerms(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysShownCaseReceived(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysCommitmentNotified(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysPaidNoticeOnlyWhenPaid(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures alwaysPaidNotified(decideAward(s, id, by_, checkedEpoch, amount))
+  ensures stepVaultReservationNeedsCommitment(s, "decideAward", decideAward(s, id, by_, checkedEpoch, amount))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "decideAward", decideAward(s, id, by_, checkedEpoch, amount))
+  ensures stepAuthorizationFollowsDisplay(s, "decideAward", decideAward(s, id, by_, checkedEpoch, amount))
+  ensures stepNoticesPermanent(s, decideAward(s, id, by_, checkedEpoch, amount))
+{
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var nb := security__bounty_decideAward(b, id, by_, checkedEpoch, amount);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  settlement__money_lawEqualReflexive_ensures(amount);
+  assert lastDecider(security__bounty_caseOf(nb, id)) == by_;
+  NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
+  PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
+  assert s.vaultCase > 0 ==> s.vaultCase != id;
+  assert s.directCase > 0 ==> s.directCase != id;
+  AwardKeysDiffer(id);
+  assert !operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, id), c.reporter);
 }
 
 lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, approve: bool)
@@ -488,56 +711,160 @@ lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: in
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> stepAuthorizationFollowsDisplay(s, "reviewRelated", reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> stepNoticesPermanent(s, reviewRelated(s, id, by_, checkedEpoch, approve)))
 {
+  hide *;
   if inv(s) && canReviewRelated(s, id, by_, checkedEpoch, approve) {
-    var b := s.bounty;
-    var c := caseOf(s, id);
-    var gross := c.grossChosen;
-    var clearance := security__bounty_clearanceFor(b, id, gross);
-    var after := security__cases_reviewRelated(c, by_, checkedEpoch, approve, clearance);
-    var nb := security__bounty_reviewRelated(b, id, by_, checkedEpoch, approve);
-    assert id in security__bounty_caseIds;
-    CaseRulesOf(b, id);
-    assert c.revision >= 0;
-    assert c.receipt.Confirmed? && c.rootCause > 0 && c.commitment.NoCommitment? && !security__cases_committed(c);
-    assert security__terms_amountAllowed(c.terms, gross);
-    forall h | h in b.holds && h.caseId == id ensures !(h.kind.VaultHold? && h.settledReceipt == 0) {
-      assert security__bounty_holdMatches(b, h);
-    }
-    if approve {
-      assert nb == security__bounty_withHold(id, after, gross, b);
-      if after.commitment.VaultReservation? {
-        assert clearance.rail.VaultRail?;
-        assert security__bounty_fundsFresh(b, c.terms.asset);
-        assert b.funds.observedAt > 0;
-      }
-      RecordedHoldKeepsMatch(id, after, gross, b);
-      WithHoldGross(id, after, gross, b);
-      OpenVaultGrossValid(b);
-      settlement__money_lawAddCongruence_ensures(b.reserved, security__bounty_openVaultGross(b), gross);
-      settlement__money_lawAddCongruence_ensures(s.settlement.vault.reserved, b.reserved, gross);
-    } else {
-      DroppedHoldKeepsRules(b, id, by_, checkedEpoch);
-    }
-    assert vaultObligation(s, id, gross).vault == s.settlement.vault;
-    assert vaultObligation(s, id, gross).payment.gross == gross;
-    settlement__money_lawAdditionValid_ensures(b.reserved, gross);
-    settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, gross);
-    settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, gross);
-    settlement__money_lawEqualReflexive_ensures(gross);
-    assert lastDecider(security__bounty_caseOf(nb, id)) == by_;
-    if approve && after.commitment.VaultReservation? {
-      assert security__bounty_fundsCover(b, gross);
-      assert !(settlement__money_compareAmounts(b.reserved, b.funds.free) > 0);
-      ReservedCoverStaysVaultFree(b.funds.free, b.reserved, gross, s.settlement.vault.free);
-    }
-    NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
-    PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
-    assert s.vaultCase > 0 ==> s.vaultCase != id;
-    assert s.directCase > 0 ==> s.directCase != id;
-    AwardKeysDiffer(id);
-    assert !operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, id), c.reporter);
-    RecordedHoldKeepsVaultHolds(b, nb, id);
+    ReviewRelatedPart1a(s, id, by_, checkedEpoch, approve);
+    ReviewRelatedPart1b(s, id, by_, checkedEpoch, approve);
+    ReviewRelatedPart1c(s, id, by_, checkedEpoch, approve);
+    ReviewRelatedPart2(s, id, by_, checkedEpoch, approve);
   }
+}
+
+lemma ReviewRelatedPart1a(s: PrivateAward, id: int, by_: int, checkedEpoch: int, approve: bool)
+  requires inv(s) && canReviewRelated(s, id, by_, checkedEpoch, approve)
+  ensures alwaysHoldsKeepCaseRules(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysFundsSnapshotObserved(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysBountyReserveIsVaultReserve(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysBountyCoverIsVaultFree(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysCoverAmountsValid(reviewRelated(s, id, by_, checkedEpoch, approve))
+{
+  security__bounty_reviewRelated_ensures(s.bounty, id, by_, checkedEpoch, approve);
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var gross := c.grossChosen;
+  var clearance := security__bounty_clearanceFor(b, id, gross);
+  var after := security__cases_reviewRelated(c, by_, checkedEpoch, approve, clearance);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  assert security__terms_amountAllowed(c.terms, gross);
+  if approve {
+    settlement__money_lawAddCongruence_ensures(s.settlement.vault.reserved, b.reserved, gross);
+  }
+  assert vaultObligation(s, id, gross).vault == s.settlement.vault;
+  assert vaultObligation(s, id, gross).payment.gross == gross;
+  settlement__money_lawAdditionValid_ensures(b.reserved, gross);
+  settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, gross);
+  settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, gross);
+  if approve && after.commitment.VaultReservation? {
+    assert security__bounty_fundsCover(b, gross);
+    assert !(settlement__money_compareAmounts(b.reserved, b.funds.free) > 0);
+    ReservedCoverStaysVaultFree(b.funds.free, b.reserved, gross, s.settlement.vault.free);
+  }
+}
+
+lemma ReviewRelatedPart1b(s: PrivateAward, id: int, by_: int, checkedEpoch: int, approve: bool)
+  requires inv(s) && canReviewRelated(s, id, by_, checkedEpoch, approve)
+  ensures alwaysVaultAwardReserved(reviewRelated(s, id, by_, checkedEpoch, approve))
+{
+  hide *;
+  if approve {
+    ReviewRelatedPart1bApprove(s, id, by_, checkedEpoch);
+  } else {
+    ReviewRelatedPart1bRefuse(s, id, by_, checkedEpoch);
+  }
+}
+
+lemma ReviewRelatedPart1bApprove(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
+  requires inv(s) && canReviewRelated(s, id, by_, checkedEpoch, true)
+  ensures alwaysVaultAwardReserved(reviewRelated(s, id, by_, checkedEpoch, true))
+{
+  hide *;
+  reveal inv, canReviewRelated, reviewRelated, withCommitment, withInbox, withSettlement, withBounty, caseOf, vaultHold, vaultObligation, vaultCommitmentReady, awardTarget, alwaysHoldsKeepCaseRules, alwaysVaultAwardReserved, alwaysCommittedWithinTerms, ProofLib.Filter, security__bounty_canReviewRelated, security__bounty_reviewRelated, security__bounty_withHold, security__bounty_putCase, security__bounty_caseOf, security__bounty_caseIds, security__bounty_holdFor, security__bounty_clearanceFor, security__bounty_alwaysCasesKeepAwardRules, security__bounty_alwaysHoldsMatchCases, security__bounty_holdMatches, security__bounty_hasHold, security__bounty_known, security__cases_canReviewRelated, security__cases_reviewRelated, security__cases_committedWith, security__cases_committed, security__cases_alwaysProposalCommitsNothing, security__cases_alwaysCommitmentMatchesAward, security__cases_alwaysFullAwardHeld, security__cases_alwaysStandardAwardRail, security__cases_alwaysApprovedWithinTerms, security__terms_amountAllowed, settlement__composition_canConfigure, settlement__composition_configure, settlement__composition_canReserve, settlement__composition_reserve, settlement__composition_hasReserve, settlement__payment_canConfigure, settlement__payment_configure, settlement__payment_reserveVault, settlement__vault_reserve, settlement__vault_reservationMatches, settlement__money_positiveAmount, settlement__money_lawEqualReflexive;
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var gross := c.grossChosen;
+  var clearance := security__bounty_clearanceFor(b, id, gross);
+  var after := security__cases_reviewRelated(c, by_, checkedEpoch, true, clearance);
+  var nb := security__bounty_reviewRelated(b, id, by_, checkedEpoch, true);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  assert nb == security__bounty_withHold(id, after, gross, b);
+  forall x ensures x in nb.holds <==> (x in b.holds && x.caseId != id) || x == security__bounty_holdFor(b, id, after) {
+    ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+  }
+  assert vaultObligation(s, id, gross).vault == s.settlement.vault;
+  assert vaultObligation(s, id, gross).payment.gross == gross;
+  settlement__money_lawEqualReflexive_ensures(gross);
+  assert s.vaultCase > 0 ==> s.vaultCase != id;
+  RecordedHoldKeepsVaultHolds(b, nb, id);
+}
+
+lemma ReviewRelatedPart1bRefuse(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
+  requires inv(s) && canReviewRelated(s, id, by_, checkedEpoch, false)
+  ensures alwaysVaultAwardReserved(reviewRelated(s, id, by_, checkedEpoch, false))
+{
+  var b := s.bounty;
+  var nb := security__bounty_reviewRelated(b, id, by_, checkedEpoch, false);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  RefusedHolds(b, id, by_, checkedEpoch);
+  forall x ensures x in nb.holds <==> x in b.holds && x.caseId != id {
+    ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+  }
+  assert s.vaultCase > 0 ==> s.vaultCase != id;
+  RecordedHoldKeepsVaultHolds(b, nb, id);
+}
+
+lemma ReviewRelatedPart1c(s: PrivateAward, id: int, by_: int, checkedEpoch: int, approve: bool)
+  requires inv(s) && canReviewRelated(s, id, by_, checkedEpoch, approve)
+  ensures alwaysCaseRevisionsCounted(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysVaultTargetMatchesAward(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysNothingAuthorizedBeforeAdmission(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysDirectJournalBound(reviewRelated(s, id, by_, checkedEpoch, approve))
+{
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var gross := c.grossChosen;
+  var clearance := security__bounty_clearanceFor(b, id, gross);
+  var after := security__cases_reviewRelated(c, by_, checkedEpoch, approve, clearance);
+  var nb := security__bounty_reviewRelated(b, id, by_, checkedEpoch, approve);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  assert c.revision >= 0;
+  assert s.vaultCase > 0 ==> s.vaultCase != id;
+  assert s.directCase > 0 ==> s.directCase != id;
+  if approve {
+    assert nb == security__bounty_withHold(id, after, gross, b);
+    forall x ensures x in nb.holds <==> (x in b.holds && x.caseId != id) || x == security__bounty_holdFor(b, id, after) {
+      ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+    }
+  } else {
+    RefusedHolds(b, id, by_, checkedEpoch);
+    forall x ensures x in nb.holds <==> x in b.holds && x.caseId != id {
+      ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+    }
+  }
+}
+
+lemma ReviewRelatedPart2(s: PrivateAward, id: int, by_: int, checkedEpoch: int, approve: bool)
+  requires inv(s) && canReviewRelated(s, id, by_, checkedEpoch, approve)
+  ensures alwaysShownAmountsExact(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysCommittedWithinTerms(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysShownCaseReceived(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysCommitmentNotified(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysPaidNoticeOnlyWhenPaid(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures alwaysPaidNotified(reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures stepVaultReservationNeedsCommitment(s, "reviewRelated", reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "reviewRelated", reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures stepAuthorizationFollowsDisplay(s, "reviewRelated", reviewRelated(s, id, by_, checkedEpoch, approve))
+  ensures stepNoticesPermanent(s, reviewRelated(s, id, by_, checkedEpoch, approve))
+{
+  var b := s.bounty;
+  var c := caseOf(s, id);
+  var gross := c.grossChosen;
+  var nb := security__bounty_reviewRelated(b, id, by_, checkedEpoch, approve);
+  assert id in security__bounty_caseIds;
+  CaseRulesOf(b, id);
+  assert security__terms_amountAllowed(c.terms, gross);
+  settlement__money_lawEqualReflexive_ensures(gross);
+  assert lastDecider(security__bounty_caseOf(nb, id)) == by_;
+  NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
+  PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
+  assert s.vaultCase > 0 ==> s.vaultCase != id;
+  assert s.directCase > 0 ==> s.directCase != id;
+  AwardKeysDiffer(id);
+  assert !operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, id), c.reporter);
 }
 
 // A finalized payout takes the award from both reserved totals.
@@ -564,34 +891,199 @@ lemma reconcile_ensures(s: PrivateAward, evidence: settlement__composition_Final
   ensures (inv(s) ==> canReconcile(s, evidence) ==> stepAuthorizationFollowsDisplay(s, "reconcile", reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> stepNoticesPermanent(s, reconcile(s, evidence)))
 {
+  hide *;
   if inv(s) && canReconcile(s, evidence) {
-    var gross := evidence.amounts.gross;
-    assert settlement__money_validAmount(gross);
-    settlement__money_lawSubtractionValid_ensures(s.bounty.reserved, gross);
-    var paid := s.settlement.payment.gross;
-    var chosen := caseOf(s, s.vaultCase).grossChosen;
-    settlement__money_lawSubtractionValid_ensures(s.settlement.vault.reserved, paid);
-    settlement__money_lawSubtractionValid_ensures(s.bounty.funds.free, gross);
-    settlement__money_lawSubtractionValid_ensures(s.bounty.reserved, paid);
-    assert s.vaultCase in security__bounty_caseIds;
-    CaseRulesOf(s.bounty, s.vaultCase);
-    assert security__cases_alwaysApprovedWithinTerms(caseOf(s, s.vaultCase));
-    assert settlement__money_validAmount(chosen) && settlement__money_validAmount(paid);
-    settlement__money_lawEqualSymmetric_ensures(gross, chosen);
-    settlement__money_lawEqualOrder_ensures(paid, chosen, gross);
-    settlement__money_lawEqualOrder_ensures(chosen, gross, paid);
-    settlement__money_lawEqualReflexive_ensures(paid);
-    settlement__money_lawEqualSymmetric_ensures(gross, paid);
-    assert settlement__money_equalAmounts(paid, gross);
-    settlement__money_lawEqualOrder_ensures(paid, gross, s.bounty.reserved);
-    settlement__money_lawEqualOrder_ensures(s.settlement.vault.reserved, s.bounty.reserved, paid);
-    settlement__money_lawSubtractCongruence_ensures(s.settlement.vault.reserved, s.bounty.reserved, paid);
-    settlement__money_lawSubtractCongruence_ensures(paid, gross, s.bounty.reserved);
-    settlement__money_lawEqualOrder_ensures(settlement__money_subtractAmounts(s.settlement.vault.reserved, paid), settlement__money_subtractAmounts(s.bounty.reserved, paid), settlement__money_subtractAmounts(s.bounty.reserved, gross));
-    NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase));
-    PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase)));
-    assert s.directCase > 0 ==> s.directCase != s.vaultCase;
+    ReconcilePart1a(s, evidence);
+    ReconcilePart1b(s, evidence);
+    ReconcilePart1c(s, evidence);
+    ReconcilePart2a(s, evidence);
+    ReconcilePart2b(s, evidence);
+    ReconcilePart2c(s, evidence);
   }
+}
+
+lemma ReconcilePart1a(s: PrivateAward, evidence: settlement__composition_FinalizedPayment)
+  requires inv(s) && canReconcile(s, evidence)
+  ensures alwaysHoldsKeepCaseRules(reconcile(s, evidence))
+  ensures alwaysFundsSnapshotObserved(reconcile(s, evidence))
+{
+  hide *;
+  reveal inv, canReconcile, reconcile, withInbox, withBounty, withSettlement, alwaysHoldsKeepCaseRules, alwaysFundsSnapshotObserved, security__bounty_inv;
+  security__bounty_settleVaultHold_ensures(s.bounty, s.vaultCase, vaultPayout(evidence));
+}
+
+lemma ReconcilePart1c(s: PrivateAward, evidence: settlement__composition_FinalizedPayment)
+  requires inv(s) && canReconcile(s, evidence)
+  ensures alwaysBountyReserveIsVaultReserve(reconcile(s, evidence))
+  ensures alwaysBountyCoverIsVaultFree(reconcile(s, evidence))
+  ensures alwaysCoverAmountsValid(reconcile(s, evidence))
+{
+  var gross := evidence.amounts.gross;
+  assert settlement__money_validAmount(gross);
+  settlement__money_lawSubtractionValid_ensures(s.bounty.reserved, gross);
+  var paid := s.settlement.payment.gross;
+  var chosen := caseOf(s, s.vaultCase).grossChosen;
+  settlement__money_lawSubtractionValid_ensures(s.settlement.vault.reserved, paid);
+  settlement__money_lawSubtractionValid_ensures(s.bounty.funds.free, gross);
+  settlement__money_lawSubtractionValid_ensures(s.bounty.reserved, paid);
+  assert s.vaultCase in security__bounty_caseIds;
+  CaseRulesOf(s.bounty, s.vaultCase);
+  assert security__cases_alwaysApprovedWithinTerms(caseOf(s, s.vaultCase));
+  assert settlement__money_validAmount(chosen) && settlement__money_validAmount(paid);
+  settlement__money_lawEqualSymmetric_ensures(gross, chosen);
+  settlement__money_lawEqualOrder_ensures(paid, chosen, gross);
+  settlement__money_lawEqualOrder_ensures(chosen, gross, paid);
+  settlement__money_lawEqualReflexive_ensures(paid);
+  settlement__money_lawEqualSymmetric_ensures(gross, paid);
+  assert settlement__money_equalAmounts(paid, gross);
+  settlement__money_lawEqualOrder_ensures(paid, gross, s.bounty.reserved);
+  settlement__money_lawEqualOrder_ensures(s.settlement.vault.reserved, s.bounty.reserved, paid);
+  settlement__money_lawSubtractCongruence_ensures(s.settlement.vault.reserved, s.bounty.reserved, paid);
+  settlement__money_lawSubtractCongruence_ensures(paid, gross, s.bounty.reserved);
+  settlement__money_lawEqualOrder_ensures(settlement__money_subtractAmounts(s.settlement.vault.reserved, paid), settlement__money_subtractAmounts(s.bounty.reserved, paid), settlement__money_subtractAmounts(s.bounty.reserved, gross));
+  if s.bounty.funds.asset != "" {
+    SettledCoverStaysVaultFree(s.bounty.funds.free, s.bounty.reserved, gross, s.settlement.vault.free);
+  }
+}
+
+lemma SettledCoverStaysVaultFree(funds: seq<int>, reserved: seq<int>, gross: seq<int>, free: seq<int>)
+  requires settlement__money_validAmount(funds) && settlement__money_validAmount(reserved)
+  requires settlement__money_validAmount(gross) && settlement__money_validAmount(free)
+  requires settlement__money_compareAmounts(reserved, gross) >= 0
+  requires settlement__money_compareAmounts(reserved, funds) > 0
+    || settlement__money_compareAmounts(settlement__money_subtractAmounts(funds, reserved), free) <= 0
+  ensures var nf := if settlement__money_compareAmounts(funds, gross) >= 0 then settlement__money_subtractAmounts(funds, gross) else settlement__money_zero;
+    var nr := settlement__money_subtractAmounts(reserved, gross);
+    settlement__money_compareAmounts(nr, nf) > 0
+      || settlement__money_compareAmounts(settlement__money_subtractAmounts(nf, nr), free) <= 0
+{
+  var nf := if settlement__money_compareAmounts(funds, gross) >= 0 then settlement__money_subtractAmounts(funds, gross) else settlement__money_zero;
+  var nr := settlement__money_subtractAmounts(reserved, gross);
+  settlement__money_lawSubtractionValid_ensures(reserved, gross);
+  settlement__money_lawNumericOrderTotal_ensures(funds, gross);
+  if settlement__money_compareAmounts(funds, gross) < 0 {
+    settlement__money_lawZeroOrder_ensures(nr);
+    settlement__money_lawNumericOrderTotal_ensures(nr, settlement__money_zero);
+    if settlement__money_compareAmounts(nr, settlement__money_zero) <= 0 {
+      settlement__money_lawSubtractionValid_ensures(settlement__money_zero, nr);
+      settlement__money_lawSubtractionAtMost_ensures(settlement__money_zero, nr);
+      settlement__money_lawZeroOrder_ensures(free);
+      settlement__money_lawNumericOrderTransitive_ensures(settlement__money_subtractAmounts(settlement__money_zero, nr), settlement__money_zero, free);
+    }
+  } else {
+    settlement__money_lawSubtractionValid_ensures(funds, gross);
+    settlement__money_lawNumericOrderTotal_ensures(nr, nf);
+    if settlement__money_compareAmounts(nr, nf) <= 0 {
+      settlement__money_lawSubtractionReconstructs_ensures(reserved, gross);
+      settlement__money_lawSubtractionReconstructs_ensures(funds, gross);
+      settlement__money_lawAdditionValid_ensures(nr, gross);
+      settlement__money_lawAdditionValid_ensures(nf, gross);
+      settlement__money_lawAddOrder_ensures(nr, nf, gross);
+      settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(nr, gross), reserved, settlement__money_addAmounts(nf, gross));
+      settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(nf, gross), funds, reserved);
+      settlement__money_lawNumericOrderTotal_ensures(reserved, funds);
+      assert settlement__money_compareAmounts(reserved, funds) <= 0;
+      var d := settlement__money_subtractAmounts(nf, nr);
+      var c := settlement__money_subtractAmounts(funds, reserved);
+      settlement__money_lawSubtractionValid_ensures(nf, nr);
+      settlement__money_lawSubtractionReconstructs_ensures(nf, nr);
+      settlement__money_lawAdditionValid_ensures(d, nr);
+      settlement__money_lawAdditionValid_ensures(settlement__money_addAmounts(d, nr), gross);
+      settlement__money_lawAdditionValid_ensures(d, settlement__money_addAmounts(nr, gross));
+      settlement__money_lawAdditionValid_ensures(d, reserved);
+      settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(d, nr), nf, gross);
+      settlement__money_lawAddAssociative_ensures(d, nr, gross);
+      settlement__money_lawAddCommutative_ensures(d, settlement__money_addAmounts(nr, gross));
+      settlement__money_lawAddCommutative_ensures(d, reserved);
+      settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(nr, gross), reserved, d);
+      settlement__money_lawEqualSymmetric_ensures(settlement__money_addAmounts(settlement__money_addAmounts(d, nr), gross), settlement__money_addAmounts(d, settlement__money_addAmounts(nr, gross)));
+      settlement__money_lawEqualSymmetric_ensures(settlement__money_addAmounts(d, settlement__money_addAmounts(nr, gross)), settlement__money_addAmounts(settlement__money_addAmounts(nr, gross), d));
+      settlement__money_lawEqualSymmetric_ensures(settlement__money_addAmounts(d, reserved), settlement__money_addAmounts(reserved, d));
+      settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(d, settlement__money_addAmounts(nr, gross)), settlement__money_addAmounts(d, reserved), funds);
+      settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(settlement__money_addAmounts(d, nr), gross), settlement__money_addAmounts(d, settlement__money_addAmounts(nr, gross)), funds);
+      settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(settlement__money_addAmounts(d, nr), gross), settlement__money_addAmounts(nf, gross), funds);
+      settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(nf, gross), funds, settlement__money_addAmounts(d, reserved));
+      settlement__money_lawSubtractionValid_ensures(funds, reserved);
+      settlement__money_lawSubtractionReconstructs_ensures(funds, reserved);
+      settlement__money_lawAdditionValid_ensures(c, reserved);
+      settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(c, reserved), funds, settlement__money_addAmounts(d, reserved));
+      settlement__money_lawAddOrder_ensures(d, c, reserved);
+      settlement__money_lawNumericOrderTransitive_ensures(d, c, free);
+    }
+  }
+}
+
+lemma ReconcilePart1b(s: PrivateAward, evidence: settlement__composition_FinalizedPayment)
+  requires inv(s) && canReconcile(s, evidence)
+  ensures alwaysVaultAwardReserved(reconcile(s, evidence))
+  ensures alwaysCaseRevisionsCounted(reconcile(s, evidence))
+  ensures alwaysVaultTargetMatchesAward(reconcile(s, evidence))
+  ensures alwaysNothingAuthorizedBeforeAdmission(reconcile(s, evidence))
+  ensures alwaysDirectJournalBound(reconcile(s, evidence))
+{
+  hide *;
+  reveal inv, canReconcile, reconcile, withInbox, withBounty, withSettlement, caseOf, directCaseOf, vaultHold, directHold, awardTarget, alwaysVaultAwardReserved, alwaysCaseRevisionsCounted, alwaysVaultTargetMatchesAward, alwaysNothingAuthorizedBeforeAdmission, alwaysDirectJournalBound, security__bounty_settleVaultHold, security__bounty_caseOf, security__bounty_caseIds, settlement__composition_reconcile, settlement__payment_recordVaultPayment, settlement__vault_payReserved;
+  var nb := security__bounty_settleVaultHold(s.bounty, s.vaultCase, vaultPayout(evidence));
+  assert |nb.holds| == |s.bounty.holds|;
+  assert forall i :: 0 <= i < |s.bounty.holds| ==> nb.holds[i].caseId == s.bounty.holds[i].caseId && nb.holds[i].kind == s.bounty.holds[i].kind;
+  forall x ensures vaultHold(nb, x) == vaultHold(s.bounty, x) && directHold(nb, x) == directHold(s.bounty, x) {
+    if vaultHold(nb, x) {
+      var h :| h in nb.holds && h.caseId == x && h.kind.VaultHold?;
+      var i :| 0 <= i < |nb.holds| && nb.holds[i] == h;
+      assert s.bounty.holds[i] in s.bounty.holds;
+    }
+    if vaultHold(s.bounty, x) {
+      var h :| h in s.bounty.holds && h.caseId == x && h.kind.VaultHold?;
+      var i :| 0 <= i < |s.bounty.holds| && s.bounty.holds[i] == h;
+      assert nb.holds[i] in nb.holds;
+    }
+    if directHold(nb, x) {
+      var h :| h in nb.holds && h.caseId == x && h.kind.DirectHold?;
+      var i :| 0 <= i < |nb.holds| && nb.holds[i] == h;
+      assert s.bounty.holds[i] in s.bounty.holds;
+    }
+    if directHold(s.bounty, x) {
+      var h :| h in s.bounty.holds && h.caseId == x && h.kind.DirectHold?;
+      var i :| 0 <= i < |s.bounty.holds| && s.bounty.holds[i] == h;
+      assert nb.holds[i] in nb.holds;
+    }
+  }
+}
+
+lemma ReconcilePart2a(s: PrivateAward, evidence: settlement__composition_FinalizedPayment)
+  requires inv(s) && canReconcile(s, evidence)
+  ensures alwaysShownAmountsExact(reconcile(s, evidence))
+  ensures alwaysCommittedWithinTerms(reconcile(s, evidence))
+  ensures alwaysShownCaseReceived(reconcile(s, evidence))
+{
+  hide *;
+  reveal inv, reconcile, withInbox, withBounty, withSettlement, caseOf, alwaysShownAmountsExact, alwaysCommittedWithinTerms, alwaysShownCaseReceived, security__bounty_settleVaultHold, security__bounty_caseOf;
+}
+
+lemma ReconcilePart2c(s: PrivateAward, evidence: settlement__composition_FinalizedPayment)
+  requires inv(s) && canReconcile(s, evidence)
+  ensures alwaysAwardNoticesArePrivateCaseNotices(reconcile(s, evidence))
+  ensures alwaysCommitmentNotified(reconcile(s, evidence))
+{
+  hide *;
+  reveal inv, canReconcile, reconcile, withInbox, withBounty, withSettlement, caseOf, alwaysAwardNoticesArePrivateCaseNotices, alwaysCommitmentNotified, security__bounty_settleVaultHold, security__bounty_caseOf, security__bounty_caseIds, noticeKey, noticeCode;
+  NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase));
+  AwardKeysDiffer(s.vaultCase);
+}
+
+lemma ReconcilePart2b(s: PrivateAward, evidence: settlement__composition_FinalizedPayment)
+  requires inv(s) && canReconcile(s, evidence)
+  ensures alwaysPaidNoticeOnlyWhenPaid(reconcile(s, evidence))
+  ensures alwaysPaidNotified(reconcile(s, evidence))
+  ensures stepVaultReservationNeedsCommitment(s, "reconcile", reconcile(s, evidence))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "reconcile", reconcile(s, evidence))
+  ensures stepAuthorizationFollowsDisplay(s, "reconcile", reconcile(s, evidence))
+  ensures stepNoticesPermanent(s, reconcile(s, evidence))
+{
+  assert s.vaultCase in security__bounty_caseIds;
+  NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase));
+  PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase)));
+  assert s.directCase > 0 ==> s.directCase != s.vaultCase;
 }
 
 // Admission changes only the journal; its terms repeat the committed direct award, and nothing was authorized before it.
@@ -716,11 +1208,86 @@ lemma recordTransfer_ensures(s: PrivateAward, transfer: settlement__directBounty
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> stepAuthorizationFollowsDisplay(s, "recordTransfer", recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> stepNoticesPermanent(s, recordTransfer(s, transfer, observedRevision, generation)))
 {
+  hide *;
   if inv(s) && canRecordTransfer(s, transfer, observedRevision, generation) {
-    DirectLegsFacts(s, settlement__directBounty_recordTransfer(s.direct, transfer, observedRevision, generation, verifiedApprover(s)));
-    PrefixKeepsNotices(s.inbox, withDirectLegs(s, settlement__directBounty_recordTransfer(s.direct, transfer, observedRevision, generation, verifiedApprover(s))));
-    assert s.vaultCase > 0 ==> s.vaultCase != s.directCase;
+    RecordTransferPart1(s, transfer, observedRevision, generation);
+    RecordTransferPart2a(s, transfer, observedRevision, generation);
+    RecordTransferPart2b(s, transfer, observedRevision, generation);
   }
+}
+
+lemma RecordTransferPart1(s: PrivateAward, transfer: settlement__directBounty_Transfer, observedRevision: int, generation: int)
+  requires inv(s) && canRecordTransfer(s, transfer, observedRevision, generation)
+  ensures alwaysHoldsKeepCaseRules(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysFundsSnapshotObserved(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysBountyReserveIsVaultReserve(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysBountyCoverIsVaultFree(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysCoverAmountsValid(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysVaultAwardReserved(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysCaseRevisionsCounted(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysVaultTargetMatchesAward(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysNothingAuthorizedBeforeAdmission(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysDirectJournalBound(recordTransfer(s, transfer, observedRevision, generation))
+{
+}
+
+lemma DirectLegsPart2a(s: PrivateAward, d: settlement__directBounty_DirectBounty)
+  requires inv(s) && s.directCase > 0
+  ensures alwaysShownAmountsExact(withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures alwaysCommittedWithinTerms(withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures alwaysShownCaseReceived(withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures alwaysCommitmentNotified(withInbox(withDirectLegs(s, d), withDirect(d, s)))
+{
+  hide *;
+  reveal inv, withInbox, withDirect, caseOf, directCaseOf, alwaysShownAmountsExact, alwaysCommittedWithinTerms, alwaysShownCaseReceived, alwaysAwardNoticesArePrivateCaseNotices, alwaysCommitmentNotified, noticeKey, noticeCode;
+  DirectLegsFacts(s, d);
+}
+
+lemma DirectLegsPart2b(s: PrivateAward, via: string, d: settlement__directBounty_DirectBounty)
+  requires inv(s) && s.directCase > 0
+  requires via != "prepareDirect" && via != "recoverDirect"
+  requires s.vaultCase > 0 ==> s.vaultCase != s.directCase
+  requires settlement__directBounty_paid(s.direct) ==> settlement__directBounty_paid(d)
+  ensures alwaysPaidNoticeOnlyWhenPaid(withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures alwaysPaidNotified(withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures stepVaultReservationNeedsCommitment(s, via, withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, via, withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures stepAuthorizationFollowsDisplay(s, via, withInbox(withDirectLegs(s, d), withDirect(d, s)))
+  ensures stepNoticesPermanent(s, withInbox(withDirectLegs(s, d), withDirect(d, s)))
+{
+  hide *;
+  reveal inv, withInbox, withDirect, caseOf, directCaseOf, alwaysPaidNoticeOnlyWhenPaid, alwaysPaidNotified, stepVaultReservationNeedsCommitment, stepDirectPaymentNeedsFinancialApprover, stepAuthorizationFollowsDisplay, stepNoticesPermanent, noticeKey, noticeCode;
+  DirectLegsFacts(s, d);
+  PrefixKeepsNotices(s.inbox, withDirectLegs(s, d));
+}
+
+lemma RecordTransferPart2a(s: PrivateAward, transfer: settlement__directBounty_Transfer, observedRevision: int, generation: int)
+  requires inv(s) && canRecordTransfer(s, transfer, observedRevision, generation)
+  ensures alwaysShownAmountsExact(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysCommittedWithinTerms(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysShownCaseReceived(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysCommitmentNotified(recordTransfer(s, transfer, observedRevision, generation))
+{
+  hide *;
+  reveal canRecordTransfer, recordTransfer;
+  DirectLegsPart2a(s, settlement__directBounty_recordTransfer(s.direct, transfer, observedRevision, generation, verifiedApprover(s)));
+}
+
+lemma RecordTransferPart2b(s: PrivateAward, transfer: settlement__directBounty_Transfer, observedRevision: int, generation: int)
+  requires inv(s) && canRecordTransfer(s, transfer, observedRevision, generation)
+  ensures alwaysPaidNoticeOnlyWhenPaid(recordTransfer(s, transfer, observedRevision, generation))
+  ensures alwaysPaidNotified(recordTransfer(s, transfer, observedRevision, generation))
+  ensures stepVaultReservationNeedsCommitment(s, "recordTransfer", recordTransfer(s, transfer, observedRevision, generation))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "recordTransfer", recordTransfer(s, transfer, observedRevision, generation))
+  ensures stepAuthorizationFollowsDisplay(s, "recordTransfer", recordTransfer(s, transfer, observedRevision, generation))
+  ensures stepNoticesPermanent(s, recordTransfer(s, transfer, observedRevision, generation))
+{
+  hide *;
+  reveal inv, canRecordTransfer, recordTransfer, alwaysVaultAwardReserved, alwaysDirectJournalBound, caseOf, directCaseOf, settlement__directBounty_canRecordTransfer, settlement__directBounty_recordTransfer, settlement__directBounty_paid;
+  var d := settlement__directBounty_recordTransfer(s.direct, transfer, observedRevision, generation, verifiedApprover(s));
+  DirectLegsPart2b(s, "recordTransfer", d);
 }
 
 lemma recordPair_ensures(s: PrivateAward, pair: settlement__directBounty_ReceiptPair, observedRevision: int, generation: int)
@@ -746,11 +1313,55 @@ lemma recordPair_ensures(s: PrivateAward, pair: settlement__directBounty_Receipt
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> stepAuthorizationFollowsDisplay(s, "recordPair", recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> stepNoticesPermanent(s, recordPair(s, pair, observedRevision, generation)))
 {
+  hide *;
   if inv(s) && canRecordPair(s, pair, observedRevision, generation) {
-    DirectLegsFacts(s, settlement__directBounty_recordPair(s.direct, pair, observedRevision, generation, verifiedApprover(s)));
-    PrefixKeepsNotices(s.inbox, withDirectLegs(s, settlement__directBounty_recordPair(s.direct, pair, observedRevision, generation, verifiedApprover(s))));
-    assert s.vaultCase > 0 ==> s.vaultCase != s.directCase;
+    RecordPairPart1(s, pair, observedRevision, generation);
+    RecordPairPart2a(s, pair, observedRevision, generation);
+    RecordPairPart2b(s, pair, observedRevision, generation);
   }
+}
+
+lemma RecordPairPart1(s: PrivateAward, pair: settlement__directBounty_ReceiptPair, observedRevision: int, generation: int)
+  requires inv(s) && canRecordPair(s, pair, observedRevision, generation)
+  ensures alwaysHoldsKeepCaseRules(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysFundsSnapshotObserved(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysBountyReserveIsVaultReserve(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysBountyCoverIsVaultFree(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysCoverAmountsValid(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysVaultAwardReserved(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysCaseRevisionsCounted(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysVaultTargetMatchesAward(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysNothingAuthorizedBeforeAdmission(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysDirectJournalBound(recordPair(s, pair, observedRevision, generation))
+{
+}
+
+lemma RecordPairPart2a(s: PrivateAward, pair: settlement__directBounty_ReceiptPair, observedRevision: int, generation: int)
+  requires inv(s) && canRecordPair(s, pair, observedRevision, generation)
+  ensures alwaysShownAmountsExact(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysCommittedWithinTerms(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysShownCaseReceived(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysAwardNoticesArePrivateCaseNotices(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysCommitmentNotified(recordPair(s, pair, observedRevision, generation))
+{
+  hide *;
+  reveal canRecordPair, recordPair;
+  DirectLegsPart2a(s, settlement__directBounty_recordPair(s.direct, pair, observedRevision, generation, verifiedApprover(s)));
+}
+
+lemma RecordPairPart2b(s: PrivateAward, pair: settlement__directBounty_ReceiptPair, observedRevision: int, generation: int)
+  requires inv(s) && canRecordPair(s, pair, observedRevision, generation)
+  ensures alwaysPaidNoticeOnlyWhenPaid(recordPair(s, pair, observedRevision, generation))
+  ensures alwaysPaidNotified(recordPair(s, pair, observedRevision, generation))
+  ensures stepVaultReservationNeedsCommitment(s, "recordPair", recordPair(s, pair, observedRevision, generation))
+  ensures stepDirectPaymentNeedsFinancialApprover(s, "recordPair", recordPair(s, pair, observedRevision, generation))
+  ensures stepAuthorizationFollowsDisplay(s, "recordPair", recordPair(s, pair, observedRevision, generation))
+  ensures stepNoticesPermanent(s, recordPair(s, pair, observedRevision, generation))
+{
+  hide *;
+  reveal inv, canRecordPair, recordPair, alwaysVaultAwardReserved, alwaysDirectJournalBound, caseOf, directCaseOf, settlement__directBounty_canRecordPair, settlement__directBounty_canRecordTransfer, settlement__directBounty_recordPair, settlement__directBounty_paid;
+  var d := settlement__directBounty_recordPair(s.direct, pair, observedRevision, generation, verifiedApprover(s));
+  DirectLegsPart2b(s, "recordPair", d);
 }
 
 // An unreceived case has unpaid terms and no award, so no amount can be shown for it; a shown amount is one the terms allow, split exactly.
@@ -806,6 +1417,40 @@ lemma showAmounts_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
 
 // Saving one case notice per recipient keeps every earlier notice in place, adds only case notices on the security
 // outbox, and makes a notice exist for exactly the earlier ones and the saved key for each recipient.
+lemma initialHolds_ensures()
+  ensures inv(initialHolds())
+{
+  InitialPart1();
+  InitialPart2();
+}
+
+lemma InitialPart1()
+  ensures alwaysHoldsKeepCaseRules(initialHolds())
+  ensures alwaysFundsSnapshotObserved(initialHolds())
+  ensures alwaysBountyReserveIsVaultReserve(initialHolds())
+  ensures alwaysBountyCoverIsVaultFree(initialHolds())
+  ensures alwaysCoverAmountsValid(initialHolds())
+  ensures alwaysVaultAwardReserved(initialHolds())
+  ensures alwaysCaseRevisionsCounted(initialHolds())
+  ensures alwaysVaultTargetMatchesAward(initialHolds())
+  ensures alwaysNothingAuthorizedBeforeAdmission(initialHolds())
+  ensures alwaysDirectJournalBound(initialHolds())
+{
+  security__bounty_initialHolds_ensures();
+}
+
+lemma InitialPart2()
+  ensures alwaysShownAmountsExact(initialHolds())
+  ensures alwaysCommittedWithinTerms(initialHolds())
+  ensures alwaysShownCaseReceived(initialHolds())
+  ensures alwaysAwardNoticesArePrivateCaseNotices(initialHolds())
+  ensures alwaysCommitmentNotified(initialHolds())
+  ensures alwaysPaidNoticeOnlyWhenPaid(initialHolds())
+  ensures alwaysPaidNotified(initialHolds())
+{
+  operations__notifications_initialHolds_ensures();
+}
+
 lemma FoldSaveFacts(inbox: operations__notifications_Inbox, key: int, rs: seq<int>)
   ensures (|Std.Collections.Seq.FoldLeft((i: operations__notifications_Inbox, t: int) => operations__notifications_save(i, key, operations__notifications_Kind.SecurityCase, t), inbox, rs).notices| >= |inbox.notices| && Std.Collections.Seq.FoldLeft((i: operations__notifications_Inbox, t: int) => operations__notifications_save(i, key, operations__notifications_Kind.SecurityCase, t), inbox, rs).notices[..|inbox.notices|] == inbox.notices)
   ensures (operations__notifications_alwaysChannelByKind(inbox) && (forall n :: n in inbox.notices ==> n.kind.SecurityCase? && n.template.CaseTemplate?)) ==> (operations__notifications_alwaysChannelByKind(Std.Collections.Seq.FoldLeft((i: operations__notifications_Inbox, t: int) => operations__notifications_save(i, key, operations__notifications_Kind.SecurityCase, t), inbox, rs)) && (forall n :: n in Std.Collections.Seq.FoldLeft((i: operations__notifications_Inbox, t: int) => operations__notifications_save(i, key, operations__notifications_Kind.SecurityCase, t), inbox, rs).notices ==> n.kind.SecurityCase? && n.template.CaseTemplate?))
@@ -813,8 +1458,14 @@ lemma FoldSaveFacts(inbox: operations__notifications_Inbox, key: int, rs: seq<in
             == (operations__notifications_noticeExists(inbox, k, t) || (k == key && t in rs)))
   decreases |rs|
 {
-  if |rs| > 0 {
+  hide *;
+  reveal Std.Collections.Seq.FoldLeft, operations__notifications_save, operations__notifications_newNotice, operations__notifications_noticeExists, operations__notifications_alwaysChannelByKind, operations__notifications_securityKind, operations__notifications_categoryOf;
+  var f := (i: operations__notifications_Inbox, t: int) => operations__notifications_save(i, key, operations__notifications_Kind.SecurityCase, t);
+  if |rs| == 0 {
+    assert Std.Collections.Seq.FoldLeft(f, inbox, rs) == inbox;
+  } else {
     var next := operations__notifications_save(inbox, key, operations__notifications_Kind.SecurityCase, rs[0]);
+    assert Std.Collections.Seq.FoldLeft(f, inbox, rs) == Std.Collections.Seq.FoldLeft(f, next, rs[1..]);
     FoldSaveFacts(next, key, rs[1..]);
     assert (|next.notices| >= |inbox.notices| && next.notices[..|inbox.notices|] == inbox.notices);
     if !operations__notifications_noticeExists(inbox, key, rs[0]) {
