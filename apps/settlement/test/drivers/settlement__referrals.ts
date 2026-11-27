@@ -20,9 +20,13 @@ export const driver: Driver = {
     return result;
   },
   receive: async (_key, raw, by) => {
-    const result = await outcome(receiveControl(history, raw, sender(by)));
-    if (result === "accepted") history = [...history, (await Effect.runPromise(receiveControl(history, raw, sender(by)))).step];
-    return result;
+    const accepted = await Effect.runPromise(receiveControl(history, raw, sender(by)).pipe(
+      Effect.map((result) => result.step),
+      Effect.catchTags({ Rejected: () => Effect.succeed(undefined), NotAnEvent: () => Effect.succeed(undefined) }),
+    ));
+    if (accepted === undefined) return "refused";
+    history = [...history, accepted];
+    return "accepted";
   },
   observe: () => Effect.runPromise(controlled(history)),
 };

@@ -11,9 +11,9 @@ import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend";
 import { Notices } from "@repo/ports/operations";
 import type { Driver, Options } from "../../gen/settlement__monthlySettlement.conformance.ts";
 import type { Award, Escrow } from "../../gen/settlement__escrow.ts";
-import type { Eligibility, RevisionFact } from "../../gen/settlement__monthly.ts";
+import { type Eligibility, type RevisionFact, noShareRecord } from "../../gen/settlement__monthly.ts";
 import { type Event, type MonthlySettlement, noCursor } from "../../gen/settlement__monthlySettlement.ts";
-import { fromAmount } from "../../src/kernels/amounts.ts";
+import { fromAmount, toAmount } from "../../src/kernels/amounts.ts";
 import { type Period, formatPeriod, isPeriod } from "../../src/kernels/calendar.ts";
 import { type MonthFacts, MonthlyFacts, manifestRelationships, sendMonth } from "../../src/monthly/store.vibe";
 import { underfundedNotice } from "../../src/monthly/coordinator.vibe";
@@ -49,7 +49,11 @@ const manifestOf = (revision: RevisionFact) => JSON.stringify({
   escrow: { chain: "base", effectiveCycle: formatPeriod(revision.effectivePeriod as Period), feeMode: revision.feePolicy, feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: NETWORK, vault: revision.vault, asset: revision.asset === "" ? "" : assetHex(revision.asset) }] },
 });
 
-const stored = (revision: RevisionFact): RevisionFact => ({ ...revision, feePolicy: policyOf(revision) });
+const stored = (revision: RevisionFact): RevisionFact => ({
+  ...revision,
+  asset: revision.asset === "" ? "" : assetHex(revision.asset),
+  feePolicy: policyOf(revision),
+});
 const modelled = (revision: RevisionFact): RevisionFact => ({
   ...revision,
   asset: tokens.get(revision.asset) ?? revision.asset,
@@ -81,6 +85,7 @@ interface World {
   readonly facts: { eligibility: Eligibility; current: RevisionFact | undefined };
   readonly numbers: Map<number, number>;
   readonly digests: Map<string, string>;
+  readonly scanned: Map<number, "reserved" | "paid">;
   chain: ChainView;
   period: number | undefined;
 }
@@ -103,7 +108,7 @@ const open = async (): Promise<World> => {
   const clock = settableClock(START * 1000);
   const facts: World["facts"] = { eligibility: NO_ELIGIBILITY, current: undefined };
   const runtime = runtimeOver(db, clock, facts);
-  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), chain: { escrow: initialEscrow(), headTime: 0, cursor: noCursor, leaves: [] }, period: undefined };
+  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), scanned: new Map(), chain: { escrow: initialEscrow(), headTime: 0, cursor: noCursor, leaves: [] }, period: undefined };
 };
 
 function initialEscrow(): Escrow {
@@ -154,23 +159,22 @@ const sourceOf = async (w: World, actor: number) => {
 };
 
 const recordAward = async (w: World, sourceActor: number, paid: boolean) => {
+  if (w.period === undefined) return;
   const award = w.chain.escrow.awards.find((entry) => entry.source.actor === sourceActor && entry.source.origin === PROJECT && entry.source.period === w.period);
   const digest = await sourceOf(w, sourceActor);
   if (award === undefined || digest === undefined) return;
-  if (paid) {
-    await w.db.prepare("UPDATE payment_obligations SET state = 'paid', paid_transaction = ? WHERE network = ? AND vault = ? AND source_digest = ?").bind(`tx-${digest}`, NETWORK, w.chain.escrow.vault, digest).run();
-    return;
-  }
   await w.db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at) VALUES (?, ?, ?, ?, 'base', ?, ?, 6, ?, ?, ?, 'reserved', ?) ON CONFLICT DO NOTHING")
     .bind(`obligation-${digest}`, PROJECT, String(award.actor), NETWORK, w.chain.escrow.vault, assetHex(w.chain.escrow.asset.token), fromAmount(award.gross).toString(), fromAmount(award.fee).toString(), digest, iso(Math.floor(w.clock.now() / 1000))).run();
+  if (paid) await w.db.prepare("UPDATE payment_obligations SET state = 'paid', paid_transaction = ? WHERE network = ? AND vault = ? AND source_digest = ?").bind(`tx-${digest}`, NETWORK, w.chain.escrow.vault, digest).run();
+  w.scanned.set(sourceActor, paid ? "paid" : "reserved");
 };
 
-const forStore = (w: World, event: Event): Event => {
+const forStore = (w: World, event: Event) => {
   if (event.type === "observeRevision") return { ...event, revision: stored(event.revision) };
   if (event.type === "propose") {
     const hex = sha(`snapshot:${event.snapshot.digest}`);
     w.digests.set(hex, event.snapshot.digest);
-    return { ...event, snapshot: { ...event.snapshot, digest: hex }, revision: stored(event.revision) };
+    return { ...event, snapshot: { ...event.snapshot, digest: hex }, revision: stored(event.revision), basisPoints: 0, record: noShareRecord };
   }
   return event;
 };
@@ -179,17 +183,14 @@ const monthOnly = new Set(["observeClock", "observeEligibility", "observeRevisio
 const decided = new Set(["adjust", "finalize", "autoFreeze", "createObligations", "noteUnderfunded"]);
 
 const chainStep = async (w: World, event: Event, by: string) => {
-  const next = await run(w, observeChain(keyOf(w), event, by, w.chain).pipe(Effect.option));
+  const next = await run(w, observeChain(w.period === undefined ? undefined : keyOf(w), event, by, w.chain).pipe(Effect.option));
   if (next._tag === "None") return "refused" as const;
-  const before = w.chain;
   w.chain = { escrow: next.value.escrow, headTime: next.value.headTime, cursor: next.value.cursor, leaves: next.value.leaves };
   if (event.type === "commitObligation") await recordAward(w, event.actor, false);
-  if (event.type === "commitManualAward") await recordAward(w, event.source.actor, false);
   if (event.type === "materialize") await recordAward(w, event.proof.actor, false);
   if (event.type === "observeExistingAward" || event.type === "observeConflict") await recordAward(w, event.actor, false);
   if (event.type === "observePaid") await recordAward(w, event.actor, true);
-  if (event.type === "deploy" || event.type === "deposit" || event.type === "withdraw" || event.type === "observeHead" || event.type === "pledgeMonths"
-    || before.escrow.free !== next.value.escrow.free || fromAmount(before.escrow.pledged) !== fromAmount(next.value.escrow.pledged)) await syncSnapshot(w);
+  if (w.chain.escrow.deployed) await syncSnapshot(w);
   return "accepted" as const;
 };
 
@@ -200,9 +201,9 @@ const dispatch = async (event: Event, by: string): Promise<"accepted" | "refused
     w.period = event.period;
     return "accepted";
   }
-  if (w.period === undefined) return "refused";
-  const key = keyOf(w);
   if (monthOnly.has(event.type)) {
+    if (w.period === undefined) return "refused";
+    const key = keyOf(w);
     const sent = forStore(w, event) as Parameters<typeof sendMonth>[1];
     const result = await outcome(w, sendMonth(key, sent, { logins: new Map([1, 2, 3, 4, 5].map((actor) => [actor, `user${actor}`])) }));
     if (result !== "accepted") return result;
@@ -216,6 +217,8 @@ const dispatch = async (event: Event, by: string): Promise<"accepted" | "refused
     return result;
   }
   if (decided.has(event.type)) {
+    if (w.period === undefined) return "refused";
+    const key = keyOf(w);
     const chosen = event as Decided;
     return outcome(w, Effect.gen(function* () {
       const settlement = yield* loadSettlement(key);
@@ -226,12 +229,67 @@ const dispatch = async (event: Event, by: string): Promise<"accepted" | "refused
   return chainStep(w, event, by);
 };
 
-const indexedAward = (award: Award): Award => ({ ...award, origin: "ManualAward", period: 0, index: -1, committedAt: 0, destination: "", bindingVersion: 0, paidIn: "" });
+const canonicalAmount = (amount: ReadonlyArray<number>) => toAmount(fromAmount([...amount]));
+const canonicalRevision = (revision: RevisionFact): RevisionFact => ({
+  ...revision,
+  monthlyAmount: canonicalAmount(revision.monthlyAmount),
+  maximum: canonicalAmount(revision.maximum),
+});
+const indexedAward = (award: Award): Award => ({
+  ...award,
+  gross: canonicalAmount(award.gross),
+  fee: canonicalAmount(award.fee),
+  origin: "ManualAward",
+  period: 0,
+  index: -1,
+  committedAt: 0,
+  destination: "",
+  bindingVersion: 0,
+  paidIn: "",
+});
 
 const view = (state: MonthlySettlement): MonthlySettlement => ({
   ...state,
-  month: { ...state.month, coordinatorRetries: 0 },
-  escrow: { ...state.escrow, awards: state.escrow.awards.filter((award) => !award.paid).map(indexedAward), months: [], releasedLeaves: [], withdrawals: [] },
+  month: {
+    ...state.month,
+    revision: canonicalRevision(state.month.revision),
+    currentRevision: canonicalRevision(state.month.currentRevision),
+    cap: canonicalAmount(state.month.cap),
+    shares: state.month.shares.map((share) => ({ ...share, amount: canonicalAmount(share.amount) })),
+    proposedShares: state.month.proposedShares.map((share) => ({ ...share, amount: canonicalAmount(share.amount) })),
+    total: canonicalAmount(state.month.total),
+    changes: state.month.changes.map((change) => ({ ...change, amount: canonicalAmount(change.amount) })),
+    cuts: state.month.cuts.map((cut) => ({ ...cut, proposed: canonicalAmount(cut.proposed), amount: canonicalAmount(cut.amount) })),
+    publicCuts: state.month.publicCuts.map((cut) => ({ ...cut, proposed: canonicalAmount(cut.proposed), amount: canonicalAmount(cut.amount) })),
+    obligations: state.month.obligations.map((obligation) => ({ ...obligation, amount: canonicalAmount(obligation.amount) })),
+    coordinatorRetries: 0,
+  },
+  escrow: {
+    ...state.escrow,
+    monthlyCap: canonicalAmount(state.escrow.monthlyCap),
+    deposited: canonicalAmount(state.escrow.deposited),
+    held: canonicalAmount(state.escrow.held),
+    committed: canonicalAmount(state.escrow.committed),
+    spent: canonicalAmount(state.escrow.spent),
+    free: canonicalAmount(state.escrow.free),
+    pending: canonicalAmount(state.escrow.pending),
+    reserved: canonicalAmount(state.escrow.reserved),
+    reservedPrincipal: canonicalAmount(state.escrow.reservedPrincipal),
+    reservedFees: canonicalAmount(state.escrow.reservedFees),
+    paid: canonicalAmount(state.escrow.paid),
+    paidNet: canonicalAmount(state.escrow.paidNet),
+    payoutFees: canonicalAmount(state.escrow.payoutFees),
+    grossWithdrawn: canonicalAmount(state.escrow.grossWithdrawn),
+    withdrawalFees: canonicalAmount(state.escrow.withdrawalFees),
+    accruedFees: canonicalAmount(state.escrow.accruedFees),
+    claimedFees: canonicalAmount(state.escrow.claimedFees),
+    pledged: canonicalAmount(state.escrow.pledged),
+    pledges: state.escrow.pledges.map((pledge) => ({ ...pledge, amount: canonicalAmount(pledge.amount) })),
+    awards: state.escrow.awards.filter((award) => !award.paid).map(indexedAward),
+    months: [],
+    releasedLeaves: [],
+    withdrawals: [],
+  },
 });
 
 const noticeSent = async (w: World) => {
@@ -239,8 +297,40 @@ const noticeSent = async (w: World) => {
   return Number(found.results[0]?.n ?? 0) > 0;
 };
 
-const projected = (chain: Escrow, place: VaultPlace | undefined, escrow: Escrow): Escrow =>
-  place === undefined || !chain.deployed ? chain : { ...chain, free: escrow.free, reserved: escrow.reserved, paid: escrow.paid, awards: escrow.awards, pledges: escrow.pledges, pledged: escrow.pledged };
+const projected = (chain: Escrow, place: VaultPlace | undefined, escrow: Escrow, month: MonthlySettlement["month"], scanned: ReadonlyMap<number, "reserved" | "paid">): Escrow => {
+  if (place === undefined || !chain.deployed) return chain;
+  const isScanned = (award: Award) => award.source.origin === PROJECT && award.source.period === month.period && scanned.has(award.source.actor);
+  const scannedReserved = new Map(escrow.awards.filter((award) => !award.paid).map((award) => [award.source.actor, award]));
+  const awards: Award[] = [];
+  let reservedDelta = 0n;
+  let paidDelta = 0n;
+  for (const award of chain.awards) {
+    if (!isScanned(award)) {
+      awards.push(award);
+      if (award.paid) paidDelta += fromAmount(award.gross);
+      else reservedDelta += fromAmount(award.gross);
+      continue;
+    }
+    const storedAward = scannedReserved.get(award.source.actor);
+    if (award.paid) {
+      if (scanned.get(award.source.actor) !== "paid") {
+        paidDelta += fromAmount(award.gross);
+        reservedDelta -= fromAmount(award.gross);
+      }
+    } else if (storedAward !== undefined) {
+      awards.push(storedAward);
+    }
+  }
+  return {
+    ...chain,
+    free: escrow.free,
+    reserved: toAmount(fromAmount(escrow.reserved) + reservedDelta),
+    paid: toAmount(fromAmount(escrow.paid) + paidDelta),
+    awards,
+    pledges: escrow.pledges,
+    pledged: escrow.pledged,
+  };
+};
 
 const observed = async (w: World): Promise<MonthlySettlement> => {
   if (w.period === undefined) {
@@ -251,7 +341,7 @@ const observed = async (w: World): Promise<MonthlySettlement> => {
   const settlement = await run(w, loadSettlement(keyOf(w)));
   const month = settlement.state.month;
   return view({
-    escrow: projected(w.chain.escrow, settlement.place, settlement.state.escrow),
+    escrow: projected(w.chain.escrow, settlement.place, settlement.state.escrow, month, w.scanned),
     headTime: w.chain.headTime,
     cursor: w.chain.cursor ?? noCursor,
     leaves: [...(w.chain.leaves ?? [])],

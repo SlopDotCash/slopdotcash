@@ -9,8 +9,8 @@ import { settableClock } from "@repo/platform/testing/clock";
 import { Registry } from "@repo/ports/backend";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/settlement__monthly.conformance.ts";
-import type { AwardFact, Eligibility, Event, Monthly, RevisionFact } from "../../gen/settlement__monthly.ts";
-import { fromAmount } from "../../src/kernels/amounts.ts";
+import type { AwardFact, BanExclusion, Eligibility, Event, Monthly, RevisionFact, SkipReason } from "../../gen/settlement__monthly.ts";
+import { fromAmount, toAmount } from "../../src/kernels/amounts.ts";
 import { type Period, formatPeriod, isPeriod } from "../../src/kernels/calendar.ts";
 import { ordinaryFeeBase } from "../../src/kernels/fees.ts";
 import { type MonthFacts, MonthlyFacts, awardSource, loadMonth, manifestRelationships, sendMonth, withoutProposal } from "../../src/monthly/store.vibe";
@@ -81,7 +81,7 @@ interface World {
   readonly digests: Map<string, string>;
   project: string;
   period: number | undefined;
-  closed: boolean;
+  closedSkip: SkipReason | undefined;
 }
 
 let world: World | undefined;
@@ -101,7 +101,7 @@ const open = async (): Promise<World> => {
   const clock = settableClock(START * 1000);
   const facts: World["facts"] = { eligibility: noEligibility, current: undefined };
   const runtime = runtimeOver(db, clock, facts);
-  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), project: PROJECT, period: undefined, closed: false };
+  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), project: PROJECT, period: undefined, closedSkip: undefined };
 };
 
 const current = async () => world ??= await open();
@@ -160,6 +160,28 @@ const recordInLedger = async (w: World, event: Event & { readonly award: AwardFa
   await w.db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at) VALUES (?, ?, ?, ?, 'base', ?, ?, 6, ?, ?, ?, 'reserved', ?)").bind(`obligation-${source}`, w.project, String(event.award.actor), network, vault, asset, gross.toString(), ordinaryFeeBase(gross).toString(), source, new Date(w.clock.now()).toISOString()).run();
 };
 
+const syncBans = async (w: World, bans: ReadonlyArray<BanExclusion>) => {
+  await w.db.prepare("DELETE FROM project_maintainer_bans").run();
+  const valid = bans.filter((entry) => entry.actor > 0 && entry.ban > 0);
+  if (valid.length === 0) return;
+  const latest = await w.db.prepare("SELECT revision, manifest, manifest_sha256, created_at FROM project_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1").bind(w.project).all();
+  const row = latest.results[0];
+  if (row === undefined) return;
+  const manifest = text(row.manifest);
+  const manifestSha = text(row.manifest_sha256);
+  const createdAt = text(row.created_at, new Date(START * 1000).toISOString());
+  const revision = Number(row.revision);
+  await w.db.prepare("INSERT OR IGNORE INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', ?, ?, ?, ?, ?)").bind(w.project, revision, manifest, manifestSha, createdAt, createdAt).run();
+  const issuer = JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "assessment-1", policyVersion: "1", rule: "confirmed-malice" });
+  const vettingId = `enf_${w.project}_vetting`;
+  const enforcementId = `enf_${w.project}_moderator`;
+  await w.db.prepare("INSERT OR IGNORE INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'confirmed malice', 'scan-1', '9001', '[\"github:9001\"]', NULL, NULL, ?, 'vetting-service', 'standing-rule', ?, ?, NULL, NULL, 'no_revision_needed', ?)").bind(vettingId, w.project, issuer, revision, manifestSha, createdAt).run();
+  await w.db.prepare("INSERT OR IGNORE INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 2, 'ban', 'banned', 'none', 'moderator decision', 'scan-1', '9001', '[\"github:9001\"]', '7', 'moderator', NULL, 'project-moderator', 'admin-panel', ?, ?, NULL, NULL, 'no_revision_needed', ?)").bind(enforcementId, w.project, revision, manifestSha, createdAt).run();
+  for (const entry of valid) {
+    await w.db.prepare("INSERT OR IGNORE INTO project_maintainer_bans (rowid, enforcement_id, github_id, github_login) VALUES (?, ?, ?, ?)").bind(entry.ban, enforcementId, String(entry.actor), `user${entry.actor}`).run();
+  }
+};
+
 const fundingOf = async (w: World) => {
   const counts = await w.db.prepare("SELECT (SELECT count(*) FROM monthly_payment_obligations o WHERE o.network = r.network AND o.vault = r.vault) AS outstanding, (SELECT count(*) FROM payment_obligations p WHERE p.network = r.network AND p.vault = r.vault) AS reserved FROM monthly_payment_runs r WHERE r.project_id = ? AND r.period = ?").bind(w.project, formatPeriod(w.period as Period)).all();
   const row = counts.results[0];
@@ -179,7 +201,29 @@ const initialView = (w: World): Monthly => ({
   frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "", earlyCloseAt: 0, reviewedOctober: false,
 });
 
-const view = (state: Monthly): Monthly => ({ ...state, underfundedNotice: false, coordinatorRetries: 0, pledgedVault: state.pledgedVault === state.currentRevision.vault ? state.pledgedVault : "" });
+const canonicalAmount = (amount: ReadonlyArray<number>) => toAmount(fromAmount([...amount]));
+const canonicalRevision = (revision: RevisionFact): RevisionFact => ({
+  ...revision,
+  monthlyAmount: canonicalAmount(revision.monthlyAmount),
+  maximum: canonicalAmount(revision.maximum),
+});
+
+const view = (state: Monthly): Monthly => ({
+  ...state,
+  revision: canonicalRevision(state.revision),
+  currentRevision: canonicalRevision(state.currentRevision),
+  cap: canonicalAmount(state.cap),
+  shares: state.shares.map((share) => ({ ...share, amount: canonicalAmount(share.amount) })),
+  proposedShares: state.proposedShares.map((share) => ({ ...share, amount: canonicalAmount(share.amount) })),
+  total: canonicalAmount(state.total),
+  changes: state.changes.map((change) => ({ ...change, amount: canonicalAmount(change.amount) })),
+  cuts: state.cuts.map((cut) => ({ ...cut, proposed: canonicalAmount(cut.proposed), amount: canonicalAmount(cut.amount) })),
+  publicCuts: state.publicCuts.map((cut) => ({ ...cut, proposed: canonicalAmount(cut.proposed), amount: canonicalAmount(cut.amount) })),
+  obligations: state.obligations.map((obligation) => ({ ...obligation, amount: canonicalAmount(obligation.amount) })),
+  underfundedNotice: false,
+  coordinatorRetries: 0,
+  pledgedVault: state.pledgedVault === state.currentRevision.vault ? state.pledgedVault : "",
+});
 
 const storePledge = async (w: World, vault: string) => {
   await w.db.prepare("INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, ?, ?, ?, '1000000', 1, '1', ?) ON CONFLICT (project_id, network, vault, period) DO UPDATE SET amount = excluded.amount, open = 1").bind(w.project, NETWORK, vault, formatPeriod(w.period as Period), new Date(w.clock.now()).toISOString()).run();
@@ -188,7 +232,7 @@ const storePledge = async (w: World, vault: string) => {
 const observed = async (w: World): Promise<Monthly> => {
   if (w.period === undefined) return view(initialView(w));
   const loaded = await w.runtime.runPromise(loadMonth({ projectId: w.project, period: w.period as Period }));
-  const state = w.closed && loaded.state.phase === "Collecting" ? withoutProposal(loaded.state) : loaded.state;
+  const state: Monthly = w.closedSkip !== undefined && loaded.state.phase === "Collecting" ? { ...loaded.state, phase: "NoProposal", skip: w.closedSkip } : loaded.state;
   return view({
     ...state,
     snapshotDigest: w.digests.get(state.snapshotDigest) ?? state.snapshotDigest,
@@ -206,6 +250,7 @@ const dispatch = async (event: Event): Promise<"accepted" | "refused"> => {
     return "accepted";
   }
   if (w.period === undefined) return "refused";
+  if (w.closedSkip !== undefined && (event.type === "propose" || event.type === "proposeCloseout" || event.type === "closeProposalWindow")) return "refused";
   const key = { projectId: w.project, period: w.period as Period };
   if (event.type === "observeClock") {
     const verdict = await outcome(w, sendMonth(key, event));
@@ -214,18 +259,21 @@ const dispatch = async (event: Event): Promise<"accepted" | "refused"> => {
   }
   const sent = forStore(w, event);
   if (sent.type === "proposeCloseout") return outcome(w, Effect.tap(sendMonth(key, sent), (next) => Effect.flatMap(Effect.forEach(next.proposedShares, (share) => awardSource(w.project, key.period, share.actor)), (digests) => Effect.promise(() => importCloseout(w, sent.snapshot.digest, next, digests)))));
-  const verdict = await outcome(w, sendMonth(key, sent, { logins: new Map([1, 2, 3, 4, 5].map((actor) => [actor, `user${actor}`])), funding: await fundingOf(w), reason: reasonOf(event) }));
-  if (verdict !== "accepted") return verdict;
+  if (sent.type === "createObligations") await syncBans(w, sent.bans);
+  const next = await w.runtime.runPromise(sendMonth(key, sent, { logins: new Map([1, 2, 3, 4, 5].map((actor) => [actor, `user${actor}`])), funding: await fundingOf(w), reason: reasonOf(event) }).pipe(
+    Effect.catchTags({ Rejected: () => Effect.succeed(undefined) }),
+  ));
+  if (next === undefined) return "refused";
   if (event.type === "observeEligibility") w.facts.eligibility = event.eligibility;
   if (event.type === "observeRevision") {
     w.facts.current = event.revision;
     await registerRevision(w, event.revision);
   }
   if (event.type === "observeSettings") await settingsTo(w, event.automatic, event.settingsSequence);
-  if (event.type === "closeProposalWindow") w.closed = true;
+  if (event.type === "closeProposalWindow") w.closedSkip = withoutProposal(next).skip;
   if (event.type === "observePledge") await storePledge(w, event.pledgeVault);
   if (event.type === "recordReserved" || event.type === "recordConflict" || event.type === "recordPaid") await recordInLedger(w, event);
-  return verdict;
+  return "accepted";
 };
 
 export const driver: Driver & AsyncDisposable = {

@@ -26,6 +26,7 @@ const chains: Readonly<Record<Network, string>> = { Base: "base", Ethereum: "eth
 interface Case {
   readonly caseId: string;
   readonly suffix: string;
+  readonly otherUses: TxUse[];
   facts: Facts | undefined;
   terms: Terms | undefined;
 }
@@ -47,7 +48,7 @@ async function opened(): Promise<Case> {
     db.prepare("INSERT INTO security_cases (id, project_id, advisory_repository, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at) VALUES (?, ?, 'owner/repo', '2', 'reporter', 'verified', ?, ?, '7', 1, '{}', 'confirmed', 'resolved', 'approved', 'not-applicable', 'embargoed', 'private', 'none', 1, ?, ?)").bind(caseId, projectId, now, now, now, now),
     db.prepare("INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) VALUES (?, ?, ?, '{}', '4', ?)").bind(caseId, projectId, `root-${caseId}`, now),
   ]);
-  return { caseId, suffix, facts: undefined, terms: undefined };
+  return { caseId, suffix, otherUses: [], facts: undefined, terms: undefined };
 }
 
 const mapped = (text: string) => (text === "" ? "" : `${text}${current.suffix}`);
@@ -89,8 +90,8 @@ const unadmitted: Facts = {
   otherUses: [],
 };
 
-function factsNow() {
-  return current.facts ?? unadmitted;
+function factsNow(): Facts {
+  return { ...(current.facts ?? unadmitted), otherUses: current.otherUses };
 }
 
 function admissionFacts(event: Extract<Event, { type: "admit" }>): Facts | undefined {
@@ -206,7 +207,7 @@ function plan(event: Event, by: number): Plan | "refused" {
     case "prepare":
       return { facts, extra: [stored(event.intent.payer), stored(event.intent.reporter)], eventOf: (snapshotted) => ({ ...event, intent: mappedIntent(snapshotted, event.intent) }), entry: { kind: "intent", intent: intentEntry(facts, event.intent) } };
     case "recordOtherUse":
-      return { facts, extra: [], eventOf: () => ({ ...event, use: { ...event.use, transaction: mapped(event.use.transaction) } }), entry: undefined, after: () => { current.facts = { ...facts, otherUses: [...facts.otherUses, { network: event.use.network, transaction: mapped(event.use.transaction) }] }; } };
+      return { facts, extra: [], eventOf: () => ({ ...event, use: { ...event.use, transaction: mapped(event.use.transaction) } }), entry: undefined, after: () => { current.otherUses.push({ network: event.use.network, transaction: mapped(event.use.transaction) }); } };
     case "recordTransfer":
       return { facts, extra: [], eventOf: () => ({ ...event, transfer: mappedTransfer(event.transfer) }), entry: { kind: "receipts", network: facts.rail.network, verifiedAt: now, proofs: [receiptOf(event.transfer)] } };
     case "recordPair":

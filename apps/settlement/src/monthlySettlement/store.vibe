@@ -110,7 +110,9 @@ effect function countsOf(place: VaultPlace) {
 }
 
 interface Holdings {
-  readonly reserved: ReadonlyArray<Award>
+  readonly awards: ReadonlyArray<Award>
+  readonly reservedGross: bigint
+  readonly reservedFees: bigint
   readonly paidGross: bigint
   readonly paidFees: bigint
 }
@@ -118,7 +120,9 @@ interface Holdings {
 effect function monthHoldings(month: Loaded, place: VaultPlace) {
   const actors = new Map(month.rows.proposed.map((row) => [row.source_digest, Number(row.github_user_id)]))
   const chain = try chainAwards(place.network, place.vault)
-  const reserved: Award[] = []
+  const awards: Award[] = []
+  let reservedGross = 0n
+  let reservedFees = 0n
   let paidGross = 0n
   let paidFees = 0n
   for (const [digest, held] of chain) {
@@ -129,12 +133,15 @@ effect function monthHoldings(month: Loaded, place: VaultPlace) {
     const actor = Number(held.githubUserId)
     if (gross === undefined || gross === 0n || !Number.isSafeInteger(actor) || actor <= 0) throw new RowMismatch({ text: "payment obligation", issue: `${digest} does not hold a positive award` })
     if (fee === undefined || fee > gross) throw new RowMismatch({ text: "payment obligation", issue: `${digest} holds the fee ${held.feeBase}, which is not base units within its gross` })
-    if (held.state === "paid") {
+    const paid = held.state === "paid"
+    if (paid) {
       paidGross += gross
       paidFees += fee
-      continue
+    } else {
+      reservedGross += gross
+      reservedFees += fee
     }
-    reserved.push({
+    awards.push({
       source: { origin: month.state.project, period: month.state.period, actor: owner },
       actor,
       gross: amountOf(gross),
@@ -143,13 +150,13 @@ effect function monthHoldings(month: Loaded, place: VaultPlace) {
       period: 0,
       index: -1,
       committedAt: 0,
-      paid: false,
-      destination: "",
-      bindingVersion: 0,
-      paidIn: "",
+      paid,
+      destination: paid ? "paid" : "",
+      bindingVersion: paid ? 1 : 0,
+      paidIn: paid ? (held.paidTransaction != null && held.paidTransaction !== "" ? held.paidTransaction : digest) : "",
     })
   }
-  return { reserved, paidGross, paidFees } satisfies Holdings
+  return { awards, reservedGross, reservedFees, paidGross, paidFees } satisfies Holdings
 }
 
 function sum(values: ReadonlyArray<bigint>) {
@@ -175,8 +182,8 @@ effect function vaultOf(key: MonthKey, month: Loaded, place: VaultPlace | undefi
   if (free === undefined) throw new RowMismatch({ text: "vault snapshot", issue: `${snapshot.free_balance} is not base units` })
   const network = NETWORKS[place.network]
   const holdings = try monthHoldings(month, place)
-  const reserved = sum(holdings.reserved.map((award) => fromAmount(award.gross)))
-  const reservedFees = sum(holdings.reserved.map((award) => fromAmount(award.fee)))
+  const reserved = holdings.reservedGross
+  const reservedFees = holdings.reservedFees
   const paid = holdings.paidGross
   const payoutFees = holdings.paidFees
   const native = snapshot.asset_address === EVM_NATIVE_ASSET || snapshot.asset_address === SOLANA_NATIVE_ASSET
@@ -200,7 +207,7 @@ effect function vaultOf(key: MonthKey, month: Loaded, place: VaultPlace | undefi
     paidNet: amountOf(paid - payoutFees),
     payoutFees: amountOf(payoutFees),
     accruedFees: amountOf(payoutFees),
-    awards: [...holdings.reserved],
+    awards: [...holdings.awards],
     pledges: [...copy.pledges],
     pledged: copy.pledged,
   }
@@ -251,7 +258,9 @@ export effect function settle(settlement: Settlement, event: Decided, by: string
   return next
 }
 
-export effect function observeChain(key: MonthKey, event: Event, by: string, chain?: ChainView) {
-  const settlement = try loadSettlement(key, chain)
-  return try apply(settlement.state, event, by)
+export effect function observeChain(key: MonthKey | undefined, event: Event, by: string, chain?: ChainView) {
+  const state = key === undefined
+    ? try decodeState({ month: initial.month, escrow: chain?.escrow ?? unopenedVault, headTime: chain?.headTime ?? 0, cursor: chain?.cursor ?? noCursor, leaves: [...(chain?.leaves ?? initial.leaves)] })
+    : (try loadSettlement(key, chain)).state
+  return try apply(state, event, by)
 }
