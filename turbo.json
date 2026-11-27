@@ -1,6 +1,6 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
-  "globalPassThroughEnv": ["QUINT_HOME", "VITEST_MAX_WORKERS"],
+  "globalPassThroughEnv": ["QUINT_HOME", "SLOP_PYTHON", "VITEST_MAX_WORKERS"],
   "globalDependencies": [
     ".nvmrc",
     "pnpm-workspace.yaml",
@@ -617,7 +617,6 @@
         ".cache/test-result-*.json"
       ],
       "env": [
-        "SLOP_PYTHON",
         "VIBESTACK_QUINT_EVALUATOR"
       ]
     },

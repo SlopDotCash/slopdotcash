@@ -1,5 +1,5 @@
 name: setup
-description: Node 26, pnpm from packageManager and its cache; with verification, Dafny from its pinned release, Quint's evaluator, Chromium, Foundry with solc and z3, Rust and Python 3, the pinned merge Git built where the Git journeys look for it, and the spec cache; with solana, the pinned Agave CLI and program builder, their platform tools and the reviewed validator image; Turborepo's local cache for pull requests and local-only branch pushes; for publication, a locked install without lifecycle scripts or any cache.
+description: Node 26, pnpm from packageManager and its cache; on Linux for prepare and skill-validating verification jobs, Python 3.13 with PyYAML 6.0.3 exported as SLOP_PYTHON; with verification, Dafny from its pinned release, Quint's evaluator, Chromium, Foundry with solc and z3, Rust and Python 3, the pinned merge Git built where the Git journeys look for it, and the spec cache; with solana, the pinned Agave CLI and program builder, their platform tools and the reviewed validator image; Turborepo's local cache for pull requests and local-only branch pushes; for publication, a locked install without lifecycle scripts or any cache.
 inputs:
   job:
     description: Names the caches this job saves. The contracts job installs only the native contract tools and pinned package runner.
@@ -207,6 +207,26 @@ runs:
       with:
         node-version-file: .nvmrc
         package-manager-cache: false
+    - id: setup-python
+      if: >-
+        runner.os == 'Linux' &&
+        (inputs.job == 'prepare' ||
+        (inputs.verification == 'true' && inputs.job != 'contracts' && !startsWith(inputs.job, 'simulate-') && !startsWith(inputs.job, 'selftest-')))
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: "3.13"
+    - name: Install the skill validator dependency
+      if: steps.setup-python.outcome == 'success'
+      shell: bash
+      env:
+        PYTHON_PATH: ${{ steps.setup-python.outputs.python-path }}
+      run: |
+        set -euo pipefail
+        python="${PYTHON_PATH:-$pythonLocation/bin/python}"
+        test -x "$python"
+        "$python" -m pip install --disable-pip-version-check --no-cache-dir --only-binary=:all: PyYAML==6.0.3
+        "$python" -c "import sys, yaml; sys.exit(0 if yaml.__version__ == '6.0.3' else 1)"
+        printf 'SLOP_PYTHON=%s\n' "$python" >> "$GITHUB_ENV"
     - id: pnpm-store
       if: inputs.publication != 'true' && inputs.job != 'contracts'
       shell: bash
