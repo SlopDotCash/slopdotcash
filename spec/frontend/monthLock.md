@@ -173,6 +173,8 @@ pure def check(m: MonthLock, result: LockResult, by: int): MonthLock =
 
 ### Rules
 
+Discovered by the proof: `LockReviewed` only holds a lock review (`kind == LockingMonths`), never a release.
+
 ```quint
 pure def pendingLock(m: MonthLock): bool = m.kind == LockingMonths
   and (m.phase == LockReviewed or m.phase == LockAwaiting or m.phase == LockChecking)
@@ -184,7 +186,8 @@ pure def alwaysPendingLockFits(m: MonthLock): bool = pendingLock(m) implies
   M::compareAmounts(M::addAmounts(m.locked, m.added), M::addAmounts(m.free, m.deposit)) <= 0
 pure def alwaysPendingReleaseIsLapsed(m: MonthLock): bool = pendingRelease(m) implies
   M::positiveAmount(m.released) and M::compareAmounts(m.released, m.lapsed) <= 0
-pure def alwaysOnlyTheOwnerLocks(m: MonthLock): bool = pendingLock(m) implies m.wallet == m.owner
+pure def alwaysOnlyTheOwnerLocks(m: MonthLock): bool = (m.phase == LockReviewed implies m.kind == LockingMonths)
+  and (pendingLock(m) implies m.wallet == m.owner)
 pure def alwaysChecksWithinLimit(m: MonthLock): bool = m.checks >= 0 and m.checks <= checkLimit
 pure def alwaysValidAmounts(m: MonthLock): bool = M::validAmount(m.free) and M::validAmount(m.locked) and M::validAmount(m.lapsed)
   and M::validAmount(m.shownLocked) and M::validAmount(m.added) and M::validAmount(m.deposit) and M::validAmount(m.released)

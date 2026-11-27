@@ -263,9 +263,12 @@ pure def answer(v: OwnerVault, target: Target, lifetime: int, origin: Origin, re
 
 ### Rules
 
+Discovered by the proof: a flow awaiting the wallet still holds its unsigned attempt, with neither a returned hash nor a candidate entered yet.
+
 ```quint
 pure def flowSaved(flow: Flow, limit: int): bool =
-  (flow.phase == Awaiting implies flow.slot.identity == flow.awaiting and flow.awaiting != "")
+  (flow.phase == Awaiting implies flow.slot.identity == flow.awaiting and flow.awaiting != ""
+    and flow.slot.hash == "" and flow.slot.candidate == "")
   and ((flow.phase == Sent or flow.phase == Unclear) implies flow.slot != WA::noAttempt)
   and (flow.phase == Sent implies (flow.slot.hash != "" or flow.slot.candidate != ""))
   and flow.autoAsks >= 0 and flow.autoAsks <= limit and flow.refusals >= 0
