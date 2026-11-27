@@ -181,8 +181,9 @@ export effect function unlist(key: Key, facts: Facts) {
   return try update(aggregate(key, facts), (current) => decide(key, facts, [{ event: { type: "unlistPath" }, by: registry }, { event: { type: "prune" }, by: schedule }], noEvidence, current))
 }
 
-export effect function receive(key: Key, facts: Facts, input: unknown, by: string, evidence: Evidence = noEvidence) {
-  return try send(key, facts, try decodeEvent(input), by, evidence)
+export effect function receive(key: Key, facts: Facts, input: unknown, by: string, evidence: Evidence | ((event: Event) => Evidence) = noEvidence) {
+  const event = try decodeEvent(input)
+  return try send(key, facts, event, by, typeof evidence === "function" ? evidence(event) : evidence)
 }
 
 export effect function storedRows() {

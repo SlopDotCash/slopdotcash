@@ -71,6 +71,7 @@ type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 let generation = 0;
 let nextActor = 8_000_000;
+let nextCase = 0;
 const tracks = new Map<string, Track>();
 const senders = new Map<string, string>();
 const cases = new Map<string, number>();
@@ -103,10 +104,12 @@ function caseId(track: Track, privateCase: number): string {
 async function caseFor(track: Track, privateCase: number): Promise<string> {
   const id = caseId(track, privateCase);
   if (!cases.has(id)) {
+    const suffix = (++nextCase).toString(16).padStart(12, "0");
+    const ghsa = `GHSA-${suffix.slice(0, 4)}-${suffix.slice(4, 8)}-${suffix.slice(8, 12)}`;
     await db.prepare(`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state,
         receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at)
-      VALUES (?, ?, 'example/bindings', 'GHSA-aaaa-bbbb-cccc', ?, 'reporter', 'claimed', 'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, ?, ?)`)
-      .bind(id, projectId, track.actor, seededAt, seededAt).run();
+      VALUES (?, ?, 'example/bindings', ?, ?, 'reporter', 'claimed', 'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, ?, ?)`)
+      .bind(id, projectId, ghsa, track.actor, seededAt, seededAt).run();
     cases.set(id, privateCase);
   }
   return id;
@@ -289,6 +292,7 @@ export const driver: Driver<View> & AsyncDisposable = {
   reset: () => {
     generation++;
     tracks.clear();
+    cases.clear();
   },
   dispatch,
   observe,

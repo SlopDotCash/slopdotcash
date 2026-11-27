@@ -1,7 +1,7 @@
 // spec/operations/localValidator.md, "Story: Run tests only against the validator owned by the current stage"; spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
 import { rpc } from "./chains/faults.ts";
 
-export { type Account, type Anvil, type AnvilOptions, type Artifact, type ForgeOutput, type Receipt, type Transaction, anvil, artifact, deploy, forgeBuild } from "./chains/anvil.ts";
+export { type Account, type Anvil, type AnvilOptions, type Artifact, type ForgeOutput, type Receipt, type Transaction, anvil, artifact, deploy, forgeBuild, signPersonalMessage } from "./chains/anvil.ts";
 export { type Fault, type FaultRule, type Fired, type Served, forward, portsFree, rpc, rpcFaults, serve } from "./chains/faults.ts";
 export { type Payer, type ProgramBuild, type Validator, type ValidatorOptions, type ValidatorReceipt, SOLANA_TEST_BINARY_SHA256, SOLANA_TEST_IMAGE, SOLANA_TEST_VERSION, sbfBuild, solanaValidator } from "./chains/validator.ts";
 

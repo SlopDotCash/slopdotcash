@@ -1,11 +1,10 @@
 // spec/operations/escrowQualification.md, "Story: Qualify escrow one network at a time with an explicitly approved scope"; spec/operations/escrowQualification.md, "Story: Keep previously approved scope and evidence exceptions attached to their specific controls"
-import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { base58Encode } from "@repo/platform/chain/solana";
 import { webCrypto } from "@repo/platform/crypto";
+import { signPersonalMessage } from "@repo/platform/testing/chains";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import type { Driver, Options } from "../../gen/operations__escrowQualification.conformance.ts";
 import type { Approver, Event } from "../../gen/operations__escrowQualification.ts";
@@ -13,9 +12,24 @@ import { type Approval, approvalMessage, createLedger, loadLedger, recordEntry }
 import type { Registry } from "../../src/qualification/escrow/registry.ts";
 
 const runtime = ManagedRuntime.make(Layer.mergeAll(NodeServices.layer, webCrypto));
-const ownerKey = generateKeyPairSync("ed25519");
-const owner = base58Encode(new Uint8Array(ownerKey.publicKey.export({ format: "der", type: "spki" }).subarray(12)));
-const registry: Registry = { evm: [], solana: [{ network: "Solana", program: owner, programSha256: "0".repeat(64), programLength: 1, authority: owner }] };
+const ownerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
+const owner = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+const zeroAddress = `0x${"0".repeat(40)}`;
+const zeroHash = "0".repeat(64);
+const registry: Registry = {
+  evm: [{
+    network: "Base",
+    sourceCommit: "0".repeat(40),
+    factory: zeroAddress,
+    proxyCodeSha256: zeroHash,
+    vaultImplementation: zeroAddress,
+    vaultImplementationCodeSha256: zeroHash,
+    factoryImplementation: zeroAddress,
+    factoryImplementationCodeSha256: zeroHash,
+    authority: owner,
+  }],
+  solana: [],
+};
 let workspace = mkdtempSync(join(tmpdir(), "slop-escrow-ledger-"));
 let created = new Set<string>();
 
@@ -28,10 +42,10 @@ const ledgerOf = async (key: string) => {
   return path;
 };
 
-const approval = (event: Event): Approval | undefined => {
+const approval = async (event: Event): Promise<Approval | undefined> => {
   if (event.type !== "approve") return undefined;
-  const signature = sign(null, new TextEncoder().encode(approvalMessage(event.review)), ownerKey.privateKey);
-  return { scheme: "solana", signer: owner, signature: base58Encode(new Uint8Array(signature)) };
+  const { signer, signature } = await signPersonalMessage(ownerKey, approvalMessage(event.review));
+  return { scheme: "evm", signer, signature };
 };
 
 export const driver: Driver & AsyncDisposable = {
@@ -42,7 +56,7 @@ export const driver: Driver & AsyncDisposable = {
   },
   dispatch: async (key, event: Event, by) => {
     const path = await ledgerOf(key);
-    const signed = approval(event);
+    const signed = await approval(event);
     const extra = { ...(event.type === "retainAttempt" ? { raw: event.operation.transaction } : {}), ...(signed === undefined ? {} : { approval: signed }) };
     return runtime.runPromise(Effect.flatMap(loadLedger(path, registry), (loaded) => recordEntry(loaded, event, by as Approver, extra)).pipe(
       Effect.as("accepted" as const),
