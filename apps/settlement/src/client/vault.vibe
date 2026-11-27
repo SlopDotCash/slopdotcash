@@ -59,9 +59,11 @@ export const staleAfterMs = 1_800_000
 
 export const vaultEdgeSeconds = 60
 
-export const projectTotals = route({ method: "GET", path: "/api/v1/payments/projects/:id/totals", access: "public", limitKib: 1, request: undefined, answer: ProjectTotals, rejected: "rejected", cache: "private" })
+const privateNoStore = { "cache-control": "private, no-store" } as const
 
-export const projectVault = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault", access: "public", limitKib: 1, request: undefined, answer: ProjectVault, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds } })
+export const projectTotals = route({ method: "GET", path: "/api/v1/payments/projects/:id/totals", access: "public", limitKib: 1, request: undefined, answer: ProjectTotals, rejected: "rejected", cache: "private", refusalHeaders: privateNoStore })
+
+export const projectVault = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault", access: "public", limitKib: 1, request: undefined, answer: ProjectVault, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds }, refusalHeaders: privateNoStore })
 
 const VaultDepositSchema = Schema.Struct({
   id: Schema.String,
@@ -87,6 +89,6 @@ const ProjectDepositsSchema = Schema.Struct({
 })
 export type ProjectDeposits = typeof ProjectDepositsSchema.Type
 
-export const projectDeposits = route({ method: "GET", path: "/api/v1/payments/projects/:id/deposits", access: "public", limitKib: 1, request: undefined, answer: ProjectDepositsSchema, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds } })
+export const projectDeposits = route({ method: "GET", path: "/api/v1/payments/projects/:id/deposits", access: "public", limitKib: 1, request: undefined, answer: ProjectDepositsSchema, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds }, refusalHeaders: privateNoStore })
 
 export const vaultApi = [projectTotals, projectVault, projectDeposits]

@@ -335,7 +335,7 @@ function workerConfig(name: string, source: string, options: Bindings, compatibi
       env: built.env,
       ...built.triggers.length === 0 ? {} : { triggers: built.triggers },
       ...Object.keys(built.exports).length === 0 ? {} : { exports: built.exports },
-      ...options.assets === undefined ? {} : { assets: { directory: options.assets, runWorkerFirst: true, hasUserWorker: true } },
+      ...options.assets === undefined ? {} : { assets: { directory: options.assets, runWorkerFirst: true, hasUserWorker: true, notFoundHandling: "404-page" as const } },
     },
     dev: { cacheAPI: true, ...outbound === undefined ? {} : { outboundService: connection(outbound, outboundErrors) } },
   }, ...built.mailers];

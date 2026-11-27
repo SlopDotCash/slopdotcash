@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } from "@repo/platform/d1"
-import { type Actor, Refused, handleRaw, json, jsonBody } from "@repo/platform/http"
+import { type Actor, Caller, Refused, handleRaw, json, jsonBody, refuse, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "@repo/ports/backend"
 import { apply, canRecordAttested, heldFor, initial, mayRequestReceiptCheck } from "../../gen/security__cases.effect.vibe"
@@ -420,6 +420,8 @@ effect function afterwards(id: string, actor: Actor) {
   return { case: try shownCase(observed, actor, true) }
 }
 
+const jsonObjectBody = Schema.Record(Schema.String, Schema.Unknown)
+
 effect function bodyOf(limitKib: number) {
   return (try jsonBody(limitKib)) as Body
 }
@@ -427,6 +429,11 @@ effect function bodyOf(limitKib: number) {
 export const caseRoutes = Layer.mergeAll(
   handleSecurityRead(listCases, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
   handleSecurityRead(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
-  handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => created(input.actor, body))),
+  handleRaw({ ...claimCase, access: "public" }, () => effect {
+    if (!(try sameOriginWrite())) throw refuse(403, "origin_forbidden", "Requests must come from this site")
+    const body = (try strictBody(jsonObjectBody, claimCase.limitKib * 1024)) as Body
+    const actor = try (try Caller).current(claimCase)
+    return try created(actor, body)
+  }),
   handleRaw(actOnCase, (input) => Effect.flatMap(bodyOf(actOnCase.limitKib), (body) => Effect.map(acted(input.actor, input.params.id ?? "", body), (result) => answer(result)))),
 )

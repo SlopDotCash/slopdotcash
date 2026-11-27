@@ -8,7 +8,8 @@ import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { type ValueCensus, ValueInputs } from "@repo/ports/points"
 import { type JournalReader } from "../src/collect/implementation/facts.vibe"
-import { type ImplementationMemo, emptyImplementationMemo, implementationMemoFile, openImplementationMemo, parseImplementationMemo, writeImplementationMemo } from "../src/collect/implementation/memo.vibe"
+import { type ImplementationMemo, emptyImplementationMemo, implementationMemoFile, implementationMemoRulesDigest, implementationMemoRulesHash, openImplementationMemo, parseImplementationMemo, writeImplementationMemo } from "../src/collect/implementation/memo.vibe"
+import { implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn, implementationMemoRulesVersion } from "../src/collect/memo/memo.vibe"
 import { type ProofReader, readAcceptedImplementationProofs } from "../src/collect/implementation/native.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
@@ -207,20 +208,30 @@ it.live('A written implementation memo is reused on the next pass, and a stale o
     const contents = try fs.readFileString(sidecar)
     const stale = parseImplementationMemo(contents, codeDigest, (try Clock.currentTimeMillis) + 8 * day) catch (error) => error._tag
     try fs.writeFileString(sidecar, contents.replace(codeDigest, "b".repeat(64)))
+    const changedCode = try Effect.provide(openImplementationMemo(codeDigest), environment)
+    const rulesMismatch = parseImplementationMemo(contents, codeDigest, try Clock.currentTimeMillis, implementationMemoRulesVersion + 1) catch (error) => error._tag
+    try fs.writeFileString(sidecar, contents.replace(`"rulesVersion":${implementationMemoRulesVersion}`, `"rulesVersion":${implementationMemoRulesVersion + 1}`))
     const refused = { count: 0 }
     const tampered = try Effect.provide(openImplementationMemo(codeDigest), environment)
     const relive = (try collected(world, try localProofs(repositoryDirectory, refused), tampered)).implementation.history.acceptedImplementationDigests
+    const pinnedHash = try implementationMemoRulesHash(new URL("../../..", import.meta.url).pathname)
 
     try same({
       calls: [live.count, reused.count, refused.count],
+      auditRates: [reopened.auditOneIn, changedCode.auditOneIn],
       reusedDigests: [...again].sort(),
       reliveDigests: [...relive].sort(),
       stale: typeof stale === "string" ? stale : "accepted",
+      rulesMismatch: typeof rulesMismatch === "string" ? rulesMismatch : "accepted",
+      pinnedHash,
     }, {
       calls: [1, 0, 1],
+      auditRates: [implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn],
       reusedDigests: [...first].sort(),
       reliveDigests: [...first].sort(),
       stale: "ImplementationMemoInvalid",
+      rulesMismatch: "ImplementationMemoInvalid",
+      pinnedHash: implementationMemoRulesDigest,
     })
   })
   }

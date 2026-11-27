@@ -5,7 +5,7 @@ import { Schema } from "effect";
 import { repoRoot } from "@repo/platform/testing/paths";
 import { retired } from "@repo/operations/retired";
 import { type AmendedRefusal, type Amendment, amendments } from "./amendments.ts";
-import { type OldEntry, type WorkerSuccessor, successors } from "./entries.ts";
+import { type OldEntry, type WorkerSuccessor, parityPointsProtectionToken, successors } from "./entries.ts";
 
 const parity = join(repoRoot, "reference/parity");
 
@@ -303,7 +303,10 @@ export function replayDifference(replay: ReplayCase, seen: Seen): ReadonlyArray<
 /** @throws {TypeError} */
 export function replayRequest(replay: ReplayCase): Probe {
   const url = new URL(replay.request.url);
-  return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers: replay.request.headers, ...replay.request.body == null ? {} : { body: replay.request.body } };
+  const headers = Object.fromEntries(
+    Object.entries(replay.request.headers).map(([name, value]) => [name, value.replaceAll("<POINTS_PROTECTION_TOKEN>", parityPointsProtectionToken)]),
+  );
+  return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers, ...replay.request.body == null ? {} : { body: replay.request.body } };
 }
 
 function rowOrigin(row: Row, successor: WorkerSuccessor): string {

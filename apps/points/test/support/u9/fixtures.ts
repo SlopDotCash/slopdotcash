@@ -41,7 +41,7 @@ const registered = [
 export const registry: RepositoryRegistry = {
   registered,
   targets: registered,
-  projects: [...new Set(registered.map((entry) => entry.projectId))].map((id) => ({ id, skillSourcePath: "SKILL.md" })),
+  projects: [...new Set(registered.map((entry) => entry.projectId))].map((id) => ({ id, skillSourcePath: `skills/contribute-to-${id}` })),
 };
 
 

@@ -3,7 +3,7 @@ import { isoAt } from "@repo/platform/clock"
 import { outcomeFirstPolicyAt, paymentReviewPolicyAt, scoreV2EffectiveAt, v2EventPoints } from "../kernels/scoring/legacyV2.ts"
 import { paymentReviewBasisOmittedReason, paymentReviewPolicy } from "../client/snapshot/schema.vibe"
 import { books } from "./book.vibe"
-import { type AcceptedOutcomes, type Activity, type Actor, type CategoryCounts, type ClosedPull, type EventCategory, FactsRefused, type LeaderEntry, type MergedPull, type RawActivity, type ReviewDecision, type ReviewExclusion, type ScoreEvent, type ScoredSnapshot, type Scoring, type ScoringFacts, actorIndex, actorsOf, implementationHistory, isBot, millisAt, workUnitSlug } from "./facts.vibe"
+import { type AcceptedOutcomes, type Activity, type Actor, type CategoryCounts, type ClosedPull, type EventCategory, FactsRefused, type JointUnitPublication, type LeaderEntry, type MergedPull, type OmittedReviewCredit, type RawActivity, type ReviewDecision, type ReviewExclusion, type ScoreEvent, type ScoredSnapshot, type Scoring, type ScoringFacts, actorIndex, actorsOf, implementationHistory, isBot, millisAt, workUnitSlug } from "./facts.vibe"
 import { mergedCredit, outcomeOrder, timedPulls } from "./merges.vibe"
 import { type Credited, deductions, eventPoints } from "./penalties.vibe"
 import { ranked, sortedModels } from "./ranks.vibe"
@@ -214,11 +214,17 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
   for (const [actor, at] of facts.bans) bans.set(actor, try millisAt(at, actor))
   const merges = try mergedCredit({ pulls: merged, closed, contexts: facts.contexts, decisions: facts.joint, ...(facts.valueActors === undefined ? {} : { valueActors: facts.valueActors }), attributionHolds: facts.attributionHolds, windowFrom, windowTo, implementation: implementationHistory(facts) }, actors)
   const ledger = ledgerOf(bans, facts.projects)
-  for (const event of merges.events) try ledger.credit(event)
+  const creditedIds = new Set<string>()
+  for (const event of merges.events) if (try ledger.credit(event)) creditedIds.add(event.id)
+  const jointUnitPublication = new Map<string, JointUnitPublication[]>()
+  for (const unit of merges.jointUnitCredits) {
+    const complete = unit.complete && unit.eventIds.every((id) => creditedIds.has(id))
+    jointUnitPublication.set(unit.digest, [...(jointUnitPublication.get(unit.digest) ?? []), { coveredPullRequestIds: unit.coveredPullRequestIds, complete }])
+  }
   try creditEvaluated(facts.evaluated ?? [], ledger, windowFrom, windowTo)
   const held = new Set([...merges.held.map((entry) => entry.sourceId), ...facts.heldUnits.flatMap((unit) => unit.sources)])
   const ordered = (try timedPulls(merged)).sort(outcomeOrder).map(({ pull }) => pull)
-  const reviewExclusions = try reviewCredit(ordered, closed, { windowFrom, windowTo, reviewCutoff, bans, merges, held, ledger })
+  const { exclusions: reviewExclusions, omittedReviewCredits } = try reviewCredit(ordered, closed, { windowFrom, windowTo, reviewCutoff, bans, merges, held, ledger })
   try creditRetained(facts.retainedReviews ?? [], new Set([...merged.map((pull) => pull.id), ...closed.map((pull) => pull.id), ...held]), ledger, windowFrom, windowTo)
   const events = published(ledger.events)
   const deducted = try deductions(events, facts.penalties, facts.projects)
@@ -226,6 +232,8 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
     leaders: leadersOf(events, deducted.byActor, facts.activity),
     ledger: events,
     reviewExclusions: [...reviewExclusions].sort(compareExclusions),
+    omittedReviewCredits: [...omittedReviewCredits].sort((left: OmittedReviewCredit, right: OmittedReviewCredit) => compareExclusions(left, right)),
+    jointUnitPublication,
     held: merges.held,
     implementationHeld: merges.implementationHeld,
     standaloneReview: merges.standaloneReview,

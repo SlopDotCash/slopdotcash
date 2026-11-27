@@ -74,8 +74,15 @@ function Editor({ runtime, project, actorId, onAccessLost, onSaved, onCancel, st
 
   const discard = async () => {
     const discarded = await runtime.runPromise(discardManifestDraft(project.id, project.revision));
-    if (discarded) onCancel();
-    else setError(editorMessages.discardFailed);
+    if (discarded) {
+      const fresh = initialDraft(project, undefined);
+      latestRef.current = fresh;
+      setDraft(fresh);
+      setDraftError(false);
+      setError(null);
+    } else {
+      setError(editorMessages.discardFailed);
+    }
   };
 
   return (

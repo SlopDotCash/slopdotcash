@@ -167,7 +167,7 @@ effect function listFailed(owner: string, message: string, focusId: string | nul
 }
 
 export effect function loadSubmissions(owner: string, focusId: string | null, receiptFirst: boolean) {
-  const listed = try privateCall(owner, listSubmissions, {}, (list) => list.submissions.length, (list) => list.recipientGithubId)
+  const listed = try privateCall(owner, listSubmissions, {}, (list) => list.submissions.length, (list) => list.recipientGithubId, true)
   if (listed.kind !== "done") return try listFailed(owner, listed.message, focusId, receiptFirst)
   const focused = try focusedReceipt(owner, listed.value.submissions, focusId, receiptFirst)
   if (focused.error === null) try pruneReportTexts(focused.submissions)

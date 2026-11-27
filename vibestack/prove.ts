@@ -751,17 +751,6 @@ export function proofPaths(unit: string) {
 
 export const abandonedProof = Symbol("abandoned proof");
 
-export function proofInputs(unit: string, text: string): Record<string, Input> {
-  return Object.fromEntries(Object.entries({
-    [unit]: text,
-    "lemmascript.json": JSON.stringify({ "unread-annotations": "error", "run-log": false }),
-    "tsconfig.json": JSON.stringify({
-      compilerOptions: { target: "es2023", lib: ["es2023"], module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, types: [] },
-      files: [unit],
-    }),
-  }).map(([f, t]) => [f, { text: t, key: t }]));
-}
-
 /** Prove one unit in a directory of its own, so that nothing left over from another run or project can vouch for it. */
 export async function prove(memory: Memory, u: Unit, offered: { proof?: { file: string; text: string }; lib?: string; axioms: Offered[] }, discarded?: () => boolean): Promise<Proof | typeof abandonedProof> {
   const { root } = memory;
@@ -772,7 +761,14 @@ export async function prove(memory: Memory, u: Unit, offered: { proof?: { file: 
   fs.mkdirSync(dir, { recursive: true });
   // A configuration of our own, so that one further up cannot redirect the proof or relax it, and a TypeScript
   // project of our own, so that the project's tsconfig.json cannot add files, globals or options to it.
-  const sources = (text: string) => proofInputs(u.unit, text);
+  const sources = (text: string): Record<string, Input> => Object.fromEntries(Object.entries({
+    [u.unit]: text,
+    "lemmascript.json": JSON.stringify({ "unread-annotations": "error", "run-log": false }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { target: "es2023", lib: ["es2023"], module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, types: [] },
+      files: [u.unit],
+    }),
+  }).map(([f, t]) => [f, { text: t, key: t }]));
   let total = 0;
   const result = (errors: string[], log: string, dfy = ""): Proof => ({ total, unproved: [], exhausted: [], resting: {}, errors, log, dfy, scaffold: "" });
   // What imported units proved, and the library, are only of use to a proof file. The imported modules are generated

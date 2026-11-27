@@ -8,8 +8,6 @@ export interface BindingRecord {
   readonly authorities: ReadonlyArray<string>
 }
 
-export type Sender = "account" | "attester" | "operator"
-
 export interface Step {
   readonly event: Event
   readonly by: string

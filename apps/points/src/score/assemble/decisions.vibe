@@ -220,6 +220,8 @@ schema JointWire {
     readonly model: Schema.Unknown
     readonly sources: ReadonlyArray<{ readonly pullRequestNodeId: string }>
     readonly units: ReadonlyArray<JointUnitWire>
+    readonly legacyPredecessors?: ReadonlyArray<string>
+    readonly supersedes?: ReadonlyArray<string>
   }
   readonly evidence: {
     readonly sources: ReadonlyArray<{ readonly evidence: SourceEvidence }>
@@ -249,6 +251,9 @@ export interface JointRead {
   readonly decision: JointDecision
   readonly indexed: ReadonlyArray<string>
   readonly sources: ReadonlyArray<JointSource>
+  readonly history: ReadonlyArray<HistoryRow>
+  readonly legacyPredecessors: ReadonlyArray<string>
+  readonly supersedes: ReadonlyArray<string>
 }
 
 type ValueLines = (file: unknown) => LineCounts | undefined
@@ -372,5 +377,12 @@ export effect function jointOf(row: SourceDecision, sourceAt: (acceptedAt: strin
     members: sources.map((source) => ({ pullId: source.pull.node_id, head: source.pull.head.sha, acceptedAt: source.acceptedAt, indirect: indirect.has(source.pull.node_id) })),
     units,
   }
-  return { decision, indexed: wire.record.sources.map((source) => source.pullRequestNodeId), sources } satisfies JointRead
+  return {
+    decision,
+    indexed: wire.record.sources.map((source) => source.pullRequestNodeId),
+    sources,
+    history: wire.history,
+    legacyPredecessors: wire.record.legacyPredecessors ?? [],
+    supersedes: wire.record.supersedes ?? [],
+  } satisfies JointRead
 }

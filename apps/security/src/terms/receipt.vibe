@@ -1,7 +1,6 @@
 // spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "A finding qualifies only under its frozen eligibility class"; spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch } from "@repo/platform/d1"
-import type { Json } from "@repo/ports/backend"
 import type { LossFinding, ReceiptTerms, Severity } from "../../gen/security__terms.ts"
 import { amountAllowed, eligibleFinding, unpaidTerms } from "../../gen/security__terms.effect.vibe"
 import { type FrozenTerms, receiptTermsOf } from "../receipt/program.vibe"
@@ -16,9 +15,6 @@ export interface StoredReceipt {
 
 export const severities = { critical: "Critical", high: "High", medium: "Medium", low: "Low", informational: "Informational", unresolved: "SeverityUnresolved" } as const satisfies Readonly<Record<string, Severity>>
 export const losses = { "verified-potential": "VerifiedPotential", "verified-actual": "VerifiedActual", "not-verified": "NotVerified", unresolved: "LossUnresolved" } as const satisfies Readonly<Record<string, LossFinding>>
-
-export type SeverityText = keyof typeof severities
-export type LossText = keyof typeof losses
 
 function isFrozen(value: unknown): value is FrozenTerms {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -73,8 +69,4 @@ export function eligibleUnder(terms: ReceiptTerms, inScope: boolean, severity: S
 
 export function allowedAmount(terms: ReceiptTerms, grossMinor: string) {
   return amountAllowed(terms, limbsOf(grossMinor))
-}
-
-export function termsJson(terms: FrozenTerms | undefined): Json {
-  return terms ?? null
 }

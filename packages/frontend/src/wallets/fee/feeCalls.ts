@@ -19,10 +19,33 @@ export interface FeeWay {
   readonly kind: WayKind;
 }
 
+export interface SolanaFeeTerms {
+  readonly network: string;
+  readonly programId: string | null;
+  readonly token: string;
+  readonly symbol: string;
+  readonly decimals: number;
+  readonly keptTo: string;
+  readonly switchedOn: boolean;
+}
+
+export interface SolanaFeeWay {
+  readonly network: string;
+  readonly programId: string;
+  readonly token: string;
+  readonly symbol: string;
+  readonly decimals: number;
+  readonly amount: string;
+  readonly minimumAccepted: string;
+  readonly keptTo: string;
+  readonly kind: "stable";
+}
+
 export interface FeeTerms {
   readonly networks: ReadonlyArray<FeeNetwork>;
   readonly feeWallet: string;
   readonly burn: string;
+  readonly solana?: SolanaFeeTerms;
 }
 
 export type DepositStep = "approve" | "reset" | "send";
@@ -41,7 +64,17 @@ export interface Call {
   readonly value: string;
 }
 
-export const publishedTerms: FeeTerms = { networks: feeNetworks, feeWallet, burn: burnAddress };
+export const publishedSolanaTerms: SolanaFeeTerms = {
+  network: "solana-mainnet",
+  programId: "4St4KPBhaHZw29gEaqstU9TzYHRfXLq7aat932r1uzW7",
+  token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  symbol: "USDC",
+  decimals: 6,
+  keptTo: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
+  switchedOn: false,
+};
+
+export const publishedTerms: FeeTerms = { networks: feeNetworks, feeWallet, burn: burnAddress, solana: publishedSolanaTerms };
 
 const tokenAbi = parseAbi(["function approve(address,uint256) returns (bool)"]);
 const depositsAbi = parseAbi([
@@ -50,9 +83,32 @@ const depositsAbi = parseAbi([
 ]);
 const depositedTopic = toEventSelector("Deposited(uint256,bytes32,address,address,uint128,address)");
 const addressPattern = /^0x[0-9a-fA-F]{40}$/u;
+const solanaAddressPattern = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u;
+const solanaSignaturePattern = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/u;
+const solanaSignatureOrAddressPattern = /^(?:[1-9A-HJ-NP-Za-km-z]{32,44}|[1-9A-HJ-NP-Za-km-z]{64,88})$/u;
 const amountPattern = /^[1-9][0-9]{0,38}$/u;
 const steps: ReadonlyArray<SavedStep> = ["approve", "reset", "send", "batch"];
 const uint128Max = (1n << 128n) - 1n;
+
+/** @throws {never} */
+export function isSolanaFeeNetwork(network: string): boolean {
+  return network.startsWith("solana-");
+}
+
+/** @throws {never} */
+export function isSolanaRecordAddress(value: string): boolean {
+  return solanaAddressPattern.test(value);
+}
+
+/** @throws {never} */
+export function isSolanaSignature(value: string): boolean {
+  return solanaSignaturePattern.test(value);
+}
+
+/** @throws {never} */
+export function isSolanaTransactionOrAddress(value: string): boolean {
+  return solanaSignatureOrAddressPattern.test(value);
+}
 
 /** @throws {never} */
 function same(left: string, right: string): boolean {
@@ -91,10 +147,59 @@ export function termsOf(terms: FeeTerms, network: string): FeeNetwork | undefine
 
 /** @throws {never} */
 export function tokenOf(terms: FeeTerms, network: string, token: string): { readonly kind: WayKind; readonly symbol: string; readonly decimals: number } | undefined {
+  if (isSolanaFeeNetwork(network)) {
+    const solana = terms.solana;
+    if (solana === undefined || solana.network !== network || !solanaAddressPattern.test(token) || solana.token !== token) return undefined;
+    return { kind: "stable", symbol: solana.symbol, decimals: solana.decimals };
+  }
   if (!addressPattern.test(token)) return undefined;
   const found = termsOf(terms, network)?.tokens.find((entry) => same(entry.address, token));
   if (found === undefined || found.kind === "NoToken") return undefined;
   return { kind: found.kind === "SlopToken" ? "slop" : "stable", symbol: found.symbol, decimals: found.decimals };
+}
+
+/** @throws {never} */
+export function publishedSolanaWay(terms: FeeTerms, stableMinor: string): SolanaFeeWay | null {
+  const solana = terms.solana;
+  if (
+    solana === undefined
+    || !solana.switchedOn
+    || solana.programId === null
+    || !solanaAddressPattern.test(solana.programId)
+    || !solanaAddressPattern.test(solana.token)
+    || !solanaAddressPattern.test(solana.keptTo)
+    || !validStableFee(stableMinor)
+  ) return null;
+  return {
+    network: solana.network,
+    programId: solana.programId,
+    token: solana.token,
+    symbol: solana.symbol,
+    decimals: solana.decimals,
+    amount: stableMinor,
+    minimumAccepted: stableMinor,
+    keptTo: solana.keptTo,
+    kind: "stable",
+  };
+}
+
+/** @throws {never} */
+export function checkSolanaWay(terms: FeeTerms, entry: unknown, stableMinor: string): SolanaFeeWay | null | "invalid" {
+  const rec = recordOf(entry);
+  if (rec === undefined) return "invalid";
+  const published = publishedSolanaWay(terms, stableMinor);
+  if (published === null) return null;
+  const matches =
+    rec.network === published.network
+    && rec.contract === published.programId
+    && (rec.chainId === null || rec.chainId === undefined)
+    && rec.token === published.token
+    && rec.keptTo === published.keptTo
+    && rec.symbol === published.symbol
+    && rec.decimals === published.decimals
+    && rec.amount === stableMinor
+    && rec.minimumAccepted === stableMinor;
+  return matches ? published : "invalid";
 }
 
 /** @throws {never} */

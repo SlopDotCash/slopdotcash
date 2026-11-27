@@ -2,7 +2,6 @@
 module verified {
   import * as H from "./history.ts"
   export type HistoryRow = H.HistoryRow
-  export type Episode = H.Episode
   /** @throws {never} */
   export function foldRestriction(records: ReadonlyArray<H.HistoryRow>): H.Episode { return H.foldRestriction([...records]) }
   /** @throws {never} */
@@ -16,5 +15,5 @@ module verified {
   /** @throws {never} */
   export function unreleasedBans(keyCount: number, bans: ReadonlyArray<number>, releases: ReadonlyArray<number>): number[] { return H.unreleasedBans(keyCount, [...bans], [...releases]) }
 }
-import { type Episode, type HistoryRow, awaitsMaliceDecision, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans } from verified
-export { type Episode, type HistoryRow, awaitsMaliceDecision, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans }
+import { type HistoryRow, awaitsMaliceDecision, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans } from verified
+export { type HistoryRow, awaitsMaliceDecision, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans }

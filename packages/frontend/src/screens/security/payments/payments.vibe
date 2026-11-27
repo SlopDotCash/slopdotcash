@@ -33,7 +33,7 @@ export function paymentsRuntime(page: PageRuntime): PaymentsRuntime {
 
 export effect function watchOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
   const choice = try WalletChoice
-  for try (const offers of choice.offers) try show(offers)
+  try Stream.runForEach(choice.offers, show)
 }
 
 effect function seenOf(record: SecurityCase) {
@@ -77,10 +77,6 @@ export effect function checkDirect<R>(opened: DirectOpened<R>, inputs: HashInput
 
 export effect function departDirect<R>(opened: DirectOpened<R>) {
   try opened.form.depart(opened.surface)
-}
-
-export effect function shownDirect<R>(opened: DirectOpened<R>) {
-  return try opened.form.shown(opened.surface)
 }
 
 export effect function openSolanaPayment(record: SecurityCase) {

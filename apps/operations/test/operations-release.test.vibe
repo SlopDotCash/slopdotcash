@@ -1242,6 +1242,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const audited = "Reject known production dependency vulnerabilities"
     const snapshot = "Snapshot the current project registry for verification"
     const gitBuild = ["Install canonical Git build dependencies", "Install canonical merge Git"]
+    const collectorToken = "Mint the read-only collector token for assessment source reads"
     const catalog = "Read and verify the complete historical assessment catalog"
     const receipt = "Preserve the assessment audit receipt"
     const publication = `apps/points/dist/programs/main.js reviewed /runner/repository-registry.json --reviewed-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
@@ -1270,8 +1271,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
         freshCollection: "slop-quality-refs/heads/main-collect",
       },
       steps: {
-        audit: [checked, audited, snapshot, catalog, receipt],
-        replay: [checked, audited, snapshot, ...gitBuild, "Mint the read-only collector token for replay", catalog, receipt],
+        audit: [checked, audited, snapshot, collectorToken, catalog, receipt],
+        replay: [checked, audited, snapshot, ...gitBuild, collectorToken, catalog, receipt],
         publication: [checked, audited, snapshot, ...gitBuild, "Rebuild and verify owner-reviewed historical Points"],
       },
       receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2" },

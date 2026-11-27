@@ -30,11 +30,6 @@ export const project: ShownProject = {
   record: {},
 };
 
-export const reviewedProject: ShownProject = {
-  ...project,
-  reward: { ...project.reward, reviewBudget: { committedMinor: 100_000_000n, fundingState: "committed", monthlyCapDisplay: "$200" } },
-};
-
 export const prizeProject: ShownProject = {
   ...project,
   id: "prize",
@@ -113,8 +108,6 @@ export const listing = projectListing({ project, networkPays: payingEverywhere, 
 
 export const unlisted = projectListing({ project: { ...project, reward: { ...project.reward, monthlyCapMinor: 0n, monthlyCapDisplay: "$0" } }, networkPays: payingEverywhere, nowMs: listedAt });
 
-export const mergeNow = Date.parse("2026-11-17T12:00:00.000Z");
-
 export const heldProject: ShownProject = { ...project, record: { slopbot: { intakeCap: 5, wantedIssues: true } } };
 
 const mergeRow: MergeRepository = {
@@ -136,10 +129,6 @@ const mergeRow: MergeRepository = {
 };
 
 export const heldMerge: Shown<MergeIndex> = { status: "Current", value: new Map([["slop", [mergeRow]]]) };
-
-export const openMerge: Shown<MergeIndex> = { status: "Current", value: new Map([["slop", [{ ...mergeRow, openOutside: 1 }]]]) };
-
-export const pendingMerge: Shown<MergeIndex> = { status: "Loading", value: undefined };
 
 export const failedMerge: Shown<MergeIndex> = { status: "Failed", value: undefined };
 

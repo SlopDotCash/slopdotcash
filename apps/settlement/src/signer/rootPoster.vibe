@@ -13,7 +13,7 @@ import { type Deployment, postRootCalldata } from "../referrals/distributor.vibe
 import { type PostRoot, PosterRefused, RootPoster, type SignedRoot, posterMarker } from "../referrals/poster.vibe"
 import { chainAllowed, envelopeAllowed, growthAllowed } from "../referrals/posterLimits.ts"
 
-export { type PostRoot, PosterRefused, RootPoster, type SignedRoot, posterMarker }
+export { type PostRoot, PosterRefused, posterMarker }
 
 export service RootPosterKey {
   readonly key: Redacted.Redacted<string> | undefined

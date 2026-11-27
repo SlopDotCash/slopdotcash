@@ -18,7 +18,7 @@ import { bin, exec, makeTempDir, removeTempDir, run, startAttached } from "./run
 import { readSpecs, badSpecName, specFiles, specName, isStd, located, type Spec } from "./parse.ts";
 import { contracts, citationLookup, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, moved, showPending, ledgerFile, readReviewLock, writeLedger, type Pending, type Accepted, type ReviewLock } from "./review.ts";
 import { cacheCredentials, dafnyVersion, entry, recall, remembered, steady, store, certifyInstallation, collectGarbage, evaluatorForCheck, isActionEntry, toolchainFingerprint, type Memory } from "./cache.ts";
-import { generated, mirrorGen, publishGen, typecheckAll, proofUnits, proofSourceSpecs, proofFiles, strayProofFiles } from "./units.ts";
+import { generated, mirrorGen, publishGen, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { simulation, type Simulation } from "./simulate.ts";
 import { tests, VITEST_CONFIG } from "./testing/check.ts";
 import { sha, digest, indent, packageScripts, pruneSidecars, configured, testInputs, readSrc, codeDirs, codeDirOf, owner, specOwnerPaths, projectRoot, allDone, UNREAD, workspacePackages, writeWhole, tsApi, type Reported, type SrcFile } from "./util.ts";
@@ -133,19 +133,6 @@ async function withStableInstallation<T>(attempt: () => Promise<T>): Promise<T> 
       if (!(error instanceof InstallationChanged) || retries === 2) throw error;
     }
   }
-}
-
-export async function sourceProofUnits(root: string, ownerName: string, sources: SrcFile[]) {
-  return withStableInstallation(async () => {
-    const specs = proofSourceSpecs(root, readSpecs(root, undefined, ownerName), sources);
-    const memory = { root, fresh: false, used: new Set<string>(), actionSignal: AbortSignal.timeout(120_000) };
-    const models: Model[] = [];
-    for await (const { model, error } of generating(memory, specs, root, new Map())) {
-      if (!model) throw error;
-      models.push(model);
-    }
-    return proofUnits(root, models, sources).filter((unit) => unit.src);
-  });
 }
 
 const canSimulate = (model: Model) => !!model.stateType || !!model.laws.length || !!model.evals.length;

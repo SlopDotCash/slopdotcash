@@ -39,6 +39,9 @@ export schema FundingChecked {
 
 export schema FundingAnswer = FundingReviewed | FundingChecked
 
+const privateNoStore = { "cache-control": "private, no-store" } as const
+const originForbidden = { status: 403, code: "origin_forbidden", message: "" } as const
+
 export const paymentsSolanaFunding = route({
   method: "POST",
   path: "/api/v1/payments/projects/:id/solana-funding",
@@ -48,6 +51,8 @@ export const paymentsSolanaFunding = route({
   answer: FundingAnswer,
   rejected: "funding_action_rejected",
   cache: "private",
+  refusalHeaders: privateNoStore,
+  originForbidden,
 })
 
 export schema MonthLockAction {
@@ -121,6 +126,8 @@ export const paymentsSolanaMonthLock = route({
   answer: MonthLockAnswer,
   rejected: lockRows.monthLockRejected.error,
   cache: "private",
+  refusalHeaders: privateNoStore,
+  originForbidden,
   invalid: { status: lockRows.invalidMonthLock.status, code: lockRows.invalidMonthLock.error, message: "", headers: lockRows.invalidMonthLock.headers },
 })
 

@@ -281,6 +281,12 @@ effect function unsubscribe(query: URLSearchParams) {
   return privateJson({ enabled: false, securityEnabled: false })
 }
 
+effect function signedMethodNotAllowed() {
+  const signed = try signedIn()
+  if (signed.kind === "refused") return signed.response
+  return json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" })
+}
+
 export const EmailRoutes = Layer.mergeAll(
   handleRaw(emailPreference, () => emailAnswer(preference())),
   handleRaw(emailConsent, () => emailAnswer(saveConsent())),
@@ -288,5 +294,6 @@ export const EmailRoutes = Layer.mergeAll(
   handleRaw(emailVerify, () => emailAnswer(verify())),
   handleRaw(emailUnsubscribe, (input) => emailAnswer(unsubscribe(input.query))),
   methodNotAllowed([emailPreference, emailConsent], succeed(json({ error: "method_not_allowed" }, 405, { allow: "GET, POST", "cache-control": "private, no-store" }))),
-  methodNotAllowed([emailVerification, emailVerify, emailUnsubscribe], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" }))),
+  methodNotAllowed([emailVerification, emailVerify], emailAnswer(signedMethodNotAllowed())),
+  methodNotAllowed([emailUnsubscribe], succeed(json({ error: "method_not_allowed" }, 405, { allow: "POST", "cache-control": "private, no-store" }))),
 )

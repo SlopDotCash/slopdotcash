@@ -52,7 +52,7 @@ import { applyEvaluations } from "../src/evaluations/journal.vibe"
 import { admitManifests, type Admitted, type ManifestInput } from "../src/evaluations/manifests.vibe"
 import { recoveryDigest, retiredAwards } from "../src/evaluations/retired.vibe"
 import { discussionCache } from "../src/ingestion/discussions.vibe"
-import { availableBudget, executeNodeBatch, Graphql, graphqlClient, tryReferenceDiscussion } from "../src/ingestion/graphql.vibe"
+import { availableBudget, executeNodeBatch, Graphql, graphqlClient, maxGraphqlRequestAttempts, tryReferenceDiscussion } from "../src/ingestion/graphql.vibe"
 import { validateHistoricalDiscussion } from "../src/ingestion/historicalDiscussion.vibe"
 import { Ingestion, ingestion, ingestionGitHub } from "../src/ingestion/read.vibe"
 import { checkpointDirectoryName, restoreCheckpoint } from "../src/ingestion/restore.vibe"
@@ -606,6 +606,64 @@ import { seededGithub, slopbotFake } from fakes
           requests: 29,
         },
       )
+    }
+
+    const seenPageSizes: number[] = []
+    const timeoutBatches: ReadonlyArray<string>[] = []
+    const http500Batches: ReadonlyArray<string>[] = []
+    let singleTimeout = false
+    const hangUntilAbort = (request: Request) =>
+      new Promise<Response>((_, reject) => {
+        if (request.signal.aborted) {
+          reject(request.signal.reason instanceof Error ? request.signal.reason : new Error("aborted"))
+          return
+        }
+        request.signal.addEventListener("abort", () => reject(request.signal.reason instanceof Error ? request.signal.reason : new Error("aborted")), { once: true })
+      })
+    const http500Fetcher: Fetcher = {
+      fetch: async (request) => {
+        const sent = JSON.parse(await request.clone().text()) as { readonly variables?: { readonly ids?: ReadonlyArray<string> } }
+        const batch = sent.variables?.ids ?? []
+        http500Batches.push(batch)
+        if (batch.length > 2) return new MiniflareResponse("<html>Internal Server Error</html>", { status: 500, headers: { "content-type": "text/html" } }) as unknown as globalThis.Response
+        return fake.fetch(request)
+      },
+    }
+    const timeoutFetcher: Fetcher = {
+      fetch: async (request) => {
+        const sent = JSON.parse(await request.clone().text()) as { readonly variables?: { readonly ids?: ReadonlyArray<string>; readonly pageSize?: number } }
+        if (typeof sent.variables?.pageSize === "number") {
+          seenPageSizes.push(sent.variables.pageSize)
+          if (sent.variables.pageSize > 50) return hangUntilAbort(request)
+          return fake.fetch(request)
+        }
+        const batch = sent.variables?.ids ?? []
+        timeoutBatches.push(batch)
+        if (singleTimeout || batch.length > 2) return hangUntilAbort(request)
+        return fake.fetch(request)
+      },
+    }
+    provide Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outboundVia(http500Fetcher)), clock.layer {
+      const split500 = try executeNodeBatch(nodesQuery, ids)
+      const split500Nodes = Array.isArray(split500.nodes) ? split500.nodes.map((node: unknown) => (node as { readonly id?: unknown }).id) : []
+      try same({ split500Nodes, http500Batches }, {
+        split500Nodes: ids,
+        http500Batches: [...Array.from({ length: maxGraphqlRequestAttempts }, () => ids), ids.slice(0, 2), ids.slice(2)],
+      })
+    }
+    provide Layer.provide(graphqlClient({ token: Redacted.make(world.token), requestTimeoutMs: 15, sleep: () => Effect.void }), outboundVia(timeoutFetcher)), clock.layer {
+      const graphql = try Graphql
+      try graphql.execute(rateLimitQuery, { pageSize: 100 })
+      const splitTimeout = try executeNodeBatch(nodesQuery, ids)
+      const splitTimeoutNodes = Array.isArray(splitTimeout.nodes) ? splitTimeout.nodes.map((node: unknown) => (node as { readonly id?: unknown }).id) : []
+      singleTimeout = true
+      const exhausted = graphql.execute(nodesQuery, { ids: [ids[0] ?? ""] }) catch (error) => error._tag === "GraphqlUpstream" ? [error._tag, error.status] : [error._tag, 0]
+      try same({ seenPageSizes, splitTimeoutNodes, timeoutBatches, exhausted }, {
+        seenPageSizes: [100, 50],
+        splitTimeoutNodes: ids,
+        timeoutBatches: [...Array.from({ length: maxGraphqlRequestAttempts }, () => ids), ids.slice(0, 2), ids.slice(2), ...Array.from({ length: maxGraphqlRequestAttempts }, () => [ids[0] ?? ""])],
+        exhausted: ["GraphqlUpstream", 504],
+      })
     }
   })
 

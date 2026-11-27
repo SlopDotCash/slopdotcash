@@ -1,6 +1,6 @@
 // spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
 import { ConstraintViolation, first, sql } from "@repo/platform/d1"
-import { Refused, admission, answerSubtree, answered, body, handle } from "@repo/platform/http"
+import { Refused, answerSubtree, answered, body, handle } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Refusal } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
@@ -24,7 +24,7 @@ function parity(row: { readonly status: number; readonly error: string; readonly
 }
 
 const refusals: Record<Exclude<Choice, "Accepted" | "GitHubUnavailable">, Refusal> = {
-  OriginForbidden: admission.origin,
+  OriginForbidden: { status: 403, code: "origin_forbidden", message: "", headers: { "cache-control": "private, no-store" } },
   ActorRequired: parity(postReferralsCode.unauthorizedSignInWithGitHub),
   InvalidName: parity(postReferralsCode.invalidCode),
   TeamAccount: parity(postReferralsCode.teamAccount),

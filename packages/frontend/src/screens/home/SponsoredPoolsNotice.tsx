@@ -4,12 +4,18 @@ import { X } from "lucide-react";
 import { useState } from "react";
 import { webStorage } from "../../platform/webStorage.ts";
 
-const DISMISS_KEY = "slop:sponsored-pools-notice:dismissed";
+export const SPONSORED_POOLS_NOTICE_ENDS = Date.parse("2026-12-08T00:00:00Z");
+export const SPONSORED_POOLS_NOTICE_KEY = "slop:notice:sponsored-pools-2026";
 const SPONSORED_POOLS_URL = "/sponsored-pools";
+
+/** @throws {never} */
+export function sponsoredPoolsNoticeActive(now: number): boolean {
+  return Number.isFinite(now) && now < SPONSORED_POOLS_NOTICE_ENDS;
+}
 
 function isDismissed(): boolean {
   try {
-    return webStorage("local")?.getItem(DISMISS_KEY) === "1";
+    return webStorage("local")?.getItem(SPONSORED_POOLS_NOTICE_KEY) === "dismissed";
   } catch {
     return false;
   }
@@ -17,14 +23,14 @@ function isDismissed(): boolean {
 
 function markDismissed(): void {
   try {
-    webStorage("local")?.setItem(DISMISS_KEY, "1");
+    webStorage("local")?.setItem(SPONSORED_POOLS_NOTICE_KEY, "dismissed");
   } catch {
     return;
   }
 }
 
 export function SponsoredPoolsNotice() {
-  const [hidden, setHidden] = useState(isDismissed);
+  const [hidden, setHidden] = useState(() => !sponsoredPoolsNoticeActive(Date.now()) || isDismissed());
   if (hidden) return null;
   return (
     <aside aria-label="Sponsored pools" className="border-b border-border bg-card">

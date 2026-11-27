@@ -67,13 +67,3 @@ export function kindOfStored(stored: string): Kind {
   if (stored === "slopbot_scam_review") return "SlopbotScamReview";
   return "TraceLicensingAvailable";
 }
-
-//@ pure
-export function securityTemplateVersion(kind: Kind): string {
-  //@ ensures \result === "" || \result === "security-inbox-v1" || \result === "security-receipt-v1"
-  //@ ensures (\result === "security-inbox-v1") === (kind === "SecurityCase")
-  //@ ensures (\result === "security-receipt-v1") === (kind === "SecurityReportReceived")
-  if (kind === "SecurityCase") return "security-inbox-v1";
-  if (kind === "SecurityReportReceived") return "security-receipt-v1";
-  return "";
-}

@@ -41,6 +41,4 @@ function refusedSummaryMethod(method: Method) {
 
 export const otherSummaryMethods = (["POST", "PUT", "DELETE"] as const).map(refusedSummaryMethod)
 
-export const feedApi: ReadonlyArray<AnyRoute> = [health, penalties, valueAssessments, workUnitAssessments]
-
 export const summaryApi: ReadonlyArray<AnyRoute> = [summary, ...otherSummaryMethods]

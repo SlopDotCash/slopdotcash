@@ -23,6 +23,8 @@ export const assessmentRefusals = {
   methodNotAllowed: refusal(refusals.otherMethods.methodNotAllowed),
 } satisfies Readonly<Record<string, Refusal>>
 
+const privateNoStore = { "cache-control": "private, no-store" } as const
+
 export const incompleteAssessments = route({
   method: "GET",
   path: "/api/v1/notifications/incomplete-assessments",
@@ -32,13 +34,14 @@ export const incompleteAssessments = route({
   answer: IncompleteAssessments,
   rejected: refusals.githubUnavailable.error,
   cache: "private",
+  refusalHeaders: privateNoStore,
   unauthenticated: assessmentRefusals.notSignedIn,
   sessionExpired: assessmentRefusals.notSignedIn,
   actorMismatch: assessmentRefusals.actorChanged,
 })
 
 function refusedMethod(method: Method) {
-  return route({ method, path: incompleteAssessments.path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: refusals.otherMethods.methodNotAllowed.error, cache: "private" })
+  return route({ method, path: incompleteAssessments.path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: refusals.otherMethods.methodNotAllowed.error, cache: "private", refusalHeaders: privateNoStore })
 }
 
 export const otherAssessmentMethods = (["POST", "PUT", "DELETE"] as const).map(refusedMethod)

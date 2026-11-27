@@ -1,5 +1,5 @@
 // spec/slopbot/pointsDisputes.md, "Triage runs under an expiring lease and every outcome escalates to a moderator"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"
-import { handleRaw, json } from "@repo/platform/http"
+import { handleRaw } from "@repo/platform/http"
 import { route } from "@repo/platform/route"
 import { disputeKeyPattern } from "@repo/points/client"
 import { repositoryAccessOrigin } from "../access/route.vibe"
@@ -24,7 +24,7 @@ export const pointsDisputeTriage = route({
 
 function invalid() {
   const row = slopbotPostV1PointsDisputes.invalidRequestS400
-  return json({ error: row.error }, row.status, row.headers)
+  return HttpServerResponse.jsonUnsafe({ error: row.error }, { status: row.status, contentType: "application/json" })
 }
 
 effect function requestedKey() {
@@ -44,7 +44,7 @@ effect function triageAnswer() {
   const key = try requestedKey()
   if (key === undefined) return invalid()
   try processPointsDispute(key)
-  return json({ accepted: true } satisfies typeof TriageAccepted.Type)
+  return HttpServerResponse.jsonUnsafe({ accepted: true } satisfies typeof TriageAccepted.Type, { status: 200, contentType: "application/json" })
 }
 
 export const pointsDisputeRoutes = handleRaw(pointsDisputeTriage, () => triageAnswer())

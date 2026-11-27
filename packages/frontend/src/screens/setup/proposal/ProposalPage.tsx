@@ -171,7 +171,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
     );
     inFlightRef.current = false;
     if (Exit.isSuccess(exit)) {
-      if (draftPayload(store.get().wizard) === submitted) clearReferrer();
+      if (draftPayload(store.get().wizard) === submitted) update((current) => clearedWizard(current, null));
       return setSubmission({ status: "created", projectId: exit.value.project.id, actorId: actor.githubId, setup: exit.value.setup, referrer: saved.referrer });
     }
     const failure = Exit.findErrorOption(exit);

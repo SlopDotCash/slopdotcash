@@ -234,42 +234,6 @@ export function typecheckAll(memory: Memory, specs: Spec[], output = memory.root
   }));
 }
 
-function withoutImports(text: string) {
-  const ts = tsApi();
-  const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
-  // `export … from` loads a module as surely as `import` does.
-  const imports = file.statements.filter((d): d is TS.ImportDeclaration | TS.ExportDeclaration => ts.isImportDeclaration(d) || (ts.isExportDeclaration(d) && !!d.moduleSpecifier));
-  const kept = imports.reduceRight((rest, d) => rest.slice(0, d.getFullStart()) + rest.slice(d.getEnd()), text);
-  return { kept, from: imports.map((d) => (d.moduleSpecifier as TS.StringLiteral).text) };
-}
-
-function sourceModel(root: string, file: string, from: string[], models: readonly string[]): string | undefined {
-  const deps = from.map((specifier) => {
-    const target = path.resolve(root, path.dirname(file), specifier);
-    return models.find((model) => target === path.join(root, `${codeDirOf(file)}gen/${model}.ts`))
-      ?? fail(`${file}: verified code may only import generated modules (gen/<name>.ts), not ${specifier}`);
-  });
-  if (new Set(deps).size > 1) throw new Error(`${file}: verified code may import one generated module; put what it needs from the others into that module's spec`);
-  return deps[0];
-}
-
-export function proofSourceSpecs(root: string, specs: Spec[], sources: SrcFile[]): Spec[] {
-  const byName = new Map(specs.map((spec) => [spec.name, spec]));
-  const names = [...byName.keys()];
-  const needed = new Set<string>();
-  const add = (name: string) => {
-    if (needed.has(name)) return;
-    needed.add(name);
-    const spec = byName.get(name) ?? fail(`no specification model ${name}`);
-    spec.imports.forEach(add);
-  };
-  for (const { file, code } of sources) {
-    const model = sourceModel(root, file, withoutImports(code).from, names);
-    if (model !== undefined) add(model);
-  }
-  return specs.filter((spec) => needed.has(spec.name));
-}
-
 const proofFileOf = (m: Model) => m.source.replace(/\.md$/, ".proof.dfy");
 const definesAnything = (m: Model) => m.exports.types.length > 0 || m.exports.values.length > 0;
 
@@ -291,7 +255,14 @@ const definesAnything = (m: Model) => m.exports.types.length > 0 || m.exports.va
  */
 export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = readSrc(root)): Unit[] {
   const byName = new Map(models.map((m) => [m.name, m]));
-  const modelNames = [...byName.keys()];
+  const withoutImports = (text: string) => {
+    const ts = tsApi();
+    const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
+    // `export … from` loads a module as surely as `import` does.
+    const imports = file.statements.filter((d): d is TS.ImportDeclaration | TS.ExportDeclaration => ts.isImportDeclaration(d) || (ts.isExportDeclaration(d) && !!d.moduleSpecifier));
+    const kept = imports.reduceRight((rest, d) => rest.slice(0, d.getFullStart()) + rest.slice(d.getEnd()), text);
+    return { kept, from: imports.map((d) => (d.moduleSpecifier as TS.StringLiteral).text) };
+  };
   const withoutObligations = (text: string) => text.replace(/^\s*\/\/@ ensures .*\n/gm, "");
   const renderings = new Map<string, string>();
   const rendered = (name: string, prefix: string, docs: boolean) => {
@@ -344,7 +315,14 @@ export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = 
     if (/\bimport\s*\(|\brequire\s*\(/.test(code)) throw new Error(`${f}: verified code may not load other code with import() or require()`);
     checkVerifiedSource(f, code);
     const { kept, from } = withoutImports(code);
-    const d = sourceModel(root, f, from, modelNames);
+    const deps = from.map((spec) => {
+      // The gen/ of the file's own package: the root's, or the one an owner is given (mirrorGen).
+      const target = path.resolve(root, path.dirname(f), spec);
+      return models.find((m) => target === path.join(root, `${codeDirOf(f)}gen/${m.name}.ts`))?.name ?? fail(`${f}: verified code may only import generated modules (gen/<name>.ts), not ${spec}`);
+    });
+    if (new Set(deps).size > 1) throw new Error(`${f}: verified code may import one generated module; put what it needs from the others into that module's spec`);
+    // The module it imports sits beside it under its own names, as the code refers to them.
+    const d = deps[0];
     const beside = (docs: boolean) => d ? bundle(byName.get(d)!, docs).map(withoutObligations) : [];
     units.push({
       requires: used.filter((k) => k === "requires").length,

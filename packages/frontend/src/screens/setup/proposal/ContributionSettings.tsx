@@ -18,6 +18,7 @@ export type ContributionSettingsProps = {
   onChange: (field: ContributionSetting, value: string) => void;
   /** The fee amount, where the owner can set it: the settings page. */
   amount?: { readonly value: string; readonly error: string | undefined; readonly onChange: (value: string) => void };
+  standing?: { readonly value: string; readonly onChange: (value: string) => void };
 };
 
 function Setting({ name, value, label, hint, onChange }: { name: ContributionSetting; value: string; label: string; hint: ReactNode; onChange: (value: string) => void }) {
@@ -38,7 +39,7 @@ function Setting({ name, value, label, hint, onChange }: { name: ContributionSet
 }
 
 /** The refundable submission fee, the wanted issues label and the refundable report deposit, each on unless the owner turns it off. */
-export function ContributionSettings({ bountyOnly, value, onChange, amount }: ContributionSettingsProps) {
+export function ContributionSettings({ bountyOnly, value, onChange, amount, standing }: ContributionSettingsProps) {
   return (
     <div className="flex flex-col gap-4">
       {bountyOnly ? null : (
@@ -51,6 +52,19 @@ export function ContributionSettings({ bountyOnly, value, onChange, amount }: Co
             onChange={(entry) => onChange("submissionFee", entry)}
           />
           {amount && value.submissionFee === "true" ? <TextField label="Submission fee in USDC or USDG" name="submissionFeeAmount" inputMode="decimal" value={amount.value} error={amount.error} onChange={amount.onChange} /> : null}
+          {standing && value.submissionFee === "true" ? (
+            <div className="flex min-h-11 items-center gap-2.5">
+              <Checkbox
+                id={fieldId("standingDeposits")}
+                name="standingDeposits"
+                checked={standing.value === "true"}
+                onCheckedChange={(checked) => standing.onChange(String(checked === true))}
+              />
+              <Label htmlFor={fieldId("standingDeposits")} className="text-copy leading-page font-bold">
+                Accept standing deposits
+              </Label>
+            </div>
+          ) : null}
           <Setting
             name="wantedIssues"
             value={value.wantedIssues}

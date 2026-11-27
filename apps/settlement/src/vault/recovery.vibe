@@ -1,6 +1,5 @@
 // spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"
 import { first, sql } from "@repo/platform/d1"
-import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { registryDeployments } from "./deployments.vibe"
 import { refreshDeployment } from "./refresh.vibe"
 
@@ -57,34 +56,6 @@ function parsedJson(text: string): unknown {
   }
 }
 
-effect function variable(name: string) {
-  return try Config.withDefault(Config.String(name), "")
-}
-
-export effect function releaseEnvironment() {
-  return {
-    actions: try variable("GITHUB_ACTIONS"),
-    repository: try variable("GITHUB_REPOSITORY"),
-    ref: try variable("GITHUB_REF"),
-    workflowRef: try variable("GITHUB_WORKFLOW_REF"),
-    eventName: try variable("GITHUB_EVENT_NAME"),
-    sha: try variable("GITHUB_SHA"),
-    rpcUrls: try variable("PAYMENT_RPC_URLS"),
-    cloudflareAccount: try variable("CLOUDFLARE_ACCOUNT_ID"),
-    cloudflareToken: (try variable("CLOUDFLARE_API_TOKEN")) !== "",
-  } satisfies ReleaseEnvironment
-}
-
-export effect function checkedOut() {
-  const head = scoped(effect {
-    const spawner = try ChildProcessSpawner.ChildProcessSpawner
-    const handle = try spawner.spawn(ChildProcess.make("git", ["rev-parse", "HEAD"], { stdin: "ignore", stderr: "ignore" }))
-    const text = try Stream.mkString(Stream.decodeText(handle.stdout))
-    return Number(try handle.exitCode) === 0 ? text.trim() : ""
-  })
-  return head catch () => ""
-}
-
 export effect function recoverMissingObservations(environment: ReleaseEnvironment, checkout: string) {
   if (!trustedRelease(environment, checkout)) throw new RecoveryRefused({ message: "The exact trusted main release is required" })
   if (!protectedSolanaConfiguration(environment)) throw new RecoveryRefused({ message: "Protected Solana observation configuration is required" })
@@ -104,9 +75,4 @@ export effect function recoverMissingObservations(environment: ReleaseEnvironmen
     else throw new RecoveryRefused({ message: "Vault observation recovery failed; no provider data or credentials are logged." })
   }
   return { stored, retained } satisfies Recovered
-}
-
-export effect function recoverObservationsCommand() {
-  const recovered = try recoverMissingObservations(try releaseEnvironment(), try checkedOut())
-  try Console.log(`Vault observations: ${recovered.stored} stored, ${recovered.retained} retained`)
 }

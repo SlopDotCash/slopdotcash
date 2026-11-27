@@ -9,10 +9,9 @@ import { idOf } from "../enforcement/replay.vibe"
 import { enforcementAggregate, rosterOf } from "../enforcement/store.vibe"
 import { compose, vettingService } from "./compose.vibe"
 import { type Pin, PinUnavailable, listedRepository, livePin } from "./livePin.vibe"
-import { ContentUnreadable, contentSha256 } from "./pins.vibe"
+import { contentSha256 } from "./pins.vibe"
 import { type Assessment, type Queued, assessment, nextAssessmentNumber, queueStatement, templateReplacementReason } from "./store.vibe"
 
-export { ContentUnreadable, contentSha256 }
 
 export interface Requester {
   readonly githubId: string

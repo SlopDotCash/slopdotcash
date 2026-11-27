@@ -12,4 +12,7 @@ export const HistoricalValuePublisher = entrypoint(publisherLayer, publisherMeth
 
 export const ReportingReadinessRefresher = entrypoint((env: AppVars) => appServices(env), { refreshReportingReadiness, refreshMergeActivity })
 
-export default worker({ services: (env: AppVars) => appServices(env), routes: repositoryAccessRoutes })
+export default worker({
+  services: (env: AppVars) => appServices(env),
+  routes: Layer.merge(repositoryAccessRoutes, HttpRouter.add("*", "*", HttpServerResponse.text("not found", { status: 404, contentType: "text/plain;charset=UTF-8" }))),
+})
