@@ -6,10 +6,10 @@ import { RegistryManifests } from "@repo/ports/backend"
 import type { PointWeight, ProjectMonth } from "@repo/ports/points"
 import { instantOf } from "../kernels/records/instants.ts"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
-import { PayloadRow, monthStart, revisionOf } from "./live.vibe"
+import { PayloadRow, currentPointsBatch, monthStart, revisionOf } from "./live.vibe"
 import { exclusionsOf, monthWeights, periodOfCycle, projectionOf } from "./weights.vibe"
 
-schema CurrentBatchRow { readonly digest: string; readonly generated_at: string }
+export { currentPointsBatch } from "./live.vibe"
 schema CoveredRow { readonly covered: number }
 
 export interface CloseoutMonth extends ProjectMonth {
@@ -21,10 +21,6 @@ export interface CloseoutMonth extends ProjectMonth {
 function exactInstant(at: string) {
   const parsed = Date.parse(at)
   return !Number.isNaN(parsed) && new Date(parsed).toISOString() === at
-}
-
-export effect function currentPointsBatch() {
-  return try first(CurrentBatchRow, sql`SELECT digest, generated_at FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1`)
 }
 
 export effect function closeoutLedger(month: CloseoutMonth) {

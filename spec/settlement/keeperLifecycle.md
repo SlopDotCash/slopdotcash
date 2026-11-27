@@ -7,6 +7,10 @@ reconcile exact evidence. The retained `operator_keeper_lifecycle` model at
 A Durable Object belongs to one reviewed network and normalized gas wallet.
 Project selection is independent of its identity. Configuration can change on
 instance replacement while journal identity and liabilities remain durable.
+The native keeper can reopen the legacy EVM journal when its API origin,
+network and complete signer address match. Hexadecimal casing can differ.
+It preserves the stored identity and never resets the journal or its liabilities.
+Solana signer identity requires the exact address.
 
 The [RPC selection](./keeperRpc.md) and [keeper scan](./keeperScan.md) models
 own endpoint truth and reconciliation-stage sequencing. The [job scheduler](../operations/paymentJobs.md)

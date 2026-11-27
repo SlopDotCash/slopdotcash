@@ -2,14 +2,14 @@
 import { millisOf } from "@repo/platform/clock"
 import type { PointsJournal } from "../../kernels/records/records.schema.ts"
 import { recoverPublished } from "../../recovery/published.vibe"
-import type { ImplementationHistory } from "../../score/facts.vibe"
+import type { AcceptanceMarkers, ImplementationHistory } from "../../score/facts.vibe"
 import { type AcceptedImplementationPredecessor, previousPositiveImplementationSources } from "../../score/history.vibe"
 import type { MergedRepository } from "../merged/collection.vibe"
 import type { MergedOutcome } from "../merged/wire.vibe"
 import type { ImplementationMemo, ImplementationMemoStats } from "./memo.vibe"
 import { type AcceptedImplementationProofs, ImplementationEvidenceUnavailable, type ProofReader, type ProofRepository } from "./native.vibe"
 import { earlierImplementationPredecessor, implementationNodes, readPreviousImplementationSources } from "./previous.vibe"
-import { type AcceptanceMarkers, type AcceptedImplementationSource, type CurrentAcceptance, currentAcceptance, dedupedSources, implementationDigestCandidates, implementationSourcesByShape } from "./sources.vibe"
+import { type AcceptedImplementationSource, type CurrentAcceptance, currentAcceptance, dedupedSources, implementationDigestCandidates, implementationSourcesByShape } from "./sources.vibe"
 
 export type JournalReader = () => (PointsJournal | null)!ImplementationEvidenceUnavailable
 

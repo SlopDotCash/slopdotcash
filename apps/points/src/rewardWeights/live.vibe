@@ -6,12 +6,15 @@ import { RegistryManifests } from "@repo/ports/backend"
 import { ClosedMonth, type PointWeight, type ProjectMonth } from "@repo/ports/points"
 import { revisionText } from "../kernels/records/canonical.ts"
 import { instantOf } from "../kernels/records/instants.ts"
+import { RegistryRepository } from "../census/projects.vibe"
 import { PointRevision } from "../kernels/records/records.schema.ts"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
 import { exclusionsOf, monthWeights, periodOfCycle, projectionOf } from "./weights.vibe"
 
 export schema PayloadRow { readonly payload: string }
-schema BatchRow { readonly generated_at: string | null }
+schema CurrentBatchRow { readonly digest: string; readonly generated_at: string }
+schema CoveredRow { readonly covered: number }
+schema MonthlyRepositories { readonly repositories: ReadonlyArray<RegistryRepository> }
 
 const decodePayload = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
 
@@ -27,19 +30,57 @@ export effect function revisionOf(payload: string) {
   return revision
 }
 
+export effect function currentPointsBatch() {
+  return try first(CurrentBatchRow, sql`SELECT digest, generated_at FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1`)
+}
+
+effect function coversMonth(batch: string, repository: RegistryRepository, from: string, until: string) {
+  const countsFrom = repository.countsFrom
+  if (countsFrom !== undefined && instantOf(countsFrom) === null) {
+    throw new RowMismatch({ text: repository.id, issue: "the repository has an invalid counting period" })
+  }
+  const firstCounted = countsFrom !== undefined && countsFrom > from ? countsFrom : from
+  if (firstCounted >= until) return true
+  const identities = JSON.stringify([repository.id, ...(repository.aliases ?? [])])
+  const coverage = try first(CoveredRow, sql`WITH RECURSIVE
+    ranges(start_at, end_at) AS (
+      SELECT json_extract(c.value, '$.from'), json_extract(c.value, '$.to')
+      FROM points_batches b, json_each(b.coverage) c
+      WHERE b.digest = ${batch}
+        AND lower(json_extract(c.value, '$.repository')) IN (SELECT lower(value) FROM json_each(${identities}))
+        AND json_extract(c.value, '$.from') < ${until}
+        AND json_extract(c.value, '$.to') > ${firstCounted}
+    ),
+    reached(end_at) AS (
+      SELECT ${firstCounted}
+      UNION
+      SELECT r.end_at FROM reached p JOIN ranges r ON r.start_at <= p.end_at AND r.end_at > p.end_at
+      WHERE p.end_at < ${until}
+    )
+    SELECT 1 AS covered FROM reached WHERE end_at >= ${until} LIMIT 1`)
+  return coverage !== undefined
+}
+
 export effect function closedLedger(month: ProjectMonth) {
   const period = periodOfCycle(month.period)
   const today = instantOf(try isoNow())
   if (period === undefined || today === null || period >= periodOf(today)) return undefined
   const from = monthStart(period)
   const until = monthStart(period + 1)
-  const batch = try first(BatchRow, sql`SELECT max(generated_at) AS generated_at FROM points_batches`)
-  if (batch === undefined || batch.generated_at === null || batch.generated_at < until) return undefined
+  const batch = try currentPointsBatch()
+  if (batch === undefined || batch.generated_at < until) return undefined
+  const registered = try (try RegistryManifests).project(month.projectId)
+  if (registered === undefined) return undefined
+  const manifest = Schema.decodeUnknownEffect(Schema.fromJsonString(MonthlyRepositories))(registered.manifest) catch effect () => {
+    throw new RowMismatch({ text: `project ${month.projectId} manifest`, issue: "its repository scope is not readable" })
+  }
+  if (manifest.repositories.length === 0) return undefined
+  for (const repository of manifest.repositories) if (!(try coversMonth(batch.digest, repository, from, until))) return undefined
   const stored = try rows(PayloadRow, sql`SELECT r.payload FROM points_revisions r WHERE json_extract(r.payload, '$.award.projectId') = ${month.projectId} AND json_extract(r.payload, '$.award.occurredAt') >= ${from} AND json_extract(r.payload, '$.award.occurredAt') < ${until} AND NOT EXISTS (SELECT 1 FROM points_revisions s WHERE s.previous = r.id) ORDER BY r.source_key`)
   const revisions = []
   for (const row of stored) revisions.push(try revisionOf(row.payload))
-  const registered = try (try RegistryManifests).project(month.projectId)
-  const exclusions = registered === undefined ? [] : try exclusionsOf(month.projectId, registered.manifest)
+  if ((try currentPointsBatch())?.digest !== batch.digest) return undefined
+  const exclusions = try exclusionsOf(month.projectId, registered.manifest)
   const { ledger, logins } = try projectionOf(month.projectId, revisions, today)
   const weighted = try monthWeights(month.projectId, period, periodOf(today), exclusions, ledger)
   return {

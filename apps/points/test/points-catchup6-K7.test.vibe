@@ -327,6 +327,64 @@ effect function emptySquash(server: Remote) {
   return { actual: outcomes, expected: [true, "Accepted squash changes its first-parent tree", "Earlier accepted squash is absent from the later base", "Later squash base does not retain all earlier accepted paths"] }
 }
 
+effect function emptyMerge(server: Remote) {
+  const { gitDir } = server
+  const baseFiles = { "base.ts": "independent base work\n" }
+  const acceptedFiles = { ...baseFiles, [workPath]: "accepted work\n" }
+  const retainedFiles = { ...acceptedFiles, "other.ts": "unrelated work\n" }
+  const base = try commit(gitDir, "Initial tree", {}, [])
+  const earlierParent = try commit(gitDir, "Advanced integration before earlier acceptance", baseFiles, [base])
+  const earlierHead = try commit(gitDir, "Earlier submitted work", { [workPath]: acceptedFiles[workPath] }, [base])
+  const earlierMerge = try commit(gitDir, "Earlier accepted work", acceptedFiles, [earlierParent, earlierHead])
+  const laterWork = try commit(gitDir, "Later submitted copy", acceptedFiles, [earlierParent])
+  const laterHead = try commit(gitDir, "Later submitted follow-up", acceptedFiles, [laterWork])
+  const independentHead = try commit(gitDir, "Unrelated submitted work", { ...baseFiles, "other.ts": "unrelated work\n" }, [earlierParent])
+  const intervening = try commit(gitDir, "Unrelated intervening merge", retainedFiles, [earlierMerge, independentHead])
+  const direct = try commit(gitDir, "Direct empty merge", acceptedFiles, [earlierMerge, laterHead])
+  const empty = try commit(gitDir, "Empty merge after unrelated work", retainedFiles, [intervening, laterHead])
+  const nonempty = try commit(gitDir, "Nonempty merge", { ...retainedFiles, "new.ts": "new change\n" }, [intervening, laterHead])
+  const side = try commit(gitDir, "Earlier acceptance only on a side parent", acceptedFiles, [earlierParent, earlierMerge])
+  const sideOnly = try commit(gitDir, "Empty merge with side-only acceptance", acceptedFiles, [side, laterHead])
+  const reverted = try commit(gitDir, "Later first-parent change to retained path", { ...retainedFiles, [workPath]: "different work\n" }, [intervening])
+  const lostPath = try commit(gitDir, "Empty merge with changed retained path", { ...retainedFiles, [workPath]: "different work\n" }, [reverted, laterHead])
+  const reverseHead = try commit(gitDir, "Reported earlier head carries later merge", retainedFiles, [empty])
+  const reverseMerge = try commit(gitDir, "Reported earlier merge carries later history", retainedFiles, [earlierParent, reverseHead])
+  const earlierPull: FixturePull = { number: 1, node_id: "PR_earlier", merged_at: "2026-10-04T00:00:00.000Z", base: { sha: base, ref: "develop", repo: repository }, head: { sha: earlierHead }, merge_commit_sha: earlierMerge, commits: 1, changed_files: 1 }
+  const laterPull: FixturePull = { number: 2, node_id: "PR_later", merged_at: "2026-10-04T01:00:00.000Z", base: { sha: earlierParent, ref: "develop", repo: repository }, head: { sha: laterHead }, merge_commit_sha: empty, commits: 2, changed_files: 1 }
+  effect function sourceOf(pull: FixturePull) {
+    return { repository: repository.full_name, repositoryNodeId: repository.node_id, sourceId: pull.node_id,
+      sourceUrl: `https://github.com/${repository.full_name}/pull/${pull.number}`, occurredAt: pull.merged_at, headSha: pull.head.sha,
+      author: { id: `actor_${pull.number}`, login: `fixture-${pull.number}`, kind: "User" }, complete: true, commitCount: pull.commits,
+      commits: try commitsOf(gitDir, pull.head.sha, pull.base.sha, pull.node_id) } satisfies CorrectionSource
+  }
+  const earlier = try sourceOf(earlierPull)
+  const later = try sourceOf(laterPull)
+  const reverseCommits = try commitsOf(gitDir, reverseHead, base, earlierPull.node_id)
+  const reverse = { ...earlier, headSha: reverseHead, commitCount: reverseCommits.length, commits: reverseCommits }
+  const proof: IdenticalAcceptedChange = { earlierSourceId: earlier.sourceId, earlierMergeSha: earlierMerge, mergeSha: empty, diffSha256: try changeDigest(gitDir, earlierParent, earlierMerge), emptyMerge: true }
+  effect function verify(selectedProof: IdenticalAcceptedChange, source = later, owner = earlier, ownerPull = earlierPull) {
+    const selectedPull = { ...laterPull, merge_commit_sha: selectedProof.mergeSha }
+    const pulls = [ownerPull, selectedPull]
+    serve(server, [owner, source], pulls)
+    const retirement = retirementOf(source, owner, selectedProof)
+    const result = try attempt(server, verifyHistoricalIdenticalAcceptedChanges({ sourceAudit: auditOf(pulls), duplicateRetirements: [retirement] }, "develop"))
+    return typeof result === "string" ? result : [...result.identical]
+  }
+  const directProof = { ...proof, mergeSha: direct }
+  const reverseProof = { ...proof, earlierMergeSha: reverseMerge }
+  const [first] = later.commits
+  if (first === undefined) throw Error("fixture later submission")
+  return {
+    actual: [try verify(directProof), try verify(proof), try verify({ ...proof, mergeSha: nonempty }), try verify({ ...proof, mergeSha: sideOnly }),
+      try verify({ ...proof, mergeSha: lostPath }), try verify(proof, { ...later, commits: [first, first] }),
+      try verify({ ...proof, emptySquash: true }), try verify(reverseProof, later, reverse, { ...earlierPull, head: { sha: reverseHead }, merge_commit_sha: reverseMerge, commits: reverseCommits.length })],
+    expected: [[digestText(retirementOf(later, earlier, directProof))], [digestText(retirementOf(later, earlier, proof))],
+      "Accepted merge changes its first-parent tree", "Earlier accepted merge is absent from the later first-parent history",
+      "Later merge base does not retain all earlier accepted paths", "Empty merge needs the complete two-parent submitted acceptance",
+      "Reviewed identical change identity is invalid", "Earlier source already carries the retiring PR's merge"],
+  }
+}
+
 effect function withRemote<A, E, R>(use: (server: Remote) => A!E!R) {
   const made = try remote()
   provide gitAt(made.wrapper) {
@@ -409,6 +467,32 @@ effect function identicalFixture(survivingCarrier = false, earlierAmount?: numbe
   const expected = bind(f)
   const retired = try Effect.try(() => hash(retirement))
   return { ...f, earlier, expected, verified: new Set([retired]) }
+}
+
+effect function emptyMergeFixture(earlierAmount?: number) {
+  const f = try identicalFixture(false, earlierAmount)
+  const proof = f.retirement.identicalAcceptedChange
+  const source = f.retirement.source
+  const [work] = source.commits
+  if (proof === undefined || work === undefined) throw Error("fixture empty merge source")
+  proof.emptyMerge = true
+  source.author = { ...actor, id: btoa("04:User43"), login: "fork-carrier" }
+  source.commits.push({ ...work, sha: "c".repeat(40), parentShas: [work.sha], additions: 0, deletions: 0, files: [] })
+  source.commitCount = source.commits.length
+  const zero = { ...f.original, key: sha256Of(keyText({ projectId: f.original.projectId, actorId: source.author.id,
+    category: f.original.category, sourceId: f.original.sourceId })), actor: { id: source.author.id, login: source.author.login }, amount: 0 }
+  const baseline = try Effect.try(() => appended(f.baseline, zero, "b".repeat(64)))
+  const revisionId = baseline.revisions.at(-1)?.id ?? ""
+  const candidate = f.packet.corrections.candidates.find((item) => item.sourceId === source.sourceId)
+  if (candidate === undefined) throw Error("fixture empty merge candidate")
+  f.packet.baselineDigest = try Effect.try(() => batchDigestOf(baseline))
+  f.packet.baselineRevisionCount = baseline.revisions.length
+  f.packet.corrections.baseline = try Effect.try(() => baselineOf(baseline))
+  f.retirement.expectedPredecessors.push({ key: zero.key, revisionId })
+  candidate.expectedPredecessors = f.retirement.expectedPredecessors.map((predecessor) => ({ ...predecessor }))
+  const updated = { ...f, baseline }
+  const expected = bind(updated)
+  return { ...updated, expected, verified: new Set([digestText(f.retirement)]) }
 }
 
 effect function carriedEdgeFixture() {
@@ -537,6 +621,28 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
     const squash = try withRemote(emptySquash)
     try same(squash.actual, squash.expected)
   }))
+
+  it.effect('An empty two-parent acceptance requires complete identical submitted changes retained on its first-parent history (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const checked = try withRemote(emptyMerge)
+    try same(checked.actual, checked.expected)
+  }))
+
+  it.effect('A verified empty merge keeps exact baseline shares when the later opener differs from the credited contributor (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => effect {
+    provide webCrypto {
+      const f = try emptyMergeFixture()
+      const verified = try rebuilt(f.packet, f.baseline, f.verified)
+      const unverified = try rebuilt(f.packet, f.baseline)
+      const unequal = try emptyMergeFixture(29)
+      const unequalResult = try rebuilt(unequal.packet, unequal.baseline, unequal.verified)
+      const stale = try emptyMergeFixture()
+      const prior = stale.retirement.expectedPredecessors.at(-1)
+      if (prior === undefined) throw Error("fixture missing predecessor")
+      prior.revisionId = "d".repeat(64)
+      const staleResult = try rebuilt(stale.packet, stale.baseline, new Set([digestText(stale.retirement)]))
+      try same([verified, unverified, unequalResult, staleResult], [f.expected, "Identical accepted change lacks a verified earlier ordinary pool",
+        "Empty merge must preserve the earlier pool with identical recipient shares", "Duplicate pool changed after owner review"])
+    }
+  })
 
   it.effect('A duplicate retirement verifies native acceptance order even for ordinary coverage (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
     const server: Remote = { gitDir: "", log: "", routes: new Map(), reads: new Map() }

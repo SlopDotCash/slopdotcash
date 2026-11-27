@@ -175,7 +175,7 @@ export effect function verifyCurrentValueSource(evidence: Evidence, result: Curr
   const identity = try absentOn404((try GitHub).json(`/repos/${evidence.repository}`, RepositoryIdentity))
   if (identity === undefined || identity.private || identity.id !== evidence.repositoryDatabaseId || identity.node_id !== evidence.repositoryNodeId)
     throw new ValueRefused({ reason: "Value publication requires the same public repository identity" })
-  const collected = try collectEvidence({ repository: evidence.repository, number: evidence.pull.number, policy: repository, ...(joint?.recovered === undefined ? {} : { recovered: joint.recovered }) })
+  const collected = try collectEvidence({ repository: evidence.repository, number: evidence.pull.number, policy: repository, negotiatedDiff: true, ...(joint?.recovered === undefined ? {} : { recovered: joint.recovered }) })
   let current = try collectContext(collected, contextSelections(evidence))
   if (joint?.mergeRecipe !== undefined) current = try reuseMergeResolution(current, evidence, joint.mergeRecipe)
   if (evidence.mergeResolutions !== undefined && evidence.mergeResolutions.length === 0 && current.commits.every((commit) => commit.parents.length !== 2)) current = { ...current, mergeResolutions: [] }

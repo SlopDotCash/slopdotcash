@@ -110,11 +110,40 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function incompleteAssessment(projectId: string, id: string) {
+const privateScanFinding = "Private fixture finding text";
+const privateScanGap = "Private fixture coverage note";
+const privateScanPath = "slop-skill-template/private-fixture.md";
+
+async function incompleteAssessment(projectId: string, id: string, repository?: string) {
   const commit = "c".repeat(40);
   const template = "d".repeat(64);
-  const result = JSON.stringify({ schemaVersion: "slop-vetting-result-v2", assessmentId: id, disposition: "incomplete", assessed: { commitSha: commit, templateSha256: template } });
   const at = new Date().toISOString();
+  const [current] = await site.sql("SELECT revision, manifest_sha256 FROM projects WHERE id = ?", projectId);
+  const assessed = { commitSha: commit, templateSha256: template };
+  const result = JSON.stringify({
+    schemaVersion: "slop-vetting-result-v2",
+    assessmentId: id,
+    disposition: "incomplete",
+    assessed,
+    ...(repository === undefined ? {} : {
+      projectId,
+      revision: current?.revision,
+      manifestSha256: current?.manifest_sha256,
+      policyVersion: "fixture",
+      assessed: { ...assessed, repository, inputManifestSha256: "a".repeat(64), dependencyLocks: [] },
+      scan: { runId: "scan-1", startedAt: new Date(Date.now() - 1000).toISOString(), completedAt: at, reportSha256: "b".repeat(64) },
+      coverage: Object.fromEntries(["source", "manifests", "dependencies", "installScripts", "downloads", "agentInstructions"].map((surface) => [surface, { state: "complete", items: 1 }])),
+      checks: Object.fromEntries(["wallet-drainer", "credential-theft", "secret-exfiltration", "unsafe-execution", "prompt-injection"].map((check) => [check, "passed"])),
+      visibilityGaps: [privateScanGap],
+      execution: null,
+      reusedAssessmentId: null,
+      primaryReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-policy", inputManifestSha256: "a".repeat(64), runId: "primary", status: "completed", verdict: "findings", risk: "ambiguous", findingCount: 1 },
+      specialistReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-policy", inputManifestSha256: "a".repeat(64), runId: "specialist", status: "completed", verdict: "findings", risk: "ambiguous", findingCount: 1 },
+      artifacts: [],
+      findings: [{ severity: "medium", category: "other", summary: privateScanFinding, evidence: privateScanPath }],
+      confirmation: null,
+    }),
+  });
   await site.sql(
     "INSERT INTO vetting_assessments(id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at) SELECT ?, id, revision, manifest_sha256, ?, ?, ?, '9001', 'octo-root', ?, 'Browser journey fixture', 'incomplete', 'fixture', ?, ?, ?, ? FROM projects WHERE id = ?",
     id, "b".repeat(64), commit, template, at, result, await sha256(result), "e".repeat(64), at, projectId,
@@ -471,9 +500,10 @@ describe("Maintain a live project with current GitHub authority", () => {
 
   // spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work"
   it("removal is asked once, a stale revision keeps the", async () => {
-    await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/", "^console Failed to load resource: the server responded with a status of 404");
+    await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/");
     const fullName = await repository(users.oli, "removable");
     const id = await createProject(users.oli, fullName, "Removable");
+    const projectPath = `/api/v1/projects/${encodeURIComponent(id)}`;
     const removals = async () => (await site.sent()).filter((sent) => sent.method === "POST" && sent.path === `/api/v1/projects/${id}/remove`).length;
     const dialog = named("alertdialog", "Remove Removable from Slop?");
 
@@ -496,14 +526,24 @@ describe("Maintain a live project with current GitHub authority", () => {
     await shown(dialog).toMatchObject({ visible: true });
     expect(await site.sql("SELECT status FROM projects WHERE id = ?", id)).toEqual([{ status: "paused" }]);
 
-    await site.click(within(dialog, named("button", "Reload")));
+    await site.hold("GET", projectPath);
+    try {
+      await site.click(within(dialog, named("button", "Reload")));
+      await shown(within(dialog, named("button", "Reload"))).toMatchObject({ visible: true });
+    } finally {
+      await site.release("GET", projectPath);
+    }
+    await shown(dialog).toMatchObject({ count: 0 });
     await shown(settings).toMatchObject({ visible: true });
+    await shown(named("button", "Remove project")).toMatchObject({ focused: true });
     await site.click(named("button", "Remove project"));
     await site.click(within(dialog, named("button", "Remove project")));
     await shown(named("heading", "Project removed", { level: 1 })).toMatchObject({ visible: true });
     expect(await removals()).toBe(2);
-    expect((await site.fetch("GET", `/api/v1/projects/${encodeURIComponent(id)}`)).status).toBe(404);
-    expect((await revisions(id)).length).toBeGreaterThanOrEqual(2);
+    expect((await lastRevision(id))?.revision).toBe(3);
+    expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
+    await site.allow("^console Failed to load resource: the server responded with a status of 404 \\(Not Found\\)$");
+    expect((await site.fetch("GET", projectPath)).status).toBe(404);
   });
 });
 
@@ -584,7 +624,31 @@ describe("Exempt only by the frozen set or an audited", () => {
     const fullName = await repository(users.eli, "exempt");
     const id = await createProject(users.eli, fullName, "Exempt");
     const assessment = `vet_${"7".repeat(32)}`;
-    await incompleteAssessment(id, assessment);
+    await incompleteAssessment(id, assessment, fullName.toUpperCase());
+    await manage(id);
+    const reasons = named("region", "Why the scan did not clear");
+    await shown(reasons).toMatchObject({ visible: true });
+    await expect.poll(async () => (await site.read(reasons)).text, { timeout: 30_000 }).toContain("Specialist: ambiguous");
+    await shown(text("The last scan finished, but it did not establish clearance. Findings in Slop's skill template were recorded.", true)).toMatchObject({ visible: true });
+    await shown(named("button", "Rescan")).toMatchObject({ visible: true });
+    const checkPath = `/api/v1/project-setup/${encodeURIComponent(id)}/check`;
+    const ownerSetup = await site.fetch("POST", checkPath, {});
+    expect(ownerSetup.status).toBe(200);
+    expect(JSON.stringify(ownerSetup)).not.toMatch(/Private fixture|private-fixture/iu);
+    const privateReason = /Slop's skill template|Specialist: ambiguous|Private fixture|private-fixture/iu;
+    const publicProject = await site.fetch("GET", `/api/v1/projects/${encodeURIComponent(id)}`);
+    expect(JSON.stringify(publicProject)).not.toMatch(privateReason);
+    await signOut(users.eli.login);
+    await signIn(users.pia.login, "/");
+    const strangerSetup = await site.fetch("POST", checkPath, {});
+    expect(JSON.stringify(strangerSetup)).not.toMatch(privateReason);
+    await signOut(users.pia.login);
+
+    await signIn(users.eli.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await incompleteAssessment(id, `vet_${"9".repeat(32)}`, "other/repository");
+    const inconsistent = await site.fetch("POST", checkPath, {});
+    expect(JSON.stringify(inconsistent)).toContain("The last scan did not clear the project.");
+    expect(JSON.stringify(inconsistent)).not.toMatch(privateReason);
     await signOut(users.eli.login);
 
     await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=security`);

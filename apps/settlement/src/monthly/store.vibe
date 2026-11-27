@@ -1,6 +1,7 @@
 // spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
 import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
+import { sha256Of } from "@repo/platform/git/bytes"
 import { D1, type D1Error, RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
@@ -315,7 +316,7 @@ export effect function awardSource(projectId: string, period: Period, actor: num
   return try sha256Hex(JSON.stringify(["slop-escrow-origin-v2", projectId, formatPeriod(period), String(actor)]))
 }
 
-export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly early_close_at: string | null; readonly revision: number | null }
+export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly early_close_at: string | null; readonly reviewed_october: 0 | 1; readonly revision: number | null }
 export schema ProposedRow { readonly github_user_id: string; readonly github_login: string; readonly gross_base: string; readonly source_digest: string }
 export schema ChangeRow { readonly sequence: number; readonly github_user_id: string; readonly gross_base: string; readonly actor_id: string; readonly created_at: string }
 export schema CutRow { readonly sequence: number; readonly github_user_id: string; readonly proposed_gross_base: string; readonly gross_base: string; readonly reason: string; readonly created_at: string }
@@ -353,7 +354,7 @@ function scopeOf(key: MonthKey) {
 export function monthReads(key: MonthKey): ReadonlyArray<Statement> {
   const scope = scopeOf(key)
   return [
-    sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, early_close_at, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
+    sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, early_close_at, reviewed_october, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
     sql`SELECT github_user_id, github_login, gross_base, source_digest FROM monthly_reward_base_rows WHERE ${scope} ORDER BY rowid`,
     sql`SELECT sequence, github_user_id, gross_base, actor_id, created_at FROM monthly_allocation_changes WHERE ${scope} ORDER BY sequence`,
     sql`SELECT sequence, github_user_id, proposed_gross_base, gross_base, reason, created_at FROM monthly_allocation_cut_reasons WHERE ${scope} ORDER BY sequence`,
@@ -420,6 +421,32 @@ effect function pledgeObserved(month: Monthly, rows: MonthRows, manifest: Monthl
   return pledged && canObservePledge(month, deployment.vault) ? observePledge(month, deployment.vault) : month
 }
 
+const legacyReviewedOctober = new Map([
+  ["feed", {
+    cap: "500000000",
+    manifest: "d600433ac17e054357e350e7718e64f67041b27153b71d26f10c9fab059ee390",
+    packet: "57785bafd61c219b6c595b5a8b1e3bf142829d7c61ee6c5106f21bfeaf7d6331",
+  }],
+  ["thenetwork", {
+    cap: "500000000",
+    manifest: "fe29a09d36c7c639ad8597c7d54d1d11a7e9e46a281c518d18805f8a57d488c7",
+    packet: "1aa3f69c06c34cb3d386db1f9966ca5a9721e4d6061ccb90479b64720034c8d7",
+  }],
+  ["asi", {
+    cap: "250000000",
+    manifest: "a3eff392b868cebcefbfc4a2993e7a80cd9e4dce048748bd302bdfc9a0fe806e",
+    packet: "3dfe3101b52e3d095a5af7103b825634745278c62ef2016999b148cfa75fda4e",
+  }],
+])
+
+function usesReviewedOctoberPool(key: MonthKey, row: BaseRow) {
+  if (row.reviewed_october === 1) return true
+  const approved = legacyReviewedOctober.get(key.projectId)
+  return approved !== undefined && formatPeriod(key.period) === "2026-10" && row.early_close_at === null &&
+    row.cap_base === approved.cap && row.source_snapshot_sha256 === approved.packet && row.manifest_sha256 === approved.manifest &&
+    sha256Of(row.manifest) === approved.manifest
+}
+
 export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts, now: number) {
   const project = key.projectId
   const period = key.period
@@ -475,6 +502,7 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
     notices,
     latestCutAt: cuts.reduce((last, entry) => Math.max(last, entry.at), 0),
     earlyCloseAt: earlyCloseAt(project, period, found),
+    reviewedOctober: usesReviewedOctoberPool(key, found),
   }, rows.settings)
   const run = rows.run
   if (run === undefined) return try decodeState(proposed)

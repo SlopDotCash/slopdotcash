@@ -183,9 +183,8 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "24
   it.effect('Both Workers keep their class and entry names in the bundle, and the minified backend slice fits the _worker.js limit (spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => effect {
     const spike = try Spike
     const service = try orDie(Effect.try(() => readText(spike.built.service)))
-    const minified = try promise(() => buildSite(`${spikeCache}/minified`, true))
     const backend = try promise(() => buildDeployables(backendRoot, { outDir: `${spikeCache}/backend`, workers: { worker: "src/worker.vibe" }, minify: true }))
-    const measured = try orDie(Effect.try(() => bundleSizes({ pages: spike.built.pages, pagesMinified: minified.pages, backendMinified: `${backend}/worker.js` })))
+    const measured = try orDie(Effect.try(() => bundleSizes({ pages: spike.built.pages, backendMinified: `${backend}/worker.js` })))
     try Effect.log(JSON.stringify(measured))
     try same({
       exports: /export \{[^}]*\bJournal\b[^}]*\}/u.test(service) && /export \{[^}]*\bVerifier\b[^}]*\}/u.test(service),

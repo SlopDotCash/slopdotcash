@@ -17,14 +17,13 @@ export interface SiteFiles {
   readonly assets: string;
 }
 
-export async function buildSite(outDir: string, minify = false): Promise<SiteFiles> {
+export async function buildSite(outDir: string): Promise<SiteFiles> {
   const assets = join(outDir, "site");
   await build({ root: join(spike, "explore"), configFile: false, logLevel: "error", build: { outDir: assets, emptyOutDir: true } });
   const deployed = await buildDeployables(spike, {
     outDir: join(outDir, "deployables"),
     workers: { _worker: "worker/pages.vibe", service: "worker/service.vibe" },
     programs: { main: "program/main.vibe" },
-    minify,
   });
   return { pages: join(deployed, "_worker.js"), service: join(deployed, "service.js"), program: join(deployed, "programs/main.js"), assets };
 }

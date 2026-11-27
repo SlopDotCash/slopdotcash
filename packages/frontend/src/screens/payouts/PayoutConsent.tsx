@@ -1,7 +1,7 @@
-// spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"
+// spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"
 import type { AccountPayment, AccountWallet, PaymentsAccount } from "@repo/settlement/client";
 import { chainFamily, isNetworkKey } from "@repo/settlement/kernels/networks";
-import { Button, Dialog, DialogContent, Status, type WalletOption } from "@repo/ui";
+import { Button, Dialog, DialogContent, Status, type StatusProps, type WalletOption } from "@repo/ui";
 import { type Effect, Exit } from "effect";
 import { useState } from "react";
 import type { PageRuntime } from "../../app/runtime.vibe";
@@ -19,13 +19,20 @@ export type PayoutConsentProps = {
   payment: AccountPayment;
   /** Shows how the account was lost: signed out or changed. */
   onAccessLost: (lost: AccessLost) => void;
+  onRefresh: () => void;
 };
 
 const consentFailed = "Payout consent failed. Your award stays reserved.";
 
 type ConsentControlProps = PayoutConsentProps & { readonly claim: AccountWallet };
 
-function ConsentControl({ runtime, account, payment, claim, onAccessLost }: ConsentControlProps) {
+const bindingPresentation = {
+  pending: { tone: "Neutral", icon: "Clock", label: "Authorized · pending" },
+  finalized: { tone: "Positive", icon: "Check", label: "Wallet bound" },
+  unavailable: { tone: "Negative", icon: "Alert", label: "Authorization unavailable" },
+} as const satisfies Record<NonNullable<AccountPayment["bindingStatus"]>, StatusProps["presentation"]>;
+
+function ConsentControl({ runtime, account, payment, claim, onAccessLost, onRefresh }: ConsentControlProps) {
   const consent: ConsentRuntime = consentRuntime(runtime, account.githubUserId, claim);
   const family = chainFamily(payment.chain);
   const offers = useFeed(consent, "offers", watchOffers).value ?? [];
@@ -55,7 +62,8 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
     if (next.consent.phase === "Accepted") {
       void consent.runPromiseExit(closeConsent());
       setOpen(false);
-      setNotice(next.notice);
+      if (family === "evm") onRefresh();
+      else setNotice(next.notice);
       return;
     }
     setProblem(next.problem);
@@ -114,5 +122,13 @@ export function PayoutConsent(props: PayoutConsentProps) {
   const { account, payment } = props;
   const claim = account.wallets.find((wallet) => wallet.chain === payment.chain && wallet.authorized);
   if (!claim || payment.vault === "" || payment.state !== "reserved" || !isNetworkKey(payment.network)) return null;
+  if (payment.bindingStatus !== undefined) {
+    return (
+      <span className="flex flex-wrap items-center gap-2">
+        <Status role="status" presentation={bindingPresentation[payment.bindingStatus]} />
+        {payment.bindingStatus === "unavailable" ? <Button variant="secondary" size="sm" aria-label="Retry wallet authorization" onClick={props.onRefresh}>Retry</Button> : null}
+      </span>
+    );
+  }
   return <ConsentControl key={claim.claimId} {...props} claim={claim} />;
 }

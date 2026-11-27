@@ -533,6 +533,8 @@ jobs:
             exit "$feed_status"
           else
             mv public/data/leaderboard.json "$BUNDLE/github/leaderboard.json"
+            digest="$(sha256sum "$BUNDLE/github/leaderboard.json" | cut -d ' ' -f 1)"
+            echo "fresh_digest=$digest" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Save the collection memo for the next trusted collection
@@ -609,6 +611,7 @@ jobs:
           path: ${{ runner.temp }}/collected-data
 
       - name: Load validated published data for a manual release
+        id: restored_ledger
         if: inputs.use_published_data == true
         env:
           DATA_FROM_RUN: ${{ inputs.data_from_run || '' }}
@@ -619,6 +622,10 @@ jobs:
             collected="$RUNNER_TEMP/collected"
             node apps/points/dist/programs/main.js snapshot extract-collected "$RUNNER_TEMP/collected-data/bundle.zip" "$collected"
             node apps/points/dist/programs/main.js snapshot restore-local "$collected" "$BUNDLE/github/leaderboard.json"
+            if [ -f "$collected/leaderboard-fresh.sha256" ]; then
+              digest="$(cat "$collected/leaderboard-fresh.sha256")"
+              echo "fresh_digest=$digest" >> "$GITHUB_OUTPUT"
+            fi
             cp "$collected/profiles.json" "$RUNNER_TEMP/published-profiles.json"
           else
             node apps/points/dist/programs/main.js snapshot restore "$SLOP_DATA_ORIGIN/data/leaderboard.json" "$BUNDLE/github/leaderboard.json"
@@ -646,13 +653,18 @@ jobs:
 
       - name: Build the public Points data
         env:
+          FRESH_LEADERBOARD_SHA256: ${{ steps.live_ledger.outputs.fresh_digest || steps.restored_ledger.outputs.fresh_digest }}
           POINTS_PROTECTION_URL: ${{ github.ref == 'refs/heads/main' && 'https://slop.cash/api/v1/operator/protected-point-months' || '' }}
           POINTS_PROTECTION_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.POINTS_PROTECTION_TOKEN || '' }}
         run: |
           set -euo pipefail
           cp "$BUNDLE/github/leaderboard.json" "$BUNDLE/site/data/leaderboard.json"
+          fresh=()
+          if [ -n "$FRESH_LEADERBOARD_SHA256" ]; then
+            fresh=(--fresh-snapshot "$FRESH_LEADERBOARD_SHA256")
+          fi
           node apps/points/dist/programs/main.js journal build "$RUNNER_TEMP/repository-registry.json" "$BUNDLE/site/data" "$BUNDLE/registry/snapshot.json" \
-            --online --bootstrap --environment "$SLOP_RELEASE_ENVIRONMENT"
+            --online --bootstrap --environment "$SLOP_RELEASE_ENVIRONMENT" "${fresh[@]}"
           if [ "${{ inputs.use_published_data == true }}" = true ]; then
             node apps/points/dist/programs/main.js profiles publish "$RUNNER_TEMP/published-profiles.json" "$BUNDLE/site/data/profiles.json" --current
           fi
@@ -693,6 +705,7 @@ jobs:
         id: manifest
         run: |
           set -euo pipefail
+          rm -f "$BUNDLE/site/data/leaderboard-fresh.sha256"
           node apps/operations/dist/programs/main.js release manifest "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE"
           node apps/operations/dist/programs/main.js release verify-bundle "$BUNDLE"
           digest="$(sha256sum "$BUNDLE/release-manifest.json" | cut -d ' ' -f 1)"
@@ -708,7 +721,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload Cloudflare Pages bundle
+      - name: Bind the fresh collection receipt for checked recovery
+        if: steps.live_ledger.outputs.fresh_digest != ''
+        env:
+          FRESH_LEADERBOARD_SHA256: ${{ steps.live_ledger.outputs.fresh_digest }}
+        run: printf '%s\n' "$FRESH_LEADERBOARD_SHA256" > "$BUNDLE/site/data/leaderboard-fresh.sha256"
+
+      - name: Upload the collected-data recovery bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: slop-source-${{ github.sha }}

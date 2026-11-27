@@ -143,13 +143,18 @@ whose commit is an ancestor of this release's, whose exact attempt has
 exactly one successful "Prepare checked browser bundle" job with exactly one
 successful "Generate live contribution data" step, and whose one unexpired
 `slop-source-<head sha>` artifact, at most 2 GiB and at most six days old,
-matches its GitHub sha256 digest. Only its ledger and profiles are taken,
-with their own generation time; the [retained-data age
+matches its GitHub sha256 digest. Its ledger and profiles retain their
+generation time. The [retained-data age
 check](../points/retainedFreshness.md) still refuses data older than
 production serves. The extraction bounds (`data/leaderboard.json` at most
 25 MiB, at most eight `data/leaderboard/<sha256>.part` of at most 8 MiB each,
 `data/profiles.json` at most 8 MiB, each a regular non-empty file named once)
-are the shell's.
+are the shell's. A successful fresh collector can preserve the raw leaderboard
+SHA-256 as one optional 65-byte regular artifact entry,
+`data/leaderboard-fresh.sha256`, for this recovery path. The builder checks
+that digest against the exact reconstructed leaderboard before using any
+first-time [out-of-window review credits](../points/journal.md). Only a
+verified fresh producer receipt establishes that authority after restore.
 
 ```quint
 pure def canCollectData(r: Release, environment: Environment, registryDigest: int, githubDigest: int, recordedAt: int): bool =

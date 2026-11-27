@@ -3,8 +3,9 @@ import { type ApprovalEvidence, approvalSettled } from "../../../gen/frontend__b
 import { networkLabel } from "../../kernels/assetText.ts"
 import { WalletFailed } from "../core/discovery.vibe"
 import { type EvmConnection, evmChainId, evmRequest, requireSelected, sendTransaction } from "../core/evm.vibe"
+import { failureOf } from "../core/injected.ts"
 import { allowanceData, balanceOfData, hexQuantity, wordValue } from "../owner/evmCalls.ts"
-import { type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, failureCode, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf } from "../owner/evmEvidence.ts"
+import { type WalletReceipt, atomicSupported, batchReferenceOf, batchRefusedCode, batchReport, blockHashOf, blockNumberOf, canonicalReceipt, isTransactionHash, matchesCall, receiptOf, receiptStatus, transactionOf } from "../owner/evmEvidence.ts"
 import { settled } from "../owner/ownerDecisions.ts"
 import { type DepositStep, type FeeWay, batchCalls, depositEvents, pausedData, reviewedDeposit, stepCall } from "./feeCalls.ts"
 
@@ -101,10 +102,8 @@ export effect function sendFeeBatch<E>(connection: EvmConnection, way: FeeWay, i
   const chain = try chainOf(way)
   try requireSelected(connection, chain)
   try beforePrompt
-  const result: unknown = evmRequest(connection, "wallet_sendCalls", [{ version: "2.0.0", from: connection.address, chainId: hexQuantity(chain), atomicRequired: true, calls }]) catch effect (error) => {
-    if (error._tag === "WalletFailed" && batchRefusedCode(failureCode(error))) throw new FeeBatchUnavailable({ message: depositMessages.batchRefused })
-    throw error
-  }
+  const result = try evmRequest(connection, "wallet_sendCalls", [{ version: "2.0.0", from: connection.address, chainId: hexQuantity(chain), atomicRequired: true, calls }],
+    (caught) => batchRefusedCode(failureOf(caught).code) ? new FeeBatchUnavailable({ message: depositMessages.batchRefused }) : undefined)
   const reference = batchReferenceOf(result)
   if (reference === undefined) throw new WalletFailed({ message: depositMessages.batchNoReference })
   return reference

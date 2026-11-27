@@ -1,4 +1,4 @@
-// spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A recorded award follows the latest complete snapshot's score"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A later assessment that reaches an October-protected source holds the overlapping work and records each hold"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
+// spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score"; spec/points/journal.md, "A recorded award follows the latest complete snapshot's score"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A later assessment that reaches an October-protected source holds the overlapping work and records each hold"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type ImplementationAllocation, type LeaderboardSnapshot, type ScoreEvent, type ValueCoverage, valueScoringApprovedHistoryFrom } from "../client/snapshot/schema.vibe"
 import { POINTS_PER_THIRD, pointsOfThirdsText } from "../client/units/scoreUnits.ts"
@@ -8,11 +8,11 @@ import { instantOf } from "../kernels/records/instants.ts"
 import { workUnitSlug } from "../score/facts.vibe"
 import {
   type Decision, type Event, type JointHoldInput, type JointHoldReason, type SourceActor, type SourceCoverage, type SourceRule, type Supersession, implementationPoolHeld, jointHoldReason,
-  noDecision, octoberDuplicateRetirementReason, octoberOriginalContributorReason, reviewedSourceHeld, unassessedSourceHeld, verifiedAllocationReason,
+  freshSnapshotMatches, noDecision, octoberDuplicateRetirementReason, octoberOriginalContributorReason, reviewedSourceHeld, unassessedSourceHeld, unseenOmittedReview, verifiedAllocationReason,
 } from "../../gen/points__journal.effect.vibe"
 import type { Provenance as Phase, Scored } from "../../gen/points__scoringPolicy.ts"
 import { findRepository } from "../client/snapshot/checks.vibe"
-import { type Repositories, type Store, advanceTo, bandOf, command, countsFromDay, countsFromOf, hold, instant, jointUnit, ownUnit, projectOf, ruleOf, unitNameOf, workCounts } from "./ledger.vibe"
+import { type Repositories, type Store, advanceTo, bandOf, command, countsFromDay, countsFromOf, hold, instant, jointUnit, ownUnit, projectOf, reviewIdentity, ruleOf, unitNameOf, workCounts } from "./ledger.vibe"
 import { reconcilePenalties } from "./penalties.vibe"
 import { appended, commit, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "./rows.vibe"
 
@@ -612,7 +612,22 @@ export effect function creditAward(store: Store, repositories: Repositories, ite
   return rows
 }
 
-export interface SnapshotOptions { readonly preserveHeldImplementation?: boolean }
+function priorReviewers(store: Store, repositories: Repositories, credited: ReadonlyArray<Credited>) {
+  const reviewers = new Set<string>()
+  const record = (award: Award) => {
+    if (award.category !== "substantive-review" && award.category !== "evaluated-contribution") return
+    const pull = reviewIdentity(repositories.registry, award.sourceUrl)
+    if (pull !== undefined) reviewers.add(`${pull}\0${award.actor.id}`)
+  }
+  for (const { award } of store.latest.values()) record(award)
+  for (const { award } of credited) record(award)
+  return reviewers
+}
+
+export interface SnapshotOptions {
+  readonly preserveHeldImplementation?: boolean
+  readonly freshCollection?: boolean
+}
 
 export effect function applySnapshot(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, digest: string, recordedAt: string, options: SnapshotOptions = {}) {
   if (store.coverage.some((entry) => entry.digest === digest)) return false
@@ -675,12 +690,20 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     excludedReviews.add(sourceKey(projectId, exclusion.reviewId))
   }
   const supplied = new Set(credited.map((item) => item.award.key))
-  for (const credit of snapshot.omittedReviewCredits ?? []) {
+  const omittedCredits = options.freshCollection === true ? snapshot.omittedReviewCredits ?? [] : []
+  const reviewers = omittedCredits.length === 0 ? new Set<string>() : priorReviewers(store, repositories, credited)
+  const suppliedSources = new Set(omittedCredits.length === 0 ? [] : credited.map(({ award }) => award.sourceId))
+  for (const credit of omittedCredits) {
+    if (credit.acceptedAt === undefined) continue
     const projectId = projectOf(repositories, credit.repository)
     if (projectId === undefined) throw new UnregisteredRepository({ repository: credit.repository })
     if (credit.reviewer.kind !== "User") throw new ActorNotUser({ eventId: credit.id })
     if (!Number.isSafeInteger(credit.scoreThirds) || credit.scoreThirds < 1) throw new ScoreNotExact({ eventId: credit.id })
-    if (!workCounts(repositories, credit.repository, credit.submittedAt)) continue
+    if (!workCounts(repositories, credit.repository, credit.submittedAt) || !snapshot.repositories.some((repository) => repository.id === credit.repository && repository.projectId === projectId)) continue
+    const pull = reviewIdentity(repositories.registry, credit.url)
+    if (pull === undefined) continue
+    const reviewer = `${pull}\0${credit.reviewer.id}`
+    if (!unseenOmittedReview(store.keysBySource.has(credit.reviewId) || suppliedSources.has(credit.reviewId), reviewers.has(reviewer))) continue
     const occurredAt = try isoAt(millisOf(credit.submittedAt))
     const workUnitId = `wu_value_review_${workUnitSlug(credit.reviewId)}`
     const award: Award = {
@@ -712,6 +735,8 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     }
     credited.push({ award, event, unit: ownUnit(projectId, credit.reviewId) })
     supplied.add(award.key)
+    suppliedSources.add(credit.reviewId)
+    reviewers.add(reviewer)
   }
   const ownRecordMerges = new Set(credited
     .filter((item) => item.award.category === "merged-pull-request" && item.unit === ownUnit(item.award.projectId, item.award.sourceId))
@@ -735,10 +760,10 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
   return true
 }
 
-export effect function applySnapshots(store: Store, repositories: Repositories, snapshots: ReadonlyArray<{ readonly snapshot: LeaderboardSnapshot; readonly digest: string }>, recordedAt: string) {
+export effect function applySnapshots(store: Store, repositories: Repositories, snapshots: ReadonlyArray<{ readonly snapshot: LeaderboardSnapshot; readonly digest: string }>, recordedAt: string, freshSnapshot?: string) {
   let applied = 0
   for (const { snapshot, digest } of [...snapshots].sort((left, right) => left.snapshot.generatedAt.localeCompare(right.snapshot.generatedAt))) {
-    if (try applySnapshot(store, repositories, snapshot, digest, recordedAt)) applied += 1
+    if (try applySnapshot(store, repositories, snapshot, digest, recordedAt, { freshCollection: freshSnapshotMatches(freshSnapshot ?? "", digest) })) applied += 1
   }
   return applied
 }

@@ -74,6 +74,22 @@ effect function client() {
   return github({ token, userAgent })
 }
 
+effect function negotiatedBytes() {
+  const path = `/repos/octo/tool-1/commits/${"1".repeat(40)}`
+  const options = { accept: "application/vnd.github.diff", followRenamed: false } as const
+  const layer = try client()
+  return try reported(effect {
+    provide layer {
+      const api = try GitHub
+      const raw = try api.bytes(path, 8)
+      const diff = try api.bytes(path, 4, options)
+      const tooLarge = api.bytes(path, 3, options) catch (error) => error._tag
+      const decode = new TextDecoder()
+      return [decode.decode(raw), decode.decode(diff), tooLarge]
+    }
+  })
+}
+
 effect function repositoryPages() {
   const login = try param("login")
   const search = try query()
@@ -204,6 +220,7 @@ export default worker({
     Layer.succeed(Secrets, { token: Redacted.make(env.GITHUB_TOKEN), webhook: Redacted.make(env.WEBHOOK_SECRET) }),
   ),
   routes: Layer.mergeAll(
+    HttpRouter.add("GET", "/bytes", negotiatedBytes()),
     HttpRouter.add("GET", "/pages/:login", repositoryPages()),
     HttpRouter.add("GET", "/accounts/:login", account()),
     HttpRouter.add("GET", "/search", searchPages()),

@@ -58,7 +58,7 @@ type Monthly = { project: str, period: int, phase: MonthlyPhase, skip: SkipReaso
   exclusions: List[X::Exclusion], shares: List[A::Share], total: M::Amount, sequence: int, trigger: Trigger, frozenSequence: int, frozenBy: int,
   obligations: List[Obligation], banned: List[BanExclusion], underfundedNotice: bool, coordinatorRetries: int,
   proposedShares: List[A::Share], changes: List[Change], cuts: List[Cut], publicCuts: List[Cut], notices: List[CutNotice],
-  latestCutAt: int, frozenAt: int, pledgedVault: str, earlyCloseAt: int }
+  latestCutAt: int, frozenAt: int, pledgedVault: str, earlyCloseAt: int, reviewedOctober: bool }
 pure val noRevision: RevisionFact = { number: 0, effectivePeriod: 0, monthlyAmount: M::zero, maximum: M::zero, rewardStartAt: 0,
   vault: "", asset: "", feePolicy: "", exclusions: List() }
 pure val noEligibility: Eligibility = { revision: 0, active: false, verifiedPool: false, paused: false, restricted: false,
@@ -68,7 +68,7 @@ pure val initial: Monthly = { project: "eliza", period: 0, phase: Unopened, skip
   snapshotDigest: "", exclusions: List(), shares: List(), total: M::zero, sequence: 0, trigger: NoTrigger, frozenSequence: 0,
   frozenBy: 0, obligations: List(), banned: List(),
   underfundedNotice: false, coordinatorRetries: 0, proposedShares: List(), changes: List(), cuts: List(), publicCuts: List(),
-  notices: List(), latestCutAt: 0, frozenAt: 0, pledgedVault: "", earlyCloseAt: 0 }
+  notices: List(), latestCutAt: 0, frozenAt: 0, pledgedVault: "", earlyCloseAt: 0, reviewedOctober: false }
 pure val firstAutomaticPeriod = 202611
 pure val cutoffSeconds = 259200
 pure val proposalWindowSeconds = 259200
@@ -498,15 +498,34 @@ pure def recordPaid(m: Monthly, award: AwardFact): Monthly =
 
 ### The allocation is conserved within the month's pool
 
+The guarded [October import](./octoberImport.md) records whether the
+proposal uses the separately reviewed 1,000 USDC pool for Eliza or Slop.
+The earlier October imports for Feed, The Network and ASI retain their
+reviewed pools when their exact archived proposal and manifest digests
+match. The stored registry revision still supplies the vault, asset and
+fee policy. A reviewed October pool is available for manual owner
+finalization even if the revision's ordinary monthly cap for October is zero. Feed's
+reviewed October proposal uses the verified vault from its revision for
+the first ordinary funding cycle in November.
+
 ```quint
 pure def alwaysAllocationConserved(m: Monthly): bool = M::validAmount(m.total) and M::validAmount(m.cap)
   and M::compareAmounts(m.total, m.cap) <= 0 and M::equalAmounts(A::allocatedTotal(m.shares), m.total)
   and m.shares.every(s => M::validAmount(s.amount) and s.actor > 0 and m.shares.select(o => o.actor == s.actor).length() == 1)
 pure def proposedPhase(phase: MonthlyPhase): bool =
   phase == Proposed or phase == Frozen or phase == Funded or phase == Completed
-pure def alwaysCapFromRevision(m: Monthly): bool = proposedPhase(m.phase) implies
-  (if (m.earlyCloseAt > 0) m.cap == C::closeoutCap else m.cap == m.revision.monthlyAmount)
-    and M::positiveAmount(m.cap) and m.revision.effectivePeriod <= m.period
+pure def reviewedOctoberPool(m: Monthly): bool =
+  m.period == 202610 and m.earlyCloseAt == 0 and (
+    ((m.project == "eliza" or m.project == "slopdotcash") and M::equalAmounts(m.cap, M::smallAmount(1000000000)))
+    or ((m.project == "feed" or m.project == "thenetwork") and M::equalAmounts(m.cap, M::smallAmount(500000000)))
+    or (m.project == "asi" and M::equalAmounts(m.cap, M::smallAmount(250000000))))
+pure def alwaysCapFromRevision(m: Monthly): bool =
+  (m.reviewedOctober implies (proposedPhase(m.phase) and reviewedOctoberPool(m)))
+  and (proposedPhase(m.phase) implies
+    (m.reviewedOctober or (if (m.earlyCloseAt > 0) m.cap == C::closeoutCap else m.cap == m.revision.monthlyAmount))
+      and M::positiveAmount(m.cap)
+      and (m.revision.effectivePeriod <= m.period or
+        (m.reviewedOctober and m.project == "feed" and m.revision.effectivePeriod == 202611)))
 pure def alwaysUnproposedEmpty(m: Monthly): bool = not(proposedPhase(m.phase)) implies
   m.shares.length() == 0 and M::equalAmounts(m.total, M::zero) and m.obligations.length() == 0 and m.sequence == 0
     and m.proposedShares.length() == 0 and m.changes.length() == 0 and m.cuts.length() == 0 and m.latestCutAt == 0

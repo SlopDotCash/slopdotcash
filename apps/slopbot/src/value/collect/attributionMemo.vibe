@@ -225,10 +225,10 @@ export function recordingGitHub(inner: GitHub.Shape, current: () => AttributionR
         return try decoded(schema, raw, "/graphql")
       })
     },
-    bytes: (path, limitBytes) => effect {
+    bytes: (path, limitBytes, options) => effect {
       const recorder = current()
       return try watched(recorder, effect {
-        const bytes = try inner.bytes(path, limitBytes)
+        const bytes = try inner.bytes(path, limitBytes, options)
         recorder?.observeGet(path, undefined)
         return bytes
       })

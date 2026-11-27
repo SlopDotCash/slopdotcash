@@ -32,7 +32,7 @@ import { bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
 import { type Period, formatPeriod, parsePeriod, periodContaining, periodEndSeconds } from "../src/kernels/calendar.ts"
 import { ordinaryFeeBase } from "../src/kernels/fees.ts"
 import { NETWORKS } from "../src/kernels/networks.ts"
-import { fingerprintOf } from "../src/keeper/attempts.vibe"
+import { fingerprintOf, readAttempt } from "../src/keeper/attempts.vibe"
 
 module node {
   import { fileURLToPath } from "node:url"
@@ -46,8 +46,8 @@ import { journalRegistry, keeperConfig, modelConfiguration } from "../src/keeper
 import { configuredStart, keeperCore } from "../src/keeper/lifecycle.vibe"
 import { type KeeperRun, keeperTick } from "../src/keeper/run.vibe"
 import { operatorKey } from "../src/keeper/signer.vibe"
-import { operatorSolanaSeed } from "../src/keeper/solana.vibe"
-import { IDENTITY_KEY, inTransaction, openKeeperStore, recordOf } from "../src/keeper/store.vibe"
+import { SolanaAttempt, operatorSolanaSeed } from "../src/keeper/solana.vibe"
+import { IDENTITY_KEY, inTransaction, keep, openKeeperStore, recordOf } from "../src/keeper/store.vibe"
 import { registryProjectDigest } from "../src/owner/ownerInstructions.ts"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
 
@@ -205,13 +205,17 @@ effect function gasRows() {
   }))
 }
 
-effect function award(actor: bigint, source: bigint, gross: bigint) {
+effect function awardReservation(actor: bigint, source: bigint, gross: bigint) {
   const { escrow, vault } = try Bench
   const sourceDigest = word(source)
   const id = try Effect.try(() => awardId(escrow.chainId, vault, sourceDigest))
   const data = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id, actor, gross, sourceDigest }))
-  try promise(() => escrow.send(escrow.roles.owner.address, vault, data))
-  return id
+  const receipt = try promise(() => escrow.send(escrow.roles.owner.address, vault, data))
+  return { id, receipt }
+}
+
+effect function award(actor: bigint, source: bigint, gross: bigint) {
+  return (try awardReservation(actor, source, gross)).id
 }
 
 effect function bind(actor: bigint, wallet: Account) {
@@ -392,10 +396,18 @@ effect function writtenConfig(file: string, text: string) {
   return path
 }
 
-effect function spawnKeeper(program: string, configPath: string) {
+effect function spawnKeeper(program: string, configPath: string, args: ReadonlyArray<string> = ["--execute"]) {
   const { journalPath, operator } = try Bench
   const spawner = try ChildProcessSpawner.ChildProcessSpawner
-  return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, "--execute"], { env: { KEEPER_EVM_PRIVATE_KEY: operator.privateKey }, extendEnv: true }))
+  return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, ...args], { env: { KEEPER_EVM_PRIVATE_KEY: operator.privateKey }, extendEnv: true }))
+}
+
+effect function runKeeperProcess(program: string, configPath: string) {
+  return try scoped(effect {
+    const handle = try spawnKeeper(program, configPath)
+    const [stdout, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode]
+    return { code: Number(code), printed: try Effect.try(() => JSON.parse(stdout) as KeeperRun & { readonly mode: string }) }
+  })
 }
 
 layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServices.layer)), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
@@ -424,6 +436,55 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
     })
   })
 
+  it.effect('The keeper CLI can settle one exact funded award while leaving other executable awards alone (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing")', () => effect {
+    const { escrow, program, vault, registry, operator } = try Bench
+    const { id: selected, receipt } = try awardReservation(190n, 0xa190n, 7_000n)
+    const other = try award(191n, 0xa191n, 8_000n)
+    try bind(190n, escrow.roles.recipient)
+    try bind(191n, escrow.roles.donor)
+    try finalize()
+    const config = try writtenConfig("exact-award.json", try operatorConfig(escrow.chain.url))
+    const before = try operatorNonce()
+    const legacyIdentity = JSON.stringify([registry, "base-mainnet", `0x${operator.address.slice(2).toUpperCase()}`])
+    try journal(openKeeperStore())
+    try journal(inTransaction((tx) => keep(tx, IDENTITY_KEY, legacyIdentity)))
+    const run = (id: string, execute: boolean, reservation?: string) => scoped(effect {
+      const args = ["--award-id", id, ...reservation === undefined ? [] : ["--reservation", reservation], ...execute ? ["--execute"] : []]
+      const handle = try spawnKeeper(program, config, args)
+      const [stdout, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode]
+      const result = try Effect.try(() => JSON.parse(stdout) as KeeperRun)
+      return { code: Number(code), results: result.results.map(({ operation, state }) => [operation, state]) }
+    })
+    const dry = try run(selected, false)
+    const commitment = decodeEscrowLogs(vault, try promise(() => escrow.logs(vault, receipt.blockNumber, receipt.blockNumber)))
+      .find((log) => log.kind === "event" && log.event.name === "AwardCommitted" && log.event.id === selected)
+    if (commitment === undefined) return try die(new Error("test award reservation has no event"))
+    const index = commitment.at.index
+    try journal(inTransaction((tx) => tx.run(sql`DELETE FROM awards WHERE id = ${selected}`)))
+    const absent = try run(selected, true)
+    const badReference = try run(selected, true, `${receipt.transactionHash}:${index + 1}`)
+    const withoutSend = try operatorNonce()
+    const submitted = try run(selected, true, `${receipt.transactionHash}:${index}`)
+    try settled()
+    const verified = try run(selected, true)
+    const after = try operatorNonce()
+    const stillReady = try run(other, false)
+    try run(other, true)
+    try settled()
+    const keptIdentity = try journal(recordOf(IDENTITY_KEY))
+    try same({ dry, absent, badReference, readSends: withoutSend - before, submitted, verified, sends: after - before, stillReady, keptIdentity }, {
+      dry: { code: 0, results: [[`award:${selected}`, "ready"]] },
+      absent: { code: 1, results: [[`award:${selected}`, "unavailable"]] },
+      badReference: { code: 1, results: [["deployment", "unavailable"]] },
+      readSends: 0n,
+      submitted: { code: 0, results: [[`award:${selected}`, "submitted"]] },
+      verified: { code: 0, results: [[`award:${selected}`, "paid"]] },
+      sends: 1n,
+      stillReady: { code: 0, results: [[`award:${other}`, "ready"]] },
+      keptIdentity: legacyIdentity,
+    })
+  })
+
   it.effect('A keeper CLI killed after the journal commit and before the broadcast answers sends the same bytes once on the next run (spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance")', () => effect {
     const { escrow, program: main } = try Bench
     const id = try award(103n, 0xa103n, 3_000n)
@@ -449,11 +510,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       return Number(handle.exitCode catch () => 137)
     })
     const committed = try gasRows()
-    const resumed = try scoped(effect {
-      const handle = try spawnKeeper(main, try writtenConfig("direct.json", try operatorConfig(escrow.chain.url)))
-      const [stdout, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode]
-      return { code: Number(code), printed: try Effect.try(() => JSON.parse(stdout) as KeeperRun & { readonly mode: string }) }
-    })
+    const resumed = try runKeeperProcess(main, try writtenConfig("direct.json", try operatorConfig(escrow.chain.url)))
     try settled()
     const after = try operatorNonce()
     const rows = try gasRows()
@@ -466,6 +523,69 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       rowsAdded: rows.length - committed.length,
       nonces: after - before,
     }, { killed: false, mode: "execute", resumed: "submitted", fired: ["timeout"], sameBytes: true, rowsAdded: 0, nonces: 1n })
+  })
+
+  it.effect('The EVM keeper CLI recovers an accepted send whose RPC answer was lost, then indexes the finalized payment once (spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing")', () => effect {
+    const { escrow, operator, vault, program: main } = try Bench
+    const actor = 106n
+    const gross = 3_500n
+    const wallet = escrow.roles.donor
+    const id = try award(actor, 0xa106n, gross)
+    try bind(actor, wallet)
+    try finalize()
+    const initialHead = try promise(() => escrow.chain.finalized())
+    const initialNonce = try operatorNonce()
+    try journal(openKeeperStore())
+    const initialGas = try gasRows()
+    const key = `keeper:pay:${fingerprintOf([escrow.chainId.toString(), vault.toLowerCase(), id.toLowerCase()])}`
+    const faults = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [
+      { method: "eth_sendRawTransaction", fault: "lostResponse" },
+      { method: "eth_getTransactionByHash", nth: 1, fault: "http500" },
+    ]))
+    const proxy = try acquireRelease(promise(() => serve(faults)), (server) => promise(() => server.close()))
+    const config = try writtenConfig("lost-response.json", try operatorConfig(proxy.url))
+    const first = try runKeeperProcess(main, config)
+    const attempt = try journal(inTransaction((tx) => readAttempt(tx, key)))
+    if (attempt === undefined || attempt === null) return try die(new Error("the keeper retained no signed attempt"))
+    const signed = readSignedType2(attempt.rawTransaction as Hex)
+    const held = (try gasRows()).slice(initialGas.length)
+    const observed = try promise(() => escrow.chain.rpc("eth_getTransactionReceipt", [attempt.transactionId]))
+    if (observed === null) return try die(new Error("Anvil has no receipt for the retained attempt"))
+    const receipt = observed as { readonly gasUsed: string; readonly effectiveGasPrice: string; readonly status: string }
+    const charged = try Effect.try(() => (BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice)).toString())
+    try settled()
+    const resumed = try runKeeperProcess(main, config)
+    const retained = try journal(inTransaction((tx) => readAttempt(tx, key)))
+    const paid = try journal(inTransaction((tx) => tx.all(sql`SELECT json_extract(payment, '$.transactionId') AS transaction_id FROM awards WHERE scope = ${`${project}:${vault}`} AND id = ${id}`)))
+    const finalHead = try promise(() => escrow.chain.finalized())
+    const payments = decodeEscrowLogs(vault, try promise(() => escrow.logs(vault, initialHead + 1n, finalHead)))
+      .flatMap((log) => log.kind === "event" && log.event.name === "Paid" && log.event.id === id ? [{ ...log.event, transactionId: log.at.transaction }] : [])
+    const fee = ordinaryFeeBase(gross)
+    try same({
+      first: outcomeOf(first.printed, id)?.state,
+      signed: [signed?.id, signed?.sender, signed?.request.nonce, signed?.request.value],
+      retained: retained?.rawTransaction === attempt.rawTransaction && retained.transactionId === attempt.transactionId,
+      held: held.map(({ transaction_id, actual }) => [transaction_id, actual]),
+      settled: (try gasRows()).slice(initialGas.length),
+      successful: receipt.status,
+      restarted: [resumed.code, resumed.printed.mode, outcomeOf(resumed.printed, id)],
+      paid,
+      payments,
+      nonces: (try operatorNonce()) - initialNonce,
+      faults: faults.fired,
+    }, {
+      first: "waiting",
+      signed: [attempt.transactionId, try lower(operator.address), Number(initialNonce), 0n],
+      retained: true,
+      held: [[attempt.transactionId, null]],
+      settled: held.map((row) => ({ ...row, actual: charged })),
+      successful: "0x1",
+      restarted: [0, "execute", undefined],
+      paid: [{ transaction_id: attempt.transactionId }],
+      payments: [{ name: "Paid", id, actor, destination: try lower(wallet.address), version: 1n, gross, net: gross - fee, fee, transactionId: attempt.transactionId }],
+      nonces: 1n,
+      faults: [{ method: "eth_sendRawTransaction", fault: "lostResponse" }, { method: "eth_getTransactionByHash", fault: "http500" }],
+    })
   })
 
   it.effect('The operator Worker answers only the internal tick, coalesces concurrent ticks into one run and reports a failed run with a fixed answer (spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"; spec/settlement/keeperRpc.md, "Only an absent override uses the originally configured endpoint")', () => effect {
@@ -684,7 +804,10 @@ interface SolanaChain {
   readonly statuses: Map<string, { readonly failed: boolean; readonly finalized: boolean }>
   readonly landed: Map<string, Landed>
   readonly sent: Map<string, string>
+  readonly broadcastBytes: string[]
   readonly asked: string[]
+  dropNextSendReply: boolean
+  listedPayment: string | undefined
   genesis: string
   chainTime: number
   blockhashes: number
@@ -785,7 +908,7 @@ function fixtureAccounts(tree: AllocationTree) {
       [8, keyBytes(solanaOwner)], [40, digestBytes(registryProjectDigest(solanaProject))], [72, digestBytes(networkDomain as Digest)], [104, keyBytes(identityWallet.address)],
       [136, keyBytes(solanaFeeRecipient)], [168, keyBytes(SYSTEM_PROGRAM)], [249, le64(BINDING_DELAY)], [298, le64(172_800n)],
     ]))],
-    [solanaVault, programAccount(new Uint8Array(8))],
+    [solanaVault, programAccount(new Uint8Array())],
     [payAwardAddress, awardAccount(false)],
     [bindingAddress(solanaProgram, solanaProjectPda, u64(payActor) as U64), programAccount(anchored("WalletBinding", 169, [
       [8, digestBytes(paySource)], [40, keyBytes(identityWallet.address)], [72, le64(payActor)], [80, digestBytes(networkDomain as Digest)], [112, keyBytes(payee.address)], [144, le64(1n)],
@@ -815,7 +938,12 @@ function chainAnswer(chain: SolanaChain, call: RpcCall): unknown {
     case "getBlockTime": return chain.chainTime
     case "getFeeForMessage": return slotted(Number(FEE))
     case "getMinimumBalanceForRentExemption": return Number(RENT)
-    case "getSignaturesForAddress": return []
+    case "getBlock": return { blockhash: walletOf(0x58).address, previousBlockhash: walletOf(0x59).address, parentSlot: 9 }
+    case "getSignaturesForAddress": {
+      const signature = chain.listedPayment
+      if (signature === undefined || call.params[0] !== solanaProjectPda) return []
+      return [{ signature, slot: 10, err: null }]
+    }
     case "getSignatureStatuses": return slotted((Array.isArray(call.params[0]) ? call.params[0] : []).map((signature) => {
       const status = chain.statuses.get(String(signature))
       return status === undefined ? null : { slot: 10, confirmations: null, err: status.failed ? { InstructionError: [0, "Custom"] } : null, confirmationStatus: status.finalized ? "finalized" : "confirmed" }
@@ -824,6 +952,7 @@ function chainAnswer(chain: SolanaChain, call: RpcCall): unknown {
       const raw = String(call.params[0])
       const wire = base64Decode(raw) ?? new Uint8Array()
       const signature = base58Encode(wire.slice(1, 65))
+      chain.broadcastBytes.push(raw)
       chain.sent.set(signature, raw)
       return signature
     }
@@ -851,12 +980,17 @@ function solanaPolicy() {
 }
 
 const SolanaStarted = Layer.effect(SolanaBench, effect {
-  const chain: SolanaChain = { accounts: fixtureAccounts(try monthTree()), statuses: new Map(), landed: new Map(), sent: new Map(), asked: [], genesis: solanaGenesis, chainTime: CHAIN_START, blockhashes: 0, seedReads: 0 }
+  const chain: SolanaChain = { accounts: fixtureAccounts(try monthTree()), statuses: new Map(), landed: new Map(), sent: new Map(), broadcastBytes: [], asked: [], dropNextSendReply: false, listedPayment: undefined, genesis: solanaGenesis, chainTime: CHAIN_START, blockhashes: 0, seedReads: 0 }
   const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
   const rpc = try acquireRelease(promise(() => serve(async (request) => {
     const call = await request.json() as RpcCall
     chain.asked.push(call.method === "getAccountInfo" ? `getAccountInfo:${String(call.params[0])}` : call.method)
-    return json({ jsonrpc: "2.0", id: call.id, result: chainAnswer(chain, call) })
+    const result = chainAnswer(chain, call)
+    if (call.method === "sendTransaction" && chain.dropNextSendReply) {
+      chain.dropNextSendReply = false
+      return new Response(null, { status: 503 })
+    }
+    return json({ jsonrpc: "2.0", id: call.id, result })
   })), (server) => promise(() => server.close()))
   const body = { schemaVersion: "1", projects: [{ id: solanaProject, status: "active", escrow: solanaPolicy() }], restrictions: [] }
   const published = new Map<string, string>()
@@ -910,6 +1044,16 @@ effect function solanaGas() {
   }))
 }
 
+effect function solanaPaymentEvidence() {
+  return try solanaJournal(inTransaction((tx) => tx.all(sql`SELECT
+    json_extract(payment, '$.transactionId') AS signature,
+    json_extract(payment, '$.destination') AS destination,
+    json_extract(payment, '$.sourceDigest') AS source,
+    json_extract(payment, '$.gross') AS gross,
+    json_extract(payment, '$.fee') AS fee
+    FROM awards WHERE id = ${payAward} AND payment IS NOT NULL`)))
+}
+
 effect function publishSolanaMonth() {
   const { published } = try SolanaBench
   const tree = try monthTree()
@@ -930,7 +1074,7 @@ function monthState(run: KeeperRun) {
 }
 
 layer(Layer.mergeAll(Layer.provideMerge(SolanaStarted, Layer.merge(webCrypto, NodeServices.layer)), NodeServices.layer), { excludeTestServices: true, timeout: "120 seconds" })((it) => {
-  it.effect('A Solana deployment progresses through preflight, authority, gas, scanning and local state checks (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/payment.md, "A Solana pay pre-check may read confirmed chain time only to avoid an early send, never as evidence"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes")', () => effect {
+  it.effect('A Solana deployment progresses through preflight, authority, gas, scanning and local state checks (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/payment.md, "A Solana pay pre-check may read confirmed chain time only to avoid an early send, never as evidence"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes")', () => effect {
     const { chain } = try SolanaBench
     try solanaJournal(inTransaction((tx) => tx.run(sql`INSERT INTO awards(scope,id,actor,reserve) VALUES(${`${solanaProject}:${solanaVault}`}, ${payAward}, ${payActor.toString()}, ${"{}"})`)))
     chain.genesis = walletOf(0x99).address
@@ -940,29 +1084,47 @@ layer(Layer.mergeAll(Layer.provideMerge(SolanaStarted, Layer.merge(webCrypto, No
     const early = try solanaRun(10)
     const beforeMaturity = { award: outcomeOf(early, payAward)?.state, sent: chain.sent.size, seedReads: chain.seedReads }
     chain.chainTime = CHAIN_START + Number(BINDING_DELAY)
-    const matured = try solanaRun(10)
+    chain.dropNextSendReply = true
+    const interrupted = try solanaRun(10)
     const [first] = [...chain.sent.keys()]
+    const [firstWire] = chain.broadcastBytes
+    if (first === undefined || firstWire === undefined) return try die(new Error("No initial signed Solana attempt"))
+    const durable = try solanaGas()
+    const attemptKey = `solana:keeper:${solanaNetwork}:${try sha256Hex(JSON.stringify([solanaNetwork, solanaVault, payAward]))}`
+    const stored = try Schema.decodeUnknownEffect(SolanaAttempt)(try solanaJournal(recordOf(attemptKey)))
+    try same([stored.raw, stored.transactionId], [firstWire, first])
+    try same(outcomeOf(interrupted, payAward)?.state, "waiting")
+    try same(try solanaPaymentEvidence(), [])
+    const originalWork = [chain.seedReads, chain.blockhashes]
+    const matured = try solanaRun(10)
+    try same(chain.broadcastBytes, [firstWire, firstWire])
+    try same([chain.seedReads, chain.blockhashes], originalWork)
+    try same(try solanaGas(), durable)
     const reserved = (try solanaGas()).map((row) => [row.maximum, row.transaction_id === first, row.actual])
-    if (first !== undefined) chain.statuses.set(first, { failed: false, finalized: false })
+    chain.statuses.set(first, { failed: false, finalized: false })
     const pending = try solanaRun(10)
     const unchanged = { award: outcomeOf(pending, payAward)?.state, sent: chain.sent.size }
-    if (first !== undefined) {
-      chain.statuses.set(first, { failed: true, finalized: true })
-      chain.landed.set(first, { failed: true, charge: FEE })
-    }
+    chain.statuses.set(first, { failed: true, finalized: true })
+    chain.landed.set(first, { failed: true, charge: FEE })
     const replaced = try solanaRun(10)
     const statusAt = chain.asked.indexOf("getSignatureStatuses")
     const rereadAt = chain.asked.lastIndexOf(`getAccountInfo:${payAwardAddress}`)
     const sentAt = chain.asked.indexOf("sendTransaction")
     const second = [...chain.sent.keys()].find((signature) => signature !== first)
     const replacement = { award: outcomeOf(replaced, payAward)?.state, sent: chain.sent.size, reread: statusAt >= 0 && statusAt < rereadAt && rereadAt < sentAt }
-    if (second !== undefined) {
-      chain.statuses.set(second, { failed: false, finalized: true })
-      chain.landed.set(second, { failed: false, charge: FEE + RENT })
-      chain.accounts.set(payAwardAddress, awardAccount(true))
-    }
+    if (second === undefined) return try die(new Error("No Solana replacement after finalized failure"))
+    chain.statuses.set(second, { failed: false, finalized: true })
+    chain.landed.set(second, { failed: false, charge: FEE + RENT })
+    chain.accounts.set(payAwardAddress, awardAccount(true))
     const paid = try solanaRun(10)
     const settledRows = (try solanaGas()).map((row) => [row.maximum, row.actual])
+    try same(try solanaPaymentEvidence(), [])
+    chain.listedPayment = second
+    try solanaRun(10)
+    try solanaRun(10)
+    try same(try solanaPaymentEvidence(), [{ signature: second, destination: payee.address, source: paySource, gross: payGross.toString(), fee: ordinaryFeeBase(payGross).toString() }])
+    try same(chain.broadcastBytes.length, 3)
+    chain.listedPayment = undefined
     try publishSolanaMonth()
     const sentBefore = chain.sent.size
     const oneLeaf = try solanaRun(1)

@@ -498,10 +498,11 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       const sent = try promise(() => escrow.send(escrow.roles.owner.address, wrong.vault, prepared.transaction.data as Hex))
       try finalize(escrow)
       const checked = try checkRelease({ ...requestOf(wrong), planId: prepared.planId, transactionId: sent.transactionHash }, try registered(wrong))
-      const firstStale = try review(stale)
+      const firstReview = try review(stale)
       try promise(() => escrow.chain.rpc("evm_mine", []))
       try finalize(escrow)
-      const restale = try review(stale)
+      const invalidated = try review(stale)
+      const freshReview = try review(stale)
       const staleDeployment = try registered(stale)
       const staleRequest = prepareRelease({ ...requestOf(stale), manifestSha256: "d".repeat(64) }, staleDeployment, { githubId: steward }) catch (error) => error instanceof ReleaseRefused ? error.message : String(error)
       const healthyReview = try review(healthy)
@@ -516,8 +517,9 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
         owner: [sent.status, prepared.transaction.from],
         checked: checked.status,
         free: [wrong.freeBefore, reservedFree, releasedFree],
-        firstStale: firstStale.status,
-        restale: restale.status === "ready" && firstStale.status === "ready" ? [restale.status, restale.terms.releasedGross, restale.transaction.data === firstStale.transaction.data] : restale,
+        firstReview: firstReview.status,
+        invalidated,
+        freshReview: freshReview.status === "ready" && firstReview.status === "ready" ? [freshReview.status, freshReview.terms.releasedGross, freshReview.transaction.data === firstReview.transaction.data] : freshReview,
         staleRequest,
         healthy: healthyReview,
         partial: partialReview,
@@ -534,8 +536,9 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
         owner: ["success", owner],
         checked: "finalized",
         free: [20_000_000n, 14_000_000n, 20_000_000n],
-        firstStale: "ready",
-        restale: ["ready", "6000000", true],
+        firstReview: "ready",
+        invalidated: { status: "held", reason: "evidence-stale" },
+        freshReview: ["ready", "6000000", true],
         staleRequest: "Project policy changed",
         healthy: { status: "held", reason: "no-wrong-sum-fault" },
         partial: { status: "held", reason: "prior-reserve-transition" },

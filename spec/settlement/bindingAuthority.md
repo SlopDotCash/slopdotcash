@@ -161,6 +161,33 @@ pure def pay(b: Bindings, actor: int, expectedVersion: int): Bindings =
   { ...withActor({ ...ab, paidVersion: ab.current.version, cancelCount: 0 }, b), payments: b.payments + 1 }
 ```
 
+### Payouts reopens with the current wallet authorization or finalized binding
+
+The signed-in account's reserved EVM payout shows stored wallet consent
+for its current claim, network, vault and finalized binding version,
+while the consent still leaves the submission window. It shows a
+binding as finalized only after the vault's finalized state names the
+current claim and destination, has a positive version, is active and
+has not been cancelled. An unreadable binding after retained consent
+shows authorization as unavailable and does not prompt for another
+signature. Earlier claims and other vaults and networks never supply
+this status. The read returns only a status, never proof bytes, and
+neither the signature nor the binding changes the award's payment state.
+If the effective claim changes while chain evidence is read, the
+retained status does not carry forward. The contributor can retry the read.
+
+```quint
+import bindingConsent as Consent from "../backend/bindingConsent"
+type PayoutBindingStatus = AwaitingConsent | ConsentPending | BindingFinalized | BindingUnavailable
+type RetainedPayoutConsent = { version: str, expiresAt: int }
+pure def payoutBindingStatus(readable: bool, currentClaimBound: bool, version: str, now: int,
+  consents: List[RetainedPayoutConsent]): PayoutBindingStatus =
+  if (not(readable)) BindingUnavailable
+  else if (currentClaimBound) BindingFinalized
+  else if (consents.some(c => c.version == version and c.expiresAt > now + Consent::submissionWindow)) ConsentPending
+  else AwaitingConsent
+```
+
 ## Story: Rotate the identity authority without the attester's cooperation
 
 ### The registrar on EVM, or the project owner on Solana, proposes and may cancel one rotation at a time

@@ -18,6 +18,17 @@ from the [RPC selection model](./keeperRpc.md), plus the reviewed deployment
 check. Each run starts with the durable object, journal and selected endpoint
 identities from the same immutable configuration.
 
+The operator CLI can select an exact already funded award with
+`--award-id <id>` on a configuration for one project and one reviewed ordinary
+vault on its network. Scanning and gas reconciliation still run against the
+same durable journal. The keeper skips monthly work and attempts only the
+selected award after indexing its finalized reservation in that vault. An
+operator may supply the original reservation transaction and event index with
+`--reservation <transaction:index>` when the journal lacks the event. It goes
+through the same exact finalized receipt verifier and leaves the scanner
+cursor under the normal scanner. An unknown award fails. An indexed final payment is reported without another
+send. Omit `--execute` to check readiness without signing.
+
 ```quint
 import keeperDiagnostics as D from "./keeperDiagnostics"
 import keeperRpc as R from "./keeperRpc"

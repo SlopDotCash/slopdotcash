@@ -1,5 +1,6 @@
 // spec/security/enforcement.md, "Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction"; spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
 import { type AnyRoute, route } from "@repo/platform/route"
+import type { ScanClearanceBadge, ScanClearanceView } from "@repo/ports/security"
 
 export schema PublicRestriction = "clear" | "quarantined" | "banned"
 
@@ -98,22 +99,6 @@ export interface ScanClearanceInput {
   readonly findingsLocation?: FindingsLocation
 }
 
-export type ScanClearanceTone = "success" | "warning" | "danger" | "info" | "neutral"
-
-export type ScanClearanceIcon = "pass" | "fail" | "skip" | "partial" | "held" | "note" | "review"
-
-export interface ScanClearanceBadge {
-  readonly tone: ScanClearanceTone
-  readonly icon: ScanClearanceIcon
-  readonly label: string
-}
-
-export interface ScanClearanceView {
-  readonly checks: ReadonlyArray<ScanClearanceBadge>
-  readonly coverage: ReadonlyArray<ScanClearanceBadge>
-  readonly review: ReadonlyArray<ScanClearanceBadge>
-}
-
 function words(value: string): string {
   return value.replace(/([a-z])([A-Z])/gu, (_match, before: string, after: string) => `${before} ${after.toLowerCase()}`).replaceAll("-", " ")
 }
@@ -149,10 +134,10 @@ export function scanClearanceView(assessment: ScanClearanceInput): ScanClearance
   const location = assessment.findingsLocation
   const repositoryClear = facts.flaggedChecks.length === 0 && facts.checksNotRun.length === 0 && facts.incompleteSurfaces.length === 0 && facts.openFindings.length === 0 && assessment.heldArtifacts === 0
   const passed: ScanClearanceBadge = { tone: "success", icon: "pass", label: "No check flagged" }
-  const slopSide = repositoryClear && (location === undefined || location === "template")
+  const slopSide = repositoryClear && facts.visibilityGaps.length === 0 && location === "template"
   const located: ReadonlyArray<ScanClearanceBadge> = !repositoryClear || location === "unknown" ? []
-    : slopSide ? [passed]
-    : [passed, { tone: "warning", icon: "note", label: location === "both" ? "Findings: repository + template" : "Findings: repository" }]
+    : location === "repository" || location === "both" ? [passed, { tone: "warning", icon: "note", label: location === "both" ? "Findings: repository + template" : "Findings: repository" }]
+    : [passed]
   const checks: ReadonlyArray<ScanClearanceBadge> = [
     ...located,
     ...facts.flaggedChecks.map((threat) => {

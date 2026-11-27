@@ -289,6 +289,34 @@ pure def credit(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision)
     decision: if (decision.basis == NoBasis) noDecision else { ...decision, delta: a.amount } }, l)
 ```
 
+### Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score
+
+A human review allocated a positive share under the [review rules](./reviews.md)
+keeps its original submission time and assessed share when it precedes the
+rolling window. The accepted outcome must be in the current census, and the
+review must fall inside the allocation window ending at that outcome. Its
+outside-window exclusion stays in the snapshot, and its share stays out of
+the rolling ledger, standings and payment basis. The omitted share binds the
+same repository, pull request, review, actor, assessment and work unit as
+its ordinary credit. The adapter may submit it through the ordinary first
+credit only when the exact fresh collector digest is verified and the
+journal has no previous award for its source or reviewer on this pull request.
+A trusted superseded producer can preserve that digest through checked
+artifact recovery. Existing history and the [protected project month
+checks](./protectedMonths.md) continue to apply.
+
+```quint
+type OmittedReviewWindow = { reviewAt: int, outcomeAt: int, from: int, to: int, policyAt: int }
+pure def allocatedBeforeSnapshot(w: OmittedReviewWindow): bool =
+  w.policyAt <= w.reviewAt and w.reviewAt < w.from and
+  w.from <= w.outcomeAt and w.outcomeAt <= w.to and
+  w.outcomeAt - (w.to - w.from) <= w.reviewAt
+pure def freshSnapshotMatches(freshDigest: str, digest: str): bool =
+  freshDigest != "" and freshDigest == digest
+pure def unseenOmittedReview(sourceRecorded: bool, reviewerRecorded: bool): bool =
+  not(sourceRecorded or reviewerRecorded)
+```
+
 ### An evaluated award comes only from an admitted reviewed manifest
 
 The journal admits a manifest under the [evaluation](./evaluations.md)

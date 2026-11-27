@@ -281,6 +281,96 @@ describe("Replace a payout wallet without losing the current", () => {
   });
 });
 
+// spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/settlement/bindingAuthority.md, "Payouts reopens with the current wallet authorization or finalized binding"
+describe("Payout authorization", () => {
+  // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
+  it("restores on reload", { timeout: 150_000 }, async () => {
+    await site.allow(
+      "^console Applying inline style violates the following Content Security Policy directive 'style-src 'self''",
+      "^failed GET /api/v1/project-session net::ERR_ABORTED$",
+      "^failed GET /contributor-allocation\\.json net::ERR_ABORTED$",
+    );
+    await site.wallets({ evm: { name: "Anvil Wallet" } });
+    await site.backendRpc();
+    await signIn(users.kai.login, "/account#wallets");
+    await site.click(named("button", "Connect EVM wallet"));
+    await site.click(named("button", "Connect Anvil Wallet", { within: named("dialog", "Connect an EVM wallet") }));
+    await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
+
+    const project = "payout-consent";
+    const actor = String(users.kai.id);
+    const now = new Date().toISOString();
+    const manifest = JSON.stringify({ id: project, status: "active" });
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(manifest))), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,1,?,?,?,?,?,?)", project, manifest, digest, "Register browser test project", actor, users.kai.login, now);
+    await site.sql("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)", project, manifest, digest, now, now);
+    const { vault, asset } = await site.vault({ projectId: project });
+    await site.finalize();
+    await site.sql("INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES('payout-consent-award',?,?,'base-mainnet','base',?,?,6,'1000000','20000',?,'reserved',?)", project, actor, vault, asset, "b".repeat(64), now);
+
+    await site.open("/earnings");
+    const authorize = named("button", "Authorize payout wallet");
+    const pending = { text: "Authorized · pending", exact: true };
+    const finalized = { text: "Wallet bound", exact: true };
+    await site.click(authorize);
+    await site.allow("^console Failed to load resource: the server responded with a status of 503", "^503 GET /api/v1/payments/me$");
+    await site.fail("GET", "/api/v1/payments/me", 503, { error: "payments_unavailable" });
+    await site.click(named("button", "Sign with Anvil Wallet", { within: named("dialog", "Authorize payout wallet") }));
+    await shown(named("button", "Retry")).toMatchObject({ visible: true });
+    await shown(authorize).toMatchObject({ count: 0 });
+    await site.unfail("GET", "/api/v1/payments/me");
+    await site.click(named("button", "Retry"));
+    await shown(pending).toMatchObject({ visible: true });
+    const signs = () => site.walletAsked().then((asks) => asks.filter((ask) => ask.method === "eth_signTypedData_v4").length);
+    expect(await signs()).toBe(1);
+
+    await site.open("/earnings");
+    await shown(pending).toMatchObject({ visible: true });
+    await shown(authorize).toMatchObject({ count: 0 });
+    expect(await signs()).toBe(1);
+    expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 200, body: { payments: [{ bindingStatus: "pending", state: "reserved" }] } });
+
+    await site.backendRpc(false);
+    await site.open("/earnings");
+    await shown({ text: "Authorization unavailable", exact: true }).toMatchObject({ visible: true });
+    await shown(authorize).toMatchObject({ count: 0 });
+    await site.backendRpc();
+    await site.click(named("button", "Retry wallet authorization"));
+    await shown(pending).toMatchObject({ visible: true });
+
+    await site.bindPayout(actor, vault);
+    await site.open("/earnings");
+    await shown(pending).toMatchObject({ visible: true });
+    await shown(finalized).toMatchObject({ count: 0 });
+    await site.finalize();
+    await site.open("/earnings");
+    await shown(finalized).toMatchObject({ visible: true });
+    await shown(authorize).toMatchObject({ count: 0 });
+    await shown({ text: "Paid", exact: true }).toMatchObject({ count: 0 });
+    expect(await signs()).toBe(1);
+    expect(await site.sql("SELECT state, paid_transaction FROM payment_obligations WHERE id = 'payout-consent-award'")).toEqual([{ state: "reserved", paid_transaction: null }]);
+    await accessible();
+
+    await site.open("/account#wallets");
+    await site.walletAccount(2);
+    const replacement = (await site.walletAddresses()).evm ?? "";
+    expect(replacement).toMatch(/^0x[0-9a-f]{40}$/iu);
+    await site.click(named("button", "Change EVM wallet"));
+    await site.click(named("button", "Connect Anvil Wallet", { within: named("dialog", "Connect an EVM wallet") }));
+    await site.click(named("button", "Register"));
+    await expect.poll(async () => (await site.read(evmCard)).text, { timeout: 30_000 }).toContain(replacement);
+    await shown(named("img", "Confirmed", { within: evmCard })).toMatchObject({ visible: true });
+    await site.open("/earnings");
+    await shown(authorize).toMatchObject({ visible: true });
+    const payments = await site.fetch("GET", "/api/v1/payments/me");
+    expect(payments.status).toBe(200);
+    const wallets = typeof payments.body === "object" && payments.body !== null && "wallets" in payments.body && Array.isArray(payments.body.wallets) ? payments.body.wallets : [];
+    expect(wallets.some((wallet: unknown) => typeof wallet === "object" && wallet !== null && "chain" in wallet && "address" in wallet && "authorized" in wallet && wallet.chain === "base" && wallet.address === replacement.toLowerCase() && wallet.authorized === true)).toBe(true);
+    await shown(finalized).toMatchObject({ count: 0 });
+    expect(await signs()).toBe(1);
+  });
+});
+
 // spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"
 describe("Start and complete a GitHub sign-in flow", () => {
   // spec/backend/identity.md, "A website flow belongs to the browser that started it"

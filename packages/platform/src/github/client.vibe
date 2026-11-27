@@ -98,7 +98,7 @@ export service GitHub {
   json<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S, options?: ReadOptions): S["Type"]!GitHubFailure
   pages<S extends Schema.ConstraintDecoder<unknown>>(path: string, itemSchema: S, options?: PageOptions): ReadonlyArray<S["Type"]>!GitHubFailure
   graphql<S extends Schema.ConstraintDecoder<unknown>>(query: string, variables: Readonly<Record<string, unknown>>, schema: S, options?: GraphQLOptions): S["Type"]!GitHubFailure
-  bytes(path: string, limitBytes: number): Uint8Array!GitHubFailure
+  bytes(path: string, limitBytes: number, options?: Omit<ReadOptions, "limitBytes">): Uint8Array!GitHubFailure
   send<S extends Schema.ConstraintDecoder<unknown>>(method: WriteMethod, path: string, body: unknown, schema?: S): Sent<S["Type"]>!GitHubFailure
   status(path: string): number!GitHubFailure
 }
@@ -295,9 +295,9 @@ export function githubWith(settings: Settings): Layer.Layer<GitHub, never, HttpC
         if (envelope.data === undefined || envelope.data === null) throw new GitHubMalformed({ path: "/graphql", issue: "GraphQL answered no data" })
         return try decoded(schema, envelope.data, "/graphql")
       },
-      bytes: (path, limitBytes) => effect {
+      bytes: (path, limitBytes, options) => effect {
         const url = try located(path)
-        return (try read({ method: "GET", url, accept: githubRaw }, limitBytes)).bytes
+        return (try read({ method: "GET", url, accept: options?.accept ?? githubRaw, followRenamed: options?.followRenamed }, limitBytes)).bytes
       },
       send: (method, path, body, schema) => effect {
         const url = try located(path)

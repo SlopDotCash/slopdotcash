@@ -376,8 +376,10 @@ promotion (`CO::unprovedZeroLinePromotion` of its census commits, a commit
 owned when the implementation owners give it to this source); it is an
 unresolved implementation source; or its accepted-implementation digest
 (repository and native delta digest) was already scored in this or an
-earlier window. Every credited source records its digest, so a later exact
-repeat is held. Legacy scoring without value decisions is unchanged
+earlier window. For a changed two-parent merge without a joint decision,
+a difference between the bound pull request totals and the line counts of
+its accepted first-parent change makes the implementation source unresolved.
+Every credited source records its digest, so a later exact repeat is held. Legacy scoring without value decisions is unchanged
 (development `src/lib/leaderboard.ts` implementation hold,
 `implementation_credit_gate` `selectCommitCensus`, `selectZeroLineWork`,
 `selectPreviousSubmission`). A source held as unavailable reports

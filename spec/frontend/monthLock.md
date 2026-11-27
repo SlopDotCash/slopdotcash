@@ -143,6 +143,17 @@ month. The shown locked total follows only the finalized read, and never
 exceeds the locked total. The finalized read is `readVault` arriving while
 the card shows the included transaction.
 
+The EVM deposit-and-lock check binds a versioned wallet report to the
+reviewed chain and accepted batch reference. A landed versioned report
+requires atomic execution. With multiple receipts, each receipt must
+belong to a canonical finalized block after the head read before the wallet
+prompt, in increasing block and transaction order. Success requires one
+exact vault deposit event from the reviewed owner, the transaction for that
+reviewed deposit, and a later, separate owner-to-vault transaction for the
+exact reviewed pledge. A reverted batch needs both reviewed transactions
+as finalized reverts. Missing, ambiguous, or conflicting evidence keeps the
+check pending.
+
 ```quint
 pure def canCheck(m: MonthLock, result: LockResult, by: int): bool = by == timer and m.phase == LockChecking
   and m.checks < checkLimit

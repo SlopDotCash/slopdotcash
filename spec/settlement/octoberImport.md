@@ -5,8 +5,10 @@ owner-reviewed packet of monthly proposals, outside the normal
 [monthly proposal](./monthly.md) write. Source anchors are development
 `.github/workflows/october-rewards.yml` (manual dispatch with
 `reviewed_packet_sha256` and `apply`, default off, `main` only, the
-`slop-production` concurrency group) and `scripts/run-october-rewards.ts`
-(`preparePrivateOctoberPlan`, `importOctoberPlan`, `verifyOctoberReadback`).
+`slop-production` concurrency group), `apps/settlement/src/programs/octoberRewards.vibe`
+(the native Eliza operator), and `apps/settlement/src/october/import.vibe`
+(the guarded insert and exact readback, including the marker for the
+reviewed manual October pool).
 The September–October band reapplication that produces the packet's
 weights is a Points rule; this unit covers only the proposal write. One
 instance is the October import of every project in the packet.

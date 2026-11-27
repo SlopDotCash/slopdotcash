@@ -135,12 +135,12 @@ export effect function verifyEvmDeployment(deployment: EvmDeployment, block: Blo
 }
 
 export effect function readEvmTotals(deployment: EvmDeployment) {
-  try verifyEvmDeployment(deployment, "finalized")
-  const vault = try address(deployment.vault)
   const rpc = try EvmRpc
   if ((try rpc.chainId()) !== deployment.chainId) throw new DeploymentMismatch({ message: "Wrong chain" })
   const head = try rpc.head("finalized")
   const block: BlockRef = head.number
+  try verifyEvmDeployment(deployment, block)
+  const vault = try address(deployment.vault)
   const read = readTotals({
     totals: try rpc.call({ to: vault, data: TOTALS_CALL, block }),
     token: try getter(vault, TOKEN_CALL, block),

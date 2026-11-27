@@ -244,15 +244,23 @@ adds no members, the earlier award was positive at the baseline and the
 packet leaves the earlier ordinary pool unchanged, or only confirms it with
 the verified allocation decision); an empty squash (the later squash is
 empty, its parent already holds the change, its one commit is its head with
-one parent, and the earlier award was positive at the baseline); a
-surviving carrier (two distinct merges with one result, the source's one
+one parent, and the earlier award was positive at the baseline); an empty
+merge (both acceptances have two parents with their submitted head second,
+both complete submitted changes match the earlier accepted first-parent
+change, and that change remains on the later first-parent history with every
+changed path intact. The later acceptance leaves its first-parent tree
+unchanged. Both ordinary pools retain their exact baseline revisions through
+review and have identical positive shares by contributor. Existing zero shares
+retain their revisions. The earlier source cannot carry the later accepted merge in its submitted or accepted history);
+a surviving carrier (two distinct merges with one result, the source's one
 commit its head with one parent and authored by the original human author,
 who holds the one positive ordinary award of each source with the same
 amount in October, and a carrier tip refreshed at most once along the
 first-parent chain without the retiring merge and pinned until the import:
 `refreshCarrierTip`, `retireSurvivingCarrier`); or a distinct squash (its
-one commit is its head with one parent). The ancestry check does not apply
-to an identical accepted change.
+one commit is its head with one parent). The claim-coverage ancestry check
+does not apply to an identical accepted change, which has its own native
+acceptance checks.
 
 Instead of claim coverage or an identical accepted change, a retirement may
 rest on a net outcome (`netOutcome`, main): the retired source's whole
@@ -336,16 +344,17 @@ pure def mergeEdgeCovers(edge: CarriedMergeEdge, retiredAt: int): bool =
   edge.twoParents and edge.originHeadSecond and edge.memberIsMerge and edge.rangeFromFirstParent and edge.ordinaryRewarded
 type AcceptanceOrder = { sameMerge: bool, ancestryKnown: bool, carriesRetiringMerge: bool }
 pure def orderAllows(o: AcceptanceOrder): bool = o.sameMerge or (o.ancestryKnown and not(o.carriesRetiringMerge))
-type IdenticalKind = NoIdenticalChange | SharedMerge | CarriedAcceptance | EmptySquash | SurvivingCarrier | DistinctSquash
+type IdenticalKind = NoIdenticalChange | SharedMerge | CarriedAcceptance | EmptySquash | EmptyMerge | SurvivingCarrier | DistinctSquash
 type IdenticalChange = { kind: IdenticalKind, earlierSources: int, ownerAt: int, ownerRetiring: bool, diffVerified: bool,
   ownRecordPool: bool, ownerPositive: bool, ownerPositiveAtBaseline: bool, sameHead: bool, singleOwnCommit: bool,
-  carriedMatches: bool, ownerPoolKept: bool, originalAuthorPair: bool, carrierTipPinned: bool }
+  carriedMatches: bool, ownerPoolKept: bool, originalAuthorPair: bool, carrierTipPinned: bool, sameRecipientShares: bool }
 pure def identicalChangeApplies(i: IdenticalChange, retiredAt: int): bool =
   i.kind != NoIdenticalChange and i.earlierSources == 1 and i.ownerAt >= 0 and i.ownerAt < retiredAt and not(i.ownerRetiring) and
   i.diffVerified and i.ownRecordPool and i.ownerPositive and
   (if (i.kind == SharedMerge) i.sameHead and i.ownerPositiveAtBaseline
    else if (i.kind == CarriedAcceptance) i.carriedMatches and i.ownerPoolKept and i.ownerPositiveAtBaseline
    else if (i.kind == EmptySquash) i.singleOwnCommit and i.ownerPositiveAtBaseline
+   else if (i.kind == EmptyMerge) i.ownerPositiveAtBaseline and i.ownerPoolKept and i.sameRecipientShares
    else if (i.kind == SurvivingCarrier) i.singleOwnCommit and i.originalAuthorPair and i.carrierTipPinned
    else i.singleOwnCommit)
 type NetOutcome = { present: bool, sources: int, earlierBefore: bool, inSubmittedRange: bool, completeRange: bool,
@@ -445,7 +454,7 @@ pure val claimValues = Set(claimCover, { ...claimCover, coverings: 2 }, { ...cla
     { source: 3, acceptedAt: 2432110, nodeRank: 2 }), awardSource: 2 })
 pure val noIdentical: IdenticalChange = { kind: NoIdenticalChange, earlierSources: 0, ownerAt: -1, ownerRetiring: false,
   diffVerified: false, ownRecordPool: false, ownerPositive: false, ownerPositiveAtBaseline: false, sameHead: false,
-  singleOwnCommit: false, carriedMatches: false, ownerPoolKept: false, originalAuthorPair: false, carrierTipPinned: false }
+  singleOwnCommit: false, carriedMatches: false, ownerPoolKept: false, originalAuthorPair: false, carrierTipPinned: false, sameRecipientShares: false }
 pure val distinctOrder: AcceptanceOrder = { sameMerge: false, ancestryKnown: true, carriesRetiringMerge: false }
 pure val readyRetirement: Retirement = { source: 1, occurredAt: 2432120, sourceComplete: true, poolUnchanged: true,
   octoberPool: true, dossierBound: true, claimedPaths: 1, promotion: promotion, unchanged: List(), squashes: List(squash),
@@ -474,10 +483,16 @@ pure def lawSurvivingCarrierNeedsPinnedTip(change: IdenticalChange, retiredAt: i
   (change.kind == SurvivingCarrier and not(change.carrierTipPinned)) implies not(identicalChangeApplies(change, retiredAt))
 pure def lawCarriedMergeEdgeNeedsTheEarlierHeadSecond(edge: CarriedMergeEdge, retiredAt: int): bool =
   not(edge.originHeadSecond) implies not(mergeEdgeCovers(edge, retiredAt))
+pure def lawEmptyMergePreservesEarlierRecipientShares(change: IdenticalChange, retiredAt: int): bool =
+  (change.kind == EmptyMerge and not(change.ownerPoolKept and change.sameRecipientShares and change.ownerPositiveAtBaseline)) implies
+    not(identicalChangeApplies(change, retiredAt))
 pure val changeValues = Set(sharedChange, { ...sharedChange, sameHead: false },
   { ...sharedChange, kind: CarriedAcceptance, carriedMatches: true, ownerPoolKept: true },
   { ...sharedChange, kind: CarriedAcceptance, carriedMatches: true, ownerPoolKept: false },
   { ...sharedChange, kind: EmptySquash, singleOwnCommit: true },
+  { ...sharedChange, kind: EmptyMerge, ownerPoolKept: true, sameRecipientShares: true },
+  { ...sharedChange, kind: EmptyMerge, ownerPoolKept: true, sameRecipientShares: false },
+  { ...sharedChange, kind: EmptyMerge, ownerPoolKept: false, sameRecipientShares: true },
   { ...sharedChange, kind: SurvivingCarrier, singleOwnCommit: true, originalAuthorPair: true, carrierTipPinned: true },
   { ...sharedChange, kind: SurvivingCarrier, singleOwnCommit: true, originalAuthorPair: true },
   { ...sharedChange, kind: DistinctSquash, singleOwnCommit: true, ownerPositiveAtBaseline: false },

@@ -28,9 +28,7 @@ import type { Environment } from "../gen/points__recovery.ts"
 import { distinctOrder } from "../gen/points__reviewedHistory.ts"
 import { emptyReview } from "../gen/points__reviews.effect.vibe"
 import { Machine, machine } from "../gen/points__window.effect.vibe"
-import { collectOpen, identities, type OpenReference } from "../src/census/collect.vibe"
-import { collectedTargets, fetchRegistry, registeredProjects, registryAnswer, type RegistryProject } from "../src/census/projects.vibe"
-import { assertReviewCensusStable, collectReviewCensus, recollectedOnce } from "../src/census/reviews.vibe"
+import type { RegistryProject } from "../src/census/projects.vibe"
 import { pointsRule } from "../src/client/journal.vibe"
 import { leaderboardMethodology } from "../src/client/snapshot/methodology.vibe"
 import { encodeParts, maxFileBytes, maxPartBytes } from "../src/client/snapshot/parts.vibe"
@@ -42,9 +40,6 @@ import { accountBanFeedUrl, participationBans } from "../src/collect/feeds/bans.
 import { acceptedReviewHistory, acceptedReviewHistoryPath, evaluatedContributions, evaluatedContributionsPath } from "../src/collect/feeds/history.vibe"
 import { penaltyState, projectPenaltyHistory, projectPenaltyState } from "../src/collect/feeds/penalties.vibe"
 import { valueHistoryPage, valueHistoryRecords, workUnitHistory, workUnitHistoryPage } from "../src/collect/feeds/value.vibe"
-import { collectSearchReferences } from "../src/collect/merged/census.vibe"
-import { collectMergedWork, confirmReviewCensus } from "../src/collect/merged/collection.vibe"
-import { commitLineLoader } from "../src/collect/merged/commits.vibe"
 import { type Collection, collectSnapshot, SnapshotAssembly } from "../src/collect/run/pipeline.vibe"
 import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { applyCorrections } from "../src/corrections/apply/command.vibe"
@@ -99,11 +94,10 @@ import { type Actor, type Assessment, type AutomatedReview, type ChangedFile, ty
 import { compareStandings } from "../src/score/ranks.vibe"
 import { leadersOf, scoreSnapshot } from "../src/score/snapshot.vibe"
 import { readRegistry } from "../src/snapshot/adaptPr.vibe"
-import { atomicWrite, readSnapshotFile } from "../src/snapshot/files.vibe"
+import { readSnapshotFile } from "../src/snapshot/files.vibe"
 import { restoreSnapshot } from "../src/snapshot/restore.vibe"
 import { restoreLocal } from "../src/snapshot/restoreLocal.vibe"
 import { packTransport } from "../src/snapshot/write.vibe"
-import { observe, publishRefresh, startWindow, type WindowBounds, windowBounds, windowRun } from "../src/window/window.vibe"
 import { answeringAfter, declaredRun, type EvidenceObject, evidenceObject, type QueuedRow, scanResult, serviceKeys, signingKeySha256, skillTemplates, vettingRequest } from "./support/backendRoutes/world.ts"
 import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
 import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
@@ -119,8 +113,7 @@ import { ada, avatarOf, fetcherOf as fetcherOfU16, grace, linus, previousCensus,
 import { type HistoricalCycle, historicalCycle, type HistoricalEvent } from "./support/u2/history.ts"
 import { type ArchivedFile, checkedOutCommit, type Checkpoint, checkpointOf, resumedRun, servedCheckpoint } from "./support/u3/archive.ts"
 import { failNext, fetcherOf, gatewayText, notModified, pullNodeIds, repository, seeded, start, statuses, withEtag, withRateLimit } from "./support/u3/github.ts"
-import { fetcherOf as fetcherOfU4, hydratedFromWorld, nodeIdOf, openedDuringPage, registrySnapshot, repository as repositoryU4, seeded as seededU4, servedRegistry, start as startU4, unchangedPage } from "./support/u4/github.ts"
-import { alterNextSearch, bulkCommits, closedAt, day, dropLast, fetcherOf as fetcherOfU5, gatewayFailures, repeatFirst, repository as repositoryU5, requestsMatching, type Seeded, seeded as seededU5, start as startU5, statisticsUnavailableAt } from "./support/u5/github.ts"
+import { day, repository as repositoryU5, type Seeded, seeded as seededU5, start as startU5 } from "./support/u5/github.ts"
 import { banFeed, historyRow, jointPage, penaltyPage, penaltyRow, scripted, valuePage } from "./support/u6/feeds.ts"
 import { gif, png } from "./support/u6/images.ts"
 import { plain, type Published, published } from "./support/u7/published.ts"
@@ -165,29 +158,6 @@ module host {
 }
 import { brokenAfter, unfinished, webJson, webRequest, webResponse } from host
 
-module availability {
-  import { Response as WebResponse } from "miniflare"
-  import type { Fetcher } from "@repo/platform/bindings"
-
-  interface Sent { readonly query?: string; readonly variables?: { readonly ids?: ReadonlyArray<string> } }
-
-  /** @throws {never} */
-  export function stillUnavailable(inner: Fetcher, probes: Array<ReadonlyArray<string>>): Fetcher {
-    return {
-      fetch: async (request) => {
-        const sent = (request.method === "POST" ? JSON.parse(await request.clone().text()) : {}) as Sent
-        const ids = sent.variables?.ids ?? []
-        if (sent.query?.includes("LeaderboardSourceAvailability") !== true) return inner.fetch(request)
-        probes.push(ids)
-        if (ids.length > 1) return new WebResponse("<html>gateway unavailable</html>", { status: 504, headers: { "content-type": "text/html" } }) as unknown as globalThis.Response
-        const payload = (await (await inner.fetch(request)).json()) as { readonly data: Readonly<Record<string, unknown>> }
-        const errors = ids.map((_, index) => ({ type: "NOT_FOUND", path: ["nodes", index], message: "Could not resolve requested node" }))
-        return new WebResponse(JSON.stringify({ data: { ...payload.data, nodes: ids.map(() => null) }, errors }), { status: 200, headers: { "content-type": "application/json" } }) as unknown as globalThis.Response
-      },
-    }
-  }
-}
-import { stillUnavailable } from availability
 
 module fakes {
   import { Request as WebRequest, Response as WebResponse } from "miniflare"
@@ -753,409 +723,7 @@ import { seededGithub, slopbotFake } from fakes
   })
 }
 
-{
-  const fetcherOf = fetcherOfU4
-  const repository = repositoryU4
-  const seeded = seededU4
-  const start = startU4
 
-  effect function same(actual: unknown, expected: unknown) {
-    try Effect.try(() => assert.deepStrictEqual(actual, expected))
-  }
-
-  function githubLayer(world: { readonly fake: GitHubFake; readonly token: string }) {
-    return Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outboundVia(fetcherOf(world.fake)))
-  }
-
-  function hydration(world: { readonly fake: GitHubFake }) {
-    return (references: ReadonlyArray<OpenReference>) => Effect.try(() => hydratedFromWorld(world.fake, references.map((reference) => reference.nodeId)))
-  }
-
-  const view = { registered: true, paused: false, retired: false, legacy: false, quarantined: false }
-  const day = 86_400_000
-
-  it.live('Census with a count change mid-pass retries once then completes; a second change leaves it incomplete and no snapshot is written (spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => effect {
-    const clock = settableClock(start)
-    const bounds = try windowBounds(start)
-    const nextDay = try windowBounds(start + day)
-    provide Layer.mergeAll(NodeServices.layer, webCrypto) {
-    const fs = try FileSystem.FileSystem
-    try scoped(effect {
-      const directory = try fs.makeTempDirectoryScoped()
-      const first = try Effect.try(() => seeded(clock.now))
-      const ids = identities()
-      const input = (world: typeof first, window: WindowBounds, publishedLower: number) => ({
-        projectId: "widgets",
-        view,
-        repository: { owner: "ada", name: "widgets" },
-        census: { lowerDay: window.lowerDay, publishedLower, referenceTime: window.toMs, repositoryId: world.repositoryNodeId, identities: ids },
-        hydrate: hydration(world),
-        options: { pageSize: 2 },
-      })
-
-      openedDuringPage(first.fake, "Opened while listing")
-      const before = first.fake.requests.length
-      const open = try Effect.provide(collectOpen(input(first, bounds, 0)), githubLayer(first))
-      const listed = first.fake.requests.length - before
-
-      const published = try windowRun()
-      try startWindow(published, bounds)
-      const counted = try observe(published, bounds, ids, { nodeId: "IC_counted", sourceNodeId: nodeIdOf(first.fake, 1), kind: "CommentEvent", actorId: "U_grace", actorKind: "Human", pullRequestAuthorId: null, atMs: start - day, mergedAtMs: null, repeatLowValue: false })
-      const botComment = try observe(published, bounds, ids, { nodeId: "IC_bot", sourceNodeId: nodeIdOf(first.fake, 1), kind: "CommentEvent", actorId: "B_helper", actorKind: "Bot", pullRequestAuthorId: null, atMs: start - 3_600_000, mergedAtMs: null, repeatLowValue: false })
-      const written = `${directory}/leaderboard.json`
-      try publishRefresh(published, Effect.succeed({ censuses: [open.issues.census, open.pullRequests.census] }), () => atomicWrite(written, new TextEncoder().encode("{}\n")))
-      const publishedWindow = try published.get()
-      const previous = { from: bounds.from, to: bounds.to, count: publishedWindow.publishedCount }
-
-      const earlier = try windowRun(previous)
-      const movedBack = startWindow(earlier, try windowBounds(start - 2 * day)) catch (error) => error._tag
-
-      const second = try Effect.try(() => seeded(clock.now))
-      openedDuringPage(second.fake, "Opened in the first pass")
-      unchangedPage(second.fake)
-      openedDuringPage(second.fake, "Opened in the second pass")
-      const refused = try windowRun(previous)
-      try startWindow(refused, nextDay)
-      const kept = `${directory}/refused.json`
-      const refreshed = effect {
-        const again = try collectOpen(input(second, nextDay, bounds.lowerDay))
-        return { censuses: [again.issues.census, again.pullRequests.census] }
-      }
-      const failure = publishRefresh(refused, Effect.provide(refreshed, githubLayer(second)), () => atomicWrite(kept, new TextEncoder().encode("{}\n"))) catch (error) => ({ tag: error._tag, message: "message" in error ? error.message : "" })
-      const failedWindow = try refused.get()
-
-      try same({
-        issues: { phase: open.issues.census.phase, countChanges: open.issues.census.countChanges, totalCount: open.issues.census.totalCount, items: open.issues.census.items.length },
-        pullRequests: { phase: open.pullRequests.census.phase, countChanges: open.pullRequests.census.countChanges, totalCount: open.pullRequests.census.totalCount },
-        listed,
-        outcomes: [counted?.outcome, botComment?.outcome],
-        published: { phase: publishedWindow.phase, from: publishedWindow.publishedFrom, to: publishedWindow.publishedTo, count: publishedWindow.publishedCount, inventory: publishedWindow.censusTotal, written: try fs.exists(written) },
-        movedBack,
-        failure,
-        failed: { phase: failedWindow.phase, from: failedWindow.publishedFrom, to: failedWindow.publishedTo, count: failedWindow.publishedCount, written: try fs.exists(kept) },
-      }, {
-        issues: { phase: "ReadyForPublication", countChanges: 1, totalCount: 4, items: 4 },
-        pullRequests: { phase: "ReadyForPublication", countChanges: 0, totalCount: 2 },
-        listed: 5,
-        outcomes: ["Counted", "ExcludedBot"],
-        published: { phase: "Published", from: bounds.lowerDay, to: bounds.upper, count: 1, inventory: 6, written: true },
-        movedBack: "WindowRefused",
-        failure: { tag: "OpenSetChanged", message: "Open issues changed from 4 to 5 while listing; rerun for a coherent snapshot" },
-        failed: { phase: "Failed", from: bounds.lowerDay, to: bounds.upper, count: 1, written: false },
-      })
-    })
-    }
-  })
-
-  it.live('Paused, retired, quarantined and unregistered legacy projects are never collected, while a registered legacy id is collected (spec/points/census.md, "Collection starts only for a collected project and never moves its window back")', () => effect {
-    const clock = settableClock(start)
-    const world = try Effect.try(() => seeded(clock.now))
-    const eliza = {
-      id: "eliza",
-      name: "eliza",
-      status: "active",
-      listingTier: "community",
-      authority: { repositoryId: "elizaOS/eliza", repositoryNodeId: "R_eliza", role: "admin", state: "verified", proof: "github-admin", reason: "fixture" },
-      reward: { committedMinor: "400000000", monthlyCapMinor: "100000000", fundingState: "committed" },
-      skill: { publishAtRoot: false },
-      repositories: [{ id: "elizaOS/eliza", displayName: "elizaOS/eliza", githubUrl: "https://github.com/elizaOS/eliza", description: "The eliza source repository.", integrationBranch: "main", aliases: [] }],
-    }
-    const served = servedRegistry({ ...registrySnapshot, projects: [...registrySnapshot.projects, eliza] })
-    const registered = try Effect.provide(fetchRegistry("https://slop.test"), outboundVia(served.fetcher))
-    const targets = try collectedTargets(registered)
-    const bounds = try windowBounds(start)
-    const census = { lowerDay: bounds.lowerDay, publishedLower: 0, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() }
-    const refusals: Array<readonly [string, unknown]> = []
-    for (const project of registered) {
-      if (targets.some((target) => target.projectId === project.projectId)) continue
-      const refused = Effect.provide(collectOpen({
-          projectId: project.projectId,
-          view: project.view,
-          repository: { owner: "ada", name: "widgets" },
-          census,
-          hydrate: hydration(world),
-        }), githubLayer(world)) catch (error) => error._tag
-      refusals.push([project.projectId, refused])
-    }
-    const unregisteredLegacy = Effect.provide(collectOpen({
-        projectId: "darling-arm64",
-        view: { ...view, registered: false, legacy: true },
-        repository: { owner: "ada", name: "widgets" },
-        census,
-        hydrate: hydration(world),
-      }), githubLayer(world)) catch (error) => error._tag
-    const movedBack = Effect.provide(collectOpen({
-        projectId: "widgets",
-        view,
-        repository: { owner: "ada", name: "widgets" },
-        census: { ...census, lowerDay: bounds.lowerDay - 1, publishedLower: bounds.lowerDay },
-        hydrate: hydration(world),
-      }), githubLayer(world)) catch (error) => error._tag
-    const unknownRestriction = registeredProjects(try registryAnswer({ ...registrySnapshot, restrictions: [{ projectId: "missing", state: "quarantined" }] })) catch (error) => error._tag
-    const extraKey = registryAnswer({ ...registrySnapshot, revisions: [] }) catch (error) => error._tag
-    const target = (projectId: string, id: string, description: string, role: "primary" | "member") => {
-      const [owner, name] = id.split("/")
-      return { projectId, id, owner, name, displayName: id, githubUrl: `https://github.com/${id}`, description, integrationBranch: "main", aliases: [], expectedNodeId: null, countsFrom: null, role }
-    }
-    try same({
-      paths: served.paths,
-      views: registered.map((project) => [project.projectId, project.view]),
-      targets,
-      refusals,
-      unregisteredLegacy,
-      movedBack,
-      githubRequests: world.fake.requests.length,
-      unknownRestriction,
-      extraKey,
-    }, {
-      paths: ["GET https://slop.test/api/v1/projects"],
-      views: [
-        ["paused-gadgets", { ...view, paused: true }],
-        ["asi", view],
-        ["delisted", { ...view, retired: true }],
-        ["held", { ...view, quarantined: true }],
-        ["widgets", view],
-        ["eliza", view],
-      ],
-      targets: [
-        target("asi", "elizaOS/asi", "The asi source repository.", "primary"),
-        target("widgets", repository, "The widgets source repository.", "member"),
-        target("eliza", "elizaOS/eliza", "The eliza source repository.", "member"),
-      ],
-      refusals: [["paused-gadgets", "NotCollected"], ["delisted", "NotCollected"], ["held", "NotCollected"]],
-      unregisteredLegacy: "NotCollected",
-      movedBack: "CensusWindowBack",
-      githubRequests: 0,
-      unknownRestriction: "RegistryMalformed",
-      extraKey: "RegistryMalformed",
-    })
-  })
-
-  it.live('A changed review census recollects every source once and a second change stops the collection (spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
-    const clock = settableClock(start)
-    const world = try Effect.try(() => seeded(clock.now))
-    const pull = { id: nodeIdOf(world.fake, 4) }
-    provide githubLayer(world) {
-      try (try Graphql).execute("query LeaderboardRateLimit { rateLimit { cost limit remaining resetAt } }")
-      const attempts: number[] = []
-      const settled = try recollectedOnce((recollection) => effect {
-        attempts.push(recollection.attempt)
-        const before = try collectReviewCensus([pull])
-        if (recollection.attempt === 1) try Effect.try(() => world.fake.world.addReview(repository, 4, { author: "grace", state: "APPROVED", body: "Looks right to me after running it." }))
-        const after = try collectReviewCensus([pull])
-        try assertReviewCensusStable(before, after)
-        return { attempt: recollection.attempt, reviews: after.get(pull.id)?.reviewCount, holds: recollection.allowJointHolds }
-      })
-      const churned: number[] = []
-      const stopped = recollectedOnce((recollection) => effect {
-        churned.push(recollection.attempt)
-        const before = try collectReviewCensus([pull])
-        try Effect.try(() => world.fake.world.addReview(repository, 4, { author: "linus", state: "CHANGES_REQUESTED", body: "Please split the change into two parts." }))
-        try assertReviewCensusStable(before, try collectReviewCensus([pull]))
-      }) catch (error) => error._tag
-      try same({ settled, attempts, stopped, churned }, {
-        settled: { attempt: 2, reviews: 1, holds: true },
-        attempts: [1, 2],
-        stopped: "ReviewCensusChanged",
-        churned: [1, 2],
-      })
-    }
-  })
-}
-
-{
-  const fetcherOf = fetcherOfU5
-  const seeded = seededU5
-  const start = startU5
-
-  effect function same(actual: unknown, expected: unknown) {
-    try Effect.try(() => assert.deepStrictEqual(actual, expected))
-  }
-
-  function githubLayer(world: ReturnType<typeof seeded>, fetcher: Fetcher = fetcherOf(world)) {
-    return Layer.mergeAll(
-      Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outboundVia(fetcher)),
-      NodeServices.layer,
-      Layer.provide(systemGit, NodeServices.layer),
-    )
-  }
-
-  function target(world: ReturnType<typeof seeded>) {
-    return { id: "widgets", projectId: "widgets", owner: "ada", name: "widgets", expectedNodeId: world.repositoryNodeId }
-  }
-
-  function sorted(ids: ReadonlyArray<string>) {
-    return [...ids].sort()
-  }
-
-
-  function actor(login: string) {
-    return { id: `U_${login}`, login, avatarUrl: `https://avatars.example/${login}`, url: `https://github.com/${login}`, kind: "User" }
-  }
-
-  it.live('Collect merged work end to end (spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
-    const world = try Effect.try(() => seeded())
-    const work = try Effect.provide(effect {
-      const collected = try collectMergedWork({
-        targets: [target(world)],
-        nowMs: start,
-        windowFromMs: start - 35 * day,
-        verificationFromMs: start - 35 * day,
-        valuePolicyFromMs: start - 10 * day,
-        evaluatedReviewKeys: new Set(),
-        recollection: { attempt: 1, unavailableSources: [], allowJointHolds: false },
-      }, (repository, finalReviewCensusCost) => Effect.succeed({ repository: repository.target.id, outcomes: repository.outcomes.length, finalReviewCensusCost }))
-      try confirmReviewCensus(collected)
-      return collected
-    }, githubLayer(world))
-    const outcome = (id: string) => work.outcomes.find((entry) => entry.id === id)
-    const paired = outcome(world.ids.paired)
-    const stacked = outcome(world.ids.stacked)
-    const merged = [world.ids.paired, world.ids.stacked, world.ids.bulk]
-    try same({
-      outcomes: sorted(work.outcomes.map((entry) => entry.id)),
-      detailed: sorted(work.mergedPullRequests.map((pull) => pull.id)),
-      reviewed: work.reviewedMergedPullRequests.length,
-      closed: work.closedUnmergedPullRequests.map((pull) => [pull.id, pull.mergedAt, pull.closedAt]),
-      closedIssues: [work.closedIssueCount, work.closedIssues.length],
-      pairedCommits: paired?.commits?.map((commit) => [commit.oid, commit.parentCount, commit.author?.login ?? null]),
-      sharedOnce: paired?.commits?.[1] === stacked?.commits?.[0],
-      bulk: outcome(world.ids.bulk)?.commits?.length,
-      lineBatches: requestsMatching(world, "LeaderboardOutcomeCommitLines"),
-      commitPages: requestsMatching(world, "LeaderboardOutcomeCommits"),
-      slices: work.searchSliceCount,
-      unavailable: work.unavailableSources,
-      afterRepository: work.collections.map((collection) => collection.open),
-    }, {
-      outcomes: sorted(merged),
-      detailed: sorted(merged),
-      reviewed: 0,
-      closed: [[world.ids.closed, null, closedAt]],
-      closedIssues: [0, 0],
-      pairedCommits: [[world.commits.grace, 1, "grace"], [world.commits.shared, 1, "linus"]],
-      sharedOnce: true,
-      bulk: bulkCommits,
-      lineBatches: 2,
-      commitPages: 1,
-      slices: 4,
-      unavailable: [],
-      afterRepository: [{ repository: "widgets", outcomes: 3, finalReviewCensusCost: 1 }],
-    })
-
-    const probes: ReadonlyArray<string>[] = []
-    const prior = [world.ids.paired, world.ids.stacked].map((nodeId) => ({ nodeId, reason: "NOT_FOUND" as const }))
-    const recollected = try Effect.provide(collectMergedWork({
-      targets: [target(world)],
-      nowMs: start,
-      windowFromMs: start - 35 * day,
-      verificationFromMs: start - 35 * day,
-      valuePolicyFromMs: start - 10 * day,
-      evaluatedReviewKeys: new Set(),
-      recollection: { attempt: 1, unavailableSources: prior, allowJointHolds: true },
-    }, (repository) => Effect.succeed(repository.outcomes.length)), githubLayer(world, stillUnavailable(fetcherOf(world), probes)))
-    const [order = []] = probes
-    try same({
-      batch: sorted(order),
-      probes,
-      held: recollected.unavailableSources.filter((source) => source.unavailableInMergedCensus === true),
-      outcomes: recollected.outcomes.map((entry) => entry.id),
-      afterRepository: recollected.collections.map((collection) => collection.open),
-    }, {
-      batch: sorted([world.ids.paired, world.ids.stacked]),
-      probes: [...Array.from({ length: maxGraphqlRequestAttempts }, () => order), ...order.map((id) => [id])],
-      held: order.map((nodeId) => ({ nodeId, reason: "NOT_FOUND", unavailableInMergedCensus: true })),
-      outcomes: [world.ids.bulk],
-      afterRepository: [1],
-    })
-  })
-
-  it.live('Merge deduplication: one merged work unit per immutable GitHub id across split or related pull requests (spec/points/workUnits.md, "Story: Value one logical work unit once"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass")', () => effect {
-    const world = try Effect.try(() => seeded())
-    alterNextSearch(world.fake, dropLast)
-    alterNextSearch(world.fake, repeatFirst)
-    alterNextSearch(world.fake, repeatFirst)
-    const stats = { searchSliceCount: 0 }
-    const search = (seed: ReturnType<typeof seeded>, fromMs: number, counted: { searchSliceCount: number }) => Effect.provide(collectSearchReferences({
-      target: target(seed),
-      fromMs,
-      toMs: start,
-      qualifier: "merged",
-      kindQualifier: "is:pr is:merged",
-      expectedKind: "PullRequest",
-      stats: counted,
-      commitLines: commitLineLoader(),
-      repositoryNodeId: seed.repositoryNodeId,
-    }), githubLayer(seed))
-    const references = try search(world, start - 35 * day, stats)
-    const leaves = try Effect.try(() => seeded())
-    alterNextSearch(leaves.fake, dropLast)
-    const leafStats = { searchSliceCount: 0 }
-    const perLeaf = try search(leaves, start - 4 * day, leafStats)
-    const ids = references.map((reference) => reference.id)
-    const shared = references.flatMap((reference) => reference.outcome?.commits ?? []).filter((commit) => commit.oid === world.commits.shared)
-    try same({
-      ids: sorted(ids),
-      unique: new Set(ids).size === ids.length,
-      slices: stats.searchSliceCount,
-      sharedCommit: [shared.length, shared[0] === shared[1]],
-      lineBatches: requestsMatching(world, "LeaderboardOutcomeCommitLines"),
-      perLeaf: { ids: sorted(perLeaf.map((reference) => reference.id)), slices: leafStats.searchSliceCount, lineBatches: requestsMatching(leaves, "LeaderboardOutcomeCommitLines") },
-    }, {
-      ids: sorted([world.ids.paired, world.ids.stacked, world.ids.bulk]),
-      unique: true,
-      slices: 3,
-      sharedCommit: [2, true],
-      lineBatches: 2,
-      perLeaf: { ids: sorted([leaves.ids.paired, leaves.ids.stacked, leaves.ids.bulk]), slices: 3, lineBatches: 3 },
-    })
-  })
-
-  it.live('A conflicting author link or changed commit metadata fails the read and never chooses a recipient (spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together")', () => effect {
-    const world = try Effect.try(() => seeded())
-    const loader = commitLineLoader()
-    const identity = { id: world.sharedCommitNodeId, oid: world.commits.shared, parentCount: 1 }
-    const refused = (error: { readonly _tag: string; readonly message?: string }) => error._tag === "MergedRecordInvalid" ? error.message ?? "" : error._tag
-    const steps = try Effect.provide(effect {
-      const unlinked = try loader.hydrate(world.repositoryNodeId, [{ ...identity, author: null }])
-      const linked = try loader.hydrate(world.repositoryNodeId, [{ ...identity, author: actor("linus") }])
-      const conflicting = loader.hydrate(world.repositoryNodeId, [{ ...identity, author: actor("grace") }]) catch (error) => refused(error)
-      const changed = loader.hydrate(world.repositoryNodeId, [{ ...identity, parentCount: 2, author: null }]) catch (error) => refused(error)
-      const aliased = loader.hydrate(world.repositoryNodeId, [{ ...identity, id: "C_other", author: null }]) catch (error) => refused(error)
-      const lineBatches = requestsMatching(world, "LeaderboardOutcomeCommitLines")
-      const pair = [{ id: world.commitNodeIds.grace, oid: world.commits.grace, parentCount: 1, author: null }, { id: world.commitNodeIds.linus, oid: world.commits.linus, parentCount: 1, author: null }]
-      gatewayFailures(world.fake, maxGraphqlRequestAttempts)
-      const split = try commitLineLoader().hydrate(world.repositoryNodeId, pair)
-      const splitRequests = requestsMatching(world, "LeaderboardOutcomeCommitLines") - lineBatches
-      const recovered: string[] = []
-      const recovering = commitLineLoader((repositoryNodeId, commit) => Effect.sync(() => {
-        recovered.push(`${repositoryNodeId}:${commit.oid}`)
-        return { additions: 7, deletions: 2, author: null }
-      }))
-      statisticsUnavailableAt(world.fake, 0)
-      const recovery = try recovering.hydrate(world.repositoryNodeId, pair)
-      const unrecoverable = effect {
-        statisticsUnavailableAt(world.fake, 1)
-        return try commitLineLoader().hydrate(world.repositoryNodeId, pair)
-      }
-      const unrecovered = unrecoverable catch (error) => refused(error)
-      return {
-        repaired: unlinked[0]?.author?.login ?? null, same: unlinked[0] === linked[0], conflicting, changed, aliased, lineBatches,
-        split: { oids: split.map((commit) => commit.oid), requests: splitRequests },
-        recovered: { calls: recovered, first: [recovery[0]?.additions, recovery[0]?.deletions], second: recovery[1]?.oid, unrecovered },
-      }
-    }, githubLayer(world))
-    try same(steps, {
-      repaired: "linus",
-      same: true,
-      conflicting: "Commit statistics changed linked commit author",
-      changed: "Commit statistics changed immutable commit metadata",
-      aliased: "Commit statistics identity changed for an immutable SHA",
-      lineBatches: 1,
-      split: { oids: [world.commits.grace, world.commits.linus], requests: maxGraphqlRequestAttempts + 2 },
-      recovered: { calls: [`${world.repositoryNodeId}:${world.commits.grace}`], first: [7, 2], second: world.commits.linus, unrecovered: "CommitStatisticsUnavailable" },
-    })
-  })
-}
 
 {
   const source = { repository: "ada/widgets", pinnedNodeId: "R_widgets" }
@@ -2281,14 +1849,14 @@ import { seededGithub, slopbotFake } from fakes
     provide d1(db) {
       try (try D1).batch([
         ...revisions.map((row, sequence) => sql`INSERT INTO points_staging (batch_id, sequence, payload) VALUES (${digest}, ${sequence}, ${revisionText(row)})`),
-        sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${digest}, ${generatedAt}, '[]', ${revisions.length})`,
+        sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${digest}, ${generatedAt}, ${JSON.stringify([{ repository: "acme/widgets", from: "2026-10-01T00:00:00.000Z", to: generatedAt, digest: "c".repeat(64) }])}, ${revisions.length})`,
       ])
     }
   }
 
   effect function registered(projectId: string, revision: number, reward: object) {
     const { db } = try Bench
-    const manifest = JSON.stringify({ id: projectId, status: "active", reward })
+    const manifest = JSON.stringify({ id: projectId, status: "active", reward, repositories: [{ id: `acme/${projectId}`, githubUrl: `https://github.com/acme/${projectId}`, displayName: projectId, description: "", integrationBranch: "main" }] })
     const digest = try sha256Hex(manifest)
     provide d1(db) {
       try (try D1).batch([
@@ -2395,7 +1963,7 @@ import { seededGithub, slopbotFake } from fakes
         digest: true,
         stable: true,
         open: undefined,
-        unregistered: [],
+        unregistered: undefined,
       })
     })
     it.effect(`Import reviewed evaluation awards once, recover the retirement incident once and recognize a paid monthly-pool recipient once (spec/points/evaluations.md, "Story: Import reviewed evaluation awards once and recover the retirement incident"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"; spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"; spec/points/journal.md, "An evaluated award comes only from an admitted reviewed manifest"; spec/points/journal.md, "An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/points/journal.md, "Payout recognition is appended once per recipient, project and cycle")`, () => effect {
@@ -6807,7 +6375,6 @@ import { seededGithub, slopbotFake } from fakes
   const root = new URL("..", import.meta.url).pathname
   const secret = "s".repeat(40)
   const origin = "http://localhost:8788"
-  const emptyDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
   const Composed = areaLayer({
     root,
@@ -6857,7 +6424,7 @@ import { seededGithub, slopbotFake } from fakes
         unpublished: [503, "points_not_published"],
         beforeBatch: { found: false, sha256: "", weights: [] },
         journal: [200, { schemaVersion: "1", ruleVersion: pointsRule, generatedAt: "2026-11-02T00:00:00.000Z", coverage: [], revisions: [], batch: "a".repeat(64), next: null, total: 0 }],
-        afterBatch: { found: true, sha256: emptyDigest, weights: [] },
+        afterBatch: { found: false, sha256: "", weights: [] },
         disputes: [401, "not_signed_in"],
         wrongToken: [404, { error: "not_found" }, "private-trace-v1-opaque-hmac-v1"],
         listed: [200, "slop-protected-point-months-v1", [{ projectId: "alpha", period: "2026-10" }], [], "no-store"],

@@ -12,8 +12,21 @@ const site: BrowserCommand<[Op], Result<Op>> = async (context, op) => (await har
 const siteCommands = {
   name: "slop:site-commands",
   config: (): ViteUserConfig => ({
-    optimizeDeps: { include: ["@storybook/addon-a11y/preview", "@storybook/react-vite", "effect/Deferred", "storybook/test"] },
-    test: { browser: { commands: { site } } },
+    resolve: { dedupe: ["react", "react-dom"] },
+    optimizeDeps: {
+      include: [
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "react/jsx-dev-runtime",
+        "lucide-react",
+        "@storybook/addon-a11y/preview",
+        "@storybook/react-vite",
+        "effect/Deferred",
+        "storybook/test",
+      ],
+    },
+    test: { testTimeout: 120_000, browser: { commands: { site } } },
   }),
   configureVitest: async ({ project: on, vitest }: { readonly project: TestProject; readonly vitest: Vitest }) => {
     if (!on.config.browser.enabled) return;

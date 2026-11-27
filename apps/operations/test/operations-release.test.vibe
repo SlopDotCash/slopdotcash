@@ -299,7 +299,7 @@ module actionsSimulation {
 }
 module workflowShape {
   import { spawnSync } from "node:child_process"
-  import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+  import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
   import { tmpdir } from "node:os"
   import { join } from "node:path"
   import { parse } from "yaml"
@@ -354,6 +354,7 @@ module workflowShape {
     return {
       github: {
         ref: `refs/heads/${run.ref ?? "main"}`,
+        sha: "a".repeat(40),
         event_name: run.event ?? "push",
         run_attempt: 2,
         event: { repository: { id: 100 }, workflow_run: { head_repository: {}, ...run.workflowRun } },
@@ -422,15 +423,18 @@ mkdir -p "$BUNDLE/github"
 `
 
   /** @throws {Error} */
-  function deadline(prepare: Job, scenario: DeadlineScenario): Ran {
+  function deadline(prepare: Job, scenario: DeadlineScenario) {
     const context = contextOf({ ref: scenario.ref, collectorRunner: scenario.hosted ? "" : "slop-collector", hosted: scenario.hosted })
     const reserve = stepOf(prepare, "Reserve checked bundle time for hosted main collection")
     const collect = stepOf(prepare, "Generate live contribution data")
     const reserved = runs(reserve.if, context) ? `${reserve.run ?? ""}\nsource "$GITHUB_ENV"` : ""
     const script = [collectionStubs, reserved, "clock=$((clock + SETUP_TIME))", collect.run ?? ""].join("\n")
     const directory = mkdtempSync(join(tmpdir(), "slop-collection-deadline-"))
+    const output = join(directory, "github-output")
+    writeFileSync(output, "")
     const ran = bash(script, {
       GITHUB_ENV: join(directory, "github-env"),
+      GITHUB_OUTPUT: output,
       GITHUB_REF: `refs/heads/${scenario.ref}`,
       RUNNER_TEMP: directory,
       BUNDLE: join(directory, "bundle"),
@@ -441,8 +445,9 @@ mkdir -p "$BUNDLE/github"
       SETUP_TIME: String(scenario.setupTime),
       FIRST_RUN_TIME: String(scenario.firstRunTime),
     }, directory)
+    const freshDigest = readFileSync(output, "utf8").trim()
     rmSync(directory, { recursive: true, force: true })
-    return ran
+    return { ...ran, freshDigest }
   }
 
   /** @throws {Error} */
@@ -466,11 +471,14 @@ mkdir -p "$BUNDLE/github"
     const start = jobOf(daily, "start")
     const followUp = jobOf(daily, "follow-up")
     const followUpStep = stepOf(followUp, "Publish a superseded collection or resume a failed one")
+    const checkout = (job: Job, run: Run) => evaluated(String(job.steps[0]?.with?.ref ?? ""), contextOf(run))
     const dispatch = (run: Run) => {
       const context = contextOf(run)
       return { start: runs(start.if, context), followUp: runs(followUp.if, context) }
     }
-    const completedRelease: Run = { event: "workflow_run", workflowRun: { id: 900, head_branch: "main", head_repository: { id: 100 }, event: "push" } }
+    const completedRelease: Run = { ref: "develop", event: "workflow_run", workflowRun: { id: 900, head_branch: "main", head_repository: { id: 100 }, event: "push" } }
+    const scheduled: Run = { ref: "develop", event: "schedule" }
+    const manualStart: Run = { event: "workflow_dispatch", inputs: { release_run_id: "" } }
     const manualFollowUp: Run = { event: "workflow_dispatch", inputs: { release_run_id: "900" } }
     const followUpCommand = (run: Run) => recorded(followUpStep, { RELEASE_RUN_ID: evaluated(followUpStep.env?.RELEASE_RUN_ID, contextOf(run)) })
     const deadlines: Readonly<Record<string, DeadlineScenario>> = {
@@ -492,13 +500,16 @@ mkdir -p "$BUNDLE/github"
       },
       deadlines: Object.fromEntries(Object.entries(deadlines).map(([name, scenario]) => [name, deadline(prepare, scenario)])),
       daily: {
-        schedule: dispatch({ event: "schedule" }),
-        manualStart: dispatch({ event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        schedule: dispatch(scheduled),
+        scheduleOnMain: dispatch({ event: "schedule" }),
+        manualStart: dispatch(manualStart),
         manualFollowUp: dispatch(manualFollowUp),
         completedRelease: dispatch(completedRelease),
         forkRelease: dispatch({ event: "workflow_run", workflowRun: { id: 901, head_branch: "main", head_repository: { id: 7 }, event: "push" } }),
         pullRequestRelease: dispatch({ event: "workflow_run", workflowRun: { id: 902, head_branch: "main", head_repository: { id: 100 }, event: "pull_request" } }),
+        manualOnDevelop: dispatch({ ref: "develop", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
         development: dispatch({ ref: "development", event: "workflow_dispatch", inputs: { release_run_id: "" } }),
+        checkouts: { schedule: checkout(start, scheduled), manualStart: checkout(start, manualStart), followUp: checkout(followUp, completedRelease), manualFollowUp: checkout(followUp, manualFollowUp) },
         startCommand: recorded(stepOf(start, "Dispatch a fresh collection unless one is running"), {}),
         followUpCommands: [followUpCommand(completedRelease), followUpCommand(manualFollowUp)],
       },
@@ -514,9 +525,10 @@ mkdir -p "$BUNDLE/github"
     const packet = "a".repeat(64)
     const audit = { operation: "audit-assessments", audit_project: "slop", audit_source_sha256: "b".repeat(64), audit_baseline_sha256: "c".repeat(64) }
     const replay = { ...audit, operation: "replay-assessments" }
+    const catalogReplay = { ...replay, require_no_active_assessments: true }
     const publication = { reviewed_packet_sha256: packet }
     const dispatched = (inputs: Readonly<Record<string, unknown>>) => contextOf({ event: "workflow_dispatch", inputs: {
-      operation: "publish-reviewed", audit_project: "", audit_source_sha256: "", audit_baseline_sha256: "", stage_review_handoff: false, reviewed_packet_sha256: "", apply: false, ...inputs,
+      operation: "publish-reviewed", audit_project: "", audit_source_sha256: "", audit_baseline_sha256: "", stage_review_handoff: false, require_no_active_assessments: false, reviewed_packet_sha256: "", apply: false, ...inputs,
     } })
     const accepts = (inputs: Readonly<Record<string, unknown>>) => {
       const context = dispatched(inputs)
@@ -533,6 +545,10 @@ mkdir -p "$BUNDLE/github"
       validation: {
         audit: accepts(audit),
         replay: accepts(replay),
+        catalogReplay: accepts(catalogReplay),
+        catalogApplying: accepts({ ...catalogReplay, apply: true }),
+        catalogAudit: accepts({ ...audit, require_no_active_assessments: true }),
+        catalogPublication: accepts({ ...publication, require_no_active_assessments: true }),
         stagedReplay: accepts({ ...replay, stage_review_handoff: true }),
         preview: accepts(publication),
         applied: accepts({ ...publication, apply: true }),
@@ -548,12 +564,14 @@ mkdir -p "$BUNDLE/github"
       },
       lanes: {
         replay: { group: evaluated(reviewed.concurrency?.group, dispatched(replay)), timeout: evaluated(publish["timeout-minutes"], dispatched(replay)) },
+        catalogReplay: { group: evaluated(reviewed.concurrency?.group, dispatched(catalogReplay)), timeout: evaluated(publish["timeout-minutes"], dispatched(catalogReplay)) },
         audit: { group: evaluated(reviewed.concurrency?.group, dispatched(audit)), timeout: evaluated(publish["timeout-minutes"], dispatched(audit)) },
         publication: { group: evaluated(reviewed.concurrency?.group, dispatched(publication)), timeout: evaluated(publish["timeout-minutes"], dispatched(publication)) },
         freshCollection: evaluated(jobOf(deploy, "prepare").concurrency?.group, contextOf({ ref: "main", event: "push" })),
       },
       steps: { audit: steps(audit), replay: steps(replay), publication: steps(publication) },
-      receipts: { audit: receipt(audit), replay: receipt(replay) },
+      receipts: { audit: receipt(audit), replay: receipt(replay), catalogReplay: receipt(catalogReplay) },
+      catalogInput: evaluated(catalog.env?.HISTORICAL_ASSESSMENT_REQUIRE_NO_ACTIVE, dispatched(catalogReplay)),
       commands: {
         registry: recorded(stepOf(publish, "Snapshot the current project registry for verification"), {}),
         audit: recorded(catalog, { OPERATION: "audit-assessments" }),
@@ -1215,21 +1233,24 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
           staging: { runsOn: "ubuntu-24.04", group: "slop-quality-refs/heads/development-push", timeout: "360", deadline: "19200", reserves: false, restoresMemo: false },
         },
         deadlines: {
-          hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"] },
-          slowSetupKeepsReservation: { code: 0, lines: ["timeout 18220", "collect 120820000", "sleep 60", "timeout 17460", "collect 120820000"] },
-          retryThatCannotFitFallsBack: { code: 0, lines: ["timeout 19300", "collect 119700000", "fallback https://slop.cash/data/leaderboard.json"] },
-          setupExhaustsBudget: { code: 1, lines: [] },
-          collectorRunnerWindow: { code: 0, lines: ["timeout 72100", "collect 172500000", "sleep 60", "timeout 72100", "collect 172500000"] },
-          stagingUnwrapped: { code: 0, lines: ["collect", "sleep 60", "collect"] },
+          hostedRetryKeepsDeadline: { code: 0, lines: ["timeout 19300", "collect 119700000", "sleep 60", "timeout 18540", "collect 119700000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          slowSetupKeepsReservation: { code: 0, lines: ["timeout 18220", "collect 120820000", "sleep 60", "timeout 17460", "collect 120820000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          retryThatCannotFitFallsBack: { code: 0, lines: ["timeout 19300", "collect 119700000", "fallback https://slop.cash/data/leaderboard.json"], freshDigest: "" },
+          setupExhaustsBudget: { code: 1, lines: [], freshDigest: "" },
+          collectorRunnerWindow: { code: 0, lines: ["timeout 72100", "collect 172500000", "sleep 60", "timeout 72100", "collect 172500000"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
+          stagingUnwrapped: { code: 0, lines: ["collect", "sleep 60", "collect"], freshDigest: "fresh_digest=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356" },
         },
         daily: {
           schedule: { start: true, followUp: false },
+          scheduleOnMain: { start: true, followUp: false },
           manualStart: { start: true, followUp: false },
           manualFollowUp: { start: false, followUp: true },
           completedRelease: { start: false, followUp: true },
           forkRelease: { start: false, followUp: false },
           pullRequestRelease: { start: false, followUp: false },
+          manualOnDevelop: { start: false, followUp: false },
           development: { start: false, followUp: false },
+          checkouts: { schedule: "refs/heads/main", manualStart: "a".repeat(40), followUp: "refs/heads/main", manualFollowUp: "a".repeat(40) },
           startCommand: ["apps/operations/dist/programs/main.js release daily start"],
           followUpCommands: [["apps/operations/dist/programs/main.js release daily follow-up 900"], ["apps/operations/dist/programs/main.js release daily follow-up 900"]],
         },
@@ -1251,6 +1272,10 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       validation: {
         audit: true,
         replay: true,
+        catalogReplay: true,
+        catalogApplying: false,
+        catalogAudit: false,
+        catalogPublication: false,
         stagedReplay: true,
         preview: true,
         applied: true,
@@ -1266,6 +1291,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       },
       lanes: {
         replay: { group: "slop-quality-refs/heads/main-collect", timeout: "360" },
+        catalogReplay: { group: "slop-historical-catalog-replay", timeout: "90" },
         audit: { group: "slop-production", timeout: "90" },
         publication: { group: "slop-production", timeout: "90" },
         freshCollection: "slop-quality-refs/heads/main-collect",
@@ -1275,7 +1301,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
         replay: [checked, audited, snapshot, ...gitBuild, collectorToken, catalog, receipt],
         publication: [checked, audited, snapshot, ...gitBuild, "Rebuild and verify owner-reviewed historical Points"],
       },
-      receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2" },
+      receipts: { audit: "historical-assessment-audit-2", replay: "historical-assessment-replay-2", catalogReplay: "historical-assessment-replay-2" },
+      catalogInput: "true",
       commands: {
         registry: [
           "apps/operations/dist/programs/main.js release registry production /runner/slop-release",

@@ -1,6 +1,6 @@
 // spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"
 import { concatBytes, gitObjectId, textBytes } from "@repo/platform/git/bytes"
-import { type PathLookup, type TreeRead, absenceProved, pathLookupLimit, treeVerified } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { type PathLookup, type TreeRead, absenceProved, pathLookupLimit, treeEntryLimit, treeVerified } from "../../../gen/slopbot__valueEvidence.effect.vibe"
 import { baseName, entryTypeOfMode, isObjectId, isSafePath, isSafeSegment, parentPath } from "./gitObject.ts"
 import { type Fields, type Reads, fields, immutable, text, treeLimitBytes } from "./reads.vibe"
 
@@ -71,10 +71,11 @@ effect function treeProof(repository: string, ref: string, recursive: boolean, r
   const treeSha = try commitTree(repository, ref, reads)
   if (treeSha === undefined) return undefined
   const tree = treeObjectOf(try immutable(`/repos/${repository}/git/trees/${treeSha}${recursive ? "?recursive=1" : ""}`, treeLimitBytes, reads))
-  const listed = tree.listed ?? []
+  const listed = tree.listed
+  if (tree.sha !== treeSha || tree.truncated !== false || listed === undefined || listed.length > treeEntryLimit) return undefined
   const entries = new Map<string, TreeEntry>()
   const children = new Map<string, TreeEntry[]>()
-  let entriesWellFormed = tree.listed !== undefined
+  let entriesWellFormed = true
   for (const value of listed) {
     const entry = entryOf(value)
     if (!wellFormed(entry, recursive) || entries.has(entry.path)) {
@@ -83,15 +84,17 @@ effect function treeProof(repository: string, ref: string, recursive: boolean, r
     }
     entries.set(entry.path, entry)
     const parent = parentPath(entry.path)
-    children.set(parent, [...children.get(parent) ?? [], entry])
+    const siblings = children.get(parent)
+    if (siblings === undefined) children.set(parent, [entry])
+    else siblings.push(entry)
   }
   if (entriesWellFormed) entriesWellFormed = [...children.keys()].every((parent) => parent === "" || entries.get(parent)?.type === "tree")
   const subtrees = recursive ? [...entries.values()].filter((entry) => entry.type === "tree").map((entry) => [entry.path, entry.sha] as const) : []
   const digestsMatch = entriesWellFormed && [["", treeSha] as const, ...subtrees].every(([path, expected]) => treeObjectSha(children.get(path) ?? []) === expected)
   const read: TreeRead = {
     commitMatches: true,
-    treeShaMatches: tree.sha === treeSha,
-    truncated: tree.truncated !== false,
+    treeShaMatches: true,
+    truncated: false,
     entries: listed.length,
     entriesWellFormed,
     digestsMatch,

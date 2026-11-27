@@ -546,7 +546,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const recipient = try address(escrow.roles.recipient.address)
     const digest = try authorize("46", recipient, "claim-46-a", null)
     const award = try committed(vault, 0x1301n, 46n, 10_000_000n)
-    const other = try committed(vault, 0x1302n, 46n, 2_000_000n)
+    const other = try committed(vault, 0x1302n, 52n, 2_000_000n)
     const reserved = [
       outcomeOf(try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id)),
       outcomeOf(try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id)),

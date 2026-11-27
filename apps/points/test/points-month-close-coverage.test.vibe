@@ -1,0 +1,93 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { RegistryManifestsLive } from "@repo/backend/ports"
+import { ClosedMonth } from "@repo/ports/points"
+import { type Journal, type RevisionBody, revisionText } from "../src/kernels/records/canonical.ts"
+import { batchDigest, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { ClosedMonthLive } from "../src/rewardWeights/live.vibe"
+import { userNodeId } from "./support/u10/actors.ts"
+
+service Bench { readonly db: D1Database }
+const Started = Layer.effect(Bench, effect {
+  const worker = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "month-close-coverage" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(worker, "SLOP_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file}: ${failed.error}`))
+  return { db: try promise(() => database(worker, "SLOP_DB")) }
+})
+
+const projectId = "widgets"
+const repository = "acme/widgets"
+const starts = "2026-11-01T00:00:00.000Z"
+const until = "2026-12-01T00:00:00.000Z"
+const priorEnd = "2026-11-23T02:00:00.000Z"
+const observed = "2026-12-01T00:12:00.000Z"
+
+effect function importBatch(journal: Journal) {
+  const { db } = try Bench
+  const digest = try batchDigest(journal)
+  const coverage = JSON.stringify(journal.coverage)
+  provide d1(db) {
+    try (try D1).batch([
+      ...journal.revisions.map((row, sequence) => sql`INSERT INTO points_staging (batch_id, sequence, payload) VALUES (${digest}, ${sequence}, ${revisionText(row)})`),
+      sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${digest}, ${journal.generatedAt}, ${coverage}, ${journal.revisions.length})`,
+    ])
+  }
+  return digest
+}
+
+effect function ledger() {
+  const { db } = try Bench
+  const clock = settableClock(Date.parse(observed))
+  const services = Layer.provide(ClosedMonthLive, Layer.mergeAll(d1(db), Layer.provide(RegistryManifestsLive, d1(db)), webCrypto))
+  provide services, clock.layer {
+    return try (try ClosedMonth).ledger({ projectId, period: "2026-11" })
+  }
+}
+
+layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Retained publication timestamps must not stand in for complete November source coverage (spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project")', () => effect {
+    const { db } = try Bench
+    const repo = { id: repository, githubUrl: "https://github.com/acme/widgets", displayName: "Widgets", description: "", integrationBranch: "main", aliases: ["acme/legacy-widgets"] }
+    const future = { ...repo, id: "acme/future-widgets", githubUrl: "https://github.com/acme/future-widgets", aliases: [], countsFrom: until }
+    const manifest = JSON.stringify({ id: projectId, status: "active", reward: {}, repositories: [repo, future] })
+    const manifestDigest = try sha256Hex(manifest)
+    provide d1(db) {
+      try (try D1).batch([
+        sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${projectId}, 1, ${manifest}, ${manifestDigest}, 'seed', '2026-08-01T00:00:00.000Z')`,
+        sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${projectId}, 'active', 1, ${manifest}, ${manifestDigest}, '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`,
+      ])
+    }
+    const actorId = userNodeId(1101)
+    const category = "merged-pull-request"
+    const body = {
+      previous: null, recordedAt: priorEnd, sourceDigest: "b".repeat(64), sourceRule: "slop-score-v2",
+      award: { key: try pointKey({ projectId, actorId, category, sourceId: "101" }), actor: { id: actorId, login: "ada" }, projectId,
+        category, amount: 30, occurredAt: "2026-11-22T00:00:00.000Z", sourceId: "101", sourceUrl: "https://github.com/acme/widgets/pull/101", workUnitId: "101", provisional: false },
+    } satisfies RevisionBody
+    const revisions = [{ id: try pointRevisionId(body), ...body }]
+    const coverage = [{ repository, from: starts, to: priorEnd, digest: "c".repeat(64) }]
+    const journal: Journal = { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: priorEnd, coverage, revisions }
+    const original = try importBatch(journal)
+    assert.equal(try ledger(), undefined)
+    const retained = try importBatch({ ...journal, generatedAt: "2026-12-01T00:11:00.000Z" })
+    assert.notEqual(original, retained)
+    assert.equal(try ledger(), undefined)
+    const otherRepository = [{ repository: "acme/unrelated", from: starts, to: until, digest: "d".repeat(64) }]
+    try importBatch({ ...journal, generatedAt: "2026-12-01T00:11:05.000Z", coverage: [...coverage, ...otherRepository] })
+    assert.equal(try ledger(), undefined)
+    const gap = [{ repository: "acme/legacy-widgets", from: "2026-11-23T02:00:01.000Z", to: until, digest: "e".repeat(64) }]
+    try importBatch({ ...journal, generatedAt: "2026-12-01T00:11:10.000Z", coverage: [...coverage, ...gap] })
+    assert.equal(try ledger(), undefined)
+    const adjoining = [{ ...gap[0], from: priorEnd }]
+    const afterClose = { ...body, previous: revisions[0]?.id ?? null, recordedAt: "2026-12-01T00:11:15.000Z", award: { ...body.award, amount: 45 } }
+    const correction = { id: try pointRevisionId(afterClose), ...afterClose }
+    try importBatch({ ...journal, generatedAt: "2026-12-01T00:11:20.000Z", coverage: [...coverage, ...adjoining], revisions: [...revisions, correction] })
+    assert.deepStrictEqual((try ledger())?.weights, [{ githubId: "1101", login: "ada", points: 45 }])
+  })
+})

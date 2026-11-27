@@ -11123,7 +11123,7 @@
     },
     {
       "path": "spec/frontend/monthLock.md",
-      "sha256": "616279bbdcd42514aaff3e3a75d928b40d9839ce86c75ab6a74692303d38083d",
+      "sha256": "459786e61cf1e9f53682c56b463417e357a10d7a657f2e6539733795e7aa8424",
       "module": "frontend__monthLock",
       "stories": [
         {
@@ -11192,7 +11192,7 @@
         },
         {
           "heading": "Story: Lock months from the owner's wallet / Rules",
-          "line": 163,
+          "line": 174,
           "definitions": [
             "pendingLock",
             "pendingRelease",
@@ -14862,18 +14862,18 @@
     },
     {
       "path": "spec/operations/dailyCollection.md",
-      "sha256": "f2729925dfb5c30409175c4374b09bf733b0565ff8dfe351c6118be4202e2341",
+      "sha256": "ae62027bd70bfa0191f353615cc765d8df24efeb183b85e6b191c433d2e09f51",
       "module": "operations__dailyCollection",
       "stories": [
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it",
-          "line": 20
+          "line": 21
         }
       ],
       "rules": [
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A daily tick starts one fresh collection only when none runs",
-          "line": 26,
+          "line": 27,
           "definitions": [
             "DailyCollection",
             "initial",
@@ -14889,7 +14889,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A superseded collection is published by a retained-data release at most three times and never replaces newer data",
-          "line": 65,
+          "line": 66,
           "definitions": [
             "maxPublishAttempts",
             "failedJobReruns",
@@ -14910,7 +14910,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A failed collection with a checkpoint is resumed once, never a resume of a resume",
-          "line": 107,
+          "line": 108,
           "definitions": [
             "resumeQuietMinutes",
             "resumePollMinutes",
@@ -14924,7 +14924,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / A follow-up acts only on a completed trusted main release, and publishes before it resumes",
-          "line": 131,
+          "line": 132,
           "definitions": [
             "FollowedRun",
             "ReleaseRead",
@@ -14938,7 +14938,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / Live data older than 48 hours fails the daily run",
-          "line": 163,
+          "line": 164,
           "definitions": [
             "staleLiveMillis",
             "liveDataStale",
@@ -14948,7 +14948,7 @@
         },
         {
           "heading": "Story: Keep published contribution data fresh without a person watching it / Simulation samples cover trusted and untrusted runs and the stale boundary",
-          "line": 177,
+          "line": 178,
           "definitions": [
             "trustedRun",
             "followedValues",
@@ -14970,7 +14970,7 @@
         },
         {
           "target": "../points/retainedFreshness.md",
-          "line": 14
+          "line": 15
         }
       ]
     },
@@ -16468,7 +16468,7 @@
     },
     {
       "path": "spec/operations/release.md",
-      "sha256": "b8628c237ccdd0200d8debc95df7e8bd86c3004bcc522e101535e00c5ee9f771",
+      "sha256": "5e6118f210227df4461682e4d546b3f08b6f3fe357c16a59f6cea0ee3b61ac39",
       "module": "operations__release",
       "stories": [
         {
@@ -16477,7 +16477,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed",
-          "line": 277
+          "line": 282
         }
       ],
       "rules": [
@@ -16549,7 +16549,7 @@
         },
         {
           "heading": "Story: Admit only a trusted run of the exact environment branch / A fresh manual main release may resume discussion reads only through live revalidation",
-          "line": 198,
+          "line": 203,
           "definitions": [
             "CheckpointAttempt",
             "checkpointMaxAgeHours",
@@ -16571,7 +16571,7 @@
         },
         {
           "heading": "Story: Admit only a trusted run of the exact environment branch / Every required check binds the same source and built artifact",
-          "line": 243,
+          "line": 248,
           "definitions": [
             "canBuild",
             "build",
@@ -16588,7 +16588,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / One holder at a time: a release run or another workflow that writes the environment's data",
-          "line": 279,
+          "line": 284,
           "definitions": [
             "lockWorkflow",
             "canWorkflowTakeLock",
@@ -16608,7 +16608,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Production publishes only the current main head; staging publishes a checked ancestor and never rolls back",
-          "line": 326,
+          "line": 331,
           "definitions": [
             "ancestorOrEqual",
             "noRollback",
@@ -16644,7 +16644,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Workers publish before the static site, each only when its own release variable is enabled",
-          "line": 412,
+          "line": 417,
           "definitions": [
             "feeVariable",
             "row",
@@ -16669,7 +16669,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key",
-          "line": 497,
+          "line": 502,
           "definitions": [
             "FeeMode",
             "SubmissionFeeConfig",
@@ -16683,7 +16683,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / A production fee-converter release keeps the RPC rotation of every active version",
-          "line": 549,
+          "line": 554,
           "definitions": [
             "FeeVersion",
             "FeeVersions",
@@ -16698,7 +16698,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / The static site publishes last and a lost response is reconciled from the provider",
-          "line": 591,
+          "line": 596,
           "definitions": [
             "ListedDeployment",
             "DeploymentListing",
@@ -16718,7 +16718,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Served bytes are verified against the deployment's own source",
-          "line": 626,
+          "line": 631,
           "definitions": [
             "ServedObservation",
             "canVerifyServed",
@@ -16733,7 +16733,7 @@
         },
         {
           "heading": "Story: Publish under the shared environment lock only while the tested source may still be deployed / Simulation samples exercise admitted and refused runs and conflicting evidence",
-          "line": 654,
+          "line": 659,
           "definitions": [
             "goodRef",
             "refValues",
@@ -16796,12 +16796,16 @@
           "line": 18
         },
         {
+          "target": "../points/journal.md",
+          "line": 156
+        },
+        {
           "target": "./intakeHealth.md",
-          "line": 290
+          "line": 295
         },
         {
           "target": "./escrowQualification.md",
-          "line": 651
+          "line": 656
         }
       ]
     },
@@ -17453,7 +17457,7 @@
     },
     {
       "path": "spec/points/assessmentAudit.md",
-      "sha256": "85eaf19606c15cccd4e714fba07ec068362aac47a14a8ace3760fec18041d317",
+      "sha256": "9340cc14c40f4f33d853dbf527e06d4b1ca3a9fa76090bf30cdec9fbdf626d36",
       "module": "points__assessmentAudit",
       "stories": [
         {
@@ -17540,7 +17544,7 @@
         },
         {
           "heading": "Story: Audit the assessments of a historical scope before owner review / A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback",
-          "line": 204,
+          "line": 208,
           "definitions": [
             "canStageReview",
             "stageReview",
@@ -17566,7 +17570,7 @@
     },
     {
       "path": "spec/points/authorship.md",
-      "sha256": "a60e9a28975368306f84d499ab68b09f209c827e6776ab531437a687a64c6d67",
+      "sha256": "7638fda2b5b4c853eaea828595393bcb9369ac40265eadbd9e90cbaeacc7cee2",
       "module": "points__authorship",
       "stories": [
         {
@@ -17762,7 +17766,7 @@
         },
         {
           "heading": "Story: Hold fresh implementation credit the census cannot prove / Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review",
-          "line": 408,
+          "line": 410,
           "definitions": [
             "ownsAcceptedOrdinaryCommit",
             "usesEarlierOwners",
@@ -19056,7 +19060,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "ee87e71d8ceae28a63d98ae9074d5313eb061d8fb3752858ee90b6fe1d5f0a41",
+      "sha256": "6d6b5a65db50ab79e590b25b6dbbfc4ceaf348f5c116bdd152fba128b1c834e7",
       "module": "points__journal",
       "stories": [
         {
@@ -19155,8 +19159,18 @@
           ]
         },
         {
-          "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
+          "heading": "Story: Preserve accepted work and correct unpaid attribution / Only an exact fresh collection can journal an unseen allocated review omitted from its rolling score",
           "line": 292,
+          "definitions": [
+            "OmittedReviewWindow",
+            "allocatedBeforeSnapshot",
+            "freshSnapshotMatches",
+            "unseenOmittedReview"
+          ]
+        },
+        {
+          "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
+          "line": 320,
           "definitions": [
             "canAdmitManifest",
             "admitManifest",
@@ -19168,7 +19182,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A recorded award follows the latest complete snapshot's score",
-          "line": 316,
+          "line": 344,
           "definitions": [
             "rescoreBasis",
             "canRescoreUnit",
@@ -19177,7 +19191,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A reallocation keeps the unit's whole value and changes only its recipients",
-          "line": 346,
+          "line": 374,
           "definitions": [
             "latestValueDecision",
             "canReallocateUnit",
@@ -19187,7 +19201,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A source re-scored by the ingestion producer appends a reassessment",
-          "line": 380,
+          "line": 408,
           "definitions": [
             "canRescoreSource",
             "rescoreSource"
@@ -19195,7 +19209,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery",
-          "line": 416,
+          "line": 444,
           "definitions": [
             "canDecideEvaluation",
             "decideEvaluation",
@@ -19208,7 +19222,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A penalty revision records the debit applied against the month's credit",
-          "line": 468,
+          "line": 496,
           "definitions": [
             "PenaltyEvidence",
             "requestOf",
@@ -19222,7 +19236,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A retained-batch award the batch no longer supplies is zeroed once",
-          "line": 517,
+          "line": 545,
           "definitions": [
             "RetainedBatch",
             "batchOwned",
@@ -19233,7 +19247,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A complete newer snapshot zeroes superseded credit inside its window",
-          "line": 547,
+          "line": 575,
           "definitions": [
             "SourceCoverage",
             "ReviewOmission",
@@ -19262,7 +19276,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
-          "line": 650,
+          "line": 678,
           "definitions": [
             "octoberOriginalContributorReason",
             "octoberDuplicateRetirementReason",
@@ -19293,7 +19307,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 729,
+          "line": 757,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -19302,7 +19316,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 759,
+          "line": 787,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -19311,7 +19325,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 790,
+          "line": 818,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -19325,7 +19339,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 827,
+          "line": 855,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -19341,7 +19355,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 855,
+          "line": 883,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -19354,7 +19368,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 889,
+          "line": 917,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -19382,7 +19396,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 955,
+          "line": 983,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -19406,7 +19420,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 981,
+          "line": 1009,
           "definitions": [
             "gValues",
             "unitValues",
@@ -19501,28 +19515,32 @@
           "line": 185
         },
         {
-          "target": "./evaluations.md",
+          "target": "./reviews.md",
           "line": 294
         },
         {
+          "target": "./evaluations.md",
+          "line": 322
+        },
+        {
           "target": "./scoringPolicy.md",
-          "line": 319
+          "line": 347
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 731
+          "line": 759
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 761
+          "line": 789
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 792
+          "line": 820
         },
         {
           "target": "./allocation.md",
-          "line": 798
+          "line": 826
         }
       ]
     },
@@ -20790,7 +20808,7 @@
     },
     {
       "path": "spec/points/reviewedHistory.md",
-      "sha256": "7b959fbde1742b3b3604a297f97b9bb26c3399a3350b9ae45514e10487280bb9",
+      "sha256": "759385bcefec00fe66afe29c695dcf436f05e92b4925fa93387e83feea3820cd",
       "module": "points__reviewedHistory",
       "stories": [
         {
@@ -20941,6 +20959,7 @@
             "lawIdenticalChangeNeedsOneEarlierRewardedSource",
             "lawSurvivingCarrierNeedsPinnedTip",
             "lawCarriedMergeEdgeNeedsTheEarlierHeadSecond",
+            "lawEmptyMergePreservesEarlierRecipientShares",
             "changeValues",
             "edgeValues",
             "lawUncoveredClaimRefused",
@@ -20952,7 +20971,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A historical replay scores only the pinned project's one repository",
-          "line": 515,
+          "line": 530,
           "definitions": [
             "HistoricalScope",
             "HistoricalInput",
@@ -20989,7 +21008,7 @@
         },
         {
           "target": "./authorship.md",
-          "line": 527
+          "line": 542
         }
       ]
     },
@@ -25417,47 +25436,58 @@
     },
     {
       "path": "spec/settlement/attesterActivation.md",
-      "sha256": "2e89b2eaf9de56f1c4770c78472d427cce6b359e8f0fa4d82a16fcdc41326587",
+      "sha256": "8e45e8cb880015bdf5c33a65e914d74acea8b0924be8ec5334c189ddd174c9d1",
       "module": "settlement__attesterActivation",
       "stories": [
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated",
-          "line": 33
+          "line": 26
         }
       ],
       "rules": [
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / A released switch is on only for an activated lane, in qualification order",
-          "line": 35,
+          "line": 28,
           "definitions": [
             "Actor",
             "PaymentService",
             "SolanaCheck",
+            "ReleasePhase",
+            "HistoricalRelease",
             "SignerRead",
             "Activation",
             "initial",
+            "historicalNetworks",
+            "historicalRelease",
             "solanaReady",
             "eligible",
             "canObserveLedger",
             "observeLedger",
+            "canObserveHistoricalRelease",
+            "observeHistoricalRelease",
             "canObserveSolanaCheck",
             "observeSolanaCheck",
             "canReleaseSwitches",
             "releaseSwitches",
             "alwaysSwitchNeedsActivatedLane",
+            "alwaysHistoricalNetworksAreReviewed",
             "alwaysNetworkListIsSwitchedOn",
             "alwaysLedgerShape",
             "stepEvidenceOnlyGrows",
+            "stepHistoricalNetworksCannotReturn",
             "lawRobinhoodNeedsThirdLane",
             "lawSolanaNeedsRecoveryVaultAndReadiness",
+            "lawHistoricalReleaseNeedsBaseAndMatchedEvidence",
+            "lawReleaseCannotRestoreDisabledHistoricalNetworks",
             "sometimesBaseOn",
             "sometimesThreeNetworksOn",
+            "sometimesKeepsHistoricalNetworksOn",
             "sometimesSolanaHeldForReadiness"
           ]
         },
         {
           "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / The executor and attester refuse a disabled network before reading any signer secret",
-          "line": 90,
+          "line": 120,
           "definitions": [
             "noRead",
             "canRequestSigner",
@@ -25469,14 +25499,17 @@
           ]
         },
         {
-          "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / Simulation samples include the 14 November development values",
-          "line": 113,
+          "heading": "Story: Execute mainnet payouts only on networks whose qualified lane is activated / Simulation samples include the reviewed legacy switch and its refused alternatives",
+          "line": 143,
           "definitions": [
             "activatedValues",
+            "networkValues",
+            "evidenceValues",
             "onValues",
             "byValues",
             "weight_observeLedger",
-            "weight_releaseSwitches"
+            "weight_releaseSwitches",
+            "eval_witness_sometimesKeepsHistoricalNetworksOn"
           ]
         }
       ],
@@ -25485,14 +25518,18 @@
       ],
       "references": [
         {
+          "target": "./signer.md",
+          "line": 9
+        },
+        {
           "target": "../operations/escrowQualification.md",
-          "line": 17
+          "line": 13
         }
       ]
     },
     {
       "path": "spec/settlement/bindingAuthority.md",
-      "sha256": "15e685e2e9e83eeff5cea2ffa54445fe059cbe7e17b3ee459f1ae8c90e619fc1",
+      "sha256": "43c30bba4ccb5836c3057c00f78c812373f812cb20bce5062d7eab76607f3846",
       "module": "settlement__bindingAuthority",
       "stories": [
         {
@@ -25505,11 +25542,11 @@
         },
         {
           "heading": "Story: Rotate the identity authority without the attester's cooperation",
-          "line": 164
+          "line": 191
         },
         {
           "heading": "Story: State the guarantees and the accepted risk",
-          "line": 207
+          "line": 234
         }
       ],
       "rules": [
@@ -25575,8 +25612,17 @@
           ]
         },
         {
+          "heading": "Story: Let the owner cancel an unpaid binding inside its window / Payouts reopens with the current wallet authorization or finalized binding",
+          "line": 164,
+          "definitions": [
+            "PayoutBindingStatus",
+            "RetainedPayoutConsent",
+            "payoutBindingStatus"
+          ]
+        },
+        {
           "heading": "Story: Rotate the identity authority without the attester's cooperation / The registrar on EVM, or the project owner on Solana, proposes and may cancel one rotation at a time",
-          "line": 166,
+          "line": 193,
           "definitions": [
             "rotationProposer",
             "excludedAuthority",
@@ -25588,7 +25634,7 @@
         },
         {
           "heading": "Story: Rotate the identity authority without the attester's cooperation / Solana needs the rotation authority's confirmation; anyone executes after the delay",
-          "line": 191,
+          "line": 218,
           "definitions": [
             "canConfirmRotation",
             "confirmRotation",
@@ -25598,7 +25644,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / Versions only grow, history is retained and the cancellation budget is bounded",
-          "line": 209,
+          "line": 236,
           "definitions": [
             "alwaysActorsUnique",
             "alwaysCancelBudget",
@@ -25616,7 +25662,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / With the owner-decision zero delay no cancellation window is ever open",
-          "line": 242,
+          "line": 269,
           "definitions": [
             "alwaysZeroDelayLeavesNoVeto",
             "sometimesCancelledWithDelay",
@@ -25630,7 +25676,7 @@
         },
         {
           "heading": "Story: State the guarantees and the accepted risk / Simulation samples",
-          "line": 264,
+          "line": 291,
           "definitions": [
             "byValues",
             "namedValues",
@@ -25649,7 +25695,9 @@
           ]
         }
       ],
-      "imports": [],
+      "imports": [
+        "backend__bindingConsent"
+      ],
       "references": [
         {
           "target": "./escrow.md",
@@ -27144,22 +27192,22 @@
     },
     {
       "path": "spec/settlement/keeperLifecycle.md",
-      "sha256": "77898bdb47b8abfd2a6cb6697729e938524ef74f1753b4782cb8ed4240d0aefc",
+      "sha256": "0096f403a12b778ae526a7f4fe00370312175b787ca09a135c2f7c1c840b14bd",
       "module": "settlement__keeperLifecycle",
       "stories": [
         {
           "heading": "Story: Connect internal requests to one live core run",
-          "line": 20
+          "line": 24
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry",
-          "line": 103
+          "line": 107
         }
       ],
       "rules": [
         {
           "heading": "Story: Connect internal requests to one live core run / Public and wrong internal routes cannot start work",
-          "line": 22,
+          "line": 26,
           "definitions": [
             "KeeperMode",
             "Caller",
@@ -27194,7 +27242,7 @@
         },
         {
           "heading": "Story: Connect internal requests to one live core run / Off and failed preflight settle without invoking a signer",
-          "line": 82,
+          "line": 86,
           "definitions": [
             "settleRun",
             "matchesRun",
@@ -27206,7 +27254,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Native fee liability and nonce become durable with the exact signed bytes",
-          "line": 105,
+          "line": 109,
           "definitions": [
             "SignerReport",
             "GasEvidence",
@@ -27227,7 +27275,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / An unmined send is replaced only by fee, same nonce and content, after activation",
-          "line": 154,
+          "line": 158,
           "definitions": [
             "latestAttempt",
             "originalAttempt",
@@ -27248,7 +27296,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / A send becomes replaceable only after ten minutes unmined and while the base fee exceeds its max fee",
-          "line": 199,
+          "line": 203,
           "definitions": [
             "replacementWaitSeconds",
             "replacementDue",
@@ -27258,7 +27306,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block",
-          "line": 216,
+          "line": 220,
           "definitions": [
             "extraFeeReserved",
             "extraFeeValues"
@@ -27266,7 +27314,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Core completion and per-request result delivery have independent lifetimes",
-          "line": 234,
+          "line": 238,
           "definitions": [
             "canItemFailure",
             "itemFailure",
@@ -27283,7 +27331,7 @@
         },
         {
           "heading": "Story: Preserve a transaction journal across lost instances and retry / Restart abandons only ephemeral work and unresolved callers from that instance",
-          "line": 266,
+          "line": 270,
           "definitions": [
             "canRestart",
             "restart",
@@ -27327,19 +27375,19 @@
       "references": [
         {
           "target": "./keeperRpc.md",
-          "line": 11
+          "line": 15
         },
         {
           "target": "./keeperScan.md",
-          "line": 11
+          "line": 15
         },
         {
           "target": "../operations/paymentJobs.md",
-          "line": 12
+          "line": 16
         },
         {
           "target": "./feeReplacement.md",
-          "line": 157
+          "line": 161
         }
       ]
     },
@@ -27406,7 +27454,7 @@
     },
     {
       "path": "spec/settlement/keeperScan.md",
-      "sha256": "67ada5f6f952a8f7949dbf97fb7d383982ee50e0edf638c8dcf0e7ce8b07cc0a",
+      "sha256": "abb9e02a84d556af4e3083d4df30c1b436fd24d9eb950958043d19c21bbbed49",
       "module": "settlement__keeperScan",
       "stories": [
         {
@@ -27434,7 +27482,7 @@
         },
         {
           "heading": "Story: Preserve the operation that failed during a keeper run / Returning to scanning requires successful receipt verification and indexing",
-          "line": 54,
+          "line": 65,
           "definitions": [
             "canBeginReceipt",
             "beginReceipt",
@@ -27478,7 +27526,7 @@
         },
         {
           "target": "./keeperDiagnostics.md",
-          "line": 60
+          "line": 71
         }
       ]
     },
@@ -28017,7 +28065,7 @@
     },
     {
       "path": "spec/settlement/monthly.md",
-      "sha256": "1a00a53336cd454e3b50c87f23235bd37cc777877a86e672ef43807847af04fc",
+      "sha256": "266ab45b187d9c511db353020d46c6b4d40d2906bd3bcc001fda5478efa23963",
       "module": "settlement__monthly",
       "stories": [
         {
@@ -28231,27 +28279,28 @@
           "definitions": [
             "alwaysAllocationConserved",
             "proposedPhase",
+            "reviewedOctoberPool",
             "alwaysCapFromRevision",
             "alwaysUnproposedEmpty"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Every cut keeps its reason bounds, its change and exactly one Inbox notice",
-          "line": 515,
+          "line": 534,
           "definitions": [
             "alwaysCutsRecorded"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / The public cut list is exactly each contributor's latest change when that change is a cut",
-          "line": 527,
+          "line": 546,
           "definitions": [
             "alwaysPublicCutsCurrent"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / A month with a cut freezes no earlier than 24 hours after the latest cut, unless its pledge freezes it at the cutoff",
-          "line": 537,
+          "line": 556,
           "definitions": [
             "alwaysAutomaticHonoursCutNotice",
             "alwaysFreezeAfterCutNotice",
@@ -28260,7 +28309,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Obligations follow the frozen shares exactly, excluding only banned accounts",
-          "line": 556,
+          "line": 575,
           "definitions": [
             "alwaysObligationsMatchShares",
             "alwaysEveryPayableShareAccounted",
@@ -28273,7 +28322,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Frozen amounts, recorded triggers and obligation progress never move backwards",
-          "line": 579,
+          "line": 598,
           "definitions": [
             "frozenPhase",
             "stepFrozenStable",
@@ -28288,7 +28337,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Proposals, changes, cuts, freezes, exclusions and payments are reachable",
-          "line": 605,
+          "line": 624,
           "definitions": [
             "sometimesWalletlessReserve",
             "sometimesCompleted",
@@ -28386,6 +28435,10 @@
         {
           "target": "./monthPledges.md",
           "line": 421
+        },
+        {
+          "target": "./octoberImport.md",
+          "line": 501
         }
       ]
     },
@@ -29318,18 +29371,18 @@
     },
     {
       "path": "spec/settlement/octoberImport.md",
-      "sha256": "37c98c7a803393e9996f909988fe2a73fbb61c7573355bc378d94effdc5e42c9",
+      "sha256": "eb03dc75cf857a6b50a8900d3c956076d8cf80432534ef19e0c2615ddbb8486f",
       "module": "settlement__octoberImport",
       "stories": [
         {
           "heading": "Story: Write each reviewed October proposal once",
-          "line": 14
+          "line": 16
         }
       ],
       "rules": [
         {
           "heading": "Story: Write each reviewed October proposal once / Planning computes the packet and writes nothing",
-          "line": 16,
+          "line": 18,
           "definitions": [
             "PacketWeight",
             "PacketEntry",
@@ -29352,7 +29405,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / An apply run writes only under the reviewed digest, current main and the production lock",
-          "line": 52,
+          "line": 54,
           "definitions": [
             "entryFor",
             "eligibleNow",
@@ -29370,7 +29423,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / A proposal already written is never added to or replaced",
-          "line": 89,
+          "line": 91,
           "definitions": [
             "canMonthlyPropose",
             "monthlyPropose",
@@ -29385,7 +29438,7 @@
         },
         {
           "heading": "Story: Write each reviewed October proposal once / Imports, kept workflow proposals, withheld recipients and replays are reachable",
-          "line": 118,
+          "line": 120,
           "definitions": [
             "sometimesImported",
             "sometimesWorkflowProposalKept",
@@ -29414,7 +29467,7 @@
         },
         {
           "target": "./payoutExclusions.md",
-          "line": 58
+          "line": 60
         }
       ]
     },
@@ -31468,7 +31521,7 @@
     },
     {
       "path": "spec/settlement/signer.md",
-      "sha256": "7c2d8dd8328e08c76ac3d6126c82640deea44da74efd4cf7398bab65fd57c3e4",
+      "sha256": "07bf9142f22bd9493cc210c703a25b13d99acbbddad51bfbbeed284d4257208b",
       "module": "settlement__signer",
       "stories": [
         {
@@ -31661,7 +31714,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 410,
+          "line": 417,
           "definitions": [
             "actorValues",
             "attemptValues",
@@ -33291,7 +33344,7 @@
     },
     {
       "path": "spec/slopbot/closure.md",
-      "sha256": "001935b29d7545852099bdb3f1be60648886647dddd8696233a2ec3012cd5538",
+      "sha256": "cc47db67576858e362881364573ae190de774411e8c469be758489beec7d1ba9",
       "module": "slopbot__closure",
       "stories": [
         {
@@ -33300,11 +33353,11 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing",
-          "line": 549
+          "line": 552
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision",
-          "line": 594
+          "line": 597
         }
       ],
       "rules": [
@@ -33506,7 +33559,7 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing / A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label",
-          "line": 551,
+          "line": 554,
           "definitions": [
             "canLabelFinding",
             "labelFinding",
@@ -33518,7 +33571,7 @@
         },
         {
           "heading": "Story: Label certain findings and security results without closing / A restricted project permits only an authorized security comment and the confirmed scam label",
-          "line": 578,
+          "line": 581,
           "definitions": [
             "canCommentSecurity",
             "commentSecurity",
@@ -33531,7 +33584,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / A maintainer reopen or an author appeal blocks further review actions on that revision",
-          "line": 596,
+          "line": 599,
           "definitions": [
             "ReopenActorRole",
             "ReopenEvidence",
@@ -33548,7 +33601,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / An upheld appeal or a maintainer reopen removes the decision's finding label",
-          "line": 630,
+          "line": 633,
           "definitions": [
             "AppealVerdict",
             "AppealOutcome",
@@ -33562,7 +33615,7 @@
         },
         {
           "heading": "Story: Reopen and appeal decisions stop further automatic action on the revision / Simulation samples include allowed and refused repository, participation and verdict observations",
-          "line": 651,
+          "line": 654,
           "definitions": [
             "verifiedSource",
             "ownRun",
@@ -33630,7 +33683,7 @@
         },
         {
           "target": "../contributor/workflow.md",
-          "line": 512
+          "line": 515
         }
       ]
     },
@@ -36340,7 +36393,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "053680b16d96e7812d2adf9ee16659c142a521a9415afbdfa55620020788b13d",
+      "sha256": "226e036503fb24a219d18bb03c967a5df6b61ef5789e275ef9f8d6581c6dd4f3",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -36371,7 +36424,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Absence is proved only by a hash-verified tree, never by a 404",
-          "line": 75,
+          "line": 78,
           "definitions": [
             "TreeRead",
             "PathLookup",
@@ -36388,7 +36441,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / A blob, tree or binary claim counts only when its git object hash matches the bytes read",
-          "line": 120,
+          "line": 123,
           "definitions": [
             "ObjectKind",
             "ObjectRead",
@@ -36410,7 +36463,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals",
-          "line": 181,
+          "line": 184,
           "definitions": [
             "LineSource",
             "FileLines",
@@ -36430,7 +36483,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 228,
+          "line": 254,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -36444,7 +36497,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 268,
+          "line": 294,
           "definitions": [
             "CensusPull",
             "CensusQuery",
