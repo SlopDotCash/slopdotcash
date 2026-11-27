@@ -32,7 +32,7 @@ import { bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
 import { type Period, formatPeriod, parsePeriod, periodContaining, periodEndSeconds } from "../src/kernels/calendar.ts"
 import { ordinaryFeeBase } from "../src/kernels/fees.ts"
 import { NETWORKS } from "../src/kernels/networks.ts"
-import { fingerprintOf } from "../src/keeper/attempts.vibe"
+import { fingerprintOf, readAttempt } from "../src/keeper/attempts.vibe"
 
 module node {
   import { fileURLToPath } from "node:url"
@@ -402,6 +402,14 @@ effect function spawnKeeper(program: string, configPath: string, args: ReadonlyA
   return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, ...args], { env: { KEEPER_EVM_PRIVATE_KEY: operator.privateKey }, extendEnv: true }))
 }
 
+effect function runKeeperProcess(program: string, configPath: string) {
+  return try scoped(effect {
+    const handle = try spawnKeeper(program, configPath)
+    const [stdout, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode]
+    return { code: Number(code), printed: try Effect.try(() => JSON.parse(stdout) as KeeperRun & { readonly mode: string }) }
+  })
+}
+
 layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServices.layer)), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Recipient isolation: an unbound recipient waits while a bound one is paid and its gas settles from the finalized receipt (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues")', () => effect {
     const { escrow } = try Bench
@@ -502,11 +510,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       return Number(handle.exitCode catch () => 137)
     })
     const committed = try gasRows()
-    const resumed = try scoped(effect {
-      const handle = try spawnKeeper(main, try writtenConfig("direct.json", try operatorConfig(escrow.chain.url)))
-      const [stdout, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode]
-      return { code: Number(code), printed: try Effect.try(() => JSON.parse(stdout) as KeeperRun & { readonly mode: string }) }
-    })
+    const resumed = try runKeeperProcess(main, try writtenConfig("direct.json", try operatorConfig(escrow.chain.url)))
     try settled()
     const after = try operatorNonce()
     const rows = try gasRows()
@@ -519,6 +523,69 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       rowsAdded: rows.length - committed.length,
       nonces: after - before,
     }, { killed: false, mode: "execute", resumed: "submitted", fired: ["timeout"], sameBytes: true, rowsAdded: 0, nonces: 1n })
+  })
+
+  it.effect('The EVM keeper CLI recovers an accepted send whose RPC answer was lost, then indexes the finalized payment once (spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing")', () => effect {
+    const { escrow, operator, vault, program: main } = try Bench
+    const actor = 106n
+    const gross = 3_500n
+    const wallet = escrow.roles.donor
+    const id = try award(actor, 0xa106n, gross)
+    try bind(actor, wallet)
+    try finalize()
+    const initialHead = try promise(() => escrow.chain.finalized())
+    const initialNonce = try operatorNonce()
+    try journal(openKeeperStore())
+    const initialGas = try gasRows()
+    const key = `keeper:pay:${fingerprintOf([escrow.chainId.toString(), vault.toLowerCase(), id.toLowerCase()])}`
+    const faults = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [
+      { method: "eth_sendRawTransaction", fault: "lostResponse" },
+      { method: "eth_getTransactionByHash", nth: 1, fault: "http500" },
+    ]))
+    const proxy = try acquireRelease(promise(() => serve(faults)), (server) => promise(() => server.close()))
+    const config = try writtenConfig("lost-response.json", try operatorConfig(proxy.url))
+    const first = try runKeeperProcess(main, config)
+    const attempt = try journal(inTransaction((tx) => readAttempt(tx, key)))
+    if (attempt === undefined || attempt === null) return try die(new Error("the keeper retained no signed attempt"))
+    const signed = readSignedType2(attempt.rawTransaction as Hex)
+    const held = (try gasRows()).slice(initialGas.length)
+    const observed = try promise(() => escrow.chain.rpc("eth_getTransactionReceipt", [attempt.transactionId]))
+    if (observed === null) return try die(new Error("Anvil has no receipt for the retained attempt"))
+    const receipt = observed as { readonly gasUsed: string; readonly effectiveGasPrice: string; readonly status: string }
+    const charged = try Effect.try(() => (BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice)).toString())
+    try settled()
+    const resumed = try runKeeperProcess(main, config)
+    const retained = try journal(inTransaction((tx) => readAttempt(tx, key)))
+    const paid = try journal(inTransaction((tx) => tx.all(sql`SELECT json_extract(payment, '$.transactionId') AS transaction_id FROM awards WHERE scope = ${`${project}:${vault}`} AND id = ${id}`)))
+    const finalHead = try promise(() => escrow.chain.finalized())
+    const payments = decodeEscrowLogs(vault, try promise(() => escrow.logs(vault, initialHead + 1n, finalHead)))
+      .flatMap((log) => log.kind === "event" && log.event.name === "Paid" && log.event.id === id ? [{ ...log.event, transactionId: log.at.transaction }] : [])
+    const fee = ordinaryFeeBase(gross)
+    try same({
+      first: outcomeOf(first.printed, id)?.state,
+      signed: [signed?.id, signed?.sender, signed?.request.nonce, signed?.request.value],
+      retained: retained?.rawTransaction === attempt.rawTransaction && retained.transactionId === attempt.transactionId,
+      held: held.map(({ transaction_id, actual }) => [transaction_id, actual]),
+      settled: (try gasRows()).slice(initialGas.length),
+      successful: receipt.status,
+      restarted: [resumed.code, resumed.printed.mode, outcomeOf(resumed.printed, id)],
+      paid,
+      payments,
+      nonces: (try operatorNonce()) - initialNonce,
+      faults: faults.fired,
+    }, {
+      first: "waiting",
+      signed: [attempt.transactionId, try lower(operator.address), Number(initialNonce), 0n],
+      retained: true,
+      held: [[attempt.transactionId, null]],
+      settled: held.map((row) => ({ ...row, actual: charged })),
+      successful: "0x1",
+      restarted: [0, "execute", undefined],
+      paid: [{ transaction_id: attempt.transactionId }],
+      payments: [{ name: "Paid", id, actor, destination: try lower(wallet.address), version: 1n, gross, net: gross - fee, fee, transactionId: attempt.transactionId }],
+      nonces: 1n,
+      faults: [{ method: "eth_sendRawTransaction", fault: "lostResponse" }, { method: "eth_getTransactionByHash", fault: "http500" }],
+    })
   })
 
   it.effect('The operator Worker answers only the internal tick, coalesces concurrent ticks into one run and reports a failed run with a fixed answer (spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"; spec/settlement/keeperRpc.md, "Only an absent override uses the originally configured endpoint")', () => effect {
