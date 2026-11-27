@@ -216,8 +216,10 @@ it.live('A written implementation memo is reused on the next pass, and a stale o
     const relive = (try collected(world, try localProofs(repositoryDirectory, refused), tampered)).implementation.history.acceptedImplementationDigests
     const pinnedHash = try implementationMemoRulesHash(new URL("../../..", import.meta.url).pathname)
 
+    const { audited, auditMismatches, digestsRead, digestsReused } = reopened.stats
     try same({
       calls: [live.count, reused.count, refused.count],
+      savedEvidence: { read: digestsRead, checked: digestsReused + audited, auditMismatches },
       auditRates: [reopened.auditOneIn, changedCode.auditOneIn],
       reusedDigests: [...again].sort(),
       reliveDigests: [...relive].sort(),
@@ -225,7 +227,8 @@ it.live('A written implementation memo is reused on the next pass, and a stale o
       rulesMismatch: typeof rulesMismatch === "string" ? rulesMismatch : "accepted",
       pinnedHash,
     }, {
-      calls: [1, 0, 1],
+      calls: [1, audited === 0 ? 0 : 1, 1],
+      savedEvidence: { read: audited, checked: first.size, auditMismatches: 0 },
       auditRates: [implementationMemoAuditOneIn, implementationMemoChangedCodeAuditOneIn],
       reusedDigests: [...first].sort(),
       reliveDigests: [...first].sort(),
