@@ -18493,7 +18493,7 @@
     },
     {
       "path": "spec/points/corrections.md",
-      "sha256": "35fe34d7e6344d134c880321d16cb0ecf501526ac2eb707bd4f08e99a8255254",
+      "sha256": "3a465d24fc984e3c7e8f52a4c5e1a7f77b55e10889a54781aa5028b9dd7cf257",
       "module": "points__corrections",
       "stories": [
         {
@@ -18502,7 +18502,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest",
-          "line": 264
+          "line": 263
         }
       ],
       "rules": [
@@ -18592,7 +18592,7 @@
         },
         {
           "heading": "Story: Reassign the existing pool while preserving funded history / An already-correct pool records its earlier-acceptance proof once",
-          "line": 226,
+          "line": 225,
           "definitions": [
             "noEntry",
             "lastShares",
@@ -18608,7 +18608,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest",
-          "line": 266,
+          "line": 265,
           "definitions": [
             "noChunk",
             "canStageChunk",
@@ -18625,7 +18625,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / A recorded source omitted from the historical search is verified through a census supplement",
-          "line": 303,
+          "line": 302,
           "definitions": [
             "canRequireSupplement",
             "requireSupplement",
@@ -18642,7 +18642,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / Directed witnesses check protection races, stale predecessors, October attribution and replay",
-          "line": 336,
+          "line": 335,
           "definitions": [
             "readyManifest",
             "carrier",
