@@ -678,4 +678,33 @@ pure val eval_witness_sometimesRestoredAfterRestriction = (
   ("recordResult", 0, { assessment: 1, repository: 1, revision: 2, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, { revision: 2, result: PolicyAccepts }),
   ("observePins", -1, List({ repository: 1, assessment: 1, pin: E::PinMatches })),
   ("reinstate", 5, { revision: 2, sequence: 3 }))
+pure val eval_witness_sometimesCollectable = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("requestAssessment", 1, 1, E::SetupCheck, 1, P::owner1),
+  ("recordResult", 0, { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true }, { revision: 1, result: PolicyAccepts }),
+  ("readSetup", 1),
+  ("activate", 1, { authority: P::owner1, installations: List({ repository: 1, installation: P::Installed }, { repository: 2, installation: P::Installed }) }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }))
+pure val eval_witness_sometimesBannedRetired = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("requestAssessment", 1, 1, E::SetupCheck, 1, P::owner1),
+  ("recordResult", 0, { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true }, { revision: 1, result: PolicyAccepts }))
+pure val eval_witness_sometimesPendingRestrictionRevision = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("quarantine", 6, { revision: 1, sequence: 1 }, { revision: 1, result: PolicyRefuses }))
+pure val eval_witness_sometimesRemovedDuringRestriction = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("remove", 1, { authority: P::owner1, expectedRevision: 1 }),
+  ("quarantine", 6, { revision: 2, sequence: 1 }, { revision: 2, result: PolicyAccepts }))
+pure val eval_witness_sometimesAppendedAwaitingScan = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("publishOwnerRevision", 1, { ...P::change1, expectedRevision: 1, presentation: false, executable: true, clearance: P::ClearanceMissing, appends: List(P::newRepository2) }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, List(), List({ repository: 2, listedBy: 0, restricted: false })))
+pure val eval_witness_sometimesExemptionLapsedWithSteward = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("grantExemption", 5, { revision: 1, sequence: 1 }, E::goodGrant),
+  ("adminRevise", 5, { ...P::exception1, expectedRevision: 1, steward: 4, clearance: P::ClearanceRetained }, List(), List()))
+pure val eval_witness_sometimesExemptAfterSetupCheck = (
+  ("publishApplication", 1, P::creation1, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }, { repository: 1, listedBy: 0, restricted: false }, List()),
+  ("grantExemption", 5, { revision: 1, sequence: 1 }, E::goodGrant),
+  ("readSetup", 1),
+  ("activate", 1, { authority: P::owner1, installations: List({ repository: 1, installation: P::Installed }, { repository: 2, installation: P::Installed }) }, { actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned }))
 ```

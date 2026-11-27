@@ -257,7 +257,7 @@
     },
     {
       "path": "spec/backend/accessComposition.md",
-      "sha256": "9c4d3dbe691794e3ea6ca5225e57dcf38480866f3afec27bb85858ba348dc3c4",
+      "sha256": "7e717997342afca40303391f4d69df152b642e76df2f4ae83aacbb76b8125a1f",
       "module": "backend__accessComposition",
       "stories": [
         {
@@ -361,7 +361,11 @@
             "weight_decideProjectBan",
             "weight_recordVettingBan",
             "weight_observeEvent",
-            "cValues"
+            "cValues",
+            "eval_witness_sometimesRefusedAtCommit",
+            "eval_witness_sometimesBannedKeepsRights",
+            "eval_witness_sometimesCreditStops",
+            "eval_witness_sometimesWritesAgainAfterRelease"
           ]
         }
       ],
@@ -2066,7 +2070,7 @@
     },
     {
       "path": "spec/backend/projectComposition.md",
-      "sha256": "86c35d2c4ea8c87390fb06bfdaee9b08ddb48eb8c34cd496b40bc1fc859e518e",
+      "sha256": "3d42a392c045d9f26ece674287ae40e09e9d914e24bbb2cb01e13ccc6b1ed196",
       "module": "backend__projectComposition",
       "stories": [
         {
@@ -2348,7 +2352,14 @@
             "weight_journalAccountDenial",
             "eval_witness_sometimesFlagPausedActiveManifest",
             "eval_witness_sometimesOwnerExcludedFromNextMonth",
-            "eval_witness_sometimesRestoredAfterRestriction"
+            "eval_witness_sometimesRestoredAfterRestriction",
+            "eval_witness_sometimesCollectable",
+            "eval_witness_sometimesBannedRetired",
+            "eval_witness_sometimesPendingRestrictionRevision",
+            "eval_witness_sometimesRemovedDuringRestriction",
+            "eval_witness_sometimesAppendedAwaitingScan",
+            "eval_witness_sometimesExemptionLapsedWithSteward",
+            "eval_witness_sometimesExemptAfterSetupCheck"
           ]
         }
       ],
@@ -7466,7 +7477,7 @@
     },
     {
       "path": "spec/contributor/workflow.md",
-      "sha256": "5750f3b4932f0a73b6a5820aac786dd388135d3ca19b37bb2a0d29be1d54347b",
+      "sha256": "5a51ee176da61142288250319b8b40c0f12d880376c096f5a5afd33e3460cb8e",
       "module": "contributor__workflow",
       "stories": [
         {
@@ -7714,7 +7725,30 @@
             "weight_requestChanges",
             "weight_pushUpdate",
             "weight_declareChangeType",
-            "weight_recordEvidenceField"
+            "weight_recordEvidenceField",
+            "eval_witness_sometimesSubmittedNonUiWithLogs",
+            "eval_witness_sometimesSubmittedWithFailedEvidenceAndStaleIntake",
+            "eval_witness_sometimesSubmittedHumanOnly",
+            "eval_witness_sometimesSubmittedWithoutRun",
+            "eval_witness_sometimesAccepted",
+            "eval_witness_sometimesAcceptedWithoutCredit",
+            "eval_witness_sometimesAppealed",
+            "eval_witness_sometimesAppealedAfterSecondClosure",
+            "eval_witness_sometimesReopened",
+            "eval_witness_sometimesAuthorCloseReopened",
+            "eval_witness_sometimesMergedWhileChangesRequested",
+            "eval_witness_sometimesUncollectedMergeUncredited",
+            "eval_witness_sometimesBannedCannotStart",
+            "eval_witness_sometimesStoppedForRisk",
+            "eval_witness_sometimesRiskBlocksReselection",
+            "eval_witness_sometimesReselectedAfterFreshScan",
+            "eval_witness_sometimesInspectionUnavailable",
+            "eval_witness_sometimesStoppedByProject",
+            "eval_witness_sometimesIssueRefused",
+            "eval_witness_sometimesStarred",
+            "eval_witness_sometimesSelfReviewUncredited",
+            "eval_witness_sometimesRevised",
+            "eval_witness_sometimesRunRecorded"
           ]
         }
       ],
@@ -9962,7 +9996,7 @@
     },
     {
       "path": "spec/fees/submissionFeeSends.md",
-      "sha256": "deba566df72bb910d195c418ca05e30d6aadee7f98c01a239062d2f9f8020122",
+      "sha256": "a9cbf23e35f848c0929f22d3a3f6d64b804b0623d232a86c65ea2c186fe97d65",
       "module": "fees__submissionFeeSends",
       "stories": [
         {
@@ -9971,7 +10005,7 @@
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors",
-          "line": 332
+          "line": 346
         }
       ],
       "rules": [
@@ -10105,12 +10139,15 @@
             "eval_witness_sometimesFailedThenSentAgain",
             "eval_witness_sometimesSecondBatchSettled",
             "eval_witness_sometimesOverBudget",
-            "eval_witness_sometimesParkedAndRestSent"
+            "eval_witness_sometimesParkedAndRestSent",
+            "eval_witness_sometimesListRecordedOnce",
+            "eval_witness_sometimesRevertParksNothing",
+            "eval_witness_sometimesParkedReleased"
           ]
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last",
-          "line": 339,
+          "line": 353,
           "definitions": [
             "solanaMaxBatch",
             "solanaExpiredReason",
@@ -10132,7 +10169,7 @@
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers",
-          "line": 384,
+          "line": 398,
           "definitions": [
             "WorkerLedgerResult",
             "WorkerOutcomes",
@@ -16978,7 +17015,7 @@
     },
     {
       "path": "spec/operations/robinhoodRpcRotation.md",
-      "sha256": "f9ea0cfd0501bd868389e3c909a4b5ed00d1b520eedaee51ccbcd8af9c420350",
+      "sha256": "9fedf4fa77f4a5a0a158f12fe7032de96febdd6268bc8df2413796775e0ff03d",
       "module": "operations__robinhoodRpcRotation",
       "stories": [
         {
@@ -17098,7 +17135,13 @@
             "uploadedValues",
             "goodVersion",
             "versionValues",
-            "readbackValues"
+            "readbackValues",
+            "eval_witness_sometimesRefusedAtPin",
+            "eval_witness_sometimesRefusedUnqualified",
+            "eval_witness_sometimesRefusedAtUpload",
+            "eval_witness_sometimesRefusedAfterUpload",
+            "eval_witness_sometimesConfirmed",
+            "eval_witness_sometimesUncertain"
           ]
         }
       ],

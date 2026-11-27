@@ -327,6 +327,20 @@ pure val eval_witness_sometimesParkedAndRestSent = (
   ("broadcast", true, Worker),
   ("mine", Chain),
   ("recordFinalized", Worker))
+pure val eval_witness_sometimesListRecordedOnce = (
+  ("publish", { mode: R::DryRun, contract: true, key: false, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("recordList", Worker),
+  ("recordList", Worker))
+pure val eval_witness_sometimesRevertParksNothing = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("breakResolver", true, Chain),
+  ("revert", Worker))
+pure val eval_witness_sometimesParkedReleased = (
+  ("publish", { mode: R::Live, contract: true, key: true, itemsTable: true, ceilings: productionCeilings }, Release),
+  ("refusePayout", true, Chain),
+  ("park", Worker),
+  ("refusePayout", false, Chain),
+  ("releaseParked", Worker))
 ```
 
 ## Story: Isolate Solana failed sends and configuration errors

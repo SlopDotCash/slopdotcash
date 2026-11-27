@@ -172,4 +172,27 @@ pure val weight_decideProjectBan = 6
 pure val weight_recordVettingBan = 6
 pure val weight_observeEvent = 3
 pure val cValues = Set(initial)
+pure val eval_witness_sometimesRefusedAtCommit = (
+  ("begin", 7, BountyReservation),
+  ("recordVettingBan", AC::vettingService, 1, 1),
+  ("decideProjectBan", 18633264, 1, 2, List(7)),
+  ("commit", 7, BountyReservation))
+pure val eval_witness_sometimesBannedKeepsRights = (
+  ("recordVettingBan", AC::vettingService, 1, 1),
+  ("decideProjectBan", 18633264, 1, 2, List(7)),
+  ("useKept", 7, FlagWithdrawal))
+pure val eval_witness_sometimesCreditStops = (
+  ("observeEvent", scheduler, 7),
+  ("advanceTime", scheduler, 1),
+  ("recordVettingBan", AC::vettingService, 1, 1),
+  ("decideProjectBan", 18633264, 1, 2, List(7)),
+  ("observeEvent", scheduler, 7))
+pure val eval_witness_sometimesWritesAgainAfterRelease = (
+  ("recordVettingBan", AC::vettingService, 1, 1),
+  ("decideProjectBan", 18633264, 1, 2, List(7)),
+  ("appeal", 7, 1),
+  ("reinstateAccounts", 202660855, 3, 1, List(7), AC::NoProjectRequest),
+  ("advanceTime", scheduler, 1),
+  ("begin", 7, BountyReservation),
+  ("commit", 7, BountyReservation))
 ```

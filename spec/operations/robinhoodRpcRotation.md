@@ -256,4 +256,46 @@ pure val versionValues = Set(goodVersion, { ...goodVersion, sameBindings: false 
 pure val readbackValues = Set({ onlyActive: 11, latest: 11, releaseMessage: true, version: goodVersion },
   { onlyActive: 10, latest: 11, releaseMessage: true, version: goodVersion },
   { onlyActive: 11, latest: 11, releaseMessage: false, version: goodVersion })
+pure val eval_witness_sometimesRefusedAtPin = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", { ...goodPin, releaseMessage: false }))
+pure val eval_witness_sometimesRefusedUnqualified = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", goodPin),
+  ("checkJournal", quietJournal),
+  ("qualify", { ...goodRead, chainId: 1 }))
+pure val eval_witness_sometimesRefusedAtUpload = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", goodPin),
+  ("checkJournal", quietJournal),
+  ("qualify", goodRead),
+  ("recheckBeforeUpload", { onlyActive: 10, latest: 10, deployment: 20, liveMain: true }),
+  ("upload", 0))
+pure val eval_witness_sometimesRefusedAfterUpload = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", goodPin),
+  ("checkJournal", quietJournal),
+  ("qualify", goodRead),
+  ("recheckBeforeUpload", { onlyActive: 10, latest: 10, deployment: 20, liveMain: true }),
+  ("upload", 11),
+  ("recheckBeforeDeploy", { onlyActive: 10, latest: 11, deployment: 20, liveMain: true }, { ...goodVersion, sameBindings: false }, quietJournal))
+pure val eval_witness_sometimesConfirmed = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", goodPin),
+  ("checkJournal", quietJournal),
+  ("qualify", goodRead),
+  ("recheckBeforeUpload", { onlyActive: 10, latest: 10, deployment: 20, liveMain: true }),
+  ("upload", 11),
+  ("recheckBeforeDeploy", { onlyActive: 10, latest: 11, deployment: 20, liveMain: true }, goodVersion, quietJournal),
+  ("deploy", true),
+  ("confirmReadback", { onlyActive: 11, latest: 11, releaseMessage: true, version: goodVersion }))
+pure val eval_witness_sometimesUncertain = (
+  ("admit", goodRequest, goodCandidate),
+  ("readPin", goodPin),
+  ("checkJournal", quietJournal),
+  ("qualify", goodRead),
+  ("recheckBeforeUpload", { onlyActive: 10, latest: 10, deployment: 20, liveMain: true }),
+  ("upload", 11),
+  ("recheckBeforeDeploy", { onlyActive: 10, latest: 11, deployment: 20, liveMain: true }, goodVersion, quietJournal),
+  ("deploy", false))
 ```
