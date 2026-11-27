@@ -395,7 +395,7 @@
     },
     {
       "path": "spec/backend/accounts.md",
-      "sha256": "47381cb2e08e4affdbf9ce2b06cb3f10b7eb7f1e85b492bb9157240e3a060ee9",
+      "sha256": "7e25d924a51ba1f26c3c9cb7ce93d2d4a22e6ad7dacb4f5dd6804990fcaa5f06",
       "module": "backend__accounts",
       "stories": [
         {
@@ -690,7 +690,8 @@
             "checkedRevisionValues",
             "suppliedVersionValues",
             "nextStateValues",
-            "choiceValues"
+            "choiceValues",
+            "eval_witness_sometimesOwnerWeekSession"
           ]
         }
       ],
@@ -2065,7 +2066,7 @@
     },
     {
       "path": "spec/backend/projectComposition.md",
-      "sha256": "c6dfd476cbb910a06d538998698a8a15b929184d4f4f4b2d823bd7fd68f06a50",
+      "sha256": "86c35d2c4ea8c87390fb06bfdaee9b08ddb48eb8c34cd496b40bc1fc859e518e",
       "module": "backend__projectComposition",
       "stories": [
         {
@@ -2344,7 +2345,10 @@
             "weight_remove",
             "weight_decideMalice",
             "weight_journalAccountAppeal",
-            "weight_journalAccountDenial"
+            "weight_journalAccountDenial",
+            "eval_witness_sometimesFlagPausedActiveManifest",
+            "eval_witness_sometimesOwnerExcludedFromNextMonth",
+            "eval_witness_sometimesRestoredAfterRestriction"
           ]
         }
       ],
@@ -3698,7 +3702,7 @@
     },
     {
       "path": "spec/contracts/evmEscrow.md",
-      "sha256": "a9513df9b4da6bdf5641eac74b80a62aaa1e88a021458849b75698ffd492f215",
+      "sha256": "344eb0cf81a220dc8399e87bce49e74f96e3c068fd18c0298bedddc41e08b885",
       "module": "contracts__evmEscrow",
       "stories": [
         {
@@ -4113,7 +4117,9 @@
             "fromPeriodValues",
             "countValues",
             "weight_pledgeMonths",
-            "weight_expirePledge"
+            "weight_expirePledge",
+            "eval_witness_sometimesEvmStrandedLeaf",
+            "eval_witness_sometimesEvmStrandedLeafLocked"
           ]
         }
       ],
@@ -4274,7 +4280,7 @@
     },
     {
       "path": "spec/contracts/solanaEscrow.md",
-      "sha256": "a51e643ca1ff0eef38265b4884b7c80b3d89b0a65d4ea9023504af9b70851b25",
+      "sha256": "23f5737c06a8487d58d65f463a17f19ab473aa8d3c0d99a7aa1d298fb5443ee5",
       "module": "contracts__solanaEscrow",
       "stories": [
         {
@@ -4709,7 +4715,11 @@
             "weight_releaseMonthlyAward",
             "weight_releaseMonthlyReserve",
             "weight_vetoBinding",
-            "weight_tick"
+            "weight_tick",
+            "eval_witness_sometimesPledgeOpenAfterAdmission",
+            "eval_witness_sometimesAwardReleased",
+            "eval_witness_sometimesLeafCommitted",
+            "eval_witness_sometimesWholeReserveReleased"
           ]
         }
       ],
@@ -5294,7 +5304,7 @@
     },
     {
       "path": "spec/contributor/installation.md",
-      "sha256": "ea55c1e8e9dc6b97645f7a72de8518dffd69278c35349a10dfff791361bcc59c",
+      "sha256": "fec3e3939b8911a5bdc632665e5542e901eca980b6fc6a32dc760414ab5bdf97",
       "module": "contributor__installation",
       "stories": [
         {
@@ -5459,7 +5469,9 @@
             "weight_retain",
             "weight_commit",
             "weight_confirm",
-            "weight_finish"
+            "weight_finish",
+            "eval_witness_sometimesNewRevisionAfterRisk",
+            "eval_witness_sometimesUpgradeNeedsNewAuthorization"
           ]
         }
       ],
@@ -5700,7 +5712,7 @@
     },
     {
       "path": "spec/contributor/maintainerWorkflow.md",
-      "sha256": "cec731909348e1d3992002508c1d5c7139b5f4077a71b8644fe891812bd9ed49",
+      "sha256": "56d01ced788d471b18027274521210d1b154e423f30a218ad5578149e6feec70",
       "module": "contributor__maintainerWorkflow",
       "stories": [
         {
@@ -5830,12 +5842,14 @@
             "stepFinishedIsFinal",
             "sometimesFinishedAfterPreparing",
             "byValues",
-            "weight_siteAct",
-            "weight_checkPermission",
-            "weight_confirmSession",
-            "weight_readBack",
-            "weight_giveDecision",
-            "repositoryIdValues"
+            "repositoryIdValues",
+            "eval_witness_sometimesRefusedWithoutHumanDecision",
+            "eval_witness_sometimesAccountChangeDiscardedCase",
+            "eval_witness_sometimesSetupCheckApplied",
+            "eval_witness_sometimesUncertainReadBackApplied",
+            "eval_witness_sometimesDecisionRecorded",
+            "eval_witness_sometimesReviewedWithoutMerge",
+            "eval_witness_sometimesAuthorizedMerge"
           ]
         }
       ],
@@ -6623,7 +6637,7 @@
     },
     {
       "path": "spec/contributor/sessionExchange.md",
-      "sha256": "3a2b1632d7af9377f396355f6d278cfde2a4bd170b967fe4963d6b5054794425",
+      "sha256": "7f3d0084d620b585762783895dfb6dfc2eb95996eb6cdc49c9bbe1215fe49aa8",
       "module": "contributor__sessionExchange",
       "stories": [
         {
@@ -6795,7 +6809,9 @@
             "weight_receiveCreate",
             "weight_waitPoll",
             "weight_acceptPoll",
-            "weight_observeStanding"
+            "weight_observeStanding",
+            "eval_witness_sometimesReady",
+            "eval_witness_sometimesConflict"
           ]
         }
       ],
@@ -8572,7 +8588,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "9cd6a0aa38f635e813228d9a48220e517dcf5a9a28414f5ff5af543469300753",
+      "sha256": "eeb184913a95500080d095095c812cb90db58356816ca3bbccc795f25840a960",
       "module": "fees__conversion",
       "stories": [
         {
@@ -8947,7 +8963,8 @@
             "weight_accrue",
             "weight_registerVault",
             "weight_observeBalance",
-            "weight_abandonIntent"
+            "weight_abandonIntent",
+            "eval_witness_sometimesClaimFinalized"
           ]
         }
       ],
@@ -9945,7 +9962,7 @@
     },
     {
       "path": "spec/fees/submissionFeeSends.md",
-      "sha256": "5dca9d32c6146216e65cb5c557008e501f755bb9b55f06b20d4b8d92e5176bcb",
+      "sha256": "deba566df72bb910d195c418ca05e30d6aadee7f98c01a239062d2f9f8020122",
       "module": "fees__submissionFeeSends",
       "stories": [
         {
@@ -9954,7 +9971,7 @@
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors",
-          "line": 283
+          "line": 332
         }
       ],
       "rules": [
@@ -10083,12 +10100,17 @@
             "sometimesRevertParksNothing",
             "sometimesParkedReleased",
             "refusedValues",
-            "brokenValues"
+            "brokenValues",
+            "eval_witness_sometimesSettled",
+            "eval_witness_sometimesFailedThenSentAgain",
+            "eval_witness_sometimesSecondBatchSettled",
+            "eval_witness_sometimesOverBudget",
+            "eval_witness_sometimesParkedAndRestSent"
           ]
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana deposit whose send landed and failed goes alone, and a failed single send is parked and sent last",
-          "line": 290,
+          "line": 339,
           "definitions": [
             "solanaMaxBatch",
             "solanaExpiredReason",
@@ -10110,7 +10132,7 @@
         },
         {
           "heading": "Story: Isolate Solana failed sends and configuration errors / A Solana configuration error fails only the Solana ledger and never stops the EVM ledgers",
-          "line": 335,
+          "line": 384,
           "definitions": [
             "WorkerLedgerResult",
             "WorkerOutcomes",
@@ -10786,7 +10808,7 @@
     },
     {
       "path": "spec/frontend/feePages.md",
-      "sha256": "675f5be3c200f4c0a892f929d6f7c31c8e83fd61a9c162aab575216035387609",
+      "sha256": "0ad4a7a105ec8e5f5ec18d1e9f92c27261ccb0614a83d2bb3ec3dc133499b096",
       "module": "frontend__feePages",
       "stories": [
         {
@@ -10944,7 +10966,15 @@
             "weight_send",
             "weight_walletReply",
             "weight_ask",
-            "weight_answer"
+            "weight_answer",
+            "eval_witness_sometimesReceived",
+            "eval_witness_sometimesFinished",
+            "eval_witness_sometimesBlockedWithinHour",
+            "eval_witness_sometimesUnclearKept",
+            "eval_witness_sometimesWrongWalletRefused",
+            "eval_witness_sometimesAutoChecked",
+            "eval_witness_sometimesUnsentCleared",
+            "eval_witness_sometimesAnotherWalletAfterDecline"
           ]
         }
       ],
@@ -11381,7 +11411,7 @@
     },
     {
       "path": "spec/frontend/ownerMonthly.md",
-      "sha256": "da68d04adb864c22c8d6087255b85e2e239b9d2ff7b48a3464f254eb98e416f9",
+      "sha256": "ce25cb18374b0300e580a1d5e56efb8d4f104bd6070b8958056bb121d2ae92a1",
       "module": "frontend__ownerMonthly",
       "stories": [
         {
@@ -11545,7 +11575,10 @@
             "weight_review",
             "weight_send",
             "weight_walletReply",
-            "weight_check"
+            "weight_check",
+            "eval_witness_sometimesReleaseSigned",
+            "eval_witness_sometimesFinalizationRefusedInNotice",
+            "eval_witness_sometimesCutSaved"
           ]
         }
       ],
@@ -11767,7 +11800,7 @@
     },
     {
       "path": "spec/frontend/paymentHistory.md",
-      "sha256": "c97e2ba4284fb810d71363e3f77b7ff5b5b59087ca927e31fa3a8e6995d16b64",
+      "sha256": "d4fab4f0eee8f59d9b081eb6dbcae03d7aed74fec284ee1c7e43c70c7844c40c",
       "module": "frontend__paymentHistory",
       "stories": [
         {
@@ -11838,7 +11871,9 @@
             "nextCursorValues",
             "lifetimeValues",
             "weight_requestPage",
-            "weight_receivePage"
+            "weight_receivePage",
+            "eval_witness_sometimesMultiPageComplete",
+            "eval_witness_sometimesRetriedComplete"
           ]
         }
       ],
@@ -12831,7 +12866,7 @@
     },
     {
       "path": "spec/frontend/provisionalVault.md",
-      "sha256": "f773a6825f1d87dadc11886e6c3ee6dd7632f0b3214f45f0823b5a8e4146aca2",
+      "sha256": "b2cda3718594ed5087c588e17140dfc2ea7e2f718ff7e15c382994160c106498",
       "module": "frontend__provisionalVault",
       "stories": [
         {
@@ -12925,13 +12960,14 @@
             "atomicValues",
             "approvalReadValues",
             "weight_readAllowance",
+            "eval_witness_sometimesApprovalSaved",
             "eval_witness_sometimesDepositAfterApproval",
             "eval_witness_sometimesBatchedDeposit"
           ]
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality / Included deposits are received pending finality only when there is an exact deposit event",
-          "line": 199,
+          "line": 201,
           "definitions": [
             "canIncludeDeposit",
             "includeDeposit",
@@ -12947,7 +12983,7 @@
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality / Only a finalized deposit in a registered vault is eligible for accounting",
-          "line": 235,
+          "line": 237,
           "definitions": [
             "canCountDeposit",
             "countDeposit",
@@ -13684,7 +13720,7 @@
     },
     {
       "path": "spec/frontend/solanaBountyPrompt.md",
-      "sha256": "f992445fc5075d9a02d6772bf11fb16f982b4685681956d099268f0852c0d3ad",
+      "sha256": "5b1e10645a462ee3ad743d4318536fd03c65220f6dd9f8bd27f4409d62937ad9",
       "module": "frontend__solanaBountyPrompt",
       "stories": [
         {
@@ -13785,7 +13821,8 @@
             "weight_verify",
             "weight_verifyReply",
             "weight_checkHistory",
-            "weight_historyReply"
+            "weight_historyReply",
+            "eval_witness_sometimesFreshPlanAfterExpiry"
           ]
         }
       ],
@@ -14203,7 +14240,7 @@
     },
     {
       "path": "spec/frontend/walletConsent.md",
-      "sha256": "bf29eb0a86d61f3de956829bd8356a979b99ac7d40aa78747c71fd964e4fa3e4",
+      "sha256": "9bd469b776b9ed0149867346d82aed3bc6741566776aec8bd8b6ef7b86daab0d",
       "module": "frontend__walletConsent",
       "stories": [
         {
@@ -14327,7 +14364,10 @@
             "weight_sign",
             "weight_signReply",
             "weight_post",
-            "weight_postReply"
+            "weight_postReply",
+            "eval_witness_sometimesDialogAccepted",
+            "eval_witness_sometimesSignInAgain",
+            "eval_witness_sometimesAccepted"
           ]
         }
       ],
@@ -14604,7 +14644,7 @@
     },
     {
       "path": "spec/operations/backup.md",
-      "sha256": "65953d2929da80e24a8c678595f83ab0c410e3492b573be7e2fde2809fe905ca",
+      "sha256": "c1390ee62f4d226c3538c57840d9188fe8ea6d9520effdbf3d369daddc168557",
       "module": "operations__backup",
       "stories": [
         {
@@ -14826,13 +14866,8 @@
             "weight_copyPage",
             "weight_verifyPage",
             "weight_finish",
-            "weight_beginRestore",
-            "weight_checkChain",
-            "weight_writeDestination",
-            "weight_readDestination",
             "weight_retain",
             "weight_failPage",
-            "weight_replayFailed",
             "weight_start",
             "weight_classify",
             "weight_writeMissingMarker",
@@ -14842,13 +14877,22 @@
             "keyValues",
             "exactValues",
             "releasedValues",
-            "weight_reserveTarget",
             "weight_freezeGeneration",
             "weight_markTarget",
             "weight_recordRetirement",
             "weight_retireGeneration",
             "weight_settleReference",
-            "weight_setRetirementRelease"
+            "weight_setRetirementRelease",
+            "eval_witness_sometimesHeld",
+            "eval_witness_sometimesDeleted",
+            "eval_witness_sometimesAdmissionKept",
+            "eval_witness_sometimesDeletionReceipt",
+            "eval_witness_sometimesGenerationRetired",
+            "eval_witness_sometimesWaitingDayStarted",
+            "eval_witness_sometimesMissingAfterMarker",
+            "eval_witness_sometimesLateWriteBacked",
+            "eval_witness_sometimesFrozenWithLateWrite",
+            "eval_witness_sometimesTargetMissingRecorded"
           ]
         }
       ],
@@ -16468,7 +16512,7 @@
     },
     {
       "path": "spec/operations/release.md",
-      "sha256": "5e6118f210227df4461682e4d546b3f08b6f3fe357c16a59f6cea0ee3b61ac39",
+      "sha256": "e2f4db90e22987d2336088e8253c7a8269393a4854402a49a17e5441b5137ad7",
       "module": "operations__release",
       "stories": [
         {
@@ -16763,17 +16807,9 @@
             "gatesValues",
             "skipProofsValues",
             "skipBrowserTestsValues",
-            "weight_setVariable",
-            "weight_rivalStart",
-            "weight_rivalTakeLock",
-            "weight_rivalFinish",
-            "weight_workflowTakeLock",
-            "weight_workflowFinish",
             "weight_configure",
             "weight_build",
             "weight_collectData",
-            "weight_resumeDiscussions",
-            "weight_revalidate",
             "weight_recordGates",
             "weight_check",
             "weight_acquireLock",
@@ -16781,7 +16817,27 @@
             "weight_publishService",
             "weight_publishSite",
             "weight_reconcilePublication",
-            "weight_verifyServed"
+            "weight_verifyServed",
+            "eval_witness_sometimesUnanchoredRefused",
+            "eval_witness_sometimesRestoredCollectionPublished",
+            "eval_witness_sometimesResumedPublished",
+            "eval_witness_sometimesVerified",
+            "eval_witness_sometimesFeeConverterSkipped",
+            "eval_witness_sometimesVerifiedAfterAdvance",
+            "eval_witness_sometimesPartialAfterMovedHead",
+            "eval_witness_sometimesRecoveredUnpublished",
+            "eval_witness_sometimesStaging",
+            "eval_witness_sometimesStagingAncestorPublished",
+            "eval_witness_sometimesRevalidatedReuse",
+            "eval_witness_sometimesSubmissionFeeBound",
+            "eval_witness_sometimesStagingDryRunBound",
+            "eval_witness_sometimesStagingRollbackRefused",
+            "eval_witness_sometimesUncertain",
+            "eval_witness_sometimesPartial",
+            "eval_witness_sometimesFeeConverterBound",
+            "eval_witness_sometimesFeeRotationInherited",
+            "eval_witness_sometimesInheritanceRefused",
+            "eval_witness_sometimesNonReleaseRecordIgnored"
           ]
         }
       ],
@@ -19060,7 +19116,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "6d6b5a65db50ab79e590b25b6dbbfc4ceaf348f5c116bdd152fba128b1c834e7",
+      "sha256": "3caa2fd9dab2677adf7c8df9a8d19eefa01ef7345bfbf26b2a46c511dc7ca2f5",
       "module": "points__journal",
       "stories": [
         {
@@ -19460,7 +19516,10 @@
             "actorValues",
             "creditValues",
             "requestedValues",
-            "totalValues"
+            "totalValues",
+            "eval_witness_sometimesRetainedOmissionZeroed",
+            "eval_witness_sometimesIncidentRecovered",
+            "eval_witness_sometimesJointAbsorbedOwnRecord"
           ]
         }
       ],
@@ -22198,7 +22257,7 @@
     },
     {
       "path": "spec/security/cases.md",
-      "sha256": "0fb9a87b1170d75161bc6aac408481e593346d06618031aaf0ed83a0fb7968c4",
+      "sha256": "7e4e7d8982e0ace01590c6aeed0cf27d584165dbab39668508b43175dd8ae1aa",
       "module": "security__cases",
       "stories": [
         {
@@ -22446,7 +22505,11 @@
             "weight_appeal",
             "weight_finishTriage",
             "weight_decideAppeal",
-            "weight_observeAuthority"
+            "eval_witness_sometimesRelatedApproved",
+            "eval_witness_sometimesFullAwardHeld",
+            "eval_witness_sometimesLegacyApproved",
+            "eval_witness_sometimesStandardApproved",
+            "eval_witness_sometimesInformationProvided"
           ]
         }
       ],
@@ -22495,7 +22558,7 @@
     },
     {
       "path": "spec/security/continuity.md",
-      "sha256": "6d5c0aae8c208f2adef91cce7d9b88a909d54b959c1313b06701aaab7cf4ac4f",
+      "sha256": "75195355eef2dc0a3b7327f23fa85834a7fcadce9e1b953f886fd6ede43ec2dc",
       "module": "security__continuity",
       "stories": [
         {
@@ -22601,7 +22664,8 @@
             "weight_replaceRoles",
             "weight_decideAward",
             "weight_showAmounts",
-            "weight_reconcile"
+            "weight_reconcile",
+            "eval_witness_sometimesClosedWhileReserved"
           ]
         }
       ],
@@ -22643,7 +22707,7 @@
     },
     {
       "path": "spec/security/enforcement.md",
-      "sha256": "7a2433ef9d4be47eccdc628e5424fa5fd1287ea11015ae80891b2a4d395cac31",
+      "sha256": "8a614b8d304ed11d6c8a4b0bfe139f6cd32ad8029abd6f34fc8666659161ea00",
       "module": "security__enforcement",
       "stories": [
         {
@@ -23028,7 +23092,20 @@
             "weight_reinstate",
             "weight_reinstateFlagPause",
             "weight_grantExemption",
-            "eValues"
+            "eValues",
+            "eval_witness_sometimesReinstatedAfterMalice",
+            "eval_witness_sometimesBannedAccountAppealed",
+            "eval_witness_sometimesAccountReinstatementJournaled",
+            "eval_witness_sometimesReleasedAccountCannotAppeal",
+            "eval_witness_sometimesFlagPauseLifted",
+            "eval_witness_sometimesFlagPauseLiftablePastPendingInvestigation",
+            "eval_witness_sometimesFlagPauseLiftedPastPendingInvestigation",
+            "eval_witness_sometimesFlagPauseLiftableAtOtherPin",
+            "eval_witness_sometimesFlagPauseLiftedPastOtherPin",
+            "eval_witness_sometimesGrantKeepsEarlierAssessment",
+            "eval_witness_sometimesRequeuedStaysCovered",
+            "eval_witness_sometimesRequeueAfterGrantStaysCovered",
+            "eval_witness_sometimesQuarantinedByIncomplete"
           ]
         }
       ],
@@ -24217,7 +24294,7 @@
     },
     {
       "path": "spec/security/reportNotices.md",
-      "sha256": "be3ce022767179e235bae1091c17e10c1c4641490040e6cdbe1a2c3a4601c6aa",
+      "sha256": "3a3bc06253d827eb4745f2a4d635cf43224937353d007fd8c6d0bcc7be62e8d0",
       "module": "security__reportNotices",
       "stories": [
         {
@@ -24437,7 +24514,8 @@
             "weight_reconcileCopies",
             "weight_readReceipt",
             "weight_expireVerification",
-            "weight_finishTriage"
+            "weight_finishTriage",
+            "eval_witness_sometimesReceiptQueued"
           ]
         }
       ],
@@ -26155,7 +26233,7 @@
     },
     {
       "path": "spec/settlement/escrow.md",
-      "sha256": "db1df56bf6ff56901221076b5d775130c4ddfc6184653d65c4d1220aa01281b2",
+      "sha256": "c63eb7a4b9717a6c3cebdb4f09eb94e2fe5e1240924ecf9db72ca7e27841ac43",
       "module": "settlement__escrow",
       "stories": [
         {
@@ -26514,7 +26592,11 @@
             "countValues",
             "amountValues",
             "periodValues",
-            "legacyValues"
+            "legacyValues",
+            "eval_witness_sometimesLegacyMonthCountsExistingOnce",
+            "eval_witness_sometimesPledgedAdmittedWhileOff",
+            "eval_witness_sometimesManualAfterRelease",
+            "eval_witness_sometimesWithdrawWhilePoolPending"
           ]
         }
       ],
@@ -28065,7 +28147,7 @@
     },
     {
       "path": "spec/settlement/monthly.md",
-      "sha256": "266ab45b187d9c511db353020d46c6b4d40d2906bd3bcc001fda5478efa23963",
+      "sha256": "a08e744bdf9f3e3cbf068537adecb6f674bc5a392d545a3fd4b7b47c1ca0a379",
       "module": "settlement__monthly",
       "stories": [
         {
@@ -28395,7 +28477,19 @@
             "weight_createObligations",
             "weight_recordReserved",
             "weight_recordPaid",
-            "weight_recordConflict"
+            "weight_recordConflict",
+            "eval_witness_sometimesPledgedFrozenWithinCutNotice",
+            "eval_witness_sometimesPledgedMonthFrozen",
+            "eval_witness_sometimesCloseoutFinalizedEarly",
+            "eval_witness_sometimesMaintainerWithoutPointsPaid",
+            "eval_witness_sometimesUnderfundedThenFunded",
+            "eval_witness_sometimesCompleted",
+            "eval_witness_sometimesOwnerAdjustedAndFinalized",
+            "eval_witness_sometimesWalletlessReserve",
+            "eval_witness_sometimesBanExcluded",
+            "eval_witness_sometimesLateCutHoldsDefaultOff",
+            "eval_witness_sometimesEarlierMonthNotAutomatic",
+            "eval_witness_sometimesCutThenOwnerFinalized"
           ]
         }
       ],
@@ -28695,7 +28789,7 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "ac804ec4af73de31bfe2bb9f565d64b727f93e365e7eb05c1a1c6f70f763b1ad",
+      "sha256": "c1523ef06f1cede63896fad0acea70f0bf72ea9ac2f70e77522c1529d50b3d47",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
@@ -28885,7 +28979,8 @@
             "snapshot",
             "v2Journal",
             "monthJournal",
-            "journalValues"
+            "journalValues",
+            "eval_witness_sometimesPrerequisiteIncluded"
           ]
         }
       ],
@@ -29006,7 +29101,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "06f79f49a07836ca0bc52fc2306429bfef3a5c51b71320da24146725c34c3d6e",
+      "sha256": "bee0f23d8b37c434682d0a94bcdac15ff05a2c2e5d05717b69f35aab03df98f3",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -29294,7 +29389,12 @@
             "weight_observeSettings",
             "weight_setMonthly",
             "weight_noteUnderfunded",
-            "weight_pledgeMonths"
+            "weight_pledgeMonths",
+            "eval_witness_sometimesCursorPassedLeaf",
+            "eval_witness_sometimesReleasedMonthPassed",
+            "eval_witness_sometimesPoolBlocksManual",
+            "eval_witness_sometimesMonthReserved",
+            "eval_witness_sometimesObligationPaid"
           ]
         }
       ],
@@ -30114,7 +30214,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "8624b6e769dab6526e77da97c0c1ffffc76f8e7269c74b4275233dd7237a42f7",
+      "sha256": "dc54853cc49bed5ec0ce3a21cfb1f1bf6fe15be4f9fe13cb0c06f42e678dbdf8",
       "module": "settlement__privateAward",
       "stories": [
         {
@@ -30336,7 +30436,10 @@
             "weight_prepareDirect",
             "weight_recordPair",
             "weight_recordTransfer",
-            "weight_recoverDirect"
+            "weight_recoverDirect",
+            "eval_witness_sometimesVaultAwardPaid",
+            "eval_witness_sometimesDirectAwardPaid",
+            "eval_witness_sometimesPaidAfterPayerRevoked"
           ]
         }
       ],
@@ -32197,7 +32300,7 @@
     },
     {
       "path": "spec/settlement/vaultSnapshots.md",
-      "sha256": "2f78c24fc047a856dd807b1c93d1bb383776167463654cdb1c6d82459fad7c33",
+      "sha256": "d673baaafcc4da7c87cb835da0ba2ef03ad0d2c96a424caca9946cd88470a61f",
       "module": "settlement__vaultSnapshots",
       "stories": [
         {
@@ -32214,15 +32317,15 @@
         },
         {
           "heading": "Story: Keep each vault's first read of the month",
-          "line": 464
+          "line": 498
         },
         {
           "heading": "Story: Keep each vault's month pledges with its finalized read",
-          "line": 512
+          "line": 546
         },
         {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero",
-          "line": 553
+          "line": 587
         }
       ],
       "rules": [
@@ -32403,12 +32506,16 @@
             "weight_checkGenesis",
             "weight_readTotals",
             "weight_readPrior",
-            "weight_write"
+            "weight_write",
+            "eval_witness_sometimesServerFinishes",
+            "eval_witness_sometimesExpiredWaitsAgain",
+            "eval_witness_sometimesTrustedRecovery",
+            "eval_witness_sometimesSavedRefused"
           ]
         },
         {
           "heading": "Story: Keep each vault's first read of the month / The first finalized read of each UTC month is recorded once per vault and never changes",
-          "line": 466,
+          "line": 500,
           "definitions": [
             "sameMonthStart",
             "monthStartOf",
@@ -32421,7 +32528,7 @@
         },
         {
           "heading": "Story: Keep each vault's month pledges with its finalized read / An ordinary vault read stores its month pledges, keeping the newest read of each month",
-          "line": 514,
+          "line": 548,
           "definitions": [
             "withMonthPledges",
             "alwaysPledgesOfTheOrdinaryVault",
@@ -32436,7 +32543,7 @@
         },
         {
           "heading": "Story: Public vault totals show the last finalized value, never a fabricated zero / A failed refresh keeps the last totals marked stale",
-          "line": 555,
+          "line": 589,
           "definitions": [
             "Freshness",
             "ShownBalance",
@@ -32467,11 +32574,11 @@
         },
         {
           "target": "../frontend/projections.md",
-          "line": 485
+          "line": 519
         },
         {
           "target": "./monthPledges.md",
-          "line": 517
+          "line": 551
         }
       ]
     },
@@ -33857,7 +33964,7 @@
     },
     {
       "path": "spec/slopbot/composition.md",
-      "sha256": "c9dcda345208e1a755ad4d1d8b507f35a9164c8c1f7afb2f67a7bfba20a999cc",
+      "sha256": "2273adf54c968b95fc6c0b8dcfe8f3c3ceb28ea915f4b2f22600b74710b79dcf",
       "module": "slopbot__composition",
       "stories": [
         {
@@ -34027,7 +34134,9 @@
             "weight_escalateAppeal",
             "weight_decideAppeal",
             "weight_observeItem",
-            "weight_reopenOwnClose"
+            "weight_reopenOwnClose",
+            "eval_witness_sometimesDeniedAppealKeepsDebit",
+            "eval_witness_sometimesUpheldAppealReopened"
           ]
         }
       ],
@@ -37116,7 +37225,7 @@
     },
     {
       "path": "spec/slopbot/webhookDelivery.md",
-      "sha256": "f9e80226ae9ad6951731e2a1791d33fc279f3f60d66512b9801e5038f7dfe335",
+      "sha256": "0f5a52c214e6d58cc6a8c15627e289a18aa899d85e76c992360bd2b4a749ab1e",
       "module": "slopbot__webhookDelivery",
       "stories": [
         {
@@ -37264,7 +37373,12 @@
             "weight_inspectValue",
             "weight_inspectQueue",
             "weight_bindReopen",
-            "weight_send"
+            "weight_send",
+            "eval_witness_sometimesReopenRetained",
+            "eval_witness_sometimesReleased",
+            "eval_witness_sometimesConfirmed",
+            "eval_witness_sometimesValued",
+            "eval_witness_sometimesValuedReceiptKeptAfterFailure"
           ]
         }
       ],
@@ -37279,7 +37393,7 @@
         },
         {
           "target": "./jobQueue.md",
-          "line": 354
+          "line": 393
         }
       ]
     },
