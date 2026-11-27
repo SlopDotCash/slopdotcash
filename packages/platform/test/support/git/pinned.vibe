@@ -1,20 +1,19 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
-import { lossyText } from "../../../src/git/bytes.ts"
-import { installPinnedGit } from "../../../src/git/install.vibe"
+import { installPinnedGit, verifyPinnedGitInstallation } from "../../../src/git/install.vibe"
 import { MERGE_GIT_VERSION } from "../../../src/git/model.vibe"
-import { Git, runCommand } from "../../../src/git/process.vibe"
+import { Git } from "../../../src/git/process.vibe"
 
 const destination = new URL("../../../.cache/merge-git-2.56.0", import.meta.url).pathname
 
-effect function versionOf(binary: string, searchPath: string) {
-  const output = runCommand({ command: binary, args: ["--version"], env: { PATH: searchPath, LC_ALL: "C" }, limit: 4096, seconds: 30 }, "no git") catch () => undefined
-  return output === undefined || output.status !== 0 ? "" : lossyText(output.stdout).trim()
+effect function validInstallation(binary: string, searchPath: string) {
+  const checked = verifyPinnedGitInstallation(binary, { PATH: searchPath, LC_ALL: "C" }) catch () => undefined
+  return checked === MERGE_GIT_VERSION
 }
 
 effect function pinnedBinary(searchPath: string) {
-  if ((try versionOf("git", searchPath)) === MERGE_GIT_VERSION) return "git"
+  if (try validInstallation("git", searchPath)) return "git"
   const installed = `${destination}/bin/git`
-  if ((try versionOf(installed, searchPath)) === MERGE_GIT_VERSION) return installed
+  if (try validInstallation(installed, searchPath)) return installed
   const fs = try FileSystem.FileSystem
   try fs.remove(destination, { recursive: true, force: true })
   try fs.makeDirectory((try Path.Path).dirname(destination), { recursive: true })

@@ -1,10 +1,42 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
 import { lossyText, sha256Of, textBytes } from "./bytes.ts"
 import { MERGE_GIT_VERSION, refused } from "./model.vibe"
-import { runCommand, runInherited } from "./process.vibe"
+import { type Environment, runCommand, runInherited } from "./process.vibe"
 
 export const PINNED_GIT_SOURCE = "https://www.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz"
 export const PINNED_GIT_SHA256 = "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3"
+
+export function pinnedGitMakeArgs(directory: string, destination: string, curlConfig?: string): ReadonlyArray<string> {
+  return [
+    "-C",
+    directory,
+    "-j2",
+    `prefix=${destination}`,
+    ...(curlConfig === undefined ? [] : [`CURL_CONFIG=${curlConfig}`]),
+    "NO_GETTEXT=YesPlease",
+    "NO_TCLTK=YesPlease",
+    "NO_PERL=YesPlease",
+    "NO_RUST=YesPlease",
+    "install",
+  ]
+}
+
+export effect function verifyPinnedGitInstallation(binary: string, env: Environment) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const built = try runCommand({ command: binary, args: ["--version"], env, limit: 4096, seconds: 30 }, "Built Git version differs from merge profile")
+  const version = lossyText(built.stdout).trim()
+  if (built.status !== 0 || version !== MERGE_GIT_VERSION) throw refused("Built Git version differs from merge profile")
+  const execPathOutput = try runCommand({ command: binary, args: ["--exec-path"], env, limit: 4096, seconds: 30 }, "Built Git installation lacks HTTPS remote helper")
+  const execPath = lossyText(execPathOutput.stdout).trim()
+  if (execPathOutput.status !== 0 || !path.isAbsolute(execPath)) throw refused("Built Git installation lacks HTTPS remote helper")
+  const helper = path.join(execPath, "git-remote-https")
+  const info = fs.stat(helper) catch effect () => {
+    return undefined
+  }
+  if (info === undefined || info.type !== "File" || (info.mode & 0o111) === 0) throw refused("Built Git installation lacks HTTPS remote helper")
+  return version
+}
 
 effect function pinnedArchive() {
   const client = try HttpClient.HttpClient
@@ -38,11 +70,13 @@ export effect function installPinnedGit(destination: string) {
       throw refused("Pinned Git archive could not be written")
     }
     const env = { PATH: searchPath, HOME: directory, LC_ALL: "C" }
+    const systemCurlConfig = "/usr/bin/curl-config"
+    const hasSystemCurlConfig = fs.exists(systemCurlConfig) catch effect () => {
+      return false
+    }
     try runInherited("tar", ["-xJf", archive, "--strip-components=1", "-C", directory], env, 600, "Pinned Git archive could not be extracted")
-    try runInherited("make", ["-C", directory, "-j2", `prefix=${destination}`, "NO_CURL=YesPlease", "NO_EXPAT=YesPlease", "NO_GETTEXT=YesPlease", "NO_TCLTK=YesPlease", "NO_PERL=YesPlease", "NO_RUST=YesPlease", "install"], env, 600, "Pinned Git build failed")
-    const built = try runCommand({ command: path.join(destination, "bin/git"), args: ["--version"], env, limit: 4096, seconds: 30 }, "Built Git version differs from merge profile")
-    const version = lossyText(built.stdout).trim()
-    if (built.status !== 0 || version !== MERGE_GIT_VERSION) throw refused("Built Git version differs from merge profile")
+    try runInherited("make", pinnedGitMakeArgs(directory, destination, hasSystemCurlConfig ? systemCurlConfig : undefined), env, 600, "Pinned Git build failed")
+    const version = try verifyPinnedGitInstallation(path.join(destination, "bin/git"), env)
     fs.writeFile(path.join(destination, "source.json"), textBytes(`${JSON.stringify({ source: PINNED_GIT_SOURCE, sha256: PINNED_GIT_SHA256, version, optionalRust: false })}\n`), { flag: "wx" }) catch effect () => {
       throw refused("Pinned Git source record could not be written")
     }

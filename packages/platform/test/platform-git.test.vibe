@@ -1,7 +1,8 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Of, textBytes } from "../src/git/bytes.ts"
-import { type CombinedParentMergeResolution, type FileRequest, Git, LEGACY_MERGE_PROFILE, type MergeInput, type MergeResolution, type PublicMergeRepository, collectMergeResolutions, collectVerifiedMergeResolutionBatch, collectVerifiedMergeResolutions, createMergeBundle, fileRequestsSha256, gitBytes, mergeRecipe, mergeResolutionLineCounts, publicFiles, recoverFiles, sameMergeRecipeInput, unbundledStore, verifyMergeObjectStore, withPublicGitObjects } from "../src/git/index.ts"
+import { type CombinedParentMergeResolution, type FileRequest, Git, LEGACY_MERGE_PROFILE, MERGE_GIT_VERSION, type MergeInput, type MergeResolution, type PublicMergeRepository, collectMergeResolutions, collectVerifiedMergeResolutionBatch, collectVerifiedMergeResolutions, createMergeBundle, fileRequestsSha256, gitBytes, mergeRecipe, mergeResolutionLineCounts, publicFiles, recoverFiles, sameMergeRecipeInput, unbundledStore, verifyMergeObjectStore, withPublicGitObjects } from "../src/git/index.ts"
+import { pinnedGitMakeArgs, verifyPinnedGitInstallation } from "../src/git/install.vibe"
 import { outbound } from "../src/http.vibe"
 import { type Repository, acceptedMerges, addUnrelatedObjects, bareRepository, borrowObjects, gunzipBase64, hexOfBytes, octopusMerge, replayedTree, twoParentMerge } from "./support/git/fixtures.ts"
 import { pinnedGit } from "./support/git/pinned.vibe"
@@ -373,6 +374,68 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
         permanentAttempts: 1,
         exhaustedReason: "Public Git object acquisition refused",
         exhaustedAttempts: 3,
+      },
+    )
+  }))
+
+  it.effect('Pinned Git installer builds with HTTPS remote support and verifies executable git-remote-https (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
+    const work = try fixture("pinned-install-check")
+    const { binary, searchPath } = try Git
+    const fs = try FileSystem.FileSystem
+    const env = { PATH: searchPath, LC_ALL: "C" }
+    const makeArgs = pinnedGitMakeArgs("/tmp/src", "/tmp/dst")
+
+    effect function fakeGit(name: string, versionText: string, execPath: string) {
+      const shim = `${work.root}/${name}.sh`
+      const script = [
+        "#!/bin/sh",
+        "set -eu",
+        'if [ "${1:-}" = "--version" ]; then',
+        `  printf '%s\\n' '${versionText}'`,
+        "  exit 0",
+        "fi",
+        'if [ "${1:-}" = "--exec-path" ]; then',
+        `  printf '%s\\n' '${execPath}'`,
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n")
+      try fs.writeFileString(shim, script)
+      try fs.chmod(shim, 0o755)
+      return shim
+    }
+
+    const emptyExec = `${work.root}/empty-exec`
+    try fs.makeDirectory(emptyExec)
+    const missingHelperGit = try fakeGit("missing-helper", MERGE_GIT_VERSION, emptyExec)
+
+    const nonExecDir = `${work.root}/non-exec`
+    try fs.makeDirectory(nonExecDir)
+    try fs.writeFileString(`${nonExecDir}/git-remote-https`, "#!/bin/sh\n")
+    try fs.chmod(`${nonExecDir}/git-remote-https`, 0o644)
+    const nonExecHelperGit = try fakeGit("non-exec-helper", MERGE_GIT_VERSION, nonExecDir)
+
+    const wrongVersionGit = try fakeGit("wrong-version", "git version 2.40.0", emptyExec)
+
+    try same(
+      {
+        disablesCurl: makeArgs.includes("NO_CURL=YesPlease"),
+        disablesExpat: makeArgs.includes("NO_EXPAT=YesPlease"),
+        keepsMinimalFlags: ["NO_GETTEXT=YesPlease", "NO_TCLTK=YesPlease", "NO_PERL=YesPlease", "NO_RUST=YesPlease"].every((flag) => makeArgs.includes(flag)),
+        realVersion: try verifyPinnedGitInstallation(binary, env),
+        missingHelper: (try Effect.flip(verifyPinnedGitInstallation(missingHelperGit, env))).reason,
+        nonExecHelper: (try Effect.flip(verifyPinnedGitInstallation(nonExecHelperGit, env))).reason,
+        wrongVersion: (try Effect.flip(verifyPinnedGitInstallation(wrongVersionGit, env))).reason,
+      },
+      {
+        disablesCurl: false,
+        disablesExpat: false,
+        keepsMinimalFlags: true,
+        realVersion: MERGE_GIT_VERSION,
+        missingHelper: "Built Git installation lacks HTTPS remote helper",
+        nonExecHelper: "Built Git installation lacks HTTPS remote helper",
+        wrongVersion: "Built Git version differs from merge profile",
       },
     )
   }))
