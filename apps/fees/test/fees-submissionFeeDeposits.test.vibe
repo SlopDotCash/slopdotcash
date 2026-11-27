@@ -12,6 +12,7 @@ import { keptFees, keptSubmissionFees } from "../src/submissionFee/income.vibe"
 import { judgeDeposits } from "../src/submissionFee/judge.vibe"
 import { planResolutions } from "../src/submissionFee/plan.vibe"
 import { scan } from "../src/submissionFee/scan.vibe"
+import { STANDING_DEPOSIT_LEDGER } from "../src/submissionFee/standingTerms.ts"
 import { type FeePorts, type FeeWorld, contract, network, payer, startedFeeWorld, usdg, withFeePorts } from "./support/submissionFee.vibe"
 
 const slop = "0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae" as Hex
@@ -55,6 +56,8 @@ interface Wire {
 interface DepositsWorld extends FeeWorld {
   readonly ledger: Ledger
   readonly network: NetworkConfig
+  readonly standingLedger: Ledger
+  readonly standingNetwork: NetworkConfig
 }
 
 service World: DepositsWorld {}
@@ -134,24 +137,28 @@ function chainRpc(ledger: Ledger): Handler {
 
 const Started = Layer.effect(World, effect {
   const ledger: Ledger = { latest: 0, finalized: 0, deposits: [], resolutions: [] }
-  const { urls: [rpcUrl = ""], ...base } = try startedFeeWorld("fees-submission-fee", start, [chainRpc(ledger)])
+  const standingLedger: Ledger = { latest: 0, finalized: 0, deposits: [], resolutions: [] }
+  const { urls: [rpcUrl = "", standingRpcUrl = ""], ...base } = try startedFeeWorld("fees-submission-fee", start, [chainRpc(ledger), chainRpc(standingLedger)])
   const config: NetworkConfig = { network, chainId: 4663, contract, startBlock: 1, rpcUrl: Redacted.make(rpcUrl), confirmations: 2, scanPageBlocks: 8, gas: { perTransactionWei: 1n, perDayWei: 1n } }
-  return { ...base, ledger, network: config }
+  return { ...base, ledger, network: config, standingLedger, standingNetwork: { ...config, network: STANDING_DEPOSIT_LEDGER, rpcUrl: Redacted.make(standingRpcUrl) } }
 })
 
 effect function provided<A, E>(program: A!E!FeePorts) {
   return try withFeePorts(try World, program)
 }
 
-effect function runOnce() {
-  const world = try World
+effect function runOn(config: NetworkConfig) {
   return try provided(effect {
-    const chain = try submissionFeeChain({ network: world.network, signer: null })
-    const scanned = try scan(world.network, chain)
-    const judged = try judgeDeposits(network)
-    const planned = try planResolutions(network)
+    const chain = try submissionFeeChain({ network: config, signer: null })
+    const scanned = try scan(config, chain)
+    const judged = try judgeDeposits(config.network)
+    const planned = try planResolutions(config.network)
     return { scanned, judged, planned }
   })
+}
+
+effect function runOnce() {
+  return try runOn((try World).network)
 }
 
 effect function write(statement: Statement) {
@@ -169,6 +176,17 @@ effect function seen() {
       UNION ALL SELECT 'case:' || case_id AS key, paid_deposit_id, outcome FROM security_report_deposits ORDER BY key`)
     const cursor = try rows(CursorSeen, sql`SELECT next_block FROM submission_fee_cursors WHERE network = ${network}`)
     return { deposits, paid, cursor: cursor[0]?.next_block ?? null }
+  })
+}
+
+schema StandingSeen { readonly id: string; readonly paid_deposit_id: number | null; readonly outcome: string | null; readonly outcome_at: string | null }
+schema StandingDepositSeen { readonly deposit_id: number; readonly accepted: number | null; readonly reject_reason: string | null; readonly state: string }
+
+effect function standingSeen() {
+  return try provided(effect {
+    const standingRows = try rows(StandingSeen, sql`SELECT id, paid_deposit_id, outcome, outcome_at FROM standing_deposits ORDER BY id`)
+    const deposits = try rows(StandingDepositSeen, sql`SELECT deposit_id, accepted, reject_reason, state FROM submission_fee_deposits WHERE network = ${STANDING_DEPOSIT_LEDGER} ORDER BY deposit_id`)
+    return { rows: standingRows, deposits }
   })
 }
 
@@ -325,6 +343,70 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       kept: ["kept", { key: "pull:5", paid_deposit_id: 10, outcome: "kept" }],
       counted: 2_000_000n,
       listed: [[`${network}:10`, 2_000_000n]],
+    }))
+  })
+
+  it.effect('A standing row follows its deposit through a reorganisation, changed contents and the finalized refund or keep (spec/fees/submissionFeeStandingDeposits.md, "A standing deposit pays its row only as burned SLOP on the standing ledger"; spec/fees/submissionFeeStandingDeposits.md, "Coverage respects the cap, prior merge, withdrawal wait, and irreversible strikes"; spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract\'s finalized events")', () => effect {
+    const { standingLedger: ledger, standingNetwork } = try World
+    const due = 100_000_000_000_000_000_000n
+    try write(sql`INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at)
+      VALUES ('sd_withdrawn_row', 7001, 1, ${item(70)}, ${due.toString()}, '10', '2026-11-21T00:00:00.000Z'),
+             ('sd_strike_row_1', 7002, 1, ${item(71)}, ${due.toString()}, '10', '2026-11-21T00:00:00.000Z')`)
+    deposit(ledger, { id: 1n, item: item(70), token: slop, amount: due, keptTo: burn, block: 10 })
+    deposit(ledger, { id: 2n, item: item(71), token: slop, amount: due, keptTo: burn, block: 11 })
+    heads(ledger, 13, 5)
+    const confirmed = try runOn(standingNetwork)
+    const paidBeforeFinal = try standingSeen()
+    deposit(ledger, { id: 1n, item: item(70), token: slop, amount: due - 1n, keptTo: burn, block: 10 })
+    heads(ledger, 14, 5)
+    try runOn(standingNetwork)
+    const changedShort = try standingSeen()
+    deposit(ledger, { id: 1n, item: item(70), token: slop, amount: due, keptTo: burn, block: 10 })
+    heads(ledger, 16, 5)
+    try runOn(standingNetwork)
+    const changedAgain = try standingSeen()
+    ledger.deposits = ledger.deposits.filter((each) => each.id !== 2n)
+    heads(ledger, 22, 20)
+    try runOn(standingNetwork)
+    const reorganised = try standingSeen()
+    deposit(ledger, { id: 3n, item: item(71), token: slop, amount: due, keptTo: burn, block: 23 })
+    heads(ledger, 26, 20)
+    try runOn(standingNetwork)
+    const paidAgain = try standingSeen()
+    heads(ledger, 32, 30)
+    try runOn(standingNetwork)
+    try write(sql`UPDATE standing_deposits SET outcome = 'refund_due', outcome_reason = 'withdrawn', outcome_at = '2026-11-25T00:00:00.000Z' WHERE id = 'sd_withdrawn_row'`)
+    try write(sql`UPDATE standing_deposits SET outcome = 'kept_due', outcome_reason = 'strike', outcome_at = '2026-11-25T00:00:00.000Z', strike_repository_id = 900, strike_pull_number = 1 WHERE id = 'sd_strike_row_1'`)
+    const decided = try runOn(standingNetwork)
+    ledger.resolutions = [{ id: 1n, refunded: true, block: 34, token: slop, to: payer, amount: due }, { id: 3n, refunded: false, block: 35, token: slop, to: burn, amount: due }]
+    heads(ledger, 40, 36)
+    const resolved = try runOn(standingNetwork)
+    const settled = try standingSeen()
+    const blockTime = (block: number) => new Date((1_800_000_000 + block * 2) * 1000).toISOString()
+    const paidBy = (view: typeof settled) => view.rows.map((row) => row.paid_deposit_id)
+    try Effect.try(() => assert.deepStrictEqual({
+      confirmed: confirmed.judged,
+      paidBeforeFinal: paidBy(paidBeforeFinal),
+      changedShort: [changedShort.deposits[0], paidBy(changedShort)],
+      changedAgain: [changedAgain.deposits[0], paidBy(changedAgain)],
+      reorganised: [reorganised.deposits.map((row) => row.deposit_id), paidBy(reorganised)],
+      paidAgain: [paidAgain.deposits[1], paidBy(paidAgain)],
+      decided: decided.planned,
+      resolved: resolved.scanned.resolved,
+      settled: [settled.deposits.map((row) => row.state), settled.rows],
+    }, {
+      confirmed: { judged: 2, paid: 2 },
+      paidBeforeFinal: [2, 1],
+      changedShort: [{ deposit_id: 1, accepted: 0, reject_reason: "amount_below_due", state: "open" }, [2, null]],
+      changedAgain: [{ deposit_id: 1, accepted: 1, reject_reason: null, state: "open" }, [2, 1]],
+      reorganised: [[1], [null, 1]],
+      paidAgain: [{ deposit_id: 3, accepted: 1, reject_reason: null, state: "open" }, [3, 1]],
+      decided: [{ id: 1, refund: true }, { id: 3, refund: false }],
+      resolved: 2,
+      settled: [["refunded", "kept"], [
+        { id: "sd_strike_row_1", paid_deposit_id: 3, outcome: "kept", outcome_at: blockTime(35) },
+        { id: "sd_withdrawn_row", paid_deposit_id: 1, outcome: "refunded", outcome_at: blockTime(34) },
+      ]],
     }))
   })
 })
