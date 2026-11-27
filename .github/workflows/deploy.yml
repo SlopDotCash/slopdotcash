@@ -353,6 +353,16 @@ jobs:
           }
           NODE
 
+      # The contributor site build validates each packaged skill with Python and
+      # PyYAML 6.0.3 (apps/contributor/src/site/validation.vibe). The runner's
+      # Python 3 has no PyYAML, so give it a pinned one in its own environment.
+      - name: Provide Python with PyYAML for skill packaging
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/slop-python"
+          "$RUNNER_TEMP/slop-python/bin/python" -m pip install --disable-pip-version-check --no-deps PyYAML==6.0.3
+          echo "SLOP_PYTHON=$RUNNER_TEMP/slop-python/bin/python" >> "$GITHUB_ENV"
+
       - name: Build every application
         run: pnpm all build --filter="./apps/*"
 
