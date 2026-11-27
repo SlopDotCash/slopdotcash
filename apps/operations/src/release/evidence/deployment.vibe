@@ -36,7 +36,7 @@ export interface Deployment {
   readonly canonical: string
 }
 
-const branches: { readonly [E in Environment]: string } = { Production: "main", Staging: "staging" }
+const branches: { readonly [E in Environment]: string } = { Production: "main", Staging: "develop" }
 const deploymentIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u
 
 function refused(message: string) {

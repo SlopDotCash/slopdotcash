@@ -141,7 +141,7 @@ export effect function runFacts() {
     pull: pull === undefined ? undefined : {
       baseSha: pull.base.sha,
       headSha: pull.head.sha,
-      promotion: pull.base.ref === "main" && (pull.head.ref === "staging" || pull.head.ref === "develop") && pull.head.repo?.full_name === pull.base.repo?.full_name,
+      promotion: pull.base.ref === "main" && pull.head.ref === "develop" && pull.head.repo?.full_name === pull.base.repo?.full_name,
     },
   } satisfies RunFacts
 }

@@ -21,9 +21,9 @@ schema DeploymentStatus { readonly log_url?: string | null }
 schema WorkflowRun { readonly head_sha: string; readonly path: string }
 
 const stagingEnvironment = "slop-staging"
-const stagingBranch = "staging"
-const legacyStagingBranch = "development"
-const stagingCutoverMillis = Date.parse("2026-11-27T00:00:00Z")
+const stagingBranch = "develop"
+const retiredStagingBranches: ReadonlySet<string> = new Set(["development", "staging"])
+const stagingCutoverMillis = Date.parse("2026-11-28T00:00:00Z")
 const deadlineVariable = "STAGING_ORDER_RETRY_UNTIL"
 const revision = /^[0-9a-f]{40}$/u
 const epochSeconds = /^\d+$/u
@@ -49,7 +49,7 @@ interface QuotaDelay {
 }
 
 function retiredLegacyStaging(deployment: Deployment) {
-  if (deployment.ref !== legacyStagingBranch || deployment.created_at === undefined || !isoInstant.test(deployment.created_at)) return false
+  if (!retiredStagingBranches.has(deployment.ref) || deployment.created_at === undefined || !isoInstant.test(deployment.created_at)) return false
   const createdAt = Date.parse(deployment.created_at)
   return Number.isFinite(createdAt) && createdAt < stagingCutoverMillis
 }
@@ -148,25 +148,35 @@ export effect function stagingHistory<E, R>(run: Run, repository: string, root: 
     const ancestor = try observe()
     try elapsed()
     try sent({ type: "inspect", ancestor })
-    if (!ancestor) throw new StagingHistoryRefused({ message: `Live staging no longer contains the staging candidate ${tested}` })
+    if (!ancestor) throw new StagingHistoryRefused({ message: `Live ${stagingBranch} no longer contains the staging candidate ${tested}` })
     const history = github.pages(`/repos/${repository}/deployments?environment=${stagingEnvironment}`, Deployment, { perPage: 100, maxPages: 10 }) catch effect (failure) => {
       return try failed(failure)
     }
     const checked = new Set<string>()
+    const skipped = new Set<string>()
     const ignored: string[] = []
     for (const deployment of history) {
       const retired = retiredLegacyStaging(deployment)
-      if (deployment.environment !== stagingEnvironment || (deployment.ref !== stagingBranch && !retired) || deployment.production_environment || !revision.test(deployment.sha)) {
+      if (
+        deployment.environment !== stagingEnvironment
+        || (deployment.ref !== stagingBranch && !retired)
+        || (retired && deployment.sha === tested)
+        || deployment.production_environment
+        || !revision.test(deployment.sha)
+      ) {
         throw new StagingHistoryRefused({ message: "Unknown staging deployment provenance; require human review" })
       }
-      if (checked.has(deployment.sha)) continue
-      const ancestorOrEqual = retired ? deployment.sha === tested : try isAncestor(root, deployment.sha, tested)
-      const nonRelease = retired ? !ancestorOrEqual : ancestorOrEqual ? false : try creator(deployment)
+      if (checked.has(deployment.sha) || (retired && skipped.has(deployment.sha))) continue
+      const ancestorOrEqual = retired ? false : try isAncestor(root, deployment.sha, tested)
+      const nonRelease = retired ? true : ancestorOrEqual ? false : try creator(deployment)
       try elapsed()
       const read = try sent({ type: "readHistory", revision: try run.idOf("staging revision", deployment.sha), ancestorOrEqual, nonRelease })
       if (read.phase === "OrderRefused") return { ignored, newer: true } satisfies Verdict
       if (ancestorOrEqual) checked.add(deployment.sha)
-      else ignored.push(deployment.sha)
+      else {
+        if (retired) skipped.add(deployment.sha)
+        ignored.push(deployment.sha)
+      }
     }
     if (!canFinish(try elapsed())) throw new StagingHistoryRefused({ message: "Current staging attempt is absent from deployment history" })
     try sent({ type: "finish" })

@@ -94,7 +94,7 @@ effect function runnerMatches(sha: string, githubToken: Redacted.Redacted<string
 
 effect function controlled(stage: Ref.Ref<string>) {
   try Ref.set(stage, "checkout")
-  const { sha, ref } = try protectedCheckout({ refs: ["refs/heads/main", "refs/heads/staging"], message: "The protected branch's exact workflow checkout is required" })
+  const { sha, ref } = try protectedCheckout({ refs: ["refs/heads/main", "refs/heads/develop"], message: "The protected branch's exact workflow checkout is required" })
   const githubToken = try secretVariable("GITHUB_TOKEN")
   if (githubToken === undefined) throw new ScanControllerFailed({ message: "The workflow read-only GitHub credential is required" })
   const origin = ref === "refs/heads/main" ? "https://slop.cash" : "https://staging.slop.cash"

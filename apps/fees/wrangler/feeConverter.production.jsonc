@@ -65,7 +65,9 @@
     "RPC_URL_ETHEREUM",
     "RPC_URL_ROBINHOOD",
     "RPC_URL_SOLANA",
-    "JUPITER_API_KEY",
     "SOLANA_RECOVERY_RPC_URL"
+  ],
+  "optionalSecrets": [
+    "JUPITER_API_KEY"
   ]
 }

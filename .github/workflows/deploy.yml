@@ -2,7 +2,7 @@ name: slop.cash
 
 on:
   push:
-    branches: [staging, main]
+    branches: [develop, main]
   workflow_dispatch:
     inputs:
       bootstrap_staging_profiles:
@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       use_published_data:
-        description: "Manual main or staging release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
+        description: "Manual main or develop release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
       data_from_run:
@@ -33,11 +33,11 @@ on:
         type: string
         default: ""
       skip_proofs:
-        description: "Manual main or staging release only: do not repeat the state-model and proof runs; every other check and all deployment verification still run"
+        description: "Manual main or develop release only: do not repeat the state-model and proof runs; every other check and all deployment verification still run"
         type: boolean
         default: false
       skip_browser_tests:
-        description: "Manual main or staging release only: run the browser smoke lane instead of the complete browser lanes; every other check and all deployment verification still run"
+        description: "Manual main or develop release only: run the browser smoke lane instead of the complete browser lanes; every other check and all deployment verification still run"
         type: boolean
         default: false
       defer_retained_attribution:
@@ -50,7 +50,7 @@ on:
         default: false
 
 concurrency:
-  group: slop-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/staging' && 'staging-push') || github.run_id }}
+  group: slop-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'develop-push') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -243,8 +243,8 @@ jobs:
       browser_complete: ${{ steps.coverage.outputs.browser_complete }}
       common: ${{ steps.coverage.outputs.common }}
     env:
-      VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
-      SLOP_GITHUB_ENVIRONMENT: ${{ github.ref == 'refs/heads/staging' && 'slop-staging' || 'slop-production' }}
+      VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/develop' && 'staging' || 'production' }}
+      SLOP_GITHUB_ENVIRONMENT: ${{ github.ref == 'refs/heads/develop' && 'slop-staging' || 'slop-production' }}
       SLOP_COLLECTION_DEADLINE_S: ${{ (github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && '72000' || '19200' }}
       SLOP_POINTS_BOOTSTRAP: "1"
     steps:
@@ -296,7 +296,7 @@ jobs:
           test -z "$ROBINHOOD_ROTATION"
           [[ "$EXPECTED_VERSION" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]
 
-      - name: Require manual main or staging release for published data
+      - name: Require manual main or develop release for published data
         if: inputs.use_published_data == true
         env:
           BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
@@ -304,17 +304,17 @@ jobs:
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
           case "$GITHUB_REF" in
-            refs/heads/main | refs/heads/staging) ;;
-            *) echo "::error::Published data is limited to manual main or staging releases."; exit 1 ;;
+            refs/heads/main | refs/heads/develop) ;;
+            *) echo "::error::Published data is limited to manual main or develop releases."; exit 1 ;;
           esac
           test "$BOOTSTRAP_STAGING_PROFILES" = "false"
 
-      - name: Require a manual staging run for staging profile bootstrap
+      - name: Require a manual develop run for staging profile bootstrap
         if: inputs.bootstrap_staging_profiles == true
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$GITHUB_REF" = refs/heads/staging
+          test "$GITHUB_REF" = refs/heads/develop
 
       - name: Install locked release tooling
         uses: ./.github/actions/setup
@@ -375,7 +375,7 @@ jobs:
         run: |
           set -euo pipefail
           environment=production
-          if [ "$GITHUB_REF" = refs/heads/staging ]; then environment=staging; fi
+          if [ "$GITHUB_REF" = refs/heads/develop ]; then environment=staging; fi
           {
             echo "environment=$environment"
             echo "BUNDLE=$RUNNER_TEMP/slop-release"
@@ -856,12 +856,12 @@ jobs:
           retention-days: 7
 
   staging:
-    name: Deploy verified staging to staging
+    name: Deploy verified develop to staging
     if: >-
       always() && !cancelled() &&
       needs.prepare.result == 'success' && needs.code.result == 'success' && needs.browsers.result == 'success' &&
       (needs.models.result == 'success' || needs.models.result == 'skipped') &&
-      github.ref == 'refs/heads/staging' &&
+      github.ref == 'refs/heads/develop' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [prepare, code, models, browsers]
     runs-on: ubuntu-24.04
@@ -886,7 +886,7 @@ jobs:
       - name: Verify staging checkout
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/staging
+          test "$GITHUB_REF" = refs/heads/develop
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: ./.github/actions/setup
         with:
@@ -939,12 +939,12 @@ jobs:
           url="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/slop-staging"
           project="$(curl -fsS --max-time 30 -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "$url")"
           branch="$(jq -er 'if .success == true then .result.production_branch else error("Cloudflare Pages project lookup failed") end' <<< "$project")"
-          if [ "$branch" = "development" ]; then
-            patched="$(curl -fsS --max-time 30 -X PATCH -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" -d '{"production_branch":"staging"}' "$url")"
+          if [ "$branch" = "development" ] || [ "$branch" = "staging" ]; then
+            patched="$(curl -fsS --max-time 30 -X PATCH -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" -d '{"production_branch":"develop"}' "$url")"
             updated="$(jq -er 'if .success == true then .result.production_branch else error("Cloudflare Pages project update failed") end' <<< "$patched")"
-            test "$updated" = "staging"
-            echo "Updated slop-staging production_branch from development to staging."
-          elif [ "$branch" != "staging" ]; then
+            test "$updated" = "develop"
+            echo "Updated slop-staging production_branch from ${branch} to develop."
+          elif [ "$branch" != "develop" ]; then
             echo "::error::Unexpected slop-staging production_branch: ${branch}"
             exit 1
           fi
