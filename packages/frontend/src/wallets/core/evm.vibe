@@ -31,18 +31,19 @@ effect function trustedProvider(id: number) {
   return held.provider
 }
 
-effect function asked(provider: Eip1193, method: string, params: ReadonlyArray<unknown>) {
+effect function asked<E = never>(provider: Eip1193, method: string, params: ReadonlyArray<unknown>, refusalOf?: (caught: unknown) => E | undefined) {
   return try tryPromise({
     try: () => providerRequest(provider, method, params),
     catch: (caught) => {
       const failure = failureOf(caught)
-      return failure.code === 4001 ? new WalletDeclined({ message: declinedMessage }) : new WalletFailed({ message: failure.message === "" ? "The wallet request failed." : failure.message })
+      if (failure.code === 4001) return new WalletDeclined({ message: declinedMessage })
+      return refusalOf?.(caught) ?? new WalletFailed({ message: failure.message === "" ? "The wallet request failed." : failure.message })
     },
   })
 }
 
-export effect function evmRequest(connection: EvmConnection, method: string, params: ReadonlyArray<unknown>) {
-  return try asked(try trustedProvider(connection.id), method, params)
+export effect function evmRequest<E = never>(connection: EvmConnection, method: string, params: ReadonlyArray<unknown>, refusalOf?: (caught: unknown) => E | undefined) {
+  return try asked(try trustedProvider(connection.id), method, params, refusalOf)
 }
 
 export effect function connectEvm(id: number, chooseAccount: boolean) {

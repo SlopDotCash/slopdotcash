@@ -235,6 +235,11 @@ effect function callOf(vault: EvmVault, operation: Operation, step: Step, gross:
   return try Effect.try({ try: () => transferCall(termsOf(vault), operation, step, gross), catch: () => refused(decimalRefusal("OutOfRange", 0)) })
 }
 
+function withdrawalRefusal(caught: unknown) {
+  const locked = pledgedFundsRefusal(caught)
+  return locked === undefined ? undefined : refused(locked)
+}
+
 export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVault, operation: Operation, step: Step, amount: string, evidence: Evidence, beforePrompt: (plan: EvmCallPlan) => void!E) {
   const review = try reviewTransfer(connection, vault, operation, amount, evidence)
   const native = termsOf(vault).native
@@ -243,11 +248,7 @@ export effect function sendTransfer<E>(connection: EvmConnection, vault: EvmVaul
   if (step !== "send" && native) throw refused(evmVaultMessages.noApprovalNative)
   const call: Call = try callOf(vault, operation, step, review.gross)
   const transaction = { from: connection.address, ...call }
-  evmRequest(connection, "eth_estimateGas", [transaction]) catch effect (error) => {
-    const locked = pledgedFundsRefusal(error)
-    if (locked !== undefined) throw refused(locked)
-    throw error
-  }
+  try evmRequest(connection, "eth_estimateGas", [transaction], operation === "withdraw" ? withdrawalRefusal : undefined)
   try requireVaultWallet(connection, vault)
   return try sendTransaction(connection, vault.chainId, transaction, beforePrompt(callPlan(connection.address, vault.chainId, call)))
 }
