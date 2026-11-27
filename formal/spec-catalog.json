@@ -36280,7 +36280,7 @@
     },
     {
       "path": "spec/slopbot/valueEvidence.md",
-      "sha256": "053680b16d96e7812d2adf9ee16659c142a521a9415afbdfa55620020788b13d",
+      "sha256": "16bf93da240c08ebf1d2884e9f4d967727c458a8052654d05a0b29e82efca5e7",
       "module": "slopbot__valueEvidence",
       "stories": [
         {
@@ -36311,7 +36311,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Absence is proved only by a hash-verified tree, never by a 404",
-          "line": 75,
+          "line": 78,
           "definitions": [
             "TreeRead",
             "PathLookup",
@@ -36328,7 +36328,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / A blob, tree or binary claim counts only when its git object hash matches the bytes read",
-          "line": 120,
+          "line": 123,
           "definitions": [
             "ObjectKind",
             "ObjectRead",
@@ -36350,7 +36350,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals",
-          "line": 181,
+          "line": 184,
           "definitions": [
             "LineSource",
             "FileLines",
@@ -36370,7 +36370,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes",
-          "line": 228,
+          "line": 231,
           "definitions": [
             "ReplayFile",
             "ReplayProof",
@@ -36384,7 +36384,7 @@
         },
         {
           "heading": "Story: Value only evidence that is complete and hash-verified / Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow",
-          "line": 268,
+          "line": 271,
           "definitions": [
             "CensusPull",
             "CensusQuery",

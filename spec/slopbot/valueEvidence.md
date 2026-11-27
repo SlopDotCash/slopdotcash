@@ -37,7 +37,10 @@ evidence required" at 3,000 files. A repeated file path is incomplete too.
 The PR commit route stops at 250, so a larger PR is read through the
 immutable compare range, which must report the same total and contain
 every listed commit. A related private PR is withheld, which is a
-limitation.
+limitation. Discussion uses full GitHub issue and pull request URLs,
+contiguous `owner/repo#123` references and bare `#123` references. A bare
+reference names an item in the current repository, including after a
+repository-shaped word separated by whitespace.
 
 ```quint
 type PageListing = { pageSizes: List[int], unavailable: bool, reported: int, itemCap: int, repeatedKeys: bool }

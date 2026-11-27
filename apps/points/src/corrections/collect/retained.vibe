@@ -14,7 +14,7 @@ export const lacksDirectAcceptance = "Historical allocation lacks direct accepta
 export const acceptanceChanged = "Historical allocation acceptance changed"
 const evidenceUnavailable = "retained-source-evidence-unavailable"
 
-const referencePattern = /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu
+const referencePattern = /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+))?#(\d+)\b/gu
 
 schema PullSide { readonly sha: string; readonly ref: string }
 schema RestPull {
@@ -79,7 +79,7 @@ export function hasUnlinkedCommit(commits: ReadonlyArray<OutcomeCommit>, owned: 
   return commits.some((commit) => commit.parentCount <= 1 && owned(commit.oid) && !isCreditEligibleCommitAuthor(commit.author))
 }
 
-export function withoutClosedCodeFences(text: string) {
+function withoutClosedCodeFences(text: string) {
   const lines = text.split(/(?<=\n)/u)
   const output: string[] = []
   let pending: string[] = []
@@ -111,7 +111,7 @@ export function withoutClosedCodeFences(text: string) {
 
 interface BacktickRun { readonly start: number; readonly end: number; readonly escaped: boolean }
 
-export function withoutClosedCodeSpans(text: string) {
+function withoutClosedCodeSpans(text: string) {
   const runs: BacktickRun[] = []
   for (const found of text.matchAll(/`+/gu)) {
     const start = found.index ?? 0
@@ -196,16 +196,23 @@ export function sameRepositoryCommitHints(repository: string, source: string) {
   return [...new Set(hints)]
 }
 
-export function referencedNumbers(repository: string, texts: ReadonlyArray<string>) {
-  const numbers = new Set<number>()
+interface DiscussionReference {
+  readonly repository: string
+  readonly number: number
+}
+
+export function githubDiscussionReferences(repository: string, texts: ReadonlyArray<string>) {
+  const references = new Map<string, DiscussionReference>()
   for (const text of texts) {
-    for (const match of githubLinkDestinations(withoutClosedCodeSpans(withoutClosedCodeFences(text))).matchAll(referencePattern)) {
-      const named = match[1] ?? match[3]
+    const discussion = githubLinkDestinations(withoutClosedCodeSpans(withoutClosedCodeFences(text)))
+    for (const match of discussion.matchAll(referencePattern)) {
+      const target = match[1] ?? match[3] ?? repository
       const number = Number(match[2] ?? match[4])
-      if ((named === undefined || named.toLowerCase() === repository.toLowerCase()) && Number.isSafeInteger(number) && number > 0) numbers.add(number)
+      if (!Number.isSafeInteger(number) || number <= 0) continue
+      references.set(`${target.toLowerCase()}#${number}`, { repository: target, number })
     }
   }
-  return numbers
+  return [...references.values()]
 }
 
 function pullUrl(repository: string, number: number) {
@@ -247,7 +254,10 @@ effect function referencesOf(source: AcceptedSource, pull: RestPull) {
     if (entry.event !== "cross-referenced" || issue === undefined || issue.pull_request === undefined) continue
     if (issue.html_url.toLowerCase() === pullUrl(source.repository, issue.number)) found.set(issue.number, { number: issue.number, id: issue.node_id })
   }
-  for (const number of referencedNumbers(source.repository, texts)) if (!found.has(number)) found.set(number, { number })
+  const repository = source.repository.toLowerCase()
+  for (const target of githubDiscussionReferences(source.repository, texts)) {
+    if (target.repository.toLowerCase() === repository && !found.has(target.number)) found.set(target.number, { number: target.number })
+  }
   return [...found.values()].filter((reference) => reference.number < source.number).sort((left, right) => left.number - right.number)
 }
 
